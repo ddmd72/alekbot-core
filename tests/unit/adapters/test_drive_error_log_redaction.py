@@ -12,6 +12,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.drive_handles import drive_handle
 from tests.support.oauth_credentials_store import mirror_get
 
 MARKER = "SECRET-TRANSCRIPT-MARKER"
@@ -90,5 +91,5 @@ async def test_a_drive_call_failure_logs_status_and_graph_codes_only(caplog):
     with patch("aiohttp.ClientSession", return_value=_session(get=[_resp(body, 500)] * 5)), \
             patch("src.adapters.microsoft.onedrive_adapter.asyncio.sleep", new=AsyncMock()), \
             pytest.raises(ValueError):
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(drive_handle(user_id="u1"), "X!1")
     assert MARKER not in caplog.text and "failed (500): generalException/inner" in caplog.text
