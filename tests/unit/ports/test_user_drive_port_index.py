@@ -14,8 +14,6 @@ _INDEX_METHODS = {
     "get_changes": (["user_id", "cursor"], {}),
     "get_change": (["user_id", "item_id"], {}),
     "list_children_changes": (["user_id", "folder_id", "limit", "cursor"], {"cursor": None}),
-    "connection": (["user_id"], {}),
-    "flag_reconnect": (["user_id"], {}),
 }
 
 
