@@ -85,8 +85,8 @@ def _cabinet(p: Probe):
     return create_user_cabinet_blueprint(
         invite_service=w("invite_service"), session_service=session_service(), user_repo=w("user_repo"),
         fact_repo=w("fact_repo"), embedding_service=w("embedding_service"),
-        oauth_credentials_port=w("oauth_credentials_port"), gmail_oauth_service=w("gmail_oauth_service"),
-        google_tasks_oauth_service=w("google_tasks_oauth_service"), indexed_email_repo=w("indexed_email_repo"),
+        oauth_credentials_port=w("oauth_credentials_port"), credential_revocation=w("credential_revocation"),
+        indexed_email_repo=w("indexed_email_repo"),
         email_indexing_service=w("email_indexing_service"), email_job_repo=w("email_job_repo"),
         task_queue=w("task_queue"), task_setup=w("task_setup"), tasks_provider=w("tasks_provider"),
         language_service=w("language_service"), agent_note_port=w("agent_note_port"),
@@ -105,14 +105,8 @@ def _oauth(p: Probe):
     return create_oauth_blueprint(
         auth_service=w("auth_service"), session_service=session_service(), auth_registry=w("auth_registry"),
         auth_config=SimpleNamespace(oauth_redirect_uri="https://app.example/auth/callback",
-                                    gmail_oauth_redirect_uri="https://app.example/g",
-                                    google_tasks_oauth_redirect_uri="https://app.example/t",
                                     access_token_ttl=86400, refresh_token_ttl=86400),
-        invite_service=w("invite_service"), gmail_oauth_service=w("gmail_oauth_service"),
-        oauth_credentials_port=w("oauth_credentials_port"), google_tasks_oauth_service=w("google_tasks_oauth_service"),
-        ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
-        ms_todo_redirect_uri="https://app.example/m", onedrive_redirect_uri="https://app.example/o",
-        task_queue=w("task_queue"), connectors=ConnectorRegistry(),
+        invite_service=w("invite_service"), connect_service=w("connect_service"), connectors=ConnectorRegistry(),
     ), {}
 
 
@@ -275,10 +269,10 @@ INPUT: Dict[Tuple[str, str], dict] = {
     ("GET", "/mcp/consent"): {"query": {"req": "consent-jwt"}},
     ("POST", "/mcp/consent"): {"form": {"req": "consent-jwt", "action": "approve"}},
     ("GET", "/auth/callback"): {"query": {"code": "c", "state": "s"}},
-    ("GET", "/auth/connect-gmail/callback"): {"query": {"code": "c", "state": "s"}},
-    ("GET", "/auth/connect-google-tasks/callback"): {"query": {"code": "c", "state": "s"}},
-    ("GET", "/auth/connect-microsoft-todo/callback"): {"query": {"code": "c", "state": "s"}},
-    ("GET", "/auth/connect-onedrive/callback"): {"query": {"code": "c", "state": "s"}},
+    # a real kind, so the start is refused by the session gate (login), not as an unknown kind (404)
+    ("GET", "/auth/connect/<kind>"): {"path": {"kind": "gmail"}},
+    # a state and a code, so the callback is refused by the session gate (login), not by a missing parameter
+    ("GET", "/auth/connect/callback"): {"query": {"code": "c", "state": "s"}},
     ("GET", "/join"): {"query": {"code": "INV-123"}},
     ("POST", "/v1/<op>"): {"path": {"op": "render.docx"}, "data": b"payload"},
     ("GET", "/s/<code>"): {"path": {"code": "abcdefghij"}},
@@ -295,21 +289,12 @@ def _default_refusal(resp) -> bool:
     return resp.status_code in (401, 403, 404) or _login_redirect(resp)
 
 
-def _state_error_redirect(resp) -> bool:
-    location = resp.headers.get("Location", "")
-    return resp.status_code == 302 and location.startswith("/cabinet?") and location.endswith("_error=state")
-
-
 # Refusals that are not 401/403/404/login. One reason each.
 REFUSAL: Dict[Tuple[str, str], Tuple[Callable, str]] = {
     ("POST", "/webhook/microsoft-tasks/<user_id>"): (
         lambda r: r.status_code == 202, "Graph requires 202 for every notification; one without the clientState is "
                                         "skipped, which the side-effect check holds"),
     ("GET", "/auth/callback"): (lambda r: r.status_code == 400, "no state cookie: the CSRF check answers 400"),
-    ("GET", "/auth/connect-gmail/callback"): (_state_error_redirect, "no state cookie: back to /cabinet?…_error=state"),
-    ("GET", "/auth/connect-google-tasks/callback"): (_state_error_redirect, "same"),
-    ("GET", "/auth/connect-microsoft-todo/callback"): (_state_error_redirect, "same"),
-    ("GET", "/auth/connect-onedrive/callback"): (_state_error_redirect, "same"),
 }
 # A whole factory whose refusal is not 401/403/404/login.
 FACTORY_REFUSAL: Dict[str, Tuple[Callable, str]] = {
