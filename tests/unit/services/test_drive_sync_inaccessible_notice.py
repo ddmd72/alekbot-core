@@ -19,7 +19,8 @@ from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIE
 from src.domain.language import LanguageCode
 from src.domain.ui_messages import UIMessage
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
-from tests.unit.services.drive_index_fakes import T0, Clock, FakeDrive, FakeQueue, FakeUsers
+from tests.support.drive_connection_service_fake import single_connection_repository
+from tests.unit.services.drive_index_fakes import T0, Clock, FakeQueue
 
 MARKED = T0 + timedelta(minutes=1)
 
@@ -79,11 +80,8 @@ def env():
     notifier.repo = repo
     queue = FakeQueue()
 
-    async def connected_users():
-        return ["u"]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=queue, drive=FakeDrive(), users=FakeUsers(enabled={"u": True}),
-                                    connected_users=connected_users, notifier=notifier, alert_sink=None,
+    svc = DriveSyncSchedulerService(repo=repo, queue=queue, connections=single_connection_repository("u"),
+                                    notifier=notifier, alert_sink=None,
                                     clock=clock, localization=Localization(), language=Language())
     return SimpleNamespace(svc=svc, repo=repo, notifier=notifier, clock=clock)
 

@@ -279,7 +279,7 @@ class UserDriveContract:
             else:
                 assert media.is_alias and isinstance(media.alias_of, str)
         change = await port.get_change(h, item_id)
-        assert not change.facets                       # the raw provider mapping is gone
+        assert not hasattr(change, "facets")           # the raw provider mapping is gone
 
     async def test_an_ordinary_file_has_neutral_media(self, world: DriveWorld) -> None:
         port, h = world.port, world.handle

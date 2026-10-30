@@ -16,7 +16,7 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_mirror_tick_step_world import StepWorld
-from .drive_mirror_tick_world import DRIVE
+from .drive_mirror_tick_world import DRIVE_IDENTITY
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -44,7 +44,7 @@ async def test_reserve_while_a_ledger_reset_is_under_way(world):
     w = world()
     await _mirrored(w)
     root = w.root_doc()
-    w.mirror.root_docs[("u", DRIVE)] = replace(root, previous_root_ids=(root.root_item_id,),
+    w.mirror.root_docs[("u", DRIVE_IDENTITY)] = replace(root, previous_root_ids=(root.root_item_id,),
                                                root_gone_at=w.clock() - timedelta(days=2))
     await w.tick()
     assert w.budgets[-1].mirror_reserve == MIRROR_RESERVE_S

@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.async_query import AsyncQuery
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from src.domain.drive_index import DriveIndexStoreUnavailable
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 def _repo(mock_env_config):
@@ -29,7 +30,7 @@ async def test_a_query_without_its_index_is_a_store_outage(monkeypatch, mock_env
     exc = gexc.FailedPrecondition("The query requires an index.")
     monkeypatch.setattr(AsyncQuery, "get", _failing(exc))
     with pytest.raises(DriveIndexStoreUnavailable) as raised:
-        await _repo(mock_env_config).records_page("u", None, 10)
+        await _repo(mock_env_config).records_page(U_SCOPE, None, 10)
     assert raised.value.__cause__ is exc
 
 
@@ -37,4 +38,4 @@ async def test_the_chunk_total_without_its_index_is_a_store_outage(monkeypatch, 
     exc = gexc.FailedPrecondition("The query requires an index.")
     monkeypatch.setattr(AsyncAggregationQuery, "get", _failing(exc))
     with pytest.raises(DriveIndexStoreUnavailable):
-        await _repo(mock_env_config).readable_chunk_total("u")
+        await _repo(mock_env_config).readable_chunk_total(U_SCOPE)

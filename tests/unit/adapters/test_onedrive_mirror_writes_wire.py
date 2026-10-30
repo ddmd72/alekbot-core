@@ -192,14 +192,14 @@ async def test_item_carries_ctag():
     session = _session(get=[_resp(_FILE), _resp(_ROOT)])
     with patch("aiohttp.ClientSession", return_value=session):
         item = await _adapter().get_item(HANDLE, "f1")
-    assert item.ctag == "c1,2"
+    assert item.content_version == "c1,2"
 
 
 async def test_upload_item_carries_ctag():
     session = _session(put=_resp(_FILE, 201), get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
         item = await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown", conflict="fail")
-    assert item.ctag == "c1,2"
+    assert item.content_version == "c1,2"
 
 
 async def test_change_carries_created_at():

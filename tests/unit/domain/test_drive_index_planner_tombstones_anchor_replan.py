@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import (
     POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, RecordState, Reason, Scope,
 )
@@ -12,7 +13,7 @@ ROOT = "root"
 
 
 def ctx(epoch=1, phase=EpochPhase.IDLE):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW,
                        place_of=lambda lat, lon: None)
 
 

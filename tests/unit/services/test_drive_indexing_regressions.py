@@ -9,6 +9,7 @@ import pytest
 from src.domain import drive_card, drive_index_planner as planner
 from src.domain.drive_index import CARD_VERSION, CURRENT_VERSIONS, EpochPhase, Reason, RecordState, Scope
 from src.domain.drive_index_params import TICK_START_BUDGET
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.exceptions import LLMRateLimitError
 from src.domain.user_drive import DriveAccessDenied, DriveResyncRequired
 from src.services import drive_indexing_service as svc_mod
@@ -241,7 +242,7 @@ async def test_every_version_bump_completes_and_applies(monkeypatch, constant, m
     """§17.1: after a bump every stale record becomes due, and applied_versions moves only when none is left."""
     w = World()
     for i in range(4):
-        w.drive.add(f"IMG_{i}.jpg", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
+        w.drive.add(f"IMG_{i}.jpg", media=DriveMediaFacts(latitude=41.9, longitude=12.5))
     await w.settle_due()   # images without a rendition reach their verdict only after retries (review B minor)
     assert all(r.due_at is None for r in w.repo.records.values())
     bumped = CURRENT_VERSIONS[constant] + 1

@@ -1,5 +1,5 @@
 """create_drive_scoped_vector_indexes.sh (USER_DRIVE_INDEXING_RFC Δ246): a dry run by default; APPLY=1 creates the
-chunk `vector` and the hint `hint_vector` indexes under user_id + item_id; an index that already exists is fine, any
+chunk `vector` and the hint `hint_vector` indexes under connection_id + item_id (MULTI_DRIVE_RFC §8); an index that already exists is fine, any
 other failure stops the run with a non-zero exit. Runs the script with a stub gcloud first on PATH."""
 import os
 import subprocess
@@ -26,14 +26,14 @@ def test_a_dry_run_creates_nothing(tmp_path):
     assert calls == [] and proc.stdout.count("dry run, APPLY=1 creates it") == 2
 
 
-def test_apply_creates_the_chunk_and_the_hint_index_under_user_id_and_item_id(tmp_path):
+def test_apply_creates_the_chunk_and_the_hint_index_under_connection_id_and_item_id(tmp_path):
     proc, calls = _run(tmp_path, APPLY="1")
     assert proc.returncode == 0, proc.stderr
     chunk, hint = calls
     for call, collection, vector in ((chunk, "development_drive_index_chunks", "vector"),
                                      (hint, "development_drive_index_hints", "hint_vector")):
         assert f"--collection-group={collection}" in call and "--database=us-production" in call
-        assert call.index("field-path=user_id") < call.index("field-path=item_id") < call.index(
+        assert call.index("field-path=connection_id") < call.index("field-path=item_id") < call.index(
             '"dimension":"768"') < call.index(f",field-path={vector} ")
 
 

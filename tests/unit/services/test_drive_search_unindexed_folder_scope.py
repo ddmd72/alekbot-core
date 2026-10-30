@@ -30,7 +30,7 @@ async def test_a_repository_scope_says_its_files_are_not_indexed(query):
 
 async def test_the_same_by_ref():
     w, root = await _repo_world()
-    result = await w.search("README", folder=f"drive:{root}")
+    result = await w.search("README", folder=f"drive:a1:{root}")
     assert result.folder_not_indexed and "not indexed" in render_results(result)
 
 
@@ -66,7 +66,7 @@ async def test_a_path_through_a_hiding_folder_says_not_indexed(folder):
 
 async def test_a_ref_to_a_folder_inside_a_hiding_folder_says_not_indexed():
     w, src = await _repo_with_src()
-    result = await w.search("main", folder=f"drive:{src}")
+    result = await w.search("main", folder=f"drive:a1:{src}")
     assert result.status == STATUS_OK and result.folder_not_indexed
     assert "not indexed" in render_results(result)
 
@@ -79,7 +79,7 @@ async def test_a_ref_to_a_folder_under_a_deleting_ancestor_says_not_indexed():
     w.drive.add("x.pdf", parent=sub)
     await w.settle()
     w.set_state(old, state=RecordState.DELETING)
-    result = await w.search("x", folder=f"drive:{sub}")
+    result = await w.search("x", folder=f"drive:a1:{sub}")
     assert result.status == STATUS_OK and result.folder_not_indexed
 
 

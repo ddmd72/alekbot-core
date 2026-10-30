@@ -51,7 +51,7 @@ class LimitDb(ChunkDb):
 
 
 def long_document_chunk(index):
-    return DriveChunk(user_id="user-1", item_id="item-1", generation=1, index=index, text="lorem " * 400,
+    return DriveChunk(user_id="user-1", connection_id="conn-1", item_id="item-1", generation=1, index=index, text="lorem " * 400,
                       char_start=0, char_end=2_400, kind="pdf",
                       word_keys=tuple(f"w:token{n:07d}" for n in range(WORD_KEYS_PER_CHUNK // 2)), keys_version=1)
 
@@ -98,7 +98,7 @@ class TestBatching:
 
     async def test_small_writes_stay_in_one_commit(self, mock_env_config):
         db = LimitDb()
-        chunks = [DriveChunk(user_id="user-1", item_id="item-1", generation=1, index=i, text="lorem", char_start=0,
+        chunks = [DriveChunk(user_id="user-1", connection_id="conn-1", item_id="item-1", generation=1, index=i, text="lorem", char_start=0,
                              char_end=5, kind="pdf", word_keys=("w:token0001",), keys_version=1) for i in range(10)]
         await make_chunk_repo(db, mock_env_config).write_chunks(chunks, [[0.25] * 768] * 10)
         assert [len(c) for c in db.commits] == [10]

@@ -20,8 +20,9 @@ from src.domain.drive_mirror_plan import audit_due, cleared_item, lost_root_rese
 from src.domain.drive_mirror_render import readme_bytes, render_archived
 from src.domain.drive_transcript import StoredTranscript
 
-from .drive_mirror_fakes import AREA, DRIVE, EN, START, USER, Crash, MirrorWorld, stored
-
+from .drive_mirror_fakes import (
+    AREA, Crash, DRIVE_IDENTITY, EN, MirrorWorld, SCOPE, START, USER, identity, mirror_key, stored,
+)
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 WEEK = timedelta(days=MIRROR_AUDIT_DAYS)
@@ -65,11 +66,11 @@ def touched_ids(world: MirrorWorld):
 # -- the pure helpers -----------------------------------------------------------------------------------------------
 
 def test_audit_due_every_week_from_creation_then_from_the_last_cycle():
-    root = MirrorRoot(USER, DRIVE, "r", ROOT_NAME, created_at=START)
+    root = MirrorRoot(USER, DRIVE_IDENTITY, "r", ROOT_NAME, created_at=START)
     assert not audit_due(root, START + WEEK - HOUR) and audit_due(root, START + WEEK)
     done = replace(root, audited_at=START + 10 * DAY)
     assert not audit_due(done, START + 16 * DAY) and audit_due(done, START + 17 * DAY)
-    assert audit_due(MirrorRoot(USER, DRIVE, "r", ROOT_NAME), START)
+    assert audit_due(MirrorRoot(USER, DRIVE_IDENTITY, "r", ROOT_NAME), START)
 
 
 def test_root_names_recognised():
@@ -79,7 +80,7 @@ def test_root_names_recognised():
 
 
 def test_lost_root_reset_drops_the_archive_and_clears_the_rest():
-    doc = MirrorDoc(USER, DRIVE, KIND_FILE, "s", mirror_item_id="m", mirror_parent_id="p", mirror_name="a.md",
+    doc = MirrorDoc(USER, DRIVE_IDENTITY, KIND_FILE, "s", mirror_item_id="m", mirror_parent_id="p", mirror_name="a.md",
                     mirror_ctag="c", rendered_hash="h", pending_op="create", pending_name="a.md", attempts=3,
                     gone_pending=True, gone_why=GONE)
     new = lost_root_reset(doc)
@@ -87,7 +88,7 @@ def test_lost_root_reset_drops_the_archive_and_clears_the_rest():
     assert not (new.mirror_item_id or new.mirror_parent_id or new.rendered_hash or new.pending_op)
     assert new.gone_pending                                # the mark stays: the mark step decides the source
     assert lost_root_reset(replace(doc, state=MIRROR_ARCHIVED)) is None
-    assert lost_root_reset(MirrorDoc(USER, DRIVE, KIND_ARCHIVE, "k", mirror_item_id="m")) is None
+    assert lost_root_reset(MirrorDoc(USER, DRIVE_IDENTITY, KIND_ARCHIVE, "k", mirror_item_id="m")) is None
     assert lost_root_reset(replace(doc, state=MIRROR_DETACHED)).state == MIRROR_DETACHED
 
 
@@ -195,15 +196,15 @@ async def test_owner_deleted_a_day_folder_discards_beneath():
     await w.run()
     assert all(w.doc(i).state == MIRROR_ARCHIVED for i in (a, b, c))
     day = w.doc(a).archive_day
-    day_key = archive_folder_key(USER, DRIVE, day, "")
+    day_key = archive_folder_key(USER, DRIVE_IDENTITY, day, "")
     keys = [w.doc(i).content_key for i in (a, b, c)]
     w.drive.remove(w.mirror.docs[day_key].mirror_item_id)  # the owner deletes the whole day
     w.reset_calls()
     await audit(w)
     assert all(w.doc(i) is None for i in (a, b, c))
     assert day_key not in w.mirror.docs
-    assert archive_folder_key(USER, DRIVE, day, "Videos") not in w.mirror.docs
-    assert archive_folder_key(USER, DRIVE, "", ARCHIVE_NAME) in w.mirror.docs      # the archive itself stays
+    assert archive_folder_key(USER, DRIVE_IDENTITY, day, "Videos") not in w.mirror.docs
+    assert archive_folder_key(USER, DRIVE_IDENTITY, "", ARCHIVE_NAME) in w.mirror.docs      # the archive itself stays
     assert not [k for k in keys if await w.mirror.pinned(USER, k)]
     assert w.drive.writes() == []
 
@@ -293,9 +294,9 @@ async def test_missing_long_paths_folder_created_on_demand_only(monkeypatch):
     w = MirrorWorld()
     (a,) = await mirrored(w, "a.mp4")
     from src.domain.drive_mirror import MirrorDoc as Doc
-    key = archive_folder_key(USER, DRIVE, "", LONG_PATHS_NAME)
+    key = archive_folder_key(USER, DRIVE_IDENTITY, "", LONG_PATHS_NAME)
     lp = w.drive._make_folder(w.root.root_item_id, LONG_PATHS_NAME)
-    await w.mirror.save_doc(Doc(USER, DRIVE, KIND_ARCHIVE, key.rsplit(":", 1)[1], source_name=LONG_PATHS_NAME,
+    await w.mirror.save_doc(Doc(USER, DRIVE_IDENTITY, KIND_ARCHIVE, key.rsplit(":", 1)[1], source_name=LONG_PATHS_NAME,
                                 mirror_item_id=lp, mirror_parent_id=w.root.root_item_id, mirror_name=LONG_PATHS_NAME))
     w.drive.remove(lp)
     w.reset_calls()
@@ -414,7 +415,7 @@ async def test_scan_marks_a_missing_record_unknown():
     # carry: a record whose digest was never stamped sends no deletion notice when it goes (§27.9.9's "a record
     # re-created after a purge and deleted before its digest was stamped")
     await w.repo.upsert_records([replace(w.rec(a), mirrored_digest="")])
-    await w.repo.delete_records(USER, [a])
+    await w.repo.delete_records(SCOPE, [a])
     w.drive.remove(a)
     counters = await w.run()
     doc = w.doc(a)
@@ -429,7 +430,7 @@ async def test_scan_marks_an_intent_doc_whose_record_is_gone():
     (a,) = await mirrored(w, "a.mp4")
     await w.mirror.save_doc(replace(w.doc(a), pending_op="create", pending_name="a.mp4.md",
                                     pending_parent_id=w.root.root_item_id, pending_at=w.clock))
-    await w.repo.delete_records(USER, [a])                 # no notice: the record carried no digest of ours
+    await w.repo.delete_records(SCOPE, [a])                 # no notice: the record carried no digest of ours
     await w.run()
     assert w.doc(a).gone_pending and w.doc(a).gone_why == UNKNOWN
 
@@ -437,7 +438,7 @@ async def test_scan_marks_an_intent_doc_whose_record_is_gone():
 async def test_scan_waits_while_enumerating():
     w = MirrorWorld()
     (a,) = await mirrored(w, "a.mp4")
-    await w.repo.delete_records(USER, [a])
+    await w.repo.delete_records(SCOPE, [a])
     await w.run(epoch_idle=False)
     assert not w.doc(a).gone_pending
     await w.run(round_complete=False)
@@ -452,7 +453,7 @@ async def test_scan_pages_rotate(monkeypatch):
     w = MirrorWorld()
     ids = await mirrored(w, "a.mp4", "b.mp4", "c.mp4", "d.mp4", "e.mp4")
     await w.mirror.save_root(replace(w.root, scan_cursor=""))
-    await w.repo.delete_records(USER, ids)
+    await w.repo.delete_records(SCOPE, ids)
     marked = []
     for _ in range(3):
         await w.run(ops=0)
@@ -514,7 +515,7 @@ async def test_unreadable_document_on_a_charge_holds_the_record(monkeypatch):
     await mirrored(w, "x.mp4")
     bad = await w.recording("bad.mp4", day="2026-10-05")
     good = await w.recording("good.mp4", day="2026-10-01")
-    bad_key = f"{USER}:{KIND_FILE}:{bad}"
+    bad_key = mirror_key(KIND_FILE, bad)
     real = w.mirror.get_docs
 
     async def get_docs(user_id, keys):
@@ -532,7 +533,7 @@ async def test_unreadable_document_on_a_charge_holds_the_record(monkeypatch):
 async def test_mark_meeting_another_drives_document_is_held():
     w = MirrorWorld()
     (a,) = await mirrored(w, "a.mp4")
-    key = archive_folder_key(USER, DRIVE, "", ARCHIVE_NAME)
+    key = archive_folder_key(USER, DRIVE_IDENTITY, "", ARCHIVE_NAME)
     other = MirrorDoc(USER, "drive-2", KIND_ARCHIVE, key.rsplit(":", 1)[1], mirror_item_id="elsewhere")
     await w.mirror.save_doc(other)                         # the key the archive needs holds another drive's document
     await w.delete_source(a)
@@ -669,17 +670,17 @@ async def observe_mirror_items(w: MirrorWorld) -> None:
         inside = w.drive.under(node.parent_id, root_id)
         if doc.kind != KIND_FILE:
             await w.repo.upsert_records([DriveIndexRecord(
-                USER, node.item_id, parent_id=node.parent_id, name=node.name, is_folder=True,
+                USER, node.item_id, connection_id=USER, identity=identity(node.item_id), parent_id=node.parent_id, name=node.name, is_folder=True,
                 state=RecordState.METADATA_ONLY, reason=Reason.FOLDER,
                 scope=Scope.INSIDE_OPAQUE if inside else Scope.NORMAL)])
         elif not inside:
             await w.repo.upsert_records([DriveIndexRecord(
-                USER, node.item_id, parent_id=node.parent_id, name=node.name, state=RecordState.METADATA_ONLY,
+                USER, node.item_id, connection_id=USER, identity=identity(node.item_id), parent_id=node.parent_id, name=node.name, state=RecordState.METADATA_ONLY,
                 scope=Scope.NORMAL)])
         else:
             gone.append(node.item_id)
     if gone:
-        await w.repo.delete_records(USER, gone)
+        await w.repo.delete_records(SCOPE, gone)
 
 
 @pytest.mark.parametrize("seed", range(12))
@@ -717,7 +718,7 @@ async def test_audit_never_touches_an_item_it_did_not_create(seed):
                 for node in root_out[1]:
                     del w.drive.nodes[node.item_id]
                 await w.mirror.mark_root_gone(USER, rid, w.clock)
-                await w.repo.delete_records(USER, [rid])
+                await w.repo.delete_records(SCOPE, [rid])
             else:                                          # ... and back (a previous root by now, maybe)
                 for node in root_out[1]:
                     w.drive.nodes[node.item_id] = node
@@ -883,7 +884,7 @@ async def test_folder_listing_404_confirmed_before_a_discard(answer):
 
 def folder_record(w: MirrorWorld, item_id: str, parent: str, scope: Scope, name: str = "Box"):
     """The index record the tick's observation leaves for a folder of the mirror (§27.9.8)."""
-    return w.repo.upsert_records([DriveIndexRecord(USER, item_id, parent_id=parent, name=name, is_folder=True,
+    return w.repo.upsert_records([DriveIndexRecord(USER, item_id, connection_id=USER, identity=identity(item_id), parent_id=parent, name=name, is_folder=True,
                                                    state=RecordState.METADATA_ONLY, reason=Reason.FOLDER, scope=scope)])
 
 
@@ -942,7 +943,7 @@ async def test_file_moved_out_is_moved_back_before_it_is_rewritten():
     (a,) = await mirrored(w, "a.mp4")
     item = w.doc(a).mirror_item_id
     w.drive.nodes[item].parent_id = AREA                   # the owner takes our file out of the mirror
-    await w.repo.upsert_records([DriveIndexRecord(USER, item, parent_id=AREA, name="a.mp4.md",
+    await w.repo.upsert_records([DriveIndexRecord(USER, item, connection_id=USER, identity=identity(item), parent_id=AREA, name="a.mp4.md",
                                                   state=RecordState.METADATA_ONLY, scope=Scope.NORMAL)])
     await w.repo.put_transcript(USER, stored(w.rec(a).transcript_key, "a new version"))
     await w.update(a, transcript_version=2)
@@ -988,7 +989,7 @@ async def test_folder_404_confirmed_with_one_read_a_tick():
     w = MirrorWorld()
     a = await archived(w)
     day = w.doc(a).mirror_parent_id
-    key = archive_folder_key(USER, DRIVE, w.doc(a).archive_day, "")
+    key = archive_folder_key(USER, DRIVE_IDENTITY, w.doc(a).archive_day, "")
     from src.domain.user_drive import DriveItemNotFoundError
     for method in ("list_children_changes", "get_change"):   # gone by its own reads; still listed by its parent
         w.drive.fail(method, DriveItemNotFoundError("gone"), lambda args: args["item_id"] == day, times=99)

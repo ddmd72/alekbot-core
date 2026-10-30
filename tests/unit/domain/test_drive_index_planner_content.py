@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
 from src.domain.drive_enrichment import DriveProfile, PhotoDescription
@@ -37,7 +38,7 @@ def admitted(monkeypatch):
 
 
 def ctx(now=NOW):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
                        place_of=lambda lat, lon: None)
 
 

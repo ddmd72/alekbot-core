@@ -1,13 +1,18 @@
 import hashlib
 import unicodedata
 
-from src.domain.drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN, ONEDRIVE_PATH_MAX
+from src.domain.drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN
 from src.domain.drive_keys import query_concepts
-from src.domain.drive_mirror import archive_folder_key, doc_key
+from src.domain.drive_mirror import archive_folder_key, ledger_key, mirror_root_doc_id
 from src.domain.drive_mirror_names import (
     LEVEL_DAY, LEVEL_OTHER, LEVEL_ROOT, Sibling, archive_place, assign_names, driver_keys, fits, full_path_length,
     mirror_file_name, place, reserved_names, root_name_candidates,
 )
+
+
+# the connection's `max_path_chars` (MULTI_DRIVE_RFC §7.1): 400 for the OneDrive App Folder, the limit these tests were
+# written against
+MAX_PATH = 400
 
 
 def _h(text):
@@ -15,7 +20,8 @@ def _h(text):
 
 
 def test_keys():
-    assert doc_key("u", "file", "i1") == "u:file:i1"
+    assert ledger_key("u", "file", "d", "s1") == "u:file:" + hashlib.sha256(b"d/s1").hexdigest()[:32]
+    assert mirror_root_doc_id("u", "d") == "u:d"
     k = archive_folder_key("u", "d", "2026-10-21", "A/B")
     assert k == "u:archive:" + hashlib.sha256(b"d/2026-10-21/A/B").hexdigest()[:32]
 
@@ -98,35 +104,35 @@ def test_path_counted_from_the_drive_root():
     assert full_path_length(area, root, parts) == 85 + 1 + 12 + 1 + 300
     app_relative = len(root) + 1 + 300                        # what the App Folder alone would count
     assert app_relative <= 380
-    assert fits("", root, parts)
+    assert fits("", root, parts, MAX_PATH)
     assert full_path_length(area, root, parts) > 390
-    assert not fits(area, root, parts)
-    assert place(parts, area_path=area, root_path=root).long_path
+    assert not fits(area, root, parts, MAX_PATH)
+    assert place(parts, area_path=area, root_path=root, max_path=MAX_PATH).long_path
 
 
 def test_limit_is_400_minus_margin():
     root = "r"
-    name = "n" * (ONEDRIVE_PATH_MAX - MIRROR_PATH_MARGIN - 2)
-    assert full_path_length("", root, (name,)) == ONEDRIVE_PATH_MAX - MIRROR_PATH_MARGIN
-    assert fits("", root, (name,))
-    assert not fits("", root, (name + "n",))
+    name = "n" * (MAX_PATH - MIRROR_PATH_MARGIN - 2)
+    assert full_path_length("", root, (name,)) == MAX_PATH - MIRROR_PATH_MARGIN
+    assert fits("", root, (name,), MAX_PATH)
+    assert not fits("", root, (name + "n",), MAX_PATH)
 
 
 def test_long_path_placement():
-    p = place(("A", "B", "c" * 400 + ".md"), area_path="Apps/X", root_path="_Transcripts")
+    p = place(("A", "B", "c" * 400 + ".md"), area_path="Apps/X", root_path="_Transcripts", max_path=MAX_PATH)
     assert p.long_path and p.parts == ("Long paths", "c" * 400 + ".md")
-    short = place(("A", "b.md"), area_path="Apps/X", root_path="_Transcripts")
+    short = place(("A", "b.md"), area_path="Apps/X", root_path="_Transcripts", max_path=MAX_PATH)
     assert not short.long_path and short.parts == ("A", "b.md")
 
 
 def test_archive_place_is_dated_mirror_path():
-    p = archive_place("2026-10-21", ("Videos", "2024", "Interview.mp4.md"), area_path="Apps/X", root_path="_Transcripts")
+    p = archive_place("2026-10-21", ("Videos", "2024", "Interview.mp4.md"), area_path="Apps/X", root_path="_Transcripts", max_path=MAX_PATH)
     assert p.parts == ("Archive", "2026-10-21", "Videos", "2024", "Interview.mp4.md") and not p.long_path
 
 
 def test_archive_long_path():
     name = "d" * 200 + ".md"
-    p = archive_place("2026-10-21", ("e" * 150, name), area_path="Apps/X", root_path="_Transcripts")
+    p = archive_place("2026-10-21", ("e" * 150, name), area_path="Apps/X", root_path="_Transcripts", max_path=MAX_PATH)
     assert p.long_path and p.parts == ("Archive", "2026-10-21", "Long paths", name)
 
 
@@ -152,6 +158,6 @@ def test_driver_keys_numbers_only_without_words():
 def test_empty_parts_are_refused():
     import pytest
     with pytest.raises(ValueError):
-        place((), area_path="", root_path="r")
+        place((), area_path="", root_path="r", max_path=MAX_PATH)
     with pytest.raises(ValueError):
-        archive_place("2026-10-21", (), area_path="", root_path="r")
+        archive_place("2026-10-21", (), area_path="", root_path="r", max_path=MAX_PATH)

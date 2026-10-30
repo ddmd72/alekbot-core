@@ -24,6 +24,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveThrottled
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.drive_handles import drive_handle
 from tests.support.oauth_credentials_store import mirror_get
 
 
@@ -97,5 +98,5 @@ class TestTokenPostTimeout:
 
         adapter = OneDriveAdapter(_oauth(), "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         with patch("aiohttp.ClientSession", return_value=_session(hang)), pytest.raises(DriveThrottled) as exc:
-            await adapter.get_changes("u1", None)
+            await adapter.get_changes(drive_handle(user_id="u1"), None)
         assert exc.value.retry_after_s == 60.0

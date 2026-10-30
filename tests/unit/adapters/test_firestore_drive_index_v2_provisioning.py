@@ -71,30 +71,30 @@ def run(mock_env_config):
 
 async def test_every_v2_query_has_a_declared_index(run):
     db, repo = run
-    await repo.find_by_about_keys("u", ["e:a"], 5)
-    await repo.find_by_about_keys("u", ["e:a"], 5, kind="pdf")
-    await repo.find_by_about_keys("u", ["e:a"], 5, date_from=T, date_to=T)
-    await repo.find_by_about_keys("u", ["e:a"], 5, kind="pdf", date_to=T)
-    await repo.upsert_records([DriveIndexRecord("u", "c")])   # the cursor record exists: its page query runs
-    await repo.find_by_about_keys("u", ["e:a"], 5, after="c")
-    await repo.find_expiring("u", ["lv:a"], date(2026, 10, 13), 5)
+    await repo.find_by_about_keys(U_SCOPE, ["e:a"], 5)
+    await repo.find_by_about_keys(U_SCOPE, ["e:a"], 5, kind="pdf")
+    await repo.find_by_about_keys(U_SCOPE, ["e:a"], 5, date_from=T, date_to=T)
+    await repo.find_by_about_keys(U_SCOPE, ["e:a"], 5, kind="pdf", date_to=T)
+    await repo.upsert_records([DriveIndexRecord("u", "c", connection_id="u")])   # the cursor record exists: its page query runs
+    await repo.find_by_about_keys(U_SCOPE, ["e:a"], 5, after="c")
+    await repo.find_expiring(U_SCOPE, ["lv:a"], date(2026, 10, 13), 5)
     await repo.enrich_queue(U_SCOPE, 5)
-    await repo.enrich_wakeups("u", T, 5)
-    await repo.count_by_job_state("u", {"pdf", "docx"})
-    await repo.keys_pending_page("u", None, 5)
-    await repo.keys_pending_page("u", "a", 5)
-    await repo.find_chunks_by_word_keys("u", ["w:a"], 5)
-    await repo.find_chunks_by_word_keys("u", ["w:a"], 5, after_item_id="a")
-    await repo.find_hints_by_keys("u", ["w:a"], 5)
-    await repo.find_hints_by_keys("u", ["w:a"], 5, after_item_id="a")
-    await repo.find_nearest_hints("u", [1.0], 5)
-    await repo.find_nearest_hints("u", [1.0], 5, kind="pdf")
+    await repo.enrich_wakeups(U_SCOPE, T, 5)
+    await repo.count_by_job_state(U_SCOPE, {"pdf", "docx"})
+    await repo.keys_pending_page(U_SCOPE, None, 5)
+    await repo.keys_pending_page(U_SCOPE, "a", 5)
+    await repo.find_chunks_by_word_keys(U_SCOPE, ["w:a"], 5)
+    await repo.find_chunks_by_word_keys(U_SCOPE, ["w:a"], 5, after_item_id="a")
+    await repo.find_hints_by_keys(U_SCOPE, ["w:a"], 5)
+    await repo.find_hints_by_keys(U_SCOPE, ["w:a"], 5, after_item_id="a")
+    await repo.find_nearest_hints(U_SCOPE, [1.0], 5)
+    await repo.find_nearest_hints(U_SCOPE, [1.0], 5, kind="pdf")
     await repo.get_hints(U_SCOPE, "a", 1)
-    await repo.get_hints_with_vectors("u", "a", 1)
+    await repo.get_hints_with_vectors(U_SCOPE, "a", 1)
     await repo.hints_page(U_SCOPE, None, 5)
     await repo.hints_page(U_SCOPE, ("a", 1, 0), 5)
-    await repo.delete_hints_except("u", "a", 1)
-    await repo.delete_user_hints("u", 5)
+    await repo.delete_hints_except(U_SCOPE, "a", 1)
+    await repo.delete_user_hints(U_SCOPE, 5)
     missing, needing = [], 0
     for name, live in LIVE.items():
         declared = _declared(live)
@@ -121,9 +121,9 @@ def test_the_heavy_v2_fields_are_exempt_from_single_field_indexing():
 def test_the_hint_vector_entries_and_no_kind_hint_keys_composite():
     hints = _declared("development_drive_index_hints")
     vectors = [i for i in hints if i[-1] == ("hint_vector", "VECTOR")]
-    assert vectors == [[("user_id", "ASCENDING"), ("hint_vector", "VECTOR")],
-                       [("user_id", "ASCENDING"), ("kind", "ASCENDING"), ("hint_vector", "VECTOR")],
-                       [("user_id", "ASCENDING"), ("item_id", "ASCENDING"), ("hint_vector", "VECTOR")]]   # Δ246
+    assert vectors == [[("connection_id", "ASCENDING"), ("hint_vector", "VECTOR")],
+                       [("connection_id", "ASCENDING"), ("kind", "ASCENDING"), ("hint_vector", "VECTOR")],
+                       [("connection_id", "ASCENDING"), ("item_id", "ASCENDING"), ("hint_vector", "VECTOR")]]   # Δ246
     assert not any(("hint_keys", "CONTAINS") in i and ("kind", "ASCENDING") in i for i in hints)
 
 

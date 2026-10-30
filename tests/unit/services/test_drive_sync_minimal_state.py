@@ -9,7 +9,7 @@ from src.domain.drive_index_params import STALE_ALERT_AFTER
 from src.domain.drive_search import DriveSearchRequest
 from src.services.drive_search_service import DriveSearchService
 
-from .drive_index_fakes import ROOT, T0
+from .drive_index_fakes import ROOT, T0, LegacyConnections
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
 from .test_drive_sync_scheduler_service import env  # noqa: F401  (the scheduler test environment)
 from .drive_index_fakes import U_SCOPE
@@ -69,8 +69,8 @@ async def test_a_tick_onboards_from_a_minimal_state_and_keeps_its_date():
 async def test_the_cabinet_and_search_say_building_for_a_minimal_state():
     w = World()
     await w.repo.create_sync_state_if_absent(DriveSyncState(user_id="u", connection_id="u", created_at=T0))
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, nonce=lambda: "n",
-                                embedding_space="test-space/8")
+    search = DriveSearchService(w.repo, w.emb, w.drive, LegacyConnections(w.users, w.drive), clock=w.clock,
+                                nonce=lambda: "n", embedding_space="test-space/8")
     status = await search.indexing_status("u")
     assert status.enabled and status.building
     result = await search.search("u", DriveSearchRequest(query="a"))

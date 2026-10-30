@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_card import card_hash
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import (
     GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase,
     FolderProbe, Priority, Reason, RecordState, Scope,
@@ -13,15 +15,17 @@ from src.domain.drive_index_planner import (
     AccessAction, PlanContext, access_action, capped, change_from_record, classify, is_stale, needs_probe,
     parent_scope, plan_observation, schedule, stale_versions, with_card, with_retry,
 )
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import ACCESS_LOSS_TTL, STALE_ALERT_AFTER
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection_state import ConnectionState
 
 NOW = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
 ROOT = "root"
 
 
 def ctx(epoch=1, phase=EpochPhase.IDLE, place_of=lambda lat, lon: "Rome (Roma), Italy"):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
 
 
 def ch(item_id, name, parent=ROOT, folder=False, **kw):
@@ -210,7 +214,7 @@ class TestObservation:
             calls.append((lat, lon))
             return "Rome (Roma), Italy"
 
-        photo = ch("a", "IMG.HEIC", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
+        photo = ch("a", "IMG.HEIC", media=DriveMediaFacts(latitude=41.9, longitude=12.5))
         stored = observe(photo, c=ctx(place_of=place_of)).upsert
         # stamped with the current geo table (§25.4.8: v2); the constant itself is pinned in test_place_forms_v2
         assert stored.place_name == "Rome (Roma), Italy" and stored.geo_table_version == GEO_TABLE_VERSION
@@ -224,7 +228,7 @@ class TestObservation:
 
     def test_change_from_record_round_trips(self):
         change = ch("a", "x.pdf", size_bytes=5, content_version="c", modified_at=NOW, fs_modified_at=NOW,
-                    facets={"hashes": {"quickXorHash": "q"}})
+                    content_identity=ContentIdentity("quickxor", "q", 5))
         rec = observe(change).upsert
         assert change_from_record(rec) == change
 
@@ -258,28 +262,35 @@ class TestScheduling:
 
 # --- gate and staleness -------------------------------------------------------------------------
 
-class TestAccess:
-    ON = DriveConnection(connected=True, drive_id="d1")
+def conn(state=ConnectionState.ACTIVE, indexing=True, drive_identity="d1"):
+    """The connection the gate reads (MULTI_DRIVE_RFC §4.4, §8): indexing switch, state and drive identity."""
+    return DriveConnection(connection_id="u", user_id="u", account_id="acc-1", credential_id="cred-1",
+                           kind="microsoft_onedrive", drive_identity=drive_identity, ref_tag="a1",
+                           indexing_enabled=indexing, state=state, created_at=NOW)
 
-    @pytest.mark.parametrize("enabled,state,conn,expected", [
-        (False, None, ON, AccessAction.NOOP_DISABLED),
-        (False, DriveSyncState(user_id="u", connection_id="u"), ON, AccessAction.PURGE_OPT_OUT),
-        (True, None, DriveConnection(connected=False), AccessAction.NOOP_DISABLED),
-        (True, DriveSyncState(user_id="u", connection_id="u"), DriveConnection(connected=False), AccessAction.RECORD_LOSS),
-        (True, DriveSyncState(user_id="u", connection_id="u"), DriveConnection(connected=True, needs_reconnect=True), AccessAction.RECORD_LOSS),
-        (True, DriveSyncState(user_id="u", connection_id="u", access_lost_at=NOW - ACCESS_LOSS_TTL), DriveConnection(connected=False),
+
+LOST = ConnectionState.NEEDS_RECONNECT
+
+
+class TestAccess:
+    @pytest.mark.parametrize("state,c,expected", [
+        (None, conn(indexing=False), AccessAction.NOOP_DISABLED),
+        (DriveSyncState(user_id="u", connection_id="u"), conn(indexing=False), AccessAction.PURGE_OPT_OUT),
+        (None, conn(LOST), AccessAction.NOOP_DISABLED),
+        (DriveSyncState(user_id="u", connection_id="u"), conn(LOST), AccessAction.RECORD_LOSS),
+        (DriveSyncState(user_id="u", connection_id="u", access_lost_at=NOW - ACCESS_LOSS_TTL), conn(LOST),
          AccessAction.PURGE_EXPIRED),
-        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d0"), ON, AccessAction.PURGE_DRIVE_SWITCH),
-        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1", access_lost_at=NOW - timedelta(days=3)), ON,
-         AccessAction.RESUME_AFTER_REGAIN),
-        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1", access_lost_at=NOW - ACCESS_LOSS_TTL), ON,
-         AccessAction.PURGE_THEN_RESTART),
-        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1"), ON, AccessAction.PROCEED),
-        (True, None, ON, AccessAction.PROCEED),
-        (True, DriveSyncState(user_id="u", connection_id="u", drive_id=""), ON, AccessAction.PROCEED),
+        (DriveSyncState(user_id="u", connection_id="u", drive_identity="d0"), conn(), AccessAction.PURGE_DRIVE_SWITCH),
+        (DriveSyncState(user_id="u", connection_id="u", drive_identity="d1", access_lost_at=NOW - timedelta(days=3)),
+         conn(), AccessAction.RESUME_AFTER_REGAIN),
+        (DriveSyncState(user_id="u", connection_id="u", drive_identity="d1", access_lost_at=NOW - ACCESS_LOSS_TTL),
+         conn(), AccessAction.PURGE_THEN_RESTART),
+        (DriveSyncState(user_id="u", connection_id="u", drive_identity="d1"), conn(), AccessAction.PROCEED),
+        (None, conn(), AccessAction.PROCEED),
+        (DriveSyncState(user_id="u", connection_id="u", drive_identity=""), conn(), AccessAction.PROCEED),
     ])
-    def test_access_action(self, enabled, state, conn, expected):
-        assert access_action(enabled, state, conn, NOW) is expected
+    def test_access_action(self, state, c, expected):
+        assert access_action(state, c, NOW) is expected
 
 
 class TestStaleness:
@@ -323,9 +334,9 @@ class TestReviewARegressions:
         assert capped(dying, NOW) is dying
 
     def test_a_started_purge_always_finishes(self):
-        st = DriveSyncState(user_id="u", connection_id="u", purging=True, drive_id="d1")
-        assert access_action(True, st, DriveConnection(connected=True, drive_id="d1"), NOW) is AccessAction.PURGE_THEN_RESTART
-        assert access_action(False, st, DriveConnection(connected=True, drive_id="d1"), NOW) is AccessAction.PURGE_OPT_OUT
+        st = DriveSyncState(user_id="u", connection_id="u", purging=True, drive_identity="d1")
+        assert access_action(st, conn(), NOW) is AccessAction.PURGE_THEN_RESTART
+        assert access_action(st, conn(indexing=False), NOW) is AccessAction.PURGE_OPT_OUT
 
 
 class TestPlanDeltas16And17:

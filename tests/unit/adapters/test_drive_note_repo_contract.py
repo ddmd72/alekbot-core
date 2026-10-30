@@ -11,7 +11,7 @@ from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain.drive_index import DriveIndexStoreUnavailable
 from src.domain.drive_note import (
     DriveNote, DriveNoteConflict, EraseResult, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
-    binding_key, next_version, note_after_write, note_doc_id, ref_key,
+    item_binding_key, next_version, note_after_write, note_doc_id, tagged_ref_key,
 )
 
 from tests.unit.adapters.firestore_drive_eval_fakes import eval_transactions
@@ -19,6 +19,13 @@ from tests.unit.adapters.firestore_drive_note_fakes import NOTES, NoteDb
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
 U, OTHER, D1, D2 = "u", "other", "drive1", "drive2"
+TAG = "a1"   # the ref tag of the connection a note is bound on (MULTI_DRIVE_RFC §9)
+
+
+def ident(item="a", drive=D1) -> str:
+    """The item's adapter-built identity (MULTI_DRIVE_RFC §7.2); its `i:` key is byte-identical to the old
+    `i:{provider}:{drive}:{item}`."""
+    return f"onedrive:{drive}:{item}"
 CHAT = NoteProvenance(origin="chat", session_id="s1", turn_id="t1")
 
 
@@ -49,7 +56,7 @@ def repo(adapter):
 
 
 def binding(item="a", drive=D1) -> NoteBinding:
-    return NoteBinding(provider_key="onedrive", drive_id=drive, item_id=item, bound_at=T, bound_by="chat")
+    return NoteBinding(item_id=item, identity=ident(item, drive), ref_tag=TAG, bound_at=T, bound_by="chat")
 
 
 def written(note_id="n1", item="a", drive=D1, user=U, text="the contractor's invoice", doc_type="", areas=(), version=1,
@@ -153,16 +160,16 @@ async def test_reads_are_per_user(repo):
 async def test_find_bound_and_the_ref_key(repo):
     await first(repo, note_id="n1", item="a")
     await first(repo, note_id="n2", item="b", drive=D2)
-    assert (await repo.find_bound(U, binding_key("onedrive", D1, "a"))).note_id == "n1"
-    assert await repo.find_bound(U, binding_key("onedrive", D2, "a")) is None
-    assert await repo.find_bound(OTHER, binding_key("onedrive", D1, "a")) is None
-    assert [n.note_id for n in await repo.find_by_match_keys(U, [ref_key("b")])] == ["n2"]
+    assert (await repo.find_bound(U, item_binding_key(ident("a", D1)))).note_id == "n1"
+    assert await repo.find_bound(U, item_binding_key(ident("a", D2))) is None
+    assert await repo.find_bound(OTHER, item_binding_key(ident("a", D1))) is None
+    assert [n.note_id for n in await repo.find_by_match_keys(U, [tagged_ref_key(TAG, "b")])] == ["n2"]
 
 
 async def test_find_by_match_keys_batches_any_number_of_keys(repo):
     for i in range(35):
         await first(repo, note_id=f"n{i:02d}", item=f"i{i:02d}")
-    keys = [binding_key("onedrive", D1, f"i{i:02d}") for i in range(35)] + [ref_key("i00"), "", "i:none"]
+    keys = [item_binding_key(ident(f"i{i:02d}", D1)) for i in range(35)] + [tagged_ref_key(TAG, "i00"), "", "i:none"]
     found = await repo.find_by_match_keys(U, keys)
     assert [n.note_id for n in found] == [f"n{i:02d}" for i in range(35)]   # deduplicated, by note id
     assert await repo.find_by_match_keys(U, []) == []
@@ -287,7 +294,7 @@ async def test_erase_deletes_every_version_and_leaves_a_contentless_stub(repo):
     assert stub.erase_pending and stub.state == "cleared" and stub.current_version == 0
     assert (stub.text, stub.doc_type, stub.life_areas, stub.keys, stub.note_vector) == ("", "", [], [], None)
     assert stub.binding is None and stub.snapshot is None and stub.last_writer is None
-    assert stub.match_keys == [binding_key("onedrive", D1, "a"), ref_key("a")] and stub.account_id == "acc"
+    assert stub.match_keys == [item_binding_key(ident("a", D1)), tagged_ref_key(TAG, "a")] and stub.account_id == "acc"
     assert stub.updated_at > before
     assert await repo.list_versions(U, "n1") == []
     assert (await repo.erase(U, ["n1"])).erased == 1                     # idempotent

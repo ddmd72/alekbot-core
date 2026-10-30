@@ -8,7 +8,7 @@ from typing import Any, List, Optional, Tuple
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
 from src.domain.drive_index import DriveChange
 from src.domain.drive_index_params import TRANSCRIBE_USD_PER_MONTH
-from src.domain.drive_mirror import KIND_FILE, KIND_FOLDER, MirrorDoc, MirrorRoot, doc_key
+from src.domain.drive_mirror import KIND_FILE, KIND_FOLDER, MirrorDoc, MirrorRoot, ledger_key
 from src.domain.drive_mirror_plan import stamped
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_transcript_stage import DriveTranscriptStage
@@ -16,7 +16,19 @@ from src.services.drive_transcript_stage import DriveTranscriptStage
 from .test_drive_indexing_transcripts import SPACE, StageSpy, TranscriptWorld
 from .drive_index_fakes import LegacyConnections
 
-DRIVE = "d1"   # the drive id FakeDrive's pages and connection carry
+DRIVE = "d1"   # the drive id FakeDrive's connection carries
+# the drive identity the connection and FakeDrive's pages carry (MULTI_DRIVE_RFC §7.2): the mirror's key (§10)
+DRIVE_IDENTITY = f"fake:{DRIVE}"
+
+
+def source_identity(item_id: str, drive_identity: str = DRIVE_IDENTITY) -> str:
+    """The item identity FakeDrive builds (`{drive identity}:{item id}`): a ledger document's source identity."""
+    return f"{drive_identity}:{item_id}"
+
+
+def mirror_key(item_id: str, kind: str = KIND_FILE, drive_identity: str = DRIVE_IDENTITY) -> str:
+    """The ledger key of a source item's document (the old `doc_key("u", kind, item_id)`)."""
+    return ledger_key("u", kind, drive_identity, source_identity(item_id, drive_identity))
 MIRROR_WRITES = ("save_root", "mark_root_gone", "clear_root_gone", "save_doc", "delete_doc", "mark_gone", "clear_mark",
                  "hold_mark")
 
@@ -74,11 +86,11 @@ class SpyMirror(InMemoryDriveMirrorRepository):
         self._note("delete_doc")
         return await super().delete_doc(*a, **kw)
 
-    async def mark_gone(self, user_id, marks, *, drive_id=""):
+    async def mark_gone(self, user_id, marks, *, drive_identity=""):
         notices = tuple((m.item_id, m.why) for m in marks)
         self._note("mark_gone", notices)
-        self.marks.append(("mark_gone", notices, drive_id))
-        return await super().mark_gone(user_id, marks, drive_id=drive_id)
+        self.marks.append(("mark_gone", notices, drive_identity))
+        return await super().mark_gone(user_id, marks, drive_identity=drive_identity)
 
     async def clear_mark(self, *a: Any, **kw: Any):
         self._note("clear_mark")
@@ -123,11 +135,11 @@ class MirrorWorld(TranscriptWorld):
         self.commits: List[Tuple[Tuple[str, ...], Optional[dict]]] = []   # (deletes, gone) of every _commit with deletes
         real_commit = self.svc._commit
 
-        async def commit(user_id, writes, deletes, *a: Any, **kw: Any):
+        async def commit(handle, writes, deletes, *a: Any, **kw: Any):
             if deletes:
                 gone = kw.get("gone")
                 self.commits.append((tuple(sorted(deletes)), dict(gone) if gone is not None else None))
-            return await real_commit(user_id, writes, deletes, *a, **kw)
+            return await real_commit(handle, writes, deletes, *a, **kw)
         self.svc._commit = commit
         real_upsert = self.repo.upsert_records
         real_delete = self.repo.delete_records
@@ -136,36 +148,42 @@ class MirrorWorld(TranscriptWorld):
             self.events.append(("upsert_records", tuple((r.item_id, r.state.value) for r in records)))
             return await real_upsert(records, vectors)
 
-        async def delete(user_id, item_ids):
+        async def delete(scope, item_ids):
             self.events.append(("delete_records", tuple(item_ids)))
-            return await real_delete(user_id, item_ids)
+            return await real_delete(scope, item_ids)
         self.repo.upsert_records = upsert
         self.repo.delete_records = delete
 
     # -- the mirror's side, written directly (as the mirror step of Task 21 would) --------------------------------
 
-    def add_root(self, name: str = "_Transcripts", *, previous: Tuple[str, ...] = (), drive: str = DRIVE,
+    def add_root(self, name: str = "_Transcripts", *, previous: Tuple[str, ...] = (), drive: str = DRIVE_IDENTITY,
                  root_item_id: Optional[str] = None) -> str:
         item = root_item_id or self.drive.add(name, folder=True)
-        self.mirror.root_docs[("u", drive)] = MirrorRoot(user_id="u", drive_id=drive, root_item_id=item,
+        self.mirror.root_docs[("u", drive)] = MirrorRoot(user_id="u", drive_identity=drive, root_item_id=item,
                                                         root_name=name, previous_root_ids=previous)
         return item
 
-    def mirrored(self, item_id: str, *, drive: str = DRIVE, content_key: str = "", state: str = "active") -> MirrorDoc:
+    def mirrored(self, item_id: str, *, drive: str = DRIVE_IDENTITY, content_key: str = "",
+                 state: str = "active") -> MirrorDoc:
         """The record stamped as the mirror step stamps it, and its ledger document."""
         rec = self.rec(item_id)
         assert rec is not None, item_id
         self.repo.records[("u", item_id)] = stamped(rec)
-        doc = MirrorDoc(user_id="u", drive_id=drive, kind=KIND_FOLDER if rec.is_folder else KIND_FILE,
-                        source_item_id=item_id, content_key=content_key or rec.transcript_key,
+        doc = MirrorDoc(user_id="u", drive_identity=drive, kind=KIND_FOLDER if rec.is_folder else KIND_FILE,
+                        source_item_id=item_id, source_identity=rec.identity or source_identity(item_id, drive),
+                        content_key=content_key or rec.transcript_key,
                         mirror_item_id=f"mf-{item_id}", state=state)
         self.mirror.docs[doc.key] = doc
         return doc
 
-    def doc(self, item_id: str, kind: str = KIND_FILE) -> Optional[MirrorDoc]:
-        return self.mirror.docs.get(doc_key("u", kind, item_id))
+    async def connection(self) -> Any:
+        """The single-drive harness's connection (`LegacyConnections`): its handle addresses the service's calls."""
+        return await self.svc._connections.get("u", "u")
 
-    def root_doc(self, drive: str = DRIVE) -> Optional[MirrorRoot]:
+    def doc(self, item_id: str, kind: str = KIND_FILE) -> Optional[MirrorDoc]:
+        return self.mirror.docs.get(mirror_key(item_id, kind))
+
+    def root_doc(self, drive: str = DRIVE_IDENTITY) -> Optional[MirrorRoot]:
         return self.mirror.root_docs.get(("u", drive))
 
     def records_under(self, folder_id: str) -> List[str]:

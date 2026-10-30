@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
 
 ROOT = "root"
@@ -178,13 +179,19 @@ class FakeUsers:
                                config=SimpleNamespace(drive_indexing_enabled=self.enabled[user_id]))
 
 
+def legacy_account(user_id: str) -> ProviderAccount:
+    """The provider account of a single-drive harness's connection (`LegacyConnections`): the initial build's key."""
+    return ProviderAccount(realm="fake", subject=f"sub-{user_id}", label="")
+
+
 class LegacyConnections:
     """The single-drive harnesses' connection, in the shape the tick reads now (MULTI_DRIVE_RFC §8): one connection per
     user whose id IS the user id (so every stored key reads as before), its switches from the user's profile flags
     (`drive_indexing_enabled`, `drive_transcribe_enabled`) and its state and drive identity from the scripted drive's
     `connection_state` (connected and not flagged: ACTIVE; otherwise NEEDS_RECONNECT; drive `d1` -> `fake:d1`).
     `flag_reconnect` counts on the drive's `flagged`, as the drive's own flag did. Read live, so a test that flips a
-    flag or the drive's state mid-test is seen by the next read, as before."""
+    flag or the drive's state mid-test is seen by the next read, as before. The connection holds the provider account
+    activation stores (`legacy_account(user_id)`), so its initial build is open as the user's one build was."""
 
     def __init__(self, users: Any, drive: Any) -> None:
         self.users = users
@@ -203,11 +210,18 @@ class LegacyConnections:
                           credential_id="cred", kind="fake", drive_identity=f"fake:{drive_id}", ref_tag="a1",
                           indexing_enabled=bool(getattr(profile.config, "drive_indexing_enabled", False)),
                           transcribe_enabled=bool(getattr(profile.config, "drive_transcribe_enabled", False)),
-                          state=ConnectionState.ACTIVE if ok else ConnectionState.NEEDS_RECONNECT, created_at=T0)
+                          state=ConnectionState.ACTIVE if ok else ConnectionState.NEEDS_RECONNECT, created_at=T0,
+                          provider_account=legacy_account(user_id))
 
     async def list_for_user(self, user_id: str, *, include_disconnected: bool = False) -> List[Any]:
         found = await self.get(user_id, user_id)
         return [found] if found is not None else []
+
+    async def primary(self, user_id: str) -> Optional[Any]:
+        """The user's one connection while it is ACTIVE (`DriveConnectionService.primary`, stage 1)."""
+        from src.domain.drive_connection_state import ConnectionState
+        found = await self.get(user_id, user_id)
+        return found if found is not None and found.state is ConnectionState.ACTIVE else None
 
     async def flag_reconnect(self, handle: Any) -> bool:
         flag = getattr(self.drive, "flag_reconnect", None)

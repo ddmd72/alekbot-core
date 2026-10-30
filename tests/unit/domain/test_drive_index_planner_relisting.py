@@ -1,6 +1,7 @@
 """Planner: a folder that turns opaque drops its pending re-listing (USER_DRIVE_INDEXING_RFC §5.2)."""
 from datetime import datetime, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_planner as planner
 from src.domain.drive_index import DriveChange, DriveIndexRecord, EpochPhase, Reason, RecordState, Scope
 
@@ -12,7 +13,7 @@ class TestPlannerClearsRelistingOnOpaqueScope:
 
     @staticmethod
     def _ctx():
-        return planner.PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
+        return planner.PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
                                    place_of=lambda lat, lon: None)
 
     def test_a_folder_rescoped_inside_an_opaque_root_drops_its_relisting(self):

@@ -13,23 +13,40 @@ from src.domain.drive_keys import word_keys
 from src.domain.drive_mirror import (
     ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MIRROR_DETACHED, MirrorDoc, MirrorRoot,
 )
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
-from src.domain.user_drive import DriveConnection, DriveItemNotFoundError
+from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.user_drive import DriveItemNotFoundError
 from src.ports.drive_index_repository import DriveIndexRepository
+from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.user_drive_port import UserDrivePort
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.drive_search_service import DriveSearchService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connection_service_fake import connection
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+DRIVE = "fake:d1"   # the searched connection's drive identity (MULTI_DRIVE_RFC §7.2): the ledger names its drive by it
+
+
+async def _connections(user_id: str = "u1", *, connection_id: str = "conn-1", drive_identity: str = DRIVE,
+                       **kw) -> DriveConnectionService:
+    """The real connection service over the fake repository, with the user's one connection (tag a1) as the primary."""
+    repo = FakeDriveConnectionRepository()
+    await repo.create(connection(user_id, connection_id, drive_identity=drive_identity, **kw))
+    await repo.save_settings(DriveUserSettings(user_id=user_id, primary_connection_id=connection_id))
+    return DriveConnectionService(repo, AsyncMock(spec=OAuthCredentialsPort))
 
 
 def _keys(text):
     return tuple(sorted(word_keys(text)))
 
 
-def _doc(n, *, name="call", said="budget meeting", day="2026-10-05", at=None, drive="d1", state=MIRROR_ARCHIVED,
+def _doc(n, *, name="call", said="budget meeting", day="2026-10-05", at=None, drive=DRIVE, state=MIRROR_ARCHIVED,
          content_key=None, **kw):
     return MirrorDoc(
-        user_id="u1", drive_id=drive, kind=KIND_FILE, source_item_id=f"s{n}", source_name=f"{name}{n}.m4a",
+        user_id="u1", drive_identity=drive, kind=KIND_FILE, source_item_id=f"s{n}", source_identity=f"{drive}:s{n}",
+        source_name=f"{name}{n}.m4a",
         source_path=f"Calls/{name}{n}.m4a", content_key=content_key if content_key is not None else f"k{n}",
         mirror_item_id=f"m{n}", mirror_parent_id="day", mirror_name=f"{name}{n}.md", state=state, archive_day=day,
         archived_at=at or T0 + timedelta(minutes=n), seconds=2820.0, speakers=2, languages=("uk", "en"),
@@ -45,11 +62,11 @@ def _stored(key, *texts):
 @pytest.fixture
 async def mirror():
     repo = InMemoryDriveMirrorRepository()
-    await repo.save_root(MirrorRoot(user_id="u1", drive_id="d1", root_item_id="root", root_name="_Transcripts"))
-    await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_ARCHIVE, source_item_id="arch",
+    await repo.save_root(MirrorRoot(user_id="u1", drive_identity=DRIVE, root_item_id="root", root_name="_Transcripts"))
+    await repo.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_ARCHIVE, source_item_id="arch",
                                   mirror_item_id="arch", mirror_parent_id="root", mirror_name=ARCHIVE_NAME,
                                   state=MIRROR_ACTIVE))
-    await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_ARCHIVE, source_item_id="day",
+    await repo.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_ARCHIVE, source_item_id="day",
                                   mirror_item_id="day", mirror_parent_id="arch", mirror_name="2026-10-05",
                                   state=MIRROR_ACTIVE))
     return repo
@@ -58,8 +75,7 @@ async def mirror():
 @pytest.fixture
 def drive():
     d = AsyncMock(spec=UserDrivePort)
-    d.connection.return_value = DriveConnection(connected=True, drive_id="d1")
-    d.get_change.side_effect = lambda user_id, item_id: DriveChange(item_id=item_id)
+    d.get_change.side_effect = lambda handle, item_id: DriveChange(item_id=item_id)
     return d
 
 
@@ -71,9 +87,14 @@ def index():
 
 
 @pytest.fixture
-def svc(mirror, drive, index):
+async def connections():
+    return await _connections()
+
+
+@pytest.fixture
+def svc(mirror, drive, index, connections):
     counter = itertools.count(1)
-    return DriveSearchService(index, AsyncMock(), AsyncMock(), drive, embedding_space="s/8",
+    return DriveSearchService(index, AsyncMock(), drive, connections, embedding_space="s/8",
                               nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror)
 
 
@@ -101,8 +122,8 @@ async def test_entry_shape_and_wrapper(svc, mirror):
     assert ("call1.m4a | Calls/call1.m4a | gone from the drive (deleted or moved out of the bot's folder), "
             "2026-10-05") in out
     assert "transcript: 47 min, 2 speakers, uk/en" in out
-    assert "archived transcript: drive:m1 (_Transcripts/Archive/2026-10-05/call1.md)" in out
-    assert '<drive_document nonce="nonce0001" ref="drive:m1" path="Calls/call1.m4a">' in out
+    assert "archived transcript: drive:a1:m1 (_Transcripts/Archive/2026-10-05/call1.md)" in out
+    assert '<drive_document nonce="nonce0001" ref="drive:a1:m1" path="Calls/call1.m4a">' in out
 
 
 async def test_empty_query_lists_the_newest(svc, mirror):
@@ -127,7 +148,7 @@ async def test_hit_the_owner_deleted_is_hidden(svc, mirror, drive):
     await mirror.save_doc(_doc(1))
     await mirror.save_doc(_doc(2))
 
-    async def get_change(user_id, item_id):
+    async def get_change(handle, item_id):
         if item_id == "m1":
             raise DriveItemNotFoundError(item_id)
         return DriveChange(item_id=item_id)
@@ -141,7 +162,7 @@ async def test_a_deleted_observation_is_hidden_and_the_next_candidate_takes_its_
     for n in range(1, 8):
         await mirror.save_doc(_doc(n))
     gone = {"m7", "m6"}
-    drive.get_change.side_effect = lambda u, i: DriveChange(item_id=i, deleted=i in gone)
+    drive.get_change.side_effect = lambda h, i: DriveChange(item_id=i, deleted=i in gone)
     out = (await svc.search_deleted("u1", "")).text
     assert out.startswith("Deleted files (5):") and "call7" not in out and "call6" not in out
     assert drive.get_change.await_count == 7   # five, then two to fill the places
@@ -154,8 +175,12 @@ async def test_each_shown_hit_is_verified_once(svc, mirror, drive):
     assert sorted(c.args[1] for c in drive.get_change.await_args_list) == ["m1", "m2", "m3"]
 
 
-async def test_not_connected_line(svc, mirror, drive):
-    drive.connection.return_value = DriveConnection(connected=False)
+async def test_not_connected_line(mirror, drive, index):
+    # the drive's grant is unusable: its connection needs a reconnect (the port's `connection()` is gone, §6)
+    conns = await _connections()
+    await conns._connections.transition("u1", "conn-1", ConnectionState.NEEDS_RECONNECT, T0)
+    svc = DriveSearchService(index, AsyncMock(), drive, conns, embedding_space="s/8", nonce=lambda: "nonce0001",
+                             mirror=mirror)
     await mirror.save_doc(_doc(1))
     out = (await svc.search_deleted("u1", "budget")).text
     assert "call1.m4a" in out and "(not verified)" in out
@@ -200,20 +225,17 @@ async def test_speech_cannot_close_the_wrapper(svc, mirror, index):
 
 
 async def test_runs_with_indexing_off(mirror, drive, index):
-    users = AsyncMock()
-    users.get_user.return_value.config.drive_indexing_enabled = False
     index.get_sync_state.return_value = None
     await mirror.save_doc(_doc(1))
-    svc = DriveSearchService(index, AsyncMock(), users, drive, embedding_space="s/8",
+    svc = DriveSearchService(index, AsyncMock(), drive, await _connections(indexing=False), embedding_space="s/8",
                              nonce=lambda: "nonce0001", mirror=mirror)
     out = (await svc.search_deleted("u1", "budget")).text
     assert "call1.m4a" in out
     index.get_sync_state.assert_not_awaited()
-    users.get_user.assert_not_awaited()
 
 
-async def test_without_a_mirror_repository_nothing_is_found(drive, index):
-    svc = DriveSearchService(index, AsyncMock(), AsyncMock(), drive, embedding_space="s/8")
+async def test_without_a_mirror_repository_nothing_is_found(drive, index, connections):
+    svc = DriveSearchService(index, AsyncMock(), drive, connections, embedding_space="s/8")
     out = (await svc.search_deleted("u1", "budget")).text
     assert out.startswith("Deleted files (0):")
 
@@ -247,7 +269,7 @@ async def test_shown_mirror_files_are_returned_as_drive_items(svc, mirror):
 async def test_refill_checks_are_capped_and_the_rest_counted(svc, mirror, drive):
     for n in range(1, 21):
         await mirror.save_doc(_doc(n))
-    drive.get_change.side_effect = lambda u, i: DriveChange(item_id=i, deleted=True)   # the owner deleted them all
+    drive.get_change.side_effect = lambda h, i: DriveChange(item_id=i, deleted=True)   # the owner deleted them all
     found = await svc.search_deleted("u1", "budget")
     out, items = found.text, found.items
     assert drive.get_change.await_count == 10 and items == []
@@ -255,25 +277,27 @@ async def test_refill_checks_are_capped_and_the_rest_counted(svc, mirror, drive)
     assert "10 more archived transcripts matched." in out
 
 
-async def test_the_recording_path_is_looked_up_only_when_the_cut_applies(svc, mirror, index, monkeypatch):
+async def test_the_recording_path_is_looked_up_only_when_the_cut_applies(svc, mirror, index, connections, monkeypatch):
     from src.domain.drive_index import DriveIndexRecord, RecordState
-    index.get_records.return_value = {"s1": DriveIndexRecord(user_id="u1", item_id="s1", name="x.m4a",
+    conn = await connections.primary("u1")
+    index.get_records.return_value = {"s1": DriveIndexRecord(user_id="u1", connection_id="conn-1", item_id="s1",
+                                                             identity=f"{DRIVE}:s1", name="x.m4a",
                                                              state=RecordState.INDEXED, transcript_state="current",
                                                              transcript_key="k1")}
     index.get_transcript.return_value = _stored("k1", "short")
     spy = AsyncMock(return_value="")
     monkeypatch.setattr(svc, "_active_mirror_path", spy)
-    await svc.transcript_text("u1", "s1")
+    await svc.transcript_text(conn, "s1")
     spy.assert_not_awaited()
     index.get_transcript.return_value = _stored("k1", *["word " * 200] * 400)
-    await svc.transcript_text("u1", "s1")
+    await svc.transcript_text(conn, "s1")
     spy.assert_awaited_once()
 
 
-async def test_has_mirror_root(svc, mirror, drive, index):
+async def test_has_mirror_root(svc, mirror, drive, index, connections):
     assert await svc.has_mirror_root("u1") is True
     assert await svc.has_mirror_root("u2") is False
-    bare = DriveSearchService(index, AsyncMock(), AsyncMock(), drive, embedding_space="s/8")
+    bare = DriveSearchService(index, AsyncMock(), drive, connections, embedding_space="s/8")
     assert await bare.has_mirror_root("u1") is False
 
 
@@ -296,7 +320,8 @@ async def test_default_search_never_returns_an_archived_transcript():
                                chunks=("the budget meeting was cancelled",))
     world.set(archived_echo, scope=Scope.INSIDE_OPAQUE)
     source = world.file("call1.m4a", kind="audio", item="s1", chunks=("the budget meeting starts now",))
-    service = DriveSearchService(world.repo, world.emb, world.users, world.drive, embedding_space="test-space/8",
+    connections = await _connections("u", connection_id="u")   # the world's index is connection "u"'s (tag a1)
+    service = DriveSearchService(world.repo, world.emb, world.drive, connections, embedding_space="test-space/8",
                                  clock=lambda: world.now, nonce=lambda: "nonce0001", mirror=mirror)
     mirror_ids = {"mr", "m1", "m2"}
 

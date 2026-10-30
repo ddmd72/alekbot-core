@@ -13,7 +13,7 @@ from src.domain.drive_transcript import StoredTranscript
 
 from src.domain.connection_scope import ConnectionScope
 
-from tests.unit.services.drive_index_fakes import T0
+from tests.unit.services.drive_index_fakes import T0, U_SCOPE
 from tests.unit.services.test_drive_indexing_service import World
 
 SCOPE = ConnectionScope("u", "u-c")   # the connection the fixtures belong to (MULTI_DRIVE_RFC §8)
@@ -122,17 +122,17 @@ async def _world_with_a_stored_transcript():
 
 async def test_the_next_ticks_purge_keeps_the_store_after_a_rebuild(script):
     w, doc = await _world_with_a_stored_transcript()
-    code, _ = await script.rebuild(w.repo, SCOPE, apply=True, now=w.clock.now, owner="r", force=True)
+    code, _ = await script.rebuild(w.repo, U_SCOPE, apply=True, now=w.clock.now, owner="r", force=True)
     assert code == 0
     await w.settle()
-    state = await w.repo.get_sync_state(SCOPE)
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.epoch == 1 and not state.purging and not state.purge_keep_transcripts
     assert ("u", "k") in w.repo.transcripts and w.rec(doc) is not None
 
 
 async def test_drop_transcripts_purge_deletes_the_store(script):
     w, _ = await _world_with_a_stored_transcript()
-    await script.rebuild(w.repo, SCOPE, apply=True, now=w.clock.now, owner="r", force=True, keep_transcripts=False)
+    await script.rebuild(w.repo, U_SCOPE, apply=True, now=w.clock.now, owner="r", force=True, keep_transcripts=False)
     await w.settle()
     assert ("u", "k") not in w.repo.transcripts
 

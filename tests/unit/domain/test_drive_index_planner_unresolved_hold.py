@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import (
@@ -29,7 +30,7 @@ def admitted(monkeypatch):
     monkeypatch.setattr(policy, "TRIAGED_KINDS", SLICE2_TRIAGED_KINDS)
 
 
-CTX = PlanContext("u", ROOT, 1, EpochPhase.IDLE, NOW, lambda a, b: None)
+CTX = PlanContext(ConnectionScope("u", "u"), ROOT, 1, EpochPhase.IDLE, NOW, lambda a, b: None)
 
 
 def folder(**kw) -> DriveIndexRecord:

@@ -5,17 +5,16 @@ the drive side on the in-memory drive index repository and a drive whose connect
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import pytest
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
-from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.composition.connector_registry import ConnectorRegistry
 from src.domain.agent import AgentStatus
-from src.domain.drive_index import DriveSyncState
+from src.domain.drive_connection import DriveConnection
 from src.domain.email import IndexingState
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -24,9 +23,10 @@ from src.domain.notify_result import NotifyResult
 from src.domain.integration import Integration
 from src.domain.reconnect_policy import R1_NOTICES
 from src.domain.task import TaskUserConfig
-from src.domain.user_drive import DriveConnection
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import delete_kind
 
@@ -58,14 +58,6 @@ class Users:
         return SimpleNamespace(user_id=user_id, account_id=f"acc-{user_id}") if user_id in self.ids else None
 
 
-class Drive:
-    def __init__(self) -> None:
-        self.per_user: Dict[str, DriveConnection] = {}
-
-    async def connection(self, user_id):
-        return self.per_user.get(user_id, DriveConnection(connected=False))
-
-
 class Alerts:
     def __init__(self) -> None:
         self.posts: List[str] = []
@@ -84,8 +76,7 @@ class World:
         self.creds = FirestoreCredentialStore(self.db, env, cipher=AesGcmTestCipher())
         self.email = FirestoreIndexedEmailRepository(self.db, env)
         self.tasks = FirestoreTaskConfigRepository(self.db, env)
-        self.drive_states = InMemoryDriveIndexRepository()
-        self.drive = Drive()
+        self.drive_connections = FakeDriveConnectionRepository()
         self.notifier = Notifier()
         self.alerts = Alerts()
         self.ensured: List[str] = []
@@ -96,15 +87,22 @@ class World:
         self.svc = IntegrationReconnectService(
             credentials=self.creds, users=Users("user-a", "user-b"), notifier=self.notifier,
             email_states=self.email, task_config=self.tasks,
+            drive_connections=DriveConnectionService(self.drive_connections, self.creds),
             alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
 
-    async def connect(self, user_id: str, provider: str) -> None:
-        await self.creds.save(OAuthCredential(
+    async def connect(self, user_id: str, provider: str) -> str:
+        return await self.creds.save(OAuthCredential(
             user_id=user_id, account_id="acct-1", kind=provider,
             integration=ConnectorRegistry().get(provider).integration,
             account=ProviderAccount(realm="microsoft" if provider.startswith("microsoft") else "google",
                                     subject=f"sub-{user_id}", label="user@example.com"),
             access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[]))
+
+    async def drive_connection(self, user_id: str, credential_id: str) -> None:
+        """An ACTIVE drive connection of the user reading `credential_id` (MULTI_DRIVE_RFC §4.4)."""
+        await self.drive_connections.create(DriveConnection(
+            connection_id=f"conn-{user_id}", user_id=user_id, account_id="acct-1", credential_id=credential_id,
+            kind="microsoft_onedrive", drive_identity="microsoft_onedrive:d1", ref_tag="a1", created_at=NOW))
 
     async def gmail_state(self, user_id: str) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=user_id, provider="gmail",
@@ -284,10 +282,12 @@ async def test_a_user_without_a_profile_is_skipped_with_the_flag_down(world):
 async def test_status_reads_reconnect_per_integration(world):
     await world.gmail_state("user-a")
     await world.todo_config("user-a")
-    await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
+    # MULTI_DRIVE_RFC §4.4: the drive reads its connections; an ACTIVE one whose credential is gone shows Reconnect
+    await world.drive_connection("user-a", "cred-gone")
     assert await world.svc.status("user-a") == {"mail": True, "drive": True, "tasks": True}
     await world.connect("user-a", "gmail")
-    world.drive.per_user["user-a"] = DriveConnection(connected=True, drive_id="d1")
+    drive_credential = await world.connect("user-a", "microsoft_onedrive")
+    await world.drive_connections.update("user-a", "conn-user-a", credential_id=drive_credential)
     assert await world.svc.status("user-a") == {"mail": False, "drive": False, "tasks": True}
     # nothing stored: never connected, nothing to reconnect
     assert await world.svc.status("user-b") == {"mail": False, "drive": False, "tasks": False}
@@ -295,5 +295,6 @@ async def test_status_reads_reconnect_per_integration(world):
 
 async def test_the_sweep_never_notifies_for_the_drive(world):
     """Drive's R1 notice is the drive fan-out's (W2.3), not the sweep's."""
-    await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
+    await world.drive_connection("user-a", "cred-gone")      # owed a reconnect (MULTI_DRIVE_RFC §4.4)
+    assert await world.svc.status("user-a", [Integration.DRIVE]) == {"drive": True}
     assert await world.svc.sweep() == {"candidates": 0, "notices": 0, "errors": 0}

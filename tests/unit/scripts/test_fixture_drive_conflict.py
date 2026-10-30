@@ -30,7 +30,7 @@ async def test_fixture_drive_honours_each_mode():
 
     replaced = await drive.upload("u", folder, "a.md", b"new", "text/markdown", conflict="replace")
     assert replaced.item_id == first.item_id and await drive.download("u", first.item_id) == b"new"
-    assert replaced.ctag and replaced.ctag != first.content_version
+    assert replaced.content_version and replaced.content_version != first.content_version
 
     created = await drive.upload("u", folder, "b.md", b"b", "text/markdown", conflict="fail")
     assert created.path == "_Transcripts/b.md"
@@ -52,4 +52,4 @@ async def test_every_item_has_ctag_and_created_at():
     change = await drive.child_by_name("u", folder, "a.md")
     assert change.created_at is not None and change.content_version
     item = await drive.get_item("u", change.item_id)
-    assert item.ctag == change.content_version
+    assert item.content_version == change.content_version

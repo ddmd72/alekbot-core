@@ -1,6 +1,7 @@
 import pytest
 
 from src.domain.drive_index import ContentClass, DriveChange, Reason
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_policy import (
     ADMITTED_KINDS, SLICE2_CONTENT_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, item_rule, kind_of, probe_from_children,
@@ -37,17 +38,17 @@ def test_the_flip_admits_the_slice2_content_kinds():   # §24.1 (was: Slice 1 ad
     assert ADMITTED_KINDS == SLICE2_CONTENT_KINDS
 
 
-@pytest.mark.parametrize("name,facets,reason", [
-    (".env", {}, Reason.DOT_NAME), ("id_rsa", {}, Reason.SECRET_NAME), ("id_ed25519.pub", {}, Reason.SECRET_NAME),
-    ("server.pem", {}, Reason.SECRET_NAME), ("tls.key", {}, Reason.SECRET_NAME), ("cert.p12", {}, Reason.SECRET_NAME),
-    ("a.pfx", {}, Reason.SECRET_NAME), ("vault.kdbx", {}, Reason.SECRET_NAME), ("login.keychain-db", {}, Reason.SECRET_NAME),
-    ("~$Договор.docx", {}, Reason.OS_ARTIFACT), ("Thumbs.db", {}, Reason.OS_ARTIFACT), ("desktop.ini", {}, Reason.OS_ARTIFACT),
-    ("x.tmp", {}, Reason.OS_ARTIFACT), ("a.pdf", {"remoteItem": {}}, Reason.REMOTE_ITEM),
-    ("a.pdf", {"package": {"type": "oneNote"}}, Reason.PACKAGE), ("a.pdf", {"malware": {}}, Reason.MALWARE),
-    ("a.pdf", {}, None),
+@pytest.mark.parametrize("name,media,reason", [
+    (".env", DriveMediaFacts(), Reason.DOT_NAME), ("id_rsa", DriveMediaFacts(), Reason.SECRET_NAME), ("id_ed25519.pub", DriveMediaFacts(), Reason.SECRET_NAME),
+    ("server.pem", DriveMediaFacts(), Reason.SECRET_NAME), ("tls.key", DriveMediaFacts(), Reason.SECRET_NAME), ("cert.p12", DriveMediaFacts(), Reason.SECRET_NAME),
+    ("a.pfx", DriveMediaFacts(), Reason.SECRET_NAME), ("vault.kdbx", DriveMediaFacts(), Reason.SECRET_NAME), ("login.keychain-db", DriveMediaFacts(), Reason.SECRET_NAME),
+    ("~$Договор.docx", DriveMediaFacts(), Reason.OS_ARTIFACT), ("Thumbs.db", DriveMediaFacts(), Reason.OS_ARTIFACT), ("desktop.ini", DriveMediaFacts(), Reason.OS_ARTIFACT),
+    ("x.tmp", DriveMediaFacts(), Reason.OS_ARTIFACT), ("a.pdf", DriveMediaFacts(alias_of=""), Reason.REMOTE_ITEM),
+    ("a.pdf", DriveMediaFacts(package=True), Reason.PACKAGE), ("a.pdf", DriveMediaFacts(malware=True), Reason.MALWARE),
+    ("a.pdf", DriveMediaFacts(), None),
 ])
-def test_item_rule(name, facets, reason):
-    assert item_rule(DriveChange(item_id="i", name=name, facets=facets)) is reason
+def test_item_rule(name, media, reason):
+    assert item_rule(DriveChange(item_id="i", name=name, media=media)) is reason
 
 
 def test_markers_and_dot_names():

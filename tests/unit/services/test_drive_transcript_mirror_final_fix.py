@@ -11,9 +11,9 @@ import pytest
 from src.domain.drive_index import DriveIndexRecord, Reason, RecordState, Scope
 from src.domain.drive_index_params import MIRROR_ARCHIVE_GRACE, MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMPTS
 from src.domain.drive_index_planner import backoff
-from src.domain.drive_mirror import KIND_FILE, doc_key
+from src.domain.drive_mirror import KIND_FILE
 
-from .drive_mirror_fakes import AREA, DRIVE, UK, USER, Crash, MirrorWorld
+from .drive_mirror_fakes import AREA, Crash, DRIVE_IDENTITY, MirrorWorld, UK, USER, identity, mirror_key
 from .test_drive_transcript_mirror import _bare_root
 from .test_drive_transcript_mirror_audit import mirrored, writes_outside
 
@@ -23,7 +23,7 @@ MIN = timedelta(minutes=1)
 async def _owner_folder(w: MirrorWorld, name: str = "Docs") -> str:
     """A folder of the owner's own at the App Folder root, as the index records it."""
     item = w.drive.add_folder(AREA, name)
-    await w.repo.upsert_records([DriveIndexRecord(USER, item, parent_id=AREA, name=name, is_folder=True,
+    await w.repo.upsert_records([DriveIndexRecord(USER, item, connection_id=USER, identity=identity(item), parent_id=AREA, name=name, is_folder=True,
                                                   state=RecordState.METADATA_ONLY, reason=Reason.FOLDER,
                                                   scope=Scope.NORMAL)])
     return item
@@ -33,7 +33,7 @@ async def _move_out(w: MirrorWorld, item: str, into: str) -> None:
     """The owner moves our file out of `_Transcripts` into his folder; the tick observes it as his file."""
     node = w.drive.nodes[item]
     node.parent_id = into
-    await w.repo.upsert_records([DriveIndexRecord(USER, item, parent_id=into, name=node.name,
+    await w.repo.upsert_records([DriveIndexRecord(USER, item, connection_id=USER, identity=identity(item), parent_id=into, name=node.name,
                                                   state=RecordState.METADATA_ONLY, scope=Scope.NORMAL)])
 
 
@@ -128,7 +128,7 @@ async def test_gone_folder_over_a_held_child_takes_no_reserve_every_tick():
     w.advance(MIRROR_ARCHIVE_GRACE + MIN)
     ready_ticks = 0
     for _ in range(6 * 24):                                  # a day of 10-minute ticks
-        if await w.mirror.ready_marks(USER, DRIVE, w.clock, 10):
+        if await w.mirror.ready_marks(USER, DRIVE_IDENTITY, w.clock, 10):
             ready_ticks += 1
         await w.run()
         w.advance(10 * MIN)
@@ -145,7 +145,7 @@ async def test_record_whose_document_cannot_be_read_backs_off_then_parks():
     w = MirrorWorld()
     await _bare_root(w)
     a = await w.recording("x.mp4")
-    key = doc_key(USER, KIND_FILE, a)
+    key = mirror_key(KIND_FILE, a)
     real = w.mirror.get_docs
 
     async def get_docs(user_id, keys):  # type: ignore[no-untyped-def]

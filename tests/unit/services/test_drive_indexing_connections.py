@@ -129,9 +129,11 @@ async def test_the_tick_spends_the_initial_build_of_the_connections_account(w):
     await w.svc._spend_usd(handle, "profile", 1.5, 0.0, 1)   # the money path every model call takes
     assert (await w.repo.get_initial_build(USER, "realm-x", "sub-conn-1")).spent_usd == 1.5
     assert (await w.repo.get_initial_build(USER, "realm-x", "sub-conn-2")).spent_usd == 0.0
-    # no account (the credential is gone): nothing is covered by an initial build, the month carries it all
-    w.accounts.pop("cred-conn-2")
-    await w.svc._spend_usd((await w.connections.get(USER, "conn-2")).handle, "profile", 2.0, 0.0, 1)
+    # no account on the connection (activation always stores one): nothing is covered by an initial build, the month
+    # carries it all
+    conn_2 = await w.connections.get(USER, "conn-2")
+    w.connections.repo.connections[(USER, "conn-2")] = replace(conn_2, provider_account=None)
+    await w.svc._spend_usd(conn_2.handle, "profile", 2.0, 0.0, 1)
     usage = await w.repo.get_model_usage(USER, "2026-10")
     assert usage.profile_usd == pytest.approx(3.5) and usage.profile_initial_usd == pytest.approx(1.5)
 
