@@ -8,6 +8,10 @@ Orchestrates:
 
 All handlers (ConversationHandler, WorkerHandler, etc.) call this service
 instead of using file_conversion utilities directly.
+
+A `drive:<tag>:<item_id>` ref is resolved to its connection's handle through the injected
+DriveConnectionService before any drive call (MULTI_DRIVE_RFC §9); a ref that resolves to no live
+connection raises DriveRefRefused with the code-built line (D13).
 """
 import mimetypes
 import os
@@ -16,6 +20,9 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 import aiofiles
 
+from ..domain import drive_ref
+from ..domain.drive_handle import DriveHandle
+from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
@@ -24,8 +31,8 @@ from ..domain.user_drive import (
     DriveFileTooLargeError,
     DriveItem,
     DrivePathError,
+    DriveRefRefused,
     format_size,
-    parse_drive_ref,
 )
 from ..domain.workspace import WORKSPACE_REF_PREFIX, parse_workspace_path, workspace_kind
 from ..ports.file_storage_port import FileStoragePort
@@ -41,6 +48,7 @@ if TYPE_CHECKING:
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.user_drive_port import UserDrivePort
     from ..ports.workspace_store_port import WorkspaceStorePort
+    from .drive_connection_service import DriveConnectionService
     from .skill_file_resolver import SkillFileResolver
 
 
@@ -55,15 +63,15 @@ def _is_workspace_ref(ref: str) -> bool:
 
 
 def _is_drive_ref(ref: str) -> bool:
-    """True if ref addresses the user's drive (USER_DRIVE_RFC §4.3).
+    """True if ref addresses the user's drive (USER_DRIVE_RFC §4.3), tagged or not (MULTI_DRIVE_RFC §9).
 
-    `parse_drive_ref` searches anywhere in the string (label punctuation tolerance), so a
+    `drive_ref.is_drive_ref` searches anywhere in the string (label punctuation tolerance), so a
     skill ref, a workspace ref or a delivered-document key whose *filename* contains `drive:` must keep its
     own store: those shapes are decided by prefix first.
     """
     if ref.startswith(SKILL_REF_PREFIX) or _is_workspace_ref(ref) or _is_delivered_key(ref):
         return False
-    return parse_drive_ref(ref) is not None
+    return drive_ref.is_drive_ref(ref)
 
 
 def _format_size(size_bytes: int) -> str:
@@ -86,6 +94,7 @@ class FileConversionService:
         skill_files: Optional["SkillFileResolver"] = None,
         drive: Optional["UserDrivePort"] = None,
         workspace: Optional["WorkspaceStorePort"] = None,
+        connections: Optional["DriveConnectionService"] = None,
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
@@ -95,8 +104,11 @@ class FileConversionService:
         self._media_storage = media_storage
         # Resolves `skill:<name>/<path>` refs (RFC §15.4). None → skill files unavailable.
         self._skill_files = skill_files
-        # drive:<id> refs — the user's long-term file area (USER_DRIVE_RFC §4.6).
+        # drive:<tag>:<id> refs — the user's drives (USER_DRIVE_RFC §4.6): the router over every drive kind and the
+        # connections a ref's tag resolves to (MULTI_DRIVE_RFC §6, §9). Both or neither: without them drive refs are
+        # unavailable.
         self._drive = drive
+        self._connections = connections
         # workspace:<path> refs (AGENT_WORKSPACE_RFC §12) — the port, not WorkspaceService, so there is no
         # service-to-service import and no cycle (REQ-ARCH-22). None → workspace refs are unavailable.
         self._workspace = workspace
@@ -107,11 +119,21 @@ class FileConversionService:
         return await self._skill_files.read(user_id, ref)
 
     async def get_drive_item(self, ref: str, user_id: str) -> DriveItem:
-        """Metadata of a `drive:` ref. FileNotFoundError when it is not one or no drive is wired."""
-        item_id = parse_drive_ref(ref)
-        if item_id is None or self._drive is None:
+        """Metadata of a `drive:` ref. FileNotFoundError when it is not one or no drive is wired; DriveRefRefused
+        (with its line) when it resolves to no live connection of the user."""
+        handle, item_id = await self._drive_target(ref, user_id)
+        return await self._require_drive().get_item(handle, item_id)
+
+    async def _drive_target(self, ref: str, user_id: str) -> Tuple[DriveHandle, str]:
+        """The handle of the connection a `drive:<tag>:<item_id>` ref names, and the item id (MULTI_DRIVE_RFC §9)."""
+        if self._drive is None or self._connections is None or not drive_ref.is_drive_ref(ref):
             raise FileNotFoundError(f"{ref!r} is not available on the user's drive")
-        return await self._drive.get_item(user_id, item_id)
+        found = await self._connections.resolve_ref(user_id, ref)
+        if found is None:
+            raise DriveRefRefused(stale_ref_line(ref))
+        if isinstance(found, DriveRefRefusal):
+            raise DriveRefRefused(found.line)
+        return found.handle, found.item_id
 
     def _require_drive(self) -> "UserDrivePort":
         if self._drive is None:
@@ -119,7 +141,8 @@ class FileConversionService:
         return self._drive
 
     async def _resolve_drive_content(self, ref: str, user_id: str) -> str:
-        item = await self.get_drive_item(ref, user_id)
+        handle, item_id = await self._drive_target(ref, user_id)
+        item = await self._require_drive().get_item(handle, item_id)
         if item.is_folder:
             return (f"[System: '{item.path or '/'}' is a folder, not a file. "
                     f"List the folder to see what is inside.]")
@@ -127,7 +150,7 @@ class FileConversionService:
             return (f"[System: '{item.path}' is {format_size(item.size_bytes)}; files above "
                     f"{format_size(MAX_FILE_BYTES)} cannot be read as text yet. Long audio and video "
                     f"processing is not available yet.]")
-        data = await self._require_drive().download(user_id, item.item_id)
+        data = await self._require_drive().download(handle, item.item_id)
         mime_type = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
         try:
@@ -142,12 +165,13 @@ class FileConversionService:
                 logger.debug("Failed to remove temp file %s", tmp_path)
 
     async def _resolve_drive_bytes(self, ref: str, user_id: str) -> bytes:
-        item = await self.get_drive_item(ref, user_id)
+        handle, item_id = await self._drive_target(ref, user_id)
+        item = await self._require_drive().get_item(handle, item_id)
         if item.is_folder:
             raise DrivePathError(f"'{item.path or '/'}' is a folder, not a file")
         if item.size_bytes > MAX_DRIVE_DOWNLOAD_BYTES:
             raise DriveFileTooLargeError(item, MAX_DRIVE_DOWNLOAD_BYTES)
-        return await self._require_drive().download(user_id, item.item_id)
+        return await self._require_drive().download(handle, item.item_id)
 
     async def _read_workspace(self, ref: str, user_id: str) -> Tuple[str, bytes]:
         """The live bytes of a `workspace:` ref, for the requesting user. Any folder: draft_skill's from_file reads

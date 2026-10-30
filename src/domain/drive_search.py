@@ -699,7 +699,7 @@ def render_results(result: DriveSearchResult) -> str:
     if result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated:
         return "\n".join(building + [
             f"Could not resolve the folder '{wanted}': too many folders share its name. Pass the "
-            f"folder's drive:<id> ref or a longer path from the top level."])
+            f"folder's drive: ref or a longer path from the top level."])
     if result.status == STATUS_FOLDER_NOT_FOUND:
         return "\n".join(building + [
             f"No folder matching '{wanted}' is in the index. Search without a folder, or list the "
