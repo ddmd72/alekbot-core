@@ -45,34 +45,34 @@ def test_the_texts_match_the_rfc():
 
 
 def test_make_card_carries_the_marking():
-    card = make_card(rec(inaccessible_since=SINCE), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n0000000")
+    card = make_card(rec(inaccessible_since=SINCE), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n0000000", "a1")
     assert card.inaccessible and not card.stale
-    open_card = make_card(rec(), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n0000000")
+    open_card = make_card(rec(), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n0000000", "a1")
     assert not open_card.inaccessible
 
 
 def test_a_kept_readable_generation_is_shown_stale():
     kept = rec(inaccessible_since=SINCE, indexed_generation=2, indexed_version="c1", content_version="c1",
                state=RecordState.INDEXED)
-    card = make_card(kept, "card scan.pdf", "s", "n0000000")
+    card = make_card(kept, "card scan.pdf", "s", "n0000000", "a1")
     assert card.stale and card.inaccessible
 
 
 def test_a_tier_card_says_the_file_cannot_be_opened():
-    card = make_card(rec(inaccessible_since=SINCE), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n1111111")
+    card = make_card(rec(inaccessible_since=SINCE), "Docs/card scan.pdf", "card scan.pdf | PDF document", "n1111111", "a1")
     text = render_results(tiered_result(card))
     assert ACCESS_LINE_FILE in text and "index: pending" not in text
 
 
 def test_a_folder_card_gets_the_folder_form():
     card = make_card(rec("D1", "Shared", folder=True, inaccessible_since=SINCE), "Shared", "Shared | folder",
-                     "n2222222")
+                     "n2222222", "a1")
     text = render_results(tiered_result(card))
     assert ACCESS_LINE_FOLDER in text and ACCESS_LINE_FILE not in text
 
 
 def test_a_related_card_carries_the_line_too():
-    card = replace(make_card(rec(inaccessible_since=SINCE), "card scan.pdf", "s", "n3333333"),
+    card = replace(make_card(rec(inaccessible_since=SINCE), "card scan.pdf", "s", "n3333333", "a1"),
                    tier=MatchTier.RELATED.value)
     result = DriveSearchResult(status=STATUS_OK, cards=(card,), envelope=DriveSearchEnvelope(index_as_of=AS_OF),
                                request=DriveSearchRequest(query="card"),
@@ -93,7 +93,7 @@ def test_the_coverage_line_counts_them_on_their_own():
 
 
 def test_a_filter_listing_card_and_envelope():
-    card = make_card(rec(inaccessible_since=SINCE), "card scan.pdf", "s", "n4444444")
+    card = make_card(rec(inaccessible_since=SINCE), "card scan.pdf", "s", "n4444444", "a1")
     result = DriveSearchResult(status=STATUS_OK, cards=(card,),
                                envelope=DriveSearchEnvelope(index_as_of=AS_OF, inaccessible=2),
                                request=DriveSearchRequest(query="", kind="pdf"), matched_total=1)

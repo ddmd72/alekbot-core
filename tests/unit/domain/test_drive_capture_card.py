@@ -62,7 +62,7 @@ class TestCardText:
 class TestRendered:
     def test_make_card_carries_the_capture(self):
         c = make_card(rec(profile=PROFILE, capture="scan", capture_source="detected"), "/Docs/scan_0001.pdf",
-                      "summary", "abcdefgh")
+                      "summary", "abcdefgh", "a1")
         assert (c.capture, c.capture_source) == ("scan", "detected")
 
     def test_the_tier_card_shows_the_line_before_its_index_line(self):

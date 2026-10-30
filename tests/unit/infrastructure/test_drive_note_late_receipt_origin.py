@@ -28,7 +28,7 @@ async def _cut_write(context: Dict[str, Any]) -> AsyncMock:
     service.create.side_effect = slow_create
     notification = AsyncMock(spec=UserNotificationService)
     notes, _, _ = _tools(service, ops=_ops(notification), context=context)
-    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR))
+    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR))
     await asyncio.sleep(0.01)
     call.cancel()
     with pytest.raises(asyncio.CancelledError):

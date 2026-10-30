@@ -14,11 +14,20 @@ from src.domain.drive_search import (
     make_card, path_match, render_results, request_from_fields, resolve_chain, search_gate,
     wrap_untrusted,
 )
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection_state import ConnectionState
 
 NOW = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
 ROOT = "root"
 NONCE = "a1b2c3d4e5f60718"
+
+
+def conn(state=ConnectionState.ACTIVE, drive_identity="fake_a:d2"):
+    """The searched connection (MULTI_DRIVE_RFC §3, §4.4): its state is what the gate reads."""
+    return DriveConnection(connection_id="conn-1", user_id="u", account_id="acc-1", credential_id="cred-1",
+                           kind="fake_a", drive_identity=drive_identity, ref_tag="a1", state=state,
+                           created_at=NOW,
+                           disconnected_at=NOW if state is ConnectionState.DISCONNECTED else None)
 
 
 def rec(item_id, parent=ROOT, name=None, folder=False, **kw):
@@ -36,48 +45,49 @@ def lookup(*recs):
 
 class TestGate:
     def test_disabled_first(self):
-        assert search_gate(False, None, DriveConnection(connected=True), NOW).status == STATUS_DISABLED
+        assert search_gate(False, None, conn(), NOW).status == STATUS_DISABLED
+
+    def test_no_connection_is_disconnected_whatever_the_switch(self):
+        # MULTI_DRIVE_RFC §8: the switch lives on the connection; with none there is no switch to read
+        assert search_gate(False, None, None, NOW).status == STATUS_DISCONNECTED
 
     def test_no_credentials_is_disconnected(self):
-        assert search_gate(True, DriveSyncState("u"), DriveConnection(connected=False), NOW).status \
+        assert search_gate(True, DriveSyncState("u"), None, NOW).status == STATUS_DISCONNECTED
+        assert search_gate(True, DriveSyncState("u"), conn(ConnectionState.DISCONNECTED), NOW).status \
             == STATUS_DISCONNECTED
 
     def test_expired_grant_within_ttl_answers_with_reconnect_needed(self):
         st = DriveSyncState("u", access_lost_at=NOW - timedelta(days=3))
-        gate = search_gate(True, st, DriveConnection(connected=True, needs_reconnect=True), NOW)
+        gate = search_gate(True, st, conn(ConnectionState.NEEDS_RECONNECT), NOW)
         assert gate.status == STATUS_OK and gate.reconnect_needed is True and not gate.rebuilding
 
     def test_expired_grant_past_ttl_is_disconnected(self):
         st = DriveSyncState("u", access_lost_at=NOW - ACCESS_LOSS_TTL)
-        gate = search_gate(True, st, DriveConnection(connected=True, needs_reconnect=True), NOW)
+        gate = search_gate(True, st, conn(ConnectionState.NEEDS_RECONNECT), NOW)
         assert gate.status == STATUS_DISCONNECTED
 
     def test_reconnected_past_ttl_is_rebuilding_not_the_half_purged_index(self):
         st = DriveSyncState("u", access_lost_at=NOW - ACCESS_LOSS_TTL)
-        gate = search_gate(True, st, DriveConnection(connected=True), NOW)
+        gate = search_gate(True, st, conn(), NOW)
         assert gate.status == STATUS_OK and gate.rebuilding
 
     def test_reconnected_just_before_the_ttl_answers_from_the_index(self):
         st = DriveSyncState("u", access_lost_at=NOW - ACCESS_LOSS_TTL + timedelta(seconds=1))
-        gate = search_gate(True, st, DriveConnection(connected=True), NOW)
+        gate = search_gate(True, st, conn(), NOW)
         assert gate.status == STATUS_OK and not gate.rebuilding
 
     def test_a_started_purge_is_rebuilding(self):
-        gate = search_gate(True, DriveSyncState("u", purging=True), DriveConnection(connected=True), NOW)
+        gate = search_gate(True, DriveSyncState("u", purging=True), conn(), NOW)
         assert gate.status == STATUS_OK and gate.rebuilding
 
     def test_expired_grant_before_the_tick_noticed_still_answers(self):
-        gate = search_gate(True, DriveSyncState("u"), DriveConnection(connected=True, needs_reconnect=True), NOW)
+        gate = search_gate(True, DriveSyncState("u"), conn(ConnectionState.NEEDS_RECONNECT), NOW)
         assert gate.status == STATUS_OK and gate.reconnect_needed
 
     def test_other_drive_hides_the_index(self):
-        st = DriveSyncState("u", drive_id="d1")
-        assert search_gate(True, st, DriveConnection(connected=True, drive_id="d2"), NOW).status \
+        st = DriveSyncState("u", drive_identity="fake_a:d1")
+        assert search_gate(True, st, conn(drive_identity="fake_a:d2"), NOW).status \
             == STATUS_DISCONNECTED
-
-    def test_drive_id_not_yet_on_credentials_skips_the_comparison(self):
-        st = DriveSyncState("u", drive_id="d1")
-        assert search_gate(True, st, DriveConnection(connected=True, drive_id=""), NOW).status == STATUS_OK
 
 
 class TestRequest:
@@ -225,7 +235,7 @@ class TestWrapper:
 
 
 def _card(item_id, path, nonce=NONCE, **kw):
-    return make_card(rec(item_id, name=path.rsplit("/", 1)[-1], **kw), path, f"{item_id} | PDF document", nonce)
+    return make_card(rec(item_id, name=path.rsplit("/", 1)[-1], **kw), path, f"{item_id} | PDF document", nonce, "a1")
 
 
 class TestRender:
@@ -255,7 +265,7 @@ class TestRender:
         cards = (_card("f1", "Contracts/a.pdf", nonce="n0000001"), _card("f2", "b.pdf", nonce="n0000002"))
         text = render_results(DriveSearchResult(status=STATUS_OK, cards=cards,
                                                 envelope=DriveSearchEnvelope(index_as_of=NOW)))
-        assert '<drive_document nonce="n0000001" ref="drive:f1" path="Contracts/a.pdf">' in text
+        assert '<drive_document nonce="n0000001" ref="drive:a1:f1" path="Contracts/a.pdf">' in text
         assert '</drive_document nonce="n0000002">' in text and "path: Contracts/a.pdf" in text
 
     def test_filter_only_says_how_many_matched(self):
@@ -276,7 +286,7 @@ class TestRender:
         assert "is in the index" in render_results(DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND, request=request))
         text = render_results(DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND, request=request,
                                                 folder_lookup_truncated=True))
-        assert text.startswith("Could not resolve the folder 'Invoices/2025'") and "drive:<id>" in text
+        assert text.startswith("Could not resolve the folder 'Invoices/2025'") and "folder's drive: ref" in text
 
     def test_duplicates_are_shown_as_also_at(self):
         card = DriveSearchCard(ref="drive:f1", item_id="f1", name="a.pdf", path="A/a.pdf", kind="pdf",
@@ -285,5 +295,7 @@ class TestRender:
             DriveSearchResult(status=STATUS_OK, cards=(card,)))
 
     def test_card_builds_the_step_one_item(self):
-        item = _card("f1", "Contracts/a.pdf").drive_item()
-        assert item.ref == "drive:f1" and item.path == "Contracts/a.pdf" and not item.is_folder
+        card = _card("f1", "Contracts/a.pdf")
+        item = card.drive_item()
+        assert card.ref == "drive:a1:f1"
+        assert item.item_id == "f1" and item.path == "Contracts/a.pdf" and not item.is_folder

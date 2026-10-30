@@ -9,7 +9,7 @@ from src.domain.drive_search import (
     STATUS_OK, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, in_date_range, make_card,
     render_results, request_from_fields, search_gate,
 )
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_connection import DriveConnection
 
 NOW = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
 
@@ -22,7 +22,7 @@ def rec(item_id, **kw):
 
 
 def card(item_id):
-    return make_card(rec(item_id), f"{item_id}.pdf", f"{item_id} | PDF document", "a1b2c3d4e5f60718")
+    return make_card(rec(item_id), f"{item_id}.pdf", f"{item_id} | PDF document", "a1b2c3d4e5f60718", "a1")
 
 
 # --- An all-empty request has no filters to match ----------------------------------------------
@@ -125,5 +125,7 @@ class TestDateFilter:
 
 class TestGateDriveIdGuard:
     def test_a_state_without_drive_id_is_not_another_drive(self):
-        gate = search_gate(True, DriveSyncState("u"), DriveConnection(connected=True, drive_id="d2"), NOW)
+        connection = DriveConnection(connection_id="conn-1", user_id="u", account_id="acc-1", credential_id="cred-1",
+                                     kind="fake_a", drive_identity="fake_a:d2", ref_tag="a1", created_at=NOW)
+        gate = search_gate(True, DriveSyncState("u"), connection, NOW)
         assert gate.status == STATUS_OK

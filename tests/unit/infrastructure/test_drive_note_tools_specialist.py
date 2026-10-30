@@ -48,13 +48,13 @@ class Clock:
 
 
 def _receipt(action: str = "set", *, text: str = REPAIR, version: int = 1, noop: bool = False, status: str = "",
-             note_id: str = "n1", ref: str = "drive:a", redo: bool = False, doc_type: str = "") -> NoteReceipt:
+             note_id: str = "n1", ref: str = "drive:a1:a", redo: bool = False, doc_type: str = "") -> NoteReceipt:
     return NoteReceipt(action=action, note_id=note_id, ref=ref, path=PATH if note_id else "", version=version,
                        text=text, doc_type=doc_type, status=status, state="active", noop=noop, redo=redo)
 
 
 def _view(version: int = 1, state: str = "active", text: str = REPAIR) -> NoteView:
-    return NoteView(note_id="n1", ref="drive:a", note_ref="drive_note:n1", path=PATH, version=version, state=state,
+    return NoteView(note_id="n1", ref="drive:a1:a", note_ref="drive_note:n1", path=PATH, version=version, state=state,
                     text=text, doc_type="contract", life_areas=("home",))
 
 
@@ -159,22 +159,22 @@ PROV = NoteProvenance(origin="chat", session_id="s1", turn_id="t1")
 
 
 @pytest.mark.parametrize("tool,args,method,expected", [
-    (nt.CREATE_NOTE, {"item_ref": "drive:a", "text": REPAIR, "doc_type": "contract", "life_areas": ["home"]},
-     "create", ((U, ACC, "drive:a", NoteContent(REPAIR, "contract", ("home",)), PROV), {})),
-    (nt.ADD_TO_NOTE, {"item_ref": "drive:a", "text": "second invoice"}, "update",
-     ((U, ACC, "drive:a", NoteChange.append_text("second invoice"), PROV), {"expected_version": None})),
-    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a", "doc_type": "invoice"}, "update",
-     ((U, ACC, "drive:a", NoteChange.set_type("invoice"), PROV), {"expected_version": None})),
-    (nt.CLEAR_NOTE_TYPE, {"item_ref": "drive:a"}, "update",
-     ((U, ACC, "drive:a", NoteChange.clear_type(), PROV), {"expected_version": None})),
-    (nt.ADD_LIFE_AREAS, {"item_ref": "drive:a", "life_areas": "home, finance"}, "update",
-     ((U, ACC, "drive:a", NoteChange.add_areas(["home", "finance"]), PROV), {"expected_version": None})),
+    (nt.CREATE_NOTE, {"item_ref": "drive:a1:a", "text": REPAIR, "doc_type": "contract", "life_areas": ["home"]},
+     "create", ((U, ACC, "drive:a1:a", NoteContent(REPAIR, "contract", ("home",)), PROV), {})),
+    (nt.ADD_TO_NOTE, {"item_ref": "drive:a1:a", "text": "second invoice"}, "update",
+     ((U, ACC, "drive:a1:a", NoteChange.append_text("second invoice"), PROV), {"expected_version": None})),
+    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a1:a", "doc_type": "invoice"}, "update",
+     ((U, ACC, "drive:a1:a", NoteChange.set_type("invoice"), PROV), {"expected_version": None})),
+    (nt.CLEAR_NOTE_TYPE, {"item_ref": "drive:a1:a"}, "update",
+     ((U, ACC, "drive:a1:a", NoteChange.clear_type(), PROV), {"expected_version": None})),
+    (nt.ADD_LIFE_AREAS, {"item_ref": "drive:a1:a", "life_areas": "home, finance"}, "update",
+     ((U, ACC, "drive:a1:a", NoteChange.add_areas(["home", "finance"]), PROV), {"expected_version": None})),
     (nt.REMOVE_LIFE_AREAS, {"item_ref": "drive_note:n1", "life_areas": ["home"]}, "update",
      ((U, ACC, "drive_note:n1", NoteChange.remove_areas(["home"]), PROV), {"expected_version": None})),
-    (nt.DELETE_NOTE, {"item_ref": "drive:a"}, "clear", ((U, ACC, "drive:a", PROV), {})),
-    (nt.UNDO_NOTE, {"item_ref": "drive:a"}, "undo", ((U, ACC, "drive:a", PROV), {})),
-    (nt.ERASE_NOTE, {"item_ref": "drive:a"}, "request_erase", ((U, "drive:a"), {})),
-    (nt.GET_NOTE, {"item_ref": " drive:a "}, "get", ((U, "drive:a"), {})),
+    (nt.DELETE_NOTE, {"item_ref": "drive:a1:a"}, "clear", ((U, ACC, "drive:a1:a", PROV), {})),
+    (nt.UNDO_NOTE, {"item_ref": "drive:a1:a"}, "undo", ((U, ACC, "drive:a1:a", PROV), {})),
+    (nt.ERASE_NOTE, {"item_ref": "drive:a1:a"}, "request_erase", ((U, "drive:a1:a"), {})),
+    (nt.GET_NOTE, {"item_ref": " drive:a1:a "}, "get", ((U, "drive:a1:a"), {})),
 ], ids=lambda v: v if isinstance(v, str) else "")
 async def test_each_tool_makes_exactly_one_service_call_with_its_mapped_arguments(tool, args, method, expected):
     service = _service()
@@ -190,7 +190,7 @@ async def test_replace_note_text_passes_the_version_get_note_read():
     service = _service()
     service.get.return_value = _view(version=4)
     notes, _, _ = _tools(service)
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     await _call(notes, nt.REPLACE_NOTE_TEXT, item_ref="drive_note:n1", text="the final bathroom repair invoice")
     call = service.update.await_args
     assert call.args[3] == NoteChange.replace_text("the final bathroom repair invoice")
@@ -200,16 +200,16 @@ async def test_replace_note_text_passes_the_version_get_note_read():
 # -- an empty or omitted field never writes ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,args", [
-    (nt.CREATE_NOTE, {"item_ref": "drive:a"}),
-    (nt.CREATE_NOTE, {"item_ref": "drive:a", "text": "", "doc_type": "", "life_areas": []}),
-    (nt.ADD_TO_NOTE, {"item_ref": "drive:a"}),
-    (nt.ADD_TO_NOTE, {"item_ref": "drive:a", "text": "   "}),
-    (nt.REPLACE_NOTE_TEXT, {"item_ref": "drive:a", "text": ""}),
-    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a", "doc_type": ""}),
-    (nt.ADD_LIFE_AREAS, {"item_ref": "drive:a", "life_areas": []}),
-    (nt.REMOVE_LIFE_AREAS, {"item_ref": "drive:a", "life_areas": ""}),
-    (nt.CREATE_NOTE, {"item_ref": "drive:a", "text": "x " * 81}),
-    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a", "doc_type": "spaceship"}),
+    (nt.CREATE_NOTE, {"item_ref": "drive:a1:a"}),
+    (nt.CREATE_NOTE, {"item_ref": "drive:a1:a", "text": "", "doc_type": "", "life_areas": []}),
+    (nt.ADD_TO_NOTE, {"item_ref": "drive:a1:a"}),
+    (nt.ADD_TO_NOTE, {"item_ref": "drive:a1:a", "text": "   "}),
+    (nt.REPLACE_NOTE_TEXT, {"item_ref": "drive:a1:a", "text": ""}),
+    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a1:a", "doc_type": ""}),
+    (nt.ADD_LIFE_AREAS, {"item_ref": "drive:a1:a", "life_areas": []}),
+    (nt.REMOVE_LIFE_AREAS, {"item_ref": "drive:a1:a", "life_areas": ""}),
+    (nt.CREATE_NOTE, {"item_ref": "drive:a1:a", "text": "x " * 81}),
+    (nt.SET_NOTE_TYPE, {"item_ref": "drive:a1:a", "doc_type": "spaceship"}),
 ], ids=["create_no_fields", "create_all_empty", "add_no_text", "add_blank_text", "replace_empty_is_refused_D5",
         "set_type_empty", "add_areas_empty", "remove_areas_empty", "create_too_long", "unknown_type"])
 async def test_an_empty_or_invalid_field_is_refused_before_any_service_call(tool, args):
@@ -237,7 +237,7 @@ async def test_truncated_arguments_are_refused_without_a_service_call():
     service = _service()
     notes, _, collector = _tools(service)
     for tool in (nt.CREATE_NOTE, nt.GET_NOTE):
-        await _call(notes, tool, item_ref="drive:a", _parse_error="truncated_json")
+        await _call(notes, tool, item_ref="drive:a1:a", _parse_error="truncated_json")
     assert service.mock_calls == []
     assert [r.outcome.text for r in collector.results] == [nt.TRUNCATED, nt.TRUNCATED]
 
@@ -247,7 +247,7 @@ async def test_truncated_arguments_are_refused_without_a_service_call():
 async def test_replace_without_a_read_is_refused_before_any_service_call():
     service = _service()
     notes, _, collector = _tools(service)
-    result = await _call(notes, nt.REPLACE_NOTE_TEXT, item_ref="drive:a", text="a new text")
+    result = await _call(notes, nt.REPLACE_NOTE_TEXT, item_ref="drive:a1:a", text="a new text")
     assert service.mock_calls == []
     assert collector.results[0].outcome.cls is OutcomeClass.REQUEST_ERROR
     assert nt.READ_FIRST in result.result_str
@@ -255,11 +255,11 @@ async def test_replace_without_a_read_is_refused_before_any_service_call():
 
 async def test_replace_after_the_note_changed_since_the_read_is_refused_and_nothing_is_written():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, provenance=PROV)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=PROV)
     notes, _, collector = _tools(env.service)
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
-    await env.service.update(U, ACC, "drive:a", NoteChange.set_type("invoice"), PROV)      # another writer: v2
-    await _call(notes, nt.REPLACE_NOTE_TEXT, item_ref="drive:a", text="a new text")
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.set_type("invoice"), PROV)      # another writer: v2
+    await _call(notes, nt.REPLACE_NOTE_TEXT, item_ref="drive:a1:a", text="a new text")
     outcome = collector.results[-1].outcome
     assert outcome.cls is OutcomeClass.REQUEST_ERROR and "changed since you read it" in outcome.text
     assert (await env.note()).text == REPAIR and (await env.note()).current_version == 2
@@ -267,12 +267,12 @@ async def test_replace_after_the_note_changed_since_the_read_is_refused_and_noth
 
 async def test_get_note_and_replace_note_text_in_one_batch_run_in_emission_order():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, provenance=PROV)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=PROV)
     notes, _, collector = _tools(env.service)
     await asyncio.gather(
-        notes.handlers[nt.GET_NOTE](ToolCall(name=nt.GET_NOTE, args={"item_ref": "drive:a"})),
+        notes.handlers[nt.GET_NOTE](ToolCall(name=nt.GET_NOTE, args={"item_ref": "drive:a1:a"})),
         notes.handlers[nt.REPLACE_NOTE_TEXT](ToolCall(name=nt.REPLACE_NOTE_TEXT,
-                                                      args={"item_ref": "drive:a", "text": "the bathroom repair, final"})))
+                                                      args={"item_ref": "drive:a1:a", "text": "the bathroom repair, final"})))
     assert [r.outcome.op for r in collector.results] == [DriveOp.NOTE_READ, DriveOp.NOTE_WRITE]
     assert collector.results[1].outcome.cls is OutcomeClass.OK
     assert (await env.note()).text == "the bathroom repair, final"
@@ -280,12 +280,12 @@ async def test_get_note_and_replace_note_text_in_one_batch_run_in_emission_order
 
 async def test_a_replace_emitted_before_its_read_in_the_same_batch_is_refused():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, provenance=PROV)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=PROV)
     notes, _, collector = _tools(env.service)
     await asyncio.gather(
         notes.handlers[nt.REPLACE_NOTE_TEXT](ToolCall(name=nt.REPLACE_NOTE_TEXT,
-                                                      args={"item_ref": "drive:a", "text": "the bathroom repair, final"})),
-        notes.handlers[nt.GET_NOTE](ToolCall(name=nt.GET_NOTE, args={"item_ref": "drive:a"})))
+                                                      args={"item_ref": "drive:a1:a", "text": "the bathroom repair, final"})),
+        notes.handlers[nt.GET_NOTE](ToolCall(name=nt.GET_NOTE, args={"item_ref": "drive:a1:a"})))
     assert collector.results[0].outcome.text == nt.READ_FIRST
     assert (await env.note()).text == REPAIR
 
@@ -300,11 +300,11 @@ async def test_a_replace_emitted_before_its_read_in_the_same_batch_is_refused():
 async def test_an_additive_tool_on_a_file_with_no_note_creates_it(tool, args, expected):
     env = Env()
     notes, _, collector = _tools(env.service)
-    await _call(notes, tool, item_ref="drive:a", **args)
+    await _call(notes, tool, item_ref="drive:a1:a", **args)
     note = await env.note()
     assert note.content == expected and note.current_version == 1
     outcome = collector.results[0].outcome
-    assert outcome.cls is OutcomeClass.OK and outcome.note_context == ("[Drive note: Docs/a.pdf ref=drive:a v1]",)
+    assert outcome.cls is OutcomeClass.OK and outcome.note_context == ("[Drive note: Docs/a.pdf ref=drive:a1:a v1]",)
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -314,9 +314,9 @@ async def test_an_additive_tool_on_a_file_with_no_note_creates_it(tool, args, ex
 async def test_a_non_additive_tool_on_a_file_with_no_note_is_not_found(tool, args):
     env = Env()
     session = DriveNoteSession()
-    session.reads["drive:a"] = 0          # a read that found no note
+    session.reads["drive:a1:a"] = 0          # a read that found no note
     notes, _, collector = _tools(env.service, session=session)
-    await _call(notes, tool, item_ref="drive:a", **args)
+    await _call(notes, tool, item_ref="drive:a1:a", **args)
     outcome = collector.results[0].outcome
     assert (outcome.cls, outcome.delivery) == (OutcomeClass.NOT_FOUND, ())
     assert outcome.text.endswith("Nothing was stored.") and await env.note() is None
@@ -327,7 +327,7 @@ async def test_a_non_additive_tool_on_a_file_with_no_note_is_not_found(tool, arg
 async def test_at_most_the_cap_of_writes_per_execution_decided_under_the_ordering_lock():
     service = _service()
     notes, _, collector = _tools(service)
-    calls = [notes.handlers[nt.ADD_TO_NOTE](ToolCall(name=nt.ADD_TO_NOTE, args={"item_ref": f"drive:f{i}",
+    calls = [notes.handlers[nt.ADD_TO_NOTE](ToolCall(name=nt.ADD_TO_NOTE, args={"item_ref": f"drive:a1:f{i}",
                                                                                 "text": "bathroom"}))
              for i in range(NOTE_WRITES_PER_TURN + 2)]
     await asyncio.gather(*calls)
@@ -342,7 +342,7 @@ async def test_refusals_do_not_count_toward_the_cap():
     session = DriveNoteSession()
     notes, _, _ = _tools(service, session=session)
     for _ in range(NOTE_WRITES_PER_TURN + 1):
-        await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a", text="bathroom")
+        await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a1:a", text="bathroom")
     assert session.writes == 0 and service.update.await_count == NOTE_WRITES_PER_TURN + 1
 
 
@@ -356,7 +356,7 @@ async def test_a_writer_on_a_run_that_is_not_an_owner_turn_is_refused_even_with_
     service = _service()
     context = {"user_id": U, "account_id": ACC, "run_origin": "background:reminder", TURN_ID_CONTEXT_KEY: "t9"}
     notes, _, collector = _tools(service, context=context, writes=True)     # declared by mistake
-    await _call(notes, tool, item_ref="drive:a", interactive_delivery=True, run_origin="voice:send_to_chat", **args)
+    await _call(notes, tool, item_ref="drive:a1:a", interactive_delivery=True, run_origin="voice:send_to_chat", **args)
     assert service.mock_calls == []
     outcome = collector.results[0].outcome
     assert (outcome.cls, outcome.text) == (OutcomeClass.REFUSED, nt.NOT_OWNER_TURN)
@@ -366,7 +366,7 @@ async def test_get_note_reads_on_any_run():
     service = _service()
     notes, _, collector = _tools(service, context={"user_id": U, "run_origin": "background:daily_review"},
                                  writes=False)
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     assert service.get.await_count == 1 and collector.results[0].outcome.cls is OutcomeClass.OK
 
 
@@ -376,14 +376,14 @@ async def test_a_saved_note_s_result_names_path_version_and_note_ref_and_never_i
     service = _service()
     service.create.return_value = _receipt(status=STATUS_SOON)
     notes, _, collector = _tools(service)
-    result = await _call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR)
+    result = await _call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR)
     outcome = collector.results[0].outcome
     assert outcome.text == (f"Note saved on {PATH} (version 1). Its note ref: drive_note:n1. The system posts the "
                             "stored note word for word: do not repeat it. Search shows it within a few minutes.")
     assert REPAIR not in result.result_str and REPAIR not in outcome.text
     assert outcome.delivery[0].type == DRIVE_NOTE_RECEIPT_DELIVERY
     assert outcome.delivery[0].data == service.create.return_value.delivery_data()
-    assert outcome.note_context == (f"[Drive note: {PATH} ref=drive:a v1]",)
+    assert outcome.note_context == (f"[Drive note: {PATH} ref=drive:a1:a v1]",)
     assert result.delivery_items == [] and result.history_context is None   # both ride the collector only (Δ7)
 
 
@@ -400,7 +400,7 @@ def test_the_six_status_sentences_are_the_known_statuses():
 @pytest.mark.parametrize("receipt,expected", [
     (_receipt("clear", text="", version=2), f"Note removed from {PATH}; its history is kept and undo can bring it "
                                             "back. Its note ref: drive_note:n1. The system posts a receipt to the owner."),
-    (_receipt("clear", note_id="", text="", version=0, noop=True), "There was no note on drive:a; nothing was changed."),
+    (_receipt("clear", note_id="", text="", version=0, noop=True), "There was no note on drive:a1:a; nothing was changed."),
     (_receipt("restore", version=3), f"Undone: the previous note is back on {PATH} (version 3). Its note ref: "
                                      "drive_note:n1. The system posts the note word for word: do not repeat it."),
     (_receipt("restore", version=4, redo=True), f"Redone: the undone change is back on {PATH} (version 4). Its note "
@@ -423,10 +423,10 @@ def test_receipt_lines_carry_no_note_words(receipt, expected):
 async def test_a_noop_clear_with_no_note_has_no_history_line_but_still_delivers_its_receipt():
     env = Env()
     notes, _, collector = _tools(env.service)
-    await _call(notes, nt.DELETE_NOTE, item_ref="drive:a")
+    await _call(notes, nt.DELETE_NOTE, item_ref="drive:a1:a")
     outcome = collector.results[0].outcome
     assert outcome.note_context == () and [d.type for d in outcome.delivery] == [DRIVE_NOTE_RECEIPT_DELIVERY]
-    assert outcome.text == "There was no note on drive:a; nothing was changed."
+    assert outcome.text == "There was no note on drive:a1:a; nothing was changed."
 
 
 @pytest.mark.parametrize("reason,cls", [
@@ -445,7 +445,7 @@ async def test_a_refusal_maps_to_its_class_with_its_message_and_nothing_stored(r
     service.create.side_effect = DriveNoteRefused(reason, "The refusal's own words.")
     session = DriveNoteSession()
     notes, _, collector = _tools(service, session=session)
-    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR)
+    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR)
     outcome = collector.results[0].outcome
     assert (outcome.cls, outcome.success, outcome.text, outcome.delivery, outcome.note_context) == (
         cls, False, "The refusal's own words. Nothing was stored.", (), ())
@@ -456,7 +456,7 @@ async def test_a_store_outage_says_try_again():
     service = _service()
     service.undo.side_effect = DriveIndexStoreUnavailable("down")
     notes, _, collector = _tools(service)
-    await _call(notes, nt.UNDO_NOTE, item_ref="drive:a")
+    await _call(notes, nt.UNDO_NOTE, item_ref="drive:a1:a")
     outcome = collector.results[0].outcome
     assert outcome.cls is OutcomeClass.FAILED and "Try again" in outcome.text
 
@@ -467,7 +467,7 @@ async def test_an_unexpected_error_logs_only_its_type_never_the_note_and_without
     service = _service()
     service.update.side_effect = ValueError(f"document field text={REPAIR!r} is invalid")
     notes, _, collector = _tools(service)
-    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a", text=REPAIR)
+    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a1:a", text=REPAIR)
     assert collector.results[0].outcome.text == nt.UNEXPECTED
     error = log.error.call_args
     assert "ValueError" in error.args[0] and REPAIR not in error.args[0] and "exc_info" not in error.kwargs
@@ -480,13 +480,13 @@ async def test_an_unexpected_error_logs_only_its_type_never_the_note_and_without
 async def test_get_note_shows_the_note_as_a_card_does_inside_an_untrusted_wrapper():
     service = _service()
     notes, _, collector = _tools(service)
-    result = await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    result = await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     outcome = collector.results[0].outcome
     assert (outcome.op, outcome.cls, outcome.facts.owner_note, collector.results[0].kind) == (
         DriveOp.NOTE_READ, OutcomeClass.OK, True, t.KIND_NOTE)
     assert outcome.text == (
-        f"The owner's note on {PATH} (drive:a, note ref drive_note:n1, version 1):\n"
-        f'<drive_document nonce="n0nce000" ref="drive:a" path="{PATH}">\n'
+        f"The owner's note on {PATH} (drive:a1:a, note ref drive_note:n1, version 1):\n"
+        f'<drive_document nonce="n0nce000" ref="drive:a1:a" path="{PATH}">\n'
         f"noted by the owner: «{REPAIR}» (type contract; life areas home)\n"
         '</drive_document nonce="n0nce000">')
     assert outcome.text in result.result_str     # the specialist needs the words to replace them
@@ -496,13 +496,13 @@ async def test_get_note_on_a_cleared_an_archived_and_no_note():
     service = _service()
     notes, _, collector = _tools(service)
     service.get.return_value = _view(version=3, state="cleared", text="")
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     service.get.return_value = _view(version=2, state="archived")
     await _call(notes, nt.GET_NOTE, item_ref="drive_note:n1")
     service.get.return_value = None
     await _call(notes, nt.GET_NOTE, item_ref="drive:b")
     cleared, archived, none = (r.outcome for r in collector.results)
-    assert cleared.text == (f"The owner's note on {PATH} (drive:a, note ref drive_note:n1) was deleted (version 3); "
+    assert cleared.text == (f"The owner's note on {PATH} (drive:a1:a, note ref drive_note:n1) was deleted (version 3); "
                             "undo_note brings it back.")
     assert not cleared.facts.owner_note
     assert "the file is gone from the drive; change this note by its note ref" in archived.text
@@ -511,9 +511,9 @@ async def test_get_note_on_a_cleared_an_archived_and_no_note():
 
 def test_the_session_remembers_a_read_under_every_alias():
     session = DriveNoteSession()
-    session.remember("drive:a", _view(version=5))
+    session.remember("drive:a1:a", _view(version=5))
     session.remember("drive:b", None)
-    assert session.reads == {"drive:a": 5, "drive_note:n1": 5, "drive:b": 0}
+    assert session.reads == {"drive:a1:a": 5, "drive_note:n1": 5, "drive:b": 0}
     assert session.read_version("drive:c") is None
 
 
@@ -521,10 +521,10 @@ def test_the_session_remembers_a_read_under_every_alias():
 
 async def test_the_erase_code_is_only_in_the_delivery_item_never_in_a_result_or_the_answer():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, provenance=PROV)
-    await env.service.update(U, ACC, "drive:a", NoteChange.set_type("contract"), PROV)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=PROV)
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.set_type("contract"), PROV)
     notes, _, collector = _tools(env.service)
-    result = await _call(notes, nt.ERASE_NOTE, item_ref="drive:a")
+    result = await _call(notes, nt.ERASE_NOTE, item_ref="drive:a1:a")
     outcome = collector.results[0].outcome
     (item,) = outcome.delivery
     assert item.type == DRIVE_NOTE_ERASE_DELIVERY
@@ -549,7 +549,7 @@ async def test_a_write_cut_after_it_started_still_lands_and_posts_exactly_one_la
     ops = _ops(notification)
     session = DriveNoteSession()
     notes, run, collector = _tools(service, ops=ops, session=session)
-    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR))
+    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR))
     await asyncio.sleep(0.01)
     call.cancel()                                          # the soft deadline cancels the engine
     with pytest.raises(asyncio.CancelledError):
@@ -577,7 +577,7 @@ async def test_a_write_that_lands_before_the_answer_rides_the_answer_only():
     ops = _ops(notification)
     service = _service()
     notes, _, collector = _tools(service, ops=ops)
-    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR)
+    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR)
     for _ in range(5):
         await asyncio.sleep(0)
     answer = compose_answer(collector, DriveReport())
@@ -595,7 +595,7 @@ async def test_a_cut_write_that_is_refused_posts_nothing_late():
     service.create.side_effect = refused
     notification = AsyncMock(spec=UserNotificationService)
     notes, _, _ = _tools(service, ops=_ops(notification))
-    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=REPAIR))
+    call = asyncio.ensure_future(_call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=REPAIR))
     await asyncio.sleep(0.01)
     call.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -621,8 +621,8 @@ async def test_a_late_receipt_without_a_notification_service_or_with_a_failing_o
 async def test_a_call_after_the_deadline_is_not_started():
     service = _service()
     notes, _, collector = _tools(service, deadline=10.0, clock=Clock(11.0))
-    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a", text=REPAIR)
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a1:a", text=REPAIR)
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     assert service.mock_calls == []
     assert [r.outcome.text for r in collector.results] == [t.NOT_STARTED, t.NOT_STARTED]
 
@@ -632,16 +632,16 @@ async def test_a_call_after_the_deadline_is_not_started():
 async def test_end_to_end_create_normalizes_resolves_the_alias_reports_not_indexed_then_undo_restores():
     env = Env()
     notes, _, collector = _tools(env.service)
-    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a", text=f"  {REPAIR}\n  base   852,40 ",
+    await _call(notes, nt.CREATE_NOTE, item_ref="drive:a1:a", text=f"  {REPAIR}\n  base   852,40 ",
                 doc_type="договор")
     stored = await env.note()
     assert (stored.text, stored.doc_type) == (f"{REPAIR} base 852,40", "contract")
     first = collector.results[0].outcome
     assert first.text.endswith(nt.STATUS_SENTENCES[STATUS_NOT_INDEXED])
     assert first.delivery[0].data["text"] == f"{REPAIR} base 852,40"
-    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a", text="and IVA 196,05")
+    await _call(notes, nt.ADD_TO_NOTE, item_ref="drive:a1:a", text="and IVA 196,05")
     assert (await env.note()).text == f"{REPAIR} base 852,40 and IVA 196,05"
-    await _call(notes, nt.UNDO_NOTE, item_ref="drive:a")
+    await _call(notes, nt.UNDO_NOTE, item_ref="drive:a1:a")
     restored = await env.note()
     assert (restored.text, restored.doc_type, restored.current_version) == (
         f"{REPAIR} base 852,40", "contract", 3)
@@ -651,9 +651,9 @@ async def test_end_to_end_create_normalizes_resolves_the_alias_reports_not_index
 
 async def test_an_archived_note_is_changed_by_its_note_ref_from_the_store_alone():
     env = Env()
-    receipt = await env.service.set(U, ACC, "drive:a", REPAIR, provenance=PROV)
+    receipt = await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=PROV)
     await env.notes.archive(U, receipt.note_id, archived_at=T, last_seen_at=T)
-    env.drive.connection.side_effect = RuntimeError("the drive is not reachable")
+    env.conn_repo.failure = RuntimeError("the drive is not reachable")       # no connection can be read
     graph = env.graph_calls()
     notes, _, collector = _tools(env.service)
     await _call(notes, nt.ADD_LIFE_AREAS, item_ref=receipt.note_ref, life_areas=["home"])
@@ -673,8 +673,8 @@ async def test_a_get_note_queued_behind_a_write_that_ran_past_the_deadline_is_no
         return _receipt(version=2)
     service.update.side_effect = slow_update
     notes, _, collector = _tools(service, deadline=150.0, clock=clock)
-    await asyncio.gather(_call(notes, nt.ADD_TO_NOTE, item_ref="drive:a", text="and the gate"),
-                         _call(notes, nt.GET_NOTE, item_ref="drive:a"))
+    await asyncio.gather(_call(notes, nt.ADD_TO_NOTE, item_ref="drive:a1:a", text="and the gate"),
+                         _call(notes, nt.GET_NOTE, item_ref="drive:a1:a"))
     assert service.get.await_count == 0
     assert [r.outcome.text for r in collector.results][1] == t.NOT_STARTED
 
@@ -684,7 +684,7 @@ async def test_a_failing_get_note_is_a_failed_read_with_nothing_remembered():
     service.get.side_effect = DriveIndexStoreUnavailable("down")
     session = DriveNoteSession()
     notes, _, collector = _tools(service, session=session)
-    await _call(notes, nt.GET_NOTE, item_ref="drive:a")
+    await _call(notes, nt.GET_NOTE, item_ref="drive:a1:a")
     assert collector.results[0].outcome.cls is OutcomeClass.FAILED and session.reads == {}
 
 

@@ -113,10 +113,10 @@ class TestStaleScore:
     def test_make_card_shows_the_score_only_of_a_scorable_record(self):
         rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="image", card_accuracy=80,
                                triage_verdict=TriageVerdict.PHOTO, indexed_generation=None)
-        assert make_card(rec, "/a", "s", "abcdefgh").card_accuracy is None
+        assert make_card(rec, "/a", "s", "abcdefgh", "a1").card_accuracy is None
         scorable_rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="pdf", card_accuracy=80, indexed_generation=1,
                                         profile=profile(), profile_source="model")
-        assert make_card(scorable_rec, "/a", "s", "abcdefgh").card_accuracy == 80
+        assert make_card(scorable_rec, "/a", "s", "abcdefgh", "a1").card_accuracy == 80
 
 
 class TestRescoreWithIncompleteChunks:
@@ -129,7 +129,8 @@ class TestRescoreWithIncompleteChunks:
         rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", name="f.pdf", kind="pdf", indexed_generation=1, chunk_count=2,
                                brief=DocumentBrief(amount="9.99 EUR"), card_accuracy=61, accuracy_version=0)
         summary = {}
-        done = asyncio.run(svc._rescore("u", rec, NOW, summary))
+        from tests.support.drive_handles import drive_handle
+        done = asyncio.run(svc._rescore(drive_handle(user_id="u", connection_id="u"), rec, NOW, summary))
         assert done.card_accuracy == 61 and done.accuracy_version == ACCURACY_VERSION
         assert summary["rescore_incomplete"] == 1
         svc._commit.assert_awaited_once()

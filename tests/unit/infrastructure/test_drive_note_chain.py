@@ -82,7 +82,7 @@ def _world(monkeypatch, env: Env):
         drive_search_service=None, drive_note_service=env.service, drive_notes_enabled=True, alert_sink=None)
     fake._drive_operations = lambda c: UserAgentFactory._drive_operations(fake, c)
     coordinator.set_agent_factory(_Factory(fake))
-    llm, seen = script(calls((nt.CREATE_NOTE, {"item_ref": "drive:a", "text": REPAIR})),
+    llm, seen = script(calls((nt.CREATE_NOTE, {"item_ref": "drive:a1:a", "text": REPAIR})),
                        calls((tt.REPORT_TOOL, {"note": "Kept the invoice on the file."})))
 
     async def specialist_call(self, request, turn=0, **kw):
@@ -110,7 +110,7 @@ async def test_a_chat_turn_writes_the_note_and_the_receipt_is_posted_literally_w
     coordinator = _world(monkeypatch, env)
     replies = [
         LLMResponse(text="", tool_calls=[ToolCall(name="delegate_to_specialist", thought_signature="s1", args={
-            "intent": Intent.WORK_WITH_DRIVE_FILES, "query": "Keep the bathroom repair invoice on drive:a.", "context": {}})]),
+            "intent": Intent.WORK_WITH_DRIVE_FILES, "query": "Keep the bathroom repair invoice on drive:a1:a.", "context": {}})]),
         LLMResponse(text="Kept it on the file."),
     ]
     sent: list = []
@@ -145,7 +145,7 @@ async def test_a_chat_turn_writes_the_note_and_the_receipt_is_posted_literally_w
     history_text, full_text = await _handler()._prepare_history_texts(response, "Kept it on the file.",
                                                                        "Kept it on the file.", None, context)
     block = json.loads(full_text.split("\n\n")[-1])
-    assert block == {"drive_note_context": [["[Drive note: Docs/a.pdf ref=drive:a v1]"]]}   # the engine's fold: one entry
+    assert block == {"drive_note_context": [["[Drive note: Docs/a.pdf ref=drive:a1:a v1]"]]}   # the engine's fold: one entry
     assert REPAIR not in full_text and REPAIR not in history_text
 
 
@@ -156,7 +156,7 @@ def _en(message):
 
 async def test_a_send_to_chat_call_posts_the_receipt_through_the_gateway_literally_with_call_wording():
     world = NoteWorld()
-    response = await world.run(specialist([(nt.CREATE_NOTE, {"item_ref": "drive:a", "text": REPAIR})]),
+    response = await world.run(specialist([(nt.CREATE_NOTE, {"item_ref": "drive:a1:a", "text": REPAIR})]),
                                run_origin="voice:send_to_chat")
     items = [i for i in response.delivery_items if i.type == DRIVE_NOTE_RECEIPT_DELIVERY]
     assert len(items) == 1

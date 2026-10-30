@@ -21,11 +21,11 @@ INBOX = DriveItem(item_id="i", name="Inbox", path="Inbox", is_folder=True)
 
 
 def ok(op, text, items=(), **kw):
-    return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), **kw)
+    return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), **kw, ref_tag="a1")
 
 
 def bad(op, cls, text, success=False, **kw):
-    return DriveOutcome(op=op, cls=cls, text=text, success=success, **kw)
+    return DriveOutcome(op=op, cls=cls, text=text, success=success, **kw, ref_tag="a1")
 
 
 def run(*entries, report=DriveReport(), **kw):
@@ -252,7 +252,8 @@ def test_files_are_a_list_in_run_order_and_drive_context_is_not_deduplicated():
     img2 = ok(DriveOp.OPEN, "attached 2", [B], file_data={"path": "/tmp/2.pdf", "mime_type": "application/pdf"})
     answer = run((1, t.KIND_SEARCH, SEARCH_CARDS), (2, t.KIND_OPEN, img1), (2, t.KIND_OPEN, img2))
     assert [f["path"] for f in answer.files] == ["/tmp/1.jpg", "/tmp/2.pdf"]
-    assert [e["ref"] for e in answer.drive_context] == ["drive:a", "drive:b", "drive:a", "drive:b"]
+    assert [e["ref"] for e in answer.drive_context] == ["drive:a1:a", "drive:a1:b", "drive:a1:a",
+                                                                 "drive:a1:b"]
 
 
 def test_the_note_is_capped_and_comes_after_the_reading_lines():

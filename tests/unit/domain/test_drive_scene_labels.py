@@ -137,18 +137,18 @@ class TestCard:
         assert card_hash(_rec(photo_scene_labels=("sea",))) != card_hash(_rec())
 
     def test_a_rendered_card_shows_a_scene_line(self):
-        card = make_card(_rec(photo_scene_labels=("sunset", "beach")), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh")
+        card = make_card(_rec(photo_scene_labels=("sunset", "beach")), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh", "a1")
         assert isinstance(card, DriveSearchCard) and card.scene_labels == ("sunset", "beach")
         assert "scene: sunset, beach" in _card_body(card)
 
     def test_the_tiered_renderer_shows_it_too(self):
         from src.domain.drive_tier_render import card_body
 
-        card = make_card(_rec(photo_scene_labels=("sunset", "beach")), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh")
+        card = make_card(_rec(photo_scene_labels=("sunset", "beach")), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh", "a1")
         assert "scene: sunset, beach" in card_body(card)
 
     def test_a_card_without_labels_has_no_scene_line(self):
-        card = make_card(_rec(), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh")
+        card = make_card(_rec(), "/P/IMG_1.jpg", "IMG_1.jpg | image", "abcdefgh", "a1")
         assert "scene:" not in _card_body(card)
 
     def test_the_field_is_the_source_of_the_line(self):

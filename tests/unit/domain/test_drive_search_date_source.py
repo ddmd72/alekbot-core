@@ -4,6 +4,7 @@ The effective date is a photo's taken date, a read document's own date (its brie
 "the document's date": an unlabelled `date:` let it cite a file date as one written in the document."""
 from datetime import datetime, timezone
 
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index import DocumentBrief, DriveIndexRecord, RecordState, Scope
 from src.domain.drive_search import (
     DATE_FILE, DATE_TAKEN, DATE_WRITTEN, STATUS_OK, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult,
@@ -23,8 +24,8 @@ def rec(**kw):
 def test_the_source_of_each_date():
     assert date_source(rec()) == DATE_FILE
     assert date_source(rec(brief=DocumentBrief(doc_date=D1), effective_date=D1)) == DATE_WRITTEN
-    taken = {"photo": {"takenDateTime": "2026-05-09T10:00:00Z"}}
-    assert date_source(rec(kind="image", facets=taken)) == DATE_TAKEN
+    taken = DriveMediaFacts(taken_at=datetime(2026, 5, 9, 10, 0, tzinfo=timezone.utc))
+    assert date_source(rec(kind="image", media=taken)) == DATE_TAKEN
     assert date_source(rec(effective_date=None)) is None
 
 
@@ -33,7 +34,7 @@ def test_a_brief_whose_date_is_not_the_effective_one_is_not_cited_as_written():
 
 
 def _render(r):
-    card = make_card(r, "Docs/a.pdf", "a.pdf | PDF document", "n0000001")
+    card = make_card(r, "Docs/a.pdf", "a.pdf | PDF document", "n0000001", "a1")
     return render_results(DriveSearchResult(status=STATUS_OK, cards=(card,), request=DriveSearchRequest(query="a"),
                                             envelope=DriveSearchEnvelope(index_as_of=D2)))
 
@@ -42,5 +43,6 @@ def test_the_rendered_date_carries_its_source():
     assert "date: 2026-05-09 (file date)" in _render(rec())
     assert "date: 2026-03-01 (written in the document)" in _render(
         rec(brief=DocumentBrief(doc_date=D1), effective_date=D1))
-    assert "date: 2026-05-09 (taken)" in _render(rec(kind="image", facets={"photo": {"takenDateTime": "2026-05-09T10:00:00Z"}}))
+    assert "date: 2026-05-09 (taken)" in _render(rec(kind="image", media=DriveMediaFacts(
+        taken_at=datetime(2026, 5, 9, 10, 0, tzinfo=timezone.utc))))
     assert "date: unknown" in _render(rec(effective_date=None))

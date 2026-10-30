@@ -34,30 +34,30 @@ SEED = NoteProvenance(origin="chat", session_id="s0", turn_id="t0")      # an ea
 OWNER = {"user_id": U, "account_id": ACC, "interactive_delivery": True, "session_id": "s1", TURN_ID_CONTEXT_KEY: "t1"}
 
 # --- the specialist's scripted note-tool calls (the drive_notes surface) ------------------------------------------------
-CREATE = {"item_ref": "drive:a", "text": REPAIR, "doc_type": "contract", "life_areas": ["home"]}
-ADD = {"item_ref": "drive:a", "text": "painting invoice from Pinturas Exemplo"}
-GET = {"item_ref": "drive:a"}
-REPLACE = {"item_ref": "drive:a", "text": "the final bathroom repair invoice"}
-SET_TYPE = {"item_ref": "drive:a", "doc_type": "invoice"}
-CLEAR_TYPE = {"item_ref": "drive:a"}
-ADD_AREAS = {"item_ref": "drive:a", "life_areas": ["finance"]}
-REMOVE_AREAS = {"item_ref": "drive:a", "life_areas": ["home"]}
-DELETE = {"item_ref": "drive:a"}
-UNDO = {"item_ref": "drive:a"}
-ERASE = {"item_ref": "drive:a"}
+CREATE = {"item_ref": "drive:a1:a", "text": REPAIR, "doc_type": "contract", "life_areas": ["home"]}
+ADD = {"item_ref": "drive:a1:a", "text": "painting invoice from Pinturas Exemplo"}
+GET = {"item_ref": "drive:a1:a"}
+REPLACE = {"item_ref": "drive:a1:a", "text": "the final bathroom repair invoice"}
+SET_TYPE = {"item_ref": "drive:a1:a", "doc_type": "invoice"}
+CLEAR_TYPE = {"item_ref": "drive:a1:a"}
+ADD_AREAS = {"item_ref": "drive:a1:a", "life_areas": ["finance"]}
+REMOVE_AREAS = {"item_ref": "drive:a1:a", "life_areas": ["home"]}
+DELETE = {"item_ref": "drive:a1:a"}
+UNDO = {"item_ref": "drive:a1:a"}
+ERASE = {"item_ref": "drive:a1:a"}
 REPORT = {"note": "Done."}
 
 
 class World:
     def __init__(self) -> None:
         self.env = Env()
-        drive_service = UserDriveService(self.env.drive)
+        drive_service = UserDriveService(self.env.drive, self.env.connections)
         self.operations = DriveOperations(conversion_service=MagicMock(), drive_service=drive_service,
                                           drive_notes=self.env.service)
 
     async def seed(self, *, text: str = REPAIR, doc_type: str = "contract", life_areas: Sequence[str] = ("home",)) -> None:
         """A note already on the file."""
-        await self.env.service.set(U, ACC, "drive:a", text, doc_type, list(life_areas), SEED)
+        await self.env.service.set(U, ACC, "drive:a1:a", text, doc_type, list(life_areas), SEED)
 
     async def note(self):
         return await self.env.note("a")
@@ -93,7 +93,7 @@ def receipts(response: AgentResponse) -> List[Dict[str, Any]]:
 
 
 def history_line(version: int) -> List[str]:
-    return [f"[Drive note: {PATH} ref=drive:a v{version}]"]
+    return [f"[Drive note: {PATH} ref=drive:a1:a v{version}]"]
 
 
 # --------------------------------------------------------------------------------------------------------- tests

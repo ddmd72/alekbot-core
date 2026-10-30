@@ -1,6 +1,6 @@
 """The stored-record shapes of slice 1b (MULTI_DRIVE_RFC §7.2, §8, §10, I7, I8): the new fields, their neutral defaults
 (a document written before them reads unchanged), and the map codecs of the two nested value types."""
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from datetime import datetime, timezone
 
 import pytest
@@ -26,10 +26,9 @@ NEW_FIELDS = {
     DriveIndexRecord: {"connection_id": "", "identity": "", "content_identity": None, "media": DriveMediaFacts()},
     DriveChunk: {"connection_id": ""},
     DriveHintDoc: {"connection_id": ""},
-    DriveSyncState: {"connection_id": "", "drive_identity": "", "transcripts_reattached_at": None},
+    DriveSyncState: {"connection_id": "", "drive_identity": ""},
     DriveRecordLean: {"content_identity": None},
-    MirrorRoot: {"drive_identity": ""},
-    MirrorDoc: {"drive_identity": "", "source_identity": ""},
+    MirrorDoc: {"source_identity": ""},
     DeletionNotice: {"source_identity": ""},
     StoredTranscript: {"retained_at": None, "retained_reason": ""},
     TranscriptJob: {"connection_id": ""},
@@ -45,6 +44,28 @@ def test_new_fields_exist_with_neutral_defaults(entity):
         field = declared[name]
         got = field.default_factory() if callable(field.default_factory) else field.default
         assert got == default, name
+
+
+# owner scope change (no re-attach gate, I7 gone): the sync state has no `transcripts_reattached_at`; the mirror shapes
+# are keyed by `drive_identity`, which replaces `drive_id` (MULTI_DRIVE_RFC §10) and has no default
+REMOVED_FIELDS = {
+    DriveSyncState: ("transcripts_reattached_at", "drive_id"),
+    MirrorRoot: ("drive_id",),
+    MirrorDoc: ("drive_id",),
+}
+
+
+@pytest.mark.parametrize("entity", list(REMOVED_FIELDS), ids=lambda e: e.__name__)
+def test_removed_fields_are_gone(entity):
+    declared = {f.name for f in fields(entity)}
+    for name in REMOVED_FIELDS[entity]:
+        assert name not in declared, name
+
+
+@pytest.mark.parametrize("entity", [MirrorRoot, MirrorDoc], ids=lambda e: e.__name__)
+def test_the_mirror_drive_identity_is_required(entity):
+    field = {f.name: f for f in fields(entity)}["drive_identity"]
+    assert field.default is MISSING and field.default_factory is MISSING
 
 
 def test_a_record_carries_the_neutral_shapes():
@@ -67,9 +88,9 @@ def test_retention_reason():
 
 
 def test_mirror_shapes_carry_the_identities_their_keys_are_built_from():
-    root = MirrorRoot(user_id="usr-1", drive_id="d", root_item_id="r", root_name="_Transcripts",
+    root = MirrorRoot(user_id="usr-1", root_item_id="r", root_name="_Transcripts",
                       drive_identity="fake_a:drive-1")
-    doc = MirrorDoc(user_id="usr-1", drive_id="d", kind="file", source_item_id="item-1",
+    doc = MirrorDoc(user_id="usr-1", kind="file", source_item_id="item-1",
                     drive_identity="fake_a:drive-1", source_identity="fake_a:drive-1:item-1")
     assert mirror_root_doc_id(root.user_id, root.drive_identity) == "usr-1:fake_a:drive-1"
     assert ledger_key(doc.user_id, doc.kind, doc.drive_identity, doc.source_identity).startswith("usr-1:file:")
