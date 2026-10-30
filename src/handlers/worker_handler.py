@@ -51,7 +51,6 @@ Supported task_types:
 from __future__ import annotations
 
 import uuid
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
 
@@ -1102,7 +1101,8 @@ class WorkerHandler:
                 return
             # Before the save: a failure here must leave the flag down so the next run retries the notice.
             await self._agent_factory.ensure_agents_for_user(user_id)
-            if not await self._oauth_credentials.update(replace(creds, needs_reconnect=True)):
+            creds.needs_reconnect = True
+            if not await self._oauth_credentials.update(creds):
                 logger.info(f"[Worker] Gmail disconnected meanwhile for {user_id[:8]}, nothing to flag")
                 return
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")

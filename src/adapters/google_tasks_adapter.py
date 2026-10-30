@@ -235,7 +235,10 @@ class GoogleTasksAdapter(TasksProviderPort):
         # Refresh if token expires within 5 minutes
         now = datetime.now(timezone.utc)
         if creds.token_expiry and (creds.token_expiry - now).total_seconds() < 300:
-            creds = await self._refresh_token(creds)
+            refreshed = await self._refresh_token(creds)
+            # the refreshed record is the one read (D-P2): its credential_id keys the update
+            creds = (replace(refreshed, credential_id=creds.credential_id)
+                     if creds.credential_id and not refreshed.credential_id else refreshed)
             if not await self._credentials_repo.update(creds):
                 # Disconnected while the token endpoint answered: not connected, as when no record is found.
                 raise ValueError(

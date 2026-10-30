@@ -13,6 +13,7 @@ Responsibilities:
   - System alert framing for SmartAgent
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -207,7 +208,10 @@ class EmailReviewService:
         now_utc = datetime.now(timezone.utc)
         if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
             try:
-                creds = await self._email_provider.refresh_token(creds)
+                # the refreshed record is the one read (D-P2): its credential_id keys the update
+                refreshed = await self._email_provider.refresh_token(creds)
+                creds = (replace(refreshed, credential_id=creds.credential_id)
+                         if creds.credential_id and not refreshed.credential_id else refreshed)
                 if not await self._oauth.update(creds):
                     logger.warning(f"[EmailReview] Gmail disconnected during refresh for {creds.user_id[:8]}")
                     return None

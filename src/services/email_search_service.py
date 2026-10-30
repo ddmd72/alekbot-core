@@ -18,6 +18,7 @@ Total: 7 search streams, 3 embedding calls (parallel).
 """
 
 import asyncio
+from dataclasses import replace
 import json
 import mimetypes
 import tempfile
@@ -299,7 +300,10 @@ class EmailSearchService:
             expiry = expiry.replace(tzinfo=timezone.utc)
         if expiry and expiry <= now:
             logger.info("📧 EmailSearchService: refreshing expired Gmail token")
-            creds = await self._gmail.refresh_token(creds)
+            # the refreshed record is the one read (D-P2): its credential_id keys the update
+            refreshed = await self._gmail.refresh_token(creds)
+            creds = (replace(refreshed, credential_id=creds.credential_id)
+                     if creds.credential_id and not refreshed.credential_id else refreshed)
             if not await self._oauth.update(creds):
                 logger.info("📧 EmailSearchService: Gmail disconnected during token refresh")
                 return None
