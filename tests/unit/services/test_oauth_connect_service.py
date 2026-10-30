@@ -232,3 +232,18 @@ async def test_logs_carry_no_secrets(caplog):
         await w.complete(state)
     text = " ".join(r.getMessage() for r in caplog.records)
     assert state not in text and "code-1" not in text and "at-new" not in text and "alex@example.com" not in text
+
+
+async def test_activation_receives_the_id_save_returned():
+    w = World()
+    real_save = w.store.repo.save
+    returned = []
+
+    async def spy(credential):
+        returned.append(await real_save(credential))
+        return returned[-1]
+
+    w.store.repo.save = spy
+    await w.complete(await w.start())
+    assert len(returned) == 1 and returned[0]
+    assert [a.credential_id for a in w.activated] == returned
