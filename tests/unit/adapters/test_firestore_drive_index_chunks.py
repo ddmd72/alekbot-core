@@ -15,6 +15,7 @@ from src.adapters.firestore_drive_index_repo import (
     CHUNK_DISTANCE, CHUNK_FIELDS, CHUNK_LEAN_FIELDS, CHUNK_VECTOR, STREAM_FIELDS, FirestoreDriveIndexRepository,
     chunk_from_doc, chunk_to_doc,
 )
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveChunk, chunk_doc_id
 from src.domain.drive_index_params import RECORD_WRITE_BATCH
 
@@ -60,7 +61,7 @@ class TestCodec:
         assert chunk_from_doc(doc).content_terms == ()
 
     def test_key(self):
-        assert chunk_key("u", "i", 3, 7) == "u:i:3:7"
+        assert chunk_doc_id(ConnectionScope(user_id="u", connection_id="conn-1"), "i", 3, 7) == "conn-1:i:3:7"
 
     def test_the_sdk_encodes_a_chunk(self):
         from google.cloud.firestore_v1 import _helpers

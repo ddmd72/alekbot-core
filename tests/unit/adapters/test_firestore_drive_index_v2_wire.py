@@ -26,7 +26,7 @@ from src.domain.drive_enrichment import DriveHintDoc, HintItem, InitialBuild, Mo
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, chunk_doc_id
 from src.domain.drive_index_lean import RECORD_LEAN_FIELDS
 from src.domain.drive_index_params import RECORD_WRITE_BATCH, WRITE_BATCH_BYTES
-from src.domain.drive_usage import usage_expires_at
+from src.domain.drive_usage import initial_build_doc_id, usage_expires_at
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
 from tests.unit.adapters.firestore_drive_eval_fakes import (
@@ -259,16 +259,18 @@ class TestUsageWrites:
         await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)
         docs = db.cols[USAGE].docs
         assert docs["u:2026-10"][USAGE_EXPIRES_AT] == datetime(2027, 11, 5, tzinfo=timezone.utc)
-        assert USAGE_EXPIRES_AT not in docs["u:initial"] and docs["u:initial"]["user_id"] == "u"
+        initial = docs[initial_build_doc_id("u", REALM, SUBJECT)]
+        assert USAGE_EXPIRES_AT not in initial and initial["user_id"] == "u"
 
     async def test_the_initial_build_is_spent_in_a_transaction(self, repo, db):
         await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)
-        assert [tx.writes for tx in db.transactions] == [[("set", "u:initial")]]
+        key = initial_build_doc_id("u", REALM, SUBJECT)   # by provider account (MULTI_DRIVE_RFC §10, D8)
+        assert [tx.writes for tx in db.transactions] == [[("set", key)]]
         await repo.close_initial_build("u", REALM, SUBJECT, T)
         await repo.close_initial_build("u", REALM, SUBJECT, T)            # already closed: nothing written
         await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)        # closed: covers 0, nothing written
         await repo.get_initial_build("u", REALM, SUBJECT)
-        assert [tx.writes for tx in db.transactions] == [[("set", "u:initial")], [("set", "u:initial")], [], []]
+        assert [tx.writes for tx in db.transactions] == [[("set", key)], [("set", key)], [], []]
 
 
 async def _capture(sent, ref, data, merge):
