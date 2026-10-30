@@ -132,10 +132,10 @@ class MediaStreamHandler:
                 elif event == "stop":
                     break
         except Exception:
-            logger.error(f"media stream for ticket={fingerprint(ticket)} failed", exc_info=True)
+            logger.error(f"media stream for ticket={fingerprint(ticket or '')} failed", exc_info=True)
             raise
         finally:
             await inbound_queue.put(None)
             if call_task is not None:
                 await call_task
-            logger.info(f"media stream closed for ticket={fingerprint(ticket)}")
+            logger.info(f"media stream closed for ticket={fingerprint(ticket or '')}")
