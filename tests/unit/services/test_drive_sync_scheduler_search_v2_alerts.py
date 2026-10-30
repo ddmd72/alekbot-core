@@ -14,7 +14,9 @@ from src.domain.drive_enrichment import InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState, Scope
 from src.domain.drive_index_params import DESCRIBED_STALL_AFTER
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
-from tests.unit.services.drive_index_fakes import Clock, FakeDrive, FakeQueue, FakeUsers
+from tests.support.drive_connection_service_fake import single_connection_repository
+from tests.unit.services.drive_index_fakes import Clock, FakeQueue, legacy_account
+from tests.unit.services.drive_usage_helpers import initial_key
 
 
 class Alerts:
@@ -31,11 +33,9 @@ def env():
     repo = InMemoryDriveIndexRepository()
     alerts = Alerts()
 
-    async def connected():
-        return ["u"]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(), users=FakeUsers(),
-                                    connected_users=connected, notifier=None, alert_sink=alerts, clock=clock)
+    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(),
+                                    connections=single_connection_repository("u", provider_account=legacy_account("u")),
+                                    notifier=None, alert_sink=alerts, clock=clock)
     return svc, repo, alerts, clock
 
 
@@ -108,7 +108,7 @@ async def test_no_stall_alert_without_budget_or_ready_jobs(env):
     repo.states["u"] = v2_state(clock, described_grew_at=old)
     await svc.fan_out()                                                    # nothing ready
     repo.records[("u", "d1")] = _ready_record()
-    repo.initial["u"] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=clock.now)
+    repo.initial[initial_key("u")] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=clock.now)
     repo.usage[("u", clock.now.strftime("%Y-%m"))] = ModelUsageMonth(profile_usd=4.0, passage_usd=20.0)
     await svc.fan_out()                                                    # no budget left
     assert not [p for p in alerts.posts if "stalled" in p]
