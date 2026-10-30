@@ -9,7 +9,6 @@ texts of C-I3, C-I5, C-M9. Synthetic data only."""
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,17 +20,17 @@ from src.domain.drive_index import DriveIndexRecord, DriveSyncState
 from src.domain.drive_index_params import ITEM_CALLS_PER_TICK
 from src.domain.drive_keys import query_concepts
 from src.domain.drive_note import (
-    STATUS_OTHER_DRIVE, DriveNoteRefused, NoteBinding, NoteRefusal, NoteSnapshot, NoteState, binding_key,
+    STATUS_OTHER_DRIVE, DriveNoteRefused, NoteBinding, NoteRefusal, NoteSnapshot, NoteState, item_binding_key,
 )
 from src.domain.drive_note_check import WHY_GONE, NoteCheck
 from src.domain.drive_note_lifecycle import NOTE_CHECK_UNKNOWN_MAX_AGE
 from src.domain.drive_note_render import search_keys
 from src.domain.exceptions import LLMClientError
-from src.domain.user_drive import DriveConnection
 from src.locales import en, es, fr
 from src.domain.ui_messages import UIMessage
 
-from .test_drive_note_service import ACC, CHAT, TEXT, U, Env, _Clock, _FlakyErase, refusal
+from tests.support.drive_connection_service_fake import connection
+from .test_drive_note_service import ACC, C1, CHAT, TEXT, U, Env, _Clock, _FlakyErase, identity, refusal
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -40,15 +39,15 @@ ROOT = Path(__file__).resolve().parents[3]
 
 async def test_a_nudge_carries_at_most_item_calls_per_tick_ids():
     env = Env()
-    await env.service._nudge(U, [f"i{n}" for n in range(ITEM_CALLS_PER_TICK + 15)])
+    await env.service._nudge(await env.connections.get(U, C1), [f"i{n}" for n in range(ITEM_CALLS_PER_TICK + 15)])
     assert len(env.nudged()[-1]) == ITEM_CALLS_PER_TICK
 
 
 async def test_an_erase_all_nudges_nothing_and_a_one_note_erase_nudges_its_item():
     env = Env()
     for item in ("a", "b"):
-        await env.service.set(U, ACC, f"drive:{item}", TEXT, provenance=CHAT)
-    one = await env.service.request_erase(U, "drive:a")
+        await env.service.set(U, ACC, f"drive:a1:{item}", TEXT, provenance=CHAT)
+    one = await env.service.request_erase(U, "drive:a1:a")
     before = len(env.nudged())
     assert await env.service.erase(U, one.code) == 1
     assert env.nudged()[before:] == [["a"]]
@@ -62,7 +61,7 @@ async def test_an_erase_all_nudges_nothing_and_a_one_note_erase_nudges_its_item(
 
 async def test_a_partial_erase_all_reports_its_scope():
     env = Env(notes=_FlakyErase(clock=_Clock()))
-    receipts = [await env.service.set(U, ACC, f"drive:{item}", TEXT, provenance=CHAT) for item in ("a", "b")]
+    receipts = [await env.service.set(U, ACC, f"drive:a1:{item}", TEXT, provenance=CHAT) for item in ("a", "b")]
     env.notes.stuck = receipts[1].note_id
     request = await env.service.request_erase_all(U)
     with pytest.raises(DriveNoteRefused) as info:
@@ -75,7 +74,7 @@ async def test_a_partial_erase_all_reports_its_scope():
 async def test_a_gone_file_refusal_points_to_the_archived_note():
     env = Env(missing={"gone"})
     with pytest.raises(DriveNoteRefused) as info:
-        await env.service.set(U, ACC, "drive:gone", TEXT, provenance=CHAT)
+        await env.service.set(U, ACC, "drive:a1:gone", TEXT, provenance=CHAT)
     assert refusal(info) == NoteRefusal.NOT_ON_DRIVE
     assert "that note is archived" in str(info.value) and "drive_note:" in str(info.value)
 
@@ -85,7 +84,7 @@ async def test_an_unopenable_file_refusal_asks_for_a_copy_in_a_new_folder():
                            inaccessible_since=_Clock()())
     env = Env(records={"x": rec})
     with pytest.raises(DriveNoteRefused) as info:
-        await env.service.set(U, ACC, "drive:x", TEXT, provenance=CHAT)
+        await env.service.set(U, ACC, "drive:a1:x", TEXT, provenance=CHAT)
     assert refusal(info) == NoteRefusal.CANNOT_OPEN
     assert "a new folder they create inside the bot's folder" in str(info.value)
 
@@ -94,8 +93,8 @@ async def test_an_unopenable_file_refusal_asks_for_a_copy_in_a_new_folder():
 
 async def test_an_unreadable_connection_does_not_say_other_drive():
     env = Env()
-    first = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    env.drive.connection.side_effect = RuntimeError("graph down")
+    first = await env.service.set(U, ACC, "drive:a1:a", TEXT, provenance=CHAT)
+    env.conn_repo.failure = RuntimeError("connection store down")
     receipt = await env.service.set(U, ACC, f"drive_note:{first.note_id}", "new words", provenance=CHAT)
     assert receipt.status != STATUS_OTHER_DRIVE
 
@@ -104,27 +103,26 @@ async def test_an_unreadable_connection_does_not_say_other_drive():
 
 async def test_with_indexing_off_a_stub_waits_while_a_record_holds_the_copy():
     env = Env(indexing=False)
-    receipt = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    await env.service.set(U, ACC, "drive:b", "two", provenance=CHAT)
-    held = (await env.notes.find_bound(U, binding_key("onedrive", "drive-1", "a"))).note_id
+    receipt = await env.service.set(U, ACC, "drive:a1:a", TEXT, provenance=CHAT)
+    await env.service.set(U, ACC, "drive:a1:b", "two", provenance=CHAT)
+    held = (await env.notes.find_bound(U, item_binding_key(identity("a")))).note_id
     env.records["a"] = DriveIndexRecord(user_id=U, item_id="a", parent_id="r", name="a.pdf", owner_note_id=held)
     request = await env.service.request_erase_all(U)
     assert await env.service.erase(U, request.code) == 2
     stub = await env.notes.get(U, receipt.note_id)
     assert stub is not None and stub.erase_pending                     # the indexer clears the copy first
-    other = await env.notes.find_bound(U, binding_key("onedrive", "drive-1", "b"))
+    other = await env.notes.find_bound(U, item_binding_key(identity("b")))
     assert other is None                                                # no copy anywhere: deleted at once
 
 
 # -- L-M3: a drive: ref and another drive's note ----------------------------------------------------------------------
 
-async def test_a_drive_ref_to_a_note_on_another_drive_is_refused_with_its_own_ref():
+async def test_a_drive_ref_never_acts_on_another_drive_s_note():
+    # MULTI_DRIVE_RFC §9: the connected drive's ref of the same item id names its own connection, never the old note
     env = Env()
-    receipt = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    env.drive.connection.return_value = DriveConnection(connected=True, drive_id="drive-2")
-    with pytest.raises(DriveNoteRefused) as info:
-        await env.service.clear(U, ACC, "drive:a", CHAT)
-    assert refusal(info) == NoteRefusal.NOT_ON_DRIVE and f"drive_note:{receipt.note_id}" in str(info.value)
+    receipt = await env.service.set(U, ACC, "drive:a1:a", TEXT, provenance=CHAT)
+    env.switch_drive()
+    assert (await env.service.clear(U, ACC, "drive:b2:a", CHAT)).noop
     assert (await env.notes.get(U, receipt.note_id)).state == NoteState.ACTIVE.value
     cleared = await env.service.clear(U, ACC, f"drive_note:{receipt.note_id}", CHAT)   # its own ref still works
     assert cleared.action == "clear"
@@ -136,7 +134,7 @@ def _archived(name_then: str, name_now: str):
     from src.domain.drive_note import DriveNote
     from src.domain.drive_note_merge import note_store_keys
     note = DriveNote(note_id="n1", user_id=U, state=NoteState.ARCHIVED, current_version=1, text="bathroom invoice",
-                     binding=NoteBinding(provider_key="onedrive", drive_id="drive-1", item_id="i1"),
+                     binding=NoteBinding(identity=identity("i1"), item_id="i1", ref_tag="a1"),
                      snapshot=NoteSnapshot(name=name_now, path=name_now))
     keys, version = note_store_keys(note.content, name_then)
     return note.model_copy(update={"keys": keys, "keys_version": version})
@@ -159,7 +157,8 @@ async def test_a_deleted_entry_shows_the_day_the_file_was_last_seen():
         "updated_at": datetime(2026, 10, 1, tzinfo=timezone.utc)})
     notes.notes[(U, note.note_id)] = note
     source = DriveNoteDeletedSearch(notes, AsyncMock(), embedding_space="s")
-    hits, _ = await source(U, query_concepts("bathroom").concepts, DriveConnection(connected=True, drive_id="drive-1"))
+    hits, _ = await source(U, query_concepts("bathroom").concepts,
+                           connection(U, ref_tag="a1", drive_identity="onedrive:drive-1"))
     assert [h.day for h in hits] == ["2026-09-03"]
 
 
@@ -188,11 +187,13 @@ async def test_no_round_end_or_audit_without_an_item_call():
     w.lifecycle.round_end = AsyncMock()
     w.lifecycle.audit = AsyncMock()
     budget = SimpleNamespace(item_call_allowed=lambda: False, item_calls=0)
-    token = svc_mod._TICK_NOTES.set(svc_mod._TickNotes(drive_id="d1", lifecycle=True))
+    harness = await w.connection()
+    token = svc_mod._TICK_NOTES.set(svc_mod._TickNotes(connection=harness, lifecycle=True))
     try:
-        state = DriveSyncState(user_id="u", connection_id="u", drive_id="d1", note_checks=(NoteCheck("n", "i", WHY_GONE, None),))
+        state = DriveSyncState(user_id="u", connection_id="u", drive_identity="fake:d1",
+                               note_checks=(NoteCheck("n", "i", WHY_GONE, None),))
         summary: dict = {}
-        assert await w.svc._notes_round_end("u", state, budget, summary) == state
+        assert await w.svc._notes_round_end(harness.handle, state, budget, summary) == state
     finally:
         svc_mod._TICK_NOTES.reset(token)
     w.lifecycle.round_end.assert_not_awaited()
