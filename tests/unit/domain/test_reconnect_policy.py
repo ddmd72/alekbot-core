@@ -35,4 +35,5 @@ def test_due_exactly_when_needed_and_not_notified_over_every_input():
 
 
 def test_the_three_integrations_have_stable_names():
-    assert [i.value for i in Integration] == ["gmail", "drive", "todo"]
+    # one Integration enum for credentials and R1 (MULTI_DRIVE_RFC §4.1): mail / tasks / drive
+    assert [i.value for i in Integration] == ["mail", "tasks", "drive"]

@@ -395,11 +395,14 @@ class TestDisconnect:
         assert lifecycle.delete_subscription.call_count == 2
 
     async def test_revokes_credentials(self):
+        # the port deletes by credential (MULTI_DRIVE_RFC §4.2): the To Do kind's credential, found by its key
         svc, _, _, _, oauth, _, _ = _make_service()
+        oauth.get.return_value = creds(_USER_ID, "microsoft_todo", credential_id="cred-1")
 
         await svc.disconnect(_USER_ID)
 
-        oauth.revoke_credentials.assert_called_once_with(_USER_ID, "microsoft_todo")
+        oauth.list_keys.assert_called_once_with(_USER_ID, "microsoft_todo")
+        oauth.delete.assert_called_once_with(_USER_ID, "cred-1")
 
     async def test_deletes_search_index(self):
         svc, _, _, _, _, search_index, _ = _make_service()
@@ -429,7 +432,7 @@ class TestDisconnect:
         await svc.disconnect(_USER_ID)
 
         # Should still proceed to revoke credentials
-        oauth.revoke_credentials.assert_called_once()
+        oauth.delete.assert_called_once()
 
 
 # =============================================================================

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.microsoft.graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
+from src.domain.credential_key import CredentialKey
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -122,14 +123,19 @@ class TestCacheIsolationAndInvalidation:
         session.post.assert_called_once()
 
     async def test_providers_never_share_a_token(self):
+        # the port is keyed by credential (MULTI_DRIVE_RFC §4.2): each provider lists its own kind's key, then reads
+        # that credential; one user holds one credential of each kind
         oauth = AsyncMock(spec=OAuthCredentialsPort)
-        oauth.get.side_effect = lambda user_id, provider: _creds(timedelta(hours=1), token=provider)
+        oauth.list_keys.side_effect = lambda user_id, kind: [CredentialKey(user_id=user_id, credential_id=f"cred-{kind}")]
+        oauth.get.side_effect = lambda user_id, credential_id: _creds(
+            timedelta(hours=1), token=credential_id.removeprefix("cred-"))
         todo = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_todo", "Tasks.ReadWrite offline_access")
         drive = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_onedrive",
                                             "Files.ReadWrite.AppFolder offline_access")
         assert await todo.user_headers("u1") == {"Authorization": "Bearer microsoft_todo"}
         assert await drive.user_headers("u1") == {"Authorization": "Bearer microsoft_onedrive"}
-        assert [c.args[1] for c in oauth.get.await_args_list] == ["microsoft_todo", "microsoft_onedrive"]
+        assert [c.args[1] for c in oauth.list_keys.await_args_list] == ["microsoft_todo", "microsoft_onedrive"]
+        assert [c.args[1] for c in oauth.get.await_args_list] == ["cred-microsoft_todo", "cred-microsoft_onedrive"]
 
     async def test_other_refresh_error_is_value_error_not_reauth(self):
         provider, oauth = _provider(_creds(timedelta(minutes=1)))

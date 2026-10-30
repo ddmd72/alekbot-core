@@ -4,6 +4,7 @@ Never mock at UserDrivePort level (docs/how_to/ADAPTER_WIRE_TESTING.md).
 Fixtures cover percent-encoded parent paths (defensive) and the raw ones Graph returned in the spike
 (RFC §7), in both prefix forms: /drive/root: and /drives/<id>/root:.
 """
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import quote
@@ -267,16 +268,18 @@ class TestUpload:
 
 class TestDisconnect:
     async def test_disconnect_revokes_and_invalidates(self):
-        adapter, oauth = _adapter()
-        adapter._tokens.invalidate = MagicMock()
+        # the port deletes by credential (MULTI_DRIVE_RFC §4.2): the drive kind's credential, found by its key
+        adapter, oauth = _adapter(replace(_creds(), credential_id="cred-1"))
+        adapter._tokens.forget = MagicMock()
         await adapter.disconnect("u1")
-        oauth.revoke_credentials.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
-        adapter._tokens.invalidate.assert_called_once_with("u1")
+        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
+        oauth.delete.assert_awaited_once_with("u1", "cred-1")
+        adapter._tokens.forget.assert_called_once_with("u1")
 
     async def test_is_connected_delegates(self):
         adapter, oauth = _adapter()
         assert await adapter.is_connected("u1") is True
-        oauth.is_connected.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
+        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
 
     def test_display_name(self):
         assert _adapter()[0].display_name == "OneDrive"

@@ -193,7 +193,7 @@ async def test_a_deliberate_gmail_disconnect_sends_none_and_a_consent_clears_the
     assert world.db.collection(STATE).docs["user-a_gmail"]["disconnected_by_user_at"] == NOW
     assert (await world.svc.sweep())["notices"] == 0
     assert world.notifier.calls == []
-    assert await world.svc.status("user-a", (Integration.MAIL,)) == {"gmail": False}
+    assert await world.svc.status("user-a", (Integration.MAIL,)) == {"mail": False}
     await world.svc.consented("user-a", Integration.MAIL)
     assert (await world.email.get_indexing_state("user-a", "gmail")).disconnected_by_user_at is None
 
@@ -285,12 +285,12 @@ async def test_status_reads_reconnect_per_integration(world):
     await world.gmail_state("user-a")
     await world.todo_config("user-a")
     await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
-    assert await world.svc.status("user-a") == {"gmail": True, "drive": True, "todo": True}
+    assert await world.svc.status("user-a") == {"mail": True, "drive": True, "tasks": True}
     await world.connect("user-a", "gmail")
     world.drive.per_user["user-a"] = DriveConnection(connected=True, drive_id="d1")
-    assert await world.svc.status("user-a") == {"gmail": False, "drive": False, "todo": True}
+    assert await world.svc.status("user-a") == {"mail": False, "drive": False, "tasks": True}
     # nothing stored: never connected, nothing to reconnect
-    assert await world.svc.status("user-b") == {"gmail": False, "drive": False, "todo": False}
+    assert await world.svc.status("user-b") == {"mail": False, "drive": False, "tasks": False}
 
 
 async def test_a_drive_disconnect_marks_the_sync_state_and_a_consent_clears_it(world):
