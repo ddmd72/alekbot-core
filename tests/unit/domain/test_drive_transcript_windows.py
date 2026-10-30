@@ -1,10 +1,11 @@
 """Window plan, coverage check, time sanity and the content key (RFC §27.4-§27.6, Δ129, Δ135)."""
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import DriveIndexRecord
 from src.domain.drive_index_params import (
     TRANSCRIBE_COVERAGE_MIN, TRANSCRIBE_OVERLAP_S, TRANSCRIBE_WINDOW_S,
 )
 from src.domain.drive_transcript import Segment, WindowSpec
-from src.domain.drive_transcript_windows import content_key, coverage_ok, plan_windows, times_ok
+from src.domain.drive_transcript_windows import coverage_ok, plan_windows, record_content_key, times_ok
 
 W, O = TRANSCRIBE_WINDOW_S, TRANSCRIBE_OVERLAP_S
 
@@ -120,19 +121,22 @@ def test_start_past_window_plus_10s_fails():
     assert not times_ok(w, [_seg(1810.5)])
 
 
+IDENTITY = "microsoft_onedrive:d1:it1"
+
+
 def _rec(**kw):
-    return DriveIndexRecord(user_id="u1", item_id="it1", **kw)
+    return DriveIndexRecord(user_id="u1", item_id="it1", identity=IDENTITY, **kw)
 
 
-def test_quickxor_key():
-    rec = _rec(content_hash="qx==:1234", content_version="ctag1")
-    assert content_key(rec) == ("qx==:1234", True)
+def test_content_identity_key():
+    rec = _rec(content_identity=ContentIdentity("quickxor", "qx==", 1234), content_version="ctag1")
+    assert record_content_key(rec) == ("quickxor:qx==:1234", True)
 
 
-def test_no_quickxor_falls_back_to_item_ctag_unshared():
-    rec = _rec(content_hash=None, content_version="ctag1")
-    assert content_key(rec) == ("item:it1:ctag1", False)
-    assert content_key(_rec(content_hash="", content_version="c")) == ("item:it1:c", False)
+def test_no_content_identity_falls_back_to_item_identity_and_version_unshared():
+    rec = _rec(content_identity=None, content_version="ctag1")
+    assert record_content_key(rec) == (f"item:{IDENTITY}:ctag1", False)
+    assert record_content_key(_rec(content_identity=None, content_version="c")) == (f"item:{IDENTITY}:c", False)
 
 
 def test_sha1_is_never_used():
