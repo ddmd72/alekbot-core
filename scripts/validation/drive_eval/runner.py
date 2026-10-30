@@ -22,13 +22,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import Priority, inaccessible
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
 from src.domain.user import UserBotConfig, UserProfile
-from src.domain.user_drive import parse_drive_ref
+from scripts.validation.drive_eval.eval_connection import ref_item_id
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.document_profiler_port import DocumentProfilerPort
 from src.ports.drive_index_repository import DriveIndexRepository
@@ -278,7 +279,7 @@ def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
 
 
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
-    item_id = parse_drive_ref(getattr(card, "ref", "") or "")
+    item_id = ref_item_id(getattr(card, "ref", "") or "")
     own = (drive.path_of(item_id) if item_id else None) or str(getattr(card, "path", "")).strip("/")
     return [own] + [str(p).strip("/") for p in getattr(card, "also_at", ()) or ()]
 
@@ -363,7 +364,7 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
                                   extractors=extractors, triage=triage)
     if not indexed.records.get("carded"):
         raise EvalError("the index settled with no card; nothing to measure")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
                                 embedding_space=embedding_space)
     run = await run_cases(search, drive, gold)
     # A known-hard case is run and reported, but guards nothing: it is in no bar and never a lost case.

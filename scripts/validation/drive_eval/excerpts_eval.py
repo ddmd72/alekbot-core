@@ -38,7 +38,7 @@ from .fixture_drive import FixtureDrive
 from .index_cache import cache_key, load_or_build
 from .metrics import case_hit, expected_substrings, substring_hit
 from .runner import (
-    EVAL_USER, EXIT_OK, EXIT_REGRESSION, EXIT_SETUP, EvalClock, EvalError, _EnabledUsers, gold_sha256, index_fixture,
+    EVAL_USER, EXIT_OK, EXIT_REGRESSION, EXIT_SETUP, EvalClock, EvalError, gold_sha256, index_fixture,
     load_gold, sha256_of, validate_gold,
 )
 
@@ -153,7 +153,9 @@ async def evaluate(*, tree: Path, gold_paths: Sequence[Path], bars_path: Path, w
                                       cache_dir=cache_dir)
     if not (facts.get("records") or {}).get("carded"):
         raise EvalError("the index has no card; nothing to measure")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=embedding_space)
+    from .eval_connection import EvalDriveConnections, eval_connection
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
+                                embedding_space=embedding_space)
     rows = [await run_case(search, drive, case) for case in gold]
     report: Dict[str, Any] = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                               "embedding_space": embedding_space, "index_cache": facts.get("cache"),

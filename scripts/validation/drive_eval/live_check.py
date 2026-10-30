@@ -154,7 +154,9 @@ async def live_check(folder: Path, user_id: str, queries: Sequence[Mapping[str, 
                                       throttle_pause_s=throttle_pause_s, extractors=extractors, triage=triage,
                                       user_id=user_id, users=users)
         report.indexed, report.summary = indexed.records, indexed.summary
-        search = DriveSearchService(repo, embeddings, users, drive, clock=clock, embedding_space=embedding_space)
+        from .eval_connection import EvalDriveConnections, eval_connection
+        search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(user_id)),
+                                    clock=clock, embedding_space=embedding_space)
         for query in queries:
             result = await search.search(user_id, request_for(dict(query)))
             report.answers.append({"query": dict(query), "status": result.status,

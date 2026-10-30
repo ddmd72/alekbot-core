@@ -37,7 +37,7 @@ from src.composition.drive_reader_runner import READER_VERSION as _RUNNER_READER
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchResult, render_results
-from src.domain.user_drive import parse_drive_ref
+from scripts.validation.drive_eval.eval_connection import ref_item_id
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.embedding_service import EmbeddingService
 from src.services.drive_search_service import DriveSearchService
@@ -136,7 +136,7 @@ def _coverage(tiered: Any) -> Dict[str, Any]:
 
 
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
-    item_id = parse_drive_ref(getattr(card, "ref", "") or "")
+    item_id = ref_item_id(getattr(card, "ref", "") or "")
     own = (drive.path_of(item_id) if item_id else None) or str(getattr(card, "path", "")).strip("/")
     return [own] + [str(p).strip("/") for p in getattr(card, "also_at", ()) or ()]
 

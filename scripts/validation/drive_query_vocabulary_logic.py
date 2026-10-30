@@ -31,7 +31,7 @@ from src.domain.drive_keys import (
 )
 from src.domain.drive_match import Concept, SourceClass
 from src.domain.drive_tiers import CLASS_RANK, Cover, FileKeys, chunk_cover, record_cover
-from src.domain.user_drive import parse_drive_ref
+from scripts.validation.drive_eval.eval_connection import ref_item_id
 
 INTENT_SEARCH = "search_files_in_drive"   # Smart's delegations, recorded before the drive specialist
 INTENT_OPEN = "open_file_from_drive"
@@ -95,7 +95,7 @@ def _events_of_row(tool_calls: Any) -> List[Event]:
             out.append(Event(INTENT_SEARCH, drive_query=str(args.get("query") or "").strip()))
             continue
         if call.get("name") == TOOL_OPEN:
-            item_id = parse_drive_ref(str(args.get("file_ref") or ""))
+            item_id = ref_item_id(str(args.get("file_ref") or ""))
             if item_id:
                 out.append(Event(INTENT_OPEN, item_id=item_id))
             continue
@@ -105,7 +105,7 @@ def _events_of_row(tool_calls: Any) -> List[Event]:
         if intent == INTENT_SEARCH:
             out.append(Event(INTENT_SEARCH, drive_query=str(ctx.get("drive_query") or "").strip()))
         elif intent == INTENT_OPEN:
-            item_id = parse_drive_ref(str(ctx.get("file_ref") or ""))
+            item_id = ref_item_id(str(ctx.get("file_ref") or ""))
             if item_id:
                 out.append(Event(INTENT_OPEN, item_id=item_id))
     return out
