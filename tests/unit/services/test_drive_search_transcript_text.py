@@ -55,7 +55,7 @@ async def test_transcript_text_wrapped_with_reminder():
     svc, _ = _service(_rec(), _stored("hello there"))
     text = await svc.transcript_text(CONN, "a1", path="Calls/call.m4a")
     assert text.startswith(REFERENCE_REMINDER + "\n")
-    assert '<drive_document nonce="nonce0001" ref="drive:a1" path="Calls/call.m4a">' in text
+    assert '<drive_document nonce="nonce0001" ref="drive:c1:a1" path="Calls/call.m4a">' in text
     assert "[00:00] hello there" in text and text.endswith("</drive_document nonce=\"nonce0001\">")
 
 
@@ -75,7 +75,7 @@ async def test_transcript_text_capped_with_note():
     svc = _service_gate_open(_rec(has_card=True, scope=Scope.NORMAL, parent_id="root"), stored)
     text = await svc.transcript_text(CONN, "a1")
     assert len(text) < 61_000 and "[Transcript cut at" not in text and "Search for a passage" not in text
-    inner = text.split('<drive_document nonce="nonce0001" ref="drive:a1" path="">\n', 1)[1]
+    inner = text.split('<drive_document nonce="nonce0001" ref="drive:c1:a1" path="">\n', 1)[1]
     shown, sep, line = inner.rpartition("\n\n[Cut by the system: ")
     full = render_body(stored.transcript)
     assert sep and full.startswith(shown) and full[len(shown):len(shown) + 2] == "\n\n"   # cut at a paragraph boundary
