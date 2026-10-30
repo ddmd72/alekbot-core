@@ -52,12 +52,13 @@ class MultiWorld:
 
     async def connect(self, connection_id: str = "conn-1", *, ref_tag: str = "a1",
                       drive_identity: str = "fake_a:drive-1", **kw: Any) -> DriveConnection:
+        account = ProviderAccount(realm="realm-x", subject=f"sub-{connection_id}", label="")
         conn = await self.connections.add(connection(USER, connection_id, ref_tag=ref_tag,
                                                      drive_identity=drive_identity,
-                                                     credential_id=f"cred-{connection_id}", **kw))
+                                                     credential_id=f"cred-{connection_id}",
+                                                     provider_account=account, **kw))
         self.drives[connection_id] = FakeDrive(drive_identity=drive_identity)
-        self.accounts[f"cred-{connection_id}"] = ProviderAccount(realm="realm-x", subject=f"sub-{connection_id}",
-                                                                 label="")
+        self.accounts[f"cred-{connection_id}"] = account
         return conn
 
     @staticmethod

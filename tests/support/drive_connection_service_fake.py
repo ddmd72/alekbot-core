@@ -11,6 +11,7 @@ from typing import List, Optional, Set, Tuple
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_handle import DriveHandle
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveNotConnectedError
 
 from .drive_connection_repo import FakeDriveConnectionRepository
@@ -21,10 +22,12 @@ T_CREATED = datetime(2026, 10, 1, tzinfo=timezone.utc)
 def connection(user_id: str = "usr-1", connection_id: str = "conn-1", *, ref_tag: str = "a1",
                drive_identity: str = "fake_a:drive-1", kind: str = "fake_a", indexing: bool = True,
                transcribe: bool = False, credential_id: str = "cred-1", account_id: str = "acc-1",
-               created_at: datetime = T_CREATED) -> DriveConnection:
+               created_at: datetime = T_CREATED,
+               provider_account: Optional[ProviderAccount] = None) -> DriveConnection:
     return DriveConnection(connection_id=connection_id, user_id=user_id, account_id=account_id,
                            credential_id=credential_id, kind=kind, drive_identity=drive_identity, ref_tag=ref_tag,
-                           indexing_enabled=indexing, transcribe_enabled=transcribe, created_at=created_at)
+                           indexing_enabled=indexing, transcribe_enabled=transcribe, created_at=created_at,
+                           provider_account=provider_account)
 
 
 class FakeDriveConnectionService:
