@@ -129,7 +129,7 @@ class TestFanOut:
         summary = await env.svc.fan_out()
         assert summary["enqueued"] == 1
         [task] = _drive_tasks(env.queue)
-        assert task["payload"] == {"user_id": "u"}
+        assert task["payload"] == {"user_id": "u", "connection_id": "u"}
         assert task["key"] == tick_task_key(U_SCOPE, env.clock.now)
         assert task["deadline"] == TICK_DEADLINE_S
 
@@ -139,9 +139,11 @@ class TestFanOut:
         assert len(_drive_tasks(env.queue)) == 1   # Cloud Tasks reserves the name (FakeQueue too)
 
     async def test_disabled_user_without_state_is_skipped(self, env):
+        """A connection with indexing off is not listed (only ACTIVE connections with indexing on are, MULTI_DRIVE_RFC
+        §8); with no stored state it is no candidate at all."""
         env.users.enabled["u"] = False
         summary = await env.svc.fan_out()
-        assert summary["skipped"] == 1 and _drive_tasks(env.queue) == []
+        assert summary["candidates"] == 0 and _drive_tasks(env.queue) == []
 
     async def test_disabled_user_with_state_is_ticked_so_the_purge_runs(self, env):
         env.users.enabled["u"] = False
@@ -177,14 +179,14 @@ class TestFanOut:
     async def test_one_failing_user_does_not_stop_the_rest(self, env):
         env.connected.append("v")
         env.users.enabled["v"] = True
-        original = env.users.get_user
+        original = env.repo.get_sync_state
 
-        async def flaky(user_id):
-            if user_id == "u":
+        async def flaky(scope):   # the fan-out reads no user profile any more: a connection's own read fails
+            if scope.user_id == "u":
                 raise RuntimeError("firestore blip")
-            return await original(user_id)
+            return await original(scope)
 
-        env.users.get_user = flaky
+        env.repo.get_sync_state = flaky
         summary = await env.svc.fan_out()
         assert summary["errors"] == 1
         assert [t["payload"]["user_id"] for t in _drive_tasks(env.queue)] == ["v"]
