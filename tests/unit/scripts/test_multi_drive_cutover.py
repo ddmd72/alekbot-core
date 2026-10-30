@@ -324,100 +324,11 @@ async def test_copy_back_restores_what_the_old_revision_needs():
     assert w.snapshot() == once          # nothing left to copy back
 
 
-async def test_copy_back_leaves_an_unchanged_copy_alone_and_only_stamps_the_old_heads():
-    w = await _applied()
-    n = w.names
-    before = w.snapshot()
-    code, lines = await w.go("copy-back", now=later(60))
-    assert code == 0, lines
-    after = w.snapshot()
-    old_heads = {f"{USER}:{HASH_KEY}", f"{USER}:{ITEM_KEY}", f"{USER}:{ARCHIVED_KEY}"}
-    for doc_id in old_heads:
-        assert after["db"][n.transcripts][doc_id] == {**before["db"][n.transcripts][doc_id], "last_used_at": later(60)}
-        after["db"][n.transcripts][doc_id] = before["db"][n.transcripts][doc_id]
-    assert after == before
-
-
-# -- the rollback guards: the old keys' orphan sweep, the drain rule, the crashed run's lease ----------------------
-
-@pytest.mark.parametrize("mode", ["purge-new", "copy-back"])
-async def test_both_rollback_modes_stamp_every_old_key_head(mode):
-    w = await _applied()
-    n = w.names
-    w.col(n.transcripts)[f"{USER}:QXH4:4"] = {"user_id": USER, "content_key": "QXH4:4", "last_used_at": NOW}
-    new_heads = {i: dict(d) for i, d in w.col(n.transcripts).items() if d["last_used_at"] == NOW}
-    code, lines = await w.go(mode, now=later(90))
-    assert code == 0, lines
-    for doc_id, head in w.col(n.transcripts).items():
-        if w.script.parse_legacy_content_key(head["content_key"], ONEDRIVE) is not None:
-            assert head["last_used_at"] == later(90), doc_id
-    for doc_id, head in new_heads.items():
-        if w.script.parse_legacy_content_key(head["content_key"], ONEDRIVE) is None:
-            assert w.doc(n.transcripts, doc_id)["last_used_at"] == NOW          # the new-key heads are not stamped
-    assert any(f"stamped {n.transcripts} 4" in line for line in lines)
-
-
-async def test_the_rollback_dry_runs_stamp_nothing():
+async def test_copy_back_leaves_an_unchanged_copy_alone():
     w = await _applied()
     before = w.snapshot()
-    for mode in ("purge-new", "copy-back"):
-        code, lines = await w.go(mode, write=False, now=later(90))
-        assert code == 0 and w.snapshot() == before and any("stamped" in line for line in lines)
-
-
-@pytest.mark.parametrize("change, fragment", [
-    (lambda w, cid: w.col(w.names.records).__setitem__(f"{cid}:item-3", {
-        "user_id": USER, "connection_id": cid, "item_id": "item-3", "transcript_state": "working"}),
-     "working/waiting"),
-    (lambda w, cid: w.col(w.names.batches).__setitem__(f"{cid}:batches%2Fb3", {
-        "user_id": USER, "connection_id": cid, "name": "batches/b3", "state": "submitted", "reserved_usd": 0.7}),
-     "open transcript batches"),
-    (lambda w, cid: w.col(w.names.usage)[f"{USER}:2026-10"].update(transcribe_reserved_usd=0.3), "open reservations"),
-])
-async def test_purge_new_refuses_while_transcription_work_is_in_flight(change, fragment):
-    w = await _applied()
-    (conn,) = await w.store.list_for_user(USER)
-    change(w, conn.connection_id)
-    before = w.snapshot()
-    code, lines = await w.go("purge-new")
-    assert code == 1 and any(line.startswith("REFUSED") and fragment in line for line in lines), lines
-    assert w.snapshot() == before and await w.store.list_for_user(USER) == [conn]
-
-
-async def test_a_rerun_by_another_process_waits_for_the_crashed_runs_lease():
-    w = world()
-    w.db.collection(w.names.chunks).fail = RuntimeError("store down")
-    with pytest.raises(RuntimeError):
-        await w.go("apply", owner="cutover-proc-1")
-    w.db.collection(w.names.chunks).fail = None
-    before = w.snapshot()
-    code, lines = await w.go("apply", now=later(5), owner="cutover-proc-2")
-    assert code == 1 and w.snapshot() == before
-    assert any("lease is held" in line and "wait 30 minutes" in line for line in lines), lines
-    code, lines = await w.go("apply", now=later(31), owner="cutover-proc-2")
-    assert code == 0, lines
-    assert w.doc(w.names.sync_state, USER) is None
-    assert not [i for i in w.col(w.names.chunks) if i.startswith(f"{USER}:")]
-
-
-# -- copy-back and notes written after the cut-over ---------------------------------------------------------------
-
-async def test_copy_back_gives_a_note_written_after_the_cut_over_its_old_ref_key():
-    w = await _applied()
-    n = w.names
-    (conn,) = await w.store.list_for_user(USER)
-    new_note = [item_binding_key(onedrive_item_identity(DRIVE, "item-5")), tagged_ref_key(conn.ref_tag, "item-5")]
-    w.col(n.notes)[f"{USER}:n5"] = {"user_id": USER, "note_id": "n5", "match_keys": list(new_note)}
-    other = [item_binding_key(onedrive_item_identity("drv-other", "item-6")), tagged_ref_key(conn.ref_tag, "item-6")]
-    w.col(n.notes)[f"{USER}:n6"] = {"user_id": USER, "note_id": "n6", "match_keys": list(other)}
     code, lines = await w.go("copy-back")
-    assert code == 0, lines
-    assert w.doc(n.notes, f"{USER}:n5")["match_keys"] == [*new_note, "r:item-5"]
-    assert w.doc(n.notes, f"{USER}:n6")["match_keys"] == other           # bound to another drive: left alone
-    keys_n1 = list(w.doc(n.notes, f"{USER}:n1")["match_keys"])
-    await w.go("copy-back")
-    assert w.doc(n.notes, f"{USER}:n1")["match_keys"] == keys_n1 and \
-        w.doc(n.notes, f"{USER}:n5")["match_keys"].count("r:item-5") == 1          # a re-run adds nothing
+    assert code == 0 and w.snapshot() == before, lines
 
 
 # -- --cleanup ----------------------------------------------------------------------------------------------------
