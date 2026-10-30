@@ -46,7 +46,7 @@ unauthenticated `curl` against the live service returns **401**. Project ID / us
    curl -s -X POST "$SERVICE_URL_DEV/worker" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
      -d '{"task_type": "daily_email_review", "user_id": "<DEV_USER_ID>", "account_id": "<DEV_ACCOUNT_ID>"}'
    ```
-   `drive_sync` runs on the indexer, not the main service: enqueue it on `drive-sync-dev` with
+   `drive_sync` (body `{user_id, connection_id}`; a body without a connection is refused) runs on the indexer, not the main service: enqueue it on `drive-sync-dev` with
    `gcloud tasks create-http-task … --oidc-service-account-email=<SA>` (needs actAs on that identity;
    `docs/07_deployment/SCHEDULERS.md`).
 3. **Local instance:** with no OIDC identity configured and `K_SERVICE` unset the gate is open, so a plain

@@ -14,7 +14,10 @@ ABC interfaces. Contracts between domain/services and the external world. ~93 po
 | `IAMPort` | `iam_port.py` | IAMService | Authorization: platform + user_id → AuthResult |
 | `QuotaService` | `quota_service.py` | FirestoreQuotaService | Billing: deduct/check quota |
 | `PromptBuilderPort` | `prompt_builder_port.py` | PromptBuilder | Agent prompt assembly |
-| `UserDrivePort` | `user_drive_port.py` | OneDriveAdapter (`adapters/microsoft/`) | User's long-term file area: list, read, write, move, delete (provider-neutral) |
+| `UserDrivePort` | `user_drive_port.py` | `DriveProviderRouter` (`composition/`, dispatches by `handle.kind`) over OneDriveAdapter (`adapters/microsoft/`) | User's long-term file area: list, read, write, move, delete (provider-neutral). Every method takes a `DriveHandle` (user, connection, credential, kind), never a bare `user_id` |
+| `DriveConnectionRepository` | `drive_connection_repository.py` | FirestoreDriveConnectionRepository | Drive connections and the user's primary pointer |
+
+- **Drive port trap:** an adapter keys caches, locks and token caches by `(user_id, credential_id)` or the connection, never by user alone, and builds item/drive identities (`{id_space}:{…}`), `ContentIdentity` and `DriveMediaFacts` itself; the domain never parses a provider id. The contract suite is `tests/contracts/user_drive_contract.py`.
 
 ## Conventions
 

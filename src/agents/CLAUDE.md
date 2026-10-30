@@ -85,6 +85,9 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
   (`scripts/validation/drive_eval/dry_run_drive.py`), never at `DelegationEngine.dispatch` (the specialist's tools do not
   pass through it). A global `provider_preference: openai` moves it to the rejected `gpt-6-luna`: pin
   `agent_providers["drive"]="claude"`. `DriveAgent` is `NO_RETRY_POLICY` (a retry would repeat a write).
+- **Drive refs are tagged:** the model and the history see `drive:<tag>:<item_id>` (the tag names the connection); a ref
+  written before the connections has no tag and answers "search for the file again". Prompt examples use the tagged form.
+  Settings (indexing, transcription, primary, disconnect) are Cabinet-only; no chat path sets them.
 - **Drive open bound:** a refusal is `REFUSED` and never settled by a later open, and arms no content gate (a page does).
 - **FileManagement:** `prefetch_file_ref=False`; `delete_file` on a `drive:` ref is refused (route through
   `work_with_drive_files`).

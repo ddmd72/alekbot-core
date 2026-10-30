@@ -124,20 +124,25 @@ How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 
 ### 3.7 User drive
 
-All are written by `FirestoreDriveIndexRepository` (`src/adapters/firestore_drive_index_repo.py`). Their meaning,
-lifecycles and which purge keeps what are in the drive map, `../05_building_blocks/user_drive/README.md`.
+All but the two connection collections are written by `FirestoreDriveIndexRepository`
+(`src/adapters/firestore_drive_index_repo.py`). Their meaning, lifecycles and which purge keeps what are in the drive map,
+`../05_building_blocks/user_drive/README.md`. Index records, chunks, hints, transcript jobs and batches and the sync state
+are keyed by the connection id (`{connection_id}:…`, with `user_id` a stored field); the usage, initial build, transcript
+store, mirror roots and ledger are user- or drive-scoped on purpose (drive map §3, "Keys by scope").
 
 | Collection | Holds |
 | :--- | :--- |
-| `{p}drive_index_records` | one record per drive item (doc id `{user_id}:{item_id}`), with a card vector and no stored path |
+| `{p}drive_connections` | one document per drive connection (doc id `{user_id}:{connection_id}`): kind, credential id, drive identity, ref tag, mount name, indexing and transcription switches, provider account, state; never deleted (a DISCONNECTED one keeps its tag reserved); written by `FirestoreDriveConnectionRepository` (`src/adapters/firestore_drive_connection_repo.py`, model `src/domain/drive_connection.py`) |
+| `{p}drive_user_settings` | the user's drive settings (doc id `{user_id}`): the primary connection pointer, read fresh on every use; same repository, model `src/domain/drive_user_settings.py` |
+| `{p}drive_index_records` | one record per drive item (doc id `{connection_id}:{item_id}`), with a card vector and no stored path |
 | `{p}drive_index_chunks` | text chunks, children of a record |
 | `{p}drive_index_hints` | passage hints, one document per chunk that has hints |
-| `{p}drive_sync_state` | sync state per user: delta cursor, epoch, lease, applied versions |
+| `{p}drive_sync_state` | sync state per connection (doc id `{connection_id}`): delta cursor, epoch, lease, applied versions |
 | `{p}drive_model_usage` | model spend per class and month (a purge keeps it) |
 | `{p}drive_transcript_jobs` | transcript jobs, one per media file in flight; window results in `{p}drive_transcript_windows` below each |
 | `{p}drive_transcript_batches` | provider batches, one per submitted batch |
 | `{p}drive_transcripts` | the transcript store under the content key; large ones are split into `{p}drive_transcript_parts` |
-| `{p}drive_mirror_roots` | the transcript mirror's root per user and drive (`{user_id}:{drive_id}`); no purge deletes it |
+| `{p}drive_mirror_roots` | the transcript mirror's root per user and drive (`{user_id}:{drive_identity}`); no purge deletes it |
 | `{p}drive_transcript_mirror` | the mirror's ledger, one document per mirrored file and folder; no purge deletes it |
 
 The two subcollections carry the prefix too, because Firestore collection-group ids are not scoped by parent.

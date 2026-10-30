@@ -59,7 +59,7 @@ apply to the main service.
 - **The token audience is pinned** to the indexer's own URL (`{url}` or `{url}/worker`): a manual task sent to another
   run.app URL form than the one in `INDEXER_URL_DEV` gets 401.
 - **Feed.** The scheduler job `alek-bot-dev-start-drive-sync` sends the main service `start_drive_sync` every 10 minutes
-  (minutes 3, 13, …), which fans out one `drive_sync` per user; bot writes and the Cabinet toggle also enqueue one. All go
+  (minutes 3, 13, …), which fans out one `drive_sync` per drive connection (payload `{user_id, connection_id}`; a manual task needs the connection id too); bot writes and the Cabinet toggle also enqueue one. All go
   through the queue `drive-sync-dev` (`max-concurrent-dispatches=1`, 1800 s dispatch deadline). Queue, job and the build
   identity's queue permission: [SCHEDULERS.md](SCHEDULERS.md) § Start Drive Sync.
 - **Model keys.** The reader and triage agents mount `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` through `--set-secrets`
@@ -518,8 +518,8 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
   that reason; `--truncated`: indexed records whose text was cut by an older chunk cap; `--no-text`: images with a `text`
   verdict the reader got no text from. The next tick reads them; no `EXTRACTION_VERSION` bump, so the rest of the drive
   is not re-read.
-- Transcription: the user's flag off (`scripts/infrastructure/drive_transcribe_flag.py --user USER --off --apply`) stops
-  that user's new work and the mirror folder; the kill switch off (`DRIVE_TRANSCRIBE_ENABLED_DEV=off`, redeploy) stops it
+- Transcription: the connection's flag off (`scripts/infrastructure/drive_transcribe_flag.py --user USER [--connection ID] --off --apply`) stops
+  that connection's new work and the mirror folder; the kill switch off (`DRIVE_TRANSCRIBE_ENABLED_DEV=off`, redeploy) stops it
   for everyone and freezes in-flight batches. There is no mirror-only switch.
 
 **Drive notes** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` §3.6). Stop every note write: `DRIVE_NOTES_ENABLED_DEV=off` in `.env`
