@@ -43,11 +43,11 @@ def agent(drive, search):
     ("append", ("x",), {}),
 ])
 async def test_a_mutation_of_a_closed_file_answers_the_access_sentence(agent, method, args, kwargs):
-    resp = await getattr(agent, method)(CTX, "u1", "drive:f1", *args, **kwargs, wait_s=100.0)
+    resp = await getattr(agent, method)(CTX, "u1", "drive:a1:f1", *args, **kwargs, wait_s=100.0)
     assert not resp.success and resp.text == ACCESS_NOTE_FILE
 
 
 async def test_an_unknown_item_still_answers_gone(agent, drive):
     drive.delete.side_effect = DriveItemNotFoundError("f9")
-    resp = await agent.delete(CTX, "u1", "drive:f9", wait_s=100.0)
+    resp = await agent.delete(CTX, "u1", "drive:a1:f9", wait_s=100.0)
     assert resp.text == GONE
