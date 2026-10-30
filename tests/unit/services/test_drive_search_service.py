@@ -114,7 +114,9 @@ class TestGate:
         reads = w.users.reads
         w.users.enabled["u"] = False   # opt-out with a warm agent cache: the next search sees it
         result = await w.search("lease")
-        assert result.status == STATUS_DISABLED and result.cards == () and w.users.reads == reads + 1
+        # the switch is the connection's (MULTI_DRIVE_RFC §3): a search reads the primary pointer and the connection
+        # fresh (§4.4, E2), and the harness derives each read from the profile
+        assert result.status == STATUS_DISABLED and result.cards == () and w.users.reads == reads + 2
         assert "turned on" in render_results(result)
 
     async def test_disconnect_hides_the_index(self):
@@ -250,7 +252,7 @@ class TestRanking:
             w.drive.add(name)
         await w.settle()
         result = await w.search("pdf")
-        assert {c.ref for c in result.cards} == {f"drive:{c.item_id}" for c in result.cards}
+        assert {c.ref for c in result.cards} == {f"drive:a1:{c.item_id}" for c in result.cards}
         assert len({c.nonce for c in result.cards}) == 3 and all(c.kind == "pdf" for c in result.cards)
 
 
@@ -341,7 +343,7 @@ class TestFolderScope:
 
     async def test_by_ref(self, w):
         contracts = await self._tree(w)
-        assert paths(await w.search("lease", folder=f"drive:{contracts}")) == ["Contracts/Lease agreement.pdf"]
+        assert paths(await w.search("lease", folder=f"drive:a1:{contracts}")) == ["Contracts/Lease agreement.pdf"]
 
     async def test_several_matches_are_candidates_not_a_guess(self, w):
         await self._tree(w)
@@ -508,8 +510,8 @@ class TestIndexingStatus:
 
 
 def test_contract_signature():
-    """The constructor named in the cross-part contract: (repo, embeddings, users, drive, *, clock)."""
+    """The constructor named in the cross-part contract: (repo, embeddings, drive, connections, *, clock)."""
     import inspect
     params = inspect.signature(DriveSearchService.__init__).parameters
-    assert list(params)[1:5] == ["repo", "embeddings", "users", "drive"]
+    assert list(params)[1:5] == ["repo", "embeddings", "drive", "connections"]
     assert params["clock"].kind is inspect.Parameter.KEYWORD_ONLY
