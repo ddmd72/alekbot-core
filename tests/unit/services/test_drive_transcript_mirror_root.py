@@ -13,7 +13,7 @@ from src.domain.drive_index_params import MIRROR_AUDIT_DAYS, MIRROR_ROOT_GRACE
 from src.domain.drive_mirror import KIND_ARCHIVE, MIRROR_ACTIVE, MIRROR_ARCHIVED, ROOT_NAME
 from src.domain.drive_mirror_plan import RootDecision, root_decision
 
-from .drive_mirror_fakes import AREA, USER, Crash, MirrorWorld, Node
+from .drive_mirror_fakes import AREA, SCOPE, USER, Crash, MirrorWorld, Node
 
 HOUR = timedelta(hours=1)
 WEEK = timedelta(days=MIRROR_AUDIT_DAYS)
@@ -58,7 +58,7 @@ async def root_leaves(w: MirrorWorld) -> List[Node]:
     root_id = w.root.root_item_id
     nodes = cut(w, root_id)
     assert await w.mirror.mark_root_gone(USER, root_id, w.clock)
-    await w.repo.delete_records(USER, [root_id])
+    await w.repo.delete_records(SCOPE, [root_id])
     return nodes
 
 
@@ -79,8 +79,8 @@ def test_root_decision_graced_and_confirmed():
     from dataclasses import replace
 
     from src.domain.drive_mirror import MirrorRoot
-    from .drive_mirror_fakes import DRIVE, START
-    root = MirrorRoot(USER, DRIVE, "r", ROOT_NAME, root_gone_at=START)
+    from .drive_mirror_fakes import DRIVE_IDENTITY, START
+    root = MirrorRoot(USER, DRIVE_IDENTITY, "r", ROOT_NAME, root_gone_at=START)
     late = START + MIRROR_ROOT_GRACE
     assert root_decision(root, record_present=True, round_complete=True, now=late) is RootDecision.CLEAR
     assert root_decision(root, record_present=False, round_complete=True, now=late - HOUR) is RootDecision.WAIT
@@ -138,7 +138,7 @@ async def test_root_found_clears_the_mark():
     root_id = w.root.root_item_id
     snapshot = dict(w.mirror.docs)
     await w.mirror.mark_root_gone(USER, root_id, w.clock)  # the record went (a stray tombstone); the root did not
-    await w.repo.delete_records(USER, [root_id])
+    await w.repo.delete_records(SCOPE, [root_id])
     w.advance(MIRROR_ROOT_GRACE + HOUR)
     w.reset_calls()
     counters = await w.run()

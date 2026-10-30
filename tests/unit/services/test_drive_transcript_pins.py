@@ -22,18 +22,22 @@ from src.domain.user_drive import DriveConnection
 from src.services.drive_transcript_stage import DriveTranscriptStage
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
-from .drive_mirror_tick_world import DRIVE, MirrorWorld
-from .drive_transcript_fakes import NOW, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner
+from .drive_mirror_tick_world import DRIVE_IDENTITY, MirrorWorld, source_identity
+from .drive_transcript_fakes import (
+    HANDLE, NOW, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner,
+)
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
 TEXT = StitchedTranscript((Segment(0.0, None, "first words"), Segment(30.0, None, "second words")), ("en",), 1, 60.0)
 
 
-def ledger(content_key: str, *, state: str = MIRROR_ARCHIVED, drive: str = DRIVE, item: str = "",
+def ledger(content_key: str, *, state: str = MIRROR_ARCHIVED, drive: str = DRIVE_IDENTITY, item: str = "",
            user: str = "u", **kw: Any) -> MirrorDoc:
-    return MirrorDoc(user_id=user, drive_id=drive, kind=KIND_FILE, source_item_id=item or f"src-{content_key}",
-                     content_key=content_key, mirror_item_id=f"mf-{content_key}", state=state, **kw)
+    source = item or f"src-{content_key}"
+    return MirrorDoc(user_id=user, drive_identity=drive, kind=KIND_FILE, source_item_id=source,
+                     source_identity=source_identity(source, drive), content_key=content_key,
+                     mirror_item_id=f"mf-{content_key}", state=state, **kw)
 
 
 # -- the orphan sweep (§27.8 b, Δ186) -----------------------------------------------------------------------------------
@@ -57,7 +61,7 @@ def _stage_env(tmp_path, *, mirror: bool = True):
 
 
 async def _sweep(env):
-    return await env.stage.cheap_steps(USER, env.host, stop_at=env.clock.mono + 600)
+    return await env.stage.cheap_steps(HANDLE, env.host, stop_at=env.clock.mono + 600)
 
 
 async def test_orphan_sweep_keeps_and_touches_a_pinned_key(tmp_path):
@@ -82,7 +86,8 @@ async def test_pin_holds_during_the_grace_hour(tmp_path):
     long_ago = NOW - TRANSCRIPT_ORPHAN_TTL - timedelta(days=1)
     await env.repo.put_transcript(USER, StoredTranscript("marked", TEXT, last_used_at=long_ago))
     await env.mirror.save_doc(ledger("marked", user=USER, state=MIRROR_ACTIVE, item="a"))
-    await env.mirror.mark_gone(USER, [DeletionNotice("a", GONE, NOW)])
+    await env.mirror.mark_gone(USER, [DeletionNotice("a", GONE, NOW, source_identity=source_identity("a"))],
+                               drive_identity=DRIVE_IDENTITY)
     await _sweep(env)
     assert env.repo.transcripts[(USER, "marked")].last_used_at == env.clock.now
 
@@ -129,7 +134,7 @@ def record_store_calls(w: MirrorWorld) -> List[Any]:
     return calls
 
 
-async def _onboarded_with_store(world, pinned: List[str], unpinned: List[str], *, pin_drive: str = DRIVE, **kw):
+async def _onboarded_with_store(world, pinned: List[str], unpinned: List[str], *, pin_drive: str = DRIVE_IDENTITY, **kw):
     w = world(**kw)
     w.add_root()
     w.add_doc("notes.md", prose(4))
