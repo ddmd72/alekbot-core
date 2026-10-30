@@ -2,6 +2,9 @@
 import pytest
 
 from scripts.validation.drive_eval.fixture_drive import DRIVE_ID, ROOT_ID, FixtureDrive, item_id_for
+from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.user_drive import DriveItemNotFoundError, DriveResyncRequired
 
 from .drive_eval_samples import MANIFEST
@@ -23,7 +26,8 @@ async def test_full_enumeration_is_parent_first_then_deltas_carry_only_the_root(
     while True:
         page = await drive.get_changes(USER, cursor)
         pages += 1
-        assert page.full_enumeration and page.drive_id == DRIVE_ID and page.root_item_id == ROOT_ID
+        assert page.full_enumeration and page.drive_identity == onedrive_drive_identity(DRIVE_ID)
+        assert page.root_item_id == ROOT_ID
         if pages == 1:
             assert page.changes[0].item_id == ROOT_ID and page.changes[0].is_folder   # S0a: the root, every round
         for change in page.changes:
@@ -46,11 +50,18 @@ async def test_unknown_cursor_asks_for_a_resync():
 async def test_generated_items_implicit_folders_and_s0e_facets():
     drive = FixtureDrive(MANIFEST)
     note = await drive.get_change(USER, item_id_for("Vault/note-001.md"))
-    assert note.facets == {"hashes": {"quickXorHash": "note1="}} and note.mime_type == "text/markdown"
+    assert note.content_identity == ContentIdentity("quickxor", "note1=", note.size_bytes)
+    assert note.media == DriveMediaFacts() and note.mime_type == "text/markdown"
     photo = await drive.get_change(USER, item_id_for("Photos/Rome 2025/IMG_0001.HEIC"))
-    assert set(photo.facets) == {"photo", "location", "image"} and photo.content_version
+    media = photo.media   # the photo, location and image facets, and nothing else
+    assert media.taken_at is not None and media.camera_make and media.location is not None
+    assert media.image_width and media.image_height and photo.content_version
+    assert media == DriveMediaFacts(taken_at=media.taken_at, camera_make=media.camera_make,
+                                    camera_model=media.camera_model, latitude=media.latitude,
+                                    longitude=media.longitude, image_width=media.image_width,
+                                    image_height=media.image_height)
     lease = await drive.get_change(USER, item_id_for("Inbox/Lease agreement — Porto.pdf"))
-    assert lease.facets["hashes"]["quickXorHash"] == "bGVhc2U="
+    assert (lease.content_identity.family, lease.content_identity.digest) == ("quickxor", "bGVhc2U=")
     inbox = await drive.get_change(USER, item_id_for("Inbox"))
     assert inbox.is_folder and inbox.child_count == 1 and inbox.parent_id == ROOT_ID
     mirror = await drive.get_change(USER, item_id_for("Dumps/site-mirror"))
