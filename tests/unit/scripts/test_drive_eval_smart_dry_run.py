@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
-from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, _EnabledUsers, index_fixture
+from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture
 from scripts.validation.drive_eval.smart_dry_run import (
     STUB_RESULT, AsEvalUser, DryRunDispatch, G3Error, annotate_drive_read, judge, make_g3_bars, score, searched,
     validate_g3,
@@ -61,7 +62,8 @@ async def setup():
     repo = InMemoryDriveIndexRepository()
     clock = EvalClock()
     await index_fixture(drive, repo, FakeEmbeddings(), rome, "fake/8", clock, throttle_pause_s=0, **fake_content())
-    search = DriveSearchService(repo, FakeEmbeddings(), _EnabledUsers(), drive, clock=clock, embedding_space="fake/8")
+    search = DriveSearchService(repo, FakeEmbeddings(), drive, EvalDriveConnections(eval_connection(EVAL_USER)),
+                                clock=clock, embedding_space="fake/8")
     real_calls = []
 
     async def real_dispatch(engine, tool_call, context, *args, **kwargs):
