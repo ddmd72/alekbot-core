@@ -5,8 +5,8 @@ FactReviewStore — the memory review's questions, its per-account state and its
 The queue and the current question: `claim_next` is the one way a question goes out, deciding with the domain's
 `current_question`, `may_send`, `next_in_queue` and `sent_today` inside one transaction over the state document and the
 account's open questions, so two concurrent claims give one question. The writes that end an attempt
-(`requeue_front`, `mark_unanswered`, `close_and_release`) clear the state's `current_question_id` in the same
-transaction, and only when it names that question; `close_and_release` reports whether it did.
+(`requeue_front`, `mark_unanswered`, `record_reply`, `close_and_release`) clear the state's `current_question_id` in the
+same transaction, and only when it names that question; `record_reply` and `close_and_release` report whether they did.
 
 The store decides no transition. Every status change is a method of `FactReviewQuestion` and every state change a method
 of `FactReviewState` (`claimed`, `released`, `delivery_failed`, `enqueued`, `failed`, `succeeded`, `undigested`, `digested`,
@@ -30,6 +30,7 @@ from typing import Dict, List, Mapping, Optional, Sequence
 
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_reply_record import ReplyRecord
 from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_state import FactReviewState
@@ -74,10 +75,13 @@ class FactReviewStore(ABC):
         not yet posted one."""
 
     @abstractmethod
-    async def record_reply(self, question_id: str, text: str, at: datetime) -> bool:
-        """`with_reply(text, at)`, in a transaction over the question. True only when the question changed. False: no
-        such question; not an asked or unanswered one, or its reply was already shown to the review; no words; or
-        nothing more fits under `MAX_REPLY_CHARS` (`with_reply` returns the question unchanged)."""
+    async def record_reply(self, question_id: str, text: str, at: datetime) -> ReplyRecord:
+        """`with_reply(text, at)`, in a transaction over the question and its account's state, the state moving by
+        `released(question_id)`: a words reply to the current question gives up the slot as it is recorded. RELEASED:
+        recorded and the slot cleared; RECORDED: recorded, the slot named another question or none. REFUSED, nothing
+        written: no such question; not an asked or unanswered one, or its reply was already shown to the review; no
+        words; or nothing more fits under `MAX_REPLY_CHARS` (`with_reply` returns the question unchanged). The
+        question's status is left as it was."""
 
     @abstractmethod
     async def mark_offered(self, question_id: str, at: datetime) -> bool:
