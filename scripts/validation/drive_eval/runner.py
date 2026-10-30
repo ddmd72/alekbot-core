@@ -96,7 +96,7 @@ class _EnabledUsers:
         if user_id != EVAL_USER:
             return None
         return UserProfile(user_id=user_id, account_id="eval-account",
-                           config=UserBotConfig(drive_indexing_enabled=True))
+                           config=UserBotConfig())
 
 
 @dataclass

@@ -77,8 +77,7 @@ class _Users:
         from src.domain.user import UserBotConfig, UserProfile
 
         return UserProfile(user_id=user_id, account_id="eval-account",
-                           config=UserBotConfig(drive_indexing_enabled=True,
-                                                agent_providers={a: PROVIDER for a in _AGENTS}))
+                           config=UserBotConfig(agent_providers={a: PROVIDER for a in _AGENTS}))
 
 
 def real_runners(keys: Dict[str, Optional[str]], assembly: Any, splitter: Any) -> Dict[str, Any]:

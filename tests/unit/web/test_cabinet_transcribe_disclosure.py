@@ -8,7 +8,6 @@ import pytest
 from quart import Quart
 
 from src.domain.drive_indexing_status import DriveIndexingStatus
-from src.domain.user import UserBotConfig
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
@@ -60,7 +59,3 @@ async def test_status_returns_the_flag(flag):
     async with (await _app(flag)).test_client() as client:
         body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
     assert body["indexing"]["transcribe_enabled"] is flag
-
-
-def test_flag_defaults_off():
-    assert UserBotConfig().drive_transcribe_enabled is False
