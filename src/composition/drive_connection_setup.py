@@ -7,7 +7,8 @@ The drive activation runs after `OAuthConnectService` saved a drive credential (
    connection's when the consent's credential already backs one (a reconnect); otherwise a probe handle for the
    credential (a connection id derived from the credential id, never stored), whose adapter caches are dropped with
    `forget` right after. A failed read falls back to the matching connection's stored identity; with none, the
-   activation raises (the connect service logs it; the credential stays saved and the next consent retries).
+   activation raises `ConnectActivationFailed`: the connect fails and the connect service removes the just-saved
+   credential (no credential without its connection).
 2. `DriveConnectionService.activate(credential, identity)`: create, or reconnect by account.
 3. When the connection indexes, a `drive_sync` task for it under a toggle key, so a reconnect resumes the index
    without waiting for the fan-out (best effort, logged).
@@ -26,6 +27,7 @@ from ..config.environment import EnvironmentConfig
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
+from ..domain.exceptions import ConnectActivationFailed
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_queue import TaskQueue
@@ -92,8 +94,8 @@ def build_drive_activation(*, connections: DriveConnectionService, drive: UserDr
             await forget(probe)
         if not identity:
             logger.error(f"💥 Drive connect of user={user_id[:8]} kind={credential.kind}: the drive identity could not "
-                         f"be read; no connection created (the credential is saved, a new consent retries)")
-            raise RuntimeError("the drive identity of a new grant could not be read")
+                         f"be read; no connection created, the connect fails")
+            raise ConnectActivationFailed("the drive identity of a new grant could not be read")
         connection = await connections.activate(credential, identity)
         if not connection.indexing_enabled or task_queue is None:
             return

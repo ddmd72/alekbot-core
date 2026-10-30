@@ -18,6 +18,7 @@ from src.composition.oauth_connect_setup import build_connect_activations
 from src.composition.connector_registry import ConnectorRegistry
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_handle import DriveHandle
+from src.domain.exceptions import ConnectActivationFailed
 from src.domain.integration import Integration
 from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveItem
@@ -87,10 +88,10 @@ class TestNewGrant:
         assert probe.connection_id != conn.connection_id
         assert w.drive_tasks() == []                         # a new connection does not index yet
 
-    async def test_an_unreadable_identity_creates_nothing_and_raises(self, caplog):
+    async def test_an_unreadable_identity_creates_nothing_and_refuses_the_consent(self, caplog):
         w = World()
         credential = await w.consent()
-        with pytest.raises(RuntimeError):
+        with pytest.raises(ConnectActivationFailed):
             await w.activate(credential)
         assert w.repo.connections == {}
         assert len(w.drive.forgotten) == 1
