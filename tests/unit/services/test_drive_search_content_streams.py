@@ -42,7 +42,7 @@ class ContentSpy(SpyRepo):
 
 def _blank(c):
     return DriveChunk(c.user_id, c.item_id, c.generation, c.index, "", c.char_start, c.char_end, c.kind,
-                      c.content_terms)
+                      c.content_terms, connection_id=c.connection_id)
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +75,8 @@ async def index(w, item_id, texts, vectors, gen=1, readable=True):
     rec = w.repo.records[("u", item_id)]
     chunks, start = [], 0
     for i, text in enumerate(texts):
-        chunks.append(DriveChunk("u", item_id, gen, i, text, start, start + len(text), rec.kind, content_terms(text)))
+        chunks.append(DriveChunk("u", item_id, gen, i, text, start, start + len(text), rec.kind, content_terms(text),
+                                 connection_id="u"))
         start += len(text)
     await w.repo.write_chunks(chunks, vectors)
     if readable:

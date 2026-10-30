@@ -5,12 +5,13 @@ import pytest
 from src.domain.drive_search import DriveSearchRequest, render_results
 from src.services.drive_search_service import DriveSearchService
 
+from .drive_harness_connections import harness_connections
 from .test_drive_search_service import World
 
 
 def _service(w, space):
-    return DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, nonce=lambda: "nonce0001",
-                              embedding_space=space)
+    return DriveSearchService(w.repo, w.emb, w.drive, harness_connections(w.users, w.drive), clock=w.clock,
+                              nonce=lambda: "nonce0001", embedding_space=space)
 
 
 async def _world():
