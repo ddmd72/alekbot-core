@@ -11,13 +11,14 @@ from src.adapters.firestore_drive_index_repo import (
 )
 
 from tests.unit.adapters.firestore_drive_fakes import RECS, Db, executed, make_repo, rec_doc, snap
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 async def test_nearest_projects_the_record_fields_and_the_distance_before_the_search(mock_env_config):
     db = Db()
     repo = make_repo(db, mock_env_config)
     db.cols[RECS].respond = lambda ops: [snap({**rec_doc("a"), CARD_DISTANCE: 0.25})]
-    hits = await repo.find_nearest_cards("u", [1.0, 0.0], 50, kind="pdf")
+    hits = await repo.find_nearest_cards(U_SCOPE, [1.0, 0.0], 50, kind="pdf")
     assert [(r.item_id, d) for r, d in hits] == [("a", 0.25)]
     (ops,) = executed(db)
     names = [op[0] for op in ops]
@@ -40,7 +41,7 @@ async def test_the_sent_query_selects_the_distance_field(monkeypatch, mock_env_c
     mock_env_config.drive_index_records_collection = "test_drive_index_records"
     mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
     repo = FirestoreDriveIndexRepository(client, mock_env_config)
-    assert await repo.find_nearest_cards("u", Vector([1.0]), 5) == []
+    assert await repo.find_nearest_cards(U_SCOPE, Vector([1.0]), 5) == []
     (query,) = sent
     selected = {f.field_path for f in query.select.fields}
     assert CARD_DISTANCE in selected and CARD_VECTOR not in selected

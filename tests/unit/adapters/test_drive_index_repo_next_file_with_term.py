@@ -10,8 +10,10 @@ from google.cloud.firestore_v1.async_query import AsyncQuery
 from src.adapters.firestore_drive_index_repo import STREAM_FIELDS, FirestoreDriveIndexRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 
-from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, chunk, chunk_snap, make_chunk_repo
+from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, chunk_snap, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import executed
+from tests.unit.services.drive_index_fakes import U_SCOPE
+from tests.support.g1a3_drive_chunks import chunk
 
 
 class TestInMemory:
@@ -26,22 +28,22 @@ class TestInMemory:
         await self._put(repo, *(chunk(item="a", index=i, terms=("2024",)) for i in range(5)),
                         chunk(item="b", index=3, terms=("2024",)), chunk(item="b", index=1, terms=("2024",)),
                         chunk(item="c", terms=("2024",)))
-        nxt = await repo.find_next_file_with_term("u", "2024", "a")
+        nxt = await repo.find_next_file_with_term(U_SCOPE, "2024", "a")
         assert (nxt.item_id, nxt.index) == ("b", 1)   # the first chunk of the next file, in key order
-        assert (await repo.find_next_file_with_term("u", "2024", "b")).item_id == "c"
-        assert await repo.find_next_file_with_term("u", "2024", "c") is None
+        assert (await repo.find_next_file_with_term(U_SCOPE, "2024", "b")).item_id == "c"
+        assert await repo.find_next_file_with_term(U_SCOPE, "2024", "c") is None
 
     async def test_term_user_and_kind(self, repo):
         await self._put(repo, chunk(item="b", terms=("1999",)), chunk(item="c", user="v", terms=("2024",)),
                         chunk(item="d", kind="docx", terms=("2024",)), chunk(item="e", terms=("2024",)))
-        assert (await repo.find_next_file_with_term("u", "2024", "a")).item_id == "d"
-        assert (await repo.find_next_file_with_term("u", "2024", "a", kind="pdf")).item_id == "e"
-        assert await repo.find_next_file_with_term("u", "2024", "e") is None
+        assert (await repo.find_next_file_with_term(U_SCOPE, "2024", "a")).item_id == "d"
+        assert (await repo.find_next_file_with_term(U_SCOPE, "2024", "a", kind="pdf")).item_id == "e"
+        assert await repo.find_next_file_with_term(U_SCOPE, "2024", "e") is None
 
     async def test_an_item_id_that_holds_no_chunk_is_a_plain_position(self, repo):
         await self._put(repo, chunk(item="b", terms=("2024",)))
-        assert (await repo.find_next_file_with_term("u", "2024", "a")).item_id == "b"
-        assert await repo.find_next_file_with_term("u", "2024", "bb") is None
+        assert (await repo.find_next_file_with_term(U_SCOPE, "2024", "a")).item_id == "b"
+        assert await repo.find_next_file_with_term(U_SCOPE, "2024", "bb") is None
 
 
 class TestFirestore:
@@ -55,7 +57,7 @@ class TestFirestore:
 
     async def test_one_array_contains_with_a_cursor_on_item_id_limit_one(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(item="b", terms=("2024",)))]
-        found = await repo.find_next_file_with_term("u", "2024", "a")
+        found = await repo.find_next_file_with_term(U_SCOPE, "2024", "a")
         assert found.item_id == "b"
         (ops,) = executed(db, CHUNKS)
         assert ops == [("where", "user_id", "==", "u"), ("where", "content_terms", "array_contains", "2024"),
@@ -64,7 +66,7 @@ class TestFirestore:
                        ("select", STREAM_FIELDS)]
 
     async def test_kind_and_exhausted(self, repo, db):
-        assert await repo.find_next_file_with_term("u", "2024", "a", kind="xlsx") is None
+        assert await repo.find_next_file_with_term(U_SCOPE, "2024", "a", kind="xlsx") is None
         (ops,) = executed(db, CHUNKS)
         assert ops[1] == ("where", "kind", "==", "xlsx")
 
@@ -83,7 +85,7 @@ class TestFirestore:
         mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
         mock_env_config.drive_index_chunks_collection = "test_drive_index_chunks"
         repo = FirestoreDriveIndexRepository(client, mock_env_config)
-        assert await repo.find_next_file_with_term("u", "2024", "a") is None
+        assert await repo.find_next_file_with_term(U_SCOPE, "2024", "a") is None
         (query,) = sent
         assert [o.field.field_path for o in query.order_by] == ["item_id", "generation", "index"]
         assert [v.string_value for v in query.start_at.values] == ["a"] and not query.start_at.before
