@@ -89,9 +89,10 @@ async def test_the_record_has_the_final_shape_and_no_secret_in_a_plaintext_field
     await store.repo.save(creds())
     (doc_id, doc), = store.docs.items()
     assert doc_id == f"user-a:{doc['credential_id']}"
-    assert set(doc) == {"user_id", "credential_id", "kind", "account", "scopes", "token_expiry", "needs_reconnect",
-                        "created_at", "updated_at", "secret"}
+    assert set(doc) == {"user_id", "credential_id", "kind", "integration", "account_id", "account", "scopes",
+                        "token_expiry", "needs_reconnect", "created_at", "updated_at", "secret"}
     assert doc["kind"] == "gmail" and doc["account"] == {"realm": "google", "subject": "sub-a"}
+    assert (doc["integration"], doc["account_id"]) == ("mail", "acct-1")
     plain = {k: v for k, v in doc.items() if k != "secret"}
     for value in SECRET_VALUES:
         assert all(value not in s for s in _strings(plain))
@@ -138,15 +139,6 @@ async def test_a_consent_clears_needs_reconnect(store):
     assert (await one(store.repo, "user-a", "gmail")).needs_reconnect is False
 
 
-async def test_another_account_replaces_the_record(store):
-    await store.repo.save(creds())
-    first = (await one(store.repo, "user-a", "gmail")).credential_id
-    await store.repo.save(creds(subject="sub-b", label="other@example.com"))
-    assert len(store.docs) == 1
-    got = await one(store.repo, "user-a", "gmail")
-    assert got.credential_id != first and (got.account.subject, got.account.label) == ("sub-b", "other@example.com")
-
-
 @pytest.mark.parametrize("subject", ["", "   "])
 async def test_a_credential_without_its_account_subject_stores_nothing(store, subject):
     with pytest.raises(ValueError):
@@ -165,10 +157,12 @@ async def test_a_refused_identity_keeps_the_existing_record(store):
 # ------------------------------------------------------------------ update: D-P2
 
 async def test_a_field_by_field_refresh_keeps_the_identity(store):
-    """What graph_auth / the Gmail and Tasks adapters do: a new OAuthCredential without the identity fields."""
+    """What graph_auth / the Gmail and Tasks adapters do: a new OAuthCredential without the identity fields, addressed
+    by the credential_id of the record it read (MULTI_DRIVE_RFC §4.2)."""
     await store.repo.save(creds())
     stored = await one(store.repo, "user-a", "gmail")
-    rebuilt = OAuthCredential(user_id=stored.user_id, account_id=None, kind=stored.kind, integration=None,
+    rebuilt = OAuthCredential(credential_id=stored.credential_id, user_id=stored.user_id, account_id=None,
+                              kind=stored.kind, integration=None,
                               account=ProviderAccount(realm="", subject="", label=stored.account.label),
                               access_token="at-refreshed",
                               refresh_token=stored.refresh_token, token_expiry=EXPIRY + timedelta(hours=1),
@@ -185,11 +179,13 @@ async def test_a_field_by_field_refresh_keeps_the_identity(store):
 async def test_an_update_never_takes_identity_from_its_argument(store):
     await store.repo.save(creds())
     stored = await one(store.repo, "user-a", "gmail")
-    hostile = replace(stored, credential_id="other",
+    # the credential_id is the update's address (MULTI_DRIVE_RFC §4.2): every other identity field is hostile
+    hostile = replace(stored, kind="microsoft_todo", account_id="acct-2",
                       account=ProviderAccount(realm="microsoft", subject="sub-z", label=stored.account.label))
     assert await store.repo.update(hostile)
     (doc,) = store.docs.values()
     assert (doc["credential_id"], doc["account"]) == (stored.credential_id, {"realm": "google", "subject": "sub-a"})
+    assert (doc["kind"], doc["account_id"]) == ("gmail", "acct-1")
 
 
 async def test_a_onedrive_refresh_carries_drive_id(store):
@@ -209,7 +205,7 @@ async def test_an_update_after_revoke_returns_false_and_writes_nothing(store):
 
 
 async def test_an_update_of_no_record_returns_false(store):
-    assert await store.repo.update(creds()) is False
+    assert await store.repo.update(creds(credential_id="cred-1")) is False
     assert store.docs == {}
 
 
@@ -245,10 +241,10 @@ async def test_an_encrypt_failure_on_save_writes_nothing():
 async def test_an_encrypt_failure_on_update_keeps_the_record():
     db = EvalDb()
     good = Store(db=db)
-    await good.repo.save(creds())
+    cid = await good.repo.save(creds())
     before = {k: dict(v) for k, v in good.docs.items()}
     with pytest.raises(RuntimeError):
-        await Store(cipher=BrokenCipher(), db=db).repo.update(creds(access_token="at-x"))
+        await Store(cipher=BrokenCipher(), db=db).repo.update(creds(credential_id=cid, access_token="at-x"))
     assert good.docs == before
 
 
@@ -288,14 +284,6 @@ async def test_revoke_deletes_only_that_kind_and_is_idempotent(store):
     await delete_kind(store.repo, "user-a", "gmail")
     assert [d["kind"] for d in store.docs.values()] == ["google_tasks"]
     assert await one(store.repo, "user-a", "gmail") is None
-
-
-async def test_two_records_of_one_kind_raise_instead_of_guessing(store):
-    await store.repo.save(creds())
-    (doc_id, doc), = store.docs.items()
-    store.docs["user-a:another"] = dict(doc, credential_id="another")
-    with pytest.raises(RuntimeError):
-        await one(store.repo, "user-a", "gmail")
 
 
 # ------------------------------------------------------------------ port contract carried over from the deleted kit
@@ -410,16 +398,18 @@ async def test_list_users_returns_every_user_of_a_kind_once(store):
 
 
 @pytest.mark.parametrize("call", [
-    lambda repo: one(repo, "user-a", "gmail"),
-    lambda repo: has_kind(repo, "user-a", "gmail"),
-    lambda repo: repo.save(creds()),
-    lambda repo: repo.update(creds()),
-    lambda repo: delete_kind(repo, "user-a", "gmail"),
-    lambda repo: repo.list_user_ids("gmail"),
-    lambda repo: kinds_of(repo, "user-a"),
+    lambda repo, cid: one(repo, "user-a", "gmail"),
+    lambda repo, cid: has_kind(repo, "user-a", "gmail"),
+    lambda repo, cid: repo.save(creds()),
+    lambda repo, cid: repo.update(creds(credential_id=cid)),
+    lambda repo, cid: delete_kind(repo, "user-a", "gmail"),
+    lambda repo, cid: repo.list_user_ids("gmail"),
+    lambda repo, cid: kinds_of(repo, "user-a"),
 ])
 async def test_a_backend_error_propagates_never_connected_or_not(store, call):
-    await store.repo.save(creds())
+    cid = await store.repo.save(creds())
     store.db.collection(CREDS).fail = RuntimeError("backend down")
+    # an update reads its one document by id (MULTI_DRIVE_RFC §4.2), which the collection's query switch does not reach
+    store.db.raise_on_txn_read(CREDS, f"user-a:{cid}", RuntimeError("backend down"))
     with pytest.raises(RuntimeError, match="backend down"):
-        await call(store.repo)
+        await call(store.repo, cid)
