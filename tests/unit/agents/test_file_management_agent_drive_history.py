@@ -64,19 +64,19 @@ async def _lines(agent, ref):
 async def test_an_opened_text_file_is_opened_whole(agent, conversion, drive):
     drive.get_item.return_value = NOTES
     conversion.resolve_content.return_value = "line one"
-    assert await _lines(agent, "drive:txt01") == ["[Drive: Folder/a.txt ref=drive:txt01 — opened whole]"]
+    assert await _lines(agent, "drive:a1:txt01") == ["[Drive: Folder/a.txt ref=drive:a1:txt01 — opened whole]"]
 
 
 async def test_a_pdf_attached_for_vision_is_opened_whole(agent, conversion, drive):
     drive.get_item.return_value = LAB
     conversion.resolve_bytes.return_value = b"%PDF"
-    assert await _lines(agent, "drive:abc123") == [
-        "[Drive: Health/lab-report.pdf ref=drive:abc123 — opened whole]"]
+    assert await _lines(agent, "drive:a1:abc123") == [
+        "[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — opened whole]"]
 
 
 async def test_an_open_that_shows_no_content_says_so(agent, conversion, drive):
     drive.get_item.return_value = HEIC
-    assert await _lines(agent, "drive:h1") == ["[Drive: scan.heic ref=drive:h1 — open answered without its content]"]
+    assert await _lines(agent, "drive:a1:h1") == ["[Drive: scan.heic ref=drive:a1:h1 — open answered without its content]"]
 
 
 async def test_a_chat_store_open_touches_no_drive_item(agent, conversion):
