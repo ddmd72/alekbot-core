@@ -21,11 +21,12 @@ from src.domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
     DriveSearchRequest, DriveSearchResult,
 )
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import NO_SEARCH, DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads
 from tests.unit.domain.drive_excerpt_builders import LEASE, TOMS_PLAN, chunk, excerpt_file, result
 
 CTX = {"user_id": "u1", "account_id": "a1"}
@@ -39,23 +40,22 @@ NOTED = ExcerptContext(files=(FileContext("item-1", TOMS_PLAN, ("f-rd",)),), fol
 
 def _ops(search=None):
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
     return DriveOperations(conversion_service=MagicMock(spec=FileConversionService), drive_service=drive,
                            drive_search=search)
 
 
 def _search(found=None, ranged=None):
     search = AsyncMock(spec=DriveSearchService)
-    search.excerpts.return_value = found if found is not None else result(PLAN, question=QUESTION)
+    search.excerpts.return_value = found if found is not None else result(PLAN, question=QUESTION, ref_tag="a1")
     search.excerpt_range.return_value = ranged if ranged is not None else result(
-        PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 3))
+        PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 3), ref_tag="a1")
     return search
 
 
 # -- find_passages -------------------------------------------------------------------------------------------------
 
 async def test_a_find_returns_the_rendered_passages_with_its_typed_result_and_files():
-    found = result(PLAN, LEASE_FILE, question=QUESTION)
+    found = result(PLAN, LEASE_FILE, question=QUESTION, ref_tag="a1")
     search = _search(found)
     out = await _ops(search).find_passages(CTX, "u1", question=f"  {QUESTION}\n", folder="R&D")
     search.excerpts.assert_awaited_once_with("u1", ExcerptRequest(question=QUESTION, folder="R&D"),
@@ -74,7 +74,7 @@ async def test_a_find_returns_the_rendered_passages_with_its_typed_result_and_fi
 async def test_a_find_passes_the_ledgers_chunks_to_the_service_and_its_context_sets_to_the_render():
     """Three sets on a find: `shown` to the service (new chunks only), the folders shown and files described to the
     render, so a noted folder already shown prints no line again."""
-    found = result(PLAN, question=QUESTION, context=NOTED)
+    found = result(PLAN, question=QUESTION, context=NOTED, ref_tag="a1")
     search = _search(found)
     shown = frozenset({("item-9", 1, 0)})
     fresh = await _ops(search).find_passages(CTX, "u1", question=QUESTION)
@@ -86,10 +86,10 @@ async def test_a_find_passes_the_ledgers_chunks_to_the_service_and_its_context_s
 
 
 async def test_owner_note_is_set_exactly_when_the_plan_printed_an_owner_line():
-    search = _search(result(PLAN, question=QUESTION, context=NOTED))
+    search = _search(result(PLAN, question=QUESTION, context=NOTED, ref_tag="a1"))
     printed = await _ops(search).find_passages(CTX, "u1", question=QUESTION)
     shown_before = await _ops(search).find_passages(CTX, "u1", question=QUESTION, shown_folders=frozenset({"f-rd"}))
-    plain = await _ops(_search(result(PLAN, question=QUESTION))).find_passages(CTX, "u1", question=QUESTION)
+    plain = await _ops(_search(result(PLAN, question=QUESTION, ref_tag="a1"))).find_passages(CTX, "u1", question=QUESTION)
     assert printed.excerpt_plan.has_owner_line and printed.facts.owner_note is True
     assert not shown_before.excerpt_plan.has_owner_line and shown_before.facts.owner_note is False
     assert plain.facts.owner_note is False
@@ -133,7 +133,7 @@ async def test_a_find_request_error_is_correctable_and_calls_no_service(kwargs):
 # -- read_passages -------------------------------------------------------------------------------------------------
 
 async def test_a_range_read_returns_the_files_passages_with_no_request_text():
-    ranged = result(PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 4), context=NOTED)
+    ranged = result(PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 4), context=NOTED, ref_tag="a1")
     search = _search(ranged=ranged)
     out = await _ops(search).read_passages(CTX, "u1", file_ref="drive:item-1", passages="3–4",
                                            shown_folders=frozenset({"f-rd"}))
@@ -146,7 +146,7 @@ async def test_a_range_read_returns_the_files_passages_with_no_request_text():
 
 
 async def test_a_range_read_that_is_cut_says_where_it_continues():
-    ranged = result(PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 12), continue_at=4)
+    ranged = result(PLAN, request=ExcerptRangeRequest("drive:item-1", 3, 12), continue_at=4, ref_tag="a1")
     out = await _ops(_search(ranged=ranged)).read_passages(CTX, "u1", file_ref="drive:item-1", passages="3-12")
     assert "read_passages from passage 4 continues" in out.text
 
@@ -183,7 +183,8 @@ async def test_each_state_of_the_result_has_its_outcome_class(fields, cls):
 
 
 async def test_files_make_a_find_ok_whatever_else_it_says():
-    found = result(PLAN, question=QUESTION, building=True, no_text=2, no_text_paths=("a.pdf", "b.pdf"))
+    found = result(PLAN, question=QUESTION, building=True, no_text=2, no_text_paths=("a.pdf", "b.pdf"),
+                   ref_tag="a1")
     out = await _ops(_search(found)).find_passages(CTX, "u1", question=QUESTION)
     assert out.cls is OutcomeClass.OK and "2 files in scope have no indexed text" in out.text
 
@@ -226,16 +227,27 @@ async def test_a_search_carries_its_query_as_request_text():
     assert out.request_text == "Tom's plan"
 
 
+class _Reads(ConnectionReads):
+    pass
+
+
+def _drive_with(item):
+    """The drive service mock: refs resolve to the seeded connection, the item is read by handle (an open reads it
+    through UserDriveService.get_item, MULTI_DRIVE_RFC §6)."""
+    drive = AsyncMock(spec=UserDriveService)
+    drive.resolve_ref.side_effect = _Reads().resolve_ref
+    drive.get_item.return_value = item
+    return drive
+
+
 async def test_an_open_logs_the_ref_and_the_size_of_the_converted_text(caplog):
     item = DriveItem(item_id="item-1", name="Tom's plan.docx", path=TOMS_PLAN, is_folder=False, size_bytes=4096,
                      mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.get_drive_item.return_value = item
     conversion.resolve_content.return_value = "x" * 1234
     search = AsyncMock(spec=DriveSearchService)
     search.archived_text.return_value = None
-    ops = DriveOperations(conversion_service=conversion, drive_service=AsyncMock(spec=UserDriveService),
-                          drive_search=search)
+    ops = DriveOperations(conversion_service=conversion, drive_service=_drive_with(item), drive_search=search)
     with caplog.at_level(logging.INFO):
         out = await ops.open(CTX, "u1", "drive:item-1")
     assert out.cls is OutcomeClass.OK and out.body
@@ -246,11 +258,9 @@ async def test_an_open_that_converts_nothing_logs_no_opened_line(caplog):
     item = DriveItem(item_id="item-3", name="photo.heic", path="Photos/photo.heic", is_folder=False,
                      mime_type="image/heic")
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.get_drive_item.return_value = item
     search = AsyncMock(spec=DriveSearchService)
     search.archived_text.return_value = None
-    ops = DriveOperations(conversion_service=conversion, drive_service=AsyncMock(spec=UserDriveService),
-                          drive_search=search)
+    ops = DriveOperations(conversion_service=conversion, drive_service=_drive_with(item), drive_search=search)
     with caplog.at_level(logging.INFO):
         await ops.open(CTX, "u1", "drive:item-3")
     assert not [r for r in caplog.records if r.getMessage().startswith("[DriveOperations] opened:")]
