@@ -71,7 +71,7 @@ def test_value_object_fields():
     assert _fields(CredentialKey) == ["user_id", "credential_id"]
     assert _fields(GrantResult) == ["access_token", "refresh_token", "token_expiry", "scopes", "account"]
     assert _fields(ConnectorSpec) == ["kind", "integration", "realm", "required_scopes", "multiple", "id_space",
-                                      "label"]
+                                      "label", "offered"]
     assert _fields(OAuthFlow) == ["user_id", "kind", "intent", "target_id", "expected_subject", "hint_label",
                                   "pkce_verifier", "return_path", "expires_at"]
 

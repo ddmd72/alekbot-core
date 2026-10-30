@@ -456,14 +456,16 @@ class TestConnection:
 
 class TestDriveIdSource:
     def test_connect_and_change_feed_read_the_same_field_of_the_same_call(self):
-        # The drive-switch check compares these two strings; both readers must stay on one source.
+        # The drive-switch check compares these two strings; both readers must stay on one source. The connect side
+        # moved from the OneDrive callback to the adapter's own `read_drive_id` (MULTI_DRIVE_RFC §5.1), which reads
+        # the same `_APPROOT` constant the change feed starts from.
         import inspect
         from src.adapters.microsoft import onedrive_adapter
-        from src.web import oauth_app
         approot = f"{onedrive_adapter._GRAPH}{onedrive_adapter._APPROOT}"
         assert approot == f"{_GRAPH}/me/drive/special/approot"
-        assert f'"{approot}"' in inspect.getsource(oauth_app)
-        assert '.get("driveId")' in inspect.getsource(oauth_app)
+        connect = inspect.getsource(onedrive_adapter.OneDriveAdapter.read_drive_id)
+        assert 'f"{_GRAPH}{_APPROOT}"' in connect
+        assert '.get("driveId")' in connect
         assert '.get("driveId"' in inspect.getsource(onedrive_adapter.OneDriveAdapter.get_changes)
 
 
