@@ -9,15 +9,18 @@ import pytest
 from scripts.validation.ab_agent_models import _READ_ONLY_INTENTS
 from scripts.validation.drive_eval.dry_run_drive import (
     STUB_TEXT, DriveOpLog, DryRunDriveOperations, DryRunError, public_coroutines)
-from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
+from scripts.validation.drive_eval.eval_connection import EVAL_REF_TAG, EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
 from src.composition.drive_specialist_build import build_drive_specialist
+from src.domain import drive_ref
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.llm import PROMPT_CACHE_BOUNDARY
 from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.drive_connection_status import DriveConnectionStatus
+from src.domain.drive_resolved_ref import ResolvedDriveRef
+from src.domain.user_drive import DriveItem
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
@@ -152,12 +155,13 @@ async def test_the_fixtures_specialist_and_file_management_share_one_operations_
 
 
 async def test_the_fixtures_drive_reads_go_through_the_fixture_drive():
-    """The fixture's conversion service holds the fixture drive: a drive: ref resolves there (here a folder)."""
+    """The fixture's conversion service holds the fixture drive: a drive: ref of the eval connection's tag resolves
+    there (here a folder)."""
     from scripts.validation.drive_eval.fixture_drive import item_id_for
     from scripts.validation.drive_eval.specialist_fixture import build_drive_fixture
 
     fixture = build_drive_fixture("u1", FixtureDrive(MANIFEST), MagicMock())
-    out = await fixture.operations.open(CONTEXT, "u1", f"drive:{item_id_for('Contracts')}")
+    out = await fixture.operations.open(CONTEXT, "u1", drive_ref.format(EVAL_REF_TAG, item_id_for("Contracts")))
     assert out.text == "'Contracts' is a folder; list it instead."
 
 
@@ -208,7 +212,10 @@ async def test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run():
     every write tool, reaches only DriveOperations' class methods — every mutation is stubbed and the drive service
     sees no write — while the reads it needs run for real: the preflight and the `drive:` folder ref's lookup."""
     service = AsyncMock(spec=UserDriveService)
-    service.connection.return_value = DriveConnection(connected=True)
+    service.status.return_value = DriveConnectionStatus(connected=True)
+    connection = eval_connection("u1")
+    abc, fold1, gone = (drive_ref.format(EVAL_REF_TAG, item) for item in ("abc", "fold1", "def"))
+    service.resolve_ref.return_value = ResolvedDriveRef(connection=connection, item_id="fold1")
     service.get_item.return_value = DriveItem(item_id="fold1", name="Archive", path="Archive", is_folder=True)
     ops = _ops(service)
     prompts = AsyncMock()
@@ -222,10 +229,10 @@ async def test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run():
             calls((tt.COPY_FILE_TO_DRIVE, {"source_ref": "report.docx"}),
                   (tt.SAVE_TEXT_FILE, {"text_item": "t1"}),
                   (tt.CREATE_FOLDER, {"folder": "Archive/2026"}),
-                  (tt.MOVE_FILE, {"file_ref": "drive:abc", "folder": "drive:fold1"}),
-                  (tt.APPEND_TO_FILE, {"text_item": "t1", "file_ref": "drive:abc"}),
-                  (tt.REPLACE_FILE_CONTENT, {"target_ref": "drive:abc", "new_content_ref": "report.docx"}),
-                  (tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:def"})),
+                  (tt.MOVE_FILE, {"file_ref": abc, "folder": fold1}),
+                  (tt.APPEND_TO_FILE, {"text_item": "t1", "file_ref": abc}),
+                  (tt.REPLACE_FILE_CONTENT, {"target_ref": abc, "new_content_ref": "report.docx"}),
+                  (tt.DELETE_DRIVE_ITEM, {"file_ref": gone})),
             calls((tt.REPORT_TOOL, {"note": "Did the seven changes."})))
         message = AgentMessage.create(
             sender="coordinator", recipient="drive_agent_u1", intent=AgentIntent.QUERY,
@@ -235,8 +242,8 @@ async def test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run():
     assert _writes(service) == []
     assert sorted(e["op"] for e in log.entries if e["stubbed"]) == sorted(DriveOperations.MUTATION_METHODS)
     assert {"op": "preflight", "args": {}, "outcome": "ok", "stubbed": False} in log.entries
-    assert {"op": "folder_path", "args": {"folder": "drive:fold1"}, "outcome": "ok", "stubbed": False} in log.entries
-    service.get_item.assert_awaited_once_with("u1", "fold1")      # the real folder_path read ran
+    assert {"op": "folder_path", "args": {"folder": fold1}, "outcome": "ok", "stubbed": False} in log.entries
+    service.get_item.assert_awaited_once_with(connection.handle, "fold1")      # the real folder_path read ran
     moved = next(e for e in log.entries if e["op"] == "move")
-    assert moved["args"] == {"ref": "drive:abc", "folder": "Archive", "new_name": None}
+    assert moved["args"] == {"ref": abc, "folder": "Archive", "new_name": None}
     assert resp.result.splitlines()[0] == "Drive result: ok"
