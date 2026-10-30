@@ -1322,7 +1322,7 @@ never-true stays `invalidated`; a duplicate is still superseded.
   "Planned; whether it took place is unknown (no answer by <Mon YYYY>): <text>". They keep the stored text whole and are
   exempt from the 40-word check. Residual: a validity end kept twice is asked as `happened`, so its wording fits badly.
 - **UI strings, new (13 keys × uk, en, fr, es = 52 strings).** The label set grows from 15 to 28 (`LABEL_KEYS`,
-  `CANONICAL_LABELS`, the root `CLAUDE.md` count); `check_labels` asks for distinct option labels per kind;
+  `CANONICAL_LABELS`, the label count in the owner's map §5.6); `check_labels` asks for distinct option labels per kind;
   `fact_question_message` takes the options of the question's kind. "Don't remember", the hint and every acknowledgement are
   reused. fr and es use the familiar register of their live strings ("Réponds", "Responde").
 
@@ -1518,7 +1518,7 @@ evidence); the facts of expiry kind `date` are the ones P2 adds, and some of tho
   S4 `still_true` question about a `date` fact keeps S4's answer; Q4).
 - *Docs:* the RFC (§8 P2 gets a "revised 2026-10-27" line pointing here; D6, D7 and S4 as built notes), the owner's map §5.5,
   §5.6, §2.7, the §7 timeline and §9.5, `decisions/fact_review_and_owner_questions.md`, `src/agents/CLAUDE.md` (review tool
-  rules), and the root `CLAUDE.md` "Memory review" paragraph (the silence rule, the label count, the scope's refusals).
+  rules), and the owner's map §5.6 (the silence rule, the label count, the scope's refusals; the root `CLAUDE.md` "Memory review" paragraph moved there).
 
 *Arbiter decisions on the open questions (2026-10-27).* Q2 `date_passed` honesty: the prompt rule, the bench 7 reading of
 every `date_passed` history and the evidence exclusion; no domain allowlist. Q3 two shapes of history: S4's "ended" (archive +
