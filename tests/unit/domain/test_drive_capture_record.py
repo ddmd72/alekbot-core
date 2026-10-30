@@ -8,15 +8,16 @@ from src.domain.drive_capture import CaptureSignals, file_capture
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
 from src.domain.drive_index import EXTRACTION_VERSION, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict
 from src.domain.drive_index_planner import demoted, indexed, triaged
+from src.domain.drive_media_facts import DriveMediaFacts
 
 NOW = datetime(2026, 10, 14, tzinfo=timezone.utc)
 SCANNER = CaptureSignals(pages=1, raster_pages=1, median_dpi=200.0, page_short_mm=140.0, page_long_mm=190.0)
-CAMERA = {"photo": {"cameraMake": "Apple"}}
+CAMERA = DriveMediaFacts(camera_make="Apple")
 
 
 def rec(**kw) -> DriveIndexRecord:
     base = dict(user_id="u", item_id="x", name="a.jpg", kind="image", scope=Scope.NORMAL, state=RecordState.PENDING,
-                content_version="c1", facets={})
+                content_version="c1")
     base.update(kw)
     return DriveIndexRecord(**base)
 
@@ -28,20 +29,20 @@ class TestFileCapture:
         assert file_capture("pdf", signals=None, model="") == ("", "")
 
     def test_a_pdf_ignores_a_triage_word_and_a_camera_facet(self):
-        assert file_capture("pdf", facets=CAMERA, triaged="scan") == ("", "")
+        assert file_capture("pdf", media=CAMERA, triaged="scan") == ("", "")
 
     def test_an_image_takes_the_camera_then_the_reader_then_triage(self):
-        assert file_capture("image", facets=CAMERA, model="scan", triaged="screenshot") == ("document_photo", "detected")
+        assert file_capture("image", media=CAMERA, model="scan", triaged="screenshot") == ("document_photo", "detected")
         assert file_capture("image", model="scan", triaged="screenshot") == ("scan", "automatic")
         assert file_capture("image", triaged="screenshot") == ("screenshot", "automatic")
         assert file_capture("image") == ("", "")
 
     def test_a_signals_free_camera_less_image_with_a_taken_date_only_has_no_camera(self):
-        assert file_capture("image", facets={"photo": {"takenDateTime": "2026-01-01T00:00:00Z"}}) == ("", "")
+        assert file_capture("image", media=DriveMediaFacts(taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc))) == ("", "")
 
     def test_other_text_kinds_are_digital_detected_whatever_else_is_said(self):
         for kind in ("docx", "xlsx", "pptx", "txt", "md", "html", "eml", "epub"):
-            assert file_capture(kind, signals=SCANNER, facets=CAMERA, model="scan", triaged="scan") == \
+            assert file_capture(kind, signals=SCANNER, media=CAMERA, model="scan", triaged="scan") == \
                 ("digital", "detected")
 
 
@@ -51,11 +52,11 @@ class TestPlanner:
         assert (out.capture, out.capture_source) == ("screenshot", "automatic")
 
     def test_a_camera_facet_beats_triages_word(self):
-        out = triaged(rec(facets=CAMERA), TriageResult("x", TriageVerdict.TEXT, capture="screenshot"), NOW)
+        out = triaged(rec(media=CAMERA), TriageResult("x", TriageVerdict.TEXT, capture="screenshot"), NOW)
         assert (out.capture, out.capture_source) == ("document_photo", "detected")
 
     def test_a_photograph_clears_any_capture(self):
-        out = triaged(rec(capture="scan", capture_source="detected", facets=CAMERA),
+        out = triaged(rec(capture="scan", capture_source="detected", media=CAMERA),
                       TriageResult("x", TriageVerdict.PHOTO), NOW)
         assert (out.capture, out.capture_source) == ("", "")
 
