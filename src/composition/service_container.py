@@ -67,6 +67,10 @@ from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
 from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
+from .drive_connection_setup import build_drive_connection_repository
+from .drive_provider_router import DriveProviderRouter
+from ..ports.drive_connection_repository import DriveConnectionRepository
+from ..services.drive_connection_service import DriveConnectionService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
     DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
@@ -202,7 +206,12 @@ class ServiceContainer:
         # (search, Cabinet counters, the fan-out) and the drive queue to the indexer service, which
         # carries the fan-out's ticks and UserDriveService's nudges. The queue is None until
         # DRIVE_INDEXER_URL is set (drive_indexing_setup.build_drive_task_queue).
+        # Every drive call goes through one `DriveProviderRouter` over the registry's drive adapters (MULTI_DRIVE_RFC
+        # §6, E6): the registry is rebuilt with the OneDrive adapter once it exists (same specs and edges), and
+        # `user_drive` is the router. Drive connections and the primary pointer: `drive_connection_service` (§4.4).
         self.user_drive: Optional[UserDrivePort] = None
+        self.drive_connection_repo: Optional[DriveConnectionRepository] = None
+        self.drive_connection_service: Optional[DriveConnectionService] = None
         self.user_drive_service: Optional[UserDriveService] = None
         self.drive_index_repo: Optional[DriveIndexRepository] = None
         self.drive_task_queue: Optional[TaskQueue] = None
@@ -210,12 +219,18 @@ class ServiceContainer:
         # an archived transcript read them on the main service.
         self.drive_mirror_repo: Optional[DriveMirrorRepository] = None
         if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
-            self.user_drive = OneDriveAdapter(
+            onedrive = OneDriveAdapter(
                 oauth_credentials=self.oauth_credentials,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
                 connector=self.connectors.get(MICROSOFT_ONEDRIVE),
             )
+            self.connectors = ConnectorRegistry(edges=self.connectors.edges(),
+                                                drive_adapters={MICROSOFT_ONEDRIVE: onedrive})
+            self.user_drive = DriveProviderRouter(self.connectors.drive_adapters())
+            self.drive_connection_repo = build_drive_connection_repository(db_client, env_config)
+            self.drive_connection_service = DriveConnectionService(self.drive_connection_repo,
+                                                                   self.oauth_credentials)
             self.drive_index_repo = build_drive_index_repository(db_client, env_config)
             self.drive_task_queue = build_drive_task_queue(config, env_config)
             self.drive_mirror_repo = build_drive_mirror_repository(db_client, env_config)

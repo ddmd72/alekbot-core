@@ -3,22 +3,27 @@ IntegrationReconnectService — R1: Reconnect and one chat notice when a past co
 (docs/10_rfcs/SECRETS_AT_REST_RFC.md §6.2, F1, F2; plan D-P4, D-P5).
 
 An integration whose own feature state shows a past connection (Gmail: an indexing state; To Do: a config with a primary
-list; Drive: a sync state) but whose credential is gone shows Reconnect in the Cabinet and sends one notice per user and
-integration (`reconnect_policy.r1_due`). R1 reads the feature stores, never the old credential collection, and lists its
-users from them too: the daily-review and To Do renewal fan-outs list users from the credential store, which is empty
-after the credential cutover.
+list) but whose credential is gone shows Reconnect in the Cabinet and sends one notice per user and integration
+(`reconnect_policy.r1_due`). R1 reads the feature stores, never the old credential collection, and lists its users from
+them too: the daily-review and To Do renewal fan-outs list users from the credential store, which is empty after the
+credential cutover.
+
+Drive reads its connections (MULTI_DRIVE_RFC §4.4, `DriveConnectionService.reconnect_needed`): a NEEDS_RECONNECT
+connection, or an ACTIVE one whose credential is gone, shows Reconnect; a DISCONNECTED one never does. A deliberate
+drive disconnect ends the connection, so Drive needs no disconnect mark and a consent has nothing to clear here (the
+activation moves the connection back to ACTIVE).
 
 `sweep()` is the hourly `/worker` task `reconnect_notice_sweep` for Gmail and To Do; Drive's notice runs in the drive
-fan-out (`DriveSyncSchedulerService._reconnect_notice`), which already visits every sync state every 10 minutes. The
+fan-out (`DriveSyncSchedulerService`, per connection), which already visits every connection every 10 minutes. The
 flag rules are the drive notice's (`drive_sync_scheduler_service.py`, "One notice per lost grant"): the flag on the
 feature state goes up before the send and comes down again only when nothing can have been sent (no channel, a
 formatter failure, `notify` raising); an `empty_answer` is final; a credential that is back lowers it.
 
-`mark_disconnected` (the Cabinet's Gmail and Drive disconnects, F1) and `consented` (the three OAuth callbacks) keep the
-mark; `status` answers whether the Cabinet shows Reconnect for an integration that reads "not connected".
+`mark_disconnected` (the Cabinet's Gmail disconnect, F1) and `consented` (the Gmail and To Do activations) keep the mark;
+`status` answers whether the Cabinet shows Reconnect for an integration that reads "not connected".
 
 Public interface:
-    IntegrationReconnectService(credentials, users, notifier, *, email_states, task_config, drive_states, drive,
+    IntegrationReconnectService(credentials, users, notifier, *, email_states, task_config, drive_connections,
                                 alert_sink, ensure_agents, clock, mail_connector, todo_connector)
     await sweep() -> Dict[str, int]
     await mark_disconnected(user_id, integration) -> None
@@ -37,15 +42,14 @@ from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.integration import Integration
 from ..domain.reconnect_policy import R1_NOTICES, Cleared, r1_due, reconnect_needed
 from ..ports.alert_sink import AlertSinkPort
-from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_config_port import TaskConfigPort
-from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .drive_connection_service import DriveConnectionService
     from .user_notification_service import UserNotificationService
 
 ALL = tuple(Integration)
@@ -62,8 +66,7 @@ class IntegrationReconnectService:
                  notifier: Optional["UserNotificationService"], *,
                  email_states: Optional[IndexedEmailRepository] = None,
                  task_config: Optional[TaskConfigPort] = None,
-                 drive_states: Optional[DriveIndexRepository] = None,
-                 drive: Optional[UserDrivePort] = None,
+                 drive_connections: Optional["DriveConnectionService"] = None,
                  alert_sink: Optional[AlertSinkPort] = None,
                  ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
                  clock: Callable[[], datetime] = _utcnow,
@@ -77,8 +80,7 @@ class IntegrationReconnectService:
         self._notifier = notifier
         self._email = email_states
         self._task_config = task_config
-        self._drive_states = drive_states
-        self._drive = drive
+        self._drive_connections = drive_connections
         self._alert_sink = alert_sink
         self._ensure_agents = ensure_agents
         self._clock = clock
@@ -198,29 +200,26 @@ class IntegrationReconnectService:
     # -- the Cabinet and the consent callbacks --------------------------------------------------------------------
 
     async def mark_disconnected(self, user_id: str, integration: Integration) -> None:
-        """The user disconnected on purpose (F1): mark the feature state so R1 skips it. Gmail and Drive only; To Do's
-        disconnect resets its config (D-P5). A store that is not wired, or a missing state, writes nothing."""
+        """The user disconnected on purpose (F1): mark the feature state so R1 skips it. Gmail only: To Do's disconnect
+        resets its config (D-P5) and a drive disconnect ends the connection (DISCONNECTED never reads as a loss). A
+        store that is not wired, or a missing state, writes nothing."""
         now = self._clock()
-        if integration is Integration.MAIL:
-            if self._email is not None:
-                await self._email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, disconnected_by_user_at=now)
-        elif integration is Integration.DRIVE:
-            if self._drive_states is not None:
-                await self._drive_states.update_sync_flags(user_id, disconnected_by_user_at=now)
-        else:
-            raise ValueError(f"{integration.value} has no disconnect mark (its disconnect resets its config)")
+        if integration is not Integration.MAIL:
+            raise ValueError(f"{integration.value} has no disconnect mark (its disconnect ends its own state)")
+        if self._email is not None:
+            await self._email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, disconnected_by_user_at=now)
         logger.info(f"[Reconnect] {integration.value} marked disconnected by user for {user_id[:8]}")
 
     async def consented(self, user_id: str, integration: Integration) -> None:
         """A new consent stored a credential: clear the mark and the notice flag, so the next loss notifies again.
-        Drive's flag is lowered by the drive fan-out once the grant works (its single clear path)."""
+        Drive: nothing here (the drive activation returns the connection to ACTIVE; the drive notice's flag is the
+        drive fan-out's)."""
         if integration is Integration.MAIL:
             if self._email is not None:
                 await self._email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, reconnect_notified=False,
                                                       disconnected_by_user_at=Cleared.MARK)
         elif integration is Integration.DRIVE:
-            if self._drive_states is not None:
-                await self._drive_states.update_sync_flags(user_id, disconnected_by_user_at=Cleared.MARK)
+            return
         elif self._task_config is not None:
             config = await self._task_config.get_config(user_id)
             if config.reconnect_notified:
@@ -243,13 +242,9 @@ class IntegrationReconnectService:
             return reconnect_needed(await self._has_credential(user_id, self._mail_kind), True,
                                     state.disconnected_by_user_at is not None)
         if integration is Integration.DRIVE:
-            if self._drive_states is None or self._drive is None:
+            if self._drive_connections is None:
                 return False
-            drive_state = await self._drive_states.get_sync_state(user_id)
-            if drive_state is None:
-                return False
-            connection = await self._drive.connection(user_id)
-            return reconnect_needed(connection.connected, True, drive_state.disconnected_by_user_at is not None)
+            return bool(await self._drive_connections.reconnect_needed(user_id))
         if self._task_config is None:
             return False
         config = await self._task_config.get_config(user_id)
