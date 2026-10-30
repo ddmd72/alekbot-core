@@ -78,6 +78,8 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_cap_alert import CapCounts
+from ..domain.drive_content_identity import ContentIdentity
+from ..domain.drive_media_facts import DriveMediaFacts
 from ..domain.drive_enrichment import (
     DriveHintDoc, DriveProfile, EnrichJob, GradedValue, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth,
     PhotoObject, ProfileDate, ProfileEntity, UsageClass,
@@ -260,6 +262,8 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "transcript_wake_at": _dt, "transcript_languages": _strs, "transcript_hold": _optional(str),
     "mirror_retry_at": _dt,       # §27.9.4
     "owner_life_areas": _strs,    # DRIVE_FILE_NOTES_RFC §3.3
+    # MULTI_DRIVE_RFC §7.2 (slice 1b): the typed shapes, stored as maps
+    "media": DriveMediaFacts.from_dict, "content_identity": ContentIdentity.from_stored,
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -283,6 +287,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "notes_merge_version": int,
     # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
     "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
+    "transcripts_reattached_at": _dt,   # MULTI_DRIVE_RFC I7 (slice 1b)
 }
 
 

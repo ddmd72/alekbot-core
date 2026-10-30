@@ -268,6 +268,9 @@ class DriveChunk:
     # were made under. Written by P5; until then empty / 0.
     word_keys: Tuple[str, ...] = ()
     keys_version: int = 0
+    # MULTI_DRIVE_RFC §8 (E8): the connection the chunk belongs to; its doc id is `chunk_doc_id(scope, …)` and `user_id`
+    # stays a stored field a read checks (I3). "" on a chunk written before the field existed.
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -456,6 +459,15 @@ class DriveIndexRecord:
     # set by the planner's `_build` on a record it creates; `_commit` looks the item's note up by its binding key in the
     # same write and clears it, found or not (§5.1 a). Always False once written.
     note_lookup_due: bool = False
+    # -- MULTI_DRIVE_RFC §7.2, §8 (slice 1b): the connection the record belongs to (doc id `record_doc_id(scope, …)`,
+    # `user_id` checked on read, I3) and the adapter-built neutral shapes that replace `facets` and `content_hash`:
+    # the item identity (`{id_space}:{…}`: the notes binding, the transcript fallback key, the ledger's source identity),
+    # the content identity (the transcript content key; None: no provider hash) and the typed media facts. "" / None /
+    # empty facts on a record written before the fields existed (the rebuild writes them, D16).
+    connection_id: str = ""
+    identity: str = ""
+    content_identity: Optional[ContentIdentity] = None
+    media: DriveMediaFacts = DriveMediaFacts()
 
     @property
     def stale(self) -> bool:
@@ -554,6 +566,14 @@ class DriveSyncState:
     # cut by its item-call share resumes after it, and `notes_audited_at` is stamped when the pass ends
     notes_audit_after_at: Optional[datetime] = None
     notes_audit_after_id: str = ""
+    # -- MULTI_DRIVE_RFC §8, §10 (slice 1b): one sync state per connection (doc id `sync_state_doc_id(scope)` = the
+    # connection id; `user_id` checked on read, I3). `drive_identity` is the adapter-built identity of the drive the feed
+    # reads (replaces `drive_id`: the drive-change check compares it with the connection's). `transcripts_reattached_at`
+    # (I7): when the transcript stage finished its first pass over the connection's recordings after this state was
+    # created; the user's orphan sweep runs only when every ACTIVE connection of the user has it set.
+    connection_id: str = ""
+    drive_identity: str = ""
+    transcripts_reattached_at: Optional[datetime] = None
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

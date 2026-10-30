@@ -14,6 +14,7 @@ from .connection_scope import ConnectionScope
 
 WINDOW_STATES: Tuple[str, ...] = ("extracted", "uploaded", "submitted", "done", "failed")   # JobWindow.state (§27.5)
 BATCH_KIND_TRANSCRIBE = "transcribe"      # TranscriptBatch.kind; "summary" joins it with T3
+RETAINED_DISCONNECT = "disconnect"        # StoredTranscript.retained_reason (I8)
 
 
 class TranscriptStub(str, Enum):
@@ -161,6 +162,10 @@ class StoredTranscript:
     render_version: int = 0
     summary_version: int = 0
     last_used_at: Optional[datetime] = None
+    # I8 (MULTI_DRIVE_RFC §10, E23): set before a disconnect purges a connection on every head one of its records
+    # carried; the orphan sweep never deletes a retained head. `retained_reason` is RETAINED_DISCONNECT.
+    retained_at: Optional[datetime] = None
+    retained_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,6 +206,7 @@ class TranscriptJob:
     reserved_usd: float = 0.0         # the file's estimate, reserved the moment it fit (G39)
     reserved_month: str = ""          # "YYYY-MM" the reservation was made in; its cost is booked there (G9)
     transcribed_at: Optional[datetime] = None   # when the last window was collected (T-R12)
+    connection_id: str = ""           # MULTI_DRIVE_RFC §8: doc id `transcript_job_doc_id(scope, item_id)`; "" before 1b
 
 
 @dataclass(frozen=True)
@@ -228,6 +234,7 @@ class TranscriptBatch:
     display_name: str = ""            # `submitting` only: the name the adapter hashes into the provider's display name (T-R28)
     provider_name: str = ""           # `submitting` only: the provider's batch name, once the submit call returned it (T-R28)
     lookups: int = 0                  # `submitting` only: lookups by display name that found nothing (T-R28)
+    connection_id: str = ""           # MULTI_DRIVE_RFC §8: one connection's windows; doc id `transcript_batch_doc_id`
 
 
 def safe_doc_id(raw: str) -> str:

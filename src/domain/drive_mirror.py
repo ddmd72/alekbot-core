@@ -78,6 +78,9 @@ class MirrorRoot:
     # when step 1 last found the read-me's name held by an item that is not the bot's (§27.9.1): the name is read
     # again only MIRROR_AUDIT_DAYS later (the audit's cadence), not every tick; None when nothing blocks it
     readme_blocked_at: Optional[datetime] = None
+    # MULTI_DRIVE_RFC §10 (slice 1b): the drive's adapter-built identity, the root's key (`mirror_root_doc_id`); it
+    # replaces `drive_id`. "" on a root written before the field existed.
+    drive_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,11 @@ class MirrorDoc:
     # file from the pinned store entry with no record (owner ruling 2026-10-21, Δ241). No link: the recording is gone
     recorded_on: str = ""
     transcript_stub: str = ""
+    # MULTI_DRIVE_RFC §10 (slice 1b): the mirror's drive identity and the source item's identity, the document's key
+    # (`ledger_key`); reads filter `drive_identity`. They replace `drive_id` and `source_item_id` in the key. "" on a
+    # document written before the fields existed.
+    drive_identity: str = ""
+    source_identity: str = ""
 
     @property
     def key(self) -> str:
@@ -149,6 +157,7 @@ class DeletionNotice:
     item_id: str
     why: str
     at: datetime
+    source_identity: str = ""   # MULTI_DRIVE_RFC §10: the gone item's identity, from which its ledger keys are built
 
 
 def doc_key(user_id: str, kind: str, source_item_id: str) -> str:

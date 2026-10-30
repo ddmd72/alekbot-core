@@ -18,6 +18,7 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Optional, Tuple
 
+from .drive_content_identity import ContentIdentity
 from .drive_index import DriveIndexRecord, RecordState, Scope
 
 ChunkId = Tuple[str, int, int]
@@ -44,6 +45,8 @@ class DriveRecordLean:
     # DRIVE_FILE_NOTES_RFC §3.3, §6.1 (review I7): the note merged into this record ("" for none), so the duplicate
     # collapse can show the noted copy of identical files. A record stored before it reads back "".
     owner_note_id: str = ""
+    # MULTI_DRIVE_RFC §7.2: the record's content identity, which replaces `content_hash` for the duplicate collapse
+    content_identity: Optional[ContentIdentity] = None
 
 
 @dataclass(frozen=True)

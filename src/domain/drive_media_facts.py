@@ -15,10 +15,16 @@ date, the planner's place step and the admission rules.
 - `malware`: the provider flagged the item as malware; never downloaded.
 - `alias_of`: the item is a pointer to another item (a shared item added to this drive, a shortcut): the identity of the
   item it points to, "" when the provider does not say which. None for an ordinary item. Admission refuses an alias.
+
+Stored as the map `to_dict()` (one key per field, `taken_at` a timestamp); `from_dict(value)` reads it back, taking the
+default for every missing key, so a record stored before a field existed reads with that field's default and a missing
+or empty map reads as `DriveMediaFacts()`. Unknown keys are ignored.
 """
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -58,3 +64,13 @@ class DriveMediaFacts:
     @property
     def is_alias(self) -> bool:
         return self.alias_of is not None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: Optional[Mapping[str, Any]]) -> DriveMediaFacts:
+        if not value:
+            return cls()
+        return cls(**{f.name: value[f.name] for f in fields(cls) if f.name in value})
+
