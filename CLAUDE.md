@@ -3,6 +3,19 @@
 Personal exocortex — a knowledge management system powered by LLMs.
 Solo developer. Production on GCP (Cloud Run + Firestore).
 
+## What belongs in this file (read before adding anything)
+
+This file is loaded into every session, so every line costs every session. Add a line only if an agent needs it
+whatever the task is:
+- **Here:** commands (what each does), rules, repo-wide traps (things that break silently), and the "Where things live" map.
+- **Not here — a subsystem's description, status or history:** its owner's map (`docs/05_building_blocks/*/README.md`),
+  its RFC (`docs/10_rfcs/`) or a decision record (`docs/04_solution_strategy/decisions/`). A new subsystem gets one row
+  in the map, nothing more.
+- **Not here — a trap of one area:** the `CLAUDE.md` of the narrowest folder holding that code (create it if missing;
+  it holds only that folder's rules and traps).
+- **Not here — when to run which tests:** that is the session procedure, kept outside the repo. Commands state only what they do.
+- **Not here — dated history** ("fixed on…", "until X it was broken"): decision records hold it.
+
 ## What and Why
 
 Exocortex — AI extension of memory and thinking via Slack/Telegram (and a voice companion).
