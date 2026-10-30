@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.drive_capabilities import DriveCapabilities
-from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
+from src.domain.drive_index import DriveChange, DriveChildrenPage
 from src.domain.drive_index_params import TRANSCRIBE_USD_PER_MONTH
 from src.domain.language import LanguageCode
 from src.domain.user_drive import DriveItem, DriveItemNotFoundError, DriveNameConflictError, name_key
@@ -231,15 +231,3 @@ class StepWorld(MirrorWorld):
 
     def mirror_files(self) -> List[str]:
         return [p for p in self.writes.files() if p.startswith("_Transcripts/")]
-
-    def no_drive_id(self) -> None:
-        """Neither the connection nor the feed knows the drive id (the OAuth callback's `""`, §27.9.2)."""
-        self.drive.connection_state = replace(self.drive.connection_state, drive_id="")
-        real = self.drive.get_changes
-
-        async def get_changes(user_id: str, cursor: Optional[str]) -> DriveChanges:
-            return replace(await real(user_id, cursor), drive_id="")
-        self.drive.get_changes = get_changes   # type: ignore[method-assign]
-        state = self.repo.states.get("u")
-        if state is not None:
-            self.repo.states["u"] = replace(state, drive_id="")

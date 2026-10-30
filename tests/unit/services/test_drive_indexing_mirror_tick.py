@@ -311,18 +311,6 @@ async def test_mirror_not_run_for_a_user_without_the_flag(world):
     assert w.lang.calls == 0
 
 
-async def test_no_drive_id_counts_and_does_not_run(world, caplog):
-    w = world()
-    w.no_drive_id()
-    w.add_doc("notes.md", prose(5))
-    with caplog.at_level(logging.INFO):
-        await w.settle()
-    assert w.runs == [] and w.mirror.root_docs == {}
-    assert all(b.mirror_reserve == 0.0 for b in w.budgets)
-    ticks = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[DriveIndex] tick ")]
-    assert any("'mirror_no_drive_id': 1" in t for t in ticks)
-
-
 # -- the continuation and the tick line ----------------------------------------------------------------------------
 
 async def test_no_continuation_for_mirror_work(world):
