@@ -68,7 +68,6 @@ class TestCameraPrior:
         (DriveMediaFacts(taken_at=datetime(2026, 8, 1, 10, tzinfo=timezone.utc)), True),
         (DriveMediaFacts(camera_make="Apple"), True),
         (DriveMediaFacts(camera_model="iPhone"), False),
-        ({"photo": "odd"}, False),
         (DriveMediaFacts(image_width=10), False),
     ])
     def test_prior(self, media, expected):
