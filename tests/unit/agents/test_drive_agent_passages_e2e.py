@@ -14,13 +14,13 @@ from src.domain import drive_answer_texts as t
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.llm import PROMPT_CACHE_BOUNDARY
-from src.domain.user_drive import DriveConnection
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.llm_port import AgentExecutionContext
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.scripted_llm import calls, script
+from tests.unit.services.drive_harness_connections import harness_connections
 from tests.unit.services.drive_search_v2_fixture import V2World
 
 QUESTION = "What does Tom's plan say happens after the first review?"
@@ -60,7 +60,10 @@ class World(V2World):
             self.repo.chunks[("u", self.plan, 1, index)] = (chunk, toward(d))
         self.other = self.file("menu.md", kind="md", chunks=["Lunch options near the office."])
         self.drive_service = AsyncMock(spec=UserDriveService)
-        self.drive_service.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+        # the service's own connection reads over the harness connection the index was built for (MULTI_DRIVE_RFC §9)
+        reads = UserDriveService(drive=None, connections=harness_connections(self.users, self.drive))
+        self.drive_service.status.side_effect = reads.status
+        self.drive_service.resolve_ref.side_effect = reads.resolve_ref
         self.operations = DriveOperations(conversion_service=MagicMock(spec=FileConversionService),
                                           drive_service=self.drive_service, drive_search=self.service)
 
