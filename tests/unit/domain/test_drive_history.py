@@ -8,7 +8,9 @@ from src.domain.drive_op import DriveOp
 from src.domain.drive_outcome import DriveOutcome
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_pass_through import PassThroughCollector
-from src.domain.user_drive import DriveItem, parse_drive_ref
+from src.domain import drive_ref
+from src.domain.drive_ref import DriveRef
+from src.domain.user_drive import DriveItem
 from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
 LAB = DriveItem(item_id="abc123", name="lab-report.pdf", path="Health/lab-report.pdf", is_folder=False)
@@ -17,7 +19,8 @@ HOME = DriveItem(item_id="fold01", name="Home", path="Home", is_folder=True)
 
 
 def _out(op, *items, **kw):
-    return DriveOutcome(op=op, cls=OutcomeClass.OK, text="x", success=True, items=items, **kw)
+    return DriveOutcome(op=op, cls=OutcomeClass.OK, text="x", success=True, items=items, ref_tag="a1",
+                        **kw)
 
 
 def _search(*items, query="lab report"):
@@ -25,7 +28,7 @@ def _search(*items, query="lab report"):
 
 
 def _passages(item, *indexes):
-    f = excerpt_file(item.item_id, item.path, [chunk(item.item_id, i, f"passage {i}") for i in indexes])
+    f = excerpt_file(item.item_id, item.path, [chunk(item.item_id, i, f"passage {i}") for i in indexes], ref_tag="a1")
     return _out(DriveOp.PASSAGES, item, excerpts=result(f, question="LAB-2025-03-0417 values"))
 
 
@@ -38,14 +41,14 @@ def _lines(*results):
 
 def test_a_search_names_its_query_and_file_count_and_keeps_the_ref():
     assert _lines((t.KIND_SEARCH, _search(LAB, LEASE))) == [
-        '[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files)]',
-        '[Drive: Home/Lisbon lease.pdf ref=drive:def456 — searched for "lab report" (2 files)]']
+        '[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — searched for "lab report" (2 files)]',
+        '[Drive: Home/Lisbon lease.pdf ref=drive:a1:def456 — searched for "lab report" (2 files)]']
 
 
 def test_one_file_touched_three_times_is_one_line_with_its_operations_combined():
     lines = _lines((t.KIND_SEARCH, _search(LAB)), (t.KIND_PASSAGES, _passages(LAB, 2, 3, 4)),
                    (t.KIND_PASSAGES, _passages(LAB, 7)), (t.KIND_SEARCH, _search(LAB)))
-    assert lines == ['[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (1 file); '
+    assert lines == ['[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — searched for "lab report" (1 file); '
                      'read passages 3–5, 8]']
 
 
@@ -75,19 +78,19 @@ def test_a_passages_call_that_showed_nothing_new_still_names_the_read():
     (DriveOp.NOTE_READ.value, _out(DriveOp.NOTE_READ, LAB), "note_read"),
 ])
 def test_each_operation_is_named(kind, outcome, phrase):
-    assert _lines((kind, outcome)) == [f"[Drive: Health/lab-report.pdf ref=drive:abc123 — {phrase}]"]
+    assert _lines((kind, outcome)) == [f"[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — {phrase}]"]
 
 
 def test_a_move_keeps_one_line_under_the_latest_path():
     moved = DriveItem(item_id="abc123", name="lab-report.pdf", path="Archive/lab-report.pdf", is_folder=False)
     assert _lines((t.KIND_SEARCH, _search(LAB)), (DriveOp.MOVE.value, _out(DriveOp.MOVE, moved))) == [
-        '[Drive: Archive/lab-report.pdf ref=drive:abc123 — searched for "lab report" (1 file); '
+        '[Drive: Archive/lab-report.pdf ref=drive:a1:abc123 — searched for "lab report" (1 file); '
         'changed: moved or renamed]']
 
 
 def test_a_listing_names_the_folder_and_each_file_once():
     assert _lines((t.KIND_LISTING, _out(DriveOp.LIST, HOME, LEASE))) == [
-        "[Drive: Home ref=drive:fold01 — listed]", "[Drive: Home/Lisbon lease.pdf ref=drive:def456 — listed]"]
+        "[Drive: Home ref=drive:a1:fold01 — listed]", "[Drive: Home/Lisbon lease.pdf ref=drive:a1:def456 — listed]"]
 
 
 def test_a_failed_or_not_started_operation_touches_no_file():
@@ -108,8 +111,8 @@ def test_two_commissions_in_one_turn_render_in_order_deduplicated():
     second = PassThroughCollector()
     second.add(1, t.KIND_OPEN, _out(DriveOp.OPEN, LEASE, body=True))
     assert drive_history_lines([first.drive_context(), second.drive_context()]) == [
-        '[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files)]',
-        '[Drive: Home/Lisbon lease.pdf ref=drive:def456 — searched for "lab report" (2 files); opened whole]']
+        '[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — searched for "lab report" (2 files)]',
+        '[Drive: Home/Lisbon lease.pdf ref=drive:a1:def456 — searched for "lab report" (2 files); opened whole]']
 
 
 def test_the_older_flat_shape_renders_each_file_once_with_its_ref():
@@ -141,10 +144,11 @@ def test_odd_fields_are_tolerated():
 def test_the_ref_parses_back_from_the_line_and_from_its_ref_token():
     line = _lines((t.KIND_SEARCH, _search(LAB)), (t.KIND_PASSAGES, _passages(LAB, 2)))[0]
     token = next(w for w in line.split() if w.startswith("ref="))
-    assert parse_drive_ref(line) == parse_drive_ref(token) == parse_drive_ref(token[len("ref="):]) == "abc123"
+    assert (drive_ref.parse(line) == drive_ref.parse(token) == drive_ref.parse(token[len("ref="):])
+            == DriveRef(tag="a1", item_id="abc123"))
 
 
 def test_entries_keep_todays_path_and_ref():
     entry = history_entries(t.KIND_SEARCH, _search(LAB))[0]
     assert (entry["path"], entry["ref"], entry["op"], entry["query"], entry["count"]) == (
-        "Health/lab-report.pdf", "drive:abc123", "searched", "lab report", 1)
+        "Health/lab-report.pdf", "drive:a1:abc123", "searched", "lab report", 1)

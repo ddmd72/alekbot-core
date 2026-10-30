@@ -26,14 +26,14 @@ def _text(item_id, index):
 
 
 def _file(*indexes, item_id="item-1", path=TOMS_PLAN):
-    return excerpt_file(item_id, path, [chunk(item_id, i, _text(item_id, i)) for i in indexes])
+    return excerpt_file(item_id, path, [chunk(item_id, i, _text(item_id, i)) for i in indexes], ref_tag="a1")
 
 
 def _passages(*files, owner_note=False, question="How does the review process work?"):
     items = tuple(PLAN_ITEM if f.item_id == "item-1" else LEASE_ITEM for f in files)
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text=f"PER-CALL TEXT {question}", success=True,
                         items=items, facts=ReadFacts(excerpts=bool(files), owner_note=owner_note),
-                        excerpts=result(*files, question=question), request_text=question)
+                        excerpts=result(*files, question=question), request_text=question, ref_tag="a1")
 
 
 def _answer(*entries, report=DriveReport(), **kw):
@@ -44,7 +44,7 @@ def _answer(*entries, report=DriveReport(), **kw):
 
 
 SEARCH = DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="REMINDER\n<card>", success=True,
-                      items=(PLAN_ITEM,), facts=ReadFacts(cards=1), request_text="Tom's plan")
+                      items=(PLAN_ITEM,), facts=ReadFacts(cards=1), request_text="Tom's plan", ref_tag="a1")
 
 
 def test_two_passages_calls_give_one_block_and_no_per_call_block():
@@ -136,8 +136,9 @@ def test_a_run_without_passages_keeps_the_note_and_has_no_passages_lines():
 def test_drive_context_has_the_files_and_the_passage_numbers_read():
     """A11 as revised 2026-10-29: each file, in order, with the display numbers read, a record for the history line."""
     _, answer = _answer((1, t.KIND_PASSAGES, _passages(_file(0, 1), _file(2, item_id="item-2", path=LEASE))))
-    assert answer.drive_context == [{"path": TOMS_PLAN, "ref": PLAN_ITEM.ref, "op": "passages", "passages": [1, 2]},
-                                    {"path": LEASE, "ref": LEASE_ITEM.ref, "op": "passages", "passages": [3]}]
+    assert answer.drive_context == [
+        {"path": TOMS_PLAN, "ref": "drive:a1:item-1", "op": "passages", "passages": [1, 2]},
+        {"path": LEASE, "ref": "drive:a1:item-2", "op": "passages", "passages": [3]}]
 
 
 def test_the_default_nonce_wraps_each_file():

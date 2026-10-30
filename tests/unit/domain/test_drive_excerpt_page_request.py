@@ -5,7 +5,7 @@ from src.domain.drive_excerpt_page import last_page_start
 from src.domain.drive_excerpt_request import BAD_RANGE, parse_page, range_request
 from src.domain.drive_index_params import EXCERPT_RANGE_MAX
 
-REF = "drive:abc123"
+REF = "drive:a1:abc123"
 
 
 @pytest.mark.parametrize("text,first", [
@@ -33,7 +33,7 @@ def test_bad_pages_get_the_range_correction(text):
 
 
 def test_a_head_line_id_works_with_a_page():
-    req = range_request("drive:abc123:3-5", "from 11")
+    req = range_request("drive:a1:abc123:3-5", "from 11")
     assert req.file_ref == REF and req.page and req.first == 11
 
 
