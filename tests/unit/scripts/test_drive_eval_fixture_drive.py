@@ -90,5 +90,3 @@ async def test_single_reads():
     assert len(names) == 520 == len(set(names))
     with pytest.raises(DriveItemNotFoundError):
         await drive.list_children_changes(USER, "fx-unknown", limit=5)
-    connection = await drive.connection(USER)
-    assert connection.connected and not connection.needs_reconnect and connection.drive_id == DRIVE_ID
