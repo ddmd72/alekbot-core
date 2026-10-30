@@ -14,6 +14,7 @@ from src.domain.drive_index_params import KNN_ITEM_IDS_MAX
 from src.services import drive_search_service as search_mod
 from src.services.drive_search_service import DriveSearchService
 
+from .drive_index_fakes import U_SCOPE
 from .drive_search_v2_fixture import V2World
 from .test_drive_search_excerpts import PassageWorld, toward
 
@@ -174,9 +175,9 @@ async def test_the_merged_batches_equal_the_top_k_over_all_the_files():
             chunks.append(_chunk(item, index))
             vectors.append(toward(((n * 7 + index * 13) % 97) / 10.0))
     await repo.write_chunks(chunks, vectors)
-    expected = await repo.find_nearest_chunks("u", E0, 40)   # every chunk belongs to `items`
+    expected = await repo.find_nearest_chunks(U_SCOPE, E0, 40)   # every chunk belongs to `items`
     for parallel in (1, 16):
-        merged = await DriveSearchService._nearest_in(repo.find_nearest_chunks_in, "u", E0, 40, items,
+        merged = await DriveSearchService._nearest_in(repo.find_nearest_chunks_in, U_SCOPE, E0, 40, items,
                                                       asyncio.Semaphore(parallel))
         assert [((c.item_id, c.index), d) for c, d in merged] == [((c.item_id, c.index), d) for c, d in expected]
 
@@ -188,7 +189,7 @@ async def test_no_files_make_no_query():
         calls.append(tuple(item_ids))
         return []
 
-    assert await DriveSearchService._nearest_in(find, "u", E0, 5, [], asyncio.Semaphore(1)) == []
+    assert await DriveSearchService._nearest_in(find, U_SCOPE, E0, 5, [], asyncio.Semaphore(1)) == []
     assert calls == []
 
 
@@ -203,6 +204,6 @@ async def test_at_most_the_gate_s_batches_run_at_once():
         return []
 
     ids = [f"book-{n:03d}" for n in range(10 * KNN_ITEM_IDS_MAX)]
-    await DriveSearchService._nearest_in(find, "u", E0, 5, ids, asyncio.Semaphore(3))
+    await DriveSearchService._nearest_in(find, U_SCOPE, E0, 5, ids, asyncio.Semaphore(3))
     assert peak[0] == 3
 

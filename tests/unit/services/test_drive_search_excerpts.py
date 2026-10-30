@@ -21,10 +21,12 @@ from src.domain.drive_keys import word_keys
 from src.domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
 )
-from src.domain.user_drive import DriveConnection, make_drive_ref
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.user_drive import DriveConnection
 from src.services import drive_search_service as search_mod
 from src.services.drive_search_service import DriveSearchService
 
+from .drive_harness_connections import harness_connections
 from .drive_search_v2_fixture import SPACE, V2World
 
 QUESTION = "how does the review process work"
@@ -79,7 +81,8 @@ class PassageWorld(V2World):
         self.repo = CountingRepo()
         self.repo.states["u"] = state
         counter = itertools.count(1)
-        self.service = DriveSearchService(self.repo, self.emb, self.users, self.drive, embedding_space=space,
+        self.connections = harness_connections(self.users, self.drive)
+        self.service = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=space,
                                           clock=lambda: self.now, nonce=lambda: f"nonce{next(counter):04d}")
         self.emb.pinned[QUESTION] = toward(0.0)
 
@@ -88,7 +91,8 @@ class PassageWorld(V2World):
         item = self.file(name, parent=parent, kind=fields.pop("kind", "docx"), chunks=texts, generation=generation,
                          **fields)
         if content_hash:
-            self.set(item, content_hash=content_hash)
+            digest, size = content_hash.split(":")
+            self.set(item, content_identity=ContentIdentity("fakehash", digest, int(size)))
         for index, d in enumerate(distances):
             chunk, _ = self.repo.chunks[("u", item, generation, index)]
             self.repo.chunks[("u", item, generation, index)] = (chunk, toward(d))
@@ -106,8 +110,17 @@ class PassageWorld(V2World):
     async def find(self, question: str = QUESTION, *, shown=frozenset(), **kw):
         return await self.service.excerpts("u", ExcerptRequest(question=question, **kw), shown=shown)
 
+    async def connection(self):
+        """The harness connection as read now (its switch and state are derived live from the profile and drive)."""
+        return await self.connections.get("u", "u")
+
     async def read(self, item: str, first: int, last: int):
-        return await self.service.excerpt_range("u", ExcerptRangeRequest(make_drive_ref(item), first, last))
+        return await self.service.excerpt_range("u", ExcerptRangeRequest(ref(item), first, last))
+
+
+def ref(item: str) -> str:
+    """The file's ref (was `make_drive_ref`, which left `src.domain.user_drive`)."""
+    return f"drive:{item}"
 
 
 def texts(result) -> List[str]:
@@ -134,7 +147,7 @@ async def test_the_whole_drive_ranks_by_the_question_and_fills_the_file(w):
     result = await w.find()
     assert result.status == STATUS_OK and w.repo.knn_limits == [CHUNK_FETCH]
     f = result.files[0]
-    assert (f.item_id, f.ref, f.name, f.path, f.kind) == (plan, make_drive_ref(plan), "Tom's plan.docx",
+    assert (f.item_id, f.ref, f.name, f.path, f.kind) == (plan, ref(plan), "Tom's plan.docx",
                                                           "R&D/Tom's plan.docx", "docx")
     assert [c.index for c in f.chunks] == [0, 1] and f.chunk_count == 2 and f.generation == 1
     assert f.capture == "digital" and f.truncated and not f.stale
@@ -186,7 +199,7 @@ async def test_an_id_held_by_a_chunk_is_lifted_among_the_nearest(w):
 async def test_file_refs_rank_only_those_files_in_memory(w):
     plan = w.doc("Tom's plan.docx", ["The review is held weekly.", "Then Acme signs off."], [0.3, 0.2])
     w.doc("menu.md", ["Lunch options near the office."], [0.0], kind="md")
-    result = await w.find(file_refs=(make_drive_ref(plan),))
+    result = await w.find(file_refs=(ref(plan),))
     assert w.repo.knn_limits == [] and w.repo.calls["vectors"] == 1
     assert [f.item_id for f in result.files] == [plan] and len(result.files[0].chunks) == 2
 
@@ -196,7 +209,7 @@ async def test_file_refs_take_precedence_over_a_folder(w):
     rd = w.folder("R&D")
     w.doc("menu.md", ["Lunch options near the office."], [0.0], parent=rd, kind="md")
     plan = w.doc("Tom's plan.docx", ["The review is held weekly."], [0.3])
-    result = await w.find(folder="R&D", file_refs=(make_drive_ref(plan),))
+    result = await w.find(folder="R&D", file_refs=(ref(plan),))
     assert [f.item_id for f in result.files] == [plan]
     assert result.folder_path == "" and w.repo.knn_limits == []
 
@@ -205,9 +218,9 @@ async def test_a_file_ref_with_no_indexed_text_is_counted(w):
     plan = w.doc("Tom's plan.docx", ["The review is held weekly."], [0.3])
     rd = w.folder("R&D")
     empty = w.file("budget.ods", parent=rd, kind="ods")
-    result = await w.find(file_refs=(make_drive_ref(plan), make_drive_ref(empty), make_drive_ref("missing-1")))
+    result = await w.find(file_refs=(ref(plan), ref(empty), ref("missing-1")))
     assert [f.item_id for f in result.files] == [plan]
-    assert result.no_text == 2 and result.no_text_paths == ("R&D/budget.ods", make_drive_ref("missing-1"))
+    assert result.no_text == 2 and result.no_text_paths == ("R&D/budget.ods", ref("missing-1"))
 
 
 # -- folder scope -----------------------------------------------------------------------------------------------------

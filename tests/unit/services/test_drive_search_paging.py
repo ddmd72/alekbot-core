@@ -5,9 +5,8 @@ import pytest
 
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_index_params import EXCERPTS_CHARS_MAX
-from src.domain.user_drive import make_drive_ref
 
-from .test_drive_search_excerpts import PassageWorld, texts
+from .test_drive_search_excerpts import PassageWorld, ref, texts
 
 
 @pytest.fixture
@@ -20,7 +19,7 @@ def clauses(count):
 
 
 async def page(w, item, first, *, last=None):
-    req = ExcerptRangeRequest(make_drive_ref(item), first, last or first + 9, page=True)
+    req = ExcerptRangeRequest(ref(item), first, last or first + 9, page=True)
     return await w.service.excerpt_range("u", req)
 
 
@@ -37,7 +36,7 @@ async def test_first_page(w, doc):
     r = await page(w, doc, 1)
     p = r.page
     assert (p.first, p.last, p.total, p.next, p.end, p.past_end) == (1, 10, 25, 11, False, False)
-    assert p.version == 1 and p.path == "Oak Street parking rules.md" and p.ref == make_drive_ref(doc)
+    assert p.version == 1 and p.path == "Oak Street parking rules.md" and p.ref == ref(doc)
     assert len(texts(r)) == 10 and r.continue_at is None
 
 
@@ -84,12 +83,12 @@ async def test_truncated_and_stale_come_from_the_record(w):
 
 
 async def test_a_plain_range_has_no_page(w, doc):
-    r = await w.service.excerpt_range("u", ExcerptRangeRequest(make_drive_ref(doc), 6, 8))
+    r = await w.service.excerpt_range("u", ExcerptRangeRequest(ref(doc), 6, 8))
     assert r.page is None and len(texts(r)) == 3 and r.continue_at is None
 
 
 async def test_a_plain_range_cut_keeps_continue_at(w):
     long = "word " * 1_800
     item = w.doc("long.md", [long] * 5, [0.1] * 5, kind="md")
-    r = await w.service.excerpt_range("u", ExcerptRangeRequest(make_drive_ref(item), 1, 5))
+    r = await w.service.excerpt_range("u", ExcerptRangeRequest(ref(item), 1, 5))
     assert r.page is None and r.continue_at == 3

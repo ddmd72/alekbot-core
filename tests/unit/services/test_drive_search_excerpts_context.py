@@ -6,9 +6,8 @@ from __future__ import annotations
 from src.domain.drive_card import note_line
 from src.domain.drive_excerpt_folder_note import FolderNote
 from src.domain.drive_index import DocumentBrief
-from src.domain.user_drive import make_drive_ref
 
-from .test_drive_search_excerpts import PassageWorld
+from .test_drive_search_excerpts import PassageWorld, ref
 
 RD_NOTE = "Acme specifications, the review process lives here"
 ACME_NOTE = "work files from Acme"
@@ -47,9 +46,9 @@ async def test_the_wide_path_reads_no_record_for_the_folder_notes():
 
 async def test_the_file_refs_path_reads_no_record_for_the_folder_notes():
     bare, _, _, bare_plan = _tree(noted=False)
-    await bare.find(file_refs=(make_drive_ref(bare_plan),))
+    await bare.find(file_refs=(ref(bare_plan),))
     w, acme, rd, plan = _tree(noted=True)
-    result = await w.find(file_refs=(make_drive_ref(plan),))
+    result = await w.find(file_refs=(ref(plan),))
     assert len(w.repo.record_reads) == len(bare.repo.record_reads)
     assert set(result.context.folders) == {acme, rd}
     assert [f.item_id for f in result.context.files] == [plan]
