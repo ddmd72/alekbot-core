@@ -1,4 +1,5 @@
 import pytest
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock
 
 from quart import Quart
@@ -14,7 +15,7 @@ def _app(ephemeral_store, provider, alert_sink=None):
         user_repository=AsyncMock(), ephemeral_store=ephemeral_store, alert_sink=alert_sink or AsyncMock(),
         notification_service=AsyncMock(), lelik_agent_provider=provider,
         answer_url="https://main.example.com/voice/answer",
-        signature_verifier=AsyncMock(return_value=True), relay_stream_url="wss://relay.example.com/",
+        signature_verifier=AsyncMock(return_value=True), relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 

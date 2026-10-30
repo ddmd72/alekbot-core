@@ -17,7 +17,7 @@ def _app(relay_warmup=None, oidc_ok=True):
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=AsyncMock(), quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
         summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=oidc_ok),
-        alert_sink=AsyncMock(), relay_warmup=relay_warmup,
+        alert_sink=AsyncMock(), relay_warmup=relay_warmup, digest_key=b"k" * 32
     ))
     return app
 

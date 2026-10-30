@@ -15,7 +15,7 @@ def _app(provider, oidc=True, prompt_content_store=None):
         ephemeral_store=AsyncMock(), quota_service=AsyncMock(),
         prompt_content_store=prompt_content_store if prompt_content_store is not None else AsyncMock(),
         summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=oidc), alert_sink=AsyncMock(),
-        lelik_agent_provider=provider,
+        lelik_agent_provider=provider, digest_key=b"k" * 32
     ))
     return app.test_client()
 

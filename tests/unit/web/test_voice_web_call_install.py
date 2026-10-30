@@ -3,6 +3,7 @@
 The main Quart app has no static folder, so these are explicit blueprint routes. iOS fetches the
 manifest and apple-touch-icon without the session cookie, so they must not sit behind auth.
 """
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -18,7 +19,7 @@ def _app():
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
         session_service=session_service, call_setup=MagicMock(), media_room=AsyncMock(),
-        ephemeral_store=AsyncMock(), relay_base_url="wss://relay.example.com"))
+        ephemeral_store=AsyncMock(), relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 
 

@@ -33,7 +33,7 @@ def _app(ephemeral_store, one_call_ttl_s=None):
         kwargs["one_call_ttl_s"] = one_call_ttl_s
 
     app = Quart(__name__)
-    app.register_blueprint(create_voice_control_plane_blueprint(**kwargs))
+    app.register_blueprint(create_voice_control_plane_blueprint(**kwargs, digest_key=b"k" * 32))
     return app
 
 

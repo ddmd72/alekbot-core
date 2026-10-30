@@ -11,6 +11,7 @@ What goes INTO Lelik's prompt is LelikPersonaService's contract
    retry for up to `one_call_ttl_s`. A failure to build the service itself (no
    profile) takes the same path — never a silent empty-context call.
 """
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -29,7 +30,7 @@ def _app(*, ephemeral_store, lelik_agent_provider, alert_sink):
         lelik_agent_provider=lelik_agent_provider,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/",
+        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 

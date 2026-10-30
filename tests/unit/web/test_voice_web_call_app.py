@@ -1,4 +1,5 @@
 """Cabinet web-call API: auth, ownership, busy, failure releases, hangup before the relay starts."""
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,7 +36,7 @@ def _setup(store, prepare_error=None):
     agent = MagicMock()
     agent.session_config = AsyncMock(side_effect=prepare_error or None,
                                      return_value={"instructions": "you are Lelik", "tools": []})
-    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent))
+    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
 
 
 def _app(store, media_room, user="u1", setup=None):
@@ -44,7 +45,7 @@ def _app(store, media_room, user="u1", setup=None):
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
         session_service=session_service, call_setup=setup or _setup(store), media_room=media_room,
-        ephemeral_store=store, relay_base_url="wss://relay.example.com"))
+        ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 
 
@@ -162,7 +163,7 @@ async def test_unauthenticated_is_401():
     ss.verify_access_token = MagicMock(side_effect=ValueError("bad"))
     session_less.register_blueprint(create_voice_web_call_blueprint(
         session_service=ss, call_setup=_setup(store), media_room=room, ephemeral_store=store,
-        relay_base_url="wss://relay.example.com"))
+        relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     resp = await session_less.test_client().post("/api/voice/web-call", json={"sdp": "o", "mid": "0"})
     assert resp.status_code == 401
 

@@ -26,7 +26,7 @@ async def test_ticket_write_failure_releases_alerts_and_raises(failing_key, capl
 
     store.set.side_effect = set_
     alert = AsyncMock()
-    service = VoiceCallSetupService(store, alert, AsyncMock(return_value=_agent()))
+    service = VoiceCallSetupService(store, alert, AsyncMock(return_value=_agent()), digest_key=b"k" * 32)
 
     with pytest.raises(VoiceCallSetupError):
         await service.prepare("t1", "u1", "a1", "phone")
@@ -44,7 +44,7 @@ async def test_a_release_that_also_fails_still_alerts_and_raises_the_setup_error
     store.set.side_effect = RuntimeError("firestore unavailable")
     store.delete.side_effect = RuntimeError("firestore unavailable")
     alert = AsyncMock()
-    service = VoiceCallSetupService(store, alert, AsyncMock(return_value=_agent()))
+    service = VoiceCallSetupService(store, alert, AsyncMock(return_value=_agent()), digest_key=b"k" * 32)
 
     with pytest.raises(VoiceCallSetupError):
         await service.prepare("t1", "u1", "a1", "phone")

@@ -25,7 +25,7 @@ def app_and_deps():
         prompt_content_store=prompt_content_store,
         summary_consumer=summary_consumer,
         oidc_verifier=oidc_verifier,
-        alert_sink=alert_sink,
+        alert_sink=alert_sink, digest_key=b"k" * 32
     ))
     return app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, oidc_verifier, alert_sink
 

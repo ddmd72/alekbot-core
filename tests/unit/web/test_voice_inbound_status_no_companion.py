@@ -4,6 +4,7 @@ released at once (no lock-out until their TTL), the ops alert is posted, and Twi
 
 A real Twilio signature (computed with Twilio's own RequestValidator) and the real Firestore ephemeral store on the
 evaluating fake."""
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from quart import Quart
 from twilio.request_validator import RequestValidator
 
@@ -39,7 +40,7 @@ async def test_no_companion_releases_ticket_and_marker_and_alerts():
     app.register_blueprint(create_voice_webhook_blueprint(
         user_repository=Tripwire("user_repository", touched), ephemeral_store=store, alert_sink=alerts,
         notification_service=Tripwire("notification_service", touched), lelik_agent_provider=no_companion,
-        answer_url="https://app.example/voice/answer", signature_verifier=twilio))
+        answer_url="https://app.example/voice/answer", signature_verifier=twilio, cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     with eval_transactions():
         await store.set("voice_pending_callback:CAin", {"ticket": "t1", "user_id": "u1", "account_id": "a1",
                                                         "to_number": "+12025550100"}, ttl_s=300)

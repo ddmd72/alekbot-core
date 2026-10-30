@@ -24,7 +24,7 @@ def _app(verdict):
     app = Quart(__name__)
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=ephemeral_store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
-        summary_consumer=summary_consumer, oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(),
+        summary_consumer=summary_consumer, oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(), digest_key=b"k" * 32
     ))
     return app, ephemeral_store, summary_consumer
 

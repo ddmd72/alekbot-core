@@ -9,7 +9,7 @@ def _service(store=None, agent=None):
     store = store or AsyncMock()
     alert = AsyncMock()
     provider = AsyncMock(return_value=agent)
-    return VoiceCallSetupService(store, alert, provider), store, alert
+    return VoiceCallSetupService(store, alert, provider, digest_key=b"k" * 32), store, alert
 
 
 @pytest.mark.asyncio

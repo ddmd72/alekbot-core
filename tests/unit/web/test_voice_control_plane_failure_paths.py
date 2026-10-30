@@ -49,7 +49,7 @@ class World:
         app = Quart("voice_control_plane_c1")
         app.register_blueprint(create_voice_control_plane_blueprint(
             ephemeral_store=self.store, quota_service=Recorder(), prompt_content_store=Recorder(),
-            summary_consumer=self.summaries.summary, oidc_verifier=_relay_only, alert_sink=self.alerts,
+            summary_consumer=self.summaries.summary, oidc_verifier=_relay_only, alert_sink=self.alerts, digest_key=b"k" * 32
         ))                                   # no late_answer_sink: this deployment cannot post late answers
         self.client = app.test_client()
 

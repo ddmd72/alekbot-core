@@ -64,7 +64,7 @@ class World:
             ephemeral_store=self.store, quota_service=Tripwire("quota_service", self.touched),
             prompt_content_store=Tripwire("prompt_content_store", self.touched),
             summary_consumer=Tripwire("summary_consumer", self.touched).consume,
-            oidc_verifier=relay_only, alert_sink=Tripwire("alert_sink", self.touched),
+            oidc_verifier=relay_only, alert_sink=Tripwire("alert_sink", self.touched), digest_key=b"k" * 32
         ))
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=main), base_url=MAIN)
         control_plane = HttpCallControlPlaneAdapter(MAIN, id_token_provider=lambda: RELAY_TOKEN, http_client=self.http)

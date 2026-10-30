@@ -28,7 +28,7 @@ def _client(touched: list):
         prompt_content_store=Tripwire("prompt_content_store", touched),
         summary_consumer=summary_consumer,
         oidc_verifier=build_oidc_gate(frozenset({"relay@example.test"}), on_cloud_run=True, label="P7"),
-        alert_sink=Tripwire("alert_sink", touched),
+        alert_sink=Tripwire("alert_sink", touched), digest_key=b"k" * 32
     ))
     return app.test_client()
 

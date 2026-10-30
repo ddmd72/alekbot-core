@@ -1,4 +1,5 @@
 import pytest
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
@@ -46,7 +47,7 @@ def _app(deps):
         # the X-Twilio-Signature header via an injected async callable, the same
         # shape voice_control_plane_app injects its OIDC verifier. Mechanical
         # adaptation to a new REQUIRED dependency; no assertion in this file changed.
-        signature_verifier=AsyncMock(return_value=True),
+        signature_verifier=AsyncMock(return_value=True), cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 
@@ -237,7 +238,7 @@ async def test_answer_webhook_hangs_up_on_machine_without_opening_session():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/",
+        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     client = app.test_client()
 
@@ -265,7 +266,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/",
+        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     client = app.test_client()
 
@@ -299,7 +300,7 @@ async def test_answer_webhook_rejects_when_ticket_not_found():
         lelik_agent_provider=persona_factory,
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/",
+        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     client = app.test_client()
 
@@ -326,7 +327,7 @@ def _signed_app(*, ephemeral_store, signature_verifier=None):
         lelik_agent_provider=_persona_factory()[0],
         answer_url="https://main.example.com/voice/answer",
         signature_verifier=signature_verifier or AsyncMock(return_value=True),
-        relay_stream_url="wss://relay.example.com/",
+        relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 
