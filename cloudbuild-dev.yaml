@@ -1,17 +1,29 @@
+# Step graph (ids + waitFor). The MAIN service deploys first and depends on nothing but the image: pull -> build -> push ->
+# deploy-main -> main-public-iam. Only after that do the independent rest run in PARALLEL (queue -> indexer -> its IAM;
+# the research job; relay -> its IAM; the scheduler script after the queue it feeds), so a drive or relay failure can
+# never stop a bot hotfix: every one of them waits for main-public-iam, and none of them is a dependency of main.
+# The sandbox steps stay serial and wait for all four branches, exactly as before (after every drive step).
 steps:
   # Pull previous image to use as build cache (|| true so first deploy doesn't fail)
   - name: "gcr.io/cloud-builders/docker"
+    id: "pull-cache"
     entrypoint: "bash"
     args: ["-c", "docker pull gcr.io/$PROJECT_ID/alek-bot-dev:latest || true"]
 
   - name: "gcr.io/cloud-builders/docker"
+    id: "build-image"
+    waitFor: ["pull-cache"]
     args: ["build", "--cache-from", "gcr.io/$PROJECT_ID/alek-bot-dev:latest",
            "-t", "gcr.io/$PROJECT_ID/alek-bot-dev:latest", "."]
 
   - name: "gcr.io/cloud-builders/docker"
+    id: "push-image"
+    waitFor: ["build-image"]
     args: ["push", "gcr.io/$PROJECT_ID/alek-bot-dev:latest"]
 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-main"
+    waitFor: ["push-image"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -35,6 +47,8 @@ steps:
   # This step is idempotent and ensures every deployment leaves the service
   # publicly accessible.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "main-public-iam"
+    waitFor: ["deploy-main"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -62,9 +76,11 @@ steps:
   # Log sampling 1.0: one line per task operation, a few per user per hour.
   # Prerequisite: the identity this build runs as needs queue admin rights on this queue
   # (roles/cloudtasks.queueAdmin, granted on the queue; docs/07_deployment/SCHEDULERS.md § Start Drive Sync).
-  # Without it this step fails the build after the main service is deployed; the indexer, research job,
-  # relay and scheduler steps then do not run.
+  # Without it this step fails the build after the main service is deployed; the indexer and scheduler steps
+  # (which wait for this one) then do not run.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "drive-queue"
+    waitFor: ["main-public-iam"]
     entrypoint: "bash"
     args:
       - "-c"
@@ -130,6 +146,8 @@ steps:
   #   the /worker gate pins the token audience to it). Empty on the first pass of the two-pass first
   #   deploy (Makefile, _INDEXER_URL): the service still starts and /worker answers 503.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-indexer"
+    waitFor: ["drive-queue"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -167,6 +185,8 @@ steps:
   # (--allow-unauthenticated alone is not reliable if the Cloud Build SA lacks
   # roles/iam.securityAdmin). Idempotent. Ingress stays internal, and /worker stays OIDC-gated.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "indexer-public-iam"
+    waitFor: ["deploy-indexer"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -181,6 +201,8 @@ steps:
   # task-timeout: 3600s (1 hour) — covers first pass + second pass for large research.
   # max-retries: 0 — no automatic retries; the research loop has its own overload retry.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-research-job"
+    waitFor: ["main-public-iam"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -227,6 +249,8 @@ steps:
   # src/adapters/twilio_telephony_adapter.py), wired into the alek-bot-dev
   # step above, not this one.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy-relay"
+    waitFor: ["main-public-iam"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -265,6 +289,8 @@ steps:
   # for alek-bot-dev above (--allow-unauthenticated alone is not reliable if
   # the Cloud Build SA lacks roles/iam.securityAdmin). Idempotent.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "relay-public-iam"
+    waitFor: ["deploy-relay"]
     entrypoint: "gcloud"
     args:
       - "run"
@@ -278,6 +304,8 @@ steps:
   # Keep the dev container warm to avoid ~30s cold starts (min-instances=0).
   # update falls through to create on first deploy.
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "scheduler-jobs"
+    waitFor: ["drive-queue"]
     entrypoint: "bash"
     args:
       - "scripts/infrastructure/cloudbuild_scheduler_jobs.sh"
@@ -292,6 +320,8 @@ steps:
   # service identity does not exist yet), so these steps cannot break the main deploy. The script holds the logic (Cloud
   # Build caps a step arg at 10 000 characters; substitutions do not apply inside files, hence `env:`).
   - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-pull"
+    waitFor: ["indexer-public-iam", "deploy-research-job", "relay-public-iam", "scheduler-jobs"]
     entrypoint: "bash"
     args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "pull"]
     env:
@@ -301,6 +331,8 @@ steps:
       - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
 
   - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-build"
+    waitFor: ["sandbox-pull"]
     entrypoint: "bash"
     args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "build"]
     env:
@@ -310,6 +342,8 @@ steps:
       - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
 
   - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-push"
+    waitFor: ["sandbox-build"]
     entrypoint: "bash"
     args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "push"]
     env:
@@ -319,6 +353,8 @@ steps:
       - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
 
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "sandbox-deploy"
+    waitFor: ["sandbox-push"]
     entrypoint: "bash"
     args: ["scripts/infrastructure/cloudbuild_sandbox_render.sh", "deploy"]
     env:

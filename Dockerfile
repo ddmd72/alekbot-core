@@ -13,14 +13,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the dependency list first so this layer caches across code changes
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Playwright Chromium — required for widget rendering (ENABLE_HTML_RENDERER=true)
-# Adds ~300MB. Only Chromium is installed (not Firefox/WebKit).
-RUN python -m playwright install chromium --with-deps
+# Layer order: everything that does not depend on the Python packages comes first (apt, the two npm installs), so a
+# requirements.txt change rebuilds only pip and Playwright Chromium, not Node and puppeteer's Chromium.
 
 # Install docx npm library for LLM-generated DOCX scripts
 COPY docx_generator/package.json docx_generator/
@@ -30,6 +24,16 @@ RUN cd docx_generator && npm install --omit=dev
 # Downloads bundled Chromium (~170MB) — required for PDF rendering in Cloud Run.
 COPY pdf_generator/package.json pdf_generator/
 RUN cd pdf_generator && npm install --omit=dev
+
+# Copy the dependency list first so this layer caches across code changes
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Playwright Chromium — required for widget rendering (ENABLE_HTML_RENDERER=true)
+# Adds ~300MB. Only Chromium is installed (not Firefox/WebKit). Stays right after pip: it needs the playwright package,
+# whose version is whatever requirements.txt resolves (one source of truth, no second pin in this file).
+RUN python -m playwright install chromium --with-deps
 
 # The drive indexer's parser child runs as this unprivileged user (R3 F3-1, USER_DRIVE_INDEXING_RFC §9): another
 # uid cannot read the indexer's /proc/<pid>/environ (its API keys) or rewrite the app source it loads. Only the
