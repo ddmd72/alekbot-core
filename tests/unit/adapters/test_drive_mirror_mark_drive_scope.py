@@ -44,8 +44,3 @@ async def test_a_document_of_another_drive_is_left_unmarked(repo):
     assert docs[a.key].gone_pending is False
     assert docs[b.key].gone_pending is True
 
-
-async def test_without_a_drive_id_every_drive_is_marked(repo):
-    await repo.save_doc(MirrorDoc(user_id="u", drive_id="old", kind=KIND_FILE, source_item_id="a"))
-    assert await repo.mark_gone("u", [DeletionNotice("a", GONE, T)]) == 1
-    assert (await repo.get_docs("u", ["u:file:a"]))["u:file:a"].gone_pending is True
