@@ -21,12 +21,13 @@ from src.domain.drive_keys import word_keys
 from src.domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
 )
+from src.domain import drive_ref
 from src.domain.drive_content_identity import ContentIdentity
 from src.domain.user_drive import DriveConnection
 from src.services import drive_search_service as search_mod
 from src.services.drive_search_service import DriveSearchService
 
-from .drive_harness_connections import harness_connections
+from .drive_harness_connections import HARNESS_TAG, harness_connections
 from .drive_search_v2_fixture import SPACE, V2World
 
 QUESTION = "how does the review process work"
@@ -119,8 +120,8 @@ class PassageWorld(V2World):
 
 
 def ref(item: str) -> str:
-    """The file's ref (was `make_drive_ref`, which left `src.domain.user_drive`)."""
-    return f"drive:{item}"
+    """The harness connection's tagged ref (MULTI_DRIVE_RFC §9): a passages request carries tagged refs only (D13)."""
+    return drive_ref.format(HARNESS_TAG, item)
 
 
 def texts(result) -> List[str]:

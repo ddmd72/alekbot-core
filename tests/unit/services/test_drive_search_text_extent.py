@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import Scope
 from src.domain.drive_text_extent import ExtentState, ExtentWhy
 from src.domain.user_drive import DriveConnection
@@ -60,8 +61,10 @@ async def test_disconnected_and_another_drive(w):
     item = doc(w, "a.md", ["x"], [0.1], kind="md")
     w.drive.connection_state = DriveConnection(connected=True, drive_id="d2")
     assert (await extent(w, item)).why is ExtentWhy.NOT_CONNECTED
-    w.drive.connection_state = DriveConnection(connected=False)
-    assert (await extent(w, item)).why is ExtentWhy.NOT_CONNECTED
+    # a disconnect is the connection's state now (MULTI_DRIVE_RFC §4.4), not the drive port's `connection` (§6)
+    w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
+    gone = replace(await w.connection(), state=ConnectionState.DISCONNECTED, disconnected_at=w.now)
+    assert (await w.service.text_extent(gone, item)).why is ExtentWhy.NOT_CONNECTED
 
 
 async def test_rebuilding_on_purge(w):
