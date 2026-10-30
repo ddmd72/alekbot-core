@@ -9,6 +9,7 @@ from src.domain.drive_index import DriveChunk
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
 
+from .drive_index_fakes import U_SCOPE
 from .test_drive_search_content_streams import FAR, ContentSpy, index, settle_metadata
 from .test_drive_search_service import World
 
@@ -58,10 +59,11 @@ async def test_refreshing_without_terms_reads_no_chunk(monkeypatch):
 
 async def test_the_in_memory_repository_leaves_out_what_was_not_asked_for():
     repo = InMemoryDriveIndexRepository()
-    await repo.write_chunks([DriveChunk("u", "a", 1, 0, "text 98765", 0, 10, "pdf", ("98765",))], [[0.5, 0.5]])
-    ((chunk, vector),) = await repo.get_chunks_with_vectors("u", "a", 1, [0], text=False, terms=False, vectors=False)
+    await repo.write_chunks([DriveChunk("u", "a", 1, 0, "text 98765", 0, 10, "pdf", ("98765",),
+                                        connection_id="u")], [[0.5, 0.5]])
+    ((chunk, vector),) = await repo.get_chunks_with_vectors(U_SCOPE, "a", 1, [0], text=False, terms=False, vectors=False)
     assert (chunk.text, chunk.content_terms, vector) == ("", (), [])
-    ((chunk, vector),) = await repo.get_chunks_with_vectors("u", "a", 1, [0])
+    ((chunk, vector),) = await repo.get_chunks_with_vectors(U_SCOPE, "a", 1, [0])
     assert (chunk.text, chunk.content_terms, vector) == ("text 98765", ("98765",), [0.5, 0.5])
 
 
@@ -70,7 +72,7 @@ async def test_firestore_reads_only_the_asked_fields(mock_env_config):
     repo = make_chunk_repo(db, mock_env_config)
     db.stored["u:a:1:0"] = {"user_id": "u", "item_id": "a", "generation": 1, "index": 0, "text": "t",
                             "char_start": 0, "char_end": 1, "kind": "pdf", "content_terms": ["98765"]}
-    rows = await repo.get_chunks_with_vectors("u", "a", 1, [0], text=False, terms=True, vectors=False)
+    rows = await repo.get_chunks_with_vectors(U_SCOPE, "a", 1, [0], text=False, terms=True, vectors=False)
     ((_, paths),) = db.get_all_calls
     assert "text" not in paths and CHUNK_VECTOR not in paths and "content_terms" in paths
     assert [(c.index, v) for c, v in rows] == [(0, [])]
