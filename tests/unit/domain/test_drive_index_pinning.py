@@ -5,10 +5,12 @@ Each test kills a mutant that survived the rest of the suite. The code was alrea
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import (
     GEO_TABLE_VERSION, NAME_KEYS_VERSION, POLICY_VERSION, STRUCTURE_POLICY_SINCE, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState,
     EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import NAME_MIN_TRIGRAMS, STALE_ALERT_AFTER
 from src.domain.drive_index_planner import (
     PlanContext, is_stale, needs_probe, plan_observation, stale_versions,
@@ -19,16 +21,16 @@ from src.domain.drive_tiers import name_query_keys
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 ROOT = "root"
-LISBON = {"latitude": 38.7223, "longitude": -9.1393}
-PORTO = {"latitude": 41.1496, "longitude": -8.6109}
+LISBON = DriveMediaFacts(latitude=38.7223, longitude=-9.1393)
+PORTO = DriveMediaFacts(latitude=41.1496, longitude=-8.6109)
 
 
 def ctx(place_of=lambda lat, lon: None, epoch=1, phase=EpochPhase.IDLE):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
 
 
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
                             state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
@@ -40,7 +42,7 @@ def folder_change(item_id, name, child_count, parent=ROOT):
 class TestStaleness:
     def test_lost_access_is_never_stale(self):
         """stale_access_lost_off — §12.1: a user who lost access gets the reconnect notice, not a stale alert."""
-        state = DriveSyncState(user_id="u", created_at=NOW - timedelta(days=3),
+        state = DriveSyncState(user_id="u", connection_id="u", created_at=NOW - timedelta(days=3),
                                last_success_at=NOW - STALE_ALERT_AFTER * 5, access_lost_at=NOW - timedelta(hours=1))
         assert is_stale(state, NOW - STALE_ALERT_AFTER * 5, NOW) is False
 
@@ -48,9 +50,9 @@ class TestStaleness:
 class TestVersionUpgrades:
     def test_geo_table_bump_marks_a_located_photo_stale(self):
         """stale_versions_geo_off — §8.5, §12.3: a new place table re-resolves place names."""
-        photo = DriveIndexRecord(user_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
+        photo = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
                                  state=RecordState.METADATA_ONLY, policy_version=POLICY_VERSION,
-                                 name_keys_version=NAME_KEYS_VERSION, facets={"location": LISBON}, place_name="Lisbon",
+                                 name_keys_version=NAME_KEYS_VERSION, media=LISBON, place_name="Lisbon",
                                  geo_table_version=GEO_TABLE_VERSION - 1)
         assert stale_versions(photo) is True
         assert stale_versions(replace(photo, geo_table_version=GEO_TABLE_VERSION)) is False
@@ -61,10 +63,10 @@ class TestVersionUpgrades:
             return "Porto" if round(lat) == 41 else "Lisbon"
 
         first = DriveChange(item_id="p", name="IMG_1.jpg", parent_id=ROOT, size_bytes=10,
-                            facets={"location": LISBON})
+                            media=LISBON)
         stored = plan_observation(first, None, None, None, ctx(place_of)).upsert
         assert stored.place_name == "Lisbon" and stored.geo_table_version == GEO_TABLE_VERSION
-        moved = replace(first, facets={"location": PORTO})
+        moved = replace(first, media=PORTO)
         assert plan_observation(moved, stored, None, None, ctx(place_of)).upsert.place_name == "Porto"
 
 

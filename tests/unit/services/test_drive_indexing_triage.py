@@ -10,12 +10,13 @@ from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_index_params import (
-    MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE, TRIAGE_USD_PER_MONTH,
+    MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_EDGE_PX, TRIAGE_USD_PER_MONTH,
 )
 from src.domain.user_drive import DriveAccessDenied
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import close_initial_build, month_usd, spend
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -38,7 +39,7 @@ async def test_holiday_photos_cost_only_batched_triage(w, photos):
     assert len(w.triage.calls) == math.ceil(photos / TRIAGE_BATCH)
     assert all(len(batch) <= TRIAGE_BATCH for batch in w.triage.calls)
     assert w.reader.requests == [] and w.drive.downloads == []
-    assert {size for _, size in w.drive.thumbnail_calls} == {TRIAGE_THUMBNAIL_SIZE}
+    assert {size for _, size in w.drive.thumbnail_calls} == {TRIAGE_THUMBNAIL_EDGE_PX}
     for n, item in enumerate(ids):
         rec = w.rec(item)
         assert (rec.state, rec.reason, rec.photo_description) == (RecordState.METADATA_ONLY, Reason.PHOTOGRAPH,
@@ -121,7 +122,7 @@ async def test_a_triage_outage_defers_images_and_lets_documents_through(w):
     result = await w.settle()
     assert result.status == "done" and w.rec(doc).state is RecordState.INDEXED
     rec = w.rec(img)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert (rec.state, rec.triage_verdict, rec.attempts) == (RecordState.PENDING, None, 0)
     assert rec.has_card and state.model_backoff_until == rec.due_at
     w.triage.unavailable = False

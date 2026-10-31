@@ -10,6 +10,8 @@ import pytest
 from src.domain.drive_enrichment import DriveHintDoc, HintItem
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE, legacy_account
+from .drive_usage_helpers import initial_build
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -35,7 +37,7 @@ def hints_of(w, item_id):
 
 async def put_hints(w, item_id, generation, n=2):
     docs = [DriveHintDoc("u", item_id, generation, i, "markdown", f"h{i}", (HintItem("rent", "keyword", "tenant"),),
-                         ("w:rent",), 1) for i in range(n)]
+                         ("w:rent",), 1, connection_id="u") for i in range(n)]
     await w.repo.write_hints(docs, [[0.1] * 8 for _ in docs])
 
 
@@ -82,7 +84,8 @@ async def test_opt_out_purges_every_hint_document_first(w):
     await put_hints(w, a, w.rec(a).indexed_generation)
     await put_hints(w, b, 99)                                  # debris of a generation that never committed
     await w.repo.add_model_usage("u", "2026-10", "2026-10-13", "profile", 0.5, 0.0, 1)
-    await w.repo.spend_initial_build("u", 1.0, w.clock.now)
+    account = legacy_account("u")
+    await w.repo.spend_initial_build("u", account.realm, account.subject, 1.0, w.clock.now)
     w.users.enabled["u"] = False
     await w.settle()
     assert w.repo.hints == {} and w.repo.chunks == {} and w.repo.records == {} and w.repo.states == {}
@@ -90,7 +93,7 @@ async def test_opt_out_purges_every_hint_document_first(w):
     assert purge.index("delete_user_hints") < purge.index("delete_user_chunks") < purge.index("delete_user_records")
     assert w.summary_total("purged_hints") == 4
     assert (await w.repo.get_model_usage("u", "2026-10")).profile_usd == 0.5   # the purge keeps the usage documents
-    assert (await w.repo.get_initial_build("u")).spent_usd == 1.0
+    assert (await initial_build(w.repo)).spent_usd == 1.0
 
 
 async def test_the_sweep_finds_hint_documents_whose_chunks_are_gone(w):
@@ -125,4 +128,4 @@ async def test_the_hint_sweep_restarts_when_cut(w, monkeypatch):
     w.drive.resync_next = True
     await w.settle()
     assert starts.count(None) == 2   # cut after one page, then one whole pass from the first hint document
-    assert hints_of(w, doc) == [] and (await w.repo.get_sync_state("u")).epoch_phase.value == "idle"
+    assert hints_of(w, doc) == [] and (await w.repo.get_sync_state(U_SCOPE)).epoch_phase.value == "idle"

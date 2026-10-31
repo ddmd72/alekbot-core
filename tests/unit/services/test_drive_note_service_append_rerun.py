@@ -20,13 +20,13 @@ def env():
 
 
 async def _appended(env, provenance=TURN):
-    await env.service.set(U, ACC, "drive:a", REPAIR, provenance=NoteProvenance(session_id="s1", turn_id="t1"))
-    return await env.service.update(U, ACC, "drive:a", NoteChange.append_text("with IVA"), provenance)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, provenance=NoteProvenance(session_id="s1", turn_id="t1"))
+    return await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text("with IVA"), provenance)
 
 
 async def test_the_same_append_re_run_in_the_same_turn_writes_nothing(env):
     first = await _appended(env)
-    again = await env.service.update(U, ACC, "drive:a", NoteChange.append_text("with IVA"), TURN)
+    again = await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text("with IVA"), TURN)
     note = await env.note()
     assert (note.text, note.current_version) == (f"{REPAIR} with IVA", 2)
     assert (again.noop, again.version, again.text, again.note_id) == (True, 2, f"{REPAIR} with IVA", first.note_id)
@@ -34,8 +34,8 @@ async def test_the_same_append_re_run_in_the_same_turn_writes_nothing(env):
 
 
 async def test_the_re_run_of_an_append_that_created_the_note_writes_nothing(env):
-    await env.service.update(U, ACC, "drive:a", NoteChange.append_text(REPAIR), TURN)
-    again = await env.service.update(U, ACC, "drive:a", NoteChange.append_text(REPAIR), TURN)
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text(REPAIR), TURN)
+    again = await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text(REPAIR), TURN)
     note = await env.note()
     assert (note.text, note.current_version, again.noop) == (REPAIR, 1, True)
 
@@ -47,19 +47,19 @@ async def test_an_append_in_another_turn_or_session_or_without_a_turn_id_appends
         await _appended(env, provenance)
     else:
         await _appended(env)
-    await env.service.update(U, ACC, "drive:a", NoteChange.append_text("with IVA"), provenance)
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text("with IVA"), provenance)
     assert (await env.note()).text == f"{REPAIR} with IVA with IVA"
 
 
 async def test_a_different_append_in_the_same_turn_is_written(env):
     await _appended(env)
-    await env.service.update(U, ACC, "drive:a", NoteChange.append_text("and the painting"), TURN)
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text("and the painting"), TURN)
     note = await env.note()
     assert (note.text, note.current_version) == (f"{REPAIR} with IVA and the painting", 3)
 
 
 async def test_the_guard_is_only_for_appends(env):
-    await env.service.set(U, ACC, "drive:a", REPAIR, "contract", provenance=TURN)
-    await env.service.update(U, ACC, "drive:a", NoteChange.add_areas(["home"]), TURN)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, "contract", provenance=TURN)
+    await env.service.update(U, ACC, "drive:a1:a", NoteChange.add_areas(["home"]), TURN)
     note = await env.note()
     assert (note.life_areas, note.current_version) == (["home"], 2)

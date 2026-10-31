@@ -23,15 +23,15 @@ PLANTED_REPORT = DriveReport(note=PLANTED, question=QUESTION, not_done=PLANTED)
 def _passages():
     file = excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 0, "Tom Baker: the Acme review needs two readers.")])
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="per-call", success=True, items=(PLAN,),
-                        facts=ReadFacts(excerpts=True), excerpts=result(file), request_text="the review")
+                        facts=ReadFacts(excerpts=True), excerpts=result(file), request_text="the review", ref_tag="a1")
 
 
 def _refused(op=DriveOp.DELETE):
-    return DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text=t.WRITE_AFTER_PASSAGES, success=False, items=(PLAN,))
+    return DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text=t.WRITE_AFTER_PASSAGES, success=False, items=(PLAN,), ref_tag="a1")
 
 
 MOVED = DriveOutcome(op=DriveOp.MOVE, cls=OutcomeClass.OK, text="Moved: R&D/Tom's plan.docx → Archive.", success=True,
-                     items=(PLAN,))
+                     items=(PLAN,), ref_tag="a1")
 
 
 def _answer(*entries, report):
@@ -75,7 +75,7 @@ def test_the_ledger_decides_not_the_origin():
 
 def test_a_run_without_passages_keeps_question_and_not_done():
     search = DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True, items=(PLAN,),
-                          facts=ReadFacts(cards=1))
+                          facts=ReadFacts(cards=1), ref_tag="a1")
     asked = _answer((1, t.KIND_SEARCH, search), report=DriveReport(question=QUESTION))
     assert asked.status is DriveStatus.AMBIGUOUS and QUESTION in asked.text
     partial = _answer((1, "move", MOVED), report=DriveReport(not_done="the second copy"))

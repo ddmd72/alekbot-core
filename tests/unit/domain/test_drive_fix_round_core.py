@@ -143,7 +143,7 @@ class TestUnspacedIds:     # Δ91
 
 
 def _state(**kw):
-    return DriveSyncState(user_id="u", created_at=NOW - STALE_ALERT_AFTER * 3, last_success_at=NOW - STALE_ALERT_AFTER * 2,
+    return DriveSyncState(user_id="u", connection_id="u", created_at=NOW - STALE_ALERT_AFTER * 3, last_success_at=NOW - STALE_ALERT_AFTER * 2,
                           **kw)
 
 

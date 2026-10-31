@@ -12,7 +12,7 @@ from tests.unit.domain.drive_excerpt_builders import LEASE, TOMS_PLAN, chunk, ex
 
 
 def _r(step, op, **fields):
-    outcome = DriveOutcome(op=op, cls=OutcomeClass.OK, text="…", success=True, **fields)
+    outcome = DriveOutcome(op=op, cls=OutcomeClass.OK, text="…", success=True, **fields, ref_tag="a1")
     return CollectedResult(handle=f"r{step}", step=step, kind=op.value, outcome=outcome)
 
 

@@ -28,7 +28,7 @@ from src.services import drive_indexing_service as svc_mod
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_enrich_world import EnrichWorld
 from .test_drive_indexing_enrichment_life import paragraphs
-from .drive_usage_helpers import close_initial_build, spend
+from .drive_usage_helpers import close_initial_build, initial_build, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 S = ModelReplyStatus
@@ -213,7 +213,7 @@ async def test_a_paid_reply_is_recorded_when_the_file_budget_cuts_the_run(w, mon
     await asyncio.sleep(0.5)   # the shielded writes finish after the cut
     usage = await w.repo.get_model_usage("u", month_key(w.clock.now))
     assert usage.profile_usd == pytest.approx(0.5) and usage.profile_initial_usd == pytest.approx(0.5)
-    assert (await w.repo.get_initial_build("u")).spent_usd >= 0.5
+    assert (await initial_build(w.repo)).spent_usd >= 0.5
 
 
 @pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`
@@ -265,7 +265,7 @@ def test_pending_keys_are_due_now_whatever_the_record_waits_for():
 
     from src.domain.drive_index import DriveIndexRecord, Scope
     now = datetime(2026, 10, 13, 9, tzinfo=timezone.utc)
-    held = DriveIndexRecord(user_id="u", item_id="d", parent_id="root", name="scan.pdf", kind="pdf",
+    held = DriveIndexRecord(user_id="u", connection_id="u", item_id="d", parent_id="root", name="scan.pdf", kind="pdf",
                             scope=Scope.NORMAL, state=RecordState.PENDING, indexed_generation=1, chunk_count=2,
                             keys_version=KEYS_VERSION - 1, due_at=next_month_start(now),
                             defer_until=next_month_start(now), priority=int(Priority.MAINTENANCE))

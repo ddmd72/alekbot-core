@@ -35,7 +35,8 @@ from typing import Callable, Dict, FrozenSet, List, NamedTuple, Optional, Set, T
 from pydantic import BaseModel
 
 from src.domain.drive_index import Nudge
-from src.domain.drive_task_keys import tick_payload
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_task_keys import scope_payload
 from src.domain.fact_review_task_keys import review_payload
 from src.domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from tests.support import worker_triggers as wt
@@ -74,18 +75,18 @@ def _review_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
     return review_payload("u1", "a1", "daily")
 
 
-def _tick_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
+def _scope_payload_keys(call: ast.Call, where: str) -> Dict[str, object]:
     count = len(call.args) + len(call.keywords)
     if count == 1:
-        return tick_payload("u1")
+        return scope_payload(ConnectionScope("u1", "c1"))
     if count == 2:
-        return tick_payload("u1", Nudge(mutation_id="m1", item_ids=("i1",)))
-    raise ExtractorError(f"{where}: tick_payload with {count} arguments")
+        return scope_payload(ConnectionScope("u1", "c1"), Nudge(mutation_id="m1", item_ids=("i1",)))
+    raise ExtractorError(f"{where}: scope_payload with {count} arguments")
 
 
 # Payload builders evaluated with dummy arguments: their keys do not depend on the values.
 EVALUATED: Dict[str, Callable[[ast.Call, str], Dict[str, object]]] = {
-    "review_payload": _review_payload_keys, "tick_payload": _tick_payload_keys,
+    "review_payload": _review_payload_keys, "scope_payload": _scope_payload_keys,
 }
 
 

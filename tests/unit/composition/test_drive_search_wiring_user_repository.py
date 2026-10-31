@@ -1,10 +1,10 @@
-"""The drive search wiring gives the search service a user repository (USER_DRIVE_INDEXING_RFC §10, §13).
+"""The drive search wiring gives the search service the drive connection service (USER_DRIVE_INDEXING_RFC §10, §13;
+MULTI_DRIVE_RFC §3, §6).
 
-The search service reads the opt-in flag uncached through its user repository on every search (§10.1 step 0).
-Without one, every search raises in production."""
+The search service reads the opt-in flag fresh on every search (§10.1 step 0); the flag now lives on the connection
+(MULTI_DRIVE_RFC §3 "Removed"), read through the connection service. Without one, every search raises in production."""
 from unittest.mock import AsyncMock, MagicMock
 
-from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition import service_container
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
@@ -27,8 +27,9 @@ def _container(monkeypatch, **extra):
 
 
 class TestSearchUserRepository:
-    def test_search_gets_a_firestore_user_repository(self, monkeypatch):
+    def test_search_gets_the_drive_connection_service(self, monkeypatch):
         monkeypatch.setattr(service_container, "OneDriveAdapter", lambda **kw: MagicMock(spec=UserDrivePort))
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec")
         assert c.drive_search_service is not None
-        assert isinstance(c.drive_search_service._users, FirestoreUserRepository)
+        assert c.drive_connection_service is not None
+        assert c.drive_search_service._connections is c.drive_connection_service

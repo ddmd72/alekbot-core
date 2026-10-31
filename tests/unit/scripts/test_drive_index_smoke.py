@@ -88,8 +88,10 @@ async def test_a_missing_index_is_reported_and_the_rest_still_runs(smoke, mock_e
 
 async def test_every_transcript_read_is_a_named_check_and_runs_once(smoke, mock_env_config):
     """Task 7B (§27.3-§27.5, §27.8 b; Task 14B adds the in-flight and key-in-use record reads): the nine transcript
-    reads close the list, each sent once, filtered on the user, the sweeps on the env-prefixed collection groups (ruling
-    T-R13); the purge deletes themselves are not run."""
+    reads close the list, each sent once, the sweeps on the env-prefixed collection groups (ruling T-R13); the purge
+    deletes themselves are not run. MULTI_DRIVE_RFC §8, §10: the connection-scoped stores (records by state and wake,
+    jobs, batches, window results) filter the connection; the user-scoped transcript store (heads, parts) and the
+    key-in-use record read behind its sweep filter the user."""
     db = ChunkDb()
     repo = make_chunk_repo(db, mock_env_config)
     names = [name for name, _ in smoke.checks(repo, "smoke-user")]
@@ -99,12 +101,16 @@ async def test_every_transcript_read_is_a_named_check_and_runs_once(smoke, mock_
                     if any(op[0] == "where" and op[1] in ("transcript_state", "transcript_wake_at", "transcript_key")
                            for op in ops)]
     assert len(record_reads) == _TRANSCRIPT_RECORD_QUERIES
+    on_user, on_connection = ("where", "user_id", "==", "smoke-user"), ("where", "connection_id", "==", "smoke-conn")
     for ops in record_reads:
-        assert ("where", "user_id", "==", "smoke-user") in ops
-    for runs in (db.cols[JOBS].executed, db.cols[BATCHES].executed, db.cols[TRANSCRIPTS].executed,
-                 db.groups[WINDOWS].executed, db.groups[PARTS].executed):
+        key_in_use = any(op[:2] == ("where", "transcript_key") for op in ops)
+        assert (on_user if key_in_use else on_connection) in ops
+    assert sum(any(op[:2] == ("where", "transcript_key") for op in ops) for ops in record_reads) == 1
+    for runs, scoped in ((db.cols[JOBS].executed, on_connection), (db.cols[BATCHES].executed, on_connection),
+                         (db.cols[TRANSCRIPTS].executed, on_user), (db.groups[WINDOWS].executed, on_connection),
+                         (db.groups[PARTS].executed, on_user)):
         (ops,) = runs
-        assert ("where", "user_id", "==", "smoke-user") in ops
+        assert scoped in ops
     for col in (*db.cols.values(), *db.groups.values()):
         for doc in col.docs.values():
             doc.set.assert_not_called()

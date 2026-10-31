@@ -15,13 +15,14 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.drive_index_params import OPEN_MAX_CHARS
 from src.domain.drive_open_texts import ROUTE_SPECIALIST
 from src.domain.llm import PROMPT_CACHE_BOUNDARY
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.llm_port import AgentExecutionContext
 from src.services.user_drive_service import UserDriveService
 from tests.support.scripted_llm import calls, script
 from tests.unit.infrastructure.test_drive_operations_uncovered_paths import FakeConversion
+from tests.unit.services.drive_harness_connections import harness_connections
 from tests.unit.services.drive_search_v2_fixture import V2World
 
 PATH = "Docs/Oak Street parking rules.md"
@@ -42,7 +43,10 @@ class World(V2World):
                          size_bytes=200_000, mime_type="text/markdown")
         self.conversion = FakeConversion({f"drive:{self.annex}": item}, text="\n\n".join(CLAUSES * 40))
         drive = AsyncMock(spec=UserDriveService)
-        drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+        # the service's own connection reads over the harness connection the index was built for (MULTI_DRIVE_RFC §9)
+        reads = UserDriveService(drive=None, connections=harness_connections(self.users, self.drive))
+        drive.status.side_effect, drive.resolve_ref.side_effect = reads.status, reads.resolve_ref
+        drive.get_item.return_value = item   # an open reads its item through the drive service (§6)
         self.operations = DriveOperations(conversion_service=self.conversion, drive_service=drive,
                                           drive_search=self.service)
 
@@ -74,7 +78,7 @@ def _tool_result(request, name: str) -> str:
 async def test_a_refused_open_is_followed_by_a_page_and_smart_reads_both(context):
     w = World()
     agent = w.agent()
-    ref = f"drive:{w.annex}"
+    ref = f"drive:a1:{w.annex}"
     agent._call_llm, seen = script(
         calls((tt.OPEN_DRIVE_FILE, {"file_ref": ref})),
         calls((tt.READ_PASSAGES, {"file_ref": ref, "passages": "from 1"})),
@@ -103,7 +107,7 @@ async def test_a_refused_open_is_followed_by_a_page_and_smart_reads_both(context
 async def test_a_find_after_a_page_gives_a_mixed_answer():
     w = World()
     agent = w.agent()
-    ref = f"drive:{w.annex}"
+    ref = f"drive:a1:{w.annex}"
     w.emb.pinned["gate hours"] = [1.0] + [0.0] * 7
     agent._call_llm, seen = script(
         calls((tt.READ_PASSAGES, {"file_ref": ref, "passages": "from 1"})),

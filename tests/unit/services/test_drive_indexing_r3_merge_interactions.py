@@ -20,6 +20,7 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .test_drive_indexing_reembed_refusal import NEW, RefusingEmbeddings, _switch_space, _world
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -27,7 +28,7 @@ MARK = "zz-r3-merge-mark"
 
 
 async def _counters(w: ContentWorld):
-    return (await w.repo.get_sync_state("u")).counters
+    return (await w.repo.get_sync_state(U_SCOPE)).counters
 
 
 async def test_a_reextraction_reuses_every_vector_and_recomputes_every_chunks_terms(monkeypatch):

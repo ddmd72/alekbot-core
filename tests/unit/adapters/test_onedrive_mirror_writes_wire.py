@@ -20,6 +20,9 @@ from src.domain.user_drive import (
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 _ROOT = {"id": "root1", "name": "Alek-bot", "folder": {"childCount": 1},
          "parentReference": {"path": "/drive/root:"}}
@@ -75,7 +78,7 @@ def _adapter():
 async def test_default_conflict_is_rename():
     session = _session(put=_resp(_FILE, 201), get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown")
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown")
     assert session.put.call_args.args[0] == (
         "https://graph.microsoft.com/v1.0/me/drive/items/p1:/a.md:/content?@microsoft.graph.conflictBehavior=rename")
 
@@ -84,7 +87,7 @@ async def test_default_conflict_is_rename():
 async def test_fail_and_replace_in_simple_put(mode):
     session = _session(put=_resp(_FILE, 201), get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown", conflict=mode)
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown", conflict=mode)
     assert session.put.call_args.args[0].endswith(f"/content?@microsoft.graph.conflictBehavior={mode}")
 
 
@@ -94,45 +97,45 @@ async def test_fail_and_replace_in_upload_session(mode):
     session = _session(post=_resp({"uploadUrl": "https://up.example/s"}),
                        put=[_resp({}, 202), _resp(_FILE, 201)], get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        await _adapter().upload("u1", "p1", "big.md", data, "text/markdown", conflict=mode)
+        await _adapter().upload(HANDLE, "p1", "big.md", data, "text/markdown", conflict=mode)
     assert session.post.call_args.kwargs["json"] == {"item": {"@microsoft.graph.conflictBehavior": mode}}
 
 
 async def test_put_fail_409_raises_name_conflict():
     session = _session(put=_resp({"error": {"code": "nameAlreadyExists"}}, 409))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveNameConflictError):
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown", conflict="fail")
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown", conflict="fail")
 
 
 async def test_patch_rename_409_raises_name_conflict():
     session = _session(patch=_resp({"error": {"code": "nameAlreadyExists"}}, 409))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveNameConflictError):
-        await _adapter().move("u1", "f1", new_name="b.md")
+        await _adapter().move(HANDLE, "f1", new_name="b.md")
 
 
 async def test_507_raises_storage_full():
     session = _session(put=_resp({"error": {"code": "quotaLimitReached"}}, 507))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveStorageFull):
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown")
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown")
 
 
 async def test_400_path_is_too_long_raises_path_too_long():
     session = _session(put=_resp(_TOO_LONG, 400))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DrivePathTooLong):
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown")
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown")
 
 
 async def test_other_400_stays_a_value_error():
     session = _session(put=_resp(_PLAIN_400, 400))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError) as exc:
-        await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown")
+        await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown")
     assert not isinstance(exc.value, DrivePathTooLong)
 
 
 async def test_folder_create_400_invalid_request_raises_path_too_long():
     session = _session(post=_resp(_PLAIN_400, 400))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DrivePathTooLong):
-        await _adapter().create_folder("u1", "root1", "deep")
+        await _adapter().create_folder(HANDLE, "root1", "deep")
 
 
 async def test_folder_create_under_root_uses_the_item_path():
@@ -140,7 +143,7 @@ async def test_folder_create_under_root_uses_the_item_path():
               "parentReference": {"id": "root1", "path": "/drives/xyz/root:/Alek-bot"}}
     session = _session(post=_resp(folder, 201), get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        item = await _adapter().create_folder("u1", "root1", "_Transcripts")
+        item = await _adapter().create_folder(HANDLE, "root1", "_Transcripts")
     url = session.post.call_args.args[0]
     assert url.endswith("/me/drive/items/root1/children") and "special/approot/children" not in url
     assert session.post.call_args.kwargs["json"]["@microsoft.graph.conflictBehavior"] == "fail"
@@ -150,7 +153,7 @@ async def test_folder_create_under_root_uses_the_item_path():
 async def test_child_by_name_found():
     session = _session(get=_resp(_FILE))
     with patch("aiohttp.ClientSession", return_value=session):
-        change = await _adapter().child_by_name("u1", "p1", "a.md")
+        change = await _adapter().child_by_name(HANDLE, "p1", "a.md")
     assert session.get.call_args.args[0].endswith("/me/drive/items/p1:/a.md:")
     assert change is not None and change.item_id == "f1" and change.content_version == "c1,2"
 
@@ -158,14 +161,14 @@ async def test_child_by_name_found():
 async def test_child_by_name_404_is_none():
     session = _session(get=_resp({"error": {"code": "itemNotFound"}}, 404))
     with patch("aiohttp.ClientSession", return_value=session):
-        assert await _adapter().child_by_name("u1", "p1", "a.md") is None
+        assert await _adapter().child_by_name(HANDLE, "p1", "a.md") is None
 
 
 async def test_child_by_name_quotes_the_name():
     name = "_Встреча #1 100% a.md"
     session = _session(get=_resp(_FILE))
     with patch("aiohttp.ClientSession", return_value=session):
-        await _adapter().child_by_name("u1", "p1", name)
+        await _adapter().child_by_name(HANDLE, "p1", name)
     assert session.get.call_args.args[0].endswith(f"/me/drive/items/p1:/{quote(name, safe='')}:")
     assert "_%D0" in session.get.call_args.args[0] and "%23" in session.get.call_args.args[0]
 
@@ -173,40 +176,40 @@ async def test_child_by_name_quotes_the_name():
 async def test_child_by_name_other_errors_propagate():
     session = _session(get=_resp(_PLAIN_400, 400))
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError):
-        await _adapter().child_by_name("u1", "p1", "a.md")
+        await _adapter().child_by_name(HANDLE, "p1", "a.md")
 
 
 async def test_area_path_from_approot():
     session = _session(get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        assert await _adapter().area_path("u1") == "/Alek-bot"
+        assert await _adapter().area_path(HANDLE) == "/Alek-bot"
     nested = {**_ROOT, "name": "Приложения", "parentReference": {"path": "/drive/root:/Apps"}}
     with patch("aiohttp.ClientSession", return_value=_session(get=_resp(nested))):
-        assert await _adapter().area_path("u1") == "/Apps/Приложения"
+        assert await _adapter().area_path(HANDLE) == "/Apps/Приложения"
 
 
 async def test_item_carries_ctag():
     session = _session(get=[_resp(_FILE), _resp(_ROOT)])
     with patch("aiohttp.ClientSession", return_value=session):
-        item = await _adapter().get_item("u1", "f1")
-    assert item.ctag == "c1,2"
+        item = await _adapter().get_item(HANDLE, "f1")
+    assert item.content_version == "c1,2"
 
 
 async def test_upload_item_carries_ctag():
     session = _session(put=_resp(_FILE, 201), get=_resp(_ROOT))
     with patch("aiohttp.ClientSession", return_value=session):
-        item = await _adapter().upload("u1", "p1", "a.md", b"x", "text/markdown", conflict="fail")
-    assert item.ctag == "c1,2"
+        item = await _adapter().upload(HANDLE, "p1", "a.md", b"x", "text/markdown", conflict="fail")
+    assert item.content_version == "c1,2"
 
 
 async def test_change_carries_created_at():
     session = _session(get=_resp(_FILE))
     with patch("aiohttp.ClientSession", return_value=session):
-        change = await _adapter().get_change("u1", "f1")
+        change = await _adapter().get_change(HANDLE, "f1")
     assert change.created_at == datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
 
 
 async def test_change_without_created_time_is_none():
     raw = {k: v for k, v in _FILE.items() if k != "createdDateTime"}
     with patch("aiohttp.ClientSession", return_value=_session(get=_resp(raw))):
-        assert (await _adapter().get_change("u1", "f1")).created_at is None
+        assert (await _adapter().get_change(HANDLE, "f1")).created_at is None

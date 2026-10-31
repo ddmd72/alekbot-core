@@ -25,7 +25,7 @@ NOW = datetime(2026, 10, 19, tzinfo=timezone.utc)
 
 
 def chunks(text):
-    return [DriveChunk(user_id="u", item_id="i", generation=1, index=0, text=text, char_start=0, char_end=len(text),
+    return [DriveChunk(user_id="u", connection_id="u", item_id="i", generation=1, index=0, text=text, char_start=0, char_end=len(text),
                        kind="pdf")]
 
 
@@ -105,18 +105,18 @@ class TestUnconfirmedBriefDate:
 
 class TestStaleScore:
     def test_clearing_the_profile_clears_the_score(self):
-        rec = DriveIndexRecord(user_id="u", item_id="i", kind="pdf", indexed_generation=1, profile=profile(),
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="pdf", indexed_generation=1, profile=profile(),
                                profile_source="model", card_accuracy=80, accuracy_version=ACCURACY_VERSION)
         out = enrich._profile_cleared(rec, NOW)
         assert out.card_accuracy is None and out.accuracy_version == 0
 
     def test_make_card_shows_the_score_only_of_a_scorable_record(self):
-        rec = DriveIndexRecord(user_id="u", item_id="i", kind="image", card_accuracy=80,
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="image", card_accuracy=80,
                                triage_verdict=TriageVerdict.PHOTO, indexed_generation=None)
-        assert make_card(rec, "/a", "s", "abcdefgh").card_accuracy is None
-        scorable_rec = DriveIndexRecord(user_id="u", item_id="i", kind="pdf", card_accuracy=80, indexed_generation=1,
+        assert make_card(rec, "/a", "s", "abcdefgh", "a1").card_accuracy is None
+        scorable_rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="pdf", card_accuracy=80, indexed_generation=1,
                                         profile=profile(), profile_source="model")
-        assert make_card(scorable_rec, "/a", "s", "abcdefgh").card_accuracy == 80
+        assert make_card(scorable_rec, "/a", "s", "abcdefgh", "a1").card_accuracy == 80
 
 
 class TestRescoreWithIncompleteChunks:
@@ -126,10 +126,11 @@ class TestRescoreWithIncompleteChunks:
         svc._repo = AsyncMock()
         svc._repo.get_chunks.return_value = []            # none of the 2 chunks can be read
         svc._commit = AsyncMock()
-        rec = DriveIndexRecord(user_id="u", item_id="i", name="f.pdf", kind="pdf", indexed_generation=1, chunk_count=2,
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", name="f.pdf", kind="pdf", indexed_generation=1, chunk_count=2,
                                brief=DocumentBrief(amount="9.99 EUR"), card_accuracy=61, accuracy_version=0)
         summary = {}
-        done = asyncio.run(svc._rescore("u", rec, NOW, summary))
+        from tests.support.drive_handles import drive_handle
+        done = asyncio.run(svc._rescore(drive_handle(user_id="u", connection_id="u"), rec, NOW, summary))
         assert done.card_accuracy == 61 and done.accuracy_version == ACCURACY_VERSION
         assert summary["rescore_incomplete"] == 1
         svc._commit.assert_awaited_once()
@@ -137,7 +138,7 @@ class TestRescoreWithIncompleteChunks:
 
 class TestDigitalByAModel:
     def rec(self, **kw):
-        return DriveIndexRecord(user_id="u", item_id="i", kind="pdf", **kw)
+        return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="pdf", **kw)
 
     def test_a_model_read_digital_file_is_priced_like_a_screenshot(self):
         assert acc.source_share(self.rec(capture="digital", extracted_by="reader@2")) == 0.03

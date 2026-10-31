@@ -9,20 +9,17 @@ from quart import Quart
 
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.drive_indexing_status import DriveIndexingStatus
-from src.domain.user_drive import DriveConnection
 from src.ports.task_queue import TaskQueue
-from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.cabinet_drive import cabinet_drive
 
 _AUTH = {"Authorization": "Bearer token"}
 
 
-def _app(status, queue):
-    drive = MagicMock(spec=UserDrivePort)
-    drive.connection = AsyncMock(return_value=DriveConnection(connected=False))
-    drive.display_name = "OneDrive"
+async def _app(status, queue):
+    drive = await cabinet_drive(state=None)      # no drive connected (MULTI_DRIVE_RFC §4.4: the card reads connections)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = status
     session_service = MagicMock()
@@ -30,14 +27,15 @@ def _app(status, queue):
     app = Quart("test_drive_index_card")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
+        drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
     ))
     return app
 
 
 async def _indexing(status, queue=None):
-    async with _app(status, queue).test_client() as client:
+    async with (await _app(status, queue)).test_client() as client:
         return (await (await client.get("/api/drive/status", headers=_AUTH)).get_json())["indexing"]
 
 

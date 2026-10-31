@@ -122,7 +122,7 @@ delegate_to_specialist_extended_rules {
                     note: "Context yes, method no."
                 },
                 {
-                    good_query: "What does Tom's plan say happens after the first review? File: R&D/Tom's plan.docx (drive:…)."
+                    good_query: "What does Tom's plan say happens after the first review? File: R&D/Tom's plan.docx (drive:a1:…)."
                     bad_query: "Open Tom's plan and return its full content verbatim."
                     note: "Context yes, method no."
                 }

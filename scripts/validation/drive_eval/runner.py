@@ -22,13 +22,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
+from scripts.validation.drive_eval.eval_connection import EVAL_CONNECTION_ID, EvalDriveConnections, eval_connection
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import Priority, inaccessible
 from src.domain.drive_index_params import K
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchRequest, request_from_fields, require_search_terms
 from src.domain.user import UserBotConfig, UserProfile
-from src.domain.user_drive import parse_drive_ref
+from scripts.validation.drive_eval.eval_connection import ref_item_id
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.document_profiler_port import DocumentProfilerPort
 from src.ports.drive_index_repository import DriveIndexRepository
@@ -94,7 +96,7 @@ class _EnabledUsers:
         if user_id != EVAL_USER:
             return None
         return UserProfile(user_id=user_id, account_id="eval-account",
-                           config=UserBotConfig(drive_indexing_enabled=True))
+                           config=UserBotConfig())
 
 
 @dataclass
@@ -217,14 +219,18 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
         content["profiler"] = profiler
     if passages is not None:
         content["passages"] = passages
+    scope = ConnectionScope(user_id, EVAL_CONNECTION_ID)
+    connections = EvalDriveConnections(eval_connection(
+        user_id, account_id="eval-account" if user_id == EVAL_USER else f"{user_id}-account"))
     service = DriveIndexingService(drive, repo, embeddings, queue, users or _EnabledUsers(),
-                                   place_of, embedding_space, clock=clock, monotonic=monotonic, **content)
+                                   place_of, embedding_space, clock=clock, monotonic=monotonic,
+                                   connections=connections, **content)
     statuses: Counter[str] = Counter()
     summary: Counter[str] = Counter()
     errors = 0
     throttled = 0
     for tick in range(1, max_ticks + 1):
-        result = await service.tick(user_id)
+        result = await service.tick(scope)
         statuses[result.status] += 1
         summary.update(result.summary)
         if result.status == "error":
@@ -240,13 +246,13 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
             await asyncio.sleep(max(throttle_pause_s, queued))
         else:
             throttled = 0
-        state = await repo.get_sync_state(user_id)
+        state = await repo.get_sync_state(scope)
         if state is None:
             raise EvalError(f"tick {tick} left no sync state (status {result.status})")
         if state.continuation_enqueued_at is None and state.round_complete:
-            due_at = await _earliest_due_at(repo, user_id)
-            if due_at is None or await _only_closed_files_wait(repo, user_id):
-                records = await repo.count_by_state(user_id)
+            due_at = await _earliest_due_at(repo, scope)
+            if due_at is None or await _only_closed_files_wait(repo, scope):
+                records = await repo.count_by_state(scope)
                 return IndexOutcome(repo, tick, dict(statuses), dict(summary), records)
             # A record waits for a later attempt (a retry, an image with no rendition yet): production's fan-out
             # re-ticks every 10 minutes, so the runner moves the clock to when the record is due and ticks again.
@@ -256,15 +262,15 @@ async def index_fixture(drive: FixtureDrive, repo: DriveIndexRepository, embeddi
     raise EvalError(f"the index did not settle in {max_ticks} ticks")
 
 
-async def _only_closed_files_wait(repo: DriveIndexRepository, user_id: str) -> bool:
+async def _only_closed_files_wait(repo: DriveIndexRepository, scope: ConnectionScope) -> bool:
     """Every record that waits is a file the bot cannot open (§26.2): it is re-read only when something changes (an
     observation, or the slow retry), so there is nothing for the runner to wait for, and ticking on would never settle."""
-    waiting = await repo.due_records(user_id, datetime(9999, 1, 1, tzinfo=timezone.utc), 200)
+    waiting = await repo.due_records(scope, datetime(9999, 1, 1, tzinfo=timezone.utc), 200)
     return bool(waiting) and all(inaccessible(rec) for rec in waiting)
 
 
-async def _earliest_due_at(repo: DriveIndexRepository, user_id: str) -> Optional[datetime]:
-    dates = [d for d in [await repo.oldest_due_at(user_id, p) for p in Priority] if d is not None]
+async def _earliest_due_at(repo: DriveIndexRepository, scope: ConnectionScope) -> Optional[datetime]:
+    dates = [d for d in [await repo.oldest_due_at(scope, p) for p in Priority] if d is not None]
     return min(dates, default=None)
 
 
@@ -278,7 +284,7 @@ def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
 
 
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
-    item_id = parse_drive_ref(getattr(card, "ref", "") or "")
+    item_id = ref_item_id(getattr(card, "ref", "") or "")
     own = (drive.path_of(item_id) if item_id else None) or str(getattr(card, "path", "")).strip("/")
     return [own] + [str(p).strip("/") for p in getattr(card, "also_at", ()) or ()]
 
@@ -363,7 +369,7 @@ async def run_eval(tree_path: Path, gold_path: Union[Path, Sequence[Path]], bars
                                   extractors=extractors, triage=triage)
     if not indexed.records.get("carded"):
         raise EvalError("the index settled with no card; nothing to measure")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
                                 embedding_space=embedding_space)
     run = await run_cases(search, drive, gold)
     # A known-hard case is run and reported, but guards nothing: it is in no bar and never a lost case.

@@ -3,7 +3,7 @@ Backlog estimate before transcription is turned on (USER_DRIVE_INDEXING_RFC §27
 index, sums the duration of the audio and video records still to transcribe and prints the minutes and what they would
 cost.
 
-Duration: a video record's `facets.video.duration` (milliseconds); an audio record has no duration facet, so its bytes are
+Duration: a video record's `media.video_duration_ms`; an audio record has no duration here, so its bytes are
 counted at 10.8 MB per hour (the spike's figure, §27.2) and the line says it is an estimate. A video without the facet is
 estimated the same way, as its own line. Files over TRANSCRIBE_MAX_BYTES (8 GiB, `too_large`) or over
 TRANSCRIBE_MAX_SECONDS (4 h, `too_long`) get a stub and no model call, so they are counted apart and not priced. Records
@@ -18,8 +18,9 @@ Output goes to stdout and to `scripts/memory/drive_transcribe_backlog.txt` (giti
 name, id or path is printed or written.
 
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
-    python scripts/infrastructure/drive_transcribe_backlog.py --user <user_id> [--out <path under scripts/memory/>]
-Exit code: 0, or 1 when nothing is stored for the user.
+    python scripts/infrastructure/drive_transcribe_backlog.py --user <user_id> [--connection <id>]
+        [--out <path under scripts/memory/>]
+Exit code: 0, or 1 when nothing is stored for the connection.
 """
 import argparse
 import asyncio
@@ -31,6 +32,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.infrastructure.drive_connection_arg import resolve_connection  # noqa: E402
+from src.domain.connection_scope import ConnectionScope  # noqa: E402
 from src.domain.drive_index import DriveIndexRecord  # noqa: E402
 from src.domain.drive_index_params import (  # noqa: E402
     TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
@@ -58,8 +61,8 @@ class Backlog:
 
 
 def _video_seconds(rec: DriveIndexRecord) -> Optional[float]:
-    ms = (rec.facets.get("video") or {}).get("duration")
-    return ms / 1000.0 if isinstance(ms, (int, float)) and not isinstance(ms, bool) and ms > 0 else None
+    ms = rec.media.video_duration_ms
+    return ms / 1000.0 if ms > 0 else None
 
 
 def classify(rec: DriveIndexRecord) -> Tuple[str, float]:
@@ -116,29 +119,36 @@ def report(backlog: Backlog) -> List[str]:
     return lines
 
 
-async def scan(repo: DriveIndexRepository, user_id: str) -> Backlog:
+async def scan(repo: DriveIndexRepository, scope: ConnectionScope) -> Backlog:
     backlog, after = Backlog(), None
     while True:
-        page = await repo.records_page(user_id, after, _PAGE)
+        page = await repo.records_page(scope, after, _PAGE)
         tally(page, backlog)
         if len(page) < _PAGE:
             return backlog
         after = page[-1].item_id
 
 
-async def _main(user_id: str, out: Path) -> int:
+async def _main(user_id: str, connection_id: Optional[str], out: Path) -> int:
     from google.cloud import firestore
 
+    from src.adapters.firestore_drive_connection_repo import FirestoreDriveConnectionRepository
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
     from src.config.environment import EnvironmentConfig
 
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
-    repo = FirestoreDriveIndexRepository(db, env)
-    if await repo.get_sync_state(user_id) is None:
-        print("no sync state: nothing is indexed for this user")
+    connections = FirestoreDriveConnectionRepository(db, env.drive_connections_collection,
+                                                     env.drive_user_settings_collection)
+    conn, why = await resolve_connection(connections, user_id, connection_id)
+    if conn is None:
+        print(f"refused: {why}")
         return 1
-    text = "\n".join(report(await scan(repo, user_id))) + "\n"
+    repo = FirestoreDriveIndexRepository(db, env)
+    if await repo.get_sync_state(conn.scope) is None:
+        print("no sync state: nothing is indexed for this connection")
+        return 1
+    text = "\n".join(report(await scan(repo, conn.scope))) + "\n"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
     print(text, end="")
@@ -149,6 +159,7 @@ async def _main(user_id: str, out: Path) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--user", required=True, help="the user whose index is read")
+    parser.add_argument("--connection", default=None, help="the connection (default: the user's one live connection)")
     parser.add_argument("--out", type=Path, default=_DEFAULT_OUT, help="report file (keep it under scripts/memory/)")
     args = parser.parse_args()
-    sys.exit(asyncio.run(_main(args.user, args.out)))
+    sys.exit(asyncio.run(_main(args.user, args.connection, args.out)))

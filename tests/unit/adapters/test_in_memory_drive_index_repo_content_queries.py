@@ -3,14 +3,16 @@
 from datetime import datetime, timedelta, timezone
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord, Reason, RecordState
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 KINDS = frozenset({"pdf", "markdown"})
 
 
 def rec(item_id, kind="pdf", state=RecordState.METADATA_ONLY, reason=None, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=item_id, kind=kind, state=state, reason=reason, **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=item_id, kind=kind, state=state, reason=reason, **kw)
 
 
 async def test_chunk_capped_lists_refusals_best_rank_then_newest():
@@ -20,11 +22,11 @@ async def test_chunk_capped_lists_refusals_best_rank_then_newest():
         rec("new-doc", reason=Reason.USER_CHUNK_CAP, card_rank=0, modified_at=NOW),
         rec("image", kind="image", reason=Reason.USER_CHUNK_CAP, card_rank=1, modified_at=NOW + timedelta(days=1)),
         rec("no-text", reason=Reason.NO_TEXT, card_rank=0, modified_at=NOW),
-        DriveIndexRecord(user_id="v", item_id="other-user", state=RecordState.METADATA_ONLY,
+        DriveIndexRecord(user_id="v", connection_id="v", item_id="other-user", state=RecordState.METADATA_ONLY,
                          reason=Reason.USER_CHUNK_CAP),
     ])
-    assert [r.item_id for r in await repo.chunk_capped("u", 10)] == ["new-doc", "old-doc", "image"]
-    assert [r.item_id for r in await repo.chunk_capped("u", 1)] == ["new-doc"]
+    assert [r.item_id for r in await repo.chunk_capped(U_SCOPE, 10)] == ["new-doc", "old-doc", "image"]
+    assert [r.item_id for r in await repo.chunk_capped(U_SCOPE, 1)] == ["new-doc"]
 
 
 async def test_count_unread_follows_is_unread():
@@ -42,6 +44,6 @@ async def test_count_unread_follows_is_unread():
         rec("photo", kind="image", reason=Reason.PHOTOGRAPH),
         rec("code", kind="code", state=RecordState.FAILED),                         # kind not counted
     ])
-    assert await repo.count_unread("u", KINDS) == 6
-    assert await repo.count_unread("u", frozenset()) == 0
-    assert await repo.count_unread("nobody", KINDS) == 0
+    assert await repo.count_unread(U_SCOPE, KINDS) == 6
+    assert await repo.count_unread(U_SCOPE, frozenset()) == 0
+    assert await repo.count_unread(ConnectionScope(user_id="nobody", connection_id="nobody"), KINDS) == 0

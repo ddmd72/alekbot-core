@@ -37,14 +37,11 @@ async def test_update_of_a_record_never_saved_writes_nothing(store):
     assert store.docs == {}
 
 
-@pytest.mark.parametrize("provider, old_drive, new_drive", [("gmail", "", ""),
-                                                             ("microsoft_onedrive", "D1", "D2")])
-async def test_update_replaces_every_field_of_an_existing_record_and_returns_true(store, provider, old_drive,
-                                                                                  new_drive):
-    cid = await store.repo.save(creds(U1, provider, needs_reconnect=True, drive_id=old_drive))
+@pytest.mark.parametrize("provider", ["gmail", "microsoft_onedrive"])
+async def test_update_replaces_every_field_of_an_existing_record_and_returns_true(store, provider):
+    cid = await store.repo.save(creds(U1, provider, needs_reconnect=True))
     new = creds(U1, provider, credential_id=cid, access_token="at-new", refresh_token="rt-new", scopes=["a", "b"],
-                account=replace(creds(U1, provider).account, label="other@example.com"), needs_reconnect=False,
-                drive_id=new_drive)
+                account=replace(creds(U1, provider).account, label="other@example.com"), needs_reconnect=False)
     assert await store.repo.update(new) is True
     got = await one(store.repo, U1, provider)
     assert got.credential_id == cid                                     # the store's own id, kept
@@ -73,7 +70,7 @@ async def test_update_touches_only_its_own_user_and_provider(store):
 
 
 async def test_a_disconnect_stands_against_an_update_in_flight(store):
-    await store.repo.save(creds(U1, "microsoft_onedrive", drive_id="D1"))
+    await store.repo.save(creds(U1, "microsoft_onedrive"))
     read = await one(store.repo, U1, "microsoft_onedrive")
     refreshed = asyncio.Event()
     results = []
@@ -81,8 +78,7 @@ async def test_a_disconnect_stands_against_an_update_in_flight(store):
     async def refresh():
         await refreshed.wait()
         results.append(await store.repo.update(
-            creds(U1, "microsoft_onedrive", credential_id=read.credential_id, access_token="refreshed",
-                  drive_id=read.drive_id)))
+            creds(U1, "microsoft_onedrive", credential_id=read.credential_id, access_token="refreshed")))
 
     async def disconnect():
         await delete_kind(store.repo, U1, "microsoft_onedrive")

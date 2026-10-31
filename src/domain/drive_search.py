@@ -18,7 +18,7 @@ Public interface:
     is_not_read_yet(rec, admitted=None, triaged=None, transcribed=None) -> bool   (waiting, not unreadable: F5-2)
     escape_text(text) -> str;  wrap_untrusted(text, *, nonce, ref, path) -> str
     render_results(result) -> str
-    make_card(rec, path, summary, nonce)
+    make_card(rec, path, summary, nonce, ref_tag)
     date_source(rec) -> DATE_TAKEN | DATE_WRITTEN | DATE_FILE | None      (the card's date label, F5-3)
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_accuracy import scorable
-from .drive_card import note_line, taken_at
+from .drive_card import content_key_of, note_line, taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict, inaccessible
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
@@ -44,7 +44,10 @@ from .drive_search_texts import (
     SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
 )
 from .drive_tier_result import TieredResult
-from .user_drive import DriveConnection, DriveItem, make_drive_ref
+from . import drive_ref
+from .drive_connection import DriveConnection
+from .drive_connection_status import DriveConnectionStatus
+from .user_drive import DriveItem
 
 STATUS_OK = "ok"
 STATUS_DISABLED = "disabled"
@@ -243,6 +246,7 @@ class DriveSearchResult:
     other_drive: bool = False            # disconnected because a different drive is connected now
     tiered: Optional[TieredResult] = None   # Search v2: a query result's tiers, coverage and footers (§25.5.6)
     awaiting_rebuild: bool = False       # the index is not rebuilt under v2 yet (D30): nothing was searched (XC-1)
+    ref_tag: str = ""                    # the searched connection's ref tag: every card's ref carries it (MULTI_DRIVE_RFC §9)
 
 
 @dataclass(frozen=True)
@@ -257,25 +261,30 @@ class _Gate:
 # Gate and request
 # ---------------------------------------------------------------------------------------------
 
-def search_gate(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
+def search_gate(enabled: bool, state: Optional[DriveSyncState], connection: Optional[DriveConnection],
                 now: datetime) -> _Gate:
-    """§10.1 step 0, over facts read uncached. Past ACCESS_LOSS_TTL, or once a purge has started, the index
-    is being deleted: an expired grant answers `disconnected`, a connected drive answers with no results
-    and `building` (the tick finishes the purge and starts epoch 1, §7.6). A different drive hides the
-    index until the purge runs."""
+    """§10.1 step 0, over facts read uncached: `enabled` is the connection's indexing switch, `state` its sync state,
+    `connection` the connection searched (MULTI_DRIVE_RFC §8; None: the user has none, which answers `disconnected`
+    whatever `enabled` says: there is no switch to read). Past ACCESS_LOSS_TTL, or once a purge has started, the index is being deleted: an expired grant answers `disconnected`, a connected drive answers
+    with no results and `building` (the tick finishes the purge and starts epoch 1, §7.6). A sync state of another
+    drive identity hides the index until the purge runs."""
+    if connection is None:
+        return _Gate(STATUS_DISCONNECTED)
     if not enabled:
         return _Gate(STATUS_DISABLED)
-    if not connection.connected:
+    status = DriveConnectionStatus.of(connection)
+    if not status.connected:
         return _Gate(STATUS_DISCONNECTED)
     past_ttl = (state is not None and state.access_lost_at is not None
                 and now >= state.access_lost_at + ACCESS_LOSS_TTL)
     if past_ttl or (state is not None and state.purging):
-        if connection.needs_reconnect:
+        if status.needs_reconnect:
             return _Gate(STATUS_DISCONNECTED)
         return _Gate(STATUS_OK, rebuilding=True)
-    if state is not None and connection.drive_id and state.drive_id and connection.drive_id != state.drive_id:
+    if (state is not None and connection.drive_identity and state.drive_identity
+            and connection.drive_identity != state.drive_identity):
         return _Gate(STATUS_DISCONNECTED, other_drive=True)
-    return _Gate(STATUS_OK, reconnect_needed=connection.needs_reconnect)
+    return _Gate(STATUS_OK, reconnect_needed=status.needs_reconnect)
 
 
 def _parse_date(raw: Optional[str], *, end_of_day: bool) -> Optional[datetime]:
@@ -484,7 +493,7 @@ def date_source(rec: DriveIndexRecord) -> Optional[str]:
         return DATE_WRITTEN
     if rec.brief is not None and rec.brief.held_date is not None and rec.brief.held_date == when:
         return DATE_WRITTEN
-    if taken_at(rec.facets) == when:
+    if taken_at(rec.media) == when:
         return DATE_TAKEN
     return DATE_FILE
 
@@ -497,18 +506,18 @@ def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = 
     return (rec.state is RecordState.PENDING and not rec.card_capped and is_unread(rec, admitted, triaged, transcribed))
 
 
-def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
+def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str, ref_tag: str) -> DriveSearchCard:
     """A record the bot cannot open (§26.2) keeps a readable generation it had, shown stale (Δ52). The owner's note
     line comes from the record (DRIVE_FILE_NOTES_RFC §6.2), so every call site renders it; each passes
     `card_text(rec, owner=False)` as the summary."""
     closed = inaccessible(rec)
     return DriveSearchCard(
-        ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
+        ref=drive_ref.format(ref_tag, rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
         is_folder=rec.is_folder, summary=summary, size_bytes=rec.size_bytes, modified_at=rec.modified_at,
         effective_date=rec.effective_date, web_url=rec.web_url, state=rec.state.value,
         reason=rec.reason.value if rec.reason else None,
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
-        content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
+        content_hash=content_key_of(rec.content_identity), nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
         inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy if scorable(rec) else None,
         scene_labels=rec.photo_scene_labels, owner_note=note_line(rec),
     )
@@ -692,7 +701,7 @@ def render_results(result: DriveSearchResult) -> str:
     if result.status == STATUS_FOLDER_NOT_FOUND and result.folder_lookup_truncated:
         return "\n".join(building + [
             f"Could not resolve the folder '{wanted}': too many folders share its name. Pass the "
-            f"folder's drive:<id> ref or a longer path from the top level."])
+            f"folder's drive: ref or a longer path from the top level."])
     if result.status == STATUS_FOLDER_NOT_FOUND:
         return "\n".join(building + [
             f"No folder matching '{wanted}' is in the index. Search without a folder, or list the "

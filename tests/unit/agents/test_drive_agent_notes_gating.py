@@ -25,7 +25,7 @@ from src.domain.drive_note import (
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest
 from src.domain.turn_identity import TURN_ID_CONTEXT_KEY
 from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_connection_status import DriveConnectionStatus
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.drive_operations import DriveOperations
 from src.infrastructure.drive_note_tools import DRIVE_NOTE_CONTEXT_KEY
@@ -59,7 +59,7 @@ def _service() -> AsyncMock:
 
 def _operations() -> DriveOperations:
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+    drive.status.return_value = DriveConnectionStatus(connected=True)
     return DriveOperations(conversion_service=MagicMock(), drive_service=drive)
 
 
@@ -176,9 +176,9 @@ async def test_a_rerun_of_the_same_turn_carries_the_same_turn_id_on_both_attempt
 
 async def test_a_rerun_of_an_append_writes_the_words_once():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, "", [], NoteProvenance(origin="chat", session_id="s0", turn_id="t0"))
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, "", [], NoteProvenance(origin="chat", session_id="s0", turn_id="t0"))
     message = _message(**{TURN_ID_CONTEXT_KEY: "slack:Ev3"}, **CHAT)
-    add = ((nt.ADD_TO_NOTE, {"item_ref": "drive:a", "text": "second invoice"}),)
+    add = ((nt.ADD_TO_NOTE, {"item_ref": "drive:a1:a", "text": "second invoice"}),)
     for _ in range(2):
         await _run(_agent(env.service), add, message=message)
     note = await env.note("a")

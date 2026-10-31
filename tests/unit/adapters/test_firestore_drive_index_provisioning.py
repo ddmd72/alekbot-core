@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.unit.adapters.firestore_drive_fakes import NOW, RECS, Db, executed, make_repo, rec_doc, snap
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -48,23 +49,23 @@ def _covered(required, index):
 
 
 async def test_every_record_query_has_a_declared_index(repo, db):
-    await repo.due_records("u", NOW, 10)
-    await repo.oldest_due_at("u", 0)
-    await repo.children("u", "p", "a", 5)
-    await repo.records_page("u", "a", 5)
-    await repo.records_seen_before("u", 2, 5)
-    await repo.card_capped("u", 5)
-    await repo.find_by_name_keys("u", ["w:a"], 5)
-    await repo.find_by_name_keys("u", ["w:a"], 5, kind="pdf")
-    await repo.filter_records("u", None, None, None, 8)
-    await repo.filter_records("u", "pdf", NOW, NOW, 8)
-    await repo.find_nearest_cards("u", [1.0], 5)
-    await repo.find_nearest_cards("u", [1.0], 5, kind="pdf")
-    await repo.count_by_state("u")
-    await repo.delete_user_records("u", 5)
+    await repo.due_records(U_SCOPE, NOW, 10)
+    await repo.oldest_due_at(U_SCOPE, 0)
+    await repo.children(U_SCOPE, "p", "a", 5)
+    await repo.records_page(U_SCOPE, "a", 5)
+    await repo.records_seen_before(U_SCOPE, 2, 5)
+    await repo.card_capped(U_SCOPE, 5)
+    await repo.find_by_name_keys(U_SCOPE, ["w:a"], 5)
+    await repo.find_by_name_keys(U_SCOPE, ["w:a"], 5, kind="pdf")
+    await repo.filter_records(U_SCOPE, None, None, None, 8)
+    await repo.filter_records(U_SCOPE, "pdf", NOW, NOW, 8)
+    await repo.find_nearest_cards(U_SCOPE, [1.0], 5)
+    await repo.find_nearest_cards(U_SCOPE, [1.0], 5, kind="pdf")
+    await repo.count_by_state(U_SCOPE)
+    await repo.delete_user_records(U_SCOPE, 5)
     db.cols[RECS].respond = lambda ops: ([snap(rec_doc("x", card_rank=2))]
                                          if ("order_by", "card_rank", "DESCENDING") in ops else [])
-    await repo.lowest_ranked_carded("u")   # top rank, dated (empty), undated
+    await repo.lowest_ranked_carded(U_SCOPE)   # top rank, dated (empty), undated
     queries = executed(db)
     assert len(queries) == 27   # due_records 5, count_by_state 7, lowest_ranked_carded 3, the rest 1 each
     declared = _declared_indexes()
@@ -78,18 +79,18 @@ def test_indexes_are_declared_for_the_live_collection_only():
     # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
     # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
     # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
-    # + 1 for the records the bot cannot open (user_id + inaccessible_since, §26.2, §26.9 step 3) + 2 transcript
+    # + 1 for the records the bot cannot open (connection_id + inaccessible_since, §26.2, §26.9 step 3) + 2 transcript
     # queues (the ready queue and the wake-ups, §27.3) + 2 transcript mirror queues (the mirror queue and its wake-ups,
     # §27.15 step 8c) + 2 vector entries
     assert len(_declared_indexes()) == 38
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
                                       ("effective_day", "DESCENDING"), ("parent_id", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_due", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("mirror_due", "ASCENDING"),
                                       ("effective_day", "DESCENDING"), ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
@@ -97,7 +98,7 @@ def test_indexes_are_declared_for_the_live_collection_only():
 async def test_the_not_read_yet_counts_have_their_composites(repo, db):
     """count_unread(pending=True) adds `card_capped == False` to the pending class (final review F5-2): one count
     per kind list, documents and text images, each served by a composite of exactly its equality fields."""
-    await repo.count_unread("u", {"pdf", "docx"}, {"jpg"}, pending=True)
+    await repo.count_unread(U_SCOPE, {"pdf", "docx"}, {"jpg"}, pending=True)
     queries = executed(db)
     assert len(queries) == 2
     declared = _declared_indexes()
@@ -134,29 +135,29 @@ def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_scr
     assert len(drive) == len(declared) == 36
     mirror_queue = [c for c in drive if "--field-config=field-path=mirror_due,order=ascending" in c]
     assert len(mirror_queue) == 1 and mirror_queue[0][-4:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=mirror_due,order=ascending",
         "--field-config=field-path=effective_day,order=descending",
         "--field-config=field-path=item_id,order=ascending"]
     mirror_wakeups = [c for c in drive if "--field-config=field-path=mirror_retry_at,order=ascending" in c]
     assert len(mirror_wakeups) == 1 and mirror_wakeups[0][-3:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=mirror_retry_at,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     transcript_queue = [c for c in drive if "--field-config=field-path=transcript_state,order=ascending" in c]
     assert len(transcript_queue) == 1 and transcript_queue[0][-5:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=transcript_state,order=ascending",
         "--field-config=field-path=effective_day,order=descending",
         "--field-config=field-path=parent_id,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     wakeups = [c for c in drive if "--field-config=field-path=transcript_wake_at,order=ascending" in c]
     assert len(wakeups) == 1 and wakeups[0][-3:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=transcript_wake_at,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     inaccessible = [c for c in drive if "--field-config=field-path=inaccessible_since,order=ascending" in c]
-    assert len(inaccessible) == 1 and "--field-config=field-path=user_id,order=ascending" in inaccessible[0]
+    assert len(inaccessible) == 1 and "--field-config=field-path=connection_id,order=ascending" in inaccessible[0]
     not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
                     and "--field-config=field-path=indexed_generation,order=ascending" in c]
     assert len(not_read_yet) == 2

@@ -8,16 +8,19 @@ from pathlib import Path
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Priority, Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_index_planner import content_due
 
 from tests.unit.services.drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
-from tests.unit.services.drive_index_fakes import T0
+from tests.unit.services.drive_index_fakes import T0, U_SCOPE
 
 _DIR = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure"
 U = "user-1"
+C = "conn-1"
+SCOPE = ConnectionScope(U, C)
 
 
 @pytest.fixture
@@ -29,14 +32,14 @@ def rq():
 
 
 def _rec(item_id, kind="pdf", state=RecordState.FAILED, reason=Reason.EXTRACT_ERROR, **kw):
-    return DriveIndexRecord(user_id=U, item_id=item_id, name=f"{item_id}.{kind}", kind=kind, content_version="c1",
+    return DriveIndexRecord(user_id=U, connection_id=C, item_id=item_id, name=f"{item_id}.{kind}", kind=kind, content_version="c1",
                             state=state, reason=reason, has_card=True, card_hash="h", indexed_generation=1,
                             indexed_version="c0", extraction_version=1, **kw)
 
 
 async def _repo(records):
     repo = InMemoryDriveIndexRepository()
-    await repo.save_sync_state(DriveSyncState(user_id=U, epoch=1, root_item_id="root", created_at=T0))
+    await repo.save_sync_state(DriveSyncState(user_id=U, connection_id=C, epoch=1, root_item_id="root", created_at=T0))
     await repo.upsert_records(records)
     return repo
 
@@ -95,32 +98,32 @@ def test_the_reason_choices_are_the_per_file_failures(rq):
 async def test_dry_run_writes_nothing(rq):
     repo = await _repo(_mixed())
     before = _stored(repo)
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind=None, apply=False, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=False, now=T0, owner="r")
     assert code == 0 and message.startswith("dry run: 2 failed files") and "--apply" in message
-    assert _stored(repo) == before and (await repo.get_sync_state(U)).lease_owner is None
+    assert _stored(repo) == before and (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 async def test_apply_writes_exactly_the_selected_records_and_releases_the_lease(rq):
     repo = await _repo(_mixed())
     before = _stored(repo)
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind="pdf", apply=True, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind="pdf", apply=True, now=T0, owner="r")
     after = _stored(repo)
     assert code == 0 and message.startswith("requeued: 1 failed files")
     changed = {k[1] for k in after if after[k] != before[k]}
     assert changed == {"item-1"} and after.keys() == before.keys()
-    rec = after[(U, "item-1")]
+    rec = after[(C, "item-1")]
     assert rec.state is RecordState.PENDING and content_due(rec, T0) and rec.indexed_generation == 1
-    assert (await repo.get_sync_state(U)).lease_owner is None
-    assert [r.item_id for r in await repo.due_records(U, T0, 10)] == ["item-1"]
+    assert (await repo.get_sync_state(SCOPE)).lease_owner is None
+    assert [r.item_id for r in await repo.due_records(SCOPE, T0, 10)] == ["item-1"]
 
 
 async def test_a_busy_lease_writes_nothing(rq):
     repo = await _repo(_mixed())
-    await repo.acquire_lease(U, "tick", T0, T0 + timedelta(minutes=30), create=False)
+    await repo.acquire_lease(SCOPE, "tick", T0, T0 + timedelta(minutes=30), create=False)
     before = _stored(repo)
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
     assert code == 1 and "retry" in message and _stored(repo) == before
-    assert (await repo.get_sync_state(U)).lease_owner == "tick"
+    assert (await repo.get_sync_state(SCOPE)).lease_owner == "tick"
 
 
 async def test_apply_selects_again_under_the_lease(rq, monkeypatch):
@@ -129,40 +132,40 @@ async def test_apply_selects_again_under_the_lease(rq, monkeypatch):
 
     async def a_tick_reads_item_2_first(*args, **kw):
         state = await taken(*args, **kw)
-        await repo.upsert_records([replace(repo.records[(U, "item-2")], state=RecordState.INDEXED, reason=None)])
+        await repo.upsert_records([replace(repo.records[(C, "item-2")], state=RecordState.INDEXED, reason=None)])
         return state
 
     monkeypatch.setattr(repo, "acquire_lease", a_tick_reads_item_2_first)
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
     assert code == 0 and "1 failed files" in message
-    assert repo.records[(U, "item-2")].state is RecordState.INDEXED
+    assert repo.records[(C, "item-2")].state is RecordState.INDEXED
 
 
 @pytest.mark.parametrize("apply", [False, True])
 async def test_nothing_to_requeue(rq, apply):
     repo = await _repo([_rec("item-4", state=RecordState.INDEXED, reason=None)])
     before = _stored(repo)
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind=None, apply=apply, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=apply, now=T0, owner="r")
     assert (code, message) == (0, "nothing to requeue") and _stored(repo) == before
-    assert (await repo.get_sync_state(U)).lease_owner is None
+    assert (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 async def test_nothing_indexed_is_an_error(rq):
-    code, _ = await rq.requeue(InMemoryDriveIndexRepository(), U, reason=Reason.EXTRACT_ERROR, kind=None, apply=True,
+    code, _ = await rq.requeue(InMemoryDriveIndexRepository(), SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=True,
                                now=T0, owner="r")
     assert code == 1
 
 
 async def test_a_reason_that_is_not_a_per_file_failure_is_refused(rq):
     with pytest.raises(ValueError):
-        await rq.requeue(await _repo([]), U, reason=Reason.NO_TEXT, kind=None, apply=False, now=T0, owner="r")
+        await rq.requeue(await _repo([]), SCOPE, reason=Reason.NO_TEXT, kind=None, apply=False, now=T0, owner="r")
 
 
 async def test_the_scan_pages_through_the_index_and_writes_in_batches(rq, monkeypatch):
     monkeypatch.setattr(rq, "_PAGE", 2)
     monkeypatch.setattr(rq, "_WRITE_BATCH", 2)
     repo = await _repo([_rec(f"item-{i}") for i in range(1, 6)])
-    code, message = await rq.requeue(repo, U, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
+    code, message = await rq.requeue(repo, SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=True, now=T0, owner="r")
     assert code == 0 and "5 failed files" in message
     assert all(r.state is RecordState.PENDING for r in repo.records.values())
 
@@ -188,7 +191,7 @@ async def test_a_failed_file_is_read_again_by_the_next_tick_only_after_the_reque
     await w.settle()
     assert w.rec(doc).state is RecordState.FAILED and len(w.parser.requests) == reads   # the outcome stands
 
-    code, _ = await rq.requeue(w.repo, "u", reason=Reason.EXTRACT_ERROR, kind="docx", apply=True, now=w.clock.now,
+    code, _ = await rq.requeue(w.repo, U_SCOPE, reason=Reason.EXTRACT_ERROR, kind="docx", apply=True, now=w.clock.now,
                                owner="r")
     assert code == 0
     await w.settle()

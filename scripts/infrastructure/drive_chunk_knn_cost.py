@@ -31,6 +31,7 @@ from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.domain.connection_scope import ConnectionScope  # noqa: E402
 from src.domain.drive_index import DriveChunk  # noqa: E402
 from src.domain.drive_index_params import CHUNK_FETCH, FETCH_MAX, RECORD_WRITE_BATCH  # noqa: E402
 from src.ports.drive_index_repository import DriveIndexRepository  # noqa: E402
@@ -60,6 +61,14 @@ def require_synthetic(user_id: str) -> None:
         raise ValueError(f"refusing user {user_id!r}: the spike writes only for a {SYNTHETIC_PREFIX}… user")
 
 
+S3_CONNECTION = "s3-conn"   # the made-up connection the spike's chunks belong to; the synthetic user has no real one
+
+
+def scope_of(user_id: str) -> ConnectionScope:
+    """The scope of the synthetic user's chunks: the made-up connection `S3_CONNECTION` (MULTI_DRIVE_RFC §8)."""
+    return ConnectionScope(user_id, S3_CONNECTION)
+
+
 def unit_vector(rng: random.Random, dims: int = DIMENSIONS) -> List[float]:
     raw = [rng.gauss(0.0, 1.0) for _ in range(dims)]
     norm = math.sqrt(sum(x * x for x in raw)) or 1.0
@@ -73,7 +82,7 @@ def synthetic_chunks(user_id: str, start: int, stop: int) -> List[DriveChunk]:
         item = n // CHUNKS_PER_ITEM
         out.append(DriveChunk(user_id=user_id, item_id=f"s3-item-{item:05d}", generation=1,
                               index=n % CHUNKS_PER_ITEM, text=TEXT, char_start=0, char_end=len(TEXT),
-                              kind="docx" if item % 5 == 4 else "pdf"))
+                              kind="docx" if item % 5 == 4 else "pdf", connection_id=S3_CONNECTION))
     return out
 
 
@@ -109,7 +118,7 @@ async def measure(repo: DriveIndexRepository, user_id: str, size: int, queries: 
             for _ in range(queries):
                 vector = unit_vector(rng)
                 started = clock()
-                await repo.find_nearest_chunks(user_id, vector, limit, kind)
+                await repo.find_nearest_chunks(scope_of(user_id), vector, limit, kind)
                 timings.append((clock() - started) * 1000)
             rows.append(Row(size, limit, kind, percentile(timings, 0.5), percentile(timings, 0.95), read_ops))
     return rows
@@ -117,7 +126,7 @@ async def measure(repo: DriveIndexRepository, user_id: str, size: int, queries: 
 
 async def purge(repo: DriveIndexRepository, user_id: str) -> int:
     total = 0
-    while (deleted := await repo.delete_user_chunks(user_id, RECORD_WRITE_BATCH)) > 0:
+    while (deleted := await repo.delete_user_chunks(scope_of(user_id), RECORD_WRITE_BATCH)) > 0:
         total += deleted
     return total
 
@@ -126,7 +135,7 @@ async def run(repo: DriveIndexRepository, user_id: str, sizes: Sequence[int], qu
               explain: Optional[Explain] = None, keep: bool = False,
               clock: Callable[[], float] = time.perf_counter) -> List[Row]:
     require_synthetic(user_id)
-    if await repo.chunks_page(user_id, None, 1):
+    if await repo.chunks_page(scope_of(user_id), None, 1):
         raise ValueError(f"{user_id} already has chunks: purge them first or pick a new synthetic id")
     rng = random.Random(seed)
     rows: List[Row] = []
@@ -164,7 +173,7 @@ def firestore_explain(repo: Any) -> Explain:
     from google.cloud.firestore_v1.query_profile import ExplainOptions
 
     async def explain(user_id: str, vector: Sequence[float], limit: int, kind: Optional[str]) -> Optional[int]:
-        results = await repo.nearest_chunks_query(user_id, vector, limit, kind).get(
+        results = await repo.nearest_chunks_query(scope_of(user_id), vector, limit, kind).get(
             explain_options=ExplainOptions(analyze=True))
         return int(results.get_explain_metrics().execution_stats.read_operations)
 

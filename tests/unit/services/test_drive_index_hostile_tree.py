@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.validation.drive_eval.eval_connection import EVAL_CONNECTION_ID
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
-from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture
+from scripts.validation.drive_eval.runner import EvalClock, index_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_extraction import PARSER, ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import Reason, RecordState, Scope
@@ -95,7 +96,7 @@ def indexed():
 @pytest.mark.parametrize("path", sorted(EXPECTED))
 def test_scope_and_reason(indexed, path):
     repo, _ = indexed
-    rec = repo.records.get((EVAL_USER, item_id_for(path)))
+    rec = repo.records.get((EVAL_CONNECTION_ID, item_id_for(path)))
     if EXPECTED[path] is None:
         assert rec is None, f"{path} must have no record"
     else:
@@ -109,7 +110,7 @@ def test_a_voice_memo_waits_unread_for_the_transcript_stage(indexed):
     """Policy 3 (§27.3): the memo is pending with its card, and nothing was read from it — no readable generation,
     no chunks, no extractor link (the transcript stage, not wired here, is media's only reader)."""
     repo, _ = indexed
-    rec = repo.records[(EVAL_USER, item_id_for("Media/voice memo.m4a"))]
+    rec = repo.records[(EVAL_CONNECTION_ID, item_id_for("Media/voice memo.m4a"))]
     assert rec.state is RecordState.PENDING and rec.has_card
     assert (rec.indexed_generation, rec.chunk_count, rec.extracted_by, rec.attempts) == (None, 0, None, 0)
     assert (rec.due_at, rec.priority) == (None, None)
@@ -118,7 +119,7 @@ def test_a_voice_memo_waits_unread_for_the_transcript_stage(indexed):
 @pytest.mark.slow
 def test_a_docx_is_indexed(indexed):
     repo, _ = indexed
-    rec = repo.records[(EVAL_USER, item_id_for("Contracts/" + _DOCX))]
+    rec = repo.records[(EVAL_CONNECTION_ID, item_id_for("Contracts/" + _DOCX))]
     assert rec.state is RecordState.INDEXED and rec.indexed_generation is not None and rec.chunk_count > 0
 
 

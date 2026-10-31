@@ -210,6 +210,8 @@ class DriveHintDoc:
     items: Tuple[HintItem, ...]
     hint_keys: Tuple[str, ...]
     passages_version: int
+    # MULTI_DRIVE_RFC §8 (E8): the connection; doc id `chunk_doc_id(scope, …)`, `user_id` checked on read (I3)
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)

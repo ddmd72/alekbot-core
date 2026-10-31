@@ -23,7 +23,7 @@ from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from src.services.drive_transcript_stage import EXTRACTED_BY, TRANSCRIBER_AGENT, DriveTranscriptStage
 
 from tests.unit.services.drive_transcript_fakes import (
-    NOW, OLD, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
+    ckey, cid, HANDLE, SCOPE, NOW, OLD, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
 )
 
 MONTH = "2026-10"
@@ -51,15 +51,15 @@ async def _add(env, *recs, **recordings):
 
 
 async def _extract(env, stop_in=600.0):
-    return await env.stage.extract_step(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.extract_step(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _cheap(env, stop_in=600.0):
-    return await env.stage.cheap_steps(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.cheap_steps(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _get(env, item_id):
-    return (await env.repo.get_records(USER, [item_id])).get(item_id)
+    return (await env.repo.get_records(SCOPE, [item_id])).get(item_id)
 
 
 def _job(env, item_id):
@@ -114,7 +114,7 @@ def _answer_all(env, batch, *, usd=0.01, **by_key):
 def _assert_all_gaps_charged(env, item_id):
     """T-R23: every window a gap marker with no refusal is no transcript: the job is dropped (reservation released),
     nothing stored or indexed, and the file charged one attempt with the T-R21 retry hold."""
-    assert _job(env, item_id) is None and (USER, f"hash-{item_id}") not in env.repo.transcripts
+    assert _job(env, item_id) is None and (USER, ckey(f"hash-{item_id}")) not in env.repo.transcripts
     assert env.host.indexed == [] and _reserved(env) == pytest.approx(0.0)
     rec = env.repo.records[(USER, item_id)]
     assert (rec.transcript_state, rec.transcript_hold, rec.transcript_attempts) == ("held", "retry", 1)
@@ -159,7 +159,7 @@ async def test_slow_cadence_after_one_hour(tmp_path):
 async def test_at_most_10_polls_per_tick(tmp_path):
     env = _env(tmp_path)
     for i in range(BATCH_POLLS_PER_TICK + 2):
-        await env.repo.create_batch(TranscriptBatch(name=f"batches/x{i:02d}", user_id=USER, submitted_at=NOW,
+        await env.repo.create_batch(TranscriptBatch(name=f"batches/x{i:02d}", user_id=USER, connection_id=USER, submitted_at=NOW,
                                                     request_keys=(f"x{i}:0",), created_at=NOW, next_poll_at=NOW))
     await _cheap(env)
     assert len(env.batch.polls) == BATCH_POLLS_PER_TICK == len(set(env.batch.polls))
@@ -337,7 +337,7 @@ async def test_short_window_is_resubmitted_not_stitched(tmp_path):
     assert summary["windows_coverage"] == 1
     assert _job(env, "a").windows[0].state == "uploaded" and _job(env, "a").windows[0].attempts == 1
     assert env.repo.window_results == {} and env.host.indexed == []
-    assert (USER, "hash-a") not in env.repo.transcripts
+    assert (USER, ckey("hash-a")) not in env.repo.transcripts
 
 
 async def test_gap_marker_after_max_attempts(tmp_path):
@@ -361,7 +361,7 @@ async def test_refused_window_gap_marker_truncated(tmp_path):
     _due(env, b1)
     await _cheap(env)
     assert len(env.runner.submits) == 1   # a refusal is never resubmitted
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     body = env.host.indexed[0][1]
     assert stored.transcript.truncated and body.count(GAP_TEXT) == 1 and "alpha" in body
     gap = next(s for s in stored.transcript.segments if s.gap)
@@ -395,7 +395,7 @@ async def test_interpolation_share_resubmits_once_then_accepts(tmp_path):
         _due(env, b)
         await _cheap(env)
     assert len(env.runner.submits) == 2
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert not stored.transcript.truncated and any(s.interpolated for s in stored.transcript.segments)
     assert "[~" in env.host.indexed[0][1]
 
@@ -439,8 +439,8 @@ async def test_result_for_deleted_record_settled_and_dropped(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a"), a=Recording(600))
     file_ref = _job(env, "a").windows[0].file_ref
-    assert await env.stage.drop_jobs(USER, env.host, ["a"]) == 0   # T-R20: left for collection
-    await env.repo.delete_records(USER, ["a"])
+    assert await env.stage.drop_jobs(HANDLE, env.host, ["a"]) == 0   # T-R20: left for collection
+    await env.repo.delete_records(SCOPE, ["a"])
     _answer_all(env, b1, usd=0.01)
     _due(env, b1)
     env.host.events.clear()
@@ -454,14 +454,14 @@ async def test_result_for_deleted_record_settled_and_dropped(tmp_path):
 async def test_result_for_another_content_version_settled_and_dropped(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a"), a=Recording(600))
-    await env.host.commit([replace(await _get(env, "a"), content_version="c2", content_hash="hash-a2")],
+    await env.host.commit([replace(await _get(env, "a"), content_version="c2", content_identity=cid("hash-a2"))],
                           {"a": await _get(env, "a")})
     await _extract(env)   # stage A leaves the job alone while its window is in a batch (T-R20)
-    assert len(env.runner.submits) == 1 and _job(env, "a").content_key == "hash-a"
+    assert len(env.runner.submits) == 1 and _job(env, "a").content_key == ckey("hash-a")
     _answer_all(env, b1, usd=0.01)
     _due(env, b1)
     await _cheap(env)
-    assert _job(env, "a") is None and (USER, "hash-a") not in env.repo.transcripts
+    assert _job(env, "a") is None and (USER, ckey("hash-a")) not in env.repo.transcripts
     assert _reserved(env) == pytest.approx(0.0)
     assert (await _get(env, "a")).transcript_state in ("held", "ready")   # free to proceed at its new version
 
@@ -470,7 +470,7 @@ async def test_files_deleted_on_success_and_abandon(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a", day="2026-10-02"), record("b"), a=Recording(600), b=Recording(600))
     refs = {i: _job(env, i).windows[0].file_ref for i in ("a", "b")}
-    await env.repo.delete_records(USER, ["b"])
+    await env.repo.delete_records(SCOPE, ["b"])
     _answer_all(env, b1)
     _due(env, b1)
     await _cheap(env)
@@ -504,7 +504,7 @@ async def test_no_speech_has_no_chunks(tmp_path):
     assert rec.transcript_state == "current" and rec.transcript_stub == "no_speech"
     assert (rec.state, rec.reason) == (RecordState.METADATA_ONLY, Reason.NO_TEXT)
     assert rec.transcript_seconds == 600 and "a" in env.host.collected   # the old chunks go (G20 stub, never plain)
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert stored.transcript is None and stored.stub == "no_speech" and stored.last_used_at == env.clock.now
 
 
@@ -515,7 +515,7 @@ async def test_finalize_writes_store_record_and_releases(tmp_path):
     _due(env, b1)
     await _cheap(env)
     rec = await _get(env, "a")
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert rec.transcript_state == "current" and rec.transcript_seconds == 600
     assert rec.transcript_languages == ("uk",) and rec.transcript_speakers == stored.transcript.speakers
     assert rec.extracted_by == EXTRACTED_BY and stored.last_used_at == env.clock.now
@@ -528,14 +528,14 @@ async def test_finalize_through_host_fence(tmp_path):
     _answer_all(env, b1)
 
     async def edited_under_the_run(rec):
-        await env.host.commit([replace(rec, content_version="c2", content_hash="hash-a2")], {"a": rec})
+        await env.host.commit([replace(rec, content_version="c2", content_identity=cid("hash-a2"))], {"a": rec})
         return False   # the §7.4 fence drops the run's result
 
     env.host.on_index = edited_under_the_run
     _due(env, b1)
     summary = await _cheap(env)
     assert summary["transcript_finalize_fenced"] == 1
-    assert (await _get(env, "a")).transcript_state != "current" and (USER, "hash-a") not in env.repo.transcripts
+    assert (await _get(env, "a")).transcript_state != "current" and (USER, ckey("hash-a")) not in env.repo.transcripts
     # the job belongs to another version now: dropped at once, its reservation released once
     assert _job(env, "a") is None and _reserved(env) == pytest.approx(0.0)
     assert env.host.releases.count((pytest.approx(file_estimate_usd(600)), MONTH)) == 1
@@ -580,7 +580,7 @@ async def test_crash_after_the_job_is_dropped_finishes_from_the_store(tmp_path):
     _due(env, b1)
     with pytest.raises(RuntimeError):
         await _cheap(env)
-    assert _job(env, "a") is None and (USER, "hash-a") in env.repo.transcripts
+    assert _job(env, "a") is None and (USER, ckey("hash-a")) in env.repo.transcripts
     assert (await _get(env, "a")).transcript_state == "waiting"
     env.host.commit = real_commit
     await _extract(env)   # stage A's store path (Δ112): no model, no ffmpeg
@@ -643,7 +643,7 @@ async def test_multi_window_speakers_are_aligned(tmp_path):
     _answer_all(env, b1, **results)
     _due(env, b1)
     await _cheap(env)
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     rec = await _get(env, "a")
     assert stored.transcript.speakers == rec.transcript_speakers == 2   # the aligned count, not the windows' labels
     assert not stored.transcript.uncertain_seam
@@ -656,22 +656,22 @@ async def test_orphan_sweep_after_ttl(tmp_path):
     env = _env(tmp_path)
     long_ago = NOW - TRANSCRIPT_ORPHAN_TTL - timedelta(days=1)
     t = StitchedTranscript((Segment(0.0, None, "x"),), ("uk",), 1, 60.0)
-    await env.repo.put_transcript(USER, StoredTranscript("orphan", t, last_used_at=long_ago))
-    await env.repo.put_transcript(USER, StoredTranscript("in-use", t, last_used_at=long_ago))
-    await env.repo.put_transcript(USER, StoredTranscript("young", t, last_used_at=NOW - timedelta(days=1)))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("orphan"), t, last_used_at=long_ago))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("in-use"), t, last_used_at=long_ago))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("young"), t, last_used_at=NOW - timedelta(days=1)))
     await env.repo.upsert_records([replace(record("c", content_hash="in-use"), transcript_state="current",
-                                           transcript_key="in-use")])
+                                           transcript_key=ckey("in-use"))])
     summary = await _cheap(env)
-    assert (USER, "orphan") not in env.repo.transcripts
-    assert env.repo.transcripts[(USER, "in-use")].last_used_at == NOW   # referenced: kept, and out of the next page
-    assert (USER, "young") in env.repo.transcripts
+    assert (USER, ckey("orphan")) not in env.repo.transcripts
+    assert env.repo.transcripts[(USER, ckey("in-use"))].last_used_at == NOW   # referenced: kept, and out of the next page
+    assert (USER, ckey("young")) in env.repo.transcripts
     assert summary["transcript_orphans_deleted"] == 1 and summary["transcript_orphans_kept"] == 1
-    await env.repo.put_transcript(USER, StoredTranscript("orphan2", t, last_used_at=long_ago))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("orphan2"), t, last_used_at=long_ago))
     await _cheap(env)   # once a day
-    assert (USER, "orphan2") in env.repo.transcripts
+    assert (USER, ckey("orphan2")) in env.repo.transcripts
     env.clock.advance(86_400)
     await _cheap(env)
-    assert (USER, "orphan2") not in env.repo.transcripts
+    assert (USER, ckey("orphan2")) not in env.repo.transcripts
 
 
 async def test_nothing_from_a_transcript_is_logged(tmp_path, caplog):
@@ -718,7 +718,7 @@ async def test_a_collection_that_fails_after_booking_neither_books_nor_bills_aga
 
 async def test_all_gaps_without_a_refusal_fail_at_max_attempts_with_no_stub(tmp_path):
     env = _env(tmp_path)
-    await _add(env, replace(record("a"), transcript_attempts=MAX_ATTEMPTS - 1, transcript_hold_version="hash-a"),
+    await _add(env, replace(record("a"), transcript_attempts=MAX_ATTEMPTS - 1, transcript_hold_version=ckey("hash-a")),
                a=Recording(600))
     for _ in range(2):   # the batch fails, its one resubmit fails too: a gap marker, nothing refused
         await _extract(env)
@@ -730,7 +730,7 @@ async def test_all_gaps_without_a_refusal_fail_at_max_attempts_with_no_stub(tmp_
     rec = await _get(env, "a")
     assert rec.transcript_state == "failed" and rec.transcript_stub == ""
     assert _job(env, "a") is None and env.host.indexed == [] and _reserved(env) == pytest.approx(0.0)
-    assert (USER, "hash-a") not in env.repo.transcripts
+    assert (USER, ckey("hash-a")) not in env.repo.transcripts
 
 
 async def test_all_gaps_with_a_refusal_finalize_truncated(tmp_path):
@@ -740,7 +740,7 @@ async def test_all_gaps_with_a_refusal_finalize_truncated(tmp_path):
     _due(env, b1)
     await _cheap(env)
     rec = await _get(env, "a")
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert rec.transcript_state == "current" and stored.transcript.truncated
     assert env.host.indexed[0][1].count(GAP_TEXT) == 1 and _reserved(env) == pytest.approx(0.0)
 
@@ -755,7 +755,7 @@ async def test_partial_gaps_without_a_refusal_still_finalize(tmp_path):
         _due(env, b)
         await _cheap(env)
     rec = await _get(env, "a")
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert rec.transcript_state == "current" and stored.transcript.truncated
     body = env.host.indexed[0][1]
     assert body.count(GAP_TEXT) == 1 and "alpha" in body
@@ -786,7 +786,7 @@ async def test_a_poll_client_error_is_logged_as_an_error(tmp_path, caplog):
 async def test_a_batch_without_request_keys_is_closed_and_released_once(tmp_path):
     env = _env(tmp_path)
     await env.host.reserve(0.05, MONTH)
-    await env.repo.create_batch(TranscriptBatch(name="batches/empty", user_id=USER, submitted_at=NOW, created_at=NOW,
+    await env.repo.create_batch(TranscriptBatch(name="batches/empty", user_id=USER, connection_id=USER, submitted_at=NOW, created_at=NOW,
                                                 next_poll_at=NOW, reserved_usd=0.05, reserved_month=MONTH))
     await _cheap(env)
     closed = env.repo.batches[(USER, "batches/empty")]
@@ -821,7 +821,7 @@ async def test_dropped_windows_are_gap_markers_while_another_batch_carries_the_r
     from src.domain.drive_transcript import JobWindow, TranscriptJob
     env = _env(tmp_path)
     specs = plan_windows(3_600)
-    job = TranscriptJob(USER, "a", "hash-a", content_version=1, duration_s=3_600.0, reserved_usd=0.1,
+    job = TranscriptJob(USER, "a", ckey("hash-a"), connection_id=USER, content_version=1, duration_s=3_600.0, reserved_usd=0.1,
                         reserved_month=MONTH, windows=(
                             JobWindow(specs[0], state="submitted", file_ref="files/0", request_key="a:0",
                                       batch_name="batches/b1", files_expire_at=NOW + timedelta(hours=40)),
@@ -829,7 +829,7 @@ async def test_dropped_windows_are_gap_markers_while_another_batch_carries_the_r
                                       batch_name="batches/b2", files_expire_at=NOW + timedelta(hours=40)),
                             JobWindow(specs[2], state="done")))
     await env.repo.save_transcript_job(job)
-    await env.repo.create_batch(TranscriptBatch(name="batches/b1", user_id=USER, request_keys=("a:0",),
+    await env.repo.create_batch(TranscriptBatch(name="batches/b1", user_id=USER, connection_id=USER, request_keys=("a:0",),
                                                 submitted_at=NOW, created_at=NOW, next_poll_at=NOW))
     env.runner.results["batches/b1"] = {"a:0": _ok("a:0", _transcript(1_800))}
     env.batch.statuses["batches/b1"] = BatchStatus.SUCCEEDED

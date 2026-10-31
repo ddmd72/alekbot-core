@@ -17,6 +17,7 @@ from src.domain.drive_index_planner import month_key
 
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
 from .drive_usage_helpers import month_usd
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -56,7 +57,7 @@ async def test_charged_outages_end_in_failed():
     doc = w.add_doc("poison.pdf", "")
     await w.settle()
     rec = w.rec(doc)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert (rec.state, rec.model_outages, rec.attempts) == (RecordState.PENDING, 1, 0)
     assert (rec.priority, rec.due_at) == (int(Priority.MAINTENANCE), state.model_backoff_until)
     for _ in range(MAX_ATTEMPTS + 3):

@@ -42,15 +42,15 @@ class TestImageTriagePort:
         assert params(ImageTriagePort, "triage") == (["user_id", "account_id", "images"], {})
 
 
-_CHUNK_METHODS = {
+_CHUNK_METHODS = {   # connection-scoped: a ConnectionScope where the user id was (MULTI_DRIVE_RFC §8)
     "write_chunks": (["chunks", "vectors"], {}),
-    "delete_chunks_except": (["user_id", "item_id", "keep_generation"], {}),
-    "find_nearest_chunks": (["user_id", "vector", "limit", "kind"], {"kind": None}),
-    "find_chunks_by_term": (["user_id", "term", "limit", "kind"], {"kind": None}),
-    "get_chunks": (["user_id", "item_id", "generation", "indexes"], {}),
-    "readable_chunk_total": (["user_id"], {}),
-    "chunks_page": (["user_id", "after", "limit"], {}),
-    "delete_user_chunks": (["user_id", "limit"], {}),
+    "delete_chunks_except": (["scope", "item_id", "keep_generation"], {}),
+    "find_nearest_chunks": (["scope", "vector", "limit", "kind"], {"kind": None}),
+    "find_chunks_by_term": (["scope", "term", "limit", "kind"], {"kind": None}),
+    "get_chunks": (["scope", "item_id", "generation", "indexes"], {}),
+    "readable_chunk_total": (["scope"], {}),
+    "chunks_page": (["scope", "after", "limit"], {}),
+    "delete_user_chunks": (["scope", "limit"], {}),
 }
 
 
@@ -64,9 +64,9 @@ class TestRepositoryChunkMethods:
         assert params(DriveIndexRepository, name) == _CHUNK_METHODS[name]
 
 
-_DRIVE_CONTENT = {
-    "download_to_file": (["user_id", "item_id", "dest_path", "max_bytes"], {}),
-    "get_thumbnail": (["user_id", "item_id", "size"], {}),
+_DRIVE_CONTENT = {   # by handle; a thumbnail asks for its longest edge in px (MULTI_DRIVE_RFC §6)
+    "download_to_file": (["handle", "item_id", "dest_path", "max_bytes"], {}),
+    "get_thumbnail": (["handle", "item_id", "max_edge_px"], {}),
 }
 
 

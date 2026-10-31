@@ -6,6 +6,7 @@ from src.domain.user_drive import DriveThrottled
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 def _continuations(w, before):
@@ -25,7 +26,7 @@ class TestRepeatedThrottleBacksOff:
             assert (await w.tick()).status == "throttled"
             delays.append(_continuations(w, before)[-1]["delay"])
         assert delays == [5, svc_mod._backoff_s(1), svc_mod._backoff_s(2)]
-        assert (await w.repo.get_sync_state("u")).systemic_failures == 3
+        assert (await w.repo.get_sync_state(U_SCOPE)).systemic_failures == 3
 
     async def test_a_long_retry_after_wins_over_the_backoff(self):
         w = World()
@@ -57,13 +58,13 @@ class TestBusyTickComesBack:
         w = World()
         w.drive.add("a.pdf")
         await w.settle()
-        await w.repo.acquire_lease("u", "holder", w.clock.now, w.clock.now + timedelta(minutes=31), create=True)
+        await w.repo.acquire_lease(U_SCOPE, "holder", w.clock.now, w.clock.now + timedelta(minutes=31), create=True)
         before = len(w.queue.tasks)
         assert (await w.tick()).status == "busy"
         assert (await w.tick()).status == "busy"          # a redelivery of the same task
         requeued = w.queue.tasks[before:]
         assert len(requeued) == 1 and requeued[0]["delay"] == NUDGE_RETRY_DELAY_S
-        assert requeued[0]["payload"] == {"user_id": "u"}
+        assert requeued[0]["payload"] == {"user_id": "u", "connection_id": "u"}
 
     async def test_a_continuation_racing_its_parent_is_not_lost(self):
         """With more than one dispatch slot a continuation runs at once. It is enqueued only after its tick released
@@ -84,11 +85,11 @@ class TestBusyTickComesBack:
         async def enqueue(task_type, payload, delay_seconds=0, deadline_seconds=None, dedup_key=None):
             name = await real_enqueue(task_type, payload, delay_seconds, deadline_seconds, dedup_key)
             if dedup_key and ":cont:" in dedup_key and delay_seconds == 0 and not concurrent:
-                concurrent.append(await w.svc.tick("u"))   # a second dispatch slot runs it at once
+                concurrent.append(await w.svc.tick(U_SCOPE))   # a second dispatch slot runs it at once
             return name
 
         w.queue.enqueue_worker_task = enqueue
-        await w.svc.tick("u")
+        await w.svc.tick(U_SCOPE)
         assert concurrent[0].status == "done"
         assert not [t for t in w.queue.tasks if "busy-" in (t["key"] or "")]
         w.drive.get_changes = real_changes

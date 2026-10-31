@@ -19,34 +19,36 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_drive_index_repo import (
     CHUNK_LEAN_FIELDS, HINT_DISTANCE, HINT_FIELDS, HINT_LEAN_FIELDS, HINT_VECTOR, USAGE_EXPIRES_AT,
-    FirestoreDriveIndexRepository, byte_batches, chunk_key, chunk_to_doc, hint_from_doc, hint_to_doc,
+    FirestoreDriveIndexRepository, byte_batches, chunk_to_doc, hint_from_doc, hint_to_doc,
     initial_from_doc, initial_to_doc, stored_bytes, usage_from_doc,
 )
 from src.domain.drive_enrichment import DriveHintDoc, HintItem, InitialBuild, ModelUsageMonth
-from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable
+from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, chunk_doc_id
 from src.domain.drive_index_lean import RECORD_LEAN_FIELDS
 from src.domain.drive_index_params import RECORD_WRITE_BATCH, WRITE_BATCH_BYTES
-from src.domain.drive_usage import usage_expires_at
+from src.domain.drive_usage import initial_build_doc_id, usage_expires_at
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, HINTS, RECS, USAGE, EvalDb, eval_transactions, make_eval_repo,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, 9, 30, tzinfo=timezone.utc)
 FIRESTORE_REQUEST_LIMIT = 10 * 1024 * 1024
+REALM, SUBJECT = "microsoft", "acct-1"   # the provider account an initial build is keyed by (MULTI_DRIVE_RFC §10)
 HEAVY = ("text", "word_keys", "content_terms", "items", "profile", "readme_excerpt", "lead_text", "card_vector",
          "vector", HINT_VECTOR)
 
 
 def hint(item="a", gen=1, index=0, *, keys=("w:roma",), kind="pdf", items=None):
-    return DriveHintDoc(user_id="u", item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash="sha",
+    return DriveHintDoc(user_id="u", connection_id="u", item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash="sha",
                         items=items if items is not None else (HintItem("Rome", "keyword", "en Roma", 12, 19),),
                         hint_keys=tuple(keys), passages_version=1)
 
 
 def big_chunk(index, *, keys=900, text_chars=2_400):
-    return DriveChunk(user_id="u", item_id="big", generation=1, index=index, text="ё" * text_chars, char_start=0,
+    return DriveChunk(user_id="u", connection_id="u", item_id="big", generation=1, index=index, text="ё" * text_chars, char_start=0,
                       char_end=text_chars, kind="pdf", content_terms=tuple(f"{n:08d}" for n in range(64)),
                       word_keys=tuple(f"w:слово{n:05d}" for n in range(keys)), keys_version=1)
 
@@ -73,25 +75,25 @@ def encoded_bytes(data):
 
 class TestLeanProjections:
     async def test_record_streams_read_only_the_lean_fields(self, repo, db):
-        await repo.find_by_about_keys("u", ["e:rome"], 5)
-        await repo.find_by_about_keys("u", ["e:rome"], 5, kind="pdf", date_from=T, date_to=T)
-        await repo.find_expiring("u", ["lv:expir"], date(2026, 10, 13), 5)
+        await repo.find_by_about_keys(U_SCOPE, ["e:rome"], 5)
+        await repo.find_by_about_keys(U_SCOPE, ["e:rome"], 5, kind="pdf", date_from=T, date_to=T)
+        await repo.find_expiring(U_SCOPE, ["lv:expir"], date(2026, 10, 13), 5)
         for ops in db.cols[RECS].executed:
-            assert selected(ops) == RECORD_LEAN_FIELDS
+            assert selected(ops) == (*RECORD_LEAN_FIELDS, "user_id")   # the owner check (I3)
             assert not set(selected(ops)) & set(HEAVY)
 
     async def test_get_records_lean_reads_only_the_lean_fields(self, repo, db):
-        await repo.get_records_lean("u", ["a", "b"])
+        await repo.get_records_lean(U_SCOPE, ["a", "b"])
         ((ids, paths),) = db.get_all_calls
-        assert ids == ["u:a", "u:b"] and tuple(paths) == RECORD_LEAN_FIELDS
+        assert ids == ["u:a", "u:b"] and tuple(paths) == (*RECORD_LEAN_FIELDS, "user_id")
 
     async def test_chunk_and_hint_streams_read_no_text_keys_items_or_vectors(self, repo, db):
-        await repo.find_chunks_by_word_keys("u", ["w:rome"], 5, after_item_id="a")
+        await repo.find_chunks_by_word_keys(U_SCOPE, ["w:rome"], 5, after_item_id="a")
         (ops,) = db.cols[CHUNKS].executed
         assert selected(ops) == CHUNK_LEAN_FIELDS == ("user_id", "item_id", "generation", "index", "kind")
-        await repo.find_hints_by_keys("u", ["w:roma"], 5)
-        await repo.hints_page("u", ("a", 1, 0), 5)
-        await repo.find_nearest_hints("u", [1.0, 0.0], 5, kind="pdf")
+        await repo.find_hints_by_keys(U_SCOPE, ["w:roma"], 5)
+        await repo.hints_page(U_SCOPE, ("a", 1, 0), 5)
+        await repo.find_nearest_hints(U_SCOPE, [1.0, 0.0], 5, kind="pdf")
         hint_ops = db.cols[HINTS].executed
         assert [selected(ops) for ops in hint_ops[:2]] == [HINT_LEAN_FIELDS] * 2
         assert set(selected(hint_ops[2])) == set(HINT_LEAN_FIELDS) | {HINT_DISTANCE}
@@ -100,15 +102,15 @@ class TestLeanProjections:
         assert "hint_keys" in HINT_LEAN_FIELDS and "items" not in HINT_LEAN_FIELDS
 
     async def test_key_reads_by_id_read_the_keys_only(self, repo, db):
-        await repo.get_chunk_keys("u", [("a", 1, 0)])
-        await repo.get_hint_keys("u", [("a", 1, 0)])
+        await repo.get_chunk_keys(U_SCOPE, [("a", 1, 0)])
+        await repo.get_hint_keys(U_SCOPE, [("a", 1, 0)])
         assert [(ids, tuple(paths)) for ids, paths in db.get_all_calls] == [
-            (["u:a:1:0"], ("item_id", "generation", "index", "word_keys")),
-            (["u:a:1:0"], ("item_id", "generation", "index", "hint_keys"))]
+            (["u:a:1:0"], ("user_id", "item_id", "generation", "index", "word_keys")),
+            (["u:a:1:0"], ("user_id", "item_id", "generation", "index", "hint_keys"))]
 
     async def test_windows_read_whole_hint_documents_and_only_the_keys_pass_reads_vectors(self, repo, db):
-        await repo.get_hints("u", "a", 1)
-        await repo.get_hints_with_vectors("u", "a", 1)
+        await repo.get_hints(U_SCOPE, "a", 1)
+        await repo.get_hints_with_vectors(U_SCOPE, "a", 1)
         first, second = db.cols[HINTS].executed
         assert selected(first) == HINT_FIELDS and HINT_VECTOR not in selected(first)
         assert selected(second) == HINT_FIELDS + (HINT_VECTOR,)
@@ -120,12 +122,12 @@ class TestDisjunctions:
         (review M1, arbiter: never a silent cut)."""
         for method in ("find_by_about_keys", "find_chunks_by_word_keys", "find_hints_by_keys"):
             with pytest.raises(ValueError, match="30"):
-                await getattr(repo, method)("u", [f"e:k{i}" for i in range(40)], 5)
+                await getattr(repo, method)(U_SCOPE, [f"e:k{i}" for i in range(40)], 5)
         assert all(not col.executed for col in db.cols.values())   # refused before any query
         keys = [f"e:k{i}" for i in range(30)] + ["e:k0"]
-        await repo.find_by_about_keys("u", keys, 5, kind="pdf")
-        await repo.find_chunks_by_word_keys("u", keys, 5)
-        await repo.find_hints_by_keys("u", keys, 5)
+        await repo.find_by_about_keys(U_SCOPE, keys, 5, kind="pdf")
+        await repo.find_chunks_by_word_keys(U_SCOPE, keys, 5)
+        await repo.find_hints_by_keys(U_SCOPE, keys, 5)
         assert db.cols[RECS].executed and db.cols[CHUNKS].executed and db.cols[HINTS].executed
         for ops in db.cols[RECS].executed + db.cols[CHUNKS].executed + db.cols[HINTS].executed:
             lists = [op for op in ops if op[0] == "where" and op[2] in ("array_contains_any", "in")]
@@ -135,7 +137,7 @@ class TestDisjunctions:
 
     async def test_job_state_counts_batch_the_kinds_by_thirty(self, repo, db):
         kinds = {f"kind{i:02d}" for i in range(65)}
-        assert await repo.count_by_job_state("u", kinds) == {"profile": {}, "passages": {}}
+        assert await repo.count_by_job_state(U_SCOPE, kinds) == {"profile": {}, "passages": {}}
         queries = db.cols[RECS].executed
         assert len(queries) == 3 * 2 * 6   # kind batches x jobs x states
         for ops in queries:
@@ -147,10 +149,10 @@ class TestDisjunctions:
             kinds)   # every kind counted once per job and state
 
     async def test_no_keys_sends_no_query(self, repo, db):
-        assert await repo.find_by_about_keys("u", [], 5) == []
-        assert await repo.find_expiring("u", [], date(2026, 1, 1), 5) == []
-        assert await repo.find_chunks_by_word_keys("u", [], 5) == []
-        assert await repo.find_hints_by_keys("u", [], 5) == []
+        assert await repo.find_by_about_keys(U_SCOPE, [], 5) == []
+        assert await repo.find_expiring(U_SCOPE, [], date(2026, 1, 1), 5) == []
+        assert await repo.find_chunks_by_word_keys(U_SCOPE, [], 5) == []
+        assert await repo.find_hints_by_keys(U_SCOPE, [], 5) == []
         assert all(not col.executed for col in db.cols.values())
 
 
@@ -189,7 +191,7 @@ class TestByteBatches:
         docs = [hint(index=i) for i in range(RECORD_WRITE_BATCH + 1)]
         await repo.write_hints(docs, [[1.0, 0.0]] * len(docs))
         assert [len(c) for c in db.commits] == [RECORD_WRITE_BATCH, 1]
-        stored = db.cols[HINTS].docs[chunk_key("u", "a", 1, 7)]
+        stored = db.cols[HINTS].docs[chunk_doc_id(U_SCOPE, "a", 1, 7)]
         assert stored["user_id"] == "u" and stored[HINT_VECTOR] == Vector([1.0, 0.0])
         assert all(merge is False for c in db.commits for _, _, _, merge in c)   # whole documents, replaced
 
@@ -201,7 +203,7 @@ class TestByteBatches:
     @pytest.mark.slow
     async def test_records_are_batched_by_bytes_too(self, mock_env_config):
         db = ChunkDb()
-        records = [DriveIndexRecord(user_id="u", item_id=f"r{i}", about_keys=tuple(f"e:k{n:04d}" * 4
+        records = [DriveIndexRecord(user_id="u", connection_id="u", item_id=f"r{i}", about_keys=tuple(f"e:k{n:04d}" * 4
                                                                                     for n in range(600)),
                                     readme_excerpt="x" * 7_500) for i in range(RECORD_WRITE_BATCH)]
         await make_chunk_repo(db, mock_env_config).upsert_records(records)
@@ -254,19 +256,21 @@ class TestUsageWrites:
 
     async def test_the_month_document_expires_and_the_initial_one_does_not(self, repo, db):
         await repo.add_model_usage("u", "2026-10", "2026-10-13", "reader", 0.5, 0.0, 1)
-        await repo.spend_initial_build("u", 1.0, T)
+        await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)
         docs = db.cols[USAGE].docs
         assert docs["u:2026-10"][USAGE_EXPIRES_AT] == datetime(2027, 11, 5, tzinfo=timezone.utc)
-        assert USAGE_EXPIRES_AT not in docs["u:initial"] and docs["u:initial"]["user_id"] == "u"
+        initial = docs[initial_build_doc_id("u", REALM, SUBJECT)]
+        assert USAGE_EXPIRES_AT not in initial and initial["user_id"] == "u"
 
     async def test_the_initial_build_is_spent_in_a_transaction(self, repo, db):
-        await repo.spend_initial_build("u", 1.0, T)
-        assert [tx.writes for tx in db.transactions] == [[("set", "u:initial")]]
-        await repo.close_initial_build("u", T)
-        await repo.close_initial_build("u", T)            # already closed: nothing written
-        await repo.spend_initial_build("u", 1.0, T)        # closed: covers 0, nothing written
-        await repo.get_initial_build("u")
-        assert [tx.writes for tx in db.transactions] == [[("set", "u:initial")], [("set", "u:initial")], [], []]
+        await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)
+        key = initial_build_doc_id("u", REALM, SUBJECT)   # by provider account (MULTI_DRIVE_RFC §10, D8)
+        assert [tx.writes for tx in db.transactions] == [[("set", key)]]
+        await repo.close_initial_build("u", REALM, SUBJECT, T)
+        await repo.close_initial_build("u", REALM, SUBJECT, T)            # already closed: nothing written
+        await repo.spend_initial_build("u", REALM, SUBJECT, 1.0, T)        # closed: covers 0, nothing written
+        await repo.get_initial_build("u", REALM, SUBJECT)
+        assert [tx.writes for tx in db.transactions] == [[("set", key)], [("set", key)], [], []]
 
 
 async def _capture(sent, ref, data, merge):
@@ -296,13 +300,13 @@ class TestTheSdkBuildsTheQueries:
         snap.to_dict = lambda: {"effective_date": T, "item_id": "c"}
         monkeypatch.setattr(AsyncQuery, "get", capture)
         monkeypatch.setattr(AsyncDocumentReference, "get", AsyncMock(return_value=snap))
-        assert await _real_repo(mock_env_config).find_by_about_keys("u", ["e:rome"], 5, after="c") == []
+        assert await _real_repo(mock_env_config).find_by_about_keys(U_SCOPE, ["e:rome"], 5, after="c") == []
         (query,) = sent
         assert [(o.field.field_path, o.direction.name) for o in query.order_by] == [
             ("effective_date", "DESCENDING"), ("item_id", "DESCENDING")]
         assert not query.start_at.before
         assert [v.string_value or v.timestamp_value for v in query.start_at.values][1] == "c"
-        assert {f.field_path for f in query.select.fields} == set(RECORD_LEAN_FIELDS)
+        assert {f.field_path for f in query.select.fields} == set(RECORD_LEAN_FIELDS) | {"user_id"}
 
     async def test_a_missing_index_on_a_v2_read_is_a_store_outage(self, monkeypatch, mock_env_config):
         exc = gexc.FailedPrecondition("The query requires an index.")
@@ -313,10 +317,10 @@ class TestTheSdkBuildsTheQueries:
         monkeypatch.setattr(AsyncQuery, "get", fail)
         monkeypatch.setattr(AsyncAggregationQuery, "get", fail)
         repo = _real_repo(mock_env_config)
-        for call in (lambda: repo.find_by_about_keys("u", ["e:rome"], 5),
-                     lambda: repo.find_hints_by_keys("u", ["w:roma"], 5),
-                     lambda: repo.enrich_queue("u", 5),
-                     lambda: repo.count_by_job_state("u", {"pdf"})):
+        for call in (lambda: repo.find_by_about_keys(U_SCOPE, ["e:rome"], 5),
+                     lambda: repo.find_hints_by_keys(U_SCOPE, ["w:roma"], 5),
+                     lambda: repo.enrich_queue(U_SCOPE, 5),
+                     lambda: repo.count_by_job_state(U_SCOPE, {"pdf"})):
             with pytest.raises(DriveIndexStoreUnavailable) as raised:
                 await call()
             assert raised.value.__cause__ is exc

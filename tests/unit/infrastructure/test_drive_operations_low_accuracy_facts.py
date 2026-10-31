@@ -11,7 +11,7 @@ import pytest
 
 from src.domain.drive_index_params import CARD_ACCURACY_TRUST
 from src.domain.drive_search import STATUS_OK, DriveSearchCard, DriveSearchRequest, DriveSearchResult
-from src.domain.user_drive import make_drive_ref
+from src.domain import drive_ref
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
@@ -21,7 +21,7 @@ CTX = {"user_id": "u1", "account_id": "a1"}
 
 
 def _card(item_id: str, *, capture: str, accuracy: Optional[int], kind: str = "pdf") -> DriveSearchCard:
-    return DriveSearchCard(ref=make_drive_ref(item_id), item_id=item_id, name=f"{item_id}.pdf",
+    return DriveSearchCard(ref=drive_ref.format("a1", item_id), item_id=item_id, name=f"{item_id}.pdf",
                            path=f"Contracts/{item_id}.pdf", kind=kind, is_folder=False, summary=f"{item_id}.pdf",
                            capture=capture, card_accuracy=accuracy, nonce=f"nonce{item_id.replace('_', '')}")
 
@@ -29,7 +29,7 @@ def _card(item_id: str, *, capture: str, accuracy: Optional[int], kind: str = "p
 async def _facts(*cards: DriveSearchCard):
     search = AsyncMock(spec=DriveSearchService)
     search.search.return_value = DriveSearchResult(status=STATUS_OK, cards=cards,
-                                                   request=DriveSearchRequest(query="lease"))
+                                                   request=DriveSearchRequest(query="lease"), ref_tag="a1")
     ops = DriveOperations(conversion_service=MagicMock(spec=FileConversionService),
                           drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
     out = await ops.search(CTX, "u1", query="lease")

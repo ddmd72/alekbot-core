@@ -7,7 +7,7 @@ Public interface:
     gate_exempt(kind) -> bool                     tables skip the text-quality gate (§8.3)
     routed(kind) -> bool                          the kind may reach the reader (§24.3 deadline rule)
     reread_cooldown_until(rec) -> Optional[datetime]  the reader's next read of an edit of a file it read (F1-3)
-    camera_prior(facets) -> bool                  the triage hint (§5.3)
+    camera_prior(media) -> bool                   the triage hint (§5.3)
     original_fallback(rec) -> bool               the reader may get the original image (§24.5, S0g)
     image_mime(head) -> str                       a provider rendition is JPEG or PNG (S0f)
     file_suffix(name) -> str                      a safe extension for the temp file
@@ -25,10 +25,11 @@ import re
 from dataclasses import replace
 from datetime import datetime
 from enum import Enum
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from .drive_extraction import READER, ExtractionOutcome, ExtractionStatus, TriageResult, chain_for
 from .drive_image_mime import MAX_VISION_IMAGE_BYTES
+from .drive_media_facts import DriveMediaFacts
 from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, TriageVerdict
 from .drive_index_params import (
     MAX_ATTEMPTS, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH, MODEL_REREAD_COOLDOWN,
@@ -89,10 +90,10 @@ def routed(kind: str) -> bool:
     return READER in chain_for(kind)
 
 
-def camera_prior(facets: Mapping[str, Any]) -> bool:
-    """`photo.takenDateTime` or `photo.cameraMake`, never the `photo` key alone (S0e saw empty `photo: {}`)."""
-    photo = facets.get("photo") or {}
-    return isinstance(photo, Mapping) and bool(photo.get("takenDateTime") or photo.get("cameraMake"))
+def camera_prior(media: DriveMediaFacts) -> bool:
+    """A taken date or a camera make in the typed media facts (MULTI_DRIVE_RFC §7.2); an empty photo facet sets
+    neither (S0e)."""
+    return media.taken_at is not None or bool(media.camera_make)
 
 
 def original_fallback(rec: DriveIndexRecord) -> bool:

@@ -21,7 +21,10 @@ from src.domain.drive_index import (
     ContentClass, DocumentBrief, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState,
     Scope, TriageVerdict,
 )
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_note_check import NoteCheck
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 11, 12, 30, 15, 123456, tzinfo=timezone.utc)
 
@@ -31,14 +34,14 @@ def full_record() -> DriveIndexRecord:
     return DriveIndexRecord(
         user_id="u1", item_id="I1", parent_id="P1", name="Договор_ред3.docx", is_folder=True, size_bytes=10,
         mime_type="application/pdf", web_url="https://example.invalid/i1", child_count=3,
-        facets={"photo": {"takenDateTime": "2025-08-01T10:00:00Z", "cameraMake": "Apple"},
-                "location": {"latitude": 41.9, "longitude": 12.5}, "file": {"hashes": ["a", "b"]}},
+        media=DriveMediaFacts(taken_at=datetime(2025, 8, 1, 10, tzinfo=timezone.utc), camera_make="Apple",
+                              latitude=41.9, longitude=12.5),
         kind="pdf", content_class=ContentClass.DOCUMENT, scope=Scope.NORMAL, state=RecordState.FAILED,
         reason=Reason.EXTRACT_ERROR, content_version="c1", modified_at=T, fs_modified_at=T - timedelta(days=1),
         effective_date=T - timedelta(days=2), place_name="Rome / Roma", geo_table_version=1, policy_version=2,
         extraction_version=3, card_version=4, embedding_space="gemini-embedding-2/768", card_hash="h",
         has_card=True, card_capped=True, card_refused=True, card_rank=1, name_tokens=("t:abc", "w:a"),
-        name_keys_version=6, content_hash="q:10",
+        name_keys_version=6, content_identity=ContentIdentity("quickxor", "q", 10),
         dirty_since=T - timedelta(hours=1), due_at=T + timedelta(minutes=5), priority=4, attempts=2,
         attempt_started_at=T - timedelta(minutes=1), probe_pending=True, rescope_pending=True, cascade_cursor="K",
         probed_child_count=600, reobserve_pending=True, reobserve_cursor="next-page", index_generation=5,
@@ -89,12 +92,14 @@ def full_record() -> DriveIndexRecord:
         mirror_due=True, mirrored_digest="md1", mirror_retry_at=T + timedelta(hours=10), mirror_held_digest="mh1",
         # DRIVE_FILE_NOTES_RFC §3.3: the record's copy of the owner's note (part B review verdict, joint for A, B, C)
         owner_note_id="N1", owner_note_version=2, owner_note_text="Рахунок підрядника, 1.048,45 EUR", owner_doc_type="contract",
-        owner_life_areas=("home", "finance"), owner_note_merge_version=1, note_lookup_due=True)
+        owner_life_areas=("home", "finance"), owner_note_merge_version=1, note_lookup_due=True,
+        # MULTI_DRIVE_RFC §7.2, §8: the connection and the adapter-built item identity
+        connection_id="c1", identity="microsoft_onedrive:D1:I1")
 
 
 def full_state() -> DriveSyncState:
     return DriveSyncState(
-        user_id="u1", drive_id="D1", root_item_id="R", cursor="cur", round_complete=True, round_started_at=T,
+        user_id="u1", connection_id="c1", drive_identity="microsoft_onedrive:D1", root_item_id="R", cursor="cur", round_complete=True, round_started_at=T,
         epoch=2, epoch_phase=EpochPhase.SWEEPING, initial_enumeration_done=True, purging=True,
         created_at=T - timedelta(days=3), lease_owner="tick", lease_until=T + timedelta(minutes=31), continuation_enqueued_at=T,
         applied_versions={"policy": 1}, target_versions={"policy": 2}, applied_space="old/768",
@@ -144,7 +149,8 @@ class TestRecordSerialization:
         assert doc["content_class"] == "document" and doc["scope"] == "normal"
         assert doc["state"] == "failed" and doc["reason"] == "extract_error"
         assert doc["name_tokens"] == ["t:abc", "w:a"] and type(doc["priority"]) is int
-        assert doc["facets"]["photo"]["cameraMake"] == "Apple" and isinstance(doc["facets"], dict)
+        assert doc["media"]["camera_make"] == "Apple" and isinstance(doc["media"], dict)
+        assert doc["content_identity"] == {"family": "quickxor", "digest": "q", "size": 10}
         assert doc["modified_at"] == T and doc["modified_at"].tzinfo is not None
 
     def test_round_trip_through_stored_types(self):
@@ -160,10 +166,6 @@ class TestRecordSerialization:
                      "model_read_at", "transcript_wake_at"):
             value = getattr(back, name)
             assert type(value) is datetime and value.utcoffset() == timedelta(0), name
-
-    def test_tuples_inside_facets_become_lists(self):
-        doc = record_to_doc(DriveIndexRecord(user_id="u", item_id="i", facets={"a": ("x", {"b": ("y",)})}))
-        assert doc["facets"] == {"a": ["x", {"b": ["y"]}]}
 
     def test_missing_fields_take_defaults_and_extras_are_ignored(self):
         rec = record_from_doc({"user_id": "u", "item_id": "i", "card_vector": [1.0], "has_card_vector": True,
@@ -223,18 +225,19 @@ def sdk(monkeypatch, mock_env_config):
 class TestWriteEncoding:
     async def test_record_write_replaces_maps_whole_and_keeps_the_vector(self, sdk):
         repo, sent = sdk
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=True,
-                                                    facets={"image": {"width": 10}})])
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i", has_card=True,
+                                                    media=DriveMediaFacts(image_width=10))])
         write = sent[0]
         assert write.update.name.endswith("/documents/test_drive_index_records/u:i")
         assert set(write.update_mask.field_paths) == set(RECORD_FIELDS)   # top-level paths only
-        assert "facets.image" not in write.update_mask.field_paths        # the map is replaced, stale keys go
-        assert set(write.update.fields["facets"].map_value.fields) == {"image"}
+        assert "media.image_width" not in write.update_mask.field_paths   # the map is replaced, stale keys go
+        assert set(write.update.fields["media"].map_value.fields) == set(DriveMediaFacts().to_dict())
+        assert write.update.fields["media"].map_value.fields["image_width"].integer_value == 10
         assert "card_vector" not in write.update_mask.field_paths          # not listed: the stored vector stays
 
     async def test_given_vector_is_written_as_a_vector_value(self, sdk):
         repo, sent = sdk
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=True)], {"i": [0.5, 0.25]})
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i", has_card=True)], {"i": [0.5, 0.25]})
         write = sent[0]
         assert {"card_vector", "has_card_vector"} <= set(write.update_mask.field_paths)
         vec = write.update.fields["card_vector"].map_value.fields
@@ -244,21 +247,22 @@ class TestWriteEncoding:
 
     async def test_cardless_record_deletes_the_vector(self, sdk):
         repo, sent = sdk
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i", has_card=False)])
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i", has_card=False)])
         write = sent[0]
         assert "card_vector" in write.update_mask.field_paths and "card_vector" not in write.update.fields
         assert write.update.fields["has_card_vector"].boolean_value is False
 
-    async def test_empty_facets_still_clear_the_stored_map(self, sdk):
+    async def test_default_media_still_replaces_the_stored_map(self, sdk):
         repo, sent = sdk
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="i")])
-        assert "facets" in sent[0].update_mask.field_paths
-        assert sent[0].update.fields["facets"].map_value.fields == {}
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i")])
+        assert "media" in sent[0].update_mask.field_paths
+        fields_ = sent[0].update.fields["media"].map_value.fields
+        assert set(fields_) == set(DriveMediaFacts().to_dict()) and fields_["camera_make"].string_value == ""
 
     async def test_save_sync_state_never_masks_the_flags(self, tx_sdk):
         """The save is a fenced transaction (§7.1): the holder's write is encoded by the SDK's transaction."""
         repo, stored, sent, _ = tx_sdk
-        stored["u1"] = state_to_doc(full_state())
+        stored["c1"] = state_to_doc(full_state())   # the state's document id is its connection id (§8)
         await repo.save_sync_state(full_state(), full_state().lease_owner)
         mask = set(sent[0].update_mask.field_paths)
         assert mask == set(STATE_FIELDS)
@@ -281,7 +285,7 @@ def compiled(monkeypatch, mock_env_config):
         protos.append(proto)
         orders = [(o.field.field_path, o.direction.name) for o in getattr(proto, "order_by", [])]
         if orders[:1] == [("card_rank", "DESCENDING")]:   # a carded record exists: eviction runs all three queries
-            doc = record_to_doc(DriveIndexRecord(user_id="u", item_id="x", card_rank=2))
+            doc = record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="x", card_rank=2))
             return [SimpleNamespace(to_dict=lambda: doc)]
         return []
 
@@ -309,25 +313,25 @@ class TestQueriesCompile:
 
     async def test_every_read_compiles(self, compiled):
         repo, protos = compiled
-        await repo.due_records("u", T, 10)
-        await repo.oldest_due_at("u", 0)
-        await repo.children("u", "p", "a", 5)
-        await repo.records_page("u", "a", 5)
-        await repo.records_seen_before("u", 2, 5)
-        await repo.count_by_state("u")
-        await repo.lowest_ranked_carded("u")
-        await repo.card_capped("u", 5)
-        await repo.delete_user_records("u", 5)
-        await repo.list_sync_user_ids()
-        await repo.find_nearest_cards("u", [0.1] * 768, 50, kind="pdf")
-        await repo.find_by_name_keys("u", ["w:a", "t:abc"], 100, kind="pdf")
-        await repo.filter_records("u", "pdf", T - timedelta(days=1), T, 8)
+        await repo.due_records(U_SCOPE, T, 10)
+        await repo.oldest_due_at(U_SCOPE, 0)
+        await repo.children(U_SCOPE, "p", "a", 5)
+        await repo.records_page(U_SCOPE, "a", 5)
+        await repo.records_seen_before(U_SCOPE, 2, 5)
+        await repo.count_by_state(U_SCOPE)
+        await repo.lowest_ranked_carded(U_SCOPE)
+        await repo.card_capped(U_SCOPE, 5)
+        await repo.delete_user_records(U_SCOPE, 5)
+        await repo.list_sync_scopes()
+        await repo.find_nearest_cards(U_SCOPE, [0.1] * 768, 50, kind="pdf")
+        await repo.find_by_name_keys(U_SCOPE, ["w:a", "t:abc"], 100, kind="pdf")
+        await repo.filter_records(U_SCOPE, "pdf", T - timedelta(days=1), T, 8)
         # due_records: one per class (5); count_by_state: 6 states + carded (7); lowest_ranked_carded: 3
         assert len(protos) == 25
 
     async def test_undated_eviction_query_is_a_null_filter(self, compiled):
         repo, protos = compiled
-        await repo.lowest_ranked_carded("u")
+        await repo.lowest_ranked_carded(U_SCOPE)
         undated = protos[2].where.composite_filter.filters
         assert any(f.unary_filter.field.field_path == "modified_at" and f.unary_filter.op.name == "IS_NULL"
                    for f in undated)
@@ -335,8 +339,8 @@ class TestQueriesCompile:
 
     async def test_keys_only_projection_encodes(self, compiled):
         repo, protos = compiled
-        await repo.list_sync_user_ids()
-        assert [f.field_path for f in protos[0].select.fields] == ["__name__"]
+        await repo.list_sync_scopes()
+        assert [f.field_path for f in protos[0].select.fields] == ["user_id"]
 
 
 # -- the lease through the SDK's own transaction wrapper -------------------------------------------
@@ -376,7 +380,7 @@ def _is_null(value) -> bool:
 class TestLeaseEncoding:
     async def test_create_writes_the_state_without_flags_inside_the_transaction(self, tx_sdk):
         repo, _, sent, reads = tx_sdk
-        assert (await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True)).lease_owner == "a"
+        assert (await repo.acquire_lease(U_SCOPE, "a", T, T + timedelta(minutes=31), create=True)).lease_owner == "a"
         assert isinstance(reads[0], AsyncTransaction)
         (write,) = sent
         assert write.update.name.endswith("/documents/test_drive_sync_state/u")
@@ -385,25 +389,25 @@ class TestLeaseEncoding:
 
     async def test_taking_an_expired_lease_updates_only_the_lease_fields(self, tx_sdk):
         repo, stored, sent, _ = tx_sdk
-        stored["u"] = {**state_to_doc(DriveSyncState(user_id="u", epoch=4, lease_owner="b", lease_until=T)),
+        stored["u"] = {**state_to_doc(DriveSyncState(user_id="u", connection_id="u", epoch=4, lease_owner="b", lease_until=T)),
                        "stale_alerted": True}
-        await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True)
+        await repo.acquire_lease(U_SCOPE, "a", T, T + timedelta(minutes=31), create=True)
         (write,) = sent
         assert set(write.update_mask.field_paths) == {"lease_owner", "lease_until"}
         assert write.current_document.exists is True   # update(): never creates the document
 
     async def test_busy_and_missing_without_create_commit_no_write(self, tx_sdk):
         repo, stored, sent, _ = tx_sdk
-        assert await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=False) is None
-        stored["u"] = state_to_doc(DriveSyncState(user_id="u", lease_owner="b", lease_until=T + timedelta(minutes=1)))
-        assert await repo.acquire_lease("u", "a", T, T + timedelta(minutes=31), create=True) is None
+        assert await repo.acquire_lease(U_SCOPE, "a", T, T + timedelta(minutes=31), create=False) is None
+        stored["u"] = state_to_doc(DriveSyncState(user_id="u", connection_id="u", lease_owner="b", lease_until=T + timedelta(minutes=1)))
+        assert await repo.acquire_lease(U_SCOPE, "a", T, T + timedelta(minutes=31), create=True) is None
         assert sent == []
 
     async def test_release_by_owner_nulls_the_lease_fields(self, tx_sdk):
         repo, stored, sent, _ = tx_sdk
-        stored["u"] = state_to_doc(DriveSyncState(user_id="u", lease_owner="a", lease_until=T))
-        await repo.release_lease("u", "a")
-        await repo.release_lease("u", "someone-else")   # stored doc still names "a": no write
+        stored["u"] = state_to_doc(DriveSyncState(user_id="u", connection_id="u", lease_owner="a", lease_until=T))
+        await repo.release_lease(U_SCOPE, "a")
+        await repo.release_lease(U_SCOPE, "someone-else")   # stored doc still names "a": no write
         (write,) = sent
         assert set(write.update_mask.field_paths) == {"lease_owner", "lease_until"}
         assert _is_null(write.update.fields["lease_owner"]) and _is_null(write.update.fields["lease_until"])

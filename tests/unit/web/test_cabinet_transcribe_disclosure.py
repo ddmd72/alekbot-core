@@ -8,14 +8,12 @@ import pytest
 from quart import Quart
 
 from src.domain.drive_indexing_status import DriveIndexingStatus
-from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection
-from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.cabinet_drive import cabinet_drive
 
 
 @pytest.mark.parametrize("lang", LANGS)
@@ -37,34 +35,27 @@ def test_disclosure_only_when_enabled():
     assert "transcribe_toggle" not in html and "drive-transcribe-toggle" not in html   # no toggle (G24)
 
 
-def _app(flag):
-    drive = MagicMock(spec=UserDrivePort)
-    drive.connection = AsyncMock(return_value=DriveConnection(connected=True))
-    drive.display_name = "OneDrive"
+async def _app(flag):
+    # the flag is the drive connection's transcription switch (MULTI_DRIVE_RFC §3 Removed, §4.4)
+    drive = await cabinet_drive(transcribe=flag)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = DriveIndexingStatus(enabled=True, counters={})
-    user = MagicMock()
-    user.config = UserBotConfig(drive_transcribe_enabled=flag)
     user_repo = MagicMock()
-    user_repo.get_user = AsyncMock(return_value=user)
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
     app = Quart("test_transcribe_disclosure")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
         drive_search_service=search, drive_task_queue=AsyncMock(),
-        drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),   # the switch is on: the user's flag decides (T-R34)
+        drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),   # the switch is on: the flag decides (T-R34)
+        drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
     ))
     return app
 
 
 @pytest.mark.parametrize("flag", [True, False])
 async def test_status_returns_the_flag(flag):
-    async with _app(flag).test_client() as client:
+    async with (await _app(flag)).test_client() as client:
         body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
     assert body["indexing"]["transcribe_enabled"] is flag
-
-
-def test_flag_defaults_off():
-    assert UserBotConfig().drive_transcribe_enabled is False

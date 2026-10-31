@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.validation.drive_eval.eval_connection import EVAL_REF_TAG, EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
-from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, _EnabledUsers, index_fixture
+from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture
 from scripts.validation.drive_eval.smart_dry_run import (
     STUB_RESULT, AsEvalUser, DryRunDispatch, G3Error, annotate_drive_read, judge, make_g3_bars, score, searched,
     validate_g3,
@@ -16,6 +17,7 @@ from scripts.validation.drive_eval.smart_dry_run import (
 from scripts.validation.drive_eval.dry_run_drive import DriveOpLog, DryRunDriveOperations
 from scripts.validation.drive_eval.specialist_fixture import build_drive_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain import drive_ref
 from src.domain.llm import ToolCall
 from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
 from src.services.drive_search_service import DriveSearchService
@@ -61,7 +63,8 @@ async def setup():
     repo = InMemoryDriveIndexRepository()
     clock = EvalClock()
     await index_fixture(drive, repo, FakeEmbeddings(), rome, "fake/8", clock, throttle_pause_s=0, **fake_content())
-    search = DriveSearchService(repo, FakeEmbeddings(), _EnabledUsers(), drive, clock=clock, embedding_space="fake/8")
+    search = DriveSearchService(repo, FakeEmbeddings(), drive, EvalDriveConnections(eval_connection(EVAL_USER)),
+                                clock=clock, embedding_space="fake/8")
     real_calls = []
 
     async def real_dispatch(engine, tool_call, context, *args, **kwargs):
@@ -103,7 +106,8 @@ async def test_list_and_open_from_the_drive_run_on_the_fixture(setup):
     with DryRunDriveOperations(log):
         listing = await fixture.operations.list_folder({"user_id": OWNER}, OWNER, "Contracts")
         assert "Договор_ред1.docx" in listing.text and listing.success
-        ref = f"drive:{item_id_for('Contracts/Договор_ред1.docx')}"
+        # a tagged ref of the eval connection (MULTI_DRIVE_RFC §9): an untagged one answers "search again"
+        ref = drive_ref.format(EVAL_REF_TAG, item_id_for('Contracts/Договор_ред1.docx'))
         opened = await _dispatch(dispatcher, _call("open_file", file_ref=ref))
     assert not opened.failed and dispatcher.calls[-1]["route"] == "fixture"
     assert not searched(log.entries) and real_calls == []

@@ -24,7 +24,9 @@ import aiohttp
 import pytest
 
 from src.domain.drive_card import effective_date
+from src.domain.drive_connection import DriveConnection
 from src.domain.drive_index_params import TICK_DEADLINE_S
+from src.domain.drive_user_settings import DriveUserSettings
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -34,10 +36,15 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.drive_indexing_service import _PER_ITEM_ERRORS
 from src.services.file_conversion_service import FileConversionService
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -98,10 +105,21 @@ def _adapter():
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 
+async def _connection_service_of(handle) -> DriveConnectionService:
+    """The real connection service over the in-memory repository, with `handle`'s connection as the primary (tag a1)."""
+    repo = FakeDriveConnectionRepository()
+    await repo.create(DriveConnection(
+        connection_id=handle.connection_id, user_id=handle.user_id, account_id="a1",
+        credential_id=handle.credential_id, kind=handle.kind, drive_identity="microsoft_onedrive:DRIVE-A",
+        ref_tag="a1", created_at=datetime(2026, 10, 1, tzinfo=timezone.utc)))
+    await repo.save_settings(DriveUserSettings(user_id=handle.user_id, primary_connection_id=handle.connection_id))
+    return DriveConnectionService(repo, AsyncMock(spec=OAuthCredentialsPort))
+
+
 async def _page(adapter, approot, page, cursor=None):
     session = _session([_resp(approot), _resp(page)])
     with patch("aiohttp.ClientSession", return_value=session):
-        return await adapter.get_changes("u1", cursor), session
+        return await adapter.get_changes(HANDLE, cursor), session
 
 
 # -- The delta cursor is bound to its drive and App Folder ------------------------------------
@@ -114,14 +132,14 @@ class TestCursorBoundToDriveAndRoot:
         # A reconnect to account B: the old cursor must not be followed (Graph may answer 400/403/404).
         session = _session([_resp(APPROOT_OTHER_DRIVE), _resp(pages[1])])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", first.cursor)
+            await adapter.get_changes(HANDLE, first.cursor)
         assert [c.args[0] for c in session.get.call_args_list] == [f"{_GRAPH}/me/drive/special/approot"]
         restart = json.loads(exc.value.restart_cursor)
         assert restart["url"] == _DELTA_START and restart["full"] is True
         # The restart page names drive B, so the tick's per-page drive check can purge drive A.
         again, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], exc.value.restart_cursor)
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}{_DELTA_START}"
-        assert again.drive_id == "DRIVE-B" and again.full_enumeration is True
+        assert again.drive_identity == "microsoft_onedrive:DRIVE-B" and again.full_enumeration is True
 
     async def test_cursor_from_a_recreated_app_folder_restarts(self):
         pages = _load("initial_enumeration.json")["pages"]
@@ -129,7 +147,7 @@ class TestCursorBoundToDriveAndRoot:
         first, _ = await _page(adapter, APPROOT, pages[0])
         session = _session([_resp(APPROOT_RECREATED), _resp(pages[1])])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", first.cursor)
+            await adapter.get_changes(HANDLE, first.cursor)
         assert session.get.call_count == 1                              # the approot only
         assert json.loads(exc.value.restart_cursor)["url"] == _DELTA_START
 
@@ -153,7 +171,7 @@ class TestCursorBoundToDriveAndRoot:
         legacy = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=prev", "full": False})
         result, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], legacy)   # unknown: no mismatch
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}/me/drive/special/approot/delta?token=prev"
-        assert result.drive_id == "DRIVE-B"
+        assert result.drive_identity == "microsoft_onedrive:DRIVE-B"
         assert json.loads(result.cursor)["drive_id"] == "DRIVE-B"       # bound from now on
 
     @pytest.mark.parametrize("binding", [{"drive_id": 1, "root_id": ROOT_ID}, {"drive_id": DRIVE_ID, "root_id": []}])
@@ -162,7 +180,7 @@ class TestCursorBoundToDriveAndRoot:
         cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=x", "full": False, **binding})
         session = _session([])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired):
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         session.get.assert_not_called()
 
 
@@ -173,7 +191,7 @@ class TestTokenEndpointTimeout:
         adapter = _adapter()
         adapter._tokens.headers = AsyncMock(side_effect=asyncio.TimeoutError())
         with patch("aiohttp.ClientSession", return_value=_session([])), pytest.raises(DriveThrottled) as exc:
-            await adapter.get_change("u1", "X!1")
+            await adapter.get_change(HANDLE, "X!1")
         assert exc.value.retry_after_s == 60.0
 
 
@@ -187,7 +205,7 @@ class TestFsModifiedAt:
                "fileSystemInfo": {"lastModifiedDateTime": "2025-08-14T18:22:05Z"}}
         adapter = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(raw)])):
-            c = await adapter.get_change("u1", "P!1")
+            c = await adapter.get_change(HANDLE, "P!1")
         august = datetime(2025, 8, 14, 18, 22, 5, tzinfo=timezone.utc)
         assert c.fs_modified_at == august
         assert c.modified_at == datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
@@ -207,7 +225,7 @@ class TestTransportErrors:
         adapter = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([error])), \
                 pytest.raises(OSError) as exc:
-            await adapter.get_change("u1", "X!1")
+            await adapter.get_change(HANDLE, "X!1")
         assert type(exc.value) is OSError and exc.value.__cause__ is error
         assert isinstance(exc.value, _PER_ITEM_ERRORS)
         assert not isinstance(exc.value, (DriveThrottled, DriveNotConnectedError))
@@ -217,7 +235,7 @@ class TestTransportErrors:
         broken = _resp({})
         broken.json = AsyncMock(side_effect=aiohttp.ClientPayloadError("body cut"))
         with patch("aiohttp.ClientSession", return_value=_session([broken])), pytest.raises(OSError) as exc:
-            await adapter.list_children_changes("u1", "F!1", limit=10)
+            await adapter.list_children_changes(HANDLE, "F!1", limit=10)
         assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ClientPayloadError)
 
     async def test_transport_error_on_the_delta_page_is_an_os_error(self):
@@ -225,14 +243,14 @@ class TestTransportErrors:
         adapter = _adapter()
         session = _session([_resp(APPROOT), aiohttp.ServerDisconnectedError()])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(OSError) as exc:
-            await adapter.get_changes("u1", None)
+            await adapter.get_changes(HANDLE, None)
         assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ServerDisconnectedError)
 
     async def test_transport_error_on_a_mutation_is_an_os_error(self):
         adapter = _adapter()
         session = _session(delete=[aiohttp.ServerDisconnectedError()])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(OSError) as exc:
-            await adapter.delete("u1", "X!1")
+            await adapter.delete(HANDLE, "X!1")
         assert type(exc.value) is OSError and isinstance(exc.value.__cause__, aiohttp.ServerDisconnectedError)
 
     async def test_transport_log_line_carries_no_query(self):
@@ -240,14 +258,14 @@ class TestTransportErrors:
         cursor = f"{_GRAPH}/me/drive/items/F/children?$skiptoken=SECRETISH"
         with patch("aiohttp.ClientSession", return_value=_session([aiohttp.ServerDisconnectedError()])), \
                 patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(OSError) as exc:
-            await adapter.list_children_changes("u1", "F", limit=10, cursor=cursor)
+            await adapter.list_children_changes(HANDLE, "F", limit=10, cursor=cursor)
         logged = " ".join(str(c.args[0]) for c in log.warning.call_args_list)
         assert logged and "SECRETISH" not in logged
         assert "SECRETISH" not in str(exc.value)   # the tick logs the exception text too
 
     @pytest.mark.parametrize("method,args,kwargs", [
         ("list_folder", ("",), {}),
-        ("delete", ("drive:X!1",), {"wait_s": 100.0}),   # a shielded mutation: never "still running"
+        ("delete", ("drive:a1:X!1",), {"wait_s": 100.0}),   # a shielded mutation: never "still running"
     ], ids=["read", "mutation"])
     @pytest.mark.parametrize("error,answer", [
         (aiohttp.ServerDisconnectedError(), "Drive operation failed: OSError."),
@@ -258,9 +276,11 @@ class TestTransportErrors:
         adapter = _adapter()
         localization = MagicMock()
         language = AsyncMock()
+        connections = await _connection_service_of(HANDLE)
         ops = DriveOperations(
             conversion_service=AsyncMock(spec=FileConversionService), notification=AsyncMock(),
-            drive_service=UserDriveService(adapter), localization=localization, language_service=language,
+            drive_service=UserDriveService(adapter, connections), localization=localization,
+            language_service=language,
         )
         context = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
         with patch("aiohttp.ClientSession", return_value=_session([error])):
@@ -284,10 +304,10 @@ class TestPerCallTimeout:
         page = {"value": [], "@odata.deltaLink": f"{_GRAPH}/me/drive/special/approot/delta?token=n"}
         session = _session([_resp(APPROOT), _resp(page)])
         with patch("aiohttp.ClientSession", return_value=session):
-            await adapter.get_changes("u1", None)
+            await adapter.get_changes(HANDLE, None)
         session.delete.side_effect = [_resp(status=204)]
         with patch("aiohttp.ClientSession", return_value=session):
-            await adapter.delete("u1", "X!1")
+            await adapter.delete(HANDLE, "X!1")
         calls = session.get.call_args_list + session.delete.call_args_list
         assert len(calls) == 3
         for call in calls:
@@ -300,7 +320,7 @@ class TestPerCallTimeout:
         adapter = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([error])), \
                 pytest.raises(asyncio.TimeoutError) as exc:
-            await adapter.get_change("u1", "X!1")
+            await adapter.get_change(HANDLE, "X!1")
         assert type(exc.value) is asyncio.TimeoutError and exc.value.__cause__ is error
         assert isinstance(exc.value, _PER_ITEM_ERRORS)
         assert not isinstance(exc.value, (DriveThrottled, DriveNotConnectedError))

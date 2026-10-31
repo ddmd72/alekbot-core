@@ -13,9 +13,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
+from src.domain.drive_connection import DriveConnection
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, DriveNoteConflict, DriveNoteVersion, NoteBinding, NoteSnapshot, NoteState,
-    NoteWriter, binding_key, ref_key,
+    DriveNote, DriveNoteConflict, DriveNoteVersion, NoteBinding, NoteSnapshot, NoteState, NoteWriter,
+    item_binding_key, tagged_ref_key,
 )
 from src.domain.messaging import MessageContext
 from src.domain.settings import ConsolidationSettings
@@ -30,6 +31,8 @@ from src.ports.task_queue import TaskQueue
 from src.ports.user_drive_port import UserDrivePort
 from src.ports.user_repository import UserRepository
 from src.services.drive_note_service import DriveNoteService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service
 
 U, OTHER = "user-1", "user-2"
 T = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
@@ -69,12 +72,17 @@ class Env:
         self.store = MemoryStore(clock)
         self.users = AsyncMock(spec=UserRepository)
         self.users.get_user.return_value = SimpleNamespace(config=SimpleNamespace(drive_indexing_enabled=indexing))
+        # the user's one drive connection (tag a1); its indexing switch is the one the erase reads (MULTI_DRIVE_RFC §4.1)
+        self.connections = FakeDriveConnectionRepository()
+        self.connections.connections[(U, "conn-1")] = DriveConnection(
+            connection_id="conn-1", user_id=U, account_id="acc", credential_id="cred-1", kind="fake",
+            drive_identity="fake:d1", ref_tag="a1", indexing_enabled=indexing, created_at=T)
         self.drive = AsyncMock(spec=UserDrivePort)
         self.queue = AsyncMock(spec=TaskQueue)
         codes = iter(f"c0ffe{i}" for i in range(10))
         self.service = DriveNoteService(
             self.notes, self.drive, AsyncMock(spec=DriveIndexRepository), AsyncMock(spec=EmbeddingService),
-            AsyncMock(spec=SecurityPort), self.users, embedding_space="s", nudge_queue=self.queue,
+            AsyncMock(spec=SecurityPort), connection_service(self.connections), embedding_space="s", nudge_queue=self.queue,
             erase_requests=self.store, clock=clock, new_code=lambda: next(codes))
         self.coordinator = MagicMock()
         self.handler = ConversationHandler(
@@ -82,11 +90,11 @@ class Env:
             global_config=ConsolidationSettings(threshold=50, batch_size=30), drive_note_service=self.service)
 
     def put(self, n, user=U, versions=2):
-        binding = NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id="d1", item_id=f"i{n}")
+        binding = NoteBinding(identity=f"fake:d1:i{n}", item_id=f"i{n}", ref_tag="a1")
         note = DriveNote(note_id=f"n{n}", user_id=user, account_id="acc", state=NoteState.ACTIVE,
                          current_version=versions, text=f"secret {n}", doc_type="contract", binding=binding,
                          snapshot=NoteSnapshot(name=f"f{n}.pdf", path=f"Docs/f{n}.pdf"),
-                         match_keys=[binding_key(ONEDRIVE_PROVIDER_KEY, "d1", f"i{n}"), ref_key(f"i{n}")],
+                         match_keys=[item_binding_key(binding.identity), tagged_ref_key("a1", f"i{n}")],
                          keys=["e:secret"], note_vector=[0.1], last_writer=NoteWriter(origin="chat"))
         self.notes.notes[(user, note.note_id)] = note
         self.notes.versions[(user, note.note_id)] = {

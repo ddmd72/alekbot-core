@@ -12,6 +12,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_fakes import FakeContentDrive
 from .drive_content_world import ContentWorld
+from .drive_index_fakes import LegacyConnections
 
 
 class ClosedDrive(FakeContentDrive):
@@ -59,4 +60,4 @@ class ClosedWorld(ContentWorld):
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: None, "test-space/8",
                                         extractors={"parser": self.parser, "reader": self.reader},
-                                        triage=self.triage, clock=self.clock, monotonic=self.clock.monotonic)
+                                        triage=self.triage, connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)

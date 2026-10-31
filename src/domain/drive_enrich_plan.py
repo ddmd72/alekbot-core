@@ -135,7 +135,7 @@ def effective_from(rec: DriveIndexRecord, profile: Optional[DriveProfile], *,
         return _utc(issued)
     if own_date and rec.brief is not None and rec.brief.held_date is not None:
         return rec.brief.held_date
-    change = DriveChange(item_id=rec.item_id, facets=rec.facets, fs_modified_at=rec.fs_modified_at,
+    change = DriveChange(item_id=rec.item_id, media=rec.media, fs_modified_at=rec.fs_modified_at,
                          modified_at=rec.modified_at)
     fallback = rec.effective_date or now
     if fallback is None and change.fs_modified_at is None and change.modified_at is None:

@@ -4,11 +4,15 @@
 - a different drive connected now is not "not connected": the user need not connect anything."""
 from dataclasses import replace
 
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import EpochPhase
 from src.domain.drive_search import STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, render_results
 from src.domain.user_drive import DriveConnection
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service, seed
 
 from .test_drive_search_service import World
+from .drive_index_fakes import U_SCOPE
 
 BUILDING = "The index is still being built"
 
@@ -22,7 +26,7 @@ async def _settled():
 
 async def test_folder_not_found_while_building_says_building_first():
     w = await _settled()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     await w.repo.save_sync_state(replace(state, epoch_phase=EpochPhase.ENUMERATING))
     result = await w.search("lease", folder="Taxes/2025")
     text = render_results(result)
@@ -46,8 +50,12 @@ async def test_a_different_drive_is_not_called_not_connected():
 
 
 async def test_a_missing_connection_still_says_not_connected():
-    w = await _settled()
-    w.drive.connection_state = DriveConnection(connected=False)
+    # a disconnect is the connection's state now (MULTI_DRIVE_RFC §4.4), not the drive port's `connection` (§6)
+    conns = FakeDriveConnectionRepository()
+    w = World(connections=connection_service(conns))
+    w.drive.add("lease.pdf")
+    await w.settle()
+    await seed(conns, "u", "u", tag="a1", drive_identity="fake:d1", state=ConnectionState.DISCONNECTED)
     result = await w.search("lease")
     text = render_results(result)
     assert not result.other_drive and "not connected" in text and "different drive" not in text

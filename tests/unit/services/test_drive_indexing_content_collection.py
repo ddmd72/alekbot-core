@@ -5,6 +5,7 @@ import pytest
 from src.domain.drive_index import DriveChunk, RecordState
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -22,7 +23,7 @@ async def indexed_doc(w, name="a.md", parent="root"):
 
 
 async def debris(w, item_id, generation, n=2):
-    await w.repo.write_chunks([DriveChunk("u", item_id, generation, i, "stray", 0, 5, "markdown") for i in range(n)],
+    await w.repo.write_chunks([DriveChunk("u", item_id, generation, i, "stray", 0, 5, "markdown", connection_id="u") for i in range(n)],
                               [[0.1] * 8 for _ in range(n)])
 
 
@@ -105,4 +106,4 @@ async def test_the_chunk_backstop_restarts_when_cut(w, monkeypatch):
     w.drive.resync_next = True
     await w.settle()
     assert starts.count(None) == 2   # cut after one page, then one whole pass from the first chunk
-    assert w.generations(doc) == [1] and (await w.repo.get_sync_state("u")).epoch_phase.value == "idle"
+    assert w.generations(doc) == [1] and (await w.repo.get_sync_state(U_SCOPE)).epoch_phase.value == "idle"

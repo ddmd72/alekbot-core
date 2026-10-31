@@ -2,7 +2,8 @@
 query a mirror repository method sends has its composite index declared in config/firestore.indexes.json under the live
 `development_` collections, except `pinned_keys`, which needs none (equality filters and the document id only, so the
 single-field indexes serve it and a privacy purge never waits for a mirror index, Δ237); the drive-scoped ones carry
-`drive_id`, the pins and the deleted-files search span drives, and `archive_keys` is exempt from single-field indexing."""
+`drive_identity` (MULTI_DRIVE_RFC §10), the pins and the deleted-files search span drives, and `archive_keys` is exempt
+from single-field indexing. The record queries of the mirror step filter the connection (`connection_id`, §8)."""
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY
 
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, NameAwareDb
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[2]
 LIVE_LEDGER = "development_drive_transcript_mirror"
@@ -113,25 +115,25 @@ async def test_the_record_queries_have_their_indexes(mock_env_config):
     db = NameAwareDb()
     with eval_transactions():
         records = make_eval_repo(db, mock_env_config)
-        await records.mirror_queue("u", 5)
-        await records.mirror_wakeups("u", T, 5)
+        await records.mirror_queue(U_SCOPE, 5)
+        await records.mirror_wakeups(U_SCOPE, T, 5)
     declared = _declared(LIVE_RECS)
     queue, wakeups = db.cols[RECS].executed
-    assert [("user_id", "ASCENDING"), ("mirror_due", "ASCENDING"), ("effective_day", "DESCENDING"),
+    assert [("connection_id", "ASCENDING"), ("mirror_due", "ASCENDING"), ("effective_day", "DESCENDING"),
             ("item_id", "ASCENDING")] in declared
-    assert [("user_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"), ("item_id", "ASCENDING")] in declared
+    assert [("connection_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"), ("item_id", "ASCENDING")] in declared
     assert _served(queue, declared) and _served(wakeups, declared)
 
 
-def test_indexes_declared_with_drive_id():
+def test_indexes_declared_with_drive_identity():
     declared = _declared(LIVE_LEDGER)
-    base = ("user_id", "ASCENDING"), ("drive_id", "ASCENDING")
+    base = ("user_id", "ASCENDING"), ("drive_identity", "ASCENDING")
     assert [*base, ("gone_pending", "ASCENDING"), ("mark_ready_at", "ASCENDING")] in declared
     assert [*base, ("mirror_parent_id", "ASCENDING")] in declared
     assert [*base, ("kind", "ASCENDING"), ("__name__", "ASCENDING")] in declared
     assert [*base, ("state", "ASCENDING"), ("checked_at", "ASCENDING")] in declared
-    # the pins and the deleted-files search span drives (Δ217, §27.9.11): no drive_id in them
-    spanning = [i for i in declared if ("drive_id", "ASCENDING") not in i]
+    # the pins and the deleted-files search span drives (Δ217, §27.9.11): no drive_identity in them
+    spanning = [i for i in declared if ("drive_identity", "ASCENDING") not in i]
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING"), ("state", "ASCENDING")] in spanning
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING"), ("gone_pending", "ASCENDING")] in spanning
     # `pinned_keys` needs no composite since Δ237; the two it used are gone (each composite costs every ledger write)
@@ -158,7 +160,7 @@ async def test_pins_send_two_queries_each_and_never_an_or(run):
     await repo.pinned_keys("u")
     assert len(db.collection(LEDGER).executed) == 2
     for ops in db.collection(LEDGER).executed:
-        assert not any(op[0] == "where" and op[1] == "drive_id" for op in ops)   # per user, every drive
+        assert not any(op[0] == "where" and op[1] == "drive_identity" for op in ops)   # per user, every drive
 
 
 async def test_every_step_query_filters_on_the_drive(run):
@@ -169,4 +171,4 @@ async def test_every_step_query_filters_on_the_drive(run):
     await repo.scan_page("u", "d", None, 5)
     await repo.detached_due("u", "d", T, 5)
     for ops in db.collection(LEDGER).executed:
-        assert ("where", "drive_id", "==", "d") in ops and ("where", "user_id", "==", "u") in ops
+        assert ("where", "drive_identity", "==", "d") in ops and ("where", "user_id", "==", "u") in ops

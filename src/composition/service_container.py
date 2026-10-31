@@ -65,8 +65,11 @@ from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
-from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
+from .drive_connection_setup import build_drive_connection_repository
+from .drive_provider_router import DriveProviderRouter
+from ..ports.drive_connection_repository import DriveConnectionRepository
+from ..services.drive_connection_service import DriveConnectionService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
     DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
@@ -202,7 +205,12 @@ class ServiceContainer:
         # (search, Cabinet counters, the fan-out) and the drive queue to the indexer service, which
         # carries the fan-out's ticks and UserDriveService's nudges. The queue is None until
         # DRIVE_INDEXER_URL is set (drive_indexing_setup.build_drive_task_queue).
+        # Every drive call goes through one `DriveProviderRouter` over the registry's drive adapters (MULTI_DRIVE_RFC
+        # §6, E6): the registry is rebuilt with the OneDrive adapter once it exists (same specs and edges), and
+        # `user_drive` is the router. Drive connections and the primary pointer: `drive_connection_service` (§4.4).
         self.user_drive: Optional[UserDrivePort] = None
+        self.drive_connection_repo: Optional[DriveConnectionRepository] = None
+        self.drive_connection_service: Optional[DriveConnectionService] = None
         self.user_drive_service: Optional[UserDriveService] = None
         self.drive_index_repo: Optional[DriveIndexRepository] = None
         self.drive_task_queue: Optional[TaskQueue] = None
@@ -210,52 +218,59 @@ class ServiceContainer:
         # an archived transcript read them on the main service.
         self.drive_mirror_repo: Optional[DriveMirrorRepository] = None
         if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
-            self.user_drive = OneDriveAdapter(
+            onedrive = OneDriveAdapter(
                 oauth_credentials=self.oauth_credentials,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
                 connector=self.connectors.get(MICROSOFT_ONEDRIVE),
             )
+            self.connectors = ConnectorRegistry(edges=self.connectors.edges(),
+                                                drive_adapters={MICROSOFT_ONEDRIVE: onedrive})
+            self.user_drive = DriveProviderRouter(self.connectors.drive_adapters())
+            self.drive_connection_repo = build_drive_connection_repository(db_client, env_config)
+            self.drive_connection_service = DriveConnectionService(self.drive_connection_repo,
+                                                                   self.oauth_credentials)
             self.drive_index_repo = build_drive_index_repository(db_client, env_config)
             self.drive_task_queue = build_drive_task_queue(config, env_config)
             self.drive_mirror_repo = build_drive_mirror_repository(db_client, env_config)
-            self.user_drive_service = UserDriveService(self.user_drive, nudge_queue=self.drive_task_queue,
+            self.user_drive_service = UserDriveService(self.user_drive, self.drive_connection_service,
+                                                       nudge_queue=self.drive_task_queue,
                                                        mirror_roots=self.drive_mirror_repo)
 
-        # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The opt-in
-        # flag is read from Firestore on every search, never from the agent cache, so the service gets
-        # an uncached user repository.
+        # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The indexing switch is
+        # the connection's (MULTI_DRIVE_RFC §4.4), read fresh through the connection service on every search.
         self.drive_search_service: Optional[DriveSearchService] = None
-        # One uncached user repository and one stateless security port, shared by the drive search and the note service
-        # (and, for the port, the skill service below): built once, injected.
-        drive_users = FirestoreUserRepository(db_client, env_config, account_repo)
+        # One stateless security port, shared by the note service and the skill service below: built once, injected.
         shared_security_port = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
         # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
         # shows the transcription disclosure only while it is on (same values as indexer_main.transcribe_enabled).
         self.drive_transcribe_switch_on: bool = (
             str(os.getenv("DRIVE_TRANSCRIBE_ENABLED") or "off").strip().lower() in ("1", "on", "true", "yes"))
-        if self.user_drive is not None and self.drive_index_repo is not None:
+        if self.user_drive is not None and self.drive_index_repo is not None \
+                and self.drive_connection_service is not None:
             self.drive_search_service = DriveSearchService(
                 repo=self.drive_index_repo, embeddings=self.embedding_service,
-                users=drive_users, drive=self.user_drive,
+                drive=self.user_drive, connections=self.drive_connection_service,
                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
                 # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
             )
 
-        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, sharing the search's uncached
-        # user repository (the indexing switch for the receipt's status). Built whatever the kill switch says: off stops
+        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with the connection service (refs,
+        # and each connection's indexing switch for the receipt's status). Built whatever the kill switch says: off stops
         # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal). One note
         # store for the process: the service and the deleted-files source share `drive_note_repo`.
         self.drive_note_repo: Optional[DriveNoteRepository] = None
         self.drive_note_service: Optional[DriveNoteService] = None
         self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
-        if self.user_drive is not None and self.drive_index_repo is not None:
+        if self.user_drive is not None and self.drive_index_repo is not None \
+                and self.drive_connection_service is not None:
             self.drive_note_repo = build_drive_note_repository(db_client, env_config)
             self.drive_note_service = build_drive_note_service(
                 db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
-                embeddings=self.embedding_service, users=drive_users, security_port=shared_security_port,
+                embeddings=self.embedding_service, connections=self.drive_connection_service,
+                security_port=shared_security_port,
                 nudge_queue=self.drive_task_queue,
             )
             # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
@@ -424,6 +439,7 @@ class ServiceContainer:
                 skill_files=skill_file_resolver,
                 drive=self.user_drive,
                 workspace=self.workspace_store,
+                connections=self.drive_connection_service,
             )
             if self.file_storage else None
         )

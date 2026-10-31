@@ -324,14 +324,8 @@ class UserBotConfig(BaseModel):
     gmail_daily_review: bool = False
     gmail_daily_review_hour: int = 9
 
-    # User drive indexing (USER_DRIVE_INDEXING_RFC §6): off until the user turns it on in the Cabinet;
-    # turning it off purges the index. Read uncached by the tick's gate and by search.
-    drive_indexing_enabled: bool = False
-
-    # Transcripts of the drive's recordings (USER_DRIVE_INDEXING_RFC §27.12, Δ125): its own consent, separate from
-    # indexing; off by default and set per user by the owner's flag script (no Cabinet toggle yet). Read by the tick's
-    # gate with the opt-in flag, once per tick; the indexer's kill switch must be on as well.
-    drive_transcribe_enabled: bool = False
+    # Drive indexing and transcription consent live on the drive connection (MULTI_DRIVE_RFC §3, §4.4:
+    # `DriveConnection.indexing_enabled` / `transcribe_enabled`, set by DriveConnectionService).
 
     # Copy each finished deep research report (its HTML) to the user's drive
     # (decisions/deep_research_drive_copy.md). The Cabinet toggle is the explicit consent; off by default.

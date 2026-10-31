@@ -8,6 +8,7 @@ from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.user_drive import DriveConnection, DriveThrottled
 
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import U_SCOPE
 
 
 class TestNewStateStartsApplied:
@@ -25,7 +26,7 @@ class TestNewStateStartsApplied:
 
         w.repo.records_page = counting
         await w.settle()
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert dict(st.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS}
         assert pages == []
 
@@ -38,7 +39,7 @@ class TestGateDecidesOnTheLeasedState:
         w = World()
         a = w.drive.add("a.pdf")
         await w.settle()
-        stored = await w.repo.get_sync_state("u")
+        stored = await w.repo.get_sync_state(U_SCOPE)
         await w.repo.save_sync_state(replace(stored, purging=True))
         real_get = w.repo.get_sync_state
 
@@ -60,9 +61,9 @@ class TestSuccessfulTickClearsLastError:
         await w.settle()
         w.drive.raise_next = DriveThrottled(retry_after_s=5)
         await w.tick()
-        assert (await w.repo.get_sync_state("u")).last_error is ErrorCategory.THROTTLED
+        assert (await w.repo.get_sync_state(U_SCOPE)).last_error is ErrorCategory.THROTTLED
         await w.tick()
-        assert (await w.repo.get_sync_state("u")).last_error is None
+        assert (await w.repo.get_sync_state(U_SCOPE)).last_error is None
 
 
 class TestRegainAfterTheGracePeriod:
@@ -83,7 +84,7 @@ class TestRegainAfterTheGracePeriod:
         w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
         embedded = len(w.emb.calls)
         await w.settle()
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.epoch == 1 and st.epoch_phase is EpochPhase.IDLE and st.initial_enumeration_done
         assert st.access_lost_at is None and not st.purging
         assert w.carded() == {a, b} and len(w.emb.calls) - embedded == 2
@@ -92,11 +93,11 @@ class TestRegainAfterTheGracePeriod:
         w, a, b = await self._lost_past_ttl()
         before = len(w.queue.tasks)
         assert (await w.tick()).status == "purged"
-        assert w.repo.records == {} and await w.repo.get_sync_state("u") is None
+        assert w.repo.records == {} and await w.repo.get_sync_state(U_SCOPE) is None
         assert w.queue.tasks[before:] == []            # nothing to continue while access is lost
         w.clock.advance(timedelta(days=2).total_seconds())
         w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
         await w.settle()
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.epoch == 1 and st.epoch_phase is EpochPhase.IDLE
         assert w.carded() == {a, b}

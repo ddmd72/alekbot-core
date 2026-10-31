@@ -21,10 +21,12 @@ from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvid
 from src.adapters.microsoft.onedrive_adapter import OneDriveAdapter
 from src.composition.connector_registry import ConnectorRegistry
 from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import creds
 
@@ -63,6 +65,8 @@ class World:
         self.revocation = CredentialRevocationService(self.store, self.registry.edges()) if revocation else None
         self.drive = OneDriveAdapter(self.store, "ms-cid", "ms-csecret",
                                      connector=self.registry.get("microsoft_onedrive"))
+        # the drive card reads the user's drive connection (MULTI_DRIVE_RFC §4.4, §11.7)
+        self.drive_connections = DriveConnectionService(FakeDriveConnectionRepository(), self.store)
 
     def app(self, *, registry=True) -> Quart:
         sessions = MagicMock()
@@ -72,7 +76,7 @@ class World:
             invite_service=MagicMock(), session_service=sessions, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.store, user_drive=self.drive,
             credential_revocation=self.revocation, reconnect=self.reconnect,
-            connectors=self.registry if registry else None))
+            connectors=self.registry if registry else None, drive_connections=self.drive_connections))
         return app
 
     async def save(self, user_id, kind, subject="sub-1", **over):
@@ -189,5 +193,7 @@ async def test_the_drive_status_names_the_credential_only_while_connected(world)
         assert "credential_id" not in await (await client.get("/api/drive/status", headers=AUTH)).get_json()
         await world.save(ALEX, "microsoft_onedrive")
         (held,) = await world.store.list_for_user(ALEX, "microsoft_onedrive")
+        # the consent's drive activation makes the grant a connection (MULTI_DRIVE_RFC §4.4, §5.2)
+        await world.drive_connections.activate(held, "microsoft_onedrive:d1")
         body = await (await client.get("/api/drive/status", headers=AUTH)).get_json()
     assert body["connected"] is True and body["credential_id"] == held.credential_id

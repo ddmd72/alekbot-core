@@ -16,9 +16,10 @@ from src.domain.drive_index_params import INACCESSIBLE_RETRY_MIN
 from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER
 from src.domain.ui_messages import UIMessage
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
+from tests.support.drive_connection_service_fake import single_connection_repository
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
-from .drive_index_fakes import T0, Clock, FakeDrive, FakeQueue, FakeUsers
+from .drive_index_fakes import T0, Clock, FakeQueue
 from .drive_inaccessible_world import ClosedWorld
 
 MARKED = T0 + timedelta(minutes=1)
@@ -46,9 +47,9 @@ def _lean(rec: DriveIndexRecord) -> DriveIndexRecord:
 
 
 def test_the_lean_fields_carry_what_the_notice_reads():
-    folder = DriveIndexRecord(user_id="u", item_id="d1", name="Shared", is_folder=True, kind="folder",
+    folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="d1", name="Shared", is_folder=True, kind="folder",
                               scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, parent_id="root")
-    doc = DriveIndexRecord(user_id="u", item_id="f1", name="a.pdf", parent_id="d1", kind="pdf", scope=Scope.NORMAL,
+    doc = DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", name="a.pdf", parent_id="d1", kind="pdf", scope=Scope.NORMAL,
                            state=RecordState.PENDING, inaccessible_since=MARKED)
     lean = _lean(doc)
     after = MARKED + timedelta(minutes=1)
@@ -61,10 +62,10 @@ async def test_the_fan_out_reads_the_marked_records_lean():
     clock = Clock()
     clock.now = T0 + timedelta(hours=1)
     repo = InMemoryDriveIndexRepository()
-    await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="f1", name="a.pdf", parent_id="root", kind="pdf",
+    await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", name="a.pdf", parent_id="root", kind="pdf",
                                                 scope=Scope.NORMAL, state=RecordState.PENDING,
                                                 inaccessible_since=MARKED, inaccessible_checked_at=MARKED)])
-    repo.states["u"] = DriveSyncState(user_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
+    repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
                                       created_at=T0, last_success_at=clock.now,
                                       counters={INACCESSIBLE_COUNTER: 1, INACCESSIBLE_UNNOTIFIED_COUNTER: 1})
     calls = []
@@ -86,11 +87,8 @@ async def test_the_fan_out_reads_the_marked_records_lean():
     localization = SimpleNamespace(get_ui_string=lambda lang, m: "{count} closed"
                                    if m is UIMessage.DRIVE_INACCESSIBLE_NOTICE else "Closed")
 
-    async def connected_users():
-        return ["u"]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(),
-                                    users=FakeUsers(enabled={"u": True}), connected_users=connected_users,
+    # the fan-out lists connections, not users (MULTI_DRIVE_RFC §8): the user's one connection, indexing on
+    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), connections=single_connection_repository("u"),
                                     notifier=notifier, alert_sink=None, clock=clock, localization=localization)
     await svc.fan_out()
     assert calls == [{"lean": True}]

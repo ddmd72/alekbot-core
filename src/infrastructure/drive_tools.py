@@ -42,7 +42,8 @@ from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_pass_through import PassThroughCollector, search_key
 from ..domain.llm import ToolCall
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
-from ..domain.user_drive import MOVE_NEEDS_TARGET, drive_label, is_drive_ref
+from ..domain.drive_ref import is_drive_ref
+from ..domain.user_drive import MOVE_NEEDS_TARGET
 from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..utils.logger import logger
 from .delegation_engine import LocalToolHandler, ToolResult
@@ -170,17 +171,17 @@ class DriveToolRun:
     def _seen(self, tc: ToolCall, result: CollectedResult) -> ToolResult:
         """What the specialist's model reads: the full text, or a stand-in for a body or a file (§6)."""
         outcome = result.outcome
-        label = drive_label(outcome.items[0]) if outcome.items else str((tc.args or {}).get("file_ref") or "")
+        label = outcome.label_of(outcome.items[0]) if outcome.items else str((tc.args or {}).get("file_ref") or "")
         if outcome.file_data:
             return self._answer(tc, t.STAND_IN_FILE.format(handle=result.handle, label=label,
                                                            mime=outcome.file_data.get("mime_type", "")))
         if outcome.facts.too_long:
             # the refusal's text names no tool; this caller appends its own route (RFC §29.6 L13)
-            ref = outcome.items[0].ref if outcome.items else str((tc.args or {}).get("file_ref") or "")
+            ref = outcome.ref_of(outcome.items[0]) if outcome.items else str((tc.args or {}).get("file_ref") or "")
             return self._answer(tc, f"[{result.handle}]\n{outcome.text}\n" + ROUTE_SPECIALIST.format(ref=ref))
         info = outcome.open_bound
         if outcome.body and outcome.facts.cut and info is not None and info.kept:
-            ref = outcome.items[0].ref if outcome.items else ""
+            ref = outcome.ref_of(outcome.items[0]) if outcome.items else ""
             return self._answer(tc, stand_in_cut(result.handle, label,
                                                  BoundText("", info.chars, info.kept, info.cut_state), ref, info.extent))
         if outcome.body:

@@ -1,8 +1,6 @@
 """
-OAuthCredential.drive_id (USER_DRIVE_INDEXING_RFC §10.1 step 0): "" by default and carried through every Graph token
-refresh. Its storage is asserted by the credential store kit (`test_credential_store_kit.py`: only a OneDrive record
-carries it, a refresh keeps it); the old adapter's round-trip and legacy-document tests went with that adapter
-(SECRETS_AT_REST_RFC §2.7).
+A Graph token refresh stores the new token, clears needs_reconnect and creates no record (the old adapter's round-trip
+and legacy-document tests went with that adapter, SECRETS_AT_REST_RFC §2.7).
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,10 +18,6 @@ def _creds(**kw) -> OAuthCredential:
                 account=ProviderAccount(realm="microsoft", subject="", label=""), access_token="old",
                 refresh_token="r1", token_expiry=datetime(2026, 10, 11, 12, tzinfo=timezone.utc), scopes=[])
     return OAuthCredential(**{**base, **kw})
-
-
-def test_default_is_empty():
-    assert _creds().drive_id == ""
 
 
 def _resp(json_data, status=200):
@@ -45,10 +39,10 @@ def _session(post_resp):
 
 
 class TestRefresh:
-    async def test_refresh_carries_drive_id_and_clears_the_flag(self):
+    async def test_refresh_clears_the_flag(self):
         oauth = AsyncMock(spec=OAuthCredentialsPort)
         oauth.get.return_value = _creds(
-            drive_id="D1", needs_reconnect=True,
+            needs_reconnect=True,
             token_expiry=datetime.now(timezone.utc) + timedelta(minutes=1))
         mirror_get(oauth)
         oauth.update.return_value = True                          # the record still exists
@@ -59,5 +53,4 @@ class TestRefresh:
             assert await provider.user_headers("u1") == {"Authorization": "Bearer new"}
         oauth.save.assert_not_called()                            # a refresh never creates a record
         saved = oauth.update.call_args.args[0]
-        assert saved.drive_id == "D1"
         assert saved.needs_reconnect is False      # a successful refresh is the proof

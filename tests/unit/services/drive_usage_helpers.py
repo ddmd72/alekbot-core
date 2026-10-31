@@ -5,9 +5,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from src.domain.drive_enrichment import UsageClass
+from src.domain.drive_enrichment import InitialBuild, UsageClass
 from src.domain.drive_index_planner import month_key
+from src.domain.drive_usage import initial_build_doc_id
 from src.ports.drive_index_repository import DriveIndexRepository
+
+from .drive_index_fakes import legacy_account
 
 
 async def spend(repo: DriveIndexRepository, cls: UsageClass, usd: float, now: datetime, *, user: str = "u") -> None:
@@ -16,8 +19,22 @@ async def spend(repo: DriveIndexRepository, cls: UsageClass, usd: float, now: da
 
 
 async def close_initial_build(repo: DriveIndexRepository, now: datetime, *, user: str = "u") -> None:
-    """The initial build is over: only the month's caps pay from now on."""
-    await repo.close_initial_build(user, now)
+    """The initial build is over: only the month's caps pay from now on. The build of the single-drive harness's
+    connection account (`legacy_account`, MULTI_DRIVE_RFC §10)."""
+    account = legacy_account(user)
+    await repo.close_initial_build(user, account.realm, account.subject, now)
+
+
+async def initial_build(repo: DriveIndexRepository, *, user: str = "u") -> InitialBuild:
+    """The initial build of the single-drive harness's connection account."""
+    account = legacy_account(user)
+    return await repo.get_initial_build(user, account.realm, account.subject)
+
+
+def initial_key(user: str = "u") -> str:
+    """The in-memory repository's key of that build (`InMemoryDriveIndexRepository.initial`)."""
+    account = legacy_account(user)
+    return initial_build_doc_id(user, account.realm, account.subject)
 
 
 async def month_usd(repo: DriveIndexRepository, cls: UsageClass, month: str, *, user: str = "u") -> float:

@@ -11,8 +11,10 @@ routes and `GoogleOAuthService` are gone:
   no longer skipped for such a grant);
 - the stored credential carries the spec's kind and integration and the signed-in session's account; without that
   session, or with one that has no account, nothing is exchanged or stored;
-- every kind is single-credential in 1a (`multiple` False): another account's consent replaces the user's record of
-  that kind and leaves the user's other kinds and other users alone; the same account's keeps its credential_id.
+- the mail and tasks kinds are single-credential (`multiple` False): another account's consent replaces the user's
+  record of that kind and leaves the user's other kinds and other users alone; the drive kind is `multiple` since
+  slice 1b (E15, E27): another account's consent adds a second credential and keeps the first; for every kind the
+  same account's consent keeps its credential_id.
 Examples from the invented cast only."""
 import pytest
 
@@ -23,6 +25,7 @@ from tests.unit.web.connect_world import ALEX, CLARA, GOOGLE_TOKEN, GRANTED, GRA
 KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
 GOOGLE_KINDS = ("gmail", "google_tasks")
 MICROSOFT_KINDS = ("microsoft_todo", "microsoft_onedrive")
+SINGLE_KINDS = ("gmail", "google_tasks", "microsoft_todo")    # `multiple` False; the drive is `multiple` since 1b (E27)
 REALM = {"gmail": "google", "google_tasks": "google", "microsoft_todo": "microsoft", "microsoft_onedrive": "microsoft"}
 INTEGRATION = {"gmail": Integration.MAIL, "google_tasks": Integration.TASKS, "microsoft_todo": Integration.TASKS,
                "microsoft_onedrive": Integration.DRIVE}
@@ -181,9 +184,9 @@ async def test_a_session_without_an_account_stores_nothing(world, kind):
     assert world.http.requests_to("POST", TOKEN[REALM[kind]]) == []
 
 
-# ------------------------------------------------------------------------------------------- one per kind (1a)
+# ------------------------------------------------------------------------------------------- one or many per kind
 
-@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("kind", SINGLE_KINDS)
 async def test_another_accounts_consent_replaces_the_record_of_that_kind(world, kind):
     other = "microsoft_todo" if kind != "microsoft_todo" else "gmail"
     await world.connect(other)                                                  # another kind of the user
@@ -196,6 +199,22 @@ async def test_another_accounts_consent_replaces_the_record_of_that_kind(world, 
     (now,) = await world.held(kind)
     assert now.account.subject == "sub-2" and now.credential_id != first.credential_id
     assert len(await world.held(other)) == 1
+    assert len(await world.held(kind, CLARA)) == 1
+
+
+async def test_another_onedrive_accounts_consent_adds_a_credential_and_keeps_the_first(world):
+    kind = "microsoft_onedrive"
+    await world.connect("microsoft_todo")                                       # another kind of the user
+    await world.connect(kind, token=world.session(CLARA, "acct-2"))             # another user, same kind
+    await world.connect(kind)
+    (first,) = await world.held(kind)
+    world.signs_in_as("sub-2")
+    resp = await world.connect(kind)
+    assert resp.headers["Location"] == _connected(kind)
+    held = {c.credential_id: c.account.subject for c in await world.held(kind)}
+    assert len(held) == 2 and held[first.credential_id] == "sub-1"            # the first is kept, unchanged
+    assert sorted(held.values()) == ["sub-1", "sub-2"]                          # the second account is added
+    assert len(await world.held("microsoft_todo")) == 1
     assert len(await world.held(kind, CLARA)) == 1
 
 

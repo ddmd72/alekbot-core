@@ -5,8 +5,10 @@ import pytest
 
 from src.domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveIndexRecord, DriveSyncState,
-    EpochPhase, Priority, record_key,
+    EpochPhase, Priority, record_doc_id,
 )
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain import drive_index_params as P
 
 NOW = datetime(2026, 10, 11, tzinfo=timezone.utc)
@@ -14,13 +16,13 @@ NOW = datetime(2026, 10, 11, tzinfo=timezone.utc)
 
 def test_change_is_frozen_and_defaults_live():
     ch = DriveChange(item_id="a")
-    assert ch.deleted is False and ch.facets == {}
+    assert ch.deleted is False and ch.media == DriveMediaFacts()
     with pytest.raises(FrozenInstanceError):
         ch.name = "x"  # type: ignore[misc]
 
 
 def test_record_defaults_have_no_work():
-    rec = DriveIndexRecord(user_id="u", item_id="a")
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="a")
     assert rec.due_at is None and rec.priority is None
     assert rec.indexed_generation is None and rec.index_generation == 0
     assert rec.has_card is False and rec.card_hash is None
@@ -32,7 +34,7 @@ def test_priority_order_matches_rfc_7_8():
 
 
 def test_sync_state_starts_idle_without_cursor():
-    st = DriveSyncState(user_id="u")
+    st = DriveSyncState(user_id="u", connection_id="u")
     assert st.epoch == 0 and st.epoch_phase is EpochPhase.IDLE and st.cursor is None
     assert st.applied_versions == {} and st.purging is False and st.systemic_failures == 0
 
@@ -45,8 +47,9 @@ def test_versions_are_ints_keyed_by_name():
     assert all(isinstance(v, int) and v >= 1 for v in CURRENT_VERSIONS.values())
 
 
-def test_record_key_is_stable():
-    assert record_key("u1", "ABC!s12") == "u1:ABC!s12"
+def test_record_doc_id_is_stable():
+    # MULTI_DRIVE_RFC §8 (E8): a record is keyed by its connection, not its user
+    assert record_doc_id(ConnectionScope(user_id="usr-1", connection_id="conn-1"), "ABC!s12") == "conn-1:ABC!s12"
 
 
 def test_params_match_rfc_15():

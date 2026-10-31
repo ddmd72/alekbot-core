@@ -10,19 +10,16 @@ from src.domain.drive_index import DriveSyncState, ErrorCategory
 from src.domain.user_drive import DriveConnection
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
 from tests.unit.services.test_drive_sync_scheduler_service import env  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 
 def _with_ensure_agents(env, ensure_agents):  # noqa: F811
-    async def connected_users():
-        return list(env.connected)
-
-    return DriveSyncSchedulerService(repo=env.repo, queue=env.queue, drive=env.drive, users=env.users,
-                                     connected_users=connected_users, notifier=env.notifier,
+    return DriveSyncSchedulerService(repo=env.repo, queue=env.queue, connections=env.connections, notifier=env.notifier,
                                      alert_sink=env.alerts, clock=env.clock, ensure_agents=ensure_agents)
 
 
 async def _lost_grant(env):  # noqa: F811
-    await env.repo.save_sync_state(DriveSyncState(user_id="u", last_error=ErrorCategory.RECONNECT_NEEDED))
+    await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_error=ErrorCategory.RECONNECT_NEEDED))
     env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
 
 
@@ -54,7 +51,7 @@ class TestReconnectNoticeLoadsAgents:
 
         summary = await _with_ensure_agents(env, ensure_agents).fan_out()
         assert env.notifier.calls == []
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is False
         assert summary["errors"] == 1
 
     async def test_failed_agent_load_is_retried_on_the_next_fan_out(self, env):  # noqa: F811
@@ -73,4 +70,4 @@ class TestReconnectNoticeLoadsAgents:
         await svc.fan_out()
         assert attempts == ["u", "u"]
         assert len(env.notifier.calls) == 1
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True

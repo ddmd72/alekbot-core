@@ -26,8 +26,10 @@ from src.ports.user_repository import UserRepository
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.localization_service import LocalizationService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_handles import drive_handle
 
 USER = "user-1"
+HANDLE = drive_handle(USER)
 HTML = b"<!DOCTYPE html><html><head><title>Heat pumps in Springfield</title></head><body>x</body></html>"
 NOW = datetime(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
 L10N = LocalizationService(FileLocalizationAdapter())
@@ -43,6 +45,7 @@ def _users(enabled=True, tz="UTC", missing=False):
 
 def _drive(path="Deep research/2026-10-14 Heat pumps in Springfield.html"):
     drive = AsyncMock(spec=UserDriveService)
+    drive.primary.return_value = MagicMock(handle=HANDLE)      # the user's primary connection (MULTI_DRIVE_RFC D7)
     item = DriveItem(item_id="i1", name=path.rsplit("/", 1)[-1], path=path, is_folder=False)
     drive.save.return_value = SaveOutcome(item=item, created=[])
     return drive
@@ -85,7 +88,7 @@ class TestCopy:
         drive = _drive()
         line = await _service(drive=drive).copy_report(USER, HTML, "heat pumps?")
         drive.save.assert_awaited_once_with(
-            USER, HTML, "2026-10-14 Heat pumps in Springfield.html", "text/html; charset=utf-8", "Deep research")
+            HANDLE, HTML, "2026-10-14 Heat pumps in Springfield.html", "text/html; charset=utf-8", "Deep research")
         assert line == "📁 Copied to your drive: Deep research/2026-10-14 Heat pumps in Springfield.html"
 
     async def test_the_line_shows_the_name_the_drive_actually_gave(self):

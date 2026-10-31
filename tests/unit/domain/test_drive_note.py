@@ -11,12 +11,14 @@ from src.domain.drive_note import (
     ERASE_SCOPE_ALL, ERASE_SCOPE_ONE, LIFE_AREAS_MAX, NOTE_CHARS_MAX, NOTE_WORDS_MAX, NOTE_WRITES_PER_TURN,
     NOTES_PER_USER_MAX, STATUS_INDEXING_OFF, STATUS_NO_CARD, STATUS_NOT_INDEXED, STATUS_SOON, DriveNote,
     DriveNoteRefused, EraseRequestReceipt, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteReceipt,
-    NoteRefusal, NoteSnapshot, NoteState, NoteTarget, binding_key, check_note_text, closed_version, content_of,
-    deterministic_note_id, drive_note_context_entry, erase_stub, is_owner_turn, next_version, normalize_note_text,
+    NoteRefusal, NoteSnapshot, NoteState, NoteTarget, check_note_text, closed_version, content_of,
+    deterministic_note_id, drive_note_context_entry, erase_stub, is_owner_turn, item_binding_key, next_version,
+    normalize_note_text,
     note_after_write, note_content, note_embedding_text, note_match_keys, note_word_count, parse_note_ref,
-    parse_note_target, ref_key, resolve_doc_type, resolve_life_areas, searchability, snapshot_of, state_after,
-    undo_source,
+    parse_note_target, resolve_doc_type, resolve_life_areas, searchability, snapshot_of, state_after,
+    tagged_ref_key, undo_source,
 )
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.user_drive import DriveItem
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
@@ -129,15 +131,15 @@ def test_an_empty_triple_deletes():
 # -- identity (D15) ---------------------------------------------------------------------------------------------------------
 
 def test_match_keys_are_the_binding_and_the_ref_key_only():
-    keys = note_match_keys(NoteBinding(provider_key="onedrive", drive_id="d1", item_id="ABC!1"))
-    assert keys == ["i:onedrive:d1:ABC!1", "r:ABC!1"]
-    assert binding_key("onedrive", "d1", "x") == "i:onedrive:d1:x" and ref_key("x") == "r:x"
+    keys = note_match_keys(NoteBinding(identity="onedrive:d1:ABC!1", item_id="ABC!1", ref_tag="a1"))
+    assert keys == ["i:onedrive:d1:ABC!1", "r:a1:ABC!1"]
+    assert item_binding_key("onedrive:d1:x") == "i:onedrive:d1:x" and tagged_ref_key("a1", "x") == "r:a1:x"
 
 
 def test_the_first_id_is_deterministic():
-    key = binding_key("onedrive", "d1", "x")
+    key = item_binding_key("onedrive:d1:x")
     assert deterministic_note_id(key) == hashlib.sha256(key.encode()).hexdigest()[:32] == deterministic_note_id(key)
-    assert deterministic_note_id(binding_key("onedrive", "d2", "x")) != deterministic_note_id(key)
+    assert deterministic_note_id(item_binding_key("onedrive:d2:x")) != deterministic_note_id(key)
 
 
 def test_refs_parse_the_note_prefix_first():
@@ -153,7 +155,7 @@ def test_refs_parse_the_note_prefix_first():
 def _change(**kw):
     base = dict(item_id="i1", parent_id="p1", name="smeta.pdf", size_bytes=1250, mime_type="application/pdf",
                 fs_modified_at=T - timedelta(days=3), modified_at=T - timedelta(days=1),
-                created_at=T - timedelta(days=9), facets={"hashes": {"quickXorHash": "qx=="}})
+                created_at=T - timedelta(days=9), content_identity=ContentIdentity("quickxor", "qx==", 1250))
     base.update(kw)
     return DriveChange(**base)
 
@@ -163,13 +165,13 @@ def test_the_snapshot_keeps_the_content_key_as_data():
                        now=T)
     assert (snap.name, snap.path, snap.parent_item_id, snap.kind, snap.size_bytes) == (
         "smeta.pdf", "Docs/smeta.pdf", "p1", "pdf", 1250)
-    assert (snap.content_key, snap.content_key_family, snap.snapshot_at) == ("qx==:1250", "quickxor", T)
+    assert (snap.content_key, snap.content_key_family, snap.snapshot_at) == ("quickxor:qx==:1250", "quickxor", T)
     assert (snap.fs_created_at, snap.fs_modified_at, snap.effective_date) == (
         T - timedelta(days=9), T - timedelta(days=3), T - timedelta(days=3))
 
 
 def test_the_snapshot_prefers_the_record_s_kind_and_date_and_a_folder_has_no_content_key():
-    folder = _change(name="Bathroom", is_folder=True, mime_type="", facets={})
+    folder = _change(name="Bathroom", is_folder=True, mime_type="", content_identity=None)
     snap = snapshot_of(folder, DriveItem(item_id="i1", name="Bathroom", path="Bathroom", is_folder=True),
                        kind="collapsed", effective_date=T, now=T)
     assert (snap.kind, snap.effective_date, snap.content_key, snap.content_key_family, snap.is_folder) == (
@@ -215,7 +217,7 @@ def test_state_after_each_action():
 
 
 def _bound(**kw):
-    binding = NoteBinding(provider_key="onedrive", drive_id="d1", item_id="i1")
+    binding = NoteBinding(identity="onedrive:d1:i1", item_id="i1", ref_tag="a1")
     data = dict(note_id="n", user_id="u", account_id="acc", current_version=1, text="old", doc_type="contract",
                 life_areas=["home"], binding=binding, snapshot=NoteSnapshot(name="a.pdf", path="Docs/a.pdf"),
                 match_keys=note_match_keys(binding), keys=["e:old"], keys_version="7.1", note_vector=[1.0],
@@ -237,12 +239,12 @@ def test_a_clear_empties_every_derived_field_and_keeps_snapshot_and_match_keys()
 
 def test_a_set_copies_the_version_and_its_binding_gives_the_match_keys():
     note = _bound(state="archived", archived_at=T - timedelta(days=1), cleared_at=T)
-    other = NoteBinding(provider_key="onedrive", drive_id="d1", item_id="i2")
+    other = NoteBinding(identity="onedrive:d1:i2", item_id="i2", ref_tag="a1")
     v2 = next_version(1, NoteContent("new", "", ("work",)), NoteAction.SET, CHAT, T)
     after = note_after_write(note, v2, NoteState.ACTIVE, CHAT, T, vector=[0.5], embedding_space="s2",
                              embedding_pending=False, binding=other)
     assert (after.text, after.doc_type, after.life_areas, after.note_vector) == ("new", "", ["work"], [0.5])
-    assert after.match_keys == ["i:onedrive:d1:i2", "r:i2"] and after.binding == other
+    assert after.match_keys == ["i:onedrive:d1:i2", "r:a1:i2"] and after.binding == other
     assert (after.state, after.archived_at, after.cleared_at, after.created_at) == ("active", None, None, T)
     assert after.updated_at is None and after.last_writer.turn_id == "t"
 
@@ -253,7 +255,7 @@ def test_the_erase_stub_holds_no_content():
                                     "current_version"}) == DriveNote(note_id="x", user_id="y").model_dump(
         exclude={"note_id", "user_id", "account_id", "state", "erase_pending", "match_keys", "current_version"})
     assert (stub.state, stub.erase_pending, stub.current_version, stub.account_id) == ("cleared", True, 0, "acc")
-    assert stub.match_keys == ["i:onedrive:d1:i1", "r:i1"]
+    assert stub.match_keys == ["i:onedrive:d1:i1", "r:a1:i1"]
 
 
 def test_states_and_actions_are_stored_as_plain_strings():
@@ -266,13 +268,13 @@ def test_states_and_actions_are_stored_as_plain_strings():
 # -- searchability, receipts, the gate ----------------------------------------------------------------------------------------
 
 def test_searchability_statuses():
-    rec = DriveIndexRecord(user_id="u", item_id="i", state=RecordState.INDEXED, has_card=True)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.INDEXED, has_card=True)
     assert searchability(False, rec) == STATUS_INDEXING_OFF
     assert searchability(True, None) == STATUS_NOT_INDEXED
     assert searchability(True, rec) == STATUS_SOON
-    assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", state=RecordState.PENDING)) == STATUS_SOON
+    assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.PENDING)) == STATUS_SOON
     for capped in (dict(card_capped=True), dict(card_refused=True), dict(state=RecordState.UNRESOLVED)):
-        assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", **capped)) == STATUS_NO_CARD
+        assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", **capped)) == STATUS_NO_CARD
 
 
 def test_the_receipt_data_and_the_history_line():
@@ -315,31 +317,7 @@ def test_format_characters_are_removed_too():
 
 
 def test_a_record_being_deleted_shows_no_card():
-    assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", state=RecordState.DELETING)) == STATUS_NO_CARD
-
-
-def test_the_provider_key_is_the_onedrive_adapter_s():
-    from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER
-    from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY
-    assert ONEDRIVE_PROVIDER_KEY == ONEDRIVE_PROVIDER == "microsoft_onedrive"
-
-
-def test_the_binding_key_parses_back():
-    from src.domain.drive_note import BindingKeyParts, parse_binding_key
-    key = binding_key("microsoft_onedrive", "b!drive", "ITEM!12")
-    assert parse_binding_key(key) == BindingKeyParts("microsoft_onedrive", "b!drive", "ITEM!12")
-    assert parse_binding_key("i:p:d:item:with:colons").item_id == "item:with:colons"
-    for bad in ("r:ITEM", "i:p:d", "i::d:x", "i:p::x", "i:p:d:", "", "x:p:d:i"):
-        assert parse_binding_key(bad) is None, bad
-
-
-def test_a_stub_s_binding_comes_from_its_match_keys():
-    from src.domain.drive_note import BindingKeyParts, binding_parts_of
-    stub = erase_stub(_bound())
-    assert stub.binding is None
-    assert binding_parts_of(stub) == BindingKeyParts("onedrive", "d1", "i1")
-    assert binding_parts_of(_bound()) == BindingKeyParts("onedrive", "d1", "i1")
-    assert binding_parts_of(DriveNote(note_id="n", user_id="u", match_keys=["r:x"])) is None
+    assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.DELETING)) == STATUS_NO_CARD
 
 
 def test_valid_from_is_never_before_the_previous_version():

@@ -13,6 +13,8 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, HookedExtractor, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import close_initial_build, spend
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -21,7 +23,7 @@ def rewire(w, reader):
     w.reader = reader
     w.svc = svc_mod.DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: "",
                                          "test-space/8", extractors={PARSER: w.parser, READER: reader},
-                                         triage=w.triage, clock=w.clock, monotonic=w.clock.monotonic)
+                                         triage=w.triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock, monotonic=w.clock.monotonic)
 
 
 def scan_outcomes(w, reader, name):
@@ -68,5 +70,5 @@ async def test_month_held_records_do_not_restart_the_upgrade_pass_on_every_worki
     await w.settle()
     assert pages != []
     assert {w.rec(s).extracted_by for s in scans} == {"reader@2"}
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.applied_versions["extractor:reader"] == 2

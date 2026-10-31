@@ -25,7 +25,7 @@ from src.domain.user_drive import DriveConnection, DriveItemNotFoundError
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
-from .drive_mirror_tick_world import DRIVE, MirrorWorld
+from .drive_mirror_tick_world import DRIVE, DRIVE_IDENTITY, MirrorWorld, mirror_key, source_identity
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -115,7 +115,7 @@ async def test_rebuild_then_onboarding_keeps_the_root(world):
     _purge_rebuild(w)
     await w.settle()
     assert w.mirror.writes() == []   # the purge and the onboarding wrote nothing of the mirror
-    assert w.root_doc() == before and list(w.mirror.root_docs) == [("u", DRIVE)]
+    assert w.root_doc() == before and list(w.mirror.root_docs) == [("u", DRIVE_IDENTITY)]
     assert w.records_under(root) and all(w.rec(i).scope is Scope.INSIDE_OPAQUE for i in w.records_under(root))
 
 
@@ -141,11 +141,10 @@ async def test_roots_read_error_ends_the_tick(world):
     assert w.rec(root).scope is Scope.INSIDE_OPAQUE and len(w.repo.records) == 1
 
 
-async def test_empty_drive_id_skips_the_mirror_but_classifies(world):
-    """No connected drive id and none on the state: the tick's mirror has no drive id (the step of Task 21 does not
-    run), yet the roots still classify; once the state carries the drive id, it is the fallback."""
+async def test_the_mirror_drive_is_the_connections_and_the_roots_classify(world):
+    """The tick's mirror is keyed by the connection's drive identity (MULTI_DRIVE_RFC §4.4, §10: a connection always
+    carries one, so there is no empty drive and no fallback to the sync state's), and the roots classify."""
     w = world()
-    w.drive.connection_state = DriveConnection(connected=True, drive_id="")
     root = w.add_root()
     w.drive.add_file("Interview.mp4.md", b"x", parent=root)
     seen: List[Any] = []
@@ -157,13 +156,10 @@ async def test_empty_drive_id_skips_the_mirror_but_classifies(world):
         return mirror
     w.svc._start_mirror = capture
     await w.tick()
-    assert seen[0] is not None and seen[0].drive_id == "" and root in seen[0].root_ids
+    assert seen[0] is not None and seen[0].drive_identity == DRIVE_IDENTITY and root in seen[0].root_ids
     assert w.rec(root).scope is Scope.INSIDE_OPAQUE and len(w.repo.records) == 1
     await w.tick()
-    assert seen[-1].drive_id == DRIVE   # the sync state's drive id (from the pages)
-    w.drive.connection_state = DriveConnection(connected=True, drive_id=DRIVE)
-    await w.tick()
-    assert seen[-1].drive_id == DRIVE
+    assert seen[-1].drive_identity == DRIVE_IDENTITY
 
 
 @pytest.mark.parametrize("switch,flag", [(False, True), (True, False), (False, False)])
@@ -291,7 +287,7 @@ async def test_tombstone_marks_gone(world):
     mark = w.doc(doc)
     assert mark.gone_pending and mark.gone_why == GONE
     assert now <= mark.gone_at and mark.mark_ready_at == mark.gone_at + MIRROR_ARCHIVE_GRACE
-    assert ("mark_gone", ((doc, GONE),), DRIVE) in w.mirror.marks
+    assert ("mark_gone", ((doc, GONE),), DRIVE_IDENTITY) in w.mirror.marks
     _no_missing_why(w)
 
 
@@ -383,7 +379,8 @@ async def test_sweep_marks_gone(world):
 
 
 async def _seed_unresolved(w, item_id, parent_id, name="memo.pdf"):
-    rec = DriveIndexRecord(user_id="u", item_id=item_id, parent_id=parent_id, name=name, kind="pdf",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, identity=source_identity(item_id),
+                           parent_id=parent_id, name=name, kind="pdf",
                            scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, policy_version=planner.POLICY_VERSION,
                            seen_epoch=w.repo.states["u"].epoch, due_at=w.clock.now, priority=int(Priority.CASCADE))
     await w.repo.upsert_records([rec])
@@ -412,7 +409,8 @@ async def test_replans_mark_unstored(world):
     await w.settle()
     # the resolve step: a parked file whose parent is now stored opaque
     await _seed_unresolved(w, "parked", hidden)
-    w.drive.items["parked"] = DriveChange(item_id="parked", name="memo.pdf", parent_id=hidden)
+    w.drive.items["parked"] = DriveChange(item_id="parked", name="memo.pdf", parent_id=hidden,
+                                          identity=source_identity("parked"))
     w.mirrored("parked")
     await w.settle()
     assert w.rec("parked") is None and w.doc("parked").gone_why == UNSTORED
@@ -434,13 +432,15 @@ async def test_reread_marks_unstored(world):
     w.add_root()
     hidden = w.drive.add(".private", folder=True)
     await w.settle()
-    rec = DriveIndexRecord(user_id="u", item_id="x", parent_id=hidden, name="memo.pdf", kind="pdf",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="x", identity=source_identity("x"),
+                           parent_id=hidden, name="memo.pdf", kind="pdf",
                            state=RecordState.INDEXED, scope=Scope.NORMAL, policy_version=planner.POLICY_VERSION)
     await w.repo.upsert_records([rec])
     w.mirrored("x")
-    token = svc_mod._TICK_MIRROR.set(await w.svc._start_mirror("u", w.repo.states["u"], None))
+    conn = await w.connection()
+    token = svc_mod._TICK_MIRROR.set(await w.svc._start_mirror(conn.handle, conn))
     try:
-        await w.svc._reread("u", w.rec("x"), w.svc._ctx("u", w.repo.states["u"], w.clock.now))
+        await w.svc._reread(conn.handle, w.rec("x"), w.svc._ctx(conn.handle, w.repo.states["u"], w.clock.now))
     finally:
         svc_mod._TICK_MIRROR.reset(token)
     assert w.rec("x") is None and w.doc("x").gone_why == UNSTORED
@@ -509,25 +509,27 @@ async def test_marks_only_for_mirrored_records_and_roots(world):
     plain = w.add_doc("b.md", prose(5))
     await w.settle()
     w.mirrored(mirrored)
-    w.mirror.docs[f"u:file:{plain}"] = replace(w.doc(mirrored), source_item_id=plain)   # a stray document: not noticed
+    w.mirror.docs[mirror_key(plain)] = replace(w.doc(mirrored), source_item_id=plain,
+                                               source_identity=source_identity(plain))   # a stray document: not noticed
     w.drive.delete(mirrored)
     w.drive.delete(plain)
     await w.settle()
     sent = [m for m in w.mirror.marks if m[0] == "mark_gone"]
-    assert sent == [("mark_gone", ((mirrored, GONE),), DRIVE)]
+    assert sent == [("mark_gone", ((mirrored, GONE),), DRIVE_IDENTITY)]
     assert not w.doc(plain).gone_pending
     deleted_with_why = [c for c in w.commits if plain in c[0]]
     assert deleted_with_why and all(plain not in (c[1] or {}) for c in deleted_with_why)
 
 
 async def test_mark_skips_another_drives_document(world):
-    """Ledger keys carry no drive id: the notice is sent with the mirror's drive id, so a document of another drive under
-    the same source id stays unmarked (carry of Task 20A)."""
+    """The notice is sent with the mirror's drive identity, so a document of another drive found under the key (ledger
+    keys carry the drive identity since MULTI_DRIVE_RFC §10: only corrupt data puts it there) stays unmarked (carry of
+    Task 20A)."""
     w, doc = await _mirrored_doc(world)
-    w.mirror.docs[f"u:file:{doc}"] = replace(w.doc(doc), drive_id="other-drive")
+    w.mirror.docs[mirror_key(doc)] = replace(w.doc(doc), drive_identity="other-drive")
     w.drive.delete(doc)
     await w.settle()
-    assert ("mark_gone", ((doc, GONE),), DRIVE) in w.mirror.marks
+    assert ("mark_gone", ((doc, GONE),), DRIVE_IDENTITY) in w.mirror.marks
     assert not w.doc(doc).gone_pending
 
 
@@ -602,9 +604,12 @@ async def test_previous_root_loss_triggers_nothing(world):
 async def test_unknown_why_when_a_caller_passes_none(world):
     """`_commit` with deletes and no `gone` (no caller does: see the static check below) marks them `unknown`."""
     w, doc = await _mirrored_doc(world)
-    token = svc_mod._TICK_MIRROR.set(await w.svc._start_mirror("u", w.repo.states["u"], None))
+    conn = await w.connection()
+    mirror = await w.svc._start_mirror(conn.handle, conn)
+    mirror.identities[doc] = w.rec(doc).identity   # what a delete site names (`_mirror_notices`) for the ledger key
+    token = svc_mod._TICK_MIRROR.set(mirror)
     try:
-        await svc_mod.DriveIndexingService._commit(w.svc, "u", [], {doc})
+        await svc_mod.DriveIndexingService._commit(w.svc, conn.handle, [], {doc})
     finally:
         svc_mod._TICK_MIRROR.reset(token)
     assert w.doc(doc).gone_why == UNKNOWN and w.rec(doc) is None

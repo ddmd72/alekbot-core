@@ -10,8 +10,11 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Tuple
 
+from .connection_scope import ConnectionScope
+
 WINDOW_STATES: Tuple[str, ...] = ("extracted", "uploaded", "submitted", "done", "failed")   # JobWindow.state (§27.5)
 BATCH_KIND_TRANSCRIBE = "transcribe"      # TranscriptBatch.kind; "summary" joins it with T3
+RETAINED_DISCONNECT = "disconnect"        # StoredTranscript.retained_reason (I8)
 
 
 class TranscriptStub(str, Enum):
@@ -159,6 +162,10 @@ class StoredTranscript:
     render_version: int = 0
     summary_version: int = 0
     last_used_at: Optional[datetime] = None
+    # I8 (MULTI_DRIVE_RFC §10, E23): set before a disconnect purges a connection on every head one of its records
+    # carried; the orphan sweep never deletes a retained head. `retained_reason` is RETAINED_DISCONNECT.
+    retained_at: Optional[datetime] = None
+    retained_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -199,6 +206,7 @@ class TranscriptJob:
     reserved_usd: float = 0.0         # the file's estimate, reserved the moment it fit (G39)
     reserved_month: str = ""          # "YYYY-MM" the reservation was made in; its cost is booked there (G9)
     transcribed_at: Optional[datetime] = None   # when the last window was collected (T-R12)
+    connection_id: str = ""           # MULTI_DRIVE_RFC §8: doc id `transcript_job_doc_id(scope, item_id)`; "" before 1b
 
 
 @dataclass(frozen=True)
@@ -226,6 +234,7 @@ class TranscriptBatch:
     display_name: str = ""            # `submitting` only: the name the adapter hashes into the provider's display name (T-R28)
     provider_name: str = ""           # `submitting` only: the provider's batch name, once the submit call returned it (T-R28)
     lookups: int = 0                  # `submitting` only: lookups by display name that found nothing (T-R28)
+    connection_id: str = ""           # MULTI_DRIVE_RFC §8: one connection's windows; doc id `transcript_batch_doc_id`
 
 
 def safe_doc_id(raw: str) -> str:
@@ -238,19 +247,22 @@ def safe_doc_id(raw: str) -> str:
     return out
 
 
-def job_doc_id(user_id: str, item_id: str) -> str:
-    return safe_doc_id(f"{user_id}:{item_id}")
-
-
-def batch_doc_id(user_id: str, name: str) -> str:
-    """A provider batch name is a path (`batches/<id>`); the id carries it escaped."""
-    return safe_doc_id(f"{user_id}:{name}")
-
-
 def transcript_doc_id(user_id: str, content_key: str) -> str:
-    """The content key is `quickXorHash:size` (base64, which has `/`) or the fallback `item:{id}:{cTag}`; the raw key
-    stays a field of the document."""
+    """The content key is the rendered content identity `{family}:{digest}:{size}` (a digest may hold `/`) or the
+    fallback `item:{identity}:{content_version}` (`drive_transcript_windows.transcript_content_key`); the raw key stays a
+    field of the document. User-scoped by design (MULTI_DRIVE_RFC §10)."""
     return safe_doc_id(f"{user_id}:{content_key}")
+
+
+def transcript_job_doc_id(scope: ConnectionScope, item_id: str) -> str:
+    """A transcript job's document id, per connection (MULTI_DRIVE_RFC §8): `{connection_id}:{item_id}`, escaped."""
+    return safe_doc_id(f"{scope.connection_id}:{item_id}")
+
+
+def transcript_batch_doc_id(scope: ConnectionScope, name: str) -> str:
+    """A transcript batch's document id, per connection (§8): `{connection_id}:{name}`, escaped (the provider's batch
+    name is a path)."""
+    return safe_doc_id(f"{scope.connection_id}:{name}")
 
 
 BATCH_CLOSED_STATES: Tuple[str, ...] = ("done", "failed")
@@ -266,7 +278,7 @@ def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
 
 def url_fields(**fields: str) -> List[str]:
     """Names of the given string fields that hold a URL (a `http:` / `https:` scheme or a `://`):
-    §27.4 keeps every URL, a Graph download URL or a Gemini file URI, out of any persisted document. A scheme, not the
+    §27.4 keeps every URL, a drive's download URL or a model provider's file URI, out of any persisted document. A scheme, not the
     letters `http`: a content key is base64 and may begin with them (`:` is not in that alphabet)."""
     return [name for name, value in fields.items() if _is_url(value)]
 

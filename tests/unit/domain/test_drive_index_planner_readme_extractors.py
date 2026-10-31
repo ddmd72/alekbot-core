@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_extraction
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash, card_text, collapsed_folder, repository_root
@@ -31,7 +32,7 @@ def admitted(monkeypatch):
 
 
 def ctx(now=NOW):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
                        place_of=lambda lat, lon: None)
 
 
@@ -40,7 +41,7 @@ def folder(name="proj", child_count=3, item_id="r"):
 
 
 def repo_rec(**kw):
-    rec = DriveIndexRecord(user_id="u", item_id="r", name="proj", parent_id=ROOT, is_folder=True, kind="folder",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="r", name="proj", parent_id=ROOT, is_folder=True, kind="folder",
                            content_class=ContentClass.FOLDER, scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY,
                            reason=Reason.OPAQUE_ROOT, child_count=3, policy_version=policy_version())
     return replace(rec, **kw)
@@ -147,7 +148,7 @@ class TestReadmeDue:
 
     def test_a_marker_leaving_reopens_without_lead_text(self):
         stored = replace(stored_repo(), child_count=3)
-        git = DriveIndexRecord(user_id="u", item_id="g", name=".git", parent_id="r", is_folder=True, kind="folder",
+        git = DriveIndexRecord(user_id="u", connection_id="u", item_id="g", name=".git", parent_id="r", is_folder=True, kind="folder",
                                scope=Scope.INSIDE_OPAQUE, state=RecordState.METADATA_ONLY, reason=Reason.FOLDER)
         plan = plan_observation(DriveChange(item_id="g", deleted=True), git, None, None, ctx(), stored)
         (reopened,) = plan.parent_updates
@@ -179,7 +180,7 @@ class TestReadmeRead:
 
 
 def indexed_by(extractor, kind="markdown", name="a.md"):
-    rec = DriveIndexRecord(user_id="u", item_id="a", name=name, kind=kind, parent_id=ROOT, scope=Scope.NORMAL,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", name=name, kind=kind, parent_id=ROOT, scope=Scope.NORMAL,
                            state=RecordState.PENDING, content_version="c1", policy_version=policy_version())
     out = ExtractionOutcome(status=ExtractionStatus.TEXT, text="Clause.", extracted_by=extractor)
     return indexed(generation_started(rec, NOW), outcome=out, generation=1, chunk_count=1, now=NOW)
@@ -202,7 +203,7 @@ class TestExtractorStale:
         assert not extractor_stale(indexed_by("parser@2"), self.VERSIONS)   # Markdown keeps the parser
 
     def test_never_read_is_never_stale(self):
-        rec = DriveIndexRecord(user_id="u", item_id="a", kind="markdown")
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", kind="markdown")
         assert not extractor_stale(rec, self.VERSIONS)
 
     def test_reextraction_makes_the_content_due_and_keeps_the_readable_generation(self):

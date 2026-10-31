@@ -37,3 +37,4 @@ class ExcerptResult:
     continue_at: Optional[int] = None
     context: ExcerptContext = ExcerptContext.EMPTY
     page: Optional[PageSpan] = None        # only on a page request (`from N`, RFC §29.5)
+    ref_tag: str = ""                      # the searched connection's ref tag (MULTI_DRIVE_RFC §9): files' refs carry it

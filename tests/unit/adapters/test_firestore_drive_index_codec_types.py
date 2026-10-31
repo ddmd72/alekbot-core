@@ -66,7 +66,7 @@ def test_both_models_have_timestamp_fields():
 
 @pytest.mark.parametrize("name", _datetime_fields(DriveIndexRecord))
 def test_record_timestamp_reads_back_as_plain_utc_datetime(name):
-    rec = DriveIndexRecord(user_id="u", item_id="i", **{name: T})
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", **{name: T})
     written = record_to_doc(rec)
     if name in RECORD_FANOUT_FIELDS:
         # the fan-out's own field (USER_DRIVE_INDEXING_RFC §26.2, Δ54): never part of the tick's record writes;
@@ -82,7 +82,7 @@ def test_record_timestamp_reads_back_as_plain_utc_datetime(name):
 
 @pytest.mark.parametrize("name", _datetime_fields(DriveSyncState))
 def test_state_timestamp_reads_back_as_plain_utc_datetime(name):
-    state = DriveSyncState(user_id="u", **{name: T})
+    state = DriveSyncState(user_id="u", connection_id="u", **{name: T})
     written = state_to_doc(state)
     if name in _STATE_FANOUT_TIMESTAMPS:
         # a fan-out flag (SECRETS_AT_REST_RFC §6.2 F1): never part of the tick's state writes; update_sync_flags
@@ -100,7 +100,7 @@ def test_state_timestamp_reads_back_as_plain_utc_datetime(name):
 def test_state_timestamp_map_reads_back_as_plain_utc_datetimes(name):
     """A map of timestamps: every value Firestore hands back is read as a plain UTC datetime, keys kept."""
     written = {"drive_reader": T, "drive_profiler": T + timedelta(minutes=5)}
-    state = DriveSyncState(user_id="u", **{name: written})
+    state = DriveSyncState(user_id="u", connection_id="u", **{name: written})
     doc = _stored(state_to_doc(state))
     assert {type(v) for v in doc[name].values()} == {DatetimeWithNanoseconds}
     back = getattr(state_from_doc("u", doc), name)
@@ -111,7 +111,7 @@ def test_state_timestamp_map_reads_back_as_plain_utc_datetimes(name):
 
 
 def test_brief_doc_date_reads_back_as_plain_utc_datetime():
-    rec = DriveIndexRecord(user_id="u", item_id="i",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i",
                            brief=DocumentBrief(doc_type="invoice", doc_date=T, parties=("A", "B")))
     doc = _stored(record_to_doc(rec))
     assert type(doc["brief"]["doc_date"]) is DatetimeWithNanoseconds

@@ -11,7 +11,8 @@ not connected, or failed. No retry, no queue, and it never raises: the delivery 
 of the copy.
 
 The copy is an ordinary drive file: with drive indexing on, the indexer picks it up like any HTML (the
-save nudges it).
+save nudges it). It goes to the primary connection (MULTI_DRIVE_RFC §11.5, D7): with no primary it is
+"not connected", never written elsewhere.
 """
 from __future__ import annotations
 
@@ -96,7 +97,8 @@ class DeepResearchDriveCopyService:
         title = report_title_from_html(html.decode("utf-8", errors="replace"))
         filename = deep_research_drive_filename(day, title, query)
         try:
-            saved = await self._drive.save(user_id, html, filename, REPORT_CONTENT_TYPE, folder)
+            primary = await self._drive.primary(user_id)
+            saved = await self._drive.save(primary.handle, html, filename, REPORT_CONTENT_TYPE, folder)
         except DriveNotConnectedError:
             logger.info("[DeepResearchDriveCopy] drive not connected for user=%s; not copied", user_id[:8])
             return UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED, ""

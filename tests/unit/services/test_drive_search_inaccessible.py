@@ -11,9 +11,15 @@ import pytest
 from src.domain.drive_search import INACCESSIBLE_COUNTER, render_results
 from src.domain.drive_search_texts import ACCESS_LINE_FILE, ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 
+from .drive_harness_connections import harness_connections
 from .test_drive_search_service import World
 
 SINCE = datetime(2026, 10, 11, 12, 30, tzinfo=timezone.utc)
+
+
+async def _conn(w):
+    """The harness connection the World's search reads (access_note takes the connection, MULTI_DRIVE_RFC §6)."""
+    return await harness_connections(w.users, w.drive).get("u", "u")
 
 
 @pytest.fixture
@@ -41,13 +47,13 @@ async def test_the_card_says_the_file_cannot_be_opened_and_coverage_counts_it(w)
 
 
 async def test_access_note_by_ref(w):
-    assert await w.search_svc.access_note("u", item_id=w.doc) == ACCESS_NOTE_FILE
-    assert await w.search_svc.access_note("u", item_id=w.folder) == ACCESS_NOTE_FOLDER
-    assert await w.search_svc.access_note("u", item_id=w.open_doc) is None
-    assert await w.search_svc.access_note("u", item_id="unknown") is None
+    assert await w.search_svc.access_note(await _conn(w), item_id=w.doc) == ACCESS_NOTE_FILE
+    assert await w.search_svc.access_note(await _conn(w), item_id=w.folder) == ACCESS_NOTE_FOLDER
+    assert await w.search_svc.access_note(await _conn(w), item_id=w.open_doc) is None
+    assert await w.search_svc.access_note(await _conn(w), item_id="unknown") is None
 
 
 async def test_access_note_by_folder_path(w):
-    assert await w.search_svc.access_note("u", path="Shared") == ACCESS_NOTE_FOLDER
-    assert await w.search_svc.access_note("u", path="/shared/") == ACCESS_NOTE_FOLDER   # as the search scope matches
-    assert await w.search_svc.access_note("u", path="Nowhere") is None
+    assert await w.search_svc.access_note(await _conn(w), path="Shared") == ACCESS_NOTE_FOLDER
+    assert await w.search_svc.access_note(await _conn(w), path="/shared/") == ACCESS_NOTE_FOLDER   # as the search scope matches
+    assert await w.search_svc.access_note(await _conn(w), path="Nowhere") is None

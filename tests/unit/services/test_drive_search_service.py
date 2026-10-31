@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_connection_state import ConnectionState
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index import EpochPhase, RecordState
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
     DriveSearchRequest, render_results,
@@ -17,9 +20,14 @@ from src.domain.user_drive import DriveConnection
 from src.services import drive_search_service as search_mod
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_search_service import DriveSearchService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service, seed
 
+from .drive_harness_connections import harness_connections
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 
 class SpyRepo(InMemoryDriveIndexRepository):
@@ -49,7 +57,7 @@ class SpyRepo(InMemoryDriveIndexRepository):
 
 
 class World:
-    def __init__(self, page_size=50):
+    def __init__(self, page_size=50, connections=None):
         self.drive = FakeContentDrive(page_size=page_size)   # wired as in production; see test_drive_indexing_service
         self.repo = SpyRepo()
         self.emb = FakeEmbeddings()
@@ -58,16 +66,18 @@ class World:
         self.indexer = DriveIndexingService(self.drive, self.repo, self.emb, FakeQueue(), self.users,
                                             lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                             extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                            triage=FakeTriage(), clock=self.clock, monotonic=self.clock.monotonic)
+                                            triage=FakeTriage(), connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         counter = itertools.count(1)
-        self.search_svc = DriveSearchService(self.repo, self.emb, self.users, self.drive, clock=self.clock,
+        self.search_svc = DriveSearchService(self.repo, self.emb, self.drive,
+                                             connections or harness_connections(self.users, self.drive),
+                                             clock=self.clock,
                                              nonce=lambda: f"nonce{next(counter):04d}",
                                              embedding_space="test-space/8")
 
     async def settle(self, max_ticks=50):
         for _ in range(max_ticks):
-            await self.indexer.tick("u")
-            state = await self.repo.get_sync_state("u")
+            await self.indexer.tick(U_SCOPE)
+            state = await self.repo.get_sync_state(U_SCOPE)
             if state is None or state.continuation_enqueued_at is None:
                 return
             self.clock.advance(1)
@@ -82,7 +92,7 @@ class World:
 
 
 def taken(day):
-    return {"photo": {"takenDateTime": f"{day}T10:00:00Z"}}
+    return DriveMediaFacts(taken_at=datetime.fromisoformat(f"{day}T10:00:00+00:00"))
 
 
 def paths(result):
@@ -104,20 +114,25 @@ class TestGate:
         reads = w.users.reads
         w.users.enabled["u"] = False   # opt-out with a warm agent cache: the next search sees it
         result = await w.search("lease")
-        assert result.status == STATUS_DISABLED and result.cards == () and w.users.reads == reads + 1
+        # the switch is the connection's (MULTI_DRIVE_RFC §3): a search reads the primary pointer and the connection
+        # fresh (§4.4, E2), and the harness derives each read from the profile
+        assert result.status == STATUS_DISABLED and result.cards == () and w.users.reads == reads + 2
         assert "turned on" in render_results(result)
 
-    async def test_disconnect_hides_the_index(self, w):
+    async def test_disconnect_hides_the_index(self):
+        # a disconnect is the connection's state now (MULTI_DRIVE_RFC §4.4), not the drive port's
+        conns = FakeDriveConnectionRepository()
+        w = World(connections=connection_service(conns))
         w.drive.add("lease.pdf")
         await w.settle()
-        w.drive.connection_state = DriveConnection(connected=False)
+        await seed(conns, "u", "u", tag="a1", drive_identity="fake:d1", state=ConnectionState.DISCONNECTED)
         assert (await w.search("lease")).status == STATUS_DISCONNECTED
 
     async def test_expired_grant_answers_with_reconnect_needed_until_the_ttl(self, w):
         w.drive.add("lease.pdf")
         await w.settle()
         w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
-        await w.indexer.tick("u")   # the gate stamps access_lost_at
+        await w.indexer.tick(U_SCOPE)   # the gate stamps access_lost_at
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.envelope.reconnect_needed and paths(result) == ["lease.pdf"]
         assert "reconnect the drive" in render_results(result)
@@ -146,7 +161,7 @@ class TestEnvelope:
         w.drive.add("doc.pdf")
         await w.settle()
         result = await w.search("doc")
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         assert not result.envelope.building and result.envelope.index_as_of == state.observed_as_of
         assert result.envelope.content_search is True and result.envelope.enabled   # the flip (§24.1, §10.2)
 
@@ -156,7 +171,7 @@ class TestEnvelope:
     async def test_an_epoch_not_idle_is_building(self, w, change):
         w.drive.add("doc.pdf")
         await w.settle()
-        w.repo.states["u"] = replace(await w.repo.get_sync_state("u"), **change)
+        w.repo.states["u"] = replace(await w.repo.get_sync_state(U_SCOPE), **change)
         assert (await w.search("doc")).envelope.building
 
     async def test_edits_and_cascades_do_not_set_building(self, w):
@@ -178,14 +193,14 @@ class TestEnvelope:
     async def test_a_purge_in_progress_answers_building_with_no_results(self, w):
         w.drive.add("lease.pdf")
         await w.settle()
-        w.repo.states["u"] = replace(await w.repo.get_sync_state("u"), purging=True)
+        w.repo.states["u"] = replace(await w.repo.get_sync_state(U_SCOPE), purging=True)
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
 
     async def test_reconnected_after_the_ttl_answers_building_not_the_half_purged_index(self, w):
         w.drive.add("lease.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, access_lost_at=w.clock.now - ACCESS_LOSS_TTL)
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
@@ -194,7 +209,7 @@ class TestEnvelope:
     async def test_unread_comes_from_the_counters(self, w):
         w.drive.add("doc.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, counters={**state.counters, "unread": 3})
         assert (await w.search("doc")).envelope.unread == 3
 
@@ -237,15 +252,15 @@ class TestRanking:
             w.drive.add(name)
         await w.settle()
         result = await w.search("pdf")
-        assert {c.ref for c in result.cards} == {f"drive:{c.item_id}" for c in result.cards}
+        assert {c.ref for c in result.cards} == {f"drive:a1:{c.item_id}" for c in result.cards}
         assert len({c.nonce for c in result.cards}) == 3 and all(c.kind == "pdf" for c in result.cards)
 
 
     async def test_duplicates_collapse_by_content_hash(self, w):
-        same = {"hashes": {"quickXorHash": "QX1"}}
+        same = ContentIdentity("quickxor", "QX1", 10)
         a, b = w.drive.add("Contracts", folder=True), w.drive.add("Inbox", folder=True)
-        w.drive.add("Lease.pdf", parent=a, facets=same, size_bytes=10)
-        w.drive.add("Lease.pdf", parent=b, facets=same, size_bytes=10)
+        w.drive.add("Lease.pdf", parent=a, content_identity=same, size_bytes=10)
+        w.drive.add("Lease.pdf", parent=b, content_identity=same, size_bytes=10)
         await w.settle()
         result = await w.search("lease")
         lease = [c for c in result.cards if c.name == "Lease.pdf"]
@@ -294,8 +309,8 @@ class TestVisibility:
 class TestFilters:
     async def test_filter_only_is_newest_first_without_knn_and_says_how_many(self, w):
         for i, day in enumerate(("2026-01-05", "2026-03-01", "2025-12-30")):
-            w.drive.add(f"scan{i}.pdf", facets=taken(day))
-        w.drive.add("budget.xlsx", facets=taken("2026-02-01"))
+            w.drive.add(f"scan{i}.pdf", media=taken(day))
+        w.drive.add("budget.xlsx", media=taken("2026-02-01"))
         await w.settle()
         calls = len(w.emb.calls)
         result = await w.search("", kind="pdf", date_from=datetime(2026, 1, 1, tzinfo=timezone.utc))
@@ -328,7 +343,7 @@ class TestFolderScope:
 
     async def test_by_ref(self, w):
         contracts = await self._tree(w)
-        assert paths(await w.search("lease", folder=f"drive:{contracts}")) == ["Contracts/Lease agreement.pdf"]
+        assert paths(await w.search("lease", folder=f"drive:a1:{contracts}")) == ["Contracts/Lease agreement.pdf"]
 
     async def test_several_matches_are_candidates_not_a_guess(self, w):
         await self._tree(w)
@@ -452,7 +467,7 @@ class TestKindFamilies:
     async def _sheets(self, w):
         for name, day in (("budget.xlsx", "2026-03-01"), ("plan.ods", "2026-02-01"), ("data.csv", "2026-01-01"),
                           ("old.xls", "2025-01-01"), ("report.pdf", "2026-04-01")):
-            w.drive.add(name, facets=taken(day))
+            w.drive.add(name, media=taken(day))
         await w.settle()
 
     async def test_all_my_spreadsheets_filter_only_one_query_per_member(self, w):
@@ -495,8 +510,8 @@ class TestIndexingStatus:
 
 
 def test_contract_signature():
-    """The constructor named in the cross-part contract: (repo, embeddings, users, drive, *, clock)."""
+    """The constructor named in the cross-part contract: (repo, embeddings, drive, connections, *, clock)."""
     import inspect
     params = inspect.signature(DriveSearchService.__init__).parameters
-    assert list(params)[1:5] == ["repo", "embeddings", "users", "drive"]
+    assert list(params)[1:5] == ["repo", "embeddings", "drive", "connections"]
     assert params["clock"].kind is inspect.Parameter.KEYWORD_ONLY

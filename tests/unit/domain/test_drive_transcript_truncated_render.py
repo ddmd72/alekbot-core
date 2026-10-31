@@ -8,7 +8,7 @@ from src.domain.drive_transcript_render import TRUNCATED_NOTE, UNCERTAIN_SEAM_LI
 
 
 def _rec(**kw):
-    return DriveIndexRecord(user_id="u", item_id="i", kind="audio", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", identity="microsoft_onedrive:d1:i", kind="audio", **kw)
 
 
 def _stored(**kw):

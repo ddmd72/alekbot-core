@@ -15,7 +15,7 @@ Public interface:
     without_checks(checks, done) -> Tuple[NoteCheck, ...]
     audit_due(audited_at, now) -> bool
     audit_key(note) -> AuditKey                                        # the audit's order and its pass cursor
-    audit_candidates(notes, *, provider_key, drive_id, now, after=None) -> List[DriveNote]
+    audit_candidates(notes, *, ref_tag, now, after=None) -> List[DriveNote]   (the connection's notes, by ref tag)
     audit_cursor(state) -> Optional[AuditKey]
     refreshed_snapshot(old, change, *, path, now) -> NoteSnapshot      # the item was found: what the bot saw now
     moved_snapshot(old, path) -> Optional[NoteSnapshot]                # the item is gone: only its last known path
@@ -29,9 +29,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Collection, Iterable, List, Optional, Sequence, Tuple
 
-from .drive_card import content_hash_of
+from .drive_content_identity import ContentIdentity
 from .drive_index import DriveChange, DriveIndexRecord, DriveSyncState
-from .drive_note import CONTENT_KEY_FAMILY, DriveNote, NoteSnapshot, NoteState, binding_parts_of
+from .drive_note import DriveNote, NoteSnapshot, NoteState, on_connection
 from .drive_note_check import NoteCheck
 from .drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
 
@@ -108,10 +108,10 @@ def audit_cursor(state: DriveSyncState) -> Optional[AuditKey]:
     return (state.notes_audit_after_at or _NEVER, state.notes_audit_after_id)
 
 
-def audit_candidates(notes: Iterable[DriveNote], *, provider_key: str, drive_id: str, now: datetime,
+def audit_candidates(notes: Iterable[DriveNote], *, ref_tag: str, now: datetime,
                      after: Optional[AuditKey] = None) -> List[DriveNote]:
-    """The active notes the audit may read by id (§7.4): bound to the index's drive of this provider (a dormant note is
-    another drive's, and is never read), not an erase stub, not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS, and —
+    """The active notes the audit may read by id (§7.4): bound on the index's connection (`ref_tag`, MULTI_DRIVE_RFC §9;
+    a note of another connection is dormant here, and is never read), not an erase stub, not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS, and —
     in a pass that resumes — after the pass cursor `after`, so a note that failed is not tried twice in one pass. In
     `audit_key` order."""
     horizon = now - timedelta(days=NOTE_AUDIT_SKIP_DAYS)
@@ -119,8 +119,7 @@ def audit_candidates(notes: Iterable[DriveNote], *, provider_key: str, drive_id:
     for note in notes:
         if note.state != NoteState.ACTIVE.value or note.erase_pending:
             continue
-        parts = binding_parts_of(note)
-        if parts is None or parts.provider_key != provider_key or parts.drive_id != drive_id:
+        if not on_connection(note, ref_tag):
             continue
         seen = note.snapshot.snapshot_at if note.snapshot is not None else None
         if seen is not None and seen > horizon:
@@ -142,7 +141,7 @@ def refreshed_snapshot(old: Optional[NoteSnapshot], change: DriveChange, *, path
     the content key from the observation; `path` from the parent chain, or the last known one when the chain could not
     be read (None); kind and effective date kept (the index decides those; a note does not re-derive them)."""
     base = old or NoteSnapshot()
-    content_key = content_hash_of(change) or ""
+    content_key, family = _content_key(change.content_identity)
     return base.model_copy(update={
         "name": change.name or base.name,
         "path": path if path is not None else base.path,
@@ -153,7 +152,7 @@ def refreshed_snapshot(old: Optional[NoteSnapshot], change: DriveChange, *, path
         "fs_created_at": change.created_at or base.fs_created_at,
         "fs_modified_at": change.fs_modified_at or base.fs_modified_at,
         "content_key": content_key,
-        "content_key_family": CONTENT_KEY_FAMILY if content_key else "",
+        "content_key_family": family,
         "snapshot_at": now,
     })
 
@@ -169,7 +168,8 @@ def moved_snapshot(old: Optional[NoteSnapshot], path: Optional[str]) -> Optional
 
 def record_moved(before: DriveIndexRecord, after: DriveIndexRecord) -> bool:
     """§7.5: an observation changed what a note's snapshot holds of its item — the name, the parent or the content."""
-    return (before.name, before.parent_id, before.content_hash) != (after.name, after.parent_id, after.content_hash)
+    return ((before.name, before.parent_id, before.content_identity)
+            != (after.name, after.parent_id, after.content_identity))
 
 
 def snapshot_stale(snapshot: Optional[NoteSnapshot], rec: DriveIndexRecord) -> bool:
@@ -178,7 +178,7 @@ def snapshot_stale(snapshot: Optional[NoteSnapshot], rec: DriveIndexRecord) -> b
     if snapshot is None:
         return True
     return (snapshot.name, snapshot.parent_item_id, snapshot.content_key) != (
-        rec.name, rec.parent_id, rec.content_hash or "")
+        rec.name, rec.parent_id, _content_key(rec.content_identity)[0])
 
 
 def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, path: Optional[str],
@@ -186,7 +186,7 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
     """The snapshot as the index holds the item now (§7.5): no item call. `path` from the parent chain, or the last
     known one (None)."""
     base = old or NoteSnapshot()
-    content_key = rec.content_hash or ""
+    content_key, family = _content_key(rec.content_identity)
     return base.model_copy(update={
         "name": rec.name or base.name,
         "path": path if path is not None else base.path,
@@ -198,6 +198,14 @@ def snapshot_from_record(old: Optional[NoteSnapshot], rec: DriveIndexRecord, *, 
         "fs_modified_at": rec.fs_modified_at or base.fs_modified_at,
         "effective_date": rec.effective_date or base.effective_date,
         "content_key": content_key,
-        "content_key_family": CONTENT_KEY_FAMILY if content_key else "",
+        "content_key_family": family,
         "snapshot_at": now,
     })
+
+
+def _content_key(identity: Optional[ContentIdentity]) -> Tuple[str, str]:
+    """The snapshot's content key and family (MULTI_DRIVE_RFC §7.2): `{family}:{digest}:{size}` and the adapter's family;
+    ("", "") when the provider gave no hash (no family is implied by absence)."""
+    if identity is None:
+        return "", ""
+    return identity.render(), identity.family

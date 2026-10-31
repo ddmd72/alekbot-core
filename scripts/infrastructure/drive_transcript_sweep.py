@@ -39,10 +39,14 @@ The transcript mirror (T2, §27.9) has three kinds of data, and the default keep
   this script deletes a root document, last. (The pin reads span drives, so a stray detached or marked document would pin a
   transcript that a re-buy would then keep.)
 
+Per connection since slice 1b (MULTI_DRIVE_RFC §8, §10): transcript jobs, batches and window results belong to a connection
+and are swept for each of the user's connections (every state: a disconnected one's leftovers too); the stored transcripts,
+the usage and the mirror (roots and ledger by drive identity) are the user's.
+
 Dry run by default: lists the users and the open reservations per month, writes nothing (the port cannot count documents).
-With --apply it takes each user's lease when a sync state exists (refused while a tick runs: retry in a few minutes).
-`--all-users` visits the users that still have a sync state; a user whose state is already gone (an old-code purge) must be
-named with `--user` (repeatable).
+With --apply it takes each connection's lease when its sync state exists (refused while a tick runs: retry in a few
+minutes). `--all-users` visits the users that still have a sync state on some connection; a user whose states are already
+gone must be named with `--user` (repeatable).
 
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
     python scripts/infrastructure/drive_transcript_sweep.py --user <user_id> [--user <user_id> ...] [--months 6] [--apply]
@@ -62,6 +66,7 @@ from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Optional, Se
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.domain.connection_scope import ConnectionScope  # noqa: E402
 from src.domain.drive_enrichment import UsageClass  # noqa: E402
 from src.domain.drive_index import DriveIndexStoreUnavailable  # noqa: E402
 from src.domain.drive_transcript_job import SUBMITTED  # noqa: E402
@@ -75,16 +80,18 @@ _SCAN = 1000     # records and open batches read for settlement (as the purge)
 _MONTHS = 6
 _PAGE = 200
 
-RootDeleter = Callable[[str, str], Awaitable[None]]   # (user_id, drive_id): the port has no root delete, the script supplies it
+RootDeleter = Callable[[str, str], Awaitable[None]]   # (user_id, drive_identity): the port has no root delete, the script supplies it
 
 
 def firestore_root_deleter(db: Any, env: Any) -> RootDeleter:
-    """Deletes the root document `{env.drive_mirror_roots_collection}/{root_doc_id(user_id, drive_id)}`. Deliberately not a
-    port method: that keeps Δ184's "no purge deletes a root document" structural (only this script, by hand, does)."""
-    from src.adapters.firestore_drive_mirror_repo import root_doc_id
+    """Deletes the root document `{env.drive_mirror_roots_collection}/{mirror_root_doc_id(user_id, drive_identity)}`.
+    Deliberately not a port method: that keeps Δ184's "no purge deletes a root document" structural (only this script, by
+    hand, does)."""
+    from src.domain.drive_mirror import mirror_root_doc_id
 
-    async def delete(user_id: str, drive_id: str) -> None:
-        await db.collection(env.drive_mirror_roots_collection).document(root_doc_id(user_id, drive_id)).delete()
+    async def delete(user_id: str, drive_identity: str) -> None:
+        await db.collection(env.drive_mirror_roots_collection).document(
+            mirror_root_doc_id(user_id, drive_identity)).delete()
     return delete
 
 
@@ -122,16 +129,21 @@ async def _settle_one(repo: DriveIndexRepository, user_id: str, usd: float, mont
 
 
 async def settle_reservations(repo: DriveIndexRepository, user_id: str, months: Sequence[str], *, apply: bool,
-                              now: datetime) -> Settlement:
+                              now: datetime, scopes: Sequence[ConnectionScope] = ()) -> Settlement:
     """T-R25, as the purge does it (`_release_transcript_reservations`), BEFORE any delete: a provider batch cannot be
     cancelled and bills when it finishes, so (1) every open batch's reservation is BOOKED as spend in its own month;
     (2) a job's reservation is booked when any window is `submitted`, released otherwise; (3) what is left in the scanned
-    months' counters is released. Each document is saved zeroed first. Without `apply` it only measures."""
+    months' counters is released. Each document is saved zeroed first. Without `apply` it only measures. `scopes`: the
+    user's connections, whose batches, jobs and records are read; the usage months are the user's."""
     out = Settlement()
-    batches = await repo.get_open_batches(user_id, now + timedelta(days=3650), _SCAN)
-    item_ids = {key.rsplit(":", 1)[0] for batch in batches for key in batch.request_keys}
-    for state in (WORKING, WAITING, PARKED, HELD):
-        item_ids.update(rec.item_id for rec in await repo.transcript_records(user_id, state, _SCAN))
+    batches = []
+    item_ids = set()
+    for scope in scopes:
+        scope_batches = await repo.get_open_batches(scope, now + timedelta(days=3650), _SCAN)
+        batches += scope_batches
+        item_ids.update((scope, key.rsplit(":", 1)[0]) for batch in scope_batches for key in batch.request_keys)
+        for state in (WORKING, WAITING, PARKED, HELD):
+            item_ids.update((scope, rec.item_id) for rec in await repo.transcript_records(scope, state, _SCAN))
     per_month: Dict[str, float] = {}
     for batch in batches:
         if batch.reserved_usd > 0 and not batch.reserved_month:
@@ -143,9 +155,9 @@ async def settle_reservations(repo: DriveIndexRepository, user_id: str, months: 
         if apply:
             await repo.save_batch(replace(batch, reserved_usd=0.0, reserved_month=""))
             await _settle_one(repo, user_id, batch.reserved_usd, batch.reserved_month, book=True)
-    for item_id in sorted(item_ids):
+    for scope, item_id in sorted(item_ids, key=lambda pair: (pair[0].connection_id, pair[1])):
         try:
-            job = await repo.get_transcript_job(user_id, item_id)
+            job = await repo.get_transcript_job(scope, item_id)
         except ValueError:
             continue          # unreadable: deleted unsettled, its month counter is released below
         if job is not None and job.reserved_usd > 0 and not job.reserved_month:
@@ -170,10 +182,11 @@ async def settle_reservations(repo: DriveIndexRepository, user_id: str, months: 
     return out
 
 
-async def _drain(deleter, user_id: str) -> int:   # type: ignore[no-untyped-def]
+async def _drain(deleter, key: Any) -> int:   # type: ignore[no-untyped-def]
+    """Calls `deleter(key, _BATCH)` until it deletes nothing; `key` is the user id or a connection scope."""
     total = 0
     while True:
-        deleted = await deleter(user_id, _BATCH)
+        deleted = await deleter(key, _BATCH)
         total += deleted
         if deleted == 0:
             return total
@@ -186,13 +199,13 @@ def _no_month_note(settlement: Settlement) -> str:
     return f"; {settlement.no_month} documents hold reserved money with no reserved_month (not settled by month)"
 
 
-async def _drive_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_id: str) -> List[str]:
+async def _drive_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_identity: str) -> List[str]:
     """Keys of the ledger documents of one drive: the folder/archive walk, then the file walk (both page on the key)."""
     keys: List[str] = []
     for reader in (mirror_repo.folder_docs, mirror_repo.scan_page):
         after: Optional[str] = None
         while True:
-            page = await reader(user_id, drive_id, after, _PAGE)
+            page = await reader(user_id, drive_identity, after, _PAGE)
             keys.extend(doc.key for doc in page)
             if len(page) < _PAGE:
                 break
@@ -201,11 +214,11 @@ async def _drive_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_id
 
 
 async def mirror_inventory(mirror_repo: DriveMirrorRepository, user_id: str) -> Tuple[List[str], List[str]]:
-    """(drive ids of the user's root documents, ledger document keys of those drives). Counts only; no names."""
-    drives = [root.drive_id for root in await mirror_repo.roots(user_id)]
+    """(drive identities of the user's root documents, ledger document keys of those drives). Counts only; no names."""
+    drives = [root.drive_identity for root in await mirror_repo.roots(user_id)]
     keys: List[str] = []
-    for drive_id in drives:
-        keys.extend(await _drive_docs(mirror_repo, user_id, drive_id))
+    for drive_identity in drives:
+        keys.extend(await _drive_docs(mirror_repo, user_id, drive_identity))
     return drives, keys
 
 
@@ -222,8 +235,8 @@ async def delete_mirror_data(mirror_repo: DriveMirrorRepository, user_id: str, r
         for doc in archived:
             await mirror_repo.delete_doc(user_id, doc.key)
             keys.append(doc.key)
-    for drive_id in drives:
-        await root_deleter(user_id, drive_id)
+    for drive_identity in drives:
+        await root_deleter(user_id, drive_identity)
     return len(keys), len(drives)
 
 
@@ -243,9 +256,11 @@ async def _delete_store(repo: DriveIndexRepository, user_id: str, pins: FrozenSe
 async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime, owner: str,
                      months: int = _MONTHS, after_rollback: bool = False,
                      mirror_repo: Optional[DriveMirrorRepository] = None, mirror: bool = False,
-                     root_deleter: Optional[RootDeleter] = None) -> Tuple[int, str]:
+                     root_deleter: Optional[RootDeleter] = None,
+                     scopes: Sequence[ConnectionScope] = ()) -> Tuple[int, str]:
     """Returns (exit code, message): counts and dollar amounts only. With `mirror_repo` the pinned store entries are kept
-    (the default) unless `mirror` (`--mirror`) is set, which also needs `root_deleter` to delete the mirror's data."""
+    (the default) unless `mirror` (`--mirror`) is set, which also needs `root_deleter` to delete the mirror's data.
+    `scopes`: the user's connections (their jobs, batches, window results and leases)."""
     if mirror and (mirror_repo is None or root_deleter is None):
         return 1, "--mirror needs the mirror repository and a root deleter"
     if mirror and apply and not after_rollback:
@@ -260,12 +275,13 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
             return 1, ("the pin queries failed: the ledger store is unavailable or its single-field indexes are not READY "
                        "(no composite is needed since Δ237): nothing was settled or deleted; re-run once the store answers")
     scan = months_back(now, months)
-    live = [state for state in (READY, WAITING, WORKING) if await repo.transcript_records(user_id, state, 1)]
+    live = [state for state in (READY, WAITING, WORKING)
+            if any([await repo.transcript_records(scope, state, 1) for scope in scopes])]
     if live and not after_rollback:
         return 1, (f"refused: records in transcript state {'/'.join(live)} — the transcript stage may still be running. "
                    f"Run this only after the rollback, then pass --after-rollback")
     if not apply:
-        plan = await settle_reservations(repo, user_id, scan, apply=False, now=now)
+        plan = await settle_reservations(repo, user_id, scan, apply=False, now=now, scopes=scopes)
         mirror_note = ""
         if mirror_repo is not None:
             if mirror:
@@ -278,18 +294,20 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
         return 0, (f"dry run: would book ${plan.booked:.4f} in flight, release ${plan.released:.4f}, then delete the "
                    f"transcript jobs, batches, stored transcripts and window/part documents (months scanned: "
                    f"{len(scan)}){_no_month_note(plan)}{mirror_note}; re-run with --apply")
-    leased = False
-    if await repo.get_sync_state(user_id) is not None:
-        if await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False) is None:
-            return 1, "a tick holds the lease; retry in a few minutes"
-        leased = True
+    leased: List[ConnectionScope] = []
     try:
-        settled = await settle_reservations(repo, user_id, scan, apply=True, now=now)   # before any delete
-        jobs = await _drain(repo.delete_user_transcript_jobs, user_id)
-        batches = await _drain(repo.delete_user_batches, user_id)
+        for scope in scopes:
+            if await repo.get_sync_state(scope) is not None:
+                if await repo.acquire_lease(scope, owner, now, now + _HOLD, create=False) is None:
+                    return 1, "a tick holds the lease; retry in a few minutes"
+                leased.append(scope)
+        settled = await settle_reservations(repo, user_id, scan, apply=True, now=now, scopes=scopes)   # before any delete
+        jobs = sum([await _drain(repo.delete_user_transcript_jobs, scope) for scope in scopes])
+        batches = sum([await _drain(repo.delete_user_batches, scope) for scope in scopes])
         stored = await _delete_store(repo, user_id, pins)
         try:   # T-R14: only after the three helpers returned 0
-            orphans = await _drain(lambda u, n: repo.delete_user_transcript_orphans(u, n, keep_transcripts=bool(pins)), user_id)
+            orphans = sum([await _drain(lambda c, n: repo.delete_user_transcript_orphans(c, n, keep_transcripts=bool(pins)),
+                                        scope) for scope in scopes])
         except DriveIndexStoreUnavailable:
             return 1, (f"settled (booked ${settled.booked:.4f}, released ${settled.released:.4f}); deleted {jobs} jobs, "
                        f"{batches} batches, {stored} stored transcripts; the window/part sweep needs its "
@@ -302,8 +320,8 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
         elif pins:
             mirror_note = f"; kept {len(pins)} pinned stored transcripts, the ledger and the root documents"
     finally:
-        if leased:
-            await repo.release_lease(user_id, owner)
+        for scope in leased:
+            await repo.release_lease(scope, owner)
     return 0, (f"booked ${settled.booked:.4f} in flight, released ${settled.released:.4f}; deleted {jobs} jobs, "
                f"{batches} batches, {stored} stored transcripts, {orphans} window/part documents"
                f"{'; reservations still open: ' + str(len(remaining)) if remaining else ''}{_no_month_note(settled)}{mirror_note}")
@@ -311,12 +329,15 @@ async def sweep_user(repo: DriveIndexRepository, user_id: str, *, apply: bool, n
 
 async def run(repo: DriveIndexRepository, user_ids: Sequence[str], *, apply: bool, now: datetime,
               months: int = _MONTHS, after_rollback: bool = False, mirror_repo: Optional[DriveMirrorRepository] = None,
-              mirror: bool = False, root_deleter: Optional[RootDeleter] = None) -> Tuple[int, List[str]]:
+              mirror: bool = False, root_deleter: Optional[RootDeleter] = None,
+              scopes: Optional[Dict[str, List[ConnectionScope]]] = None) -> Tuple[int, List[str]]:
+    """`scopes`: each user's connections (missing: none)."""
     code, lines = 0, []
     for user_id in user_ids:
         user_code, message = await sweep_user(repo, user_id, apply=apply, now=now, owner=f"sweep-{uuid.uuid4().hex}",
                                               months=months, after_rollback=after_rollback, mirror_repo=mirror_repo,
-                                              mirror=mirror, root_deleter=root_deleter)
+                                              mirror=mirror, root_deleter=root_deleter,
+                                              scopes=(scopes or {}).get(user_id, []))
         code = max(code, user_code)
         lines.append(f"{user_id}: {message}" if len(user_ids) > 1 else message)
     return code, lines
@@ -333,14 +354,23 @@ async def _main(users: List[str], all_users: bool, months: int, apply: bool, aft
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
     from src.adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
 
+    from src.adapters.firestore_drive_connection_repo import FirestoreDriveConnectionRepository
+
     repo = FirestoreDriveIndexRepository(db, env)
     mirror_repo = FirestoreDriveMirrorRepository(db, env)
-
+    connections = FirestoreDriveConnectionRepository(db, env.drive_connections_collection,
+                                                     env.drive_user_settings_collection)
     root_deleter = firestore_root_deleter(db, env)
 
-    names = sorted(set(users) | (set(await repo.list_sync_user_ids()) if all_users else set()))
+    synced = await repo.list_sync_scopes()
+    names = sorted(set(users) | ({s.user_id for s in synced} if all_users else set()))
+    scopes: Dict[str, List[ConnectionScope]] = {}
+    for user_id in names:
+        found = {c.scope for c in await connections.list_for_user(user_id)} | {s for s in synced if s.user_id == user_id}
+        scopes[user_id] = sorted(found, key=lambda s: s.connection_id)
     code, lines = await run(repo, names, apply=apply, now=datetime.now(timezone.utc), months=months,
-                          after_rollback=after_rollback, mirror_repo=mirror_repo, mirror=mirror, root_deleter=root_deleter)
+                            after_rollback=after_rollback, mirror_repo=mirror_repo, mirror=mirror,
+                            root_deleter=root_deleter, scopes=scopes)
     for line in lines:
         print(line)
     return code

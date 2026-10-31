@@ -32,8 +32,9 @@ RD = FolderNote("f-rd", "R&D", 1, "noted by the owner: «Acme specifications; th
 OWN = "noted by the owner: «Tom's draft, not final»"
 NOTED = ExcerptContext(files=(FileContext("item-1", TOMS_PLAN, ("f-rd",), "Tom Baker's plan for the review", OWN),),
                        folders={"f-rd": RD})
-FIRST = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")]),
-               question=QUESTION, context=NOTED)
+FIRST = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")],
+                            ref_tag="a1"),
+               question=QUESTION, context=NOTED, ref_tag="a1")
 
 
 def outcome_of(found: ExcerptResult, *, shown_folders=frozenset(), described_files=frozenset()) -> DriveOutcome:
@@ -42,7 +43,7 @@ def outcome_of(found: ExcerptResult, *, shown_folders=frozenset(), described_fil
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK if found.files else OutcomeClass.NOT_FOUND,
                         text=rendered.text, success=True, items=tuple(f.drive_item() for f in found.files),
                         facts=ReadFacts(excerpts=bool(found.files), owner_note=rendered.plan.has_owner_line),
-                        excerpts=found, excerpt_plan=rendered.plan, request_text=QUESTION)
+                        excerpts=found, excerpt_plan=rendered.plan, request_text=QUESTION, ref_tag="a1")
 
 
 def _ops(*finds: ExcerptResult, ranged=None):
@@ -73,9 +74,9 @@ async def _call(run, name, **args):
 async def test_find_passages_makes_one_call_with_its_arguments_and_an_empty_ledger():
     ops = _ops(FIRST)
     run, collector = _run(ops)
-    await _call(run, tt.FIND_PASSAGES, question=QUESTION, folder="R&D", file_refs="drive:item-1")
+    await _call(run, tt.FIND_PASSAGES, question=QUESTION, folder="R&D", file_refs="drive:a1:item-1")
     ops.find_passages.assert_awaited_once_with(
-        CTX, "u1", question=QUESTION, folder="R&D", file_refs="drive:item-1", shown=frozenset(),
+        CTX, "u1", question=QUESTION, folder="R&D", file_refs="drive:a1:item-1", shown=frozenset(),
         shown_folders=frozenset(), described_files=frozenset())
     (r,) = collector.results
     assert (r.handle, r.step, r.kind, r.outcome.op) == ("r1", 1, t.KIND_PASSAGES, DriveOp.PASSAGES)
@@ -104,12 +105,13 @@ async def test_a_found_passage_enters_the_ledger_and_drive_context():
     assert collector.ledger.keys() == frozenset({("item-1", 1, 2)})
     assert collector.ledger.folders_shown() == frozenset({"f-rd"})
     assert collector.ledger.files_described() == frozenset({"item-1"})
-    assert collector.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:item-1", "op": "passages", "passages": [3]}]
+    assert collector.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:a1:item-1", "op": "passages", "passages": [3]}]
 
 
 async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_more():
-    second = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 5, "The second review closes the plan.")]),
-                    question=QUESTION, context=NOTED)
+    second = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 5, "The second review closes the plan.")],
+                                 ref_tag="a1"),
+                    question=QUESTION, context=NOTED, ref_tag="a1")
     ops = _ops(FIRST, second)
     run, _ = _run(ops)
     first_seen = await _call(run, tt.FIND_PASSAGES, question=QUESTION)
@@ -124,24 +126,25 @@ async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_mor
 
 
 async def test_a_repeated_match_is_listed_by_id():
-    again = result(question=QUESTION, repeated=(("item-1", 1, 2),))
+    again = result(question=QUESTION, repeated=(("item-1", 1, 2),), ref_tag="a1")
     ops = _ops(FIRST, again)
     run, _ = _run(ops)
     await _call(run, tt.FIND_PASSAGES, question=QUESTION)
     seen = await _call(run, tt.FIND_PASSAGES, question="What comes after the first review?")
-    assert "Already shown earlier in this request and matched again: drive:item-1:3" in seen.result_str
+    assert "Already shown earlier in this request and matched again: drive:a1:item-1:3" in seen.result_str
 
 
 async def test_read_passages_makes_one_call_with_the_context_sets_only():
     ranged = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off."),
-                                                       chunk("item-1", 3, "Then Lukas Weber approves the budget.")]),
-                    request=ExcerptRangeRequest("drive:item-1", 3, 4), context=NOTED)
+                                                       chunk("item-1", 3, "Then Lukas Weber approves the budget.")],
+                                 ref_tag="a1"),
+                    request=ExcerptRangeRequest("drive:a1:item-1", 3, 4), context=NOTED, ref_tag="a1")
     ops = _ops(FIRST, ranged=ranged)
     run, collector = _run(ops)
     await _call(run, tt.FIND_PASSAGES, question=QUESTION)
     run.step = 2
-    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="3-4")
-    ops.read_passages.assert_awaited_once_with(CTX, "u1", file_ref="drive:item-1", passages="3-4",
+    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="3-4")
+    ops.read_passages.assert_awaited_once_with(CTX, "u1", file_ref="drive:a1:item-1", passages="3-4",
                                                shown_folders=frozenset({"f-rd"}),
                                                described_files=frozenset({"item-1"}))
     assert "shown" not in ops.read_passages.await_args.kwargs   # a named range is delivered whole
@@ -156,7 +159,7 @@ async def test_both_passages_tools_are_unordered_reads(name):
     ops = _ops(FIRST, ranged=FIRST)
     collector = PassThroughCollector()
     run = DriveToolRun(ops, collector, (), CTX, "u1", deadline=0.0, clock=lambda: 1.0)
-    await _call(run, name, question=QUESTION, file_ref="drive:item-1", passages="3")
+    await _call(run, name, question=QUESTION, file_ref="drive:a1:item-1", passages="3")
     assert collector.results[0].outcome.cls is OutcomeClass.NOT_FINISHED
     assert not ops.find_passages.called and not ops.read_passages.called
 

@@ -7,41 +7,46 @@ import ast
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from src.domain import drive_ref
 from src.domain.drive_note import DriveNote, NoteBinding
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.drive_resolved_ref import ResolvedDriveRef
+from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_note_service import DriveNoteService
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_connection_service_fake import connection
 
 CTX = {"user_id": "u1", "account_id": "a1"}
+CONN = connection("u1", ref_tag="a1", drive_identity="microsoft_onedrive:drv")   # the connection every ref here names
 DOC = DriveItem(item_id="d1", name="bathroom-invoice.md", path="Home/bathroom-invoice.md", is_folder=False,
-                size_bytes=100, mime_type="text/markdown")
+                size_bytes=100, mime_type="text/markdown", identity="microsoft_onedrive:drv:d1")
 
 
 def _ops(with_note: bool) -> DriveOperations:
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.get_drive_item.return_value = DOC
     conversion.resolve_content.return_value = "Line one of the file."
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="drv")
+    drive.resolve_ref.side_effect = lambda user_id, ref: ResolvedDriveRef(connection=CONN,
+                                                                          item_id=drive_ref.parse(ref).item_id)
+    drive.get_item.return_value = DOC
     search = AsyncMock(spec=DriveSearchService)
     search.archived_text.return_value = None
     notes = AsyncMock(spec=DriveNoteService)
     notes.note_for_item.return_value = DriveNote(
         note_id="n1", user_id="u1", state="active", current_version=1, text="the contractor's invoice",
-        binding=NoteBinding(provider_key="microsoft_onedrive", drive_id="drv", item_id="d1")) if with_note else None
+        binding=NoteBinding(identity=DOC.identity, item_id="d1", ref_tag="a1")) if with_note else None
     return DriveOperations(conversion_service=conversion, drive_service=drive, drive_search=search, drive_notes=notes)
 
 
 async def test_an_open_that_added_the_note_block_reports_the_fact():
-    out = await _ops(True).open(CTX, "u1", "drive:d1")
+    out = await _ops(True).open(CTX, "u1", "drive:a1:d1")
     assert out.facts.owner_note is True and "noted by the owner" in out.text
 
 
 async def test_an_open_without_a_note_reports_no_fact():
-    out = await _ops(False).open(CTX, "u1", "drive:d1")
+    out = await _ops(False).open(CTX, "u1", "drive:a1:d1")
     assert out.facts.owner_note is False
 
 
@@ -69,15 +74,15 @@ async def test_a_search_with_a_noted_card_reports_the_fact():
     from src.domain.drive_tier_result import TieredResult
 
     def card(**kw):
-        base = dict(ref="drive:f1", item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", kind="pdf",
+        base = dict(ref="drive:a1:f1", item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", kind="pdf",
                     is_folder=False, summary="lease", nonce="abcdef12")
         return DriveSearchCard(**{**base, **kw})
 
     ops = _ops(False)
     ops._drive_search.search.return_value = DriveSearchResult(
         status=STATUS_OK, cards=(card(), card(owner_note="noted by the owner: «the contractor's invoice»")),
-        tiered=TieredResult(concepts=("lease",)))
+        tiered=TieredResult(concepts=("lease",)), ref_tag="a1")
     assert (await ops.search(CTX, "u1", query="lease")).facts.owner_note is True
     ops._drive_search.search.return_value = DriveSearchResult(status=STATUS_OK, cards=(card(),),
-                                                              tiered=TieredResult(concepts=("lease",)))
+                                                              tiered=TieredResult(concepts=("lease",)), ref_tag="a1")
     assert (await ops.search(CTX, "u1", query="lease")).facts.owner_note is False

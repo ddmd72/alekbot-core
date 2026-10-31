@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 from scripts.validation.drive_eval.fixture_drive import DEFAULT_FS_MODIFIED, FixtureDrive, item_id_for
+from src.domain.drive_media_facts import DriveMediaFacts
 
 from .drive_eval_samples import MANIFEST
 
@@ -54,9 +55,8 @@ def test_item_id_is_a_fixed_literal_across_processes():
 async def test_video_facet_empty_photo_facet_and_file_size_pass_through():
     drive = FixtureDrive(_LOCAL)
     clip = await drive.get_change(USER, item_id_for("Media/clip.mp4"))
-    assert clip.facets == {"video": {"duration": 61000, "width": 1920, "height": 1080}}
+    assert clip.media == DriveMediaFacts(video_duration_ms=61000, video_width=1920, video_height=1080)
     assert clip.size_bytes == 7340032
     jpeg = await drive.get_change(USER, item_id_for("Messenger/IMG-20250601-WA0001.jpg"))
-    assert jpeg.facets == {"photo": {}, "image": {"width": 800, "height": 600}}
-    assert "photo" in jpeg.facets
+    assert jpeg.media == DriveMediaFacts(image_width=800, image_height=600)   # an empty photo facet adds no fact
     assert jpeg.size_bytes == 123457

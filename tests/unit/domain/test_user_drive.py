@@ -9,13 +9,10 @@ from src.domain.user_drive import (
     drive_context_entry,
     drive_filename,
     drive_label,
-    is_drive_ref,
     is_text_file,
     join_drive_path,
-    make_drive_ref,
     match_child_folder,
     name_key,
-    parse_drive_ref,
     sanitize_drive_filename,
     split_folder_path,
 )
@@ -23,21 +20,6 @@ from src.domain.user_drive import (
 
 def _folder(name: str, item_id: str = "f1", path: str = "") -> DriveItem:
     return DriveItem(item_id=item_id, name=name, path=path or name, is_folder=True)
-
-
-class TestRefs:
-    def test_round_trip(self):
-        assert parse_drive_ref(make_drive_ref("ABC!123")) == "ABC!123"
-
-    def test_non_drive_refs(self):
-        for ref in ("report.docx", "docs/u1/x.pdf", "skill:a/b.md", "", "drive:"):
-            assert parse_drive_ref(ref) is None
-            assert is_drive_ref(ref) is False
-
-    def test_parse_tolerates_label_punctuation(self):
-        assert parse_drive_ref('"drive:abc"') == "abc"
-        assert parse_drive_ref("drive:abc]") == "abc"
-        assert parse_drive_ref(" ref=drive:abc ") == "abc"
 
 
 class TestSplitFolderPath:
@@ -116,16 +98,25 @@ class TestNames:
 class TestLabels:
     def test_file_label(self):
         item = DriveItem(item_id="id1", name="a.m4a", path="Встречи/a.m4a", is_folder=False, size_bytes=12_900_000)
-        assert drive_label(item) == "[Drive: Встречи/a.m4a (12.3MB) ref=drive:id1]"
+        assert drive_label(item, "a1") == "[Drive: Встречи/a.m4a (12.3MB) ref=drive:a1:id1]"
 
     def test_folder_and_root(self):
-        assert drive_label(_folder("Встречи", "f1")) == "[Drive folder: Встречи/ ref=drive:f1]"
+        assert drive_label(_folder("Встречи", "f1"), "a1") == "[Drive folder: Встречи/ ref=drive:a1:f1]"
         root = DriveItem(item_id="r", name="Alek-bot", path="", is_folder=True)
-        assert drive_label(root) == "[Drive folder: / ref=drive:r]"
+        assert drive_label(root, "a1") == "[Drive folder: / ref=drive:a1:r]"
 
     def test_context_entry(self):
         item = DriveItem(item_id="id1", name="a.txt", path="a.txt", is_folder=False)
-        assert drive_context_entry(item) == {"path": "a.txt", "ref": "drive:id1"}
+        assert drive_context_entry(item, "a1") == {"path": "a.txt", "ref": "drive:a1:id1"}
+
+    @pytest.mark.parametrize("tag", ["", "A1", "1a"])
+    def test_a_label_without_a_valid_connection_tag_is_refused(self, tag):
+        # MULTI_DRIVE_RFC §9: a caller that lost its connection is a bug, not a ref to print
+        item = DriveItem(item_id="id1", name="a.txt", path="a.txt", is_folder=False)
+        with pytest.raises(ValueError):
+            drive_label(item, tag)
+        with pytest.raises(ValueError):
+            drive_context_entry(item, tag)
 
 
 def test_join_inbox_and_not_found():

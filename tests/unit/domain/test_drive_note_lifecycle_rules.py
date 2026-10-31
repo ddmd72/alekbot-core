@@ -2,11 +2,11 @@
 deleted records report a check, how checks fold, which notes the audit reads, and the snapshot an observation leaves."""
 from datetime import datetime, timedelta, timezone
 
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import DriveChange, DriveIndexRecord
 from src.domain.drive_mirror import GONE, UNSTORED
 from src.domain.drive_note import (
-    CONTENT_KEY_FAMILY, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState, binding_key,
-    erase_stub, ref_key,
+    DriveNote, NoteBinding, NoteSnapshot, NoteState, erase_stub, item_binding_key, tagged_ref_key,
 )
 from src.domain.drive_note_check import WHY_GONE, WHY_UNSTORED, NoteCheck
 from src.domain.drive_index import DriveSyncState
@@ -18,18 +18,19 @@ from src.domain.drive_note_lifecycle import (
 from src.domain.drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS, NOTE_CHECKS_MAX
 
 T = datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)
-P = ONEDRIVE_PROVIDER_KEY
+TAG = "a1"                     # the ref tag of the index's connection (MULTI_DRIVE_RFC §9)
+FAMILY = "quickxor"            # the adapter's content family (§7.2)
 
 
 def _check(note_id, item_id="i", why=WHY_GONE):
     return NoteCheck(note_id=note_id, item_id=item_id, why=why, last_seen_at=T)
 
 
-def _note(note_id, *, item="a", drive="d1", provider=P, state=NoteState.ACTIVE, seen=None):
-    binding = NoteBinding(provider_key=provider, drive_id=drive, item_id=item)
+def _note(note_id, *, item="a", tag=TAG, state=NoteState.ACTIVE, seen=None):
+    binding = NoteBinding(identity=f"fake:{tag}:{item}", item_id=item, ref_tag=tag)
     return DriveNote(note_id=note_id, user_id="u", state=state, current_version=1, text="x", binding=binding,
                      snapshot=NoteSnapshot(name=f"{item}.pdf", path=f"Docs/{item}.pdf", snapshot_at=seen),
-                     match_keys=[binding_key(provider, drive, item), ref_key(item)])
+                     match_keys=[item_binding_key(binding.identity), tagged_ref_key(tag, item)])
 
 
 def test_the_why_words_are_the_transcript_mirrors():
@@ -53,8 +54,8 @@ def test_call_share():
 class TestChecksOf:
 
     def test_only_records_with_a_note_report_one(self):
-        recs = [DriveIndexRecord(user_id="u", item_id="a", owner_note_id="n1"),
-                DriveIndexRecord(user_id="u", item_id="b")]
+        recs = [DriveIndexRecord(user_id="u", connection_id="u", item_id="a", owner_note_id="n1"),
+                DriveIndexRecord(user_id="u", connection_id="u", item_id="b")]
         assert checks_of(recs, WHY_UNSTORED, T) == (NoteCheck("n1", "a", WHY_UNSTORED, T),)
 
     def test_no_record_no_check(self):
@@ -91,13 +92,13 @@ class TestAudit:
             _note("never", item="a"),
             _note("old", item="b", seen=old),
             _note("fresh", item="c", seen=fresh),
-            _note("dormant", item="d", drive="d2", seen=old),
-            _note("other-provider", item="e", provider="gdrive", seen=old),
+            _note("dormant", item="d", tag="b2", seen=old),               # another connection of the user
+            _note("other-provider", item="e", tag="c3", seen=old),        # a connection of another provider
             _note("archived", item="f", state=NoteState.ARCHIVED, seen=old),
             _note("cleared", item="g", state=NoteState.CLEARED, seen=old),
             erase_stub(_note("stub", item="h", seen=old)),
         ]
-        got = audit_candidates(notes, provider_key=P, drive_id="d1", now=T)
+        got = audit_candidates(notes, ref_tag=TAG, now=T)
         assert [n.note_id for n in got] == ["never", "old"]     # never seen first, then the longest unseen
 
     def test_a_resumed_pass_starts_after_the_cursor(self):
@@ -105,15 +106,15 @@ class TestAudit:
         notes = [_note("a", item="a"), _note("b", item="b", seen=old), _note("c", item="c", seen=old),
                  _note("d", item="d", seen=old + timedelta(days=1))]
         after = audit_key(notes[1])
-        got = audit_candidates(notes, provider_key=P, drive_id="d1", now=T, after=after)
+        got = audit_candidates(notes, ref_tag=TAG, now=T, after=after)
         assert [n.note_id for n in got] == ["c", "d"]
         assert audit_key(notes[0]) < audit_key(notes[1]) < audit_key(notes[2])
 
     def test_the_cursor_of_the_state(self):
-        assert audit_cursor(DriveSyncState(user_id="u")) is None
-        never = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_id="n1"))
+        assert audit_cursor(DriveSyncState(user_id="u", connection_id="u")) is None
+        never = audit_cursor(DriveSyncState(user_id="u", connection_id="u", notes_audit_after_id="n1"))
         assert never is not None and never[1] == "n1" and never == audit_key(_note("n1"))
-        dated = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_at=T, notes_audit_after_id="n2"))
+        dated = audit_cursor(DriveSyncState(user_id="u", connection_id="u", notes_audit_after_at=T, notes_audit_after_id="n2"))
         assert dated == (T, "n2")
 
 
@@ -127,10 +128,10 @@ class TestSnapshots:
         old = NoteSnapshot(name="old.pdf", path="Docs/old.pdf", parent_item_id="p0", kind="pdf",
                            effective_date=T - timedelta(days=9), content_key="q0:1", snapshot_at=T - timedelta(days=30))
         change = DriveChange(item_id="a", parent_id="p1", name="new.pdf", size_bytes=7, mime_type="application/pdf",
-                             fs_modified_at=T - timedelta(days=1), facets={"hashes": {"quickXorHash": "qx"}})
+                             fs_modified_at=T - timedelta(days=1), content_identity=ContentIdentity(FAMILY, "qx", 7))
         got = refreshed_snapshot(old, change, path="Repo/new.pdf", now=T)
         assert (got.name, got.path, got.parent_item_id, got.size_bytes) == ("new.pdf", "Repo/new.pdf", "p1", 7)
-        assert (got.content_key, got.content_key_family, got.snapshot_at) == ("qx:7", CONTENT_KEY_FAMILY, T)
+        assert (got.content_key, got.content_key_family, got.snapshot_at) == ("quickxor:qx:7", FAMILY, T)
         assert (got.kind, got.effective_date) == ("pdf", T - timedelta(days=9))
         assert old.path == "Docs/old.pdf"                       # never mutated
 
@@ -150,7 +151,8 @@ class TestSnapshots:
 class TestRecordSnapshots:
 
     def _rec(self, **kw):
-        base = dict(user_id="u", item_id="a", name="a.pdf", parent_id="p", content_hash="q:1", kind="pdf",
+        base = dict(user_id="u", item_id="a", name="a.pdf", parent_id="p", content_identity=ContentIdentity(FAMILY, "q", 1),
+                    kind="pdf",
                     mime_type="application/pdf", size_bytes=1)
         base.update(kw)
         return DriveIndexRecord(**base)
@@ -159,18 +161,18 @@ class TestRecordSnapshots:
         rec = self._rec()
         assert not record_moved(rec, self._rec(size_bytes=9))
         assert record_moved(rec, self._rec(name="b.pdf")) and record_moved(rec, self._rec(parent_id="q"))
-        assert record_moved(rec, self._rec(content_hash="q:2"))
+        assert record_moved(rec, self._rec(content_identity=ContentIdentity(FAMILY, "q", 2)))
 
     def test_snapshot_stale(self):
         rec = self._rec()
         assert snapshot_stale(None, rec)
-        assert not snapshot_stale(NoteSnapshot(name="a.pdf", parent_item_id="p", content_key="q:1"), rec)
+        assert not snapshot_stale(NoteSnapshot(name="a.pdf", parent_item_id="p", content_key="quickxor:q:1"), rec)
         assert snapshot_stale(NoteSnapshot(name="a.pdf", parent_item_id="p", content_key=""), rec)
 
     def test_snapshot_from_record(self):
         rec = self._rec(effective_date=T - timedelta(days=3))
         got = snapshot_from_record(NoteSnapshot(name="old.pdf", path="x/old.pdf"), rec, path="Docs/a.pdf", now=T)
         assert (got.name, got.path, got.parent_item_id, got.kind, got.content_key, got.snapshot_at) == (
-            "a.pdf", "Docs/a.pdf", "p", "pdf", "q:1", T)
-        assert got.content_key_family == CONTENT_KEY_FAMILY and got.effective_date == T - timedelta(days=3)
+            "a.pdf", "Docs/a.pdf", "p", "pdf", "quickxor:q:1", T)
+        assert got.content_key_family == FAMILY and got.effective_date == T - timedelta(days=3)
         assert snapshot_from_record(NoteSnapshot(path="keep"), rec, path=None, now=T).path == "keep"

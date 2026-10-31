@@ -17,11 +17,11 @@ def _ops(answer):
 
 
 async def test_a_result_with_a_passage_marks_the_outcome():
-    ops = _ops(DeletedSearchResult("Deleted files (1):", [MEMO], has_passage=True))
+    ops = _ops(DeletedSearchResult("Deleted files (1):", [MEMO], has_passage=True, ref_tag="a1"))
     out = await ops.search_deleted(CTX, "u1", "meeting")
     assert out.success and out.stored_text_shown is True
 
 
 async def test_a_result_without_a_passage_does_not():
-    ops = _ops(DeletedSearchResult("Deleted files (1):", [MEMO]))
+    ops = _ops(DeletedSearchResult("Deleted files (1):", [MEMO], ref_tag="a1"))
     assert (await ops.search_deleted(CTX, "u1", "meeting")).stored_text_shown is False

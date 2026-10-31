@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.async_query import AsyncQuery
 
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from src.domain.drive_index import DriveIndexRecord, DriveIndexStoreUnavailable
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 TRANSIENT = [gexc.DeadlineExceeded("d"), gexc.ServiceUnavailable("s"), gexc.InternalServerError("i"),
              gexc.Aborted("a"), gexc.ResourceExhausted("r")]
@@ -32,7 +33,7 @@ def _failing(exc):
 async def test_a_transient_write_error_is_a_store_outage(monkeypatch, mock_env_config, exc):
     monkeypatch.setattr(AsyncWriteBatch, "commit", _failing(exc))
     with pytest.raises(DriveIndexStoreUnavailable) as raised:
-        await _repo(mock_env_config).upsert_records([DriveIndexRecord(user_id="u", item_id="i")])
+        await _repo(mock_env_config).upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i")])
     assert raised.value.__cause__ is exc
 
 
@@ -40,10 +41,10 @@ async def test_a_transient_write_error_is_a_store_outage(monkeypatch, mock_env_c
 async def test_a_transient_read_error_is_a_store_outage(monkeypatch, mock_env_config, exc):
     monkeypatch.setattr(AsyncQuery, "get", _failing(exc))
     with pytest.raises(DriveIndexStoreUnavailable):
-        await _repo(mock_env_config).records_page("u", None, 10)
+        await _repo(mock_env_config).records_page(U_SCOPE, None, 10)
 
 
 async def test_another_error_keeps_its_type(monkeypatch, mock_env_config):
     monkeypatch.setattr(AsyncQuery, "get", _failing(gexc.PermissionDenied("no")))
     with pytest.raises(gexc.PermissionDenied):
-        await _repo(mock_env_config).records_page("u", None, 10)
+        await _repo(mock_env_config).records_page(U_SCOPE, None, 10)

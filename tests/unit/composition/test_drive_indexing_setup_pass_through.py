@@ -7,7 +7,6 @@ from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
-from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
@@ -20,8 +19,8 @@ class TestSchedulerBuilderPassThrough:
             return {}
 
         scheduler = setup.build_drive_sync_scheduler(
-            repo=AsyncMock(), queue=AsyncMock(), drive=AsyncMock(), users=AsyncMock(),
-            oauth_credentials=AsyncMock(spec=OAuthCredentialsPort), notifier=notifier,
+            repo=AsyncMock(), queue=AsyncMock(), connections=AsyncMock(), connection_service=AsyncMock(),
+            notifier=notifier,
             alert_sink=alert_sink, ensure_agents=ensure_agents)
         assert scheduler._notifier is notifier
         assert scheduler._alert_sink is alert_sink

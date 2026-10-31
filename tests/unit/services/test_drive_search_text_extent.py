@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import Scope
 from src.domain.drive_text_extent import ExtentState, ExtentWhy
 from src.domain.user_drive import DriveConnection
@@ -25,7 +26,7 @@ def doc(w, name, texts, distances, **kw):
 
 
 async def extent(w, item):
-    return await w.service.text_extent("u", item)
+    return await w.service.text_extent(await w.connection(), item)
 
 
 async def test_pageable_carries_the_numbers(w):
@@ -60,8 +61,10 @@ async def test_disconnected_and_another_drive(w):
     item = doc(w, "a.md", ["x"], [0.1], kind="md")
     w.drive.connection_state = DriveConnection(connected=True, drive_id="d2")
     assert (await extent(w, item)).why is ExtentWhy.NOT_CONNECTED
-    w.drive.connection_state = DriveConnection(connected=False)
-    assert (await extent(w, item)).why is ExtentWhy.NOT_CONNECTED
+    # a disconnect is the connection's state now (MULTI_DRIVE_RFC §4.4), not the drive port's `connection` (§6)
+    w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
+    gone = replace(await w.connection(), state=ConnectionState.DISCONNECTED, disconnected_at=w.now)
+    assert (await w.service.text_extent(gone, item)).why is ExtentWhy.NOT_CONNECTED
 
 
 async def test_rebuilding_on_purge(w):
@@ -108,7 +111,7 @@ async def test_the_lookup_reads_one_record_and_no_chunk(w):
 async def test_pageable_means_page_one_returns_text():
     """L3: whatever the state of the world, a file whose extent is pageable has a first page."""
     from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
-    from src.domain.user_drive import make_drive_ref
+    from .test_drive_search_excerpts import ref
     cases = []
 
     def build(setup):
@@ -124,8 +127,8 @@ async def test_pageable_means_page_one_returns_text():
     build(lambda w: doc(w, "a.md", ["x"], [0.1], parent=_opaque(w), kind="md"))
     assert cases
     for w, item in cases:
-        e = await w.service.text_extent("u", item)
-        page = await w.service.excerpt_range("u", ExcerptRangeRequest(make_drive_ref(item), 1, 1, page=True))
+        e = await w.service.text_extent(await w.connection(), item)
+        page = await w.service.excerpt_range("u", ExcerptRangeRequest(ref(item), 1, 1, page=True))
         returns_text = bool(page.files)
         if e.state is ExtentState.PAGEABLE:
             assert returns_text

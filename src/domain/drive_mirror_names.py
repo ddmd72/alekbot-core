@@ -2,8 +2,8 @@
 Drive transcript mirror — names, collisions, path length, placement and move order
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.5, §27.9.6, §27.9.7; Δ189, Δ192, Δ193, Δ216). Pure: no I/O, no clock.
 
-Names are compared case-insensitively after NFC (OneDrive refuses names that differ only by case). Paths are counted as
-OneDrive counts them: the decoded path from the drive root, App Folder path included, as `/`-joined components with no
+Names are compared case-insensitively after NFC (the drive refuses names that differ only by case). Paths are counted as
+the drive counts them: the decoded path from the drive root, App Folder path included, as `/`-joined components with no
 leading slash.
 
 Several public classes in one module, by decision: Sibling, Placement and Move are the value types of one contract (the
@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN, ONEDRIVE_PATH_MAX
+from .drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN
 from .drive_match import Concept
 from .user_drive import name_key
 from .drive_mirror import ARCHIVE_NAME, LONG_PATHS_NAME, README_NAME, ROOT_NAME
@@ -138,9 +138,10 @@ def full_path_length(area_path: str, root_path: str, parts: Sequence[str]) -> in
     return sum(len(c) for c in comps) + max(len(comps) - 1, 0)
 
 
-def fits(area_path: str, root_path: str, parts: Sequence[str]) -> bool:
-    """True when the path is within ONEDRIVE_PATH_MAX minus MIRROR_PATH_MARGIN."""
-    return full_path_length(area_path, root_path, parts) <= ONEDRIVE_PATH_MAX - MIRROR_PATH_MARGIN
+def fits(area_path: str, root_path: str, parts: Sequence[str], max_path: int) -> bool:
+    """True when the path is within the drive's path limit (`max_path`, the connection's `max_path_chars`) minus
+    MIRROR_PATH_MARGIN."""
+    return full_path_length(area_path, root_path, parts) <= max_path - MIRROR_PATH_MARGIN
 
 
 @dataclass(frozen=True)
@@ -150,22 +151,24 @@ class Placement:
     long_path: bool = False
 
 
-def place(active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
+def place(active_parts: Sequence[str], *, area_path: str, root_path: str,
+          max_path: int) -> Placement:
     """The active location, or `Long paths/<name>` when the path does not fit (§27.9.7)."""
     parts = tuple(active_parts)
     if not parts:
         raise ValueError("place: active_parts is empty")
-    if fits(area_path, root_path, parts):
+    if fits(area_path, root_path, parts, max_path):
         return Placement(parts)
     return Placement((LONG_PATHS_NAME, parts[-1]), True)
 
 
-def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
+def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str,
+                  max_path: int) -> Placement:
     """`Archive/<day>/<mirror path>`, or `Archive/<day>/Long paths/<name>` when it does not fit (§27.9.6, Δ189)."""
     if not active_parts:
         raise ValueError("archive_place: active_parts is empty")
     parts = (ARCHIVE_NAME, day, *active_parts)
-    if fits(area_path, root_path, parts):
+    if fits(area_path, root_path, parts, max_path):
         return Placement(parts)
     return Placement((ARCHIVE_NAME, day, LONG_PATHS_NAME, active_parts[-1]), True)
 

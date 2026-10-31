@@ -17,7 +17,9 @@ from src.domain.agent_note import AgentNote
 from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from src.domain.language import LanguageCode
 from src.domain.notification import NotificationChannel
-from src.domain.user_drive import DeleteOutcome, DriveConnection, DriveItem
+from src.domain.drive_connection_status import DriveConnectionStatus
+from src.domain.drive_resolved_ref import ResolvedDriveRef
+from src.domain.user_drive import DeleteOutcome, DriveItem
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
@@ -27,6 +29,7 @@ from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyS
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.services.user_notification_service import UserNotificationService
+from tests.support.drive_connection_service_fake import connection
 from tests.support.scripted_llm import ScriptedLLM, execution_context, tools
 from tests.support.tool_e2e import StubPromptBuilder
 from tests.unit.adapters.slack.test_response_channel_send_literal import _wire_channel
@@ -82,21 +85,22 @@ async def test_a_drive_receipt_shows_the_path_and_obeys_none_of_it():
         language = AsyncMock()
         language.resolve_ui_language.return_value = LanguageCode.EN
         drive = AsyncMock(spec=UserDriveService)
-        drive.connection.return_value = DriveConnection(connected=True)
+        drive.status.return_value = DriveConnectionStatus(connected=True)
+        drive.resolve_ref.return_value = ResolvedDriveRef(connection(USER, ref_tag="a1"), "f1")
         item = DriveItem(item_id="f1", name="x.pdf", path=f"Inbox/{HOSTILE}.pdf", is_folder=False)
         drive.delete.return_value = DeleteOutcome(item=item, file_count=1)
         operations = DriveOperations(
             conversion_service=AsyncMock(spec=FileConversionService), notification=_notifications(channel),
             drive_service=drive, localization=localization, language_service=language,
         )
-        llm = ScriptedLLM([tools((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:f1"})),
+        llm = ScriptedLLM([tools((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:a1:f1"})),
                            tools((tt.REPORT_TOOL, {"note": "Deleted the file."}))])
         agent = DriveAgent(AgentConfig(agent_id="drive_agent_u1", agent_type="drive", timeout_ms=DRIVE.timeout_ms),
                            execution_context=execution_context(llm, "drive"), operations=operations,
                            prompt_builder=StubPromptBuilder())
         resp = await agent.execute(AgentMessage.create(
             sender="coordinator", recipient="drive_agent_u1", intent=AgentIntent.QUERY,
-            payload={"query": "Delete drive:f1.", "intent": Intent.WORK_WITH_DRIVE_FILES},
+            payload={"query": "Delete drive:a1:f1.", "intent": Intent.WORK_WITH_DRIVE_FILES},
             context={"user_id": USER, "account_id": "a1"}))
     finally:
         await server.close()

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel
 
+from .drive_ref import REF_PREFIX as DRIVE_REF_PREFIX
 from .exceptions import WorkspaceRefused
 from .skill import MAX_SKILL_FILE_BYTES, SKILL_FILE_EXTENSIONS
 
@@ -70,7 +71,7 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
     the right tool for a ref of another store (§7.3 "Wrong store").
     """
     text = str(raw if raw is not None else "").strip()
-    if text.startswith("drive:"):
+    if text.startswith(DRIVE_REF_PREFIX):   # the drive ref codec's prefix (MULTI_DRIVE_RFC §9), tagged or not
         raise WorkspaceRefused(
             f"'{text}' is on the user's drive, not in the workspace; open it through work_with_drive_files",
             reason="wrong_store",

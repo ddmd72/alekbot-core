@@ -9,9 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, IntEnum
-from typing import Any, Mapping, Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
+from .connection_scope import ConnectionScope
+from .drive_content_identity import ContentIdentity
 from .drive_enrichment import DriveProfile, PhotoObject
+from .drive_media_facts import DriveMediaFacts
 from .drive_note_check import NoteCheck
 
 POLICY_VERSION = 4                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
@@ -152,8 +155,19 @@ class DriveIndexStoreUnavailable(Exception):
     is never counted against a file (§8.2). The repository adapter maps its backend's transient errors to it."""
 
 
-def record_key(user_id: str, item_id: str) -> str:
-    return f"{user_id}:{item_id}"
+def record_doc_id(scope: ConnectionScope, item_id: str) -> str:
+    """`{connection_id}:{item_id}`: an index record's document id (MULTI_DRIVE_RFC §8, E8)."""
+    return f"{scope.connection_id}:{item_id}"
+
+
+def chunk_doc_id(scope: ConnectionScope, item_id: str, generation: int, index: int) -> str:
+    """`{connection_id}:{item_id}:{generation}:{index}`: a chunk's and a hint's document id (§8)."""
+    return f"{scope.connection_id}:{item_id}:{generation}:{index}"
+
+
+def sync_state_doc_id(scope: ConnectionScope) -> str:
+    """`{connection_id}`: the sync state's (and its lease's) document id (§8)."""
+    return scope.connection_id
 
 
 @dataclass(frozen=True)
@@ -171,8 +185,12 @@ class DriveChange:
     fs_modified_at: Optional[datetime] = None # fileSystemInfo.lastModifiedDateTime — effective date fallback
     web_url: str = ""
     child_count: int = 0                      # folder.childCount
-    facets: Mapping[str, Any] = field(default_factory=dict)  # photo, image, video, location, hashes, remoteItem, package, malware
-    created_at: Optional[datetime] = None     # Graph createdDateTime
+    created_at: Optional[datetime] = None     # the provider's creation time
+    # neutral shapes (MULTI_DRIVE_RFC §7.2), adapter-built: the item identity, the content identity and the typed media
+    # facts (photo, image, video, audio, location, package, malware, alias)
+    identity: str = ""                        # `{id_space}:{…}`, unique across providers
+    content_identity: Optional[ContentIdentity] = None   # None: the provider gave no hash
+    media: DriveMediaFacts = DriveMediaFacts()
 
 
 @dataclass(frozen=True)
@@ -182,8 +200,8 @@ class DriveChanges:
     cursor: str              # opaque; pass back to get_changes
     complete: bool           # this page ends the round
     full_enumeration: bool   # this page belongs to an enumeration from scratch (onboarding, 410)
-    drive_id: str
     root_item_id: str
+    drive_identity: str = ""  # the drive's adapter-built identity (MULTI_DRIVE_RFC §7.2)
 
 
 @dataclass(frozen=True)
@@ -244,6 +262,9 @@ class DriveChunk:
     # were made under. Written by P5; until then empty / 0.
     word_keys: Tuple[str, ...] = ()
     keys_version: int = 0
+    # MULTI_DRIVE_RFC §8 (E8): the connection the chunk belongs to; its doc id is `chunk_doc_id(scope, …)` and `user_id`
+    # stays a stored field a read checks (I3). "" on a chunk written before the field existed.
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -258,7 +279,6 @@ class DriveIndexRecord:
     mime_type: str = ""
     web_url: str = ""
     child_count: int = 0
-    facets: Mapping[str, Any] = field(default_factory=dict)
     kind: str = ""
     content_class: ContentClass = ContentClass.OTHER
     scope: Scope = Scope.UNRESOLVED
@@ -281,7 +301,6 @@ class DriveIndexRecord:
     card_rank: int = 3
     name_tokens: Tuple[str, ...] = ()
     name_keys_version: int = 0
-    content_hash: Optional[str] = None
     # scheduling (§7.3, §7.8)
     dirty_since: Optional[datetime] = None
     due_at: Optional[datetime] = None
@@ -432,6 +451,15 @@ class DriveIndexRecord:
     # set by the planner's `_build` on a record it creates; `_commit` looks the item's note up by its binding key in the
     # same write and clears it, found or not (§5.1 a). Always False once written.
     note_lookup_due: bool = False
+    # -- MULTI_DRIVE_RFC §7.2, §8 (slice 1b): the connection the record belongs to (doc id `record_doc_id(scope, …)`,
+    # `user_id` checked on read, I3) and the adapter-built neutral shapes: the item identity (`{id_space}:{…}`: the notes
+    # binding, the transcript fallback key, the ledger's source identity), the content identity (the transcript content
+    # key and the duplicate collapse; None: no provider hash) and the typed media facts. "" / None / empty facts on a
+    # record written before the fields existed (the rebuild writes them, D16).
+    connection_id: str = ""
+    identity: str = ""
+    content_identity: Optional[ContentIdentity] = None
+    media: DriveMediaFacts = DriveMediaFacts()
 
     @property
     def stale(self) -> bool:
@@ -445,9 +473,8 @@ def inaccessible(rec: DriveIndexRecord) -> bool:
 
 @dataclass(frozen=True)
 class DriveSyncState:
-    """One per user (§3.5)."""
+    """One per connection (§3.5, MULTI_DRIVE_RFC §8)."""
     user_id: str
-    drive_id: str = ""
     root_item_id: str = ""
     cursor: Optional[str] = None
     round_complete: bool = False
@@ -530,6 +557,11 @@ class DriveSyncState:
     # cut by its item-call share resumes after it, and `notes_audited_at` is stamped when the pass ends
     notes_audit_after_at: Optional[datetime] = None
     notes_audit_after_id: str = ""
+    # -- MULTI_DRIVE_RFC §8, §10 (slice 1b): one sync state per connection (doc id `sync_state_doc_id(scope)` = the
+    # connection id; `user_id` checked on read, I3). `drive_identity` is the adapter-built identity of the drive the feed
+    # reads (the drive-change check compares it with the connection's).
+    connection_id: str = ""
+    drive_identity: str = ""
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

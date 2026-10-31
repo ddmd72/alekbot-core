@@ -18,7 +18,7 @@ TEXT = ("Identity card of Maria Doe.\nCard number X 1234567 A.\nIssued 12.03.202
 
 
 def _chunks(text):
-    return [DriveChunk(user_id="u", item_id="i", generation=1, index=0, text=text, char_start=0, char_end=len(text),
+    return [DriveChunk(user_id="u", connection_id="u", item_id="i", generation=1, index=0, text=text, char_start=0, char_end=len(text),
                        kind="pdf")]
 
 

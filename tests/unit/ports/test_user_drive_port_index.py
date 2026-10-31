@@ -1,8 +1,10 @@
 """
 Port contract test for the change-capture surface of UserDrivePort (USER_DRIVE_INDEXING_RFC §4).
 
-Pins the five methods the indexing tick and search call: abstract, async, and the parameter names
+Pins the methods the indexing tick and search call: abstract, async, and the parameter names
 and defaults they are called with (`limit` required, `cursor` optional on the paged listing).
+MULTI_DRIVE_RFC §6: by handle; `connection` and `flag_reconnect` left the port (state is
+DriveConnectionService's).
 """
 import inspect
 
@@ -11,11 +13,9 @@ import pytest
 from src.ports.user_drive_port import UserDrivePort
 
 _INDEX_METHODS = {
-    "get_changes": (["user_id", "cursor"], {}),
-    "get_change": (["user_id", "item_id"], {}),
-    "list_children_changes": (["user_id", "folder_id", "limit", "cursor"], {"cursor": None}),
-    "connection": (["user_id"], {}),
-    "flag_reconnect": (["user_id"], {}),
+    "get_changes": (["handle", "cursor"], {}),
+    "get_change": (["handle", "item_id"], {}),
+    "list_children_changes": (["handle", "folder_id", "limit", "cursor"], {"cursor": None}),
 }
 
 

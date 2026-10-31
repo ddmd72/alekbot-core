@@ -8,6 +8,8 @@ import pytest
 
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
 from scripts.validation.drive_eval.metrics import OVERALL
+from src.domain.connection_scope import ConnectionScope
+from scripts.validation.drive_eval.eval_connection import EVAL_CONNECTION_ID
 from scripts.validation.drive_eval.runner import (
     EVAL_USER, EXIT_OK, EXIT_REGRESSION, EXIT_SETUP, EvalClock, EvalError, exit_code, index_fixture,
     request_for, run_eval,
@@ -49,13 +51,13 @@ async def test_index_settles_with_the_real_tick():
     out = await index_fixture(FixtureDrive(MANIFEST), repo, FakeEmbeddings(), rome, "fake/8", EvalClock(),
                               throttle_pause_s=0, **fake_content())
     assert out.statuses.get("error", 0) == 0 and out.ticks >= 1
-    assert await repo.due_records(EVAL_USER, datetime.max.replace(tzinfo=timezone.utc), 1) == []
-    state = await repo.get_sync_state(EVAL_USER)
+    assert await repo.due_records(ConnectionScope(EVAL_USER, EVAL_CONNECTION_ID), datetime.max.replace(tzinfo=timezone.utc), 1) == []
+    state = await repo.get_sync_state(ConnectionScope(EVAL_USER, EVAL_CONNECTION_ID))
     assert state.continuation_enqueued_at is None
     assert dict(state.applied_versions) == {**CURRENT_VERSIONS, **EXTRACTOR_VERSIONS}
 
     def rec(path):
-        return repo.records.get((EVAL_USER, item_id_for(path)))
+        return repo.records.get((EVAL_CONNECTION_ID, item_id_for(path)))
 
     assert rec("Dumps/site-mirror").reason is Reason.DENSE_TREE
     assert rec("Dumps/site-mirror/page-000.bin") is None
@@ -77,9 +79,9 @@ async def test_the_runner_keeps_ticking_until_no_continuation_is_pending():
     out = await index_fixture(FixtureDrive(MANIFEST, page_size=50), repo, FakeEmbeddings(), rome, "fake/8",
                               EvalClock(), throttle_pause_s=0, monotonic=slow, **fake_content())
     assert out.ticks > 1 and out.statuses.get("error", 0) == 0
-    state = await repo.get_sync_state(EVAL_USER)
+    state = await repo.get_sync_state(ConnectionScope(EVAL_USER, EVAL_CONNECTION_ID))
     assert state.continuation_enqueued_at is None and state.initial_enumeration_done
-    assert repo.records.get((EVAL_USER, item_id_for("Vault/note-002.md"))).has_card
+    assert repo.records.get((EVAL_CONNECTION_ID, item_id_for("Vault/note-002.md"))).has_card
 
 
 async def test_record_then_compare_passes(tmp_path):

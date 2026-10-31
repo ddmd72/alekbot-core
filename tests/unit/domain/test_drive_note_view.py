@@ -5,7 +5,7 @@ from src.domain.drive_note_view import NoteView
 
 def _note(**kw):
     data = dict(note_id="n1", user_id="u", current_version=3, text="the contractor's invoice", doc_type="contract",
-                life_areas=["home"], binding=NoteBinding(provider_key="onedrive", drive_id="d1", item_id="i1"),
+                life_areas=["home"], binding=NoteBinding(identity="fake:d1:i1", item_id="i1", ref_tag="a1"),
                 snapshot=NoteSnapshot(name="a.pdf", path="Docs/a.pdf"))
     data.update(kw)
     return DriveNote(**data)
@@ -13,7 +13,7 @@ def _note(**kw):
 
 def test_active_note():
     view = NoteView.of(_note())
-    assert (view.note_id, view.ref, view.note_ref, view.path) == ("n1", "drive:i1", "drive_note:n1", "Docs/a.pdf")
+    assert (view.note_id, view.ref, view.note_ref, view.path) == ("n1", "drive:a1:i1", "drive_note:n1", "Docs/a.pdf")
     assert (view.version, view.state, view.text, view.doc_type, view.life_areas) == (
         3, "active", "the contractor's invoice", "contract", ("home",))
     assert not view.cleared and not view.archived

@@ -129,8 +129,8 @@ class TestStates:
         assert NO_PASSAGES in _text(result())
 
     def test_repeated_ids_are_listed_by_display_number(self):
-        text = _text(result(repeated=(("item-1", 1, 0), ("item-1", 1, 4))))
-        assert "Already shown earlier in this request and matched again: drive:item-1:1, drive:item-1:5" in text
+        text = _text(result(repeated=(("item-1", 1, 0), ("item-1", 1, 4)), ref_tag="a1"))
+        assert "Already shown earlier in this request and matched again: drive:a1:item-1:1, drive:a1:item-1:5" in text
         assert NO_PASSAGES not in text
 
     def test_a_cut_range_says_where_to_continue(self):

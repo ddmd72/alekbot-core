@@ -21,6 +21,9 @@ from src.domain.user_drive import DriveItemNotFoundError
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 _NOT_FOUND = {"error": {"code": "itemNotFound", "message": "The resource could not be found."}}
 
@@ -71,7 +74,7 @@ async def test_get_change_404_raises_and_is_never_a_deletion():
     session = _session([_resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session):
         with pytest.raises(DriveItemNotFoundError):
-            await adapter.get_change("u1", "CLOSED!7")
+            await adapter.get_change(HANDLE, "CLOSED!7")
     assert session.get.call_args.args[0].endswith("/me/drive/items/CLOSED%217")
 
 
@@ -80,7 +83,7 @@ async def test_get_change_of_a_readable_item_is_an_observation():
     raw = {"id": "OPEN!1", "name": "a.pdf", "size": 10, "file": {"mimeType": "application/pdf"}, "cTag": "c1",
            "parentReference": {"id": "ROOT!1"}}
     with patch("aiohttp.ClientSession", return_value=_session([_resp(raw)])):
-        change = await adapter.get_change("u1", "OPEN!1")
+        change = await adapter.get_change(HANDLE, "OPEN!1")
     assert change.item_id == "OPEN!1" and change.deleted is False and change.parent_id == "ROOT!1"
 
 
@@ -89,11 +92,11 @@ async def test_get_change_of_a_readable_item_is_an_observation():
 async def test_every_id_addressed_call_answers_404_as_not_found(call, tmp_path):
     adapter = _adapter()
     session = _session([_resp(_NOT_FOUND, status=404)])
-    args = {"get_item": ("u1", "CLOSED!7"),
-            "download_to_file": ("u1", "CLOSED!7", str(tmp_path / "f"), 1024),
-            "get_thumbnail": ("u1", "CLOSED!7", "large"),
-            "list_children_changes": ("u1", "CLOSED!7", 10),
-            "list_children": ("u1", "CLOSED!7")}[call]
+    args = {"get_item": (HANDLE, "CLOSED!7"),
+            "download_to_file": (HANDLE, "CLOSED!7", str(tmp_path / "f"), 1024),
+            "get_thumbnail": (HANDLE, "CLOSED!7", 800),
+            "list_children_changes": (HANDLE, "CLOSED!7", 10),
+            "list_children": (HANDLE, "CLOSED!7")}[call]
     with patch("aiohttp.ClientSession", return_value=session):
         with pytest.raises(DriveItemNotFoundError):
             await getattr(adapter, call)(*args)

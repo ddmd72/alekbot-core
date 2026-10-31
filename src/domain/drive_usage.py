@@ -3,12 +3,15 @@ Drive model usage — the arithmetic of the usage and initial-build documents (d
 §25.4.5, D27). Pure: no I/O, no clock; both repository adapters apply the same rules.
 
 The documents live in `{prefix}drive_model_usage`, outside the sync state, so a purge keeps them:
-    {user_id}:{YYYY-MM}   one month's dollars per class, the fallback's share, calls and a daily map; TTL 400 days
-    {user_id}:initial     the one-time initial-build allowance (D27); no TTL, it never reopens
+    {user_id}:{YYYY-MM}                      one month's dollars per class, the fallback's share, calls and a daily
+                                             map; TTL 400 days (shared by the user's connections, D8)
+    initial_build_doc_id(user, realm, subject)   the one-time initial-build allowance of one provider account (D27, D8,
+                                             MULTI_DRIVE_RFC §10); no TTL, it never reopens
 
 Public interface:
     MODEL_USAGE_TTL, INITIAL_DOC_SUFFIX
-    usage_doc_id(user_id, month) / initial_doc_id(user_id)
+    usage_doc_id(user_id, month)
+    initial_build_doc_id(user_id, realm, subject)   the initial-build record by provider account (MULTI_DRIVE_RFC §10)
     usage_expires_at(month) -> datetime          the TTL timestamp of a month's document
     added_usage(usage, day, cls, usd, fallback_usd, calls, covered_usd=0) -> ModelUsageMonth
     reserved_field(cls) / reserved_usage(usage, cls, delta_usd)   a class's open reservations (transcription, Δ106)
@@ -24,6 +27,7 @@ from typing import Dict, Tuple
 
 from .drive_enrichment import InitialBuild, ModelUsageMonth, UsageClass
 from .drive_index_params import INITIAL_BUILD_USD
+from .drive_transcript import safe_doc_id
 
 MODEL_USAGE_TTL = timedelta(days=400)        # a month's usage document (§25.4.5)
 INITIAL_DOC_SUFFIX = "initial"
@@ -34,8 +38,13 @@ def usage_doc_id(user_id: str, month: str) -> str:
     return f"{user_id}:{month}"
 
 
-def initial_doc_id(user_id: str) -> str:
-    return f"{user_id}:{INITIAL_DOC_SUFFIX}"
+def initial_build_doc_id(user_id: str, realm: str, subject: str) -> str:
+    """`safe_doc_id({user_id}:initial:{realm}:{subject})` (MULTI_DRIVE_RFC §10, D8): one initial build per provider
+    account, so a reconnect (a new connection of the same account) finds the same record and opens no new budget.
+    User-scoped by design. ValueError for an empty realm or subject."""
+    if not realm or not subject:
+        raise ValueError("an initial-build key needs the account's realm and subject")
+    return safe_doc_id(f"{user_id}:{INITIAL_DOC_SUFFIX}:{realm}:{subject}")
 
 
 def usage_expires_at(month: str) -> datetime:

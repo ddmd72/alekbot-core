@@ -116,8 +116,8 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
-from src.adapters.microsoft import OneDriveAdapter
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
+from src.composition.drive_connection_setup import build_drive_activation
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.oauth_connect_service import OAuthConnectService
@@ -710,13 +710,12 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
     # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
     _drive_sync_scheduler = None
-    if container.drive_task_queue and container.drive_index_repo and container.user_drive:
+    if container.drive_task_queue and container.drive_index_repo and container.drive_connection_repo:
         _drive_sync_scheduler = build_drive_sync_scheduler(
             repo=container.drive_index_repo,
             queue=container.drive_task_queue,
-            drive=container.user_drive,
-            users=user_repo,
-            oauth_credentials=oauth_credentials_port,
+            connections=container.drive_connection_repo,
+            connection_service=container.drive_connection_service,
             notifier=notification_service,
             alert_sink=_alert_webhook,
             ensure_agents=agent_factory.ensure_agents_for_user,
@@ -726,15 +725,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     # R1 (SECRETS_AT_REST_RFC §6.2, plan D-P4): Reconnect and one notice for a past connection with no credential.
     # Lists its users from the feature stores; the hourly `reconnect_notice_sweep` covers Gmail and To Do (Drive's
-    # notice is the drive fan-out's). The Cabinet and the consent callbacks keep its disconnect mark.
+    # notice is the drive fan-out's; Drive's Reconnect reads its connections, MULTI_DRIVE_RFC §4.4).
     _reconnect_service = IntegrationReconnectService(
         credentials=oauth_credentials_port,
         users=user_repo,
         notifier=notification_service,
         email_states=indexed_email_repo,
         task_config=container.task_config_repo,
-        drive_states=container.drive_index_repo,
-        drive=container.user_drive,
+        drive_connections=container.drive_connection_service,
         alert_sink=_alert_webhook,
         ensure_agents=agent_factory.ensure_agents_for_user,
         mail_connector=container.connectors.get(GMAIL),
@@ -743,9 +741,12 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     # The integration connect flow (MULTI_DRIVE_RFC §4.3, §5.2): one revocation service (the provider-side revoke
     # rule, also the Cabinet's disconnects) and one connect service over the registry's specs and realm edges, with
-    # one activation per integration. The drive id is read by the concrete OneDrive adapter (not a port method).
+    # one activation per integration. The drive one creates or reconnects the drive connection (§4.4, §5.2).
     _credential_revocation = CredentialRevocationService(oauth_credentials_port, container.connectors.edges())
-    _drive_adapter = container.user_drive if isinstance(container.user_drive, OneDriveAdapter) else None
+    _drive_activation = (
+        build_drive_activation(connections=container.drive_connection_service, drive=container.user_drive,
+                               task_queue=container.drive_task_queue)
+        if container.drive_connection_service is not None and container.user_drive is not None else None)
     _connect_service = build_oauth_connect_service(
         db_client, env_config,
         connectors=container.connectors,
@@ -754,11 +755,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         digest_key=secret_digest_key,
         revocation=_credential_revocation,
         activations=build_connect_activations(
-            credentials=oauth_credentials_port,
             reconnect=_reconnect_service,
             todo_connector=container.connectors.get(MICROSOFT_TODO),
             task_queue=agent_task_queue,
-            read_drive_id=_drive_adapter.read_drive_id if _drive_adapter is not None else None,
+            drive_activation=_drive_activation,
         ),
         redirect_uri=auth_config.oauth_connect_redirect_uri,
     )

@@ -6,7 +6,7 @@ lists the newest. Synthetic data only. The deleted search is a tool of its own s
 (the `drive_deleted` flag and its routing are pinned on DriveOperations in test_file_management_drive_deleted.py)."""
 import itertools
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -15,21 +15,26 @@ from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain.drive_index import DriveChange, DriveIndexStoreUnavailable
 from src.domain.drive_keys import name_keys_v2, word_keys
 from src.domain.drive_mirror import KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot
+from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState, binding_key, erase_stub, ref_key,
+    DriveNote, NoteBinding, NoteSnapshot, NoteState, erase_stub, item_binding_key, tagged_ref_key,
 )
 from src.domain.drive_note_merge import NOTE_STORE_KEYS_VERSION
 from src.domain.drive_note_render import DORMANT_HIDDEN_LINE, MEANING_LINE
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_user_settings import DriveUserSettings
 from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.embedding_service import EmbeddingService
 from src.ports.user_drive_port import UserDrivePort
 from src.services import drive_note_deleted_search as source_mod
 from src.services.drive_note_deleted_search import DriveNoteDeletedSearch
 from src.services.drive_search_service import DriveSearchService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service
 
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 SPACE = "gemini-embedding-2/768"
+TAGS = {"d1": "a1", "d2": "b2"}   # the ref tag of the connection mounting each drive (MULTI_DRIVE_RFC §9); d1 is searched
 
 
 def store_keys(content, name):
@@ -44,11 +49,11 @@ def _note(n, *, state=NoteState.ARCHIVED, drive="d1", text="contractor bathroom 
           vector=None, space=SPACE, doc_type="", stored_keys=False, item=None):
     item = item or f"i{n}"
     name = name or f"scan{n}.pdf"
-    binding = NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id=drive, item_id=item)
+    binding = NoteBinding(identity=f"fake:{drive}:{item}", item_id=item, ref_tag=TAGS[drive])
     note = DriveNote(
         note_id=f"n{n}", user_id="u1", account_id="a", state=state, current_version=1, text=text, doc_type=doc_type,
         binding=binding, snapshot=NoteSnapshot(name=name, path=f"Docs/{name}"),
-        match_keys=[binding_key(ONEDRIVE_PROVIDER_KEY, drive, item), ref_key(item)],
+        match_keys=[item_binding_key(binding.identity), tagged_ref_key(binding.ref_tag, item)],
         archived_at=(at or T0 + timedelta(minutes=n)) if state == NoteState.ARCHIVED else None,
         updated_at=T0 + timedelta(minutes=n), note_vector=vector, embedding_space=space if vector else "")
     if stored_keys:
@@ -58,17 +63,25 @@ def _note(n, *, state=NoteState.ARCHIVED, drive="d1", text="contractor bathroom 
 
 
 class World:
-    def __init__(self, *, connection=DriveConnection(connected=True, drive_id="d1"), mirror=None):
+    def __init__(self, *, connected=True, mirror=None):
+        """The user's one connection (conn-1, tag a1) mounts d1; `connected=False` stores it DISCONNECTED."""
         self.notes = InMemoryDriveNoteRepository()
+        repo = FakeDriveConnectionRepository()
+        state = ConnectionState.ACTIVE if connected else ConnectionState.DISCONNECTED
+        repo.connections[("u1", "conn-1")] = DriveConnection(
+            connection_id="conn-1", user_id="u1", account_id="a", credential_id="cred-1", kind="fake",
+            drive_identity="fake:d1", ref_tag=TAGS["d1"], indexing_enabled=True, state=state, created_at=T0,
+            disconnected_at=None if connected else T0)
+        if connected:
+            repo.settings["u1"] = DriveUserSettings(user_id="u1", primary_connection_id="conn-1")
         self.drive = AsyncMock(spec=UserDrivePort)
-        self.drive.connection.return_value = connection
         self.drive.get_change.side_effect = lambda user_id, item_id: DriveChange(item_id=item_id)
         self.index = AsyncMock(spec=DriveIndexRepository)
         self.index.get_transcript.return_value = None
         self.emb = AsyncMock(spec=EmbeddingService)
         self.emb.get_embedding.return_value = [1.0, 0.0, 0.0]
         counter = itertools.count(1)
-        self.svc = DriveSearchService(self.index, self.emb, AsyncMock(), self.drive, embedding_space=SPACE,
+        self.svc = DriveSearchService(self.index, self.emb, self.drive, connection_service(repo), embedding_space=SPACE,
                                       nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror)
         nonces = itertools.count(1)
         self.source = DriveNoteDeletedSearch(self.notes, self.emb, embedding_space=SPACE, store_keys=store_keys,
@@ -177,7 +190,7 @@ class TestDormant:
         assert MEANING_LINE not in (await w.search("heating"))[0]
 
     async def test_disconnected_shows_archived_only_with_the_line(self):
-        w = World(connection=DriveConnection(connected=False))
+        w = World(connected=False)
         w.put(_note(1), _note(2, state=NoteState.ACTIVE, drive="d2"))
         out, _ = await w.search("bathroom")
         assert out.startswith("Deleted files (1):") and "scan1.pdf" in out and "scan2.pdf" not in out
@@ -196,12 +209,14 @@ class TestOneSurfaceWithTranscripts:
 
     async def _mirror(self):
         repo = InMemoryDriveMirrorRepository()
-        await repo.save_root(MirrorRoot(user_id="u1", drive_id="d1", root_item_id="root", root_name="_Transcripts"))
-        await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_ARCHIVE, source_item_id="day",
+        await repo.save_root(MirrorRoot(user_id="u1", drive_identity="fake:d1", root_item_id="root",
+                                        root_name="_Transcripts"))
+        await repo.save_doc(MirrorDoc(user_id="u1", drive_identity="fake:d1", kind=KIND_ARCHIVE, source_item_id="day",
                                       mirror_item_id="day", mirror_parent_id="root", mirror_name="2026-10-05",
                                       state=MIRROR_ACTIVE))
         await repo.save_doc(MirrorDoc(
-            user_id="u1", drive_id="d1", kind=KIND_FILE, source_item_id="i1", source_name="call1.m4a",
+            user_id="u1", drive_identity="fake:d1", kind=KIND_FILE, source_item_id="i1",
+            source_identity="fake:d1:i1", source_name="call1.m4a",
             source_path="Calls/call1.m4a", content_key="k1", mirror_item_id="m1", mirror_parent_id="day",
             mirror_name="call1.md", state=MIRROR_ARCHIVED, archive_day="2026-10-05", archived_at=T0,
             seconds=600.0, speakers=1, languages=("en",), archive_keys=tuple(sorted(word_keys("bathroom budget"))),
@@ -214,6 +229,6 @@ class TestOneSurfaceWithTranscripts:
         out, items = await w.search("bathroom")
         assert out.startswith("Deleted files (2):")
         entry = out[out.index("call1.m4a |"):out.index("</drive_document", out.index("call1.m4a |"))]
-        assert "archived transcript: drive:m1" in entry and "drive_note:n1" in entry and "noted by the owner" in entry
+        assert "archived transcript: drive:a1:m1" in entry and "drive_note:n1" in entry and "noted by the owner" in entry
         assert "scan2.pdf" in out and [i.item_id for i in items] == ["m1"]
 

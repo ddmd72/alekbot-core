@@ -11,8 +11,6 @@ without them.
 `needs_reconnect` is set when the provider rejected the refresh token; only a new consent clears it (a successful
 refresh is the proof it no longer holds).
 
-`drive_id` (the connected drive's id, a OneDrive record only, "" otherwise) stays here for slice 1a only: it moves to
-the drive connection in slice 1b. It is written by the OneDrive consent and carried through every refresh.
 """
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,4 +33,3 @@ class OAuthCredential:
     token_expiry: datetime
     scopes: List[str]
     needs_reconnect: bool = False
-    drive_id: str = ""

@@ -8,14 +8,15 @@ import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_drive_index_repo import (
-    CHUNK_FIELDS, CHUNK_VECTOR, RECORD_FIELDS, STREAM_FIELDS, chunk_from_doc, chunk_key, chunk_to_doc, record_from_doc,
+    CHUNK_FIELDS, CHUNK_VECTOR, RECORD_FIELDS, STREAM_FIELDS, chunk_from_doc, chunk_to_doc, record_from_doc,
     record_to_doc, state_from_doc, state_to_doc,
 )
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
-from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState
+from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, chunk_doc_id
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, 9, 30, 15, 250000, tzinfo=timezone.utc)
 
@@ -70,7 +71,7 @@ def v2_record() -> DriveIndexRecord:
 
 class TestRecordFields:
     def test_the_fixture_sets_every_v2_field(self):
-        default = DriveIndexRecord(user_id="u", item_id="i")
+        default = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert [n for n in V2_RECORD_FIELDS if getattr(v2_record(), n) == getattr(default, n)] == []
 
     def test_every_v2_field_is_a_stored_field(self):
@@ -91,25 +92,25 @@ class TestRecordFields:
         assert type(back) is datetime and back.utcoffset() == timedelta(0)
 
     def test_neutral_defaults(self):
-        rec = DriveIndexRecord(user_id="u", item_id="i")
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert rec.profile is None and rec.profile_state == "none" and rec.passages_state == "none"
         assert rec.about_keys == () and rec.keys_version == 0 and not rec.enrich_ready and not rec.keys_capped
 
     def test_a_v1_document_reads_with_the_defaults(self):
-        v1 = {f: v for f, v in record_to_doc(DriveIndexRecord(user_id="u", item_id="i")).items()
+        v1 = {f: v for f, v in record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i")).items()
               if f not in V2_RECORD_FIELDS}
-        assert record_from_doc(v1) == DriveIndexRecord(user_id="u", item_id="i")
+        assert record_from_doc(v1) == DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
 
 
 class TestStateField:
     def test_backoff_by_agent_round_trips_as_plain_utc(self):
-        state = DriveSyncState(user_id="u", model_backoff_by_agent={"drive_profiler": T, "drive_passages": T})
+        state = DriveSyncState(user_id="u", connection_id="u", model_backoff_by_agent={"drive_profiler": T, "drive_passages": T})
         back = state_from_doc("u", stored(state_to_doc(state)))
         assert back == state
         assert all(type(v) is datetime for v in back.model_backoff_by_agent.values())
 
     def test_default_is_empty(self):
-        assert DriveSyncState(user_id="u").model_backoff_by_agent == {}
+        assert DriveSyncState(user_id="u", connection_id="u").model_backoff_by_agent == {}
         assert state_from_doc("u", {}).model_backoff_by_agent == {}
 
 
@@ -128,7 +129,7 @@ class TestChunkKeys:
         assert "word_keys" not in STREAM_FIELDS and "keys_version" not in STREAM_FIELDS
 
 
-KEYED = DriveChunk("u", "a", 1, 0, "text", 0, 4, "pdf", ("1250",), ("w:text",), 1)
+KEYED = DriveChunk("u", "a", 1, 0, "text", 0, 4, "pdf", ("1250",), ("w:text",), 1, connection_id="u")
 
 
 class TestReadParity:
@@ -136,18 +137,18 @@ class TestReadParity:
         memory = InMemoryDriveIndexRepository()
         await memory.write_chunks([KEYED], [[0.5, 0.5]])
         db = ChunkDb()
-        db.stored[chunk_key("u", "a", 1, 0)] = chunk_to_doc(KEYED)
+        db.stored[chunk_doc_id(U_SCOPE, "a", 1, 0)] = chunk_to_doc(KEYED)
         firestore = make_chunk_repo(db, mock_env_config)
-        assert await memory.get_chunks("u", "a", 1, [0]) == await firestore.get_chunks("u", "a", 1, [0]) == [KEYED]
+        assert await memory.get_chunks(U_SCOPE, "a", 1, [0]) == await firestore.get_chunks(U_SCOPE, "a", 1, [0]) == [KEYED]
 
     async def test_terms_false_leaves_the_keys_out_in_both(self, mock_env_config):
         memory = InMemoryDriveIndexRepository()
         await memory.write_chunks([KEYED], [[0.5, 0.5]])
-        ((c, _),) = await memory.get_chunks_with_vectors("u", "a", 1, [0], terms=False)
+        ((c, _),) = await memory.get_chunks_with_vectors(U_SCOPE, "a", 1, [0], terms=False)
         assert c == replace(KEYED, content_terms=(), word_keys=())
         db = ChunkDb()
-        db.stored[chunk_key("u", "a", 1, 0)] = {**chunk_to_doc(KEYED), CHUNK_VECTOR: [0.5, 0.5]}
-        await make_chunk_repo(db, mock_env_config).get_chunks_with_vectors("u", "a", 1, [0], terms=False)
+        db.stored[chunk_doc_id(U_SCOPE, "a", 1, 0)] = {**chunk_to_doc(KEYED), CHUNK_VECTOR: [0.5, 0.5]}
+        await make_chunk_repo(db, mock_env_config).get_chunks_with_vectors(U_SCOPE, "a", 1, [0], terms=False)
         ((_, paths),) = db.get_all_calls
         assert "word_keys" not in paths and "content_terms" not in paths and "keys_version" in paths
 

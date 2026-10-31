@@ -48,13 +48,15 @@ def test_the_card_renders_the_dollars_and_no_page_counters():
 async def test_the_status_reads_the_usage_document_and_the_initial_build():
     from tests.unit.services.test_drive_search_service import World
     from src.domain.drive_index_planner import month_key
+    from tests.unit.services.drive_index_fakes import legacy_account
     w = World()
     w.drive.add("a.pdf")
     await w.settle()
     now = w.clock.now
     await w.repo.add_model_usage("u", month_key(now), now.date().isoformat(), "triage", 0.75, 0.0, 3,
                                  covered_usd=0.75)
-    await w.repo.spend_initial_build("u", 0.75, now)
+    account = legacy_account("u")   # the initial build is the provider account's (MULTI_DRIVE_RFC §10)
+    await w.repo.spend_initial_build("u", account.realm, account.subject, 0.75, now)
     # XC-4: 0.5 more that no initial build covered; the card's "x / cap" is what the cap paid, not the total
     await w.repo.add_model_usage("u", month_key(now), now.date().isoformat(), "triage", 0.5, 0.0, 1, covered_usd=0.0)
     status = await w.search_svc.indexing_status("u")

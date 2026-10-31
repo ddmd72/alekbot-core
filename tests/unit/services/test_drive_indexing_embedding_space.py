@@ -8,11 +8,13 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .test_drive_indexing_card_embedding_outcomes import _refuse_cards_starting_with
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 
 def _switch_space(w, space):
     w.svc = DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: "Rome (Roma), Italy",
-                                 space, extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                 space, extractors=w.svc._extractors, triage=w.svc._triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock,
                                  monotonic=w.clock.monotonic)
 
 
@@ -20,7 +22,7 @@ async def test_onboarding_records_the_space_its_cards_are_in():
     w = World()
     w.drive.add("a.pdf")
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.applied_space == "test-space/8" and state.cards_in_space("test-space/8")
     assert not state.cards_in_space("other/768")
 
@@ -33,10 +35,10 @@ async def test_a_new_space_re_embeds_every_card_and_then_applies():
     _switch_space(w, "new-space/768")
     w.emb.calls.clear()
     await w.tick()
-    mid = await w.repo.get_sync_state("u")
+    mid = await w.repo.get_sync_state(U_SCOPE)
     assert not mid.cards_in_space("new-space/768")
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.cards_in_space("new-space/768") and state.applied_space == "new-space/768"
     assert {w.rec(i).embedding_space for i in items} == {"new-space/768"}
     assert all(w.rec(i).has_card for i in items) and w.carded() == set(items)
@@ -53,7 +55,7 @@ async def test_a_refused_card_does_not_hold_back_the_switch(monkeypatch):
     for _ in range(MAX_ATTEMPTS + 2):
         await w.settle()
         w.clock.advance(RETRY_CAP.total_seconds())
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert len(refused) == MAX_ATTEMPTS and w.rec(bad).card_refused and bad not in w.carded()
     assert w.rec(good).embedding_space == "new-space/768" and state.cards_in_space("new-space/768")
 
@@ -62,8 +64,8 @@ async def test_a_space_change_alone_keeps_the_version_map(monkeypatch):
     w = World()
     w.drive.add("a.pdf")
     await w.settle()
-    versions = dict((await w.repo.get_sync_state("u")).applied_versions)
+    versions = dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions)
     _switch_space(w, "new-space/768")
     await w.settle()
-    assert dict((await w.repo.get_sync_state("u")).applied_versions) == versions == {**svc_mod.CURRENT_VERSIONS,
+    assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions) == versions == {**svc_mod.CURRENT_VERSIONS,
                                                                                      **EXTRACTOR_VERSIONS}

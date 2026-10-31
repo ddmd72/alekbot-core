@@ -27,7 +27,7 @@ def _without_notes(w: World) -> DriveIndexingService:
     return DriveIndexingService(
         w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, SPACE,
         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)}, triage=FakeTriage(),
-        clock=w.clock, monotonic=w.clock.monotonic)
+        connections=w.connections, clock=w.clock, monotonic=w.clock.monotonic)
 
 
 async def _back(w: World, item: str, nid: str) -> None:
@@ -62,10 +62,10 @@ async def test_the_kill_switch_off_during_the_restore(w):
     off = _without_notes(w)
     w.drive.add("scan.pdf", item_id=item)
     for _ in range(3):
-        await off.tick(U, None)
+        await off.tick(w.scope, None)
         w.clock.advance(600)
     assert w.repo.records.get((U, item)) is not None and w.carriers(nid) == []
-    assert (await w.repo.get_sync_state(U)).notes_merge_version == 0   # the switch's zero: a re-read follows
+    assert (await w.repo.get_sync_state(w.scope)).notes_merge_version == 0   # the switch's zero: a re-read follows
     await w.settle()
     await _back(w, item, nid)
 
@@ -75,12 +75,12 @@ async def test_a_code_rollback_during_the_restore(w):
     old = _without_notes(w)
     w.drive.add("scan.pdf", item_id=item)
     for _ in range(3):
-        await old.tick(U, None)
+        await old.tick(w.scope, None)
         # a revision without notes support never writes the notes fields: its merge version survives (plan B12)
-        state = await w.repo.get_sync_state(U)
-        w.repo.states[U] = replace(state, notes_merge_version=NOTE_MERGE_VERSION)
+        state = await w.repo.get_sync_state(w.scope)
+        w.repo.states[w.scope.connection_id] = replace(state, notes_merge_version=NOTE_MERGE_VERSION)
         w.clock.advance(600)
-    state = await w.repo.get_sync_state(U)
+    state = await w.repo.get_sync_state(w.scope)
     assert w.repo.records.get((U, item)) is not None and state.last_success_at > state.notes_tick_at   # what the detector reads
     await w.settle()
     await _back(w, item, nid)

@@ -10,6 +10,7 @@ from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
 from ..services.credential_revocation_service import CredentialRevocationService
 from ..services.email_indexing_service import EmailIndexingService
+from ..services.drive_connection_service import DriveConnectionService
 from ..services.drive_search_service import DriveSearchService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
@@ -19,7 +20,10 @@ from ..domain.email import GMAIL_INDEX_PROVIDER
 from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
-from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
+from ..domain.drive_connection import DriveConnection
+from ..domain.drive_connection_state import ConnectionState
+from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
+from ..domain.user_drive import DriveNotConnectedError
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_review_answers import deciding_answer
 from ..domain.fact_review_digest import last_actor
@@ -30,7 +34,7 @@ from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.fact_review_store import FactReviewStore
 from ..ports.embedding_service import EmbeddingService
-from ..composition.connector_registry import GMAIL, GOOGLE_TASKS, MICROSOFT_ONEDRIVE, ConnectorRegistry
+from ..composition.connector_registry import GMAIL, GOOGLE_TASKS, ConnectorRegistry
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
@@ -85,13 +89,16 @@ def create_user_cabinet_blueprint(
     localization: Optional[LocalizationService] = None,
     reconnect: Optional[IntegrationReconnectService] = None,
     connectors: Optional[ConnectorRegistry] = None,
+    drive_connections: Optional[DriveConnectionService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
 
-    `credential_revocation` removes a stored grant under the revoke rule (MULTI_DRIVE_RFC §4.3): the Gmail and Google
-    Tasks disconnects go through it (501 without it). `connectors` is the connector registry: the cards' kinds and
-    `GET /api/connectors`.
+    `credential_revocation` removes a stored grant under the revoke rule (MULTI_DRIVE_RFC §4.3): the Gmail, Google
+    Tasks and drive disconnects go through it (501 without it). `connectors` is the connector registry: the cards' kinds
+    and `GET /api/connectors`. `drive_connections` owns the drive connections (§4.4): until stage 2's connection list
+    the drive card acts on one connection, the primary or else the oldest live one; `user_drive` (the router) only drops
+    a disconnected connection's caches.
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -1479,16 +1486,37 @@ def create_user_cabinet_blueprint(
                               "closed": status.initial_build_closed},
         }
 
-    async def _transcribe_enabled(user_id: str) -> bool:
-        # The disclosure says "transcription on": true only when the kill switch is on too (the indexer's DRIVE_TRANSCRIBE_ENABLED).
-        if not drive_transcribe_switch_on:
-            return False
-        try:
-            user = await user_repo.get_user(user_id)
-            return bool(user is not None and user.config.drive_transcribe_enabled is True)
-        except Exception:
-            logger.warning("Drive status: reading the transcription flag failed", exc_info=True)
-            return False
+    async def _current_connection(user_id: str) -> Optional[DriveConnection]:
+        """The connection the drive card acts on until stage 2 (MULTI_DRIVE_RFC §11.7): the primary, else the oldest
+        live one (a primary that needs a reconnect is still the card's drive). Callers check `drive_connections`."""
+        if drive_connections is None:
+            return None
+        primary = await drive_connections.primary(user_id)
+        if primary is not None:
+            return primary
+        live = await drive_connections.list_for_user(user_id)
+        return live[0] if live else None
+
+    def _drive_label(connection: Optional[DriveConnection]) -> str:
+        """The provider's display name from the registry (never a literal here)."""
+        if connectors is None:
+            return ""
+        if connection is not None:
+            return connectors.get(connection.kind).label
+        kinds = connectors.kinds(Integration.DRIVE)
+        return connectors.get(kinds[0]).label if kinds else ""
+
+    async def _has_credential(connection: DriveConnection) -> bool:
+        """The connection's grant is stored (plaintext keys only, never a decrypt, E28)."""
+        if oauth_credentials_port is None:
+            return True
+        keys = await oauth_credentials_port.list_keys(connection.user_id, connection.kind)
+        return any(key.credential_id == connection.credential_id for key in keys)
+
+    def _transcribe_enabled(connection: Optional[DriveConnection]) -> bool:
+        # The disclosure says "transcription on": true only when the kill switch is on too (the indexer's
+        # DRIVE_TRANSCRIBE_ENABLED) and the connection's own switch is on (MULTI_DRIVE_RFC §4.4).
+        return bool(drive_transcribe_switch_on and connection is not None and connection.transcribe_enabled)
 
     async def _mirror_root(user_id: str) -> bool:
         try:
@@ -1500,32 +1528,34 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/drive/status", methods=["GET"])
     @auth_required
     async def drive_status():
-        """The user's drive connection; with indexing wired, the index too (USER_DRIVE_INDEXING_RFC §6)."""
-        if not user_drive:
+        """The drive card's connection (`_current_connection`); with indexing wired, the index too
+        (USER_DRIVE_INDEXING_RFC §6). A live connection whose grant is gone reads not connected, with Reconnect (R1)."""
+        if drive_connections is None:
             return jsonify({"connected": False, "provider": ""}), 200
+        connection: Optional[DriveConnection] = None
         try:
-            connection = await user_drive.connection(g.user_id)
+            connection = await _current_connection(g.user_id)
+            connected = connection is not None and await _has_credential(connection)
             body: dict = {
-                "connected": connection.connected,
-                "provider": user_drive.display_name,
+                "connected": connected,
+                "provider": _drive_label(connection),
                 # The grant was rejected on refresh (§7.7): still stored, but only a reconnect helps.
-                "needs_reconnect": connection.connected and connection.needs_reconnect,
+                "needs_reconnect": bool(connected and connection is not None
+                                        and connection.state is ConnectionState.NEEDS_RECONNECT),
             }
-            if reconnect is not None and not connection.connected:
+            if reconnect is not None and not connected:
                 body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.DRIVE)
-            if connection.connected and oauth_credentials_port is not None and connectors is not None:
-                # the Cabinet's Reconnect link names it (`/auth/connect/<kind>?credential=<id>`); plaintext keys only
-                keys = await oauth_credentials_port.list_keys(g.user_id, connectors.get(MICROSOFT_ONEDRIVE).kind)
-                if keys:
-                    body["credential_id"] = keys[0].credential_id
+            if connected and connection is not None:
+                # the Cabinet's Reconnect link names it (`/auth/connect/<kind>?credential=<id>`)
+                body["credential_id"] = connection.credential_id
         except Exception as exc:
             logger.error(f"Error fetching drive status: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
         if drive_search_service is not None:
             try:
                 body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
-                # The transcription disclosure shows only while the user's own flag is on (§27.12, G24); no toggle.
-                body["indexing"]["transcribe_enabled"] = await _transcribe_enabled(g.user_id)
+                # The transcription disclosure shows only while the connection's own switch is on (§27.12, G24).
+                body["indexing"]["transcribe_enabled"] = _transcribe_enabled(connection)
                 # The bot's _Transcripts folder outlives an opt-out; its disclosure clause shows whenever one exists (Δ202).
                 body["indexing"]["mirror_root"] = await _mirror_root(g.user_id)
             except Exception as exc:
@@ -1533,15 +1563,33 @@ def create_user_cabinet_blueprint(
                 logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
         return jsonify(body), 200
 
+    async def _nudge(connection: DriveConnection) -> bool:
+        """A `drive_sync` task for the connection under a toggle key (RFC Δ2), so the indexer acts without waiting for
+        the scheduler round. False (logged) when no drive queue is wired or the enqueue failed."""
+        if drive_task_queue is None:
+            # main.py builds the scheduler fan-out only with a drive queue, so nothing picks this up.
+            logger.warning("Drive change saved with no drive queue wired; no sync task will run until the drive "
+                           "queue is configured (DRIVE_INDEXER_URL)")
+            return False
+        try:
+            await drive_task_queue.enqueue_worker_task(
+                DRIVE_SYNC_TASK, scope_payload(connection.scope), deadline_seconds=TICK_DEADLINE_S,
+                dedup_key=toggle_task_key(connection.scope, datetime.now(timezone.utc)))
+            return True
+        except Exception as exc:
+            # The change is saved; the scheduler fan-out reaches the connection within TICK_INTERVAL.
+            logger.error(f"Drive change saved but the sync task was not queued: {exc}", exc_info=True)
+            return False
+
     @bp.route("/api/drive/indexing", methods=["GET"])
     @auth_required
     async def drive_indexing_get():
-        """Whether drive indexing (search over the drive) is on for the authenticated user."""
+        """Whether drive indexing (search over the drive) is on for the card's connection (false with none)."""
+        if drive_connections is None:
+            return jsonify({"enabled": False}), 200
         try:
-            user = await user_repo.get_user(g.user_id)
-            if not user:
-                return jsonify({"error": "User not found"}), 404
-            return jsonify({"enabled": user.config.drive_indexing_enabled}), 200
+            connection = await _current_connection(g.user_id)
+            return jsonify({"enabled": bool(connection is not None and connection.indexing_enabled)}), 200
         except Exception as exc:
             logger.error(f"Error fetching drive indexing setting: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
@@ -1549,41 +1597,32 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/drive/indexing", methods=["PUT"])
     @auth_required
     async def drive_indexing_set():
-        """Turn drive indexing on or off. Body: {"enabled": bool}.
+        """Turn drive indexing on or off for the card's connection (the primary until stage 2). Body: {"enabled": bool}.
 
-        Off purges the index (an explicit request, §6); search reads the flag uncached, so the index is
-        hidden at once. Either way, with a drive queue wired, a `drive_sync` task is enqueued under a toggle
-        key (RFC Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler
-        round. With no drive queue the flag is saved, a WARNING is logged and nothing runs (`queued` false)."""
+        Off purges the connection's index (an explicit request, §6); search reads the switch uncached, so the index is
+        hidden at once. Either way, with a drive queue wired, a `drive_sync` task for the connection is enqueued under
+        a toggle key (RFC Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler round.
+        With no drive queue the switch is saved, a WARNING is logged and nothing runs (`queued` false). 404 when no
+        drive is connected."""
+        if drive_connections is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
         try:
             body = await request.get_json(force=True) or {}
             enabled = body.get("enabled")
             if not isinstance(enabled, bool):
                 return jsonify({"error": "enabled (bool) required"}), 400
-            user = await user_repo.get_user(g.user_id)
-            if not user:
-                return jsonify({"error": "User not found"}), 404
-            user.config.drive_indexing_enabled = enabled
-            await user_repo.update_user(user)
+            connection = await _current_connection(g.user_id)
+            if connection is None:
+                return jsonify({"error": "Drive not connected"}), 404
+            connection = await drive_connections.set_indexing(g.user_id, connection.connection_id, enabled)
+        except DriveNotConnectedError:
+            return jsonify({"error": "Drive not connected"}), 404
         except Exception as exc:
             logger.error(f"Error updating drive indexing setting: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
-        queued = False
-        if drive_task_queue is not None:
-            try:
-                await drive_task_queue.enqueue_worker_task(
-                    DRIVE_SYNC_TASK, tick_payload(g.user_id), deadline_seconds=TICK_DEADLINE_S,
-                    dedup_key=toggle_key(g.user_id, datetime.now(timezone.utc)))
-                queued = True
-            except Exception as exc:
-                # The flag is saved; the scheduler fan-out reaches the user within TICK_INTERVAL.
-                logger.error(f"Drive indexing toggle saved but the sync task was not queued: {exc}",
-                             exc_info=True)
-        else:
-            # main.py builds the scheduler fan-out only with a drive queue, so nothing picks this up.
-            logger.warning("Drive indexing toggled with no drive queue wired; the flag is saved, but no sync "
-                           "task will run until the drive queue is configured (DRIVE_INDEXER_URL)")
-        logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} (queued={queued})")
+        queued = await _nudge(connection)
+        logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} "
+                    f"connection={connection.connection_id[:8]} (queued={queued})")
         return jsonify({"enabled": enabled, "queued": queued}), 200
 
     @bp.route("/api/drive/deep-research-copy", methods=["GET"])
@@ -1626,26 +1665,42 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/drive/disconnect", methods=["DELETE"])
     @auth_required
     async def drive_disconnect():
-        """Revoke the stored grant, drop the token and root caches (via the adapter)."""
-        if not user_drive:
+        """Disconnect the card's drive (MULTI_DRIVE_RFC §4.3, §4.4, D9): the connection ends (DISCONNECTED; its tag stays
+        reserved, a later connect is a new connection; the primary passes to another drive or is cleared), then its
+        grant is removed under the revoke rule, the adapter's caches are dropped, and a `drive_sync` task for the
+        connection lets the indexer purge its index. No connection: nothing to do."""
+        if drive_connections is None or credential_revocation is None:
             return jsonify({"error": "Drive integration not configured"}), 501
         try:
-            # R1 (F1): marked before the grant goes, so a deliberate disconnect never reads as a loss
-            if reconnect is not None:
-                await reconnect.mark_disconnected(g.user_id, Integration.DRIVE)
-            await user_drive.disconnect(g.user_id)
-            logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]}")
+            connection = await _current_connection(g.user_id)
+            if connection is None:
+                return jsonify({"success": True}), 200
+            # The connection ends first, so R1 never reads a live connection without its grant.
+            await drive_connections.disconnect(g.user_id, connection.connection_id)
+            still_used = any(c.credential_id == connection.credential_id
+                             for c in await drive_connections.list_for_user(g.user_id))
+            if not still_used:
+                await credential_revocation.remove(g.user_id, connection.credential_id)
+            logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]} connection={connection.connection_id[:8]}")
         except Exception as exc:
             logger.error(f"Error disconnecting drive: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
-        # The deep research copy needs a drive: a disconnect turns it off, so the switch the Cabinet hides while
-        # no drive is linked is never left on (owner, 2026-10-14). Best effort: the disconnect already happened.
+        if user_drive is not None:
+            try:
+                await user_drive.forget(connection.handle)
+            except Exception as exc:
+                logger.warning(f"Dropping the disconnected drive's caches failed: {exc_brief(exc)}")
+        await _nudge(connection)
+        # The deep research copy needs a drive: a disconnect that leaves no primary turns it off, so the switch the
+        # Cabinet hides while no drive is linked is never left on (owner, 2026-10-14). Best effort: the disconnect
+        # already happened.
         try:
-            user = await user_repo.get_user(g.user_id)
-            if user and user.config.drive_copy_deep_research:
-                user.config.drive_copy_deep_research = False
-                await user_repo.update_user(user)
-                logger.info(f"📁 Deep research drive copy turned off by the disconnect for user={g.user_id[:8]}")
+            if await drive_connections.primary(g.user_id) is None:
+                user = await user_repo.get_user(g.user_id)
+                if user and user.config.drive_copy_deep_research:
+                    user.config.drive_copy_deep_research = False
+                    await user_repo.update_user(user)
+                    logger.info(f"📁 Deep research drive copy turned off by the disconnect for user={g.user_id[:8]}")
         except Exception as exc:
             logger.error(f"Error turning the deep research drive copy off on disconnect: {exc}", exc_info=True)
         return jsonify({"success": True}), 200

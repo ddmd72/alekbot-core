@@ -51,7 +51,7 @@ def test_render_is_language_neutral():
 
 
 def _rec(**kw):
-    return DriveIndexRecord(user_id="u", item_id="i", kind="audio", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="audio", **kw)
 
 
 @pytest.mark.parametrize("kw,expected", [

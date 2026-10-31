@@ -196,5 +196,4 @@ async def test_the_eval_user_runs_on_the_requested_provider():
     from scripts.validation.drive_eval.content_wiring import _EvalUsers
     user = await _EvalUsers("openai").get_user("eval-user")
     assert user.config.agent_providers == {"drive_reader": "openai", "drive_triage": "openai"}
-    assert user.config.drive_indexing_enabled
     assert (await _EvalUsers("").get_user("eval-user")).config.agent_providers is None

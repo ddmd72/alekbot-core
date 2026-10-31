@@ -15,6 +15,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_world import ContentWorld
 from .drive_index_fakes import FakeEmbeddings
+from .drive_index_fakes import LegacyConnections
 
 S = ModelReplyStatus
 
@@ -113,7 +114,7 @@ class EnrichWorld(ContentWorld):
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors={"parser": self.parser, "reader": self.reader},
                                         triage=self.triage, profiler=self.profiler, passages=self.passages,
-                                        upgrade_pass=upgrade_pass, clock=self.clock, monotonic=self.clock.monotonic)
+                                        upgrade_pass=upgrade_pass, connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
 
     def hints(self, item_id: str, generation: Optional[int] = None):
         rec = self.rec(item_id)

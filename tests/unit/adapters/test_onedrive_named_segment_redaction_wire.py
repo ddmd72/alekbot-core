@@ -9,6 +9,9 @@ from src.adapters.microsoft.onedrive_adapter import _where
 from src.domain.user_drive import DriveItemNotFoundError, DriveNameConflictError, DrivePathTooLong, DriveStorageFull
 
 from tests.unit.adapters.test_onedrive_mirror_writes_wire import _PLAIN_400, _TOO_LONG, _adapter, _resp, _session
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 NAME = "Secret Interview Ганна.mp4.md"
 
@@ -39,7 +42,7 @@ async def test_upload_never_logs_the_file_name(status, body, raises):
     adapter = _adapter()
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(raises) as exc:
-        await adapter.upload("u1", "p1", NAME, b"x", "text/markdown", conflict="fail")
+        await adapter.upload(HANDLE, "p1", NAME, b"x", "text/markdown", conflict="fail")
     text = _logged(log) + " " + str(exc.value)
     assert "Secret" not in text and "Interview" not in text and "%D0" not in text and "Secret%20" not in text
     if log.method_calls:
@@ -53,7 +56,7 @@ async def test_child_by_name_never_logs_the_name(status, body):
     adapter = _adapter()
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(Exception) as exc:
-        await adapter.child_by_name("u1", "p1", NAME)
+        await adapter.child_by_name(HANDLE, "p1", NAME)
     text = _logged(log) + " " + str(exc.value)
     assert log.method_calls and f"<{len(NAME)} chars>" in _logged(log)
     assert "Secret" not in text and "Interview" not in text and "%D0" not in text

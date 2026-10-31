@@ -25,14 +25,14 @@ def _chunks(text, size=2400, overlap=0):
     while start < len(text):
         end = min(len(text), start + size)
         s = max(0, start - overlap) if index else 0
-        out.append(DriveChunk(user_id="u", item_id="i", generation=1, index=index, text=text[s:end], char_start=s,
+        out.append(DriveChunk(user_id="u", connection_id="u", item_id="i", generation=1, index=index, text=text[s:end], char_start=s,
                               char_end=end, kind="pdf"))
         start, index = end, index + 1
     return out
 
 
 def _rec(kind="pdf", **kw):
-    return DriveIndexRecord(user_id="u", item_id="i", name=kw.pop("name", "file"), kind=kind, **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", name=kw.pop("name", "file"), kind=kind, **kw)
 
 
 def _para(n, word="lorem"):

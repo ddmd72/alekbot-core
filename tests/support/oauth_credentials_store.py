@@ -78,7 +78,7 @@ def creds(user_id: str, kind: str, **over) -> OAuthCredential:
     fields = dict(user_id=user_id, account_id=ACCOUNT_ID, kind=kind, integration=spec.integration,
                   account=ProviderAccount(realm=spec.realm, subject=f"subject-{kind}", label="owner@example.com"),
                   access_token="at-old", refresh_token="rt-old", token_expiry=EXPIRY, scopes=["s.read"],
-                  needs_reconnect=False, drive_id="")
+                  needs_reconnect=False)
     fields.update(over)
     return OAuthCredential(**fields)
 

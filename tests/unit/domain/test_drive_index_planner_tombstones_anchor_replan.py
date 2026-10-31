@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import (
     POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, RecordState, Reason, Scope,
 )
@@ -12,12 +13,12 @@ ROOT = "root"
 
 
 def ctx(epoch=1, phase=EpochPhase.IDLE):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW,
                        place_of=lambda lat, lon: None)
 
 
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
                             state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
@@ -36,7 +37,7 @@ class TestDyingRepositoryIsNotReopened:
     def test_pyvenv_cfg_tombstone_after_its_folder_tombstone_does_not_revive_the_folder(self):
         venv = folder_rec("p", "env", scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT)
         dying = plan_observation(DriveChange(item_id="p", deleted=True), venv, None, None, ctx()).upsert
-        cfg = DriveIndexRecord(user_id="u", item_id="c", name="pyvenv.cfg", parent_id="p",
+        cfg = DriveIndexRecord(user_id="u", connection_id="u", item_id="c", name="pyvenv.cfg", parent_id="p",
                                scope=Scope.INSIDE_OPAQUE, state=RecordState.METADATA_ONLY)
         plan = plan_observation(DriveChange(item_id="c", deleted=True), cfg, None, None, ctx(), dying)
         assert plan.parent_updates == () and plan.delete_item_id == "c"
@@ -67,7 +68,7 @@ class TestReplanKeepsSeenEpoch:
 
     def test_replan_of_stored_record_keeps_seen_epoch(self):
         parent = folder_rec("p", "Docs", seen_epoch=2)
-        ghost = DriveIndexRecord(user_id="u", item_id="z", name="ghost.pdf", parent_id="p", kind="pdf",
+        ghost = DriveIndexRecord(user_id="u", connection_id="u", item_id="z", name="ghost.pdf", parent_id="p", kind="pdf",
                                  scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, seen_epoch=1)
         plan = plan_observation(change_from_record(ghost), ghost, parent, None, ctx(epoch=2, phase=EpochPhase.SWEEPING),
                                 parent, observed=False)
@@ -91,7 +92,7 @@ class TestReplanKeepsSeenEpoch:
 
     def test_observation_still_stamps(self):
         parent = folder_rec("p", "Docs", seen_epoch=2)
-        ghost = DriveIndexRecord(user_id="u", item_id="z", name="ghost.pdf", parent_id="p", kind="pdf",
+        ghost = DriveIndexRecord(user_id="u", connection_id="u", item_id="z", name="ghost.pdf", parent_id="p", kind="pdf",
                                  scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, seen_epoch=1)
         plan = plan_observation(replace(change_from_record(ghost)), ghost, parent, None,
                                 ctx(epoch=2, phase=EpochPhase.SWEEPING), parent)

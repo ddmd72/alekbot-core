@@ -24,7 +24,7 @@ from src.domain.drive_index_params import (
 )
 from src.domain.drive_keys import note_keys
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
+    DriveNote, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
     note_after_write, next_version,
 )
 from src.domain.drive_note_merge import NOTE_EMBED_PER_TICK, NOTE_STEP_S, NOTE_WATERMARK_SKEW_S
@@ -34,6 +34,8 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 SPACE = "test-space/8"
 
@@ -88,10 +90,10 @@ class World:
                                         lambda lat, lon: None, SPACE,
                                         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
                                         triage=FakeTriage(), notes=self.notes if notes else None,
-                                        clock=self.clock, monotonic=self.clock.monotonic)
+                                        connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
 
     async def tick(self, nudge: Optional[Nudge] = None) -> Any:
-        return await self.svc.tick("u", nudge)
+        return await self.svc.tick(U_SCOPE, nudge)
 
     async def settle(self, max_ticks: int = 60) -> Any:
         for _ in range(max_ticks):
@@ -118,7 +120,8 @@ class World:
         now = self.clock()
         version = next_version(base.current_version, NoteContent(text, doc_type, areas), NoteAction.SET,
                                NoteProvenance(turn_id="t"), now)
-        binding = NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id=drive_id, item_id=item_id, bound_at=now)
+        # bound by the item identity on the harness connection (tag a1), as the note tools bind (MULTI_DRIVE_RFC §7.2, §9)
+        binding = NoteBinding(item_id=item_id, identity=f"fake:{drive_id}:{item_id}", ref_tag="a1", bound_at=now)
         written = note_after_write(base, version, NoteState.ACTIVE, NoteProvenance(turn_id="t"), now,
                                    vector=[0.1] * 8, embedding_space=SPACE, embedding_pending=False, binding=binding,
                                    snapshot=NoteSnapshot(name=item_id))
@@ -376,7 +379,7 @@ async def test_a_keys_version_re_key_keeps_the_note_keys(w):
     await w.put_note(a, "the contractor's invoice")
     await w.settle()
     w.repo.records[("u", a)] = replace(w.rec(a), keys_version=KEYS_VERSION - 1)
-    await w.svc._commit("u", [w.rec(a)], set())   # any later write re-plans it (`planned`)
+    await w.svc._commit((await w.svc._connections.get("u", "u")).handle, [w.rec(a)], set())   # any later write re-plans it (`planned`)
     assert set(note_keys("the contractor's invoice")) <= set(w.rec(a).about_keys)
 
 
@@ -629,13 +632,13 @@ async def test_a_failed_stub_delete_is_retried(w):
 def _service(w: World, notes: Any) -> DriveIndexingService:
     return DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, SPACE,
                                 extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                triage=FakeTriage(), notes=notes, clock=w.clock, monotonic=w.clock.monotonic)
+                                triage=FakeTriage(), notes=notes, connections=LegacyConnections(w.users, w.drive), clock=w.clock, monotonic=w.clock.monotonic)
 
 
 async def _settle_with(w: World, svc: DriveIndexingService) -> None:
     for _ in range(30):
         before = len(w.queue.tasks)
-        await svc.tick("u")
+        await svc.tick(U_SCOPE)
         if not [t for t in w.queue.tasks[before:] if ":cont:" in (t["key"] or "")]:
             return
         w.clock.advance(1)
@@ -660,7 +663,7 @@ async def test_the_kill_switch_behind_a_closed_gate_saves_the_zero_version(w):
     await w.put_note(a)
     await w.settle()
     w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
-    assert (await _service(w, None).tick("u")).status == "access_lost"
+    assert (await _service(w, None).tick(U_SCOPE)).status == "access_lost"
     assert w.state().notes_merge_version == 0
 
 
@@ -736,7 +739,7 @@ async def test_the_kill_switch_zero_survives_an_error_save(w):
     await w.settle()
     assert w.state().notes_merge_version == 1
     w.drive.raise_next = RuntimeError("provider outage")      # the switch-off tick ends on the error path
-    result = await _service(w, None).tick("u")
+    result = await _service(w, None).tick(U_SCOPE)
     assert result.status == "error" and w.state().notes_merge_version == 0
 
 
@@ -843,7 +846,8 @@ async def test_an_archived_note_whose_record_is_live_is_reactivated_by_the_notes
     stored = await w.notes.get("u", note.note_id)
     assert stored.state == "active" and stored.archived_at is None
     assert w.rec(a) is not None and w.rec(a).owner_note_id == note.note_id
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, embedding_space=SPACE, clock=w.clock)
+    search = DriveSearchService(w.repo, w.emb, w.drive, LegacyConnections(w.users, w.drive), embedding_space=SPACE,
+                                clock=w.clock)
     result = await search.search("u", DriveSearchRequest(query="zanzibar"))
     assert [c.owner_note for c in result.cards if c.tier == "about"]
 

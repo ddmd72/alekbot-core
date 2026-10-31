@@ -17,6 +17,7 @@ from src.infrastructure.drive_operations import STILL_RUNNING, DriveOperations
 from src.infrastructure.drive_tools import DriveToolRun
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads, connection_of
 
 CTX = {"user_id": "u1", "account_id": "a1"}
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False, size_bytes=2048)
@@ -119,13 +120,16 @@ async def test_a_move_with_neither_field_changes_nothing(ops):
 
 async def test_a_folder_ref_and_its_path_give_the_same_call():
     drive = AsyncMock(spec=UserDriveService)
+    reads = ConnectionReads()
+    drive.resolve_ref.side_effect = reads.resolve_ref
     drive.get_item.return_value = FOLDER
     drive.move.return_value = MoveOutcome(before=FILE, after=FILE, created=[])
     ops = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive)
     run, _ = _run(ops)
-    await _call(run, tt.MOVE_FILE, file_ref="drive:f1", folder="drive:d9")
-    await _call(run, tt.MOVE_FILE, file_ref="drive:f1", folder="Archive")
-    assert drive.move.await_args_list[0].args == drive.move.await_args_list[1].args == ("u1", "f1", "Archive", None)
+    await _call(run, tt.MOVE_FILE, file_ref="drive:a1:f1", folder="drive:a1:d9")
+    await _call(run, tt.MOVE_FILE, file_ref="drive:a1:f1", folder="Archive")
+    handle = connection_of(reads, "u1").handle
+    assert drive.move.await_args_list[0].args == drive.move.await_args_list[1].args == (handle, "f1", "Archive", None)
 
 
 async def test_empty_or_omitted_refs_never_reach_the_drive():
@@ -156,14 +160,16 @@ async def test_folder_path_resolves_only_a_readable_folder_ref():
 
 async def test_only_file_content_is_marked_as_a_body():
     conversion = AsyncMock(spec=FileConversionService)
-    ops = DriveOperations(conversion_service=conversion, drive_service=AsyncMock(spec=UserDriveService))
-    conversion.get_drive_item.return_value = DriveItem(item_id="n1", name="todo.md", path="Notes/todo.md",
+    drive = AsyncMock(spec=UserDriveService)
+    drive.resolve_ref.side_effect = ConnectionReads().resolve_ref
+    ops = DriveOperations(conversion_service=conversion, drive_service=drive)
+    drive.get_item.return_value = DriveItem(item_id="n1", name="todo.md", path="Notes/todo.md",
                                                        is_folder=False, size_bytes=10, mime_type="text/markdown")
     conversion.resolve_content.return_value = "buy milk"
-    text = await ops.open(CTX, "u1", "drive:n1")
-    conversion.get_drive_item.return_value = DriveItem(item_id="h1", name="a.heic", path="a.heic", is_folder=False,
+    text = await ops.open(CTX, "u1", "drive:a1:n1")
+    drive.get_item.return_value = DriveItem(item_id="h1", name="a.heic", path="a.heic", is_folder=False,
                                                        size_bytes=10, mime_type="image/heic")
-    heic = await ops.open(CTX, "u1", "drive:h1")
+    heic = await ops.open(CTX, "u1", "drive:a1:h1")
     stored = await ops.fetch_stored(CTX, "u1", "notes.txt")
     assert (text.body, heic.body, stored.body) == (True, False, True)
     assert "buy milk" in text.text and heic.success
@@ -212,20 +218,20 @@ async def test_two_saves_in_one_batch_are_written_in_order_with_their_own_texts(
 
 async def test_an_opened_body_is_a_stand_in_and_the_collector_keeps_it(ops):
     body = "REMINDER\n<drive_document>the lease says 1200 EUR</drive_document>"
-    ops.open.return_value = _ok(DriveOp.OPEN, body, items=(FILE,), body=True)
+    ops.open.return_value = _ok(DriveOp.OPEN, body, items=(FILE,), body=True, ref_tag="a1")
     run, collector = _run(ops)
     seen = (await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:f1")).result_str
-    assert seen == t.STAND_IN_TEXT.format(handle="r1", label="[Drive: Inbox/lease.pdf (2KB) ref=drive:f1]",
+    assert seen == t.STAND_IN_TEXT.format(handle="r1", label="[Drive: Inbox/lease.pdf (2KB) ref=drive:a1:f1]",
                                           chars=len(body))
     assert "1200" not in seen and collector.results[0].outcome.text == body
 
 
 async def test_a_vision_file_is_a_stand_in_naming_its_type(ops):
-    ops.open.return_value = _ok(DriveOp.OPEN, "attached", items=(FILE,),
+    ops.open.return_value = _ok(DriveOp.OPEN, "attached", items=(FILE,), ref_tag="a1",
                                 file_data={"path": "/tmp/x.pdf", "mime_type": "application/pdf"})
     run, _ = _run(ops)
     seen = (await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:f1")).result_str
-    assert seen == "[r1: [Drive: Inbox/lease.pdf (2KB) ref=drive:f1] (application/pdf) attached for the orchestrator]"
+    assert seen == "[r1: [Drive: Inbox/lease.pdf (2KB) ref=drive:a1:f1] (application/pdf) attached for the orchestrator]"
 
 
 async def test_searches_listings_and_status_lines_are_seen_in_full(ops):

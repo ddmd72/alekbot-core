@@ -34,7 +34,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.llm_port import AgentExecutionContext
 from src.services.drive_note_service import DriveNoteService
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 from tests.support.scripted_llm import calls, script
 
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False)
@@ -52,10 +52,11 @@ def ops():
     o = AsyncMock(spec=DriveOperations)
     o.preflight.return_value = CONNECTED
     o.folder_path.side_effect = lambda user_id, folder: folder
-    o.search.return_value = _ok(DriveOp.SEARCH, "REMINDER\n<card lease>", items=(FILE,), facts=ReadFacts(cards=1))
+    o.search.return_value = _ok(DriveOp.SEARCH, "REMINDER\n<card lease>", items=(FILE,), facts=ReadFacts(cards=1),
+                                ref_tag="a1")
     o.list_folder.return_value = _ok(DriveOp.LIST, "[Drive: Inbox ref=drive:i]")
     o.move.return_value = _ok(DriveOp.MOVE, "Moved: Inbox/lease.pdf → [Drive: Archive/lease.pdf ref=drive:f1].",
-                              items=(FILE,))
+                              items=(FILE,), ref_tag="a1")
     return o
 
 
@@ -96,7 +97,7 @@ async def test_a_find_returns_success_with_the_code_built_answer(ops, prompts):
     assert "[Result r1, step 1: search]\nREMINDER\n<card lease>" in resp.result
     assert "Specialist note: Searched for the lease." in resp.result
     # the entry names the search (§7.4, 2026-10-29); the spec mock's outcome carries no request_text, so no query
-    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:f1", "op": "searched",
+    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:a1:f1", "op": "searched",
                                                        "count": 1}]}
     assert "Correct your input" not in resp.result and len(seen) == 2
 
@@ -235,8 +236,8 @@ async def test_a_plain_text_reply_is_the_note(ops, prompts):
 
 async def test_several_vision_files_reach_the_orchestrator_as_a_list(ops, prompts):
     ops.open.side_effect = [
-        _ok(DriveOp.OPEN, "a attached", items=(FILE,), file_data={"path": "/tmp/a.jpg", "mime_type": "image/jpeg"}),
-        _ok(DriveOp.OPEN, "b attached", items=(FILE,), file_data={"path": "/tmp/b.pdf", "mime_type": "application/pdf"})]
+        _ok(DriveOp.OPEN, "a attached", items=(FILE,), ref_tag="a1", file_data={"path": "/tmp/a.jpg", "mime_type": "image/jpeg"}),
+        _ok(DriveOp.OPEN, "b attached", items=(FILE,), ref_tag="a1", file_data={"path": "/tmp/b.pdf", "mime_type": "application/pdf"})]
     agent = _agent(ops, prompts)
     agent._call_llm, _ = script(calls((tt.OPEN_DRIVE_FILE, {"file_ref": "drive:a"}),
                                         (tt.OPEN_DRIVE_FILE, {"file_ref": "drive:b"}), REPORT))
@@ -330,20 +331,19 @@ def test_the_soft_deadline_takes_the_earliest_bound():
 
 async def test_one_user_lock_across_two_concurrent_executions(prompts):
     """Two commissions of one user, one shared DriveOperations: their moves never overlap (§5.5)."""
-    drive = AsyncMock(spec=UserDriveService)
+    drive = spec_drive_service("u1")
     order = []
 
-    async def move(user_id, item_id, folder, new_name):
+    async def move(handle, item_id, folder, new_name):
         order.append(("start", folder))
         await asyncio.sleep(0.05)
         order.append(("end", folder))
         return MoveOutcome(before=FILE, after=FILE, created=[])
     drive.move.side_effect = move
-    drive.connection.return_value = MagicMock(connected=True, needs_reconnect=False)
     shared = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive)
     first, second = _agent(shared, prompts), _agent(shared, prompts)
-    first._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:f1", "folder": "A"}), REPORT))
-    second._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:f1", "folder": "B"}), REPORT))
+    first._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:a1:f1", "folder": "A"}), REPORT))
+    second._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:a1:f1", "folder": "B"}), REPORT))
     await asyncio.gather(first.execute(_msg("to A")), second.execute(_msg("to B")))
     assert order in ([("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")],
                      [("start", "B"), ("end", "B"), ("start", "A"), ("end", "A")])

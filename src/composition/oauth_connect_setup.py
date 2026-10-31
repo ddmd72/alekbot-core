@@ -7,18 +7,18 @@ effort, logged, as the four old callbacks did:
 - MAIL: R1's `consented` (the disconnect mark and the notice flag go).
 - TASKS: only for the To Do kind (compared with the To Do spec resolved once, here): `consented`, then the
   `setup_microsoft_todo` task (its read-modify-save of the config then reads the cleared flag). Google Tasks: nothing.
-- DRIVE: the drive id of the new grant (`OneDriveAdapter.read_drive_id`, "" on failure) onto the saved credential,
-  then `consented`.
+- DRIVE: the drive activation built by `drive_connection_setup.build_drive_activation` (create or reconnect the
+  `DriveConnection`, MULTI_DRIVE_RFC §4.4, §5.2); none when no drive is wired. No R1 clear: a drive's reconnect state is
+  its connection's.
 
 Public interface:
     build_oauth_edges(config) -> List[OAuthProviderPort]
-    build_connect_activations(*, credentials, reconnect, todo_connector, task_queue, read_drive_id)
+    build_connect_activations(*, reconnect, todo_connector, task_queue, drive_activation)
         -> Dict[Integration, Activation]
     build_oauth_connect_service(db_client, env_config, *, connectors, credentials, cipher, digest_key, revocation,
                                 activations, redirect_uri) -> OAuthConnectService
 """
-from dataclasses import replace
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from ..adapters.google.google_oauth_provider import GoogleOAuthProvider
@@ -28,16 +28,15 @@ from ..domain.connector_spec import ConnectorSpec
 from ..domain.integration import Integration
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.cipher_port import CipherPort
-from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.oauth_provider_port import OAuthProviderPort
 from ..ports.task_queue import TaskQueue
 from ..services.credential_revocation_service import CredentialRevocationService
 from ..services.integration_reconnect_service import IntegrationReconnectService
 from ..services.oauth_connect_service import OAuthConnectService
 from ..utils.logger import logger
+from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from .connector_registry import ConnectorRegistry
-
-Activation = Callable[[OAuthCredential], Awaitable[None]]
+from .drive_connection_setup import Activation
 
 
 def build_oauth_edges(config: dict) -> List[OAuthProviderPort]:
@@ -56,11 +55,11 @@ def build_oauth_edges(config: dict) -> List[OAuthProviderPort]:
     return edges
 
 
-def build_connect_activations(*, credentials: OAuthCredentialsPort, reconnect: IntegrationReconnectService,
-                              todo_connector: ConnectorSpec, task_queue: Optional[TaskQueue],
-                              read_drive_id: Optional[Callable[[str], Awaitable[str]]]) -> Dict[Integration, Activation]:
-    """The activation of each integration (module docstring). `read_drive_id` is None when no drive adapter is wired:
-    the drive credential then keeps no drive id, which only skips the index's drive-switch check."""
+def build_connect_activations(*, reconnect: IntegrationReconnectService, todo_connector: ConnectorSpec,
+                              task_queue: Optional[TaskQueue],
+                              drive_activation: Optional[Activation]) -> Dict[Integration, Activation]:
+    """The activation of each integration (module docstring). `drive_activation` is None when no drive is wired: a
+    drive consent then only stores its credential (logged)."""
 
     async def consented(user_id: str, integration: Integration) -> None:
         # R1 (SECRETS_AT_REST_RFC §6.2): best effort, the credential is already stored; a failure only keeps the
@@ -87,15 +86,11 @@ def build_connect_activations(*, credentials: OAuthCredentialsPort, reconnect: I
                          f"{type(exc).__name__}", exc_info=True)
 
     async def drive(credential: OAuthCredential) -> None:
-        if read_drive_id is not None:
-            drive_id = await read_drive_id(credential.access_token)     # best effort: "" on any failure
-            if drive_id != credential.drive_id:
-                try:
-                    await credentials.update(replace(credential, drive_id=drive_id))
-                except Exception as exc:
-                    logger.error(f"💥 Storing the drive id failed for user={credential.user_id[:8]}: "
-                                 f"{type(exc).__name__}", exc_info=True)
-        await consented(credential.user_id, Integration.DRIVE)
+        if drive_activation is None:
+            logger.warning(f"Drive consent of user={credential.user_id[:8]} stored with no drive wired; "
+                           f"no connection created")
+            return
+        await drive_activation(credential)
 
     return {Integration.MAIL: mail, Integration.TASKS: tasks, Integration.DRIVE: drive}
 

@@ -1,12 +1,15 @@
 """Capture (USER_DRIVE_INDEXING_RFC §26.3, D34, Δ57): the deterministic rules in order, the ambiguous case going to the
 model, a deterministic answer beating the model's, Graph's camera facet, and the child's report checked like any
 other field it writes."""
+from datetime import datetime, timezone
+
 import pytest
 
 from src.domain.drive_capture import (
     CAPTURE_LABELS, Capture, CaptureSignals, CaptureSource, camera_capture, detect, model_capture, settle,
     signals_from_json, signals_to_json,
 )
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import FULL_PAGE_COVER, SCAN_DPI_MAX, SCAN_DPI_MIN, SCAN_GLASS_MAX_MM
 
 SCAN = CaptureSignals(pages=2, text_pages=0, raster_pages=2, median_dpi=200.0, page_short_mm=204.0,
@@ -82,12 +85,12 @@ class TestModelAndCamera:
         assert model_capture(value) is expected
 
     def test_graph_camera_make_or_model_is_a_document_photo(self):
-        assert camera_capture({"photo": {"cameraMake": "Synthetic"}}) is Capture.DOCUMENT_PHOTO
-        assert camera_capture({"photo": {"cameraModel": "S2"}}) is Capture.DOCUMENT_PHOTO
+        assert camera_capture(DriveMediaFacts(camera_make="Synthetic")) is Capture.DOCUMENT_PHOTO
+        assert camera_capture(DriveMediaFacts(camera_model="S2")) is Capture.DOCUMENT_PHOTO
 
     def test_a_taken_date_alone_is_no_camera(self):
-        assert camera_capture({"photo": {"takenDateTime": "2026-01-01T00:00:00Z"}}) is None
-        assert camera_capture({}) is None and camera_capture({"photo": {}}) is None
+        assert camera_capture(DriveMediaFacts(taken_at=datetime(2026, 1, 1, tzinfo=timezone.utc))) is None
+        assert camera_capture(DriveMediaFacts()) is None
 
     def test_every_capture_has_a_label(self):
         assert set(CAPTURE_LABELS) == {c.value for c in Capture}

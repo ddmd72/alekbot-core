@@ -13,14 +13,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.drive_card import content_hash_of, effective_date, photo_location
+from src.domain.drive_card import content_key_of, effective_date, photo_location
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
-from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
+from src.domain.user_drive import DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -77,7 +82,7 @@ async def _drain(adapter, pages, cursor=None):
     for page in pages:
         session = _session([_resp(APPROOT), _resp(page)])
         with patch("aiohttp.ClientSession", return_value=session):
-            result = await adapter.get_changes("u1", cursor)
+            result = await adapter.get_changes(HANDLE, cursor)
         urls.append(session.get.call_args_list[-1].args[0])
         results.append(result)
         cursor = result.cursor
@@ -105,7 +110,7 @@ class TestEnumeration:
     async def test_drive_and_root_ids_come_from_the_approot_item(self):
         adapter, _ = _adapter()
         results, _ = await _drain(adapter, _load("initial_enumeration.json")["pages"])
-        assert {(r.drive_id, r.root_item_id) for r in results} == {(DRIVE_ID, ROOT_ID)}
+        assert {(r.drive_identity, r.root_item_id) for r in results} == {(f"microsoft_onedrive:{DRIVE_ID}", ROOT_ID)}
 
     async def test_approot_is_read_fresh_for_every_page(self):
         # The indexer service never sees a disconnect, so a cached root could name the previous drive.
@@ -113,14 +118,15 @@ class TestEnumeration:
         pages = _load("initial_enumeration.json")["pages"]
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT), _resp(pages[0])])):
-            first = await adapter.get_changes("u1", None)
+            first = await adapter.get_changes(HANDLE, None)
         # A cursor bound to another drive is never followed (it restarts), so the
         # fresh read is shown with a cursor written before the binding existed, which is still followed.
         unbound = json.dumps({k: v for k, v in json.loads(first.cursor).items() if k in ("url", "full")})
         session = _session([_resp(other), _resp(pages[1])])
         with patch("aiohttp.ClientSession", return_value=session):
-            second = await adapter.get_changes("u1", unbound)
-        assert (first.drive_id, second.drive_id) == (DRIVE_ID, "OTHER")
+            second = await adapter.get_changes(HANDLE, unbound)
+        assert (first.drive_identity, second.drive_identity) == (f"microsoft_onedrive:{DRIVE_ID}",
+                                                                 "microsoft_onedrive:OTHER")
         assert session.get.call_args_list[0].args[0] == f"{_GRAPH}/me/drive/special/approot"
 
     async def test_approot_is_reported_on_every_page_as_an_ordinary_change(self):
@@ -155,7 +161,8 @@ class TestChangeMapping:
         dead = {c.item_id: c for r in results for c in r.changes if c.deleted}
         assert set(dead) == {fixture["_meta"]["folder_id"], fixture["_meta"]["child_id"]}
         for c in dead.values():   # only item_id and deleted are relied on (§3.1)
-            assert (c.name, c.parent_id, c.is_folder, c.content_version, c.facets) == ("", "", False, "", {})
+            assert (c.name, c.parent_id, c.is_folder, c.content_version, c.media, c.content_identity) == (
+                "", "", False, "", DriveMediaFacts(), None)
 
     async def test_delete_then_restore_in_one_round_keeps_feed_order(self):
         fixture = _load("delete_restore.json")
@@ -196,7 +203,9 @@ class TestChangeMapping:
         assert c.modified_at == datetime.fromisoformat(item["lastModifiedDateTime"].replace("Z", "+00:00"))
         assert c.fs_modified_at == datetime.fromisoformat(
             item["fileSystemInfo"]["lastModifiedDateTime"].replace("Z", "+00:00"))
-        assert c.facets["hashes"] == item["file"]["hashes"] and c.is_folder is False
+        # MULTI_DRIVE_RFC §7.2: the quickXorHash is the content identity (family quickxor); raw hashes are not kept
+        assert c.content_identity == ContentIdentity("quickxor", item["file"]["hashes"]["quickXorHash"], item["size"])
+        assert c.is_folder is False
 
     async def test_folder_fields(self):
         pages = _load("initial_enumeration.json")["pages"]
@@ -211,35 +220,40 @@ class TestChangeMapping:
         heic = _load("facets.json")["heic_photo_location"]
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(heic)])):
-            c = await adapter.get_change("u1", heic["id"])
-        assert {"photo", "image", "location", "hashes"} <= set(c.facets)
-        assert photo_location(c.facets) == (heic["location"]["latitude"], heic["location"]["longitude"])
+            c = await adapter.get_change(HANDLE, heic["id"])
+        # typed media facts (MULTI_DRIVE_RFC §7.2) in place of the raw photo/image/location/hashes facets
+        assert (c.media.camera_make, c.media.camera_model) == (heic["photo"]["cameraMake"], heic["photo"]["cameraModel"])
+        assert (c.media.image_width, c.media.image_height) == (heic["image"]["width"], heic["image"]["height"])
+        assert photo_location(c.media) == (heic["location"]["latitude"], heic["location"]["longitude"])
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == datetime(
             2025, 8, 14, 18, 22, 5, tzinfo=timezone.utc)                      # takenDateTime wins
-        assert content_hash_of(c) == f"{heic['file']['hashes']['quickXorHash']}:{heic['size']}"
+        assert content_key_of(c.content_identity) == f"quickxor:{heic['file']['hashes']['quickXorHash']}:{heic['size']}"
 
     async def test_empty_photo_facet_is_kept_and_dates_fall_back(self):
         jpeg = _load("facets.json")["jpeg_empty_photo"]
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(jpeg)])):
-            c = await adapter.get_change("u1", jpeg["id"])
-        assert c.facets["photo"] == {} and "image" in c.facets
+            c = await adapter.get_change(HANDLE, jpeg["id"])
+        # an empty photo facet gives no taken date; the image facet still gives the size (MULTI_DRIVE_RFC §7.2)
+        assert c.media.taken_at is None and c.media.camera_make == ""
+        assert (c.media.image_width, c.media.image_height) == (jpeg["image"]["width"], jpeg["image"]["height"])
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == c.fs_modified_at
 
     async def test_video_facet(self):
         video = _load("facets.json")["video"]
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(video)])):
-            c = await adapter.get_change("u1", video["id"])
-        assert c.facets["video"]["duration"] == video["video"]["duration"]
+            c = await adapter.get_change(HANDLE, video["id"])
+        assert c.media.video_duration_ms == video["video"]["duration"]
 
     async def test_remote_package_malware_facets_are_carried(self):
         raw = {"id": "X!1", "name": "n", "file": {"mimeType": "x"}, "parentReference": {"id": "P!1"},
                "remoteItem": {"id": "R!1"}, "package": {"type": "oneNote"}, "malware": {}}
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(raw)])):
-            c = await adapter.get_change("u1", "X!1")
-        assert {"remoteItem", "package", "malware"} <= set(c.facets) and "hashes" not in c.facets
+            c = await adapter.get_change(HANDLE, "X!1")
+        # typed: remoteItem is an alias, package and malware are flags; no hash, no content identity (§7.2)
+        assert c.media.is_alias and c.media.package and c.media.malware and c.content_identity is None
 
 
 class TestResync:
@@ -249,7 +263,7 @@ class TestResync:
         session = _session([_resp(APPROOT), _resp(gone["body"], status=410, headers=gone["headers"])])
         cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=old", "full": False})
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert json.loads(exc.value.restart_cursor) == {"url": gone["headers"]["Location"], "full": True}
 
     async def test_restart_cursor_pages_report_full_enumeration(self):
@@ -266,7 +280,7 @@ class TestResync:
         session = _session([_resp(APPROOT), _resp({}, status=410)])
         cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=old", "full": False})
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert json.loads(exc.value.restart_cursor) == {"url": "/me/drive/special/approot/delta?$top=200",
                                                         "full": True}
 
@@ -275,7 +289,7 @@ class TestResync:
         session = _session([_resp(APPROOT), _resp({}, status=410, headers={"Location": "https://evil.example/x"})])
         cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=old", "full": False})
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert "evil" not in exc.value.restart_cursor
 
     async def test_410_location_on_another_feed_restarts_from_a_fresh_delta(self):
@@ -284,7 +298,7 @@ class TestResync:
         session = _session([_resp(APPROOT), _resp({}, status=410, headers={"Location": _LIVE_410_LOCATION})])
         cursor = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=old", "full": False})
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert json.loads(exc.value.restart_cursor) == {"url": "/me/drive/special/approot/delta?$top=200",
                                                         "full": True}
 
@@ -294,7 +308,7 @@ class TestResync:
         session = _session([])
         cursor = json.dumps({"url": _LIVE_410_LOCATION, "full": True})
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert json.loads(exc.value.restart_cursor) == {"url": "/me/drive/special/approot/delta?$top=200",
                                                         "full": True}
         session.get.assert_not_called()
@@ -307,7 +321,7 @@ class TestResync:
         adapter, _ = _adapter()
         session = _session([_resp(APPROOT), _resp(page)])
         with patch("aiohttp.ClientSession", return_value=session):
-            result = await adapter.get_changes("u1", json.dumps({"url": url, "full": False}))
+            result = await adapter.get_changes(HANDLE, json.dumps({"url": url, "full": False}))
         assert session.get.call_args_list[1].args[0].endswith(url.lstrip("/").split("v1.0/")[-1])
         assert result.complete is True
 
@@ -319,7 +333,7 @@ class TestResync:
         adapter, _ = _adapter()
         session = _session([])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert json.loads(exc.value.restart_cursor)["full"] is True
         session.get.assert_not_called()
 
@@ -327,7 +341,7 @@ class TestResync:
         adapter, _ = _adapter()
         session = _session([_resp(APPROOT), _resp({"value": []})])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError):
-            await adapter.get_changes("u1", None)
+            await adapter.get_changes(HANDLE, None)
 
 
 class TestItemReads:
@@ -340,7 +354,7 @@ class TestItemReads:
         adapter, _ = _adapter()
         session = _session([_resp(fixture["get_moved_out"]["body"], status=404)])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError):
-            await adapter.get_change("u1", moved_out)
+            await adapter.get_change(HANDLE, moved_out)
         assert session.get.call_count == 1
         assert session.get.call_args.args[0].endswith("/me/drive/items/" + moved_out.replace("!", "%21"))
 
@@ -351,7 +365,7 @@ class TestItemReads:
         adapter, _ = _adapter()
         session = _session([_resp(page1)])
         with patch("aiohttp.ClientSession", return_value=session):
-            page = await adapter.list_children_changes("u1", "F!1", limit=3)
+            page = await adapter.list_children_changes(HANDLE, "F!1", limit=3)
         assert [c.item_id for c in page.changes] == [k["id"] for k in kids[:3]]
         assert page.next_cursor == page1["@odata.nextLink"]
         assert session.get.call_count == 1      # one call per page: the caller resumes with next_cursor
@@ -364,7 +378,7 @@ class TestItemReads:
         adapter, _ = _adapter()
         session = _session([_resp({"value": kids[3:]})])
         with patch("aiohttp.ClientSession", return_value=session):
-            page = await adapter.list_children_changes("u1", "F!1", limit=3, cursor=cursor)
+            page = await adapter.list_children_changes(HANDLE, "F!1", limit=3, cursor=cursor)
         assert [c.item_id for c in page.changes] == [k["id"] for k in kids[3:]]
         assert page.next_cursor is None
         assert session.get.call_args.args[0] == cursor
@@ -373,7 +387,7 @@ class TestItemReads:
         adapter, _ = _adapter()
         session = _session([_resp({"value": []})])
         with patch("aiohttp.ClientSession", return_value=session):
-            page = await adapter.list_children_changes("u1", "F", limit=200, cursor="https://evil.example/x")
+            page = await adapter.list_children_changes(HANDLE, "F", limit=200, cursor="https://evil.example/x")
         assert session.get.call_args.args[0] == f"{_GRAPH}/me/drive/items/F/children?$top=200"
         assert page.changes == () and page.next_cursor is None
 
@@ -382,76 +396,8 @@ class TestItemReads:
         cursor = f"{_GRAPH}/me/drive/items/F/children?$skiptoken=SECRETISH"
         session = _session([_resp({"error": {"code": "itemNotFound"}}, status=404)])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError) as exc:
-            await adapter.list_children_changes("u1", "F", limit=200, cursor=cursor)
+            await adapter.list_children_changes(HANDLE, "F", limit=200, cursor=cursor)
         assert "SECRETISH" not in str(exc.value)     # the tick logs the message (§8.2 per-item)
-
-
-class TestConnection:
-    async def test_not_connected(self):
-        adapter, _ = _adapter(creds=None)
-        assert await adapter.connection("u1") == DriveConnection(connected=False)
-
-    async def test_reads_flag_and_drive_id(self):
-        adapter, oauth = _adapter(creds=_creds(needs_reconnect=True, drive_id="D1"))
-        assert await adapter.connection("u1") == DriveConnection(connected=True, needs_reconnect=True,
-                                                                 drive_id="D1")
-        oauth.list_keys.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
-
-    async def test_a_changed_stored_token_drops_the_token_and_root_caches(self):
-        # A reconnect (maybe to another account) writes a new token; the indexer must use it at once.
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change("u1", ROOT_ID)                       # caches the "tok" bearer
-        assert adapter._tokens.cached_token("u1", "") == "tok"
-        oauth.get.return_value = _creds(access_token="B")
-        mirror_get(oauth)
-        adapter._root_cache["u1"] = (0.0, APPROOT)
-        await adapter.connection("u1")
-        assert adapter._tokens.cached_token("u1", "") is None and "u1" not in adapter._root_cache
-        session = _session([_resp(APPROOT), _resp(_load("folder_delete.json")["pages"][-1])])
-        with patch("aiohttp.ClientSession", return_value=session):
-            await adapter.get_changes("u1", None)
-        bearers = [c.kwargs["headers"]["Authorization"] for c in session.get.call_args_list]
-        assert bearers == ["Bearer B", "Bearer B"]                       # approot and delta page
-
-    async def test_an_unchanged_token_keeps_the_caches(self):
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change("u1", ROOT_ID)
-        reads = oauth.list_keys.await_count
-        await adapter.connection("u1")
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change("u1", ROOT_ID)
-        assert oauth.list_keys.await_count == reads + 1             # only connection() read the store
-
-    async def test_disconnected_drops_the_caches(self):
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change("u1", ROOT_ID)
-        oauth.get.return_value = None
-        mirror_get(oauth)
-        assert await adapter.connection("u1") == DriveConnection(connected=False)
-        assert adapter._tokens.cached_token("u1", "") is None
-
-    async def test_flag_reconnect_true_only_on_transition(self):
-        adapter, oauth = _adapter(creds=_creds(drive_id="D1"))
-        oauth.update.return_value = True                          # the record still exists
-        assert await adapter.flag_reconnect("u1") is True
-        oauth.save.assert_not_called()                            # a flag write never creates a record
-        saved = oauth.update.call_args.args[0]
-        assert saved.needs_reconnect is True and saved.drive_id == "D1" and saved.refresh_token == "r"
-
-    async def test_flag_reconnect_already_flagged_writes_nothing(self):
-        adapter, oauth = _adapter(creds=_creds(needs_reconnect=True))
-        assert await adapter.flag_reconnect("u1") is False
-        oauth.save.assert_not_called()
-        oauth.update.assert_not_called()
-
-    async def test_flag_reconnect_without_credentials(self):
-        adapter, oauth = _adapter(creds=None)
-        assert await adapter.flag_reconnect("u1") is False
-        oauth.save.assert_not_called()
-        oauth.update.assert_not_called()
 
 
 class TestDriveIdSource:
@@ -476,5 +422,5 @@ class TestLogging:
         session = _session([_resp(APPROOT), _resp({"error": {}}, status=500)])
         with patch("aiohttp.ClientSession", return_value=session), \
                 patch("src.adapters.microsoft.onedrive_adapter.logger") as log, pytest.raises(ValueError):
-            await adapter.get_changes("u1", cursor)
+            await adapter.get_changes(HANDLE, cursor)
         assert "SECRETISH" not in log.error.call_args.args[0]

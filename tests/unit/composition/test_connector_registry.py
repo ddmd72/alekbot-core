@@ -19,8 +19,8 @@ def test_the_four_kinds_and_their_specs():
         "gmail": (Integration.MAIL, "google", False, "Gmail"),
         "google_tasks": (Integration.TASKS, "google", False, "Google Tasks"),
         "microsoft_todo": (Integration.TASKS, "microsoft", False, "Microsoft To Do"),
-        # False until slice 1b: another account's consent replaces the drive credential, as today
-        "microsoft_onedrive": (Integration.DRIVE, "microsoft", False, "OneDrive"),
+        # E27: slice 1b flips the drive; several drive connections per user, cardinality decided by the connect service
+        "microsoft_onedrive": (Integration.DRIVE, "microsoft", True, "OneDrive"),
     }
     assert all(spec.kind == kind for kind, spec in got.items())
     assert (GMAIL, GOOGLE_TASKS, MICROSOFT_TODO, MICROSOFT_ONEDRIVE) == tuple(got)

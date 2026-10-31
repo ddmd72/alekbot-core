@@ -24,14 +24,16 @@ from src.domain.drive_index_params import CONCEPT_KEYS_MAX, INITIAL_BUILD_USD
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, RECS, EvalDb, EvalDocRef, eval_transactions, make_eval_repo,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, tzinfo=timezone.utc)
 TOO_MANY = [f"w:k{i}" for i in range(CONCEPT_KEYS_MAX + 1)]
+REALM, SUBJECT = "microsoft", "acct-1"   # the provider account an initial build is keyed by (MULTI_DRIVE_RFC §10)
 KEY_READS = (
-    ("find_by_about_keys", lambda repo, keys: repo.find_by_about_keys("u", keys, 5)),
-    ("find_expiring", lambda repo, keys: repo.find_expiring("u", keys, date(2026, 10, 13), 5)),
-    ("find_chunks_by_word_keys", lambda repo, keys: repo.find_chunks_by_word_keys("u", keys, 5)),
-    ("find_hints_by_keys", lambda repo, keys: repo.find_hints_by_keys("u", keys, 5)),
+    ("find_by_about_keys", lambda repo, keys: repo.find_by_about_keys(U_SCOPE, keys, 5)),
+    ("find_expiring", lambda repo, keys: repo.find_expiring(U_SCOPE, keys, date(2026, 10, 13), 5)),
+    ("find_chunks_by_word_keys", lambda repo, keys: repo.find_chunks_by_word_keys(U_SCOPE, keys, 5)),
+    ("find_hints_by_keys", lambda repo, keys: repo.find_hints_by_keys(U_SCOPE, keys, 5)),
 )
 
 
@@ -73,8 +75,8 @@ class TestInitialBuildLock:
         monkeypatch.setattr(EvalDocRef, "get", yielding_get)
         with eval_transactions():
             repo = make_eval_repo(EvalDb(), mock_env_config)
-            covered = await asyncio.gather(*(repo.spend_initial_build("u", 7.0, T) for _ in range(8)))
-            build = await repo.get_initial_build("u")
+            covered = await asyncio.gather(*(repo.spend_initial_build("u", REALM, SUBJECT, 7.0, T) for _ in range(8)))
+            build = await repo.get_initial_build("u", REALM, SUBJECT)
         assert sum(c for _, c in covered) == INITIAL_BUILD_USD == build.spent_usd
         assert build.closed_at == T
 
@@ -82,9 +84,9 @@ class TestInitialBuildLock:
 class TestChunksPageReadsIds:
     async def test_no_text_or_keys(self, adapters):
         db, (_, repo) = adapters
-        chunk = DriveChunk("u", "a", 1, 0, "long text", 0, 9, "pdf", ("1250",), ("w:x",) * 3, 1)
+        chunk = DriveChunk("u", "a", 1, 0, "long text", 0, 9, "pdf", ("1250",), ("w:x",) * 3, 1, connection_id="u")
         await repo.write_chunks([chunk], [[1.0, 0.0]])
-        (page,) = await repo.chunks_page("u", None, 5)
+        (page,) = await repo.chunks_page(U_SCOPE, None, 5)
         (ops,) = db.cols[CHUNKS].executed
         selected = next(op[1] for op in ops if op[0] == "select")
         assert not {"text", "word_keys", "content_terms", "vector"} & set(selected)

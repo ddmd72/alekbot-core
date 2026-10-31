@@ -4,6 +4,8 @@ policy sets, as the flip does; once the flip has landed the rebinding is a no-op
 from __future__ import annotations
 
 import struct
+from dataclasses import replace
+from datetime import datetime, timezone
 
 from typing import Callable, Dict, List, Optional
 
@@ -13,11 +15,14 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionRequest
 from src.domain.drive_index import DriveChunk, DriveIndexRecord
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS
 from src.services.drive_indexing_service import DriveIndexingService, TickResult
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 PDF_HEAD = b"%PDF-1.7\n"
 # a ZIP local header naming [Content_Types].xml: what an OOXML file starts with, so sniff_kind keeps its kind
@@ -60,11 +65,11 @@ class ContentWorld:
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors=extractors, triage=self.triage if wired else None,
-                                        clock=self.clock, monotonic=self.clock.monotonic)
+                                        connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         self.results: List[TickResult] = []
 
     async def tick(self, nudge=None) -> TickResult:
-        result = await self.svc.tick("u", nudge)
+        result = await self.svc.tick(U_SCOPE, nudge)
         self.results.append(result)
         return result
 
@@ -110,10 +115,10 @@ class ContentWorld:
 
     def add_image(self, name: str, thumbnail: Optional[bytes] = JPEG, data: bytes = JPEG, *,
                   camera: bool = False, **kw) -> str:
-        facets = {"image": {"width": 4000, "height": 3000}}
+        media = DriveMediaFacts(image_width=4000, image_height=3000)
         if camera:
-            facets["photo"] = {"takenDateTime": "2026-08-01T10:00:00Z", "cameraMake": "Apple"}
-        return self.drive.add_file(name, data, thumbnail=thumbnail, mime_type="image/jpeg", facets=facets, **kw)
+            media = replace(media, taken_at=datetime(2026, 8, 1, 10, tzinfo=timezone.utc), camera_make="Apple")
+        return self.drive.add_file(name, data, thumbnail=thumbnail, mime_type="image/jpeg", media=media, **kw)
 
 
 def prose(n_sentences: int, seed_word: str = "clause") -> str:

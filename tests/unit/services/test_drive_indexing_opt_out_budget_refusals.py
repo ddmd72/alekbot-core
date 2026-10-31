@@ -15,6 +15,7 @@ from src.domain.exceptions import (
 
 from .drive_index_fakes import FakeEmbeddings
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 _BUDGET_S = TICK_START_BUDGET.total_seconds()
 _SLOW_S = 200.0   # one slow provider call; three of them overrun the tick's start budget
@@ -45,7 +46,7 @@ class TestOptOutMidTickContinues:
         await w.settle()
         for i in range(10, 40):
             w.drive.add(f"f{i}.pdf")
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         await w.repo.save_sync_state(replace(st, continuation_enqueued_at=w.clock.now))
         w.clock.advance(5)
         return w
@@ -170,7 +171,7 @@ class TestOneRefusedCardDoesNotStallTheUser:
         rec = w.rec(bad)
         assert rec.attempts == 1 and rec.priority == int(Priority.RETRY) and rec.due_at > w.clock.now
         assert rec.state is not RecordState.DELETING
-        assert (await w.repo.get_sync_state("u")).last_error is None
+        assert (await w.repo.get_sync_state(U_SCOPE)).last_error is None
 
     async def test_rate_limit_stays_systemic(self):
         w = World()
@@ -202,7 +203,7 @@ class TestSystemicEmbeddingErrorsMoveNoRecord:
         bad = w.drive.add("refused.pdf")
         result = await w.tick()
         assert result.status in ("throttled", "error")
-        assert (await w.repo.get_sync_state("u")).last_error is not None
+        assert (await w.repo.get_sync_state(U_SCOPE)).last_error is not None
         assert w.rec(bad).attempts == 0
         assert bad not in w.carded() and set(good) <= w.carded()
         assert w.rec(bad).priority != int(Priority.RETRY) and w.rec(bad).due_at <= w.clock.now

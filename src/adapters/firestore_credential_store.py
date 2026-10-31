@@ -5,7 +5,7 @@ FirestoreCredentialStore — the integration credentials at rest (MULTI_DRIVE_RF
 Collection `{prefix}credentials`, doc id `{user_id}:{credential_id}`. `credential_id` is opaque, random and immutable:
 it survives every refresh and every consent of the same account (I5). Plaintext fields are the ones queried or
 operational: `user_id`, `credential_id`, `kind`, `integration`, `account_id`, `account.realm`, `account.subject`,
-`scopes`, `token_expiry`, `needs_reconnect`, `created_at`, `updated_at`, and `drive_id` on a OneDrive record. `secret`
+`scopes`, `token_expiry`, `needs_reconnect`, `created_at` and `updated_at`. `secret`
 is ONE `CipherPort` ciphertext of `{access_token, refresh_token, account_label}`, AAD `credentials/{user_id}:
 {credential_id}`, so a ciphertext moved to another record does not decrypt (I2) and a read or write is one cipher call.
 
@@ -41,7 +41,6 @@ from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..utils.logger import logger
 
 _AAD_STORE = "credentials"
-_ONEDRIVE_KIND = "microsoft_onedrive"
 
 
 def _utc(raw: Any) -> datetime:
@@ -89,8 +88,6 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
             "needs_reconnect": bool(credential.needs_reconnect),
             "updated_at": now,
         }
-        if kind == _ONEDRIVE_KIND:
-            fields["drive_id"] = credential.drive_id or ""
         return fields
 
     async def _open(self, snap: Any) -> OAuthCredential:
@@ -116,7 +113,6 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
             token_expiry=_utc(data["token_expiry"]),
             scopes=list(data["scopes"]),
             needs_reconnect=bool(data["needs_reconnect"]),
-            drive_id=str(data.get("drive_id") or ""),
         )
 
     @staticmethod

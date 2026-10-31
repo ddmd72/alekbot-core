@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_card import card_hash
 from src.domain.drive_enrich_plan import default_context, planned
 from src.domain.drive_index import (
@@ -16,21 +17,19 @@ from src.domain.drive_index_planner import PlanContext, plan_observation, schedu
 from src.domain.drive_keys import note_keys
 from src.domain.drive_index import KEYS_VERSION
 from src.domain.drive_note import (
-    NOTE_KEYS_VERSION, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteContent, NoteSnapshot, NoteState, binding_key, erase_stub,
-    note_match_keys,
+    NOTE_KEYS_VERSION, DriveNote, NoteBinding, NoteContent, NoteSnapshot, NoteState, erase_stub, note_match_keys,
 )
 from src.domain.drive_note_merge import (
     NOTE_MERGE_VERSION, NOTE_STORE_KEYS_VERSION, NOTE_WATERMARK_SKEW_S, NoteView, merged, note_store_keys, note_view,
-    notes_query_start,
-    record_binding_key, with_owner_note,
+    notes_query_start, with_owner_note,
 )
 
 T = datetime(2026, 10, 22, 9, tzinfo=timezone.utc)
 VIEW = NoteView(note_id="n1", version=2, text="the contractor's invoice", doc_type="contract", life_areas=("home",))
 
 
-def _note(state: str = "active", drive_id: str = "d1", provider: str = ONEDRIVE_PROVIDER_KEY, **kw) -> DriveNote:
-    binding = NoteBinding(provider_key=provider, drive_id=drive_id, item_id="i1", bound_at=T)
+def _note(state: str = "active", tag: str = "a1", **kw) -> DriveNote:
+    binding = NoteBinding(identity=f"fake:{tag}:i1", item_id="i1", ref_tag=tag, bound_at=T)
     base = dict(note_id="n1", user_id="u", state=state, current_version=2, text="the contractor's invoice",
                 doc_type="contract", life_areas=["home"], binding=binding, match_keys=note_match_keys(binding),
                 snapshot=NoteSnapshot(name="a.pdf"))
@@ -39,7 +38,7 @@ def _note(state: str = "active", drive_id: str = "d1", provider: str = ONEDRIVE_
 
 
 def _rec(**kw) -> DriveIndexRecord:
-    return DriveIndexRecord(user_id="u", item_id="i1", name="a.pdf", kind="pdf", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i1", name="a.pdf", kind="pdf", **kw)
 
 
 def test_set_change_and_clear_are_idempotent():
@@ -62,23 +61,18 @@ def test_the_merge_touches_only_the_owner_fields():
 
 
 def test_only_an_active_note_on_the_current_drive_gives_a_view():
-    assert note_view(_note(), drive_id="d1") == VIEW
-    assert note_view(_note("archived"), drive_id="d1") is None            # D9
-    assert note_view(_note("cleared", text="", doc_type="", life_areas=[]), drive_id="d1") is None
-    assert note_view(_note(), drive_id="d2") is None                      # D15/D16: dormant on another drive
-    assert note_view(_note(provider="other"), drive_id="d1") is None
-    assert note_view(erase_stub(_note()), drive_id="d1") is None
-    assert note_view(_note(), drive_id="") is None
-    assert note_view(None, drive_id="d1") is None
-
-
-def test_the_record_binding_key_uses_the_one_provider_key():
-    assert record_binding_key("d1", "i1") == binding_key(ONEDRIVE_PROVIDER_KEY, "d1", "i1")
-    assert record_binding_key("d1", "i1") in _note().match_keys
+    assert note_view(_note(), ref_tag="a1") == VIEW
+    assert note_view(_note("archived"), ref_tag="a1") is None            # D9
+    assert note_view(_note("cleared", text="", doc_type="", life_areas=[]), ref_tag="a1") is None
+    assert note_view(_note(), ref_tag="b2") is None                      # D15/D16: dormant on another connection
+    assert note_view(_note(tag="c3"), ref_tag="a1") is None              # bound on another connection (provider)
+    assert note_view(erase_stub(_note()), ref_tag="a1") is None
+    assert note_view(_note(), ref_tag="") is None
+    assert note_view(None, ref_tag="a1") is None
 
 
 def _ctx() -> PlanContext:
-    return PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=T,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=T,
                        place_of=lambda lat, lon: None)
 
 
@@ -121,7 +115,7 @@ def test_note_store_keys():
 
 
 def test_notes_query_start():
-    state = DriveSyncState(user_id="u")
+    state = DriveSyncState(user_id="u", connection_id="u")
     assert notes_query_start(state) == (None, "")
     paging = replace(state, notes_applied_at=T, notes_applied_id="n9", notes_paging=True)
     assert notes_query_start(paging) == (T, "n9")

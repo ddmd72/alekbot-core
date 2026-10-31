@@ -61,7 +61,8 @@ def _passages(found: ExcerptResult) -> DriveOutcome:
     rendered = render_excerpts(found, nonce=nonces())
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK if found.files else OutcomeClass.NOT_FOUND,
                         text=rendered.text, success=True, items=tuple(f.drive_item() for f in found.files),
-                        facts=ReadFacts(excerpts=bool(found.files)), excerpts=found, excerpt_plan=rendered.plan)
+                        facts=ReadFacts(excerpts=bool(found.files)), excerpts=found, excerpt_plan=rendered.plan,
+                        ref_tag="a1")
 
 
 def _ops(found: ExcerptResult = FOUND) -> AsyncMock:

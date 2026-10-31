@@ -3,8 +3,10 @@ DriveMirrorRepository — storage of the transcript mirror's roots and ledger
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.2, §27.9.3, §27.9.11; Δ199, Δ205, Δ206, Δ217).
 
 Two collections, one lifecycle: no purge deletes either (the ledger is the bot's record of the files it wrote on a drive).
-Every query of the mirror step takes `drive_id` and filters on it (Δ206); only the deleted-files search (`archived_*`)
-and the pins (`pinned`, `pinned_keys`) span drives, on purpose (Δ217). A missing composite index or a backend error
+User-scoped by design (MULTI_DRIVE_RFC §10, T-5): roots are keyed by the drive's identity (`mirror_root_doc_id`) and
+ledger documents by the mirror's drive identity and the source item's identity (`ledger_key`), so the folder outlives a
+connection and a reconnect finds it. Every query of the mirror step takes `drive_identity` and filters on it (Δ206); only
+the deleted-files search (`archived_*`) and the pins (`pinned`, `pinned_keys`) span drives, on purpose (Δ217). A missing composite index or a backend error
 leaves every method as `DriveIndexStoreUnavailable`, which the tick treats as systemic (§8.2).
 
 Public interface:
@@ -31,15 +33,17 @@ class DriveMirrorRepository(ABC):
 
     @abstractmethod
     async def roots(self, user_id: str) -> List[MirrorRoot]:
-        """Every root document of the user, one per drive, by drive id. A read error raises, never an empty list."""
+        """Every root document of the user, one per drive, by drive identity. A read error raises, never an empty
+        list."""
 
     @abstractmethod
-    async def get_root(self, user_id: str, drive_id: str) -> Optional[MirrorRoot]:
+    async def get_root(self, user_id: str, drive_identity: str) -> Optional[MirrorRoot]:
         """The root document of that drive, or None."""
 
     @abstractmethod
     async def save_root(self, root: MirrorRoot) -> None:
-        """Write the whole root document (keyed `{user_id}:{drive_id}`)."""
+        """Write the whole root document (keyed `mirror_root_doc_id(user_id, drive_identity)`); ValueError for an empty
+        drive identity."""
 
     @abstractmethod
     async def mark_root_gone(self, user_id: str, root_item_id: str, at: datetime) -> bool:
@@ -71,13 +75,14 @@ class DriveMirrorRepository(ABC):
     # -- deletion marks (§27.9.4) --------------------------------------------------------------
 
     @abstractmethod
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
-        """Mark the ledger documents of the noticed source items (a `file` and a `folder` document are candidates for
-        each item id). Updates **existing** documents only, never creates one. On a marked document the earliest
-        `gone_at` stays, `mark_ready_at` only moves later and the why only upgrades (`drive_mirror_plan.marked`); a new
-        mark sets `mark_ready_at = at + MIRROR_ARCHIVE_GRACE`. The keys carry no drive id (§27.9.3), so with `drive_id`
-        a document of another drive is left unmarked; "" (the tick knows no drive) checks nothing. Returns the number of
-        documents updated."""
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_identity: str) -> int:
+        """Mark the ledger documents of the noticed source items on the mirror of `drive_identity` (a `file` and a
+        `folder` document, `ledger_key(user, kind, drive_identity, notice.source_identity)`, are the candidates for each
+        notice; a notice without a source identity names no document and is skipped). Updates **existing** documents
+        only, never creates one. On a marked document the earliest `gone_at` stays, `mark_ready_at` only moves later and
+        the why only upgrades (`drive_mirror_plan.marked`); a new mark sets `mark_ready_at = at + MIRROR_ARCHIVE_GRACE`.
+        The keys carry the drive (§10), so a document of another drive is never marked. ValueError for an empty drive
+        identity. Returns the number of documents updated."""
 
     @abstractmethod
     async def clear_mark(self, user_id: str, key: str) -> None:
@@ -88,27 +93,27 @@ class DriveMirrorRepository(ABC):
         """Move the mark's `mark_ready_at` to `until` if that is later (never earlier); a missing document is a no-op."""
 
     @abstractmethod
-    async def ready_marks(self, user_id: str, drive_id: str, now: datetime, limit: int) -> List[MirrorDoc]:
+    async def ready_marks(self, user_id: str, drive_identity: str, now: datetime, limit: int) -> List[MirrorDoc]:
         """Documents of the drive with `gone_pending` and `mark_ready_at <= now`, earliest first: a held (or unripe)
         mark is excluded by the query itself (Δ217)."""
 
     # -- the mirror step's drive-scoped reads (Δ206) -------------------------------------------
 
     @abstractmethod
-    async def children(self, user_id: str, drive_id: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
+    async def children(self, user_id: str, drive_identity: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
         """Documents of the drive whose `mirror_parent_id` it is, by key."""
 
     @abstractmethod
-    async def folder_docs(self, user_id: str, drive_id: str, after_key: Optional[str],
+    async def folder_docs(self, user_id: str, drive_identity: str, after_key: Optional[str],
                           limit: int) -> List[MirrorDoc]:
         """The audit's walk: documents of the drive with `kind` in (`folder`, `archive`), by key, after `after_key`."""
 
     @abstractmethod
-    async def scan_page(self, user_id: str, drive_id: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
+    async def scan_page(self, user_id: str, drive_identity: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
         """The scan's walk: documents of the drive with `kind == "file"`, by key, after `after_key`."""
 
     @abstractmethod
-    async def detached_due(self, user_id: str, drive_id: str, before: datetime, limit: int) -> List[MirrorDoc]:
+    async def detached_due(self, user_id: str, drive_identity: str, before: datetime, limit: int) -> List[MirrorDoc]:
         """`detached` documents of the drive never checked or checked before `before`, least recently checked first."""
 
     # -- the deleted-files search (§27.9.11), across drives ------------------------------------

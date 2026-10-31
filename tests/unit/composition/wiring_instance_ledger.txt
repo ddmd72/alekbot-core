@@ -22,6 +22,7 @@ src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepos
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
 src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
@@ -45,7 +46,7 @@ src.adapters.firestore_skill_repository.FirestoreSkillRepository 1  # by-design 
 src.adapters.firestore_task_claim_store.FirestoreTaskClaimStore 1  # by-design single instance
 src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  # by-design single instance
 src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
-src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the graph's user_repo plus one uncached one shared by DriveSearchService and the note service (service_container.py drive_users)
+src.adapters.firestore_user_repo.FirestoreUserRepository 1  # by-design the graph's user_repo; the drive search and note services no longer hold one: the drive switches live on the connection, read through DriveConnectionService (MULTI_DRIVE_RFC 3 Removed, 6)
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
 src.adapters.gcp_kms_cipher_adapter.GcpKmsCipherAdapter 1  # by-design single instance
 src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
@@ -55,12 +56,14 @@ src.adapters.gcs_workspace_adapter.GcsWorkspaceAdapter 1  # by-design single ins
 src.adapters.gemini_adapter.GeminiAdapter 1  # by-design single instance
 src.adapters.gemini_embedding_adapter.GeminiEmbeddingAdapter 1  # by-design single instance
 src.adapters.gmail_provider_adapter.GmailProviderAdapter 1  # by-design single instance
+src.adapters.google.google_oauth_provider.GoogleOAuthProvider 1  # by-design the Google realm's one OAuth edge, held by the ConnectorRegistry (oauth_connect_setup.py build_oauth_edges, MULTI_DRIVE_RFC 5.1)
 src.adapters.grok_adapter.GrokAdapter 1  # by-design single instance
 src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
 src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance
 src.adapters.groovy_prompt_assembler.GroovyPromptAssembler 1  # by-design single instance
 src.adapters.in_memory_provider_resilience.InMemoryProviderResilience 1  # by-design single instance
 src.adapters.microsoft.graph_auth.MicrosoftGraphTokenProvider 2  # by-design one per Graph integration, To Do (todo_adapter.py:110) and OneDrive (onedrive_adapter.py:231), each with its own credentials record and token cache (graph_auth.py:46-47)
+src.adapters.microsoft.microsoft_oauth_provider.MicrosoftOAuthProvider 1  # by-design the Microsoft realm's one OAuth edge, held by the ConnectorRegistry (oauth_connect_setup.py build_oauth_edges, MULTI_DRIVE_RFC 5.1)
 src.adapters.microsoft.onedrive_adapter.OneDriveAdapter 1  # by-design single instance
 src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single instance
 src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
@@ -88,6 +91,7 @@ src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single insta
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
+src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -112,6 +116,7 @@ src.services.consolidation_service.ConsolidationService 1  # by-design single in
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
+src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
 src.services.drive_note_service.DriveNoteService 1  # by-design single instance
 src.services.drive_search_service.DriveSearchService 1  # by-design single instance

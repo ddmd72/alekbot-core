@@ -51,7 +51,7 @@ _CLASSIFIER_RULE = ("only what the owner named or confirmed in this conversation
                     "from the file, a card or your reading; empty otherwise")
 _LENGTH = f"At most {NOTE_WORDS_MAX} words and {NOTE_CHARS_MAX} characters"
 
-ITEM_REF = ("The drive:<id> ref of the file or folder, from a card, a listing, a [Drive: …] label, the commission or "
+ITEM_REF = ("The drive: ref of the file or folder, from a card, a listing, a [Drive: …] label, the commission or "
             "the state block; or the drive_note:<id> ref a deleted-files result shows for a note on a deleted file.")
 CREATE_TEXT = (f"Optional: the owner's words about the item, in his language: what it is, who or what it relates to. "
                f"{_LENGTH}. Empty when the owner gave only a type or life areas.")

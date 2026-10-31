@@ -58,7 +58,7 @@ class TestRecordCodec:
         assert isinstance(back.brief.parties, tuple) and back.triage_verdict is TriageVerdict.TEXT
 
     def test_photo_round_trip(self):
-        rec = DriveIndexRecord(user_id="u", item_id="p", kind="image", state=RecordState.METADATA_ONLY,
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", kind="image", state=RecordState.METADATA_ONLY,
                                reason=Reason.PHOTOGRAPH, triage_verdict=TriageVerdict.PHOTO, triage_version=1,
                                triaged_content_version="c9", caption="a cathedral at night")
         assert record_from_doc(stored(record_to_doc(rec))) == rec
@@ -80,7 +80,7 @@ class TestRecordCodec:
 
 class TestStateCodec:
     def test_round_trip(self):
-        state = DriveSyncState(user_id="u", model_backoff_until=T, model_failures=3, usage_month="2026-10",
+        state = DriveSyncState(user_id="u", connection_id="u", model_backoff_until=T, model_failures=3, usage_month="2026-10",
                                model_pages_used=120, triage_images_used=48)
         doc = state_to_doc(state)
         assert (doc["usage_month"], doc["model_pages_used"], doc["triage_images_used"], doc["model_failures"]) == \
@@ -102,4 +102,4 @@ def test_the_sdk_encodes_the_content_fields():
     assert brief["parties"].array_value.values[0].string_value == "ТОВ Приклад"
     assert brief["doc_date"].timestamp_value == BRIEF.doc_date
     assert encoded["triage_verdict"].string_value == "text"
-    assert _helpers.encode_dict(state_to_doc(DriveSyncState(user_id="u", model_backoff_until=T)))
+    assert _helpers.encode_dict(state_to_doc(DriveSyncState(user_id="u", connection_id="u", model_backoff_until=T)))

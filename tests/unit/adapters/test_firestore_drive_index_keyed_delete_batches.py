@@ -8,6 +8,7 @@ import pytest
 from src.domain.drive_index_params import KEYED_DELETE_BATCH, RECORD_WRITE_BATCH
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, HINTS, ChunkDb, chunk, chunk_snap, make_chunk_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 N = 2 * KEYED_DELETE_BATCH + 7
 
@@ -32,13 +33,13 @@ def test_the_keyed_batch_is_smaller_than_the_record_batch():
 
 async def test_a_purge_deletes_chunks_in_keyed_batches(repo, db):
     db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(index=i)) for i in range(N)]
-    assert await repo.delete_user_chunks("u", RECORD_WRITE_BATCH) == N
+    assert await repo.delete_user_chunks(U_SCOPE, RECORD_WRITE_BATCH) == N
     assert batch_sizes(db) == [KEYED_DELETE_BATCH, KEYED_DELETE_BATCH, 7]
 
 
 async def test_collecting_a_generation_deletes_in_keyed_batches(repo, db):
     db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(gen=1, index=i)) for i in range(N)]
-    assert await repo.delete_chunks_except("u", "a", 2) == N
+    assert await repo.delete_chunks_except(U_SCOPE, "a", 2) == N
     assert batch_sizes(db) == [KEYED_DELETE_BATCH, KEYED_DELETE_BATCH, 7]
 
 
@@ -46,5 +47,5 @@ async def test_a_purge_deletes_hints_in_keyed_batches(repo, db):
     db.cols[HINTS].respond = lambda ops: [SimpleNamespace(reference=SimpleNamespace(doc_id=f"h{i}"),
                                                           to_dict=lambda: {"generation": 1})
                                           for i in range(N)]
-    assert await repo.delete_user_hints("u", RECORD_WRITE_BATCH) == N
+    assert await repo.delete_user_hints(U_SCOPE, RECORD_WRITE_BATCH) == N
     assert batch_sizes(db) == [KEYED_DELETE_BATCH, KEYED_DELETE_BATCH, 7]

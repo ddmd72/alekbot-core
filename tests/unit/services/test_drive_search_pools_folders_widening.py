@@ -3,6 +3,7 @@
 
 import pytest
 
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index_params import NAME_KEY_QUERIES
 from src.domain.drive_keys import query_concepts
 from src.domain.drive_tier_pool import concept_trigrams
@@ -87,9 +88,9 @@ class TestFilterOnlyHonesty:
     async def test_filter_only_in_a_large_folder_does_not_claim_no_matches(self, w, monkeypatch):
         archive = w.drive.add("Archive", folder=True)
         for i in range(3):
-            w.drive.add(f"scan{i}.pdf", parent=archive, facets=taken(f"2019-01-0{i + 1}"))
+            w.drive.add(f"scan{i}.pdf", parent=archive, media=taken(f"2019-01-0{i + 1}"))
         for i in range(5):
-            w.drive.add(f"new{i}.pdf", facets=taken(f"2026-01-0{i + 1}"))
+            w.drive.add(f"new{i}.pdf", media=taken(f"2026-01-0{i + 1}"))
         await w.settle()
         monkeypatch.setattr(search_mod, "FOLDER_INMEM_CARDS", 2)   # the subtree walk is incomplete
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
@@ -179,7 +180,7 @@ class TestWalkBudget:
             read[parent_id] = read.get(parent_id, 0) + len(page)
             return page
         w.repo.children = children
-        result = await w.search("p3", folder=f"drive:{photos}")
+        result = await w.search("p3", folder=f"drive:a1:{photos}")
         assert result.status == STATUS_OK and w.repo.card_limits   # incomplete walk: the user-wide streams ran
         walked = sum(read.values())
         assert walked <= 30 + 1 + search_mod._WALK_PARALLEL * 2, walked
@@ -193,7 +194,7 @@ class TestSearchDecisions:
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
         for i in range(10):
-            w.drive.add(f"scan {i:02d}.pdf", facets=taken(f"2024-01-{i + 1:02d}"))
+            w.drive.add(f"scan {i:02d}.pdf", media=taken(f"2024-01-{i + 1:02d}"))
         await w.settle()
         _limit_calls(w, "filter_records", 4)
         await w.search("", kind="pdf")
@@ -201,12 +202,12 @@ class TestSearchDecisions:
 
     async def test_a_duplicate_below_the_k_cut_still_adds_its_path(self, w):
         """The identical copy is the 10th newest; the shown card still lists where it is."""
-        same = {"hashes": {"quickXorHash": "QX1"}}
+        same = ContentIdentity("quickxor", "QX1", 10)
         old = w.drive.add("Old", folder=True)
-        w.drive.add("copy.pdf", parent=old, size_bytes=10, facets={**same, **taken("2026-01-01")})
+        w.drive.add("copy.pdf", parent=old, size_bytes=10, content_identity=same, media=taken("2026-01-01"))
         for day in range(2, 10):
-            w.drive.add(f"scan{day}.pdf", facets=taken(f"2026-01-{day:02d}"))
-        w.drive.add("original.pdf", size_bytes=10, facets={**same, **taken("2026-01-10")})
+            w.drive.add(f"scan{day}.pdf", media=taken(f"2026-01-{day:02d}"))
+        w.drive.add("original.pdf", size_bytes=10, content_identity=same, media=taken("2026-01-10"))
         await w.settle()
         result = await w.search("", kind="pdf")
         assert len(result.cards) == 8 and result.cards[0].name == "original.pdf"
@@ -217,7 +218,7 @@ class TestSearchDecisions:
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 3)
         for i in range(5):
-            w.drive.add(f"scan{i}.pdf", facets=taken(f"2026-01-0{i + 1}"))
+            w.drive.add(f"scan{i}.pdf", media=taken(f"2026-01-0{i + 1}"))
         await w.settle()
         result = await w.search("", kind="pdf")
         assert result.matched_total == 3 and result.matched_at_least
@@ -230,7 +231,7 @@ class TestSearchDecisions:
         w.drive.add("lease.pdf")
         await w.settle()
         w.set_state(folder, has_card=False)
-        by_ref = await w.search("lease", folder=f"drive:{folder}")
+        by_ref = await w.search("lease", folder=f"drive:a1:{folder}")
         assert by_ref.status == STATUS_OK and paths(by_ref) == ["Contracts/lease.pdf"]
         by_path = await w.search("lease", folder="Contracts")
         assert by_path.status == STATUS_OK and paths(by_path) == ["Contracts/lease.pdf"]
@@ -249,8 +250,8 @@ class TestSearchDecisions:
         monkeypatch.setattr(search_mod, "CARD_FETCH", 2)
         monkeypatch.setattr(search_mod, "FETCH_MAX", 4)
         for i in range(5):
-            w.drive.add(f"budget{i}.xlsx", facets=taken(f"2026-02-0{i + 1}"))
-        w.drive.add("data.csv", facets=taken("2026-01-01"))
+            w.drive.add(f"budget{i}.xlsx", media=taken(f"2026-02-0{i + 1}"))
+        w.drive.add("data.csv", media=taken("2026-01-01"))
         await w.settle()
         result = await w.search("", kind="spreadsheet")
         assert len(result.cards) == 5 and result.matched_total == 5 and result.matched_at_least

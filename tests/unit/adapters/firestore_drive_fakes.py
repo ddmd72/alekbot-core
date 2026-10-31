@@ -27,7 +27,7 @@ def snap(data=None, doc_id=None):
 
 
 def rec_doc(item_id, **kw):
-    return record_to_doc(DriveIndexRecord(user_id="u", item_id=item_id, **kw))
+    return record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, **kw))
 
 
 class Query:

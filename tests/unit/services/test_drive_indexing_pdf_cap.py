@@ -10,7 +10,11 @@ from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_B
 from src.domain.user_drive import MAX_DRIVE_DOWNLOAD_BYTES, DriveFileTooLargeError, DriveItem
 from src.ports.file_storage_port import FileStoragePort
 from src.ports.user_drive_port import UserDrivePort
+from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.file_conversion_service import FileConversionService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connection_service_fake import connection
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 
@@ -71,7 +75,10 @@ async def test_chat_open_refuses_the_pdf_the_indexer_admits():
     drive = AsyncMock(spec=UserDrivePort)
     drive.get_item.return_value = DriveItem(item_id="i1", name="large.pdf", path="Docs/large.pdf", is_folder=False,
                                             size_bytes=BETWEEN, mime_type="application/pdf")
-    svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive)
+    repo = FakeDriveConnectionRepository()
+    await repo.create(connection("u1", "conn-1", ref_tag="a1"))   # the ref's tag names this connection (§9)
+    connections = DriveConnectionService(repo, AsyncMock(spec=OAuthCredentialsPort))
+    svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connections)
     with pytest.raises(DriveFileTooLargeError):
-        await svc.resolve_bytes("drive:i1", "u1")
+        await svc.resolve_bytes("drive:a1:i1", "u1")
     drive.download.assert_not_called()

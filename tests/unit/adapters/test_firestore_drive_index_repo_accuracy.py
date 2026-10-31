@@ -19,7 +19,7 @@ def test_the_four_fields_are_record_fields():
 
 
 def test_they_round_trip_as_plain_values():
-    rec = DriveIndexRecord(user_id="u", item_id="i", card_accuracy=88, accuracy_version=1, pages_refused=2,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", card_accuracy=88, accuracy_version=1, pages_refused=2,
                            read_by_fallback=True, profile=PROFILE, profile_source="model")
     doc = record_to_doc(rec)
     assert doc["card_accuracy"] == 88 and doc["accuracy_version"] == 1 and doc["pages_refused"] == 2
@@ -31,18 +31,18 @@ def test_they_round_trip_as_plain_values():
 
 
 def test_a_score_of_zero_survives_the_round_trip():
-    rec = DriveIndexRecord(user_id="u", item_id="i", card_accuracy=0)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", card_accuracy=0)
     assert record_from_doc(record_to_doc(rec)).card_accuracy == 0
 
 
 def test_a_legacy_document_loads_with_defaults():
-    doc = {k: v for k, v in record_to_doc(DriveIndexRecord(user_id="u", item_id="i", profile=PROFILE)).items()
+    doc = {k: v for k, v in record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i", profile=PROFILE)).items()
            if k not in ("card_accuracy", "accuracy_version", "pages_refused", "read_by_fallback")}
     back = record_from_doc(doc)
     assert (back.card_accuracy, back.accuracy_version, back.pages_refused, back.read_by_fallback) == (None, 0, 0, False)
 
 
 def test_a_legacy_profile_loads_with_no_grades():
-    doc = record_to_doc(DriveIndexRecord(user_id="u", item_id="i", profile=PROFILE))
+    doc = record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i", profile=PROFILE))
     del doc["profile"]["graded"]
     assert record_from_doc(doc).profile.graded == ()

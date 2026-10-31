@@ -12,6 +12,7 @@ from src.domain.drive_index_params import ABOUT_SHOWN, CONCEPT_KEYS_MAX, RELATED
 from src.domain.drive_search import render_results
 from src.domain.drive_search_texts import FOOTER_EXACT
 
+from .drive_index_fakes import U_SCOPE
 from .drive_search_v2_fixture import V2World, card, tier_of, vec
 
 
@@ -171,7 +172,7 @@ class TestCoverage:
         # state's coverage counters, and search reads only those
         for (user, item), rec in list(w.repo.records.items()):
             w.repo.records[(user, item)] = derived(rec, datetime(2026, 10, 20, tzinfo=timezone.utc))
-        gaps = await w.repo.count_describe_gaps("u")
+        gaps = await w.repo.count_describe_gaps(U_SCOPE)
         assert gaps == {GAP_WAITING: 1, GAP_HELD: 1}                # not the folder, not the photo
         state = w.repo.states["u"]
         w.repo.states["u"] = replace(state, counters={

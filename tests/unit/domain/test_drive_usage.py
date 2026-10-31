@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_enrichment import InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_index_lean import RECORD_LEAN_FIELDS, DriveRecordLean, lean_of
 from src.domain.drive_index_params import INITIAL_BUILD_USD
 from src.domain.drive_usage import (
-    MODEL_USAGE_TTL, added_usage, closed_initial, initial_doc_id, new_initial_build, spent_initial, usage_doc_id,
+    MODEL_USAGE_TTL, added_usage, closed_initial, initial_build_doc_id, new_initial_build, spent_initial, usage_doc_id,
     usage_expires_at,
 )
 
@@ -18,7 +19,8 @@ T = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
 
 
 def test_document_ids_and_the_ttl():
-    assert usage_doc_id("u", "2026-10") == "u:2026-10" and initial_doc_id("u") == "u:initial"
+    assert usage_doc_id("u", "2026-10") == "u:2026-10"
+    assert initial_build_doc_id("u", "realm_a", "sub-1") == "u:initial:realm_a:sub-1"
     assert MODEL_USAGE_TTL == timedelta(days=400)
     assert usage_expires_at("2026-10") == datetime(2026, 10, 1, tzinfo=timezone.utc) + MODEL_USAGE_TTL
 
@@ -63,9 +65,9 @@ class TestInitialBuild:
 def test_lean_of_takes_exactly_the_lean_fields():
     assert RECORD_LEAN_FIELDS == tuple(f.name for f in fields(DriveRecordLean))
     assert set(RECORD_LEAN_FIELDS) <= {f.name for f in fields(DriveIndexRecord)}
-    rec = DriveIndexRecord(user_id="u", item_id="i", parent_id="p", name="n", kind="pdf", effective_date=T,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", parent_id="p", name="n", kind="pdf", effective_date=T,
                            about_keys=("e:x",), name_tokens=("w:n",), state=RecordState.INDEXED, has_card=True,
-                           indexed_generation=3, content_hash="h", valid_until=T, readme_excerpt="not lean")
+                           indexed_generation=3, content_identity=ContentIdentity("fam1", "h", 1), valid_until=T, readme_excerpt="not lean")
     lean = lean_of(rec)
     assert lean.item_id == "i" and lean.about_keys == ("e:x",) and lean.valid_until == T
     assert lean.indexed_generation == 3 and lean.has_card

@@ -2,8 +2,9 @@
 Window plan, coverage check, time sanity and the content key (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.4-§27.6,
 Δ129, Δ135). Pure: no clock, no I/O.
 """
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import DriveIndexRecord
 from src.domain.drive_index_params import (
     TRANSCRIBE_COVERAGE_MIN, TRANSCRIBE_COVERAGE_TAIL_S, TRANSCRIBE_OVERLAP_S, TRANSCRIBE_WINDOW_S,
@@ -58,9 +59,22 @@ def times_ok(window: WindowSpec, segments: Sequence[Segment]) -> bool:
     return True
 
 
-def content_key(rec: DriveIndexRecord) -> Tuple[str, bool]:
-    """(key, shared). `quickXorHash:size` is shared across copies; without it the key is the item and its cTag and is
-    not shared. There is no other hash fallback (Δ135)."""
-    if rec.content_hash:
-        return rec.content_hash, True
-    return f"item:{rec.item_id}:{rec.content_version}", False
+def transcript_content_key(content_identity: Optional[ContentIdentity], identity: str,
+                           content_version: str) -> Tuple[str, bool]:
+    """(key, shared) of a recording's stored transcript (MULTI_DRIVE_RFC §10): the rendered content identity
+    `{family}:{digest}:{size}`, shared by every copy on any connection; without one, `item:{identity}:{content_version}`,
+    not shared, which survives a disconnect and reconnect because the item identity does. The stored transcript's
+    document id is `transcript_doc_id(user_id, key)` (user-scoped by design). ValueError when the fallback has no
+    identity."""
+    if content_identity is not None:
+        return content_identity.render(), True
+    if not identity:
+        raise ValueError("a transcript content key without a content identity needs the item identity")
+    return f"item:{identity}:{content_version}", False
+
+
+def record_content_key(rec: DriveIndexRecord) -> Tuple[str, bool]:
+    """`transcript_content_key` of a record (its content identity, item identity and content version). There is no
+    other hash fallback (Δ135)."""
+    return transcript_content_key(rec.content_identity, rec.identity, rec.content_version)
+

@@ -37,6 +37,11 @@ tests/
   floor still counts it.
 - **The aiohttp boundary has one fake.** A test that needs the HTTP surface the To Do, Gmail and Slack webhook adapters use takes
   `tests/support/http_boundary_fake.py` (`install(monkeypatch)`, exact-path routes, unrouted URLs fail loudly), never a new fake.
+  That rule covers stateless wire tests; `tests/support/graph_drive_fake.py` is a stateful Graph fake that serves the drive
+  contract suite (`tests/contracts/user_drive_contract.py`) only.
+- **Drive fakes** (multi-drive): `tests/support/fake_drive_adapter.py` (a `UserDrivePort` for any kind, registered under
+  several kinds in the two-provider tests), `drive_handles.py` (handles), `drive_connection_repo.py` (in-memory
+  `DriveConnectionRepository`) and `drive_connections.py` (connection builders). Take these; do not write a per-file drive fake.
 - **No test calls a real LLM**, and no unit test touches the network (below). A test that needs the real service is an
   integration test and lives in `tests/integration/`.
 - One test class per service or agent. `@pytest.mark.requirement("REQ-XXX")` for business requirements.

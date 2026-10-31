@@ -21,7 +21,8 @@ from .drive_op import MUTATING_OPS, DriveOp
 from .drive_open_bound_info import OpenBoundInfo
 from .drive_outcome_class import OutcomeClass
 from .drive_read_facts import ReadFacts
-from .user_drive import DriveItem, drive_context_entry
+from .drive_ref import is_valid_tag
+from .user_drive import DriveItem, drive_context_entry, drive_label, item_ref
 
 
 @dataclass(frozen=True)
@@ -52,11 +53,27 @@ class DriveOutcome:
     # An open the bound refused or cut (USER_DRIVE_INDEXING_RFC §29.6 L13): read by the stand-in and the history,
     # never printed by `compose_answer`.
     open_bound: Optional[OpenBoundInfo] = None
+    # The ref tag of the connection `items` were read from (MULTI_DRIVE_RFC §9): their labels and `drive_context` refs
+    # are `drive:<ref_tag>:<item_id>`. One operation acts on one connection (D6), so one tag covers every item; an
+    # outcome with items and no valid tag is refused at construction (a lost connection is a bug, not a ref).
+    ref_tag: str = ""
+
+    def __post_init__(self) -> None:
+        if self.items and not is_valid_tag(self.ref_tag):
+            raise ValueError(f"a drive outcome with items needs its connection's ref tag, got {self.ref_tag!r}")
 
     @property
     def is_change(self) -> bool:
         return self.op in MUTATING_OPS
 
     def drive_context(self) -> List[Dict[str, str]]:
-        """Today's per-operation `drive_context` entries (§7.4)."""
-        return [drive_context_entry(item) for item in self.items]
+        """Today's per-operation `drive_context` entries (§7.4), with tagged refs."""
+        return [drive_context_entry(item, self.ref_tag) for item in self.items]
+
+    def ref_of(self, item: DriveItem) -> str:
+        """The tagged ref of one of this outcome's items."""
+        return item_ref(item, self.ref_tag)
+
+    def label_of(self, item: DriveItem) -> str:
+        """The `[Drive: …]` label of one of this outcome's items."""
+        return drive_label(item, self.ref_tag)

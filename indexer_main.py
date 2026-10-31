@@ -73,8 +73,11 @@ from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.cipher_setup import build_cipher
 from src.composition.connector_registry import MICROSOFT_ONEDRIVE, ConnectorRegistry
+from src.composition.drive_connection_setup import build_drive_connection_service
+from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.drive_indexing_setup import (
-    build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
+    build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue,
+    build_place_lookup,
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
 from src.composition.drive_note_setup import (
@@ -138,12 +141,16 @@ def build_app() -> Quart:
         keys={key: os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY")},
         alert_sink=SlackWebhookAdapter(billing_webhook) if billing_webhook else None,
     )
-    drive = OneDriveAdapter(
+    onedrive = OneDriveAdapter(
         oauth_credentials=oauth_credentials,
         client_id=os.environ["MICROSOFT_TODO_CLIENT_ID"],
         client_secret=os.environ["MICROSOFT_TODO_CLIENT_SECRET"],
         connector=ConnectorRegistry().get(MICROSOFT_ONEDRIVE),
     )
+    # Every drive call goes through the router by the handle's kind (MULTI_DRIVE_RFC §6); each tick loads its
+    # connection through the connection service (§8), and reads its grant's provider account for the initial build.
+    drive = DriveProviderRouter(ConnectorRegistry(drive_adapters={MICROSOFT_ONEDRIVE: onedrive}).drive_adapters())
+    connections = build_drive_connection_service(db, env_config, credentials=oauth_credentials)
     index_repo = build_drive_index_repository(db, env_config)
     # The transcript mirror's roots and ledger (§27.9.2-§27.9.4): ALWAYS built, whatever the kill switch — the bot's
     # folder stays opaque to classification, deletions leave their marks and the purge keeps the pinned transcripts
@@ -195,6 +202,7 @@ def build_app() -> Quart:
         language=mirror.language,
         notes=note_repo,
         note_lifecycle=note_lifecycle,
+        connections=connections,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

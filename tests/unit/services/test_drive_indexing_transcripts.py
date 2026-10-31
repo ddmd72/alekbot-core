@@ -17,6 +17,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.batch_transcription import BatchStatus
 from src.domain.drive_card import card_hash
 from src.domain.drive_enrichment import JobState, UsageClass
+from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import (
     CURRENT_VERSIONS, EXTRACTION_VERSION, DriveIndexRecord, DriveSyncState, Reason,
     RecordState, Scope,
@@ -41,6 +42,17 @@ from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_enrich_world import EnrichWorld
 from .drive_index_fakes import T0
 from .drive_transcript_fakes import FakeBatch, FakeDrive, FakeMedia, FakeRunner, Recording
+from .drive_index_fakes import LegacyConnections
+
+# the single-drive harness's connection (`LegacyConnections`: connection id = user id)
+HANDLE = DriveHandle(user_id="u", connection_id="u", credential_id="cred", kind="fake")
+
+
+class _SearchConnections(LegacyConnections):
+    """The harness's one connection as the search service reads it: it is the primary."""
+
+    async def primary(self, user_id: str) -> Any:
+        return await self.get(user_id, user_id)
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -141,7 +153,7 @@ class TranscriptWorld(EnrichWorld):
             self.drive, self.repo, self.emb, self.queue, self.users, lambda lat, lon: "Rome (Roma), Italy", SPACE,
             extractors={"parser": self.parser, "reader": self.reader}, triage=self.triage,
             profiler=self.profiler if enrich else None, passages=self.passages if enrich else None,
-            transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=tick_cap, clock=self.clock,
+            transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=tick_cap, connections=LegacyConnections(self.users, self.drive), clock=self.clock,
             monotonic=self.clock.monotonic)
         self.states: Dict[str, List[str]] = {}
         real_upsert = self.repo.upsert_records
@@ -441,7 +453,7 @@ async def test_finalized_transcript_is_searchable(world):
     assert rec.card_hash == card_hash(rec)                                   # the card was embedded again
     assert rec.profile_state == JobState.READY.value                         # the enrichment jobs take it as text
     assert w.job(audio) is None and w.reserved() == pytest.approx(0.0)       # settled
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock,
+    search = DriveSearchService(w.repo, w.emb, w.drive, _SearchConnections(w.users, w.drive), clock=w.clock,
                                 nonce=lambda c=itertools.count(1): f"nonce{next(c):04d}", embedding_space=SPACE)
     found = await search.search("u", DriveSearchRequest(query="flamingo"))
     assert [c.path for c in found.cards] == ["memo.m4a"]
@@ -639,7 +651,7 @@ def _ctx(w) -> TranscriptContext:
 
 
 def _media(**kw: Any) -> DriveIndexRecord:
-    base: Dict[str, Any] = dict(user_id="u", item_id="m", kind="audio", scope=Scope.NORMAL, state=RecordState.PENDING,
+    base: Dict[str, Any] = dict(user_id="u", connection_id="u", item_id="m", identity="fake:d1:m", kind="audio", scope=Scope.NORMAL, state=RecordState.PENDING,
                                 content_version="c1", name="m.m4a", size_bytes=10, modified_at=T0 - timedelta(days=3))
     base.update(kw)
     return DriveIndexRecord(**base)
@@ -647,7 +659,7 @@ def _media(**kw: Any) -> DriveIndexRecord:
 
 def test_leaves_job_only_when_the_record_leaves_or_changes_version():
     ctx = TranscriptContext(now=T0, enabled=True, month_usd=0.0, reserved_usd=0.0, cap_usd=20.0)
-    working = _media(transcript_state="working", transcript_key="item:m:c1")
+    working = _media(transcript_state="working", transcript_key="item:fake:d1:m:c1")
     assert not leaves_job(working, transcript_plan(working, ctx))                       # same version: kept
     edited = replace(working, content_version="c2")
     assert leaves_job(edited, transcript_plan(edited, ctx))                             # a new version resets it
@@ -690,10 +702,10 @@ async def test_cap_override_only_lowers(world, raw, cap):
     ready = transcript_plan(_media(), _ctx(w))
     assert ready.transcript_state == "ready"
     await w.repo.upsert_records([ready])
-    models = svc_mod._Models(DriveSyncState(user_id="u"))
-    assert await w.svc._extraction_ready("u", models) is (cap > 0)
+    models = svc_mod._Models(DriveSyncState(user_id="u", connection_id="u"))
+    assert await w.svc._extraction_ready(HANDLE, models) is (cap > 0)
     await w.repo.reserve_model_usd("u", month_key(w.clock()), UsageClass.TRANSCRIBE.value, 5.0)
-    assert await w.svc._extraction_ready("u", models) is (cap > 5.0)
+    assert await w.svc._extraction_ready(HANDLE, models) is (cap > 5.0)
 
 
 async def test_a_spent_cap_yields_no_share(world):
@@ -712,7 +724,7 @@ async def test_the_cabinet_shows_the_effective_cap(world, cap):
     w = world()
     w.add_doc("a.md", prose(3))
     await w.settle()
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, clock=w.clock, embedding_space=SPACE,
+    search = DriveSearchService(w.repo, w.emb, w.drive, _SearchConnections(w.users, w.drive), clock=w.clock, embedding_space=SPACE,
                                 transcribe_cap_usd=cap)
     status = await search.indexing_status("u")
     assert status.usd_caps[UsageClass.TRANSCRIBE.value] == cap

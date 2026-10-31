@@ -24,12 +24,13 @@ from tests.unit.adapters.firestore_drive_fakes import RECS, executed
 
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
 from .test_drive_search_service import World
+from .drive_index_fakes import U_SCOPE
 
 DOCS = frozenset({"pdf"})
 
 
 def rec(item_id, **kw):
-    return DriveIndexRecord(**{"user_id": "u", "item_id": item_id, "kind": "pdf", "state": RecordState.PENDING, **kw})
+    return DriveIndexRecord(**{"user_id": "u", "connection_id": "u", "item_id": item_id, "kind": "pdf", "state": RecordState.PENDING, **kw})
 
 
 class TestDomain:
@@ -70,20 +71,20 @@ class TestRepositories:
             rec("p1"), rec("p2"), rec("f", state=RecordState.FAILED),
             rec("t", state=RecordState.METADATA_ONLY, reason=Reason.TOO_LARGE), rec("k", card_capped=True),
         ])
-        assert await repo.count_unread("u", DOCS) == 5          # the legacy total is unchanged
-        assert await repo.count_unread("u", DOCS, pending=True) == 2
-        assert await repo.count_unread("u", DOCS, pending=False) == 2
+        assert await repo.count_unread(U_SCOPE, DOCS) == 5          # the legacy total is unchanged
+        assert await repo.count_unread(U_SCOPE, DOCS, pending=True) == 2
+        assert await repo.count_unread(U_SCOPE, DOCS, pending=False) == 2
 
     async def test_firestore_pending_is_its_own_class(self, mock_env_config):
         db = ChunkDb()
         repo = make_chunk_repo(db, mock_env_config)
-        await repo.count_unread("u", {"pdf"}, pending=True)
+        await repo.count_unread(U_SCOPE, {"pdf"}, pending=True)
         pending = executed(db, RECS)
         assert len(pending) == 1 and ("where", "state", "==", "pending") in pending[0]
         assert ("where", "card_capped", "==", False) in pending[0]
         db2 = ChunkDb()
         repo2 = make_chunk_repo(db2, mock_env_config)
-        await repo2.count_unread("u", {"pdf"}, pending=False)
+        await repo2.count_unread(U_SCOPE, {"pdf"}, pending=False)
         terminal = executed(db2, RECS)
         assert len(terminal) == 5 and not any(("where", "state", "==", "pending") in ops for ops in terminal)
 
@@ -93,7 +94,7 @@ class TestEnvelope:
         w = World()
         w.drive.add("doc.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, counters={**state.counters, UNREAD_COUNTER: 5, NOT_READ_YET_COUNTER: 3})
         env = (await w.search("doc")).envelope
         assert (env.unread, env.not_read_yet, env.reading) == (2, 3, False)
@@ -102,7 +103,7 @@ class TestEnvelope:
         w = World()
         w.drive.add("doc.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, applied_versions={**state.applied_versions, "policy": POLICY_VERSION - 1})
         assert (await w.search("doc")).envelope.reading
 
@@ -121,7 +122,7 @@ async def test_the_unread_counters_are_refreshed_on_a_tick_that_does_not_settle(
         before = len(w.queue.tasks)
         await w.tick()
         continued = any(":cont:" in (t["key"] or "") for t in w.queue.tasks[before:])
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         truth = sum(1 for (u, _), r in w.repo.records.items() if u == "u" and is_not_read_yet(r, SLICE2_CONTENT_KINDS))
         if continued and truth:
             seen.append((state.counters.get(NOT_READ_YET_COUNTER, 0), truth))
@@ -135,8 +136,8 @@ async def test_the_not_read_yet_count_has_its_declared_composite(mock_env_config
     from tests.unit.adapters.test_firestore_drive_index_chunk_provisioning import _declared
     db = ChunkDb()
     repo = make_chunk_repo(db, mock_env_config)
-    await repo.count_unread("u", {"pdf"}, {"image"}, pending=True)
-    await repo.count_unread("u", {"pdf"}, {"image"}, pending=False)
+    await repo.count_unread(U_SCOPE, {"pdf"}, {"image"}, pending=True)
+    await repo.count_unread(U_SCOPE, {"pdf"}, {"image"}, pending=False)
     declared = _declared("development_drive_index_records")
     for ops in executed(db, RECS):
         prefix = {(op[1], "EQ") for op in ops if op[0] == "where" and op[2] in ("==", "IS_NULL", "in")}

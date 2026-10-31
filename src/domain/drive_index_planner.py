@@ -60,7 +60,7 @@ from typing import Any, Callable, FrozenSet, List, Mapping, Optional, Tuple, Uni
 
 from .drive_capture import camera_capture, model_capture, settle
 from .drive_card import (
-    card_eligible, card_hash, collapsed_folder, content_hash_of, effective_date, photo_location,
+    card_eligible, card_hash, collapsed_folder, effective_date, photo_location,
     structurally_card_eligible,
 )
 from .drive_enrichment import DriveProfile, PhotoDescription
@@ -82,8 +82,10 @@ from .drive_index_policy import (
 )
 from .drive_keys import name_keys_v2
 from .drive_profile import brief_date_grade, issued_of, readme_excerpt
+from .connection_scope import ConnectionScope
+from .drive_connection import DriveConnection
+from .drive_connection_state import ConnectionState
 from .place_lookup import Place
-from .user_drive import DriveConnection
 
 # The place a photo's coordinates resolve to: PlaceIndex.place (its display name and `place_forms`, §25.4.3), or a
 # display name alone (its only form).
@@ -92,11 +94,12 @@ PlaceOf = Callable[[float, float], Union[None, str, Place]]
 
 @dataclass(frozen=True)
 class PlanContext:
-    """`root_item_id` is the App Folder's root (the drive area the index covers). `mirror_root_ids` is something else:
-    the ids of the bot's own `_Transcripts` folders (§27.9.2, Δ205), the union of every root document of the user,
-    current and previous, on any drive (an id of another drive matches no item of this one). Such a folder is opaque:
-    it is stored without a card and nothing under it is indexed (§27.9.8)."""
-    user_id: str
+    """`scope` is the connection the index is of (MULTI_DRIVE_RFC §8): a record the plan creates carries its user and
+    connection. `root_item_id` is the area root of the connection's drive (the drive area the index covers).
+    `mirror_root_ids` is something else: the ids of the bot's own `_Transcripts` folders (§27.9.2, Δ205), the union of
+    every root document of the user, current and previous, on any drive (an id of another drive matches no item of
+    this one). Such a folder is opaque: it is stored without a card and nothing under it is indexed (§27.9.8)."""
+    scope: ConnectionScope
     root_item_id: str
     epoch: int
     phase: EpochPhase
@@ -144,6 +147,7 @@ class AccessAction(str, Enum):
     RECORD_LOSS = "record_loss"                # access lost within the grace period: stamp, stop
     PURGE_EXPIRED = "purge_expired"            # access lost past ACCESS_LOSS_TTL
     PURGE_DRIVE_SWITCH = "purge_drive_switch"  # a different drive is connected
+    PURGE_DISCONNECTED = "purge_disconnected"  # the connection is gone (DISCONNECTED or absent), something stored
     RESUME_AFTER_REGAIN = "resume_after_regain"
     PURGE_THEN_RESTART = "purge_then_restart"  # regained after the TTL: finish the purge, start epoch 1
     PROCEED = "proceed"
@@ -292,18 +296,19 @@ def change_from_record(rec: DriveIndexRecord) -> DriveChange:
     return DriveChange(item_id=rec.item_id, parent_id=rec.parent_id, name=rec.name, is_folder=rec.is_folder,
                        size_bytes=rec.size_bytes, mime_type=rec.mime_type, content_version=rec.content_version,
                        modified_at=rec.modified_at, fs_modified_at=rec.fs_modified_at, web_url=rec.web_url,
-                       child_count=rec.child_count, facets=dict(rec.facets))
+                       child_count=rec.child_count, identity=rec.identity, content_identity=rec.content_identity,
+                       media=rec.media)
 
 
 def _place(change: DriveChange, existing: Optional[DriveIndexRecord],
            place_of: PlaceOf) -> Tuple[Optional[str], Tuple[str, ...], int]:
     """(place_name, place_forms, geo stamp): written together (§25.4.3), so a stamp never stands without its forms; a
     stored place at this stamp and location is kept."""
-    loc = photo_location(change.facets)
+    loc = photo_location(change.media)
     if loc is None:
         return None, (), 0
     if (existing is not None and existing.geo_table_version == GEO_TABLE_VERSION
-            and photo_location(existing.facets) == loc):
+            and photo_location(existing.media) == loc):
         return existing.place_name, existing.place_forms, GEO_TABLE_VERSION
     found = place_of(*loc)
     if isinstance(found, Place):
@@ -313,7 +318,8 @@ def _place(change: DriveChange, existing: Optional[DriveIndexRecord],
 
 def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
     return (rec.parent_id, rec.name, rec.is_folder, rec.size_bytes, rec.mime_type, rec.web_url, rec.child_count,
-            dict(rec.facets), rec.kind, rec.scope, rec.state, rec.reason, rec.content_version, rec.modified_at,
+            rec.identity, rec.content_identity, rec.media, rec.kind, rec.scope, rec.state, rec.reason,
+            rec.content_version, rec.modified_at,
             rec.fs_modified_at, rec.effective_date, rec.place_name, rec.geo_table_version, rec.policy_version,
             rec.probe_pending, rec.rescope_pending, rec.reobserve_pending, rec.probed_child_count, rec.card_capped,
             rec.card_refused, rec.name_keys_version, rec.indexed_generation, rec.lead_text, rec.brief, rec.caption,
@@ -324,7 +330,8 @@ def _observable(rec: DriveIndexRecord) -> Tuple[Any, ...]:
 
 def _build(change: DriveChange, cls: Classification, existing: Optional[DriveIndexRecord],
            ctx: PlanContext, observed: bool = True) -> DriveIndexRecord:
-    base = existing or DriveIndexRecord(user_id=ctx.user_id, item_id=change.item_id)
+    base = existing or DriveIndexRecord(user_id=ctx.scope.user_id, item_id=change.item_id,
+                                        connection_id=ctx.scope.connection_id)
     place_name, place_forms, geo_version = _place(change, existing, ctx.place_of)
     carried = existing.probed_child_count if existing and not cls.probe_pending and not cls.density_reset else 0
     probed = cls.density_count or carried
@@ -351,7 +358,8 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
     rec = replace(
         base, parent_id=change.parent_id, name=change.name, is_folder=change.is_folder,
         size_bytes=change.size_bytes, mime_type=change.mime_type, web_url=change.web_url,
-        child_count=change.child_count, facets=dict(change.facets), kind=cls.kind,
+        child_count=change.child_count, identity=change.identity, content_identity=change.content_identity,
+        media=change.media, kind=cls.kind,
         content_class=cls.content_class, scope=cls.scope, state=cls.state, reason=cls.reason,
         content_version=change.content_version, modified_at=change.modified_at,
         fs_modified_at=change.fs_modified_at,
@@ -359,7 +367,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         place_name=place_name, place_forms=place_forms, geo_table_version=geo_version, policy_version=POLICY_VERSION,
         card_rank=card_rank_of(cls.content_class),
         name_tokens=name_keys_v2(change.name) if searchable(cls.reason) else (), name_keys_version=NAME_KEYS_VERSION,
-        content_hash=content_hash_of(change), probe_pending=cls.probe_pending, probed_child_count=probed,
+        probe_pending=cls.probe_pending, probed_child_count=probed,
         seen_epoch=_stamp(existing, ctx, observed),
         # DRIVE_FILE_NOTES_RFC §5.1 a (review I2): a record this observation creates looks its owner note up in the
         # one write gate (`_commit`); an existing record carries its copy of the note across (`replace(existing)`)
@@ -777,7 +785,7 @@ def _structure_stale(rec: DriveIndexRecord, embedding_space: Optional[str]) -> b
         return True   # refused by another space's model: this one gives it a fresh try (R3 F2-3)
     if (rec.has_card or rec.card_hash is not None) and rec.card_version != CARD_VERSION:   # carded, or refused
         return True
-    return photo_location(rec.facets) is not None and rec.geo_table_version != GEO_TABLE_VERSION
+    return photo_location(rec.media) is not None and rec.geo_table_version != GEO_TABLE_VERSION
 
 
 def extractor_stale(rec: DriveIndexRecord, versions: Mapping[str, int]) -> bool:
@@ -848,21 +856,25 @@ def chunks_refused(rec: DriveIndexRecord, embedding_space: str, now: datetime) -
                     first_seen=not rec.has_card)
 
 
-def access_action(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
+def access_action(state: Optional[DriveSyncState], connection: Optional[DriveConnection],
                   now: datetime) -> AccessAction:
-    """The tick's gate (§7.1 step 0, §7.6). Keyed on facts only, never on an exception type."""
-    if not enabled:
+    """The tick's gate (§7.1 step 0, §7.6), per connection (MULTI_DRIVE_RFC §8). Keyed on facts only, never on an
+    exception type. A connection that is gone (absent or DISCONNECTED) purges its index, retaining the paid transcripts
+    its records carried (I8); one with indexing off purges it as an opt-out; NEEDS_RECONNECT is the access loss with its
+    grace (the reconnect notice runs meanwhile); a state of another drive identity is a drive switch."""
+    if connection is None or connection.state is ConnectionState.DISCONNECTED:
+        return AccessAction.PURGE_DISCONNECTED if state is not None else AccessAction.NOOP_DISABLED
+    if not connection.indexing_enabled:
         return AccessAction.PURGE_OPT_OUT if state is not None else AccessAction.NOOP_DISABLED
     if state is not None and state.purging:
         return AccessAction.PURGE_THEN_RESTART   # a started purge always finishes, then onboarding (§7.6)
-    lost = not connection.connected or connection.needs_reconnect
-    if lost:
+    if connection.state is ConnectionState.NEEDS_RECONNECT:
         if state is None:
             return AccessAction.NOOP_DISABLED
         if state.access_lost_at is not None and now >= state.access_lost_at + ACCESS_LOSS_TTL:
             return AccessAction.PURGE_EXPIRED
         return AccessAction.RECORD_LOSS
-    if state is not None and connection.drive_id and state.drive_id and connection.drive_id != state.drive_id:
+    if state is not None and state.drive_identity and connection.drive_identity != state.drive_identity:
         return AccessAction.PURGE_DRIVE_SWITCH
     if state is not None and state.access_lost_at is not None:
         if now < state.access_lost_at + ACCESS_LOSS_TTL:
@@ -1103,7 +1115,7 @@ def triaged(rec: DriveIndexRecord, result: TriageResult, now: datetime,
     # §26.3 rule 1: the provider's camera facet decides; else what triage said (kept until the reader's own answer)
     # the reader's stored word (an already indexed image) outranks triage's, as in file_capture
     model = (model_capture(rec.capture) if state is RecordState.INDEXED else None) or model_capture(result.capture)
-    capture, source = settle(camera_capture(rec.facets), model)
+    capture, source = settle(camera_capture(rec.media), model)
     # a capture that changed on an indexed image changes its source share: the score is stale, and `accuracy_version` 0
     # sends it to the upgrade pass, which re-scores it from the stored profile and chunks (`scored`, B-minor 4)
     stale = state is RecordState.INDEXED and (capture, source) != (rec.capture, rec.capture_source)

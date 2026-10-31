@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
 from src.domain.drive_enrichment import DriveProfile, PhotoDescription
@@ -37,7 +38,7 @@ def admitted(monkeypatch):
 
 
 def ctx(now=NOW):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
                        place_of=lambda lat, lon: None)
 
 
@@ -533,27 +534,27 @@ class TestUsage:
         assert month_key(datetime(2026, 11, 1, 0, 30, tzinfo=timezone(timedelta(hours=2)))) == "2026-10"
 
     def test_counts_within_a_month(self):
-        state = with_usage(with_usage(DriveSyncState(user_id="u"), NOW, pages=10), NOW, pages=5, images=16)
+        state = with_usage(with_usage(DriveSyncState(user_id="u", connection_id="u"), NOW, pages=10), NOW, pages=5, images=16)
         assert state.usage_month == "2026-10" and usage_now(state, NOW) == (15, 16)
 
     def test_a_new_month_starts_at_zero(self):
         end = datetime(2026, 10, 31, 23, 59, tzinfo=timezone.utc)
-        state = with_usage(DriveSyncState(user_id="u"), end, pages=4_999, images=100)
+        state = with_usage(DriveSyncState(user_id="u", connection_id="u"), end, pages=4_999, images=100)
         later = end + timedelta(minutes=2)
         assert usage_now(state, end) == (4_999, 100) and usage_now(state, later) == (0, 0)
         assert usage_now(with_usage(state, later, pages=3), later) == (3, 0)
         assert with_usage(state, later, pages=3).usage_month == "2026-11"
 
     def test_a_fresh_state_has_no_usage(self):
-        assert usage_now(DriveSyncState(user_id="u"), NOW) == (0, 0)
+        assert usage_now(DriveSyncState(user_id="u", connection_id="u"), NOW) == (0, 0)
 
 
 class TestModelOutage:
     def test_available_by_default(self):
-        assert model_available(DriveSyncState(user_id="u"), NOW)
+        assert model_available(DriveSyncState(user_id="u", connection_id="u"), NOW)
 
     def test_backoff_doubles_to_its_cap(self):
-        state = DriveSyncState(user_id="u")
+        state = DriveSyncState(user_id="u", connection_id="u")
         delays = []
         for _ in range(12):
             state = model_outage(state, NOW)
@@ -562,12 +563,12 @@ class TestModelOutage:
         assert delays[-1] == MODEL_BACKOFF_CAP_S and state.model_failures == 12
 
     def test_unavailable_until_the_backoff_ends(self):
-        state = model_outage(DriveSyncState(user_id="u"), NOW)
+        state = model_outage(DriveSyncState(user_id="u", connection_id="u"), NOW)
         assert not model_available(state, NOW + timedelta(seconds=MODEL_BACKOFF_BASE_S - 1))
         assert model_available(state, NOW + timedelta(seconds=MODEL_BACKOFF_BASE_S))
 
     def test_recovery_resets(self):
-        state = model_recovered(model_outage(model_outage(DriveSyncState(user_id="u"), NOW), NOW))
+        state = model_recovered(model_outage(model_outage(DriveSyncState(user_id="u", connection_id="u"), NOW), NOW))
         assert (state.model_failures, state.model_backoff_until) == (0, None) and model_available(state, NOW)
 
 
@@ -598,6 +599,6 @@ class TestCanStartFile:
 
 
 def test_records_keep_slice1_defaults():
-    r = DriveIndexRecord(user_id="u", item_id="i")
+    r = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
     assert (r.lead_text, r.brief, r.triage_verdict, r.triage_version, r.triaged_content_version, r.caption) == \
         ("", None, None, 0, "", "")

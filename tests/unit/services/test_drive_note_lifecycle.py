@@ -316,15 +316,15 @@ class TestPurgeNeverArchives:
         reads = _reads(w)
         orig = w.drive.get_changes
 
-        async def other_drive(user_id, cursor):
-            page = await orig(user_id, cursor)
-            return replace(page, drive_id="d2")
+        async def other_drive(handle, cursor):
+            page = await orig(handle, cursor)
+            return replace(page, drive_identity="fake:d2")
 
         w.drive.get_changes = other_drive
         w.drive.connection_state = DriveConnection(connected=True, drive_id="d2")
         await w.settle()
         assert w.note(nid).state == NoteState.ACTIVE.value and a not in reads
-        assert (await w.state()).drive_id == "d2" and (await w.state()).note_checks == ()
+        assert (await w.state()).drive_identity == "fake:d2" and (await w.state()).note_checks == ()
 
 
 class TestWithoutTheLifecycle:

@@ -58,7 +58,7 @@ def test_compressed_tar_declared_epub_is_an_archive():
 def test_a_package_stored_under_policy_3_is_re_planned_as_an_epub():
     """Policy 4: a `.epub.pkgf` stored before it as `other / kind_not_admitted` is stale, so the upgrade pass re-plans
     it, and the re-plan makes it a pending EPUB read."""
-    rec = DriveIndexRecord(user_id="u", item_id="a", parent_id="root", name="A Sample Book.epub.pkgf", size_bytes=1000,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", parent_id="root", name="A Sample Book.epub.pkgf", size_bytes=1000,
                            kind="other", scope=Scope.NORMAL, state=RecordState.METADATA_ONLY,
                            reason=Reason.KIND_NOT_ADMITTED, policy_version=3,
                            name_keys_version=NAME_KEYS_VERSION)

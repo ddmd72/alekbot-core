@@ -49,7 +49,7 @@ class OAuthCredentialsPort(ABC):
         """Replace the record of (credential.user_id, credential.credential_id) only if it still exists: a token
         refresh or the needs_reconnect flag.
 
-        Returns True when replaced (tokens, label, scopes, expiry, needs_reconnect and drive_id from `credential`;
+        Returns True when replaced (tokens, label, scopes, expiry, needs_reconnect from `credential`;
         credential_id, kind, integration, account_id and the account realm + subject stay as stored), False when the
         record is gone: nothing is written. The existence check and the write are one atomic backend operation.
         """

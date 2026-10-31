@@ -29,6 +29,11 @@ Public interface (one call = one operation; `context` is the caller's message co
     keep_alive(task)                                     hold a task that must outlive its caller (a note write)
     post_late_note_receipt(user_id, account_id, item)    a note receipt whose write landed after the answer (Δ10)
 
+Connections (MULTI_DRIVE_RFC §6, §9): a `drive:<tag>:<item_id>` ref acts on the connection its tag names (resolved
+through UserDriveService); a path, a save and a new folder on the primary (stage 1). A ref that resolves to no live
+connection is answered with its code-built line (D13), as not found. Every label and `drive_context` ref an outcome
+carries is tagged with the connection the items were read from (`DriveOutcome.ref_tag`).
+
 The `_Transcripts` guard, root protection, never-overwrite, append-only and the move rules stay in UserDriveService.
 This module imports no UserDrivePort and no adapter; services are constructor-injected (REQ-ARCH-14: type-only
 imports). Delete and replace post receipts via notify_raw (§4.10); a delete or replace that fails after "still running"
@@ -46,6 +51,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Map
 
 import aiofiles
 
+from ..domain import drive_ref
 from ..domain.agent import DeliveryItem
 from ..domain.drive_card import owner_note_line
 from ..domain.drive_excerpt_render import render_excerpts
@@ -64,6 +70,8 @@ from ..domain.drive_search import (
     wrap_untrusted,
 )
 from ..domain.drive_capture import Capture, born_digital
+from ..domain.drive_connection import DriveConnection
+from ..domain.drive_resolved_ref import ResolvedDriveRef
 from ..domain.drive_line import DriveLine
 from ..domain.drive_preflight import DrivePreflight
 from ..domain.drive_search_line import SearchLine
@@ -83,12 +91,11 @@ from ..domain.user_drive import (
     DriveNameConflictError,
     DriveNotConnectedError,
     DrivePathError,
+    DriveRefRefused,
     DriveRootProtectedError,
     drive_filename,
     drive_label,
     format_size,
-    is_drive_ref,
-    parse_drive_ref,
     prepare_drive_text_file,
 )
 from ..domain.workspace import COPY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
@@ -130,7 +137,7 @@ _SCAN_CAPTURES = frozenset({Capture.SCAN.value, Capture.DOCUMENT_PHOTO.value})
 def wrong_store_text(ref: str) -> str:
     """A mutation given a ref that is not on the drive (or none)."""
     if not ref:
-        return "file_ref is required: the drive:<id> ref from a [Drive: ...] label."
+        return "file_ref is required: the drive: ref from a [Drive: ...] label."
     return f"'{ref}' is a chat file, not on the user's drive. To put it there use copy_file_to_drive."
 
 
@@ -168,8 +175,9 @@ class DriveOperations:
         drive_search: Optional["DriveSearchService"] = None,
         drive_notes: Optional["DriveNoteService"] = None,
     ) -> None:
-        """`drive_notes` gives an opened file the owner's note as its own block (DRIVE_FILE_NOTES_RFC §6.2); the drive id
-        comes from `drive_service.connection`, so this module reads no port (DRIVE_SPECIALIST_RFC §9.3 B8)."""
+        """`drive_notes` gives an opened file the owner's note as its own block (DRIVE_FILE_NOTES_RFC §6.2), found by the
+        item's identity; connections are resolved through `drive_service`, so this module reads no port
+        (DRIVE_SPECIALIST_RFC §9.3 B8)."""
         self._drive = drive_service
         self._drive_notes = drive_notes
         self._drive_search = drive_search
@@ -262,7 +270,8 @@ class DriveOperations:
             result = await self._drive_search.search(user_id, request)
             return DriveOutcome(op=DriveOp.SEARCH, cls=_search_class(result), text=render_results(result),
                                 success=True, items=tuple(card.drive_item() for card in result.cards),
-                                facts=_search_facts(result), request_text=request.query or "")
+                                facts=_search_facts(result), request_text=request.query or "",
+                                ref_tag=result.ref_tag)
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def search_deleted(self, context: Mapping[str, Any], user_id: str, query: Any = None) -> DriveOutcome:
@@ -275,7 +284,7 @@ class DriveOperations:
             found = await self._drive_search.search_deleted(user_id, str(query or ""))
             return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if found.items else OutcomeClass.NOT_FOUND,
                                 text=f"{REFERENCE_REMINDER}\n{found.text}", success=True, items=tuple(found.items),
-                                stored_text_shown=found.has_passage)
+                                stored_text_shown=found.has_passage, ref_tag=found.ref_tag)
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,
@@ -314,43 +323,47 @@ class DriveOperations:
                                 ref=str(file_ref or ""))
 
     async def list_folder(self, context: Mapping[str, Any], user_id: str, folder: Any = None) -> DriveOutcome:
-        """A folder path or a `drive:` folder ref, as search returns them (§26.2, Δ55)."""
+        """A folder path (on the primary) or a `drive:` folder ref (on its connection), as search returns them (§26.2,
+        Δ55)."""
         async def run() -> DriveOutcome:
             wanted = folder or None
-            folder_id = parse_drive_ref(wanted) if wanted else None
+            by_ref = bool(wanted) and drive_ref.is_drive_ref(str(wanted))
             try:
-                if folder_id is not None:
-                    out = await self._svc().list_folder_by_id(user_id, folder_id)
+                if by_ref:
+                    target = await self._svc().resolve_ref(user_id, str(wanted))
+                    conn = target.connection
+                    out = await self._svc().list_folder_by_id(target.handle, target.item_id)
                 else:
-                    out = await self._svc().list_folder(user_id, wanted)
+                    conn = await self._svc().primary(user_id)
+                    out = await self._svc().list_folder(conn.handle, wanted)
             except DriveItemNotFoundError:
-                note = await self._access_note(user_id, item_id=folder_id) if folder_id is not None else None
+                note = await self._access_note(user_id, ref=str(wanted)) if by_ref else None
                 if note is None:
                     raise
                 return _fail(DriveOp.LIST, note, OutcomeClass.REFUSED, inaccessible=True)
             except DrivePathError:
-                note = await self._access_note(user_id, path=wanted) if wanted and folder_id is None else None
+                note = await self._access_note(user_id, path=wanted) if wanted and not by_ref else None
                 if note is None:
                     raise
                 return _fail(DriveOp.LIST, note, OutcomeClass.REFUSED, inaccessible=True)
-            lines = [drive_label(out.folder)] + [f"  {drive_label(i)}" for i in out.items]
+            tag = conn.ref_tag
+            lines = [drive_label(out.folder, tag)] + [f"  {drive_label(i, tag)}" for i in out.items]
             if not out.items:
                 lines.append("  (empty)")
             if out.truncated:
                 lines.append("  … more items not shown; list a subfolder.")
-            return _ok(DriveOp.LIST, "\n".join(lines), [out.folder, *out.items])
+            return _ok(DriveOp.LIST, "\n".join(lines), [out.folder, *out.items], tag=tag)
         return await self._call(DriveOp.LIST, context, user_id, run, label=str(folder or ""))
 
     async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False) -> DriveOutcome:
         """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today)."""
         async def run() -> DriveOutcome:
-            if not is_drive_ref(ref or ""):
+            if not drive_ref.is_drive_ref(ref or ""):
                 return await self.fetch_stored(context, user_id, ref)
             try:
                 return await self._open_drive_item(context, ref, user_id, original=original)
             except DriveItemNotFoundError:
-                item_id = parse_drive_ref(ref)
-                note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
+                note = await self._access_note(user_id, ref=ref)
                 if note is None:
                     raise
                 return _fail(DriveOp.OPEN, note, OutcomeClass.REFUSED, inaccessible=True)
@@ -366,7 +379,7 @@ class DriveOperations:
         async def run() -> DriveOutcome:
             ref = source_ref or ""
             # Refuse before naming: drive_filename() on a drive ref would produce "drive_<id>" (§4.4).
-            if is_drive_ref(ref):
+            if drive_ref.is_drive_ref(ref):
                 return _fail(DriveOp.COPY, f"'{ref}' is already on the drive; use move_file.",
                              OutcomeClass.REQUEST_ERROR)
             data = await self._source_bytes(ref, user_id, DriveOp.COPY)
@@ -393,61 +406,67 @@ class DriveOperations:
     async def create_folder(self, context: Mapping[str, Any], user_id: str, folder: Any, *,
                             wait_s: float) -> DriveOutcome:
         async def run() -> DriveOutcome:
-            out = await self._svc().ensure_folder(user_id, folder or "")
+            conn = await self._svc().primary(user_id)
+            out = await self._svc().ensure_folder(conn.handle, folder or "")
             created = f" Created: {', '.join(out.created)}." if out.created else " It already existed."
-            return _ok(DriveOp.CREATE_FOLDER, f"{drive_label(out.folder)}{created}", [out.folder])
+            return _ok(DriveOp.CREATE_FOLDER, f"{drive_label(out.folder, conn.ref_tag)}{created}", [out.folder],
+                       tag=conn.ref_tag)
         return await self._call(DriveOp.CREATE_FOLDER, context, user_id, run, label=str(folder or ""), wait_s=wait_s)
 
     async def move(self, context: Mapping[str, Any], user_id: str, ref: str, *, folder: Any = None,
                    new_name: Any = None, wait_s: float) -> DriveOutcome:
         """Move and/or rename in one provider call (one `svc.move`)."""
         async def run() -> DriveOutcome:
-            item_id = parse_drive_ref(ref or "")
-            if item_id is None:
+            if not drive_ref.is_drive_ref(ref or ""):
                 return _fail(DriveOp.MOVE, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
-            out = await self._svc().move(user_id, item_id, folder or None, new_name or None)
+            target = await self._svc().resolve_ref(user_id, ref)
+            out = await self._svc().move(target.handle, target.item_id, folder or None, new_name or None)
             created = f" Created folders: {', '.join(out.created)}." if out.created else ""
-            return _ok(DriveOp.MOVE, f"Moved: {out.before.path} → {drive_label(out.after)}.{created}", [out.after])
+            tag = target.connection.ref_tag
+            return _ok(DriveOp.MOVE, f"Moved: {out.before.path} → {drive_label(out.after, tag)}.{created}",
+                       [out.after], tag=tag)
         return await self._call(DriveOp.MOVE, context, user_id, run, label=ref or "", ref=ref or "", wait_s=wait_s)
 
     async def append(self, context: Mapping[str, Any], user_id: str, ref: str, text: str, *,
                      wait_s: float) -> DriveOutcome:
         async def run() -> DriveOutcome:
-            item_id = parse_drive_ref(ref or "")
-            if item_id is None:
+            if not drive_ref.is_drive_ref(ref or ""):
                 return _fail(DriveOp.APPEND, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
             if not text:
                 return _fail(DriveOp.APPEND, "Give the text to add: a file_contents item with text.",
                              OutcomeClass.REQUEST_ERROR)
-            out = await self._svc().append_text(user_id, item_id, text)
-            return _ok(DriveOp.APPEND, f"Appended to {drive_label(out.item)}.", [out.item])
+            target = await self._svc().resolve_ref(user_id, ref)
+            out = await self._svc().append_text(target.handle, target.item_id, text)
+            tag = target.connection.ref_tag
+            return _ok(DriveOp.APPEND, f"Appended to {drive_label(out.item, tag)}.", [out.item], tag=tag)
         return await self._call(DriveOp.APPEND, context, user_id, run, label=ref or "", ref=ref or "", wait_s=wait_s)
 
     async def replace(self, context: Mapping[str, Any], user_id: str, ref: str, source_ref: str, *,
                       wait_s: float) -> DriveOutcome:
         async def run() -> DriveOutcome:
-            item_id = parse_drive_ref(ref or "")
-            if item_id is None:
+            if not drive_ref.is_drive_ref(ref or ""):
                 return _fail(DriveOp.REPLACE, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
             if not source_ref:
                 return _fail(DriveOp.REPLACE, "Give new_content_ref: the file whose content goes in.",
                              OutcomeClass.REQUEST_ERROR)
+            resolved = await self._svc().resolve_ref(user_id, ref)
             data = await self._source_bytes(source_ref, user_id, DriveOp.REPLACE)
-            target = await self._svc().get_item(user_id, item_id)
+            target = await self._svc().get_item(resolved.handle, resolved.item_id)
             self._note_target(target.path)
             mime = target.mime_type or (mimetypes.guess_type(target.name)[0] or "application/octet-stream")
-            out = await self._svc().replace_with(user_id, item_id, data, mime)
+            out = await self._svc().replace_with(resolved.handle, resolved.item_id, data, mime)
             await self._receipt(context, user_id, UIMessage.DRIVE_REPLACED, path=out.item.path,
                                 before=format_size(out.before_size), after=format_size(out.item.size_bytes))
-            return _ok(DriveOp.REPLACE, f"Replaced {drive_label(out.item)}.", [out.item])
+            tag = resolved.connection.ref_tag
+            return _ok(DriveOp.REPLACE, f"Replaced {drive_label(out.item, tag)}.", [out.item], tag=tag)
         return await self._call(DriveOp.REPLACE, context, user_id, run, label=ref or "", ref=ref or "", wait_s=wait_s)
 
     async def delete(self, context: Mapping[str, Any], user_id: str, ref: str, *, wait_s: float) -> DriveOutcome:
         async def run() -> DriveOutcome:
-            item_id = parse_drive_ref(ref or "")
-            if item_id is None:
+            if not drive_ref.is_drive_ref(ref or ""):
                 return _fail(DriveOp.DELETE, wrong_store_text(ref or ""), OutcomeClass.REQUEST_ERROR)
-            out = await self._svc().delete(user_id, item_id)
+            target = await self._svc().resolve_ref(user_id, ref)
+            out = await self._svc().delete(target.handle, target.item_id)
             if out.item.is_folder:
                 count = f"{out.file_count}+" if out.count_capped else str(out.file_count)
                 await self._receipt(context, user_id, UIMessage.DRIVE_DELETED_FOLDER, path=out.item.path, count=count)
@@ -470,11 +489,11 @@ class DriveOperations:
 
         async def drive_line() -> DriveLine:
             try:
-                connection = await drive_service.connection(user_id)
+                status = await drive_service.status(user_id)
             except Exception as exc:
                 logger.warning("[DriveOperations] connection read failed for %s: %s", user_id[:8], exc_brief(exc))
                 return DriveLine.CONNECTED
-            return DriveLine.of(connection)
+            return DriveLine.of(status)
 
         async def search_line() -> SearchLine:
             if self._drive_search is None:
@@ -490,12 +509,13 @@ class DriveOperations:
 
     async def folder_path(self, user_id: str, folder: Any) -> Any:
         """A write tool's `folder` given as a `drive:` folder ref becomes the folder's path (DRIVE_SPECIALIST_RFC §8);
-        a path, an empty value or a ref that cannot be read stays as given (the service then answers as today)."""
-        item_id = parse_drive_ref(folder) if isinstance(folder, str) else None
-        if item_id is None or self._drive is None:
+        a path, an empty value or a ref that cannot be read stays as given (the service then answers as today). Stage
+        1: a path is resolved on the primary, so a folder ref of another connection stays as given."""
+        if not isinstance(folder, str) or not drive_ref.is_drive_ref(folder) or self._drive is None:
             return folder
         try:
-            item = await self._drive.get_item(user_id, item_id)
+            target = await self._drive.resolve_ref(user_id, folder)
+            item = await self._drive.get_item(target.handle, target.item_id)
         except Exception as exc:
             logger.warning("[DriveOperations] folder ref lookup failed: %s", exc_brief(exc))
             return folder
@@ -660,13 +680,16 @@ class DriveOperations:
                 return DriveOutcome(op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True)
         except _Refusal as r:
             return _fail(op, r.text, r.cls)
+        except DriveRefRefused as e:
+            # a ref of no live connection (MULTI_DRIVE_RFC §9, D13): its line is the whole answer, once
+            logger.info("[DriveOperations] %s: ref resolves to no connection", op.value)
+            return _fail(op, e.line, OutcomeClass.NOT_FOUND)
         except DriveNotConnectedError:
             return _fail(op, NOT_CONNECTED, OutcomeClass.NOT_CONNECTED)
         except DriveItemNotFoundError:
             # An item the index knows the bot cannot open gets the index's sentence (§26.2, Δ55): a move, a delete or
             # an update of such a file as well as an open.
-            item_id = parse_drive_ref(ref)
-            note = await self._access_note(user_id, item_id=item_id) if item_id is not None else None
+            note = await self._access_note(user_id, ref=ref) if drive_ref.is_drive_ref(ref) else None
             if note is not None:
                 return _fail(op, note, OutcomeClass.REFUSED, inaccessible=True)
             return _fail(op, GONE, OutcomeClass.NOT_FOUND)
@@ -726,9 +749,9 @@ class DriveOperations:
             # ref the caller used.
             path = ref
             try:
-                item_id = parse_drive_ref(ref)
-                if item_id is not None:
-                    path = (await self._svc().get_item(user_id, item_id)).path
+                if drive_ref.is_drive_ref(ref):
+                    target = await self._svc().resolve_ref(user_id, ref)
+                    path = (await self._svc().get_item(target.handle, target.item_id)).path
             except Exception:
                 logger.warning("DriveOperations: path lookup for the late-failure notice failed", exc_info=True)
         await self._receipt(notice.context, user_id, notice.ui, path=path)
@@ -765,21 +788,24 @@ class DriveOperations:
         except DriveItemNotFoundError:
             raise
         except FileNotFoundError:
-            if is_drive_ref(ref):
+            if drive_ref.is_drive_ref(ref):
                 raise
             raise _Refusal(f"File '{ref}' not found in storage. It may have been deleted or "
                            f"expired. Ask the user to re-upload the file.", OutcomeClass.NOT_FOUND)
 
-    async def _access_note(self, user_id: str, *, item_id: Optional[str] = None,
+    async def _access_note(self, user_id: str, *, ref: Optional[str] = None,
                            path: Optional[str] = None) -> Optional[str]:
-        """The index's sentence for an item the bot cannot open (§26.2, Δ55), or None: no search service, an item the
-        index does not know or can read, or a lookup that failed (the caller keeps its own answer)."""
+        """The index's sentence for an item the bot cannot open (§26.2, Δ55), by its ref (in its connection's index) or
+        by a folder path (the primary's), or None: no search service, an item the index does not know or can read, or
+        a lookup that failed (the caller keeps its own answer)."""
         if self._drive_search is None:
             return None
         try:
-            if item_id is not None:
-                return await self._drive_search.access_note(user_id, item_id=item_id)
-            return await self._drive_search.access_note(user_id, path=path)
+            if ref is not None:
+                target = await self._svc().resolve_ref(user_id, ref)
+                return await self._drive_search.access_note(target.connection, item_id=target.item_id)
+            conn = await self._svc().primary(user_id)
+            return await self._drive_search.access_note(conn, path=path)
         except Exception:
             logger.warning("DriveOperations: access note lookup failed", exc_info=True)
             return None
@@ -788,35 +814,33 @@ class DriveOperations:
     # Open a drive file
     # ------------------------------------------------------------------
 
-    async def _transcript_of(self, user_id: str, item: DriveItem) -> Optional[str]:
+    async def _transcript_of(self, conn: DriveConnection, item: DriveItem) -> Optional[str]:
         """The wrapped transcript of a recording, or None (none stored, or the lookup failed: the file branch stays)."""
         if self._drive_search is None:
             return None
         try:
-            text = await self._drive_search.transcript_text(user_id, item.item_id, path=item.path,
-                                                          label=drive_label(item))
+            text = await self._drive_search.transcript_text(conn, item.item_id, path=item.path,
+                                                          label=drive_label(item, conn.ref_tag))
         except Exception:
             logger.warning("DriveOperations: transcript lookup failed", exc_info=True)
             return None
         return text or None
 
-    async def _archived_transcript_of(self, user_id: str, ref: str, item: DriveItem) -> Optional[str]:
+    async def _archived_transcript_of(self, target: ResolvedDriveRef, ref: str, item: DriveItem) -> Optional[str]:
         """A ref whose item is a file of the bot's `_Transcripts` folder opens from the pinned store entry, capped; with
         none, the downloaded file, capped the same way (§27.9.11). None for any other file, or when the lookup failed
         (the plain open then runs)."""
         if self._drive_search is None:
             return None
-        item_id = parse_drive_ref(ref)
-        if item_id is None:
-            return None
+        conn = target.connection
 
         async def downloaded() -> str:
-            text: str = await self._conversion_service.resolve_content(ref, user_id)
+            text: str = await self._conversion_service.resolve_content(ref, conn.user_id)
             return text
 
         try:
-            text = await self._drive_search.archived_text(user_id, item_id, label=drive_label(item), path=item.path,
-                                                          file_text=downloaded)
+            text = await self._drive_search.archived_text(conn, target.item_id, label=drive_label(item, conn.ref_tag),
+                                                          path=item.path, file_text=downloaded)
         except DriveItemNotFoundError:
             raise
         except Exception as exc:
@@ -824,13 +848,13 @@ class DriveOperations:
             return None
         return text or None
 
-    async def _text_extent(self, user_id: str, item: DriveItem) -> TextExtent:
+    async def _text_extent(self, conn: DriveConnection, item: DriveItem) -> TextExtent:
         """What the index holds of the item's text (§29.4 L5). A lookup that failed, or an answer that is not a
         `TextExtent`, counts as not indexed (L7): the open goes on and the post-conversion bound still holds the cap."""
         try:
             if self._drive_search is None:
                 return TextExtent.UNKNOWN
-            extent = await self._drive_search.text_extent(user_id, item.item_id)
+            extent = await self._drive_search.text_extent(conn, item.item_id)
             if not isinstance(extent, TextExtent):
                 raise TypeError(f"text_extent returned {type(extent).__name__}")
             return extent
@@ -840,66 +864,71 @@ class DriveOperations:
 
     async def _open_drive_item(self, context: Mapping[str, Any], ref: str, user_id: str, *,
                                original: bool) -> DriveOutcome:
-        item = await self._conversion_service.get_drive_item(ref, user_id)
+        target = await self._svc().resolve_ref(user_id, ref)
+        conn, tag = target.connection, target.connection.ref_tag
+        item = await self._svc().get_item(target.handle, target.item_id)
         if item.is_folder:
             return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; list it instead.",
                          OutcomeClass.REQUEST_ERROR)
-        archived = await self._archived_transcript_of(user_id, ref, item)
+        archived = await self._archived_transcript_of(target, ref, item)
         if archived is not None:
-            return _ok(DriveOp.OPEN, archived, [item], body=True)
+            return _ok(DriveOp.OPEN, archived, [item], body=True, tag=tag)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
                       else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
         # The open bound (RFC §29): a text above the cap is never handed to a model whole. An indexed one is refused
         # before any download and read through the index; any other is cut after the conversion. A recording's link
         # (`original`) is no text and asks nothing.
-        extent = TextExtent.UNKNOWN if original else await self._text_extent(user_id, item)
+        extent = TextExtent.UNKNOWN if original else await self._text_extent(conn, item)
         if vision_cap is None and refuses(extent):
-            logger.info("[DriveOperations] open refused: %s chars=%d passages=%d truncated=%s", item.ref,
+            logger.info("[DriveOperations] open refused: %s chars=%d passages=%d truncated=%s", ref,
                         extent.text_chars, extent.passages, extent.truncated)
             return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text=refusal_text(item.path, extent),
                                 success=False, items=(item,), facts=ReadFacts(too_long=True),
-                                open_bound=OpenBoundInfo(extent))
-        note = await self._note_line_of(user_id, item.item_id)
+                                open_bound=OpenBoundInfo(extent), ref_tag=tag)
+        note = await self._note_line_of(user_id, item)
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
-            return _ok(DriveOp.OPEN, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item])
+            return _ok(DriveOp.OPEN, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item],
+                       tag=tag)
         # A recording is decided the way the indexer decides it: by the kind classifier (extension first), not the
         # provider's mime, so a transcribed .opus/.ogg/.mkv with a generic mime still opens as its transcript.
         recording = kind_of(item.name, item.mime_type or "", False) in TRANSCRIBED_KINDS
         if recording and original:
             # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
             link = item.web_url or "(no link available)"
-            body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
-                                  nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
+            body = wrap_untrusted(f"{drive_label(item, tag)}\nLink to the original recording: {link}",
+                                  nonce=secrets.token_hex(8), ref=drive_ref.format(tag, item.item_id), path=item.path)
             # the owner's note in its own block (§6.2): nothing inside a file's wrapper can pass for it
-            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{body}", item, note), [item], body=True,
-                       owner_note=bool(note))
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{body}", item, note, tag), [item],
+                       body=True, owner_note=bool(note), tag=tag)
         if recording and self._drive_search is not None:
-            transcript = await self._transcript_of(user_id, item)
+            transcript = await self._transcript_of(conn, item)
             if transcript is not None:
                 # `transcript_text` returns text only: whether it cut is read off the extent (§29.10)
                 cut = extent.state is not ExtentState.PAGEABLE and extent.text_chars > OPEN_MAX_CHARS
                 return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, items=(item,), body=True,
-                                    text=self._with_note(transcript, item, note),
+                                    text=self._with_note(transcript, item, note, tag),
                                     facts=ReadFacts(owner_note=bool(note), cut=cut),
                                     open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
-                                                             cut_state=extent.state) if cut else None)
+                                                             cut_state=extent.state) if cut else None,
+                                    ref_tag=tag)
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:
                     raise DriveFileTooLargeError(item, vision_cap)
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
-                logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", item.ref, mime, len(data),
+                logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", ref, mime, len(data),
                             extent.pages_total or "-")
                 tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
                 os.close(tmp_fd)
                 async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
                 # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
-                                                         f"attached. You can see and analyse it directly.", item, note),
-                           [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note))
+                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} is "
+                                                         f"attached. You can see and analyse it directly.", item, note,
+                                                         tag),
+                           [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note), tag=tag)
             if mime.startswith("video/"):
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
                 if not self._notification:
@@ -913,47 +942,41 @@ class DriveOperations:
                 )
                 if not sent:
                     return _fail(DriveOp.OPEN, VIDEO_NOT_SENT, OutcomeClass.FAILED)
-                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
-                                                         f"been sent to the user as a file.", item, note), [item],
-                           owner_note=bool(note))
+                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} has "
+                                                         f"been sent to the user as a file.", item, note, tag), [item],
+                           owner_note=bool(note), tag=tag)
         except DriveFileTooLargeError as e:
             return _ok(DriveOp.OPEN, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
-                                     f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
+                                     f"{format_size(e.limit_bytes)} cannot be opened yet.", [item], tag=tag)
         content = await self._conversion_service.resolve_content(ref, user_id)
         # §28.7's trigger for serving opens from stored chunks: how large the live opens are.
-        logger.info("[DriveOperations] opened: %s chars=%d", item.ref, len(content))
+        logger.info("[DriveOperations] opened: %s chars=%d", ref, len(content))
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
         # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
         cut = bound(content, extent)
-        wrapped = wrap_untrusted(f"{drive_label(item)}\n{cut.text}", nonce=secrets.token_hex(8),
-                                 ref=item.ref, path=item.path)
+        wrapped = wrap_untrusted(f"{drive_label(item, tag)}\n{cut.text}", nonce=secrets.token_hex(8),
+                                 ref=drive_ref.format(tag, item.item_id), path=item.path)
         if cut.cut is None:
-            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note), [item],
-                       body=True, owner_note=bool(note))
-        logger.info("[DriveOperations] open cut: %s chars=%d kept=%d extent=%s", item.ref, cut.chars, cut.kept,
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note, tag), [item],
+                       body=True, owner_note=bool(note), tag=tag)
+        logger.info("[DriveOperations] open cut: %s chars=%d kept=%d extent=%s", ref, cut.chars, cut.kept,
                     cut.cut.value)
         # the cut line is the system's, outside the file's wrapper and before the owner's note block
         line = cut_line(path_subject(item.path), cut, extent)
         return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, items=(item,), body=True,
-                            text=self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}\n{line}", item, note),
+                            text=self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}\n{line}", item, note, tag),
                             facts=ReadFacts(owner_note=bool(note), cut=True),
-                            open_bound=OpenBoundInfo(extent, chars=cut.chars, kept=cut.kept, cut_state=cut.cut))
+                            open_bound=OpenBoundInfo(extent, chars=cut.chars, kept=cut.kept, cut_state=cut.cut),
+                            ref_tag=tag)
 
-    async def _note_line_of(self, user_id: str, item_id: str) -> str:
+    async def _note_line_of(self, user_id: str, item: DriveItem) -> str:
         """The owner's note on the item as a search card renders it (DRIVE_FILE_NOTES_RFC §6.2): the store's current
-        note, by binding on the connected drive (one connection read, one note read). "" without one, without the note
+        note, by the item's identity binding (one note read, MULTI_DRIVE_RFC §7.2). "" without one, without the note
         service or the drive, or on any failure: the open goes on without the line."""
-        if self._drive_notes is None or self._drive is None:
+        if self._drive_notes is None or self._drive is None or not item.identity:
             return ""
         try:
-            connection = await self._drive.connection(user_id)
-            if not connection.connected:
-                return ""
-            # a credential stored before the drive id was read has none: the sync state's (D-I3), as the service does
-            drive_id = connection.drive_id or await self._drive_notes.drive_id_for_connection(user_id, connection)
-            if not drive_id:
-                return ""
-            note = await self._drive_notes.note_for_item(user_id, drive_id, item_id)
+            note = await self._drive_notes.note_for_item(user_id, item.identity)
         except Exception as exc:
             logger.warning("DriveOperations: note lookup failed: %s", exc_brief(exc))
             return ""
@@ -962,12 +985,12 @@ class DriveOperations:
         return owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
 
     @staticmethod
-    def _with_note(text: str, item: DriveItem, line: str) -> str:
+    def _with_note(text: str, item: DriveItem, line: str, tag: str) -> str:
         """`text` followed by the note line in its own wrapper (the note is data, never instructions, §6.3)."""
         if not line:
             return text
-        return text + "\n" + wrap_untrusted(f"{drive_label(item)}\n{line}", nonce=secrets.token_hex(8), ref=item.ref,
-                                            path=item.path)
+        return text + "\n" + wrap_untrusted(f"{drive_label(item, tag)}\n{line}", nonce=secrets.token_hex(8),
+                                            ref=drive_ref.format(tag, item.item_id), path=item.path)
 
     # ------------------------------------------------------------------
     # Writes and receipts
@@ -975,15 +998,17 @@ class DriveOperations:
 
     async def _store(self, op: DriveOp, user_id: str, data: bytes, filename: str, mime: str,
                      folder: Any) -> DriveOutcome:
-        out = await self._svc().save(user_id, data, filename, mime, folder or None)
+        conn = await self._svc().primary(user_id)   # stage 1: a destination folder is a path on the primary
+        tag = conn.ref_tag
+        out = await self._svc().save(conn.handle, data, filename, mime, folder or None)
         created = f" Created folders: {', '.join(out.created)}." if out.created else ""
         if out.already_existed:
-            head = f"Already on the drive: {drive_label(out.item)}."
+            head = f"Already on the drive: {drive_label(out.item, tag)}."
         elif out.renamed:
-            head = f'Saved as "{out.item.name}" (the name "{filename}" was taken): {drive_label(out.item)}.'
+            head = f'Saved as "{out.item.name}" (the name "{filename}" was taken): {drive_label(out.item, tag)}.'
         else:
-            head = f"Saved {drive_label(out.item)}."
-        return _ok(op, head + created, [out.item])
+            head = f"Saved {drive_label(out.item, tag)}."
+        return _ok(op, head + created, [out.item], tag=tag)
 
     async def _receipt(self, context: Mapping[str, Any], user_id: str, ui: UIMessage, **fmt: str) -> None:
         """Deterministic chat receipt of a destructive action (§4.10). Best effort, logged on failure. The path is the
@@ -1012,10 +1037,12 @@ class DriveOperations:
 # Outcome helpers
 # ----------------------------------------------------------------------
 
-def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *,
+def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
         file_data: Optional[Dict[str, Any]] = None, body: bool = False, owner_note: bool = False) -> DriveOutcome:
+    """A success; `tag` is the ref tag of the connection `items` were read from (required with items)."""
     return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data,
-                        body=body, facts=ReadFacts(owner_note=owner_note) if owner_note else ReadFacts())
+                        body=body, facts=ReadFacts(owner_note=owner_note) if owner_note else ReadFacts(),
+                        ref_tag=tag)
 
 
 def _fail(op: DriveOp, text: str, cls: OutcomeClass, *, inaccessible: bool = False) -> DriveOutcome:
@@ -1038,7 +1065,8 @@ def _passages(result: ExcerptResult, shown_folders: FrozenSet[str], described_fi
                         facts=ReadFacts(excerpts=bool(result.files), owner_note=rendered.plan.has_owner_line,
                                         paged=result.page is not None,
                                         building=result.building or result.awaiting_rebuild),   # as search's
-                        excerpts=result, excerpt_plan=rendered.plan, request_text=request_text)
+                        excerpts=result, excerpt_plan=rendered.plan, request_text=request_text,
+                        ref_tag=result.ref_tag)
 
 
 def _excerpt_class(result: ExcerptResult) -> OutcomeClass:

@@ -4,6 +4,8 @@
 # Purpose: Create the card, chunk and hint vector indexes of the user-drive index
 #          (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §12.5, §24.6, §25.2.5). `make deploy-indexes` skips vector
 #          indexes, so these six are created here. They are also declared in config/firestore.indexes.json.
+#          Every pre-filter is `connection_id` since MULTI_DRIVE_RFC §8 (slice 1b: one index per connection); the
+#          user_id forms created before are dropped by the owner at the 1b deploy (the drive data is wiped then).
 # Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_drive_vector_indexes.sh
 # ==============================================================================
 
@@ -39,71 +41,71 @@ echo "   Database:   $DATABASE_ID"
 echo "   Collection: $COLLECTION, $CHUNK_COLLECTION, $HINT_COLLECTION"
 echo ""
 
-# find_nearest_cards(user_id, ...) — pre-filter user_id
-echo "📌 card_vector under user_id..."
-create_index "card_vector (user_id)" \
+# find_nearest_cards(scope, ...) — pre-filter connection_id
+echo "📌 card_vector under connection_id..."
+create_index "card_vector (connection_id)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=card_vector \
   --async
 
-# find_nearest_cards(user_id, ..., kind=...) — pre-filter user_id + kind
-echo "📌 card_vector under user_id + kind..."
-create_index "card_vector (user_id, kind)" \
+# find_nearest_cards(scope, ..., kind=...) — pre-filter connection_id + kind
+echo "📌 card_vector under connection_id + kind..."
+create_index "card_vector (connection_id, kind)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=order=ASCENDING,field-path=kind \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=card_vector \
   --async
 
-# find_nearest_chunks(user_id, ...) — pre-filter user_id
-echo "📌 chunk vector under user_id..."
-create_index "vector (user_id)" \
+# find_nearest_chunks(scope, ...) — pre-filter connection_id
+echo "📌 chunk vector under connection_id..."
+create_index "vector (connection_id)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$CHUNK_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=vector \
   --async
 
-# find_nearest_chunks(user_id, ..., kind=...) — pre-filter user_id + kind
-echo "📌 chunk vector under user_id + kind..."
-create_index "vector (user_id, kind)" \
+# find_nearest_chunks(scope, ..., kind=...) — pre-filter connection_id + kind
+echo "📌 chunk vector under connection_id + kind..."
+create_index "vector (connection_id, kind)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$CHUNK_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=order=ASCENDING,field-path=kind \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=vector \
   --async
 
-# find_nearest_hints(user_id, ...) — pre-filter user_id (Search v2, §25.2.5)
-echo "📌 hint_vector under user_id..."
-create_index "hint_vector (user_id)" \
+# find_nearest_hints(scope, ...) — pre-filter connection_id (Search v2, §25.2.5)
+echo "📌 hint_vector under connection_id..."
+create_index "hint_vector (connection_id)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$HINT_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=hint_vector \
   --async
 
-# find_nearest_hints(user_id, ..., kind=...) — pre-filter user_id + kind
-echo "📌 hint_vector under user_id + kind..."
-create_index "hint_vector (user_id, kind)" \
+# find_nearest_hints(scope, ..., kind=...) — pre-filter connection_id + kind
+echo "📌 hint_vector under connection_id + kind..."
+create_index "hint_vector (connection_id, kind)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$HINT_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=order=ASCENDING,field-path=kind \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=hint_vector \
   --async

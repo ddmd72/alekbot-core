@@ -18,7 +18,7 @@ SCAN = DriveItem(item_id="s", name="scan_0012.pdf", path="R&D/scan_0012.pdf", is
 
 def _search(**facts):
     return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True, items=(SCAN,),
-                        facts=ReadFacts(cards=1, **facts))
+                        facts=ReadFacts(cards=1, **facts), ref_tag="a1")
 
 
 def _lines(*outcomes):

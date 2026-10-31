@@ -22,12 +22,12 @@ def _blocks(kind, *outcomes):
 
 def _search(**facts):
     return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True, items=(ITEM,),
-                        facts=ReadFacts(cards=1, **facts))
+                        facts=ReadFacts(cards=1, **facts), ref_tag="a1")
 
 
 def _open(note: bool):
     return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="body", success=True, items=(ITEM,), body=True,
-                        facts=ReadFacts(owner_note=note))
+                        facts=ReadFacts(owner_note=note), ref_tag="a1")
 
 
 def test_a_search_block_with_a_noted_card_adds_the_line_once():

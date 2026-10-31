@@ -486,7 +486,7 @@ async def test_an_exact_word_hit_is_a_passage_match():
     invoice = w.file("Scan_0099.pdf", chunks=["Factura INV-2024/0012 total 1 250,00 €"])
     text = render_results(await w.search("INV-2024/0012"))
     assert "Mentioned in (1):" in text and "passage: … Factura INV-2024/0012" in text
-    assert 'matched: word "INV-2024/0012" in one passage' in text and f"drive:{invoice}" in text
+    assert 'matched: word "INV-2024/0012" in one passage' in text and f"drive:a1:{invoice}" in text
 
 
 # -- from test_drive_search_one_ancestry_load.py --------------------------------------------------------------------

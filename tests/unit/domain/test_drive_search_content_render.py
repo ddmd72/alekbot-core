@@ -74,23 +74,23 @@ class TestPolicyAtCallTime:
         assert content_admitted()
 
     def test_is_unread_reads_the_policy_now(self, monkeypatch):
-        pending = DriveIndexRecord(user_id="u", item_id="p", kind="pdf", state=RecordState.PENDING)
+        pending = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", kind="pdf", state=RecordState.PENDING)
         monkeypatch.setattr(policy, "ADMITTED_KINDS", frozenset())
         assert not is_unread(pending)
         monkeypatch.setattr(policy, "ADMITTED_KINDS", policy.SLICE2_CONTENT_KINDS)
         assert is_unread(pending)
-        assert not is_unread(DriveIndexRecord(user_id="u", item_id="c", kind="code", state=RecordState.FAILED))
+        assert not is_unread(DriveIndexRecord(user_id="u", connection_id="u", item_id="c", kind="code", state=RecordState.FAILED))
 
     def test_images_count_only_once_triage_said_text(self, monkeypatch):
         monkeypatch.setattr(policy, "TRIAGED_KINDS", policy.SLICE2_TRIAGED_KINDS)
-        image = DriveIndexRecord(user_id="u", item_id="i", kind="image", state=RecordState.PENDING)
+        image = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="image", state=RecordState.PENDING)
         assert not is_unread(image)                                        # not triaged yet
-        assert is_unread(DriveIndexRecord(user_id="u", item_id="t", kind="image", state=RecordState.PENDING,
+        assert is_unread(DriveIndexRecord(user_id="u", connection_id="u", item_id="t", kind="image", state=RecordState.PENDING,
                                           triage_verdict=TriageVerdict.TEXT))
-        assert not is_unread(DriveIndexRecord(user_id="u", item_id="ph", kind="image",
+        assert not is_unread(DriveIndexRecord(user_id="u", connection_id="u", item_id="ph", kind="image",
                                               state=RecordState.METADATA_ONLY, reason=Reason.PHOTOGRAPH,
                                               triage_verdict=TriageVerdict.PHOTO))
 
     def test_an_explicit_set_still_wins(self):
-        rec = DriveIndexRecord(user_id="u", item_id="f", kind="pdf", state=RecordState.FAILED)
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="f", kind="pdf", state=RecordState.FAILED)
         assert is_unread(rec, frozenset({"pdf"})) and not is_unread(rec, frozenset())

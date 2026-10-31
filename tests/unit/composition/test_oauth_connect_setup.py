@@ -9,7 +9,7 @@ import pytest
 
 from src.composition.oauth_connect_setup import build_oauth_edges
 from tests.support.firestore_eval import eval_transactions
-from tests.unit.web.connect_world import ALEX, APPROOT, ConnectWorld
+from tests.unit.web.connect_world import ALEX, ConnectWorld
 
 
 @pytest.fixture
@@ -53,27 +53,3 @@ async def test_a_failed_clear_does_not_stop_the_todo_setup(world):
     assert (await world.connect("microsoft_todo")).headers["Location"] == "/cabinet?connected=microsoft_todo"
     assert [t for t, _ in world.worker_tasks()] == ["setup_microsoft_todo"]
 
-
-async def test_the_drive_activation_stores_the_drive_id_then_clears_the_state(world):
-    assert (await world.connect("microsoft_onedrive")).headers["Location"] == "/cabinet?connected=microsoft_onedrive"
-    (held,) = await world.held("microsoft_onedrive")
-    assert held.drive_id == "drive-b1"
-    assert world.events == [("consented", ALEX, "drive")]
-    [read] = world.http.requests_to("GET", APPROOT)
-    assert read.headers == {"Authorization": "Bearer at-microsoft_onedrive"}
-
-
-async def test_an_unread_drive_id_still_connects_without_one(world):
-    world.http.route("GET", APPROOT, 503, {"error": {"code": "serviceNotAvailable"}})
-    assert (await world.connect("microsoft_onedrive")).headers["Location"] == "/cabinet?connected=microsoft_onedrive"
-    (held,) = await world.held("microsoft_onedrive")
-    assert held.drive_id == ""
-    assert world.events == [("consented", ALEX, "drive")]
-
-
-async def test_a_drive_reconnect_to_another_drive_takes_the_new_id(world):
-    await world.connect("microsoft_onedrive")
-    world.http.route("GET", APPROOT, body={"id": "approot-2", "parentReference": {"driveId": "drive-b2"}})
-    await world.connect("microsoft_onedrive")                    # same account: the record is updated in place
-    (held,) = await world.held("microsoft_onedrive")
-    assert held.drive_id == "drive-b2"
