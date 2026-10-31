@@ -645,6 +645,11 @@
         max-width: 280px;
       }
 
+      /* Long privacy text: collapsed by default, readable on demand. */
+      .disclosure { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+      .disclosure summary { cursor: pointer; user-select: none; }
+      .disclosure p { margin: 8px 0 0; }
+
       .integration-status {
         display: flex;
         align-items: center;
@@ -1591,6 +1596,7 @@
           "toast.drive_index_off": "Drive search off — the index is being deleted",
           "toast.drive_index_failed": "Failed to change drive search",
           "drive.dr_copy_title": "Copy deep research reports to my drive",
+          "drive.disclosure_summary": "How this works and what is shared",
           "drive.dr_copy_disclosure": "When on, every finished deep research report (the HTML page you receive in chat) is also saved to your drive, in the folder “Deep research”, named by date and title. The copies are ordinary files: they stay on the drive if you turn this off, and when drive search is on they are indexed like any other file. If the drive is not connected when a report is ready, it is not copied and the chat says so.",
           "drive.index_disclosure_dr_copy": "This includes the deep research reports copied to your drive.",
           "drive.transcribe_disclosure": "The bot transcribes the recordings in its drive folder with Google Gemini to make them searchable and readable. It keeps the transcripts in its index and writes each one as a text file in the _Transcripts folder of your drive; the transcript of a deleted recording moves to the Archive inside that folder. Recordings contain other people's voices.",
@@ -1742,6 +1748,7 @@
           "toast.drive_index_off": "Пошук на диску вимкнено — індекс видаляється",
           "toast.drive_index_failed": "Не вдалося змінити пошук на диску",
           "drive.dr_copy_title": "Копіювати звіти глибоких досліджень на мій диск",
+          "drive.disclosure_summary": "Як це працює і що передається",
           "drive.dr_copy_disclosure": "Коли увімкнено, кожен готовий звіт глибокого дослідження (HTML-сторінка, яку ти отримуєш у чаті) також зберігається на твоєму диску в папці «Глибокі дослідження» з датою й назвою в імені файлу. Копії — звичайні файли: вони лишаються на диску, якщо ти це вимкнеш, а коли пошук на диску увімкнено, індексуються як будь-який інший файл. Якщо диск не підключено, коли звіт готовий, його не буде скопійовано, і в чаті про це буде сказано.",
           "drive.index_disclosure_dr_copy": "Це стосується й звітів глибоких досліджень, скопійованих на твій диск.",
           "drive.transcribe_disclosure": "Бот розшифровує записи в папці свого диска за допомогою Google Gemini, щоб їх можна було шукати й читати, зберігає розшифровки у своєму індексі й записує кожну як текстовий файл у папку _Transcripts на твоєму диску; розшифровка видаленого запису переходить в Archive всередині цієї папки. У записах звучать голоси інших людей.",
@@ -1893,6 +1900,7 @@
           "toast.drive_index_off": "Recherche dans le disque désactivée — l'index est en cours de suppression",
           "toast.drive_index_failed": "Impossible de modifier la recherche dans le disque",
           "drive.dr_copy_title": "Copier les rapports de recherche approfondie sur mon disque",
+          "drive.disclosure_summary": "Comment ça marche et ce qui est partagé",
           "drive.dr_copy_disclosure": "Une fois activé, chaque rapport de recherche approfondie terminé (la page HTML que tu reçois dans le chat) est aussi enregistré sur ton disque, dans le dossier « Recherches approfondies », nommé par date et par titre. Les copies sont des fichiers ordinaires : elles restent sur le disque si tu désactives cette option et, quand la recherche dans le disque est activée, elles sont indexées comme n'importe quel autre fichier. Si le disque n'est pas connecté quand un rapport est prêt, il n'est pas copié et le chat le signale.",
           "drive.index_disclosure_dr_copy": "Cela inclut les rapports de recherche approfondie copiés sur ton disque.",
           "drive.transcribe_disclosure": "Le bot transcrit avec Google Gemini les enregistrements du dossier de son disque pour les rendre consultables et lisibles, conserve les transcriptions dans son index et écrit chacune sous forme de fichier texte dans le dossier _Transcripts de ton disque ; la transcription d'un enregistrement supprimé passe dans l'Archive de ce dossier. Les enregistrements contiennent les voix d'autres personnes.",
@@ -2044,6 +2052,7 @@
           "toast.drive_index_off": "Búsqueda en el disco desactivada: el índice se está borrando",
           "toast.drive_index_failed": "No se pudo cambiar la búsqueda en el disco",
           "drive.dr_copy_title": "Copiar los informes de investigación a fondo a mi disco",
+          "drive.disclosure_summary": "Cómo funciona y qué se comparte",
           "drive.dr_copy_disclosure": "Si está activado, cada informe de investigación a fondo terminado (la página HTML que recibes en el chat) también se guarda en tu disco, en la carpeta «Investigaciones», con la fecha y el título en el nombre. Las copias son archivos normales: se quedan en el disco si desactivas esta opción y, cuando la búsqueda en el disco está activada, se indexan como cualquier otro archivo. Si el disco no está conectado cuando un informe está listo, no se copia y el chat lo indica.",
           "drive.index_disclosure_dr_copy": "Esto incluye los informes de investigación a fondo copiados a tu disco.",
           "drive.transcribe_disclosure": "El bot transcribe con Google Gemini las grabaciones de la carpeta de su disco para que se puedan buscar y leer, guarda las transcripciones en su índice y escribe cada una como archivo de texto en la carpeta _Transcripts de tu disco; la transcripción de una grabación eliminada pasa al Archive dentro de esa carpeta. Las grabaciones contienen voces de otras personas.",
@@ -3888,7 +3897,7 @@
               <input type="checkbox" id="drive-index-toggle" ${enabled ? "checked" : ""}
                 onchange="saveDriveIndexing(this)" style="width:18px;height:18px;cursor:pointer;">
             </div>
-            <p style="font-size:12px; color:var(--text-muted); margin:8px 0 0;">${t("drive.index_disclosure")}${ix.dr_copy ? " " + t("drive.index_disclosure_dr_copy") : ""}${ix.transcribe_enabled ? " " + t("drive.transcribe_disclosure") : ""}${ix.mirror_root ? " " + t("drive.mirror_clause") : ""}</p>
+            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.index_disclosure")}${ix.dr_copy ? " " + t("drive.index_disclosure_dr_copy") : ""}${ix.transcribe_enabled ? " " + t("drive.transcribe_disclosure") : ""}${ix.mirror_root ? " " + t("drive.mirror_clause") : ""}</p></details>
             ${details}
           </div>`;
       }
@@ -3901,7 +3910,7 @@
               <input type="checkbox" id="drive-dr-copy-toggle" ${enabled ? "checked" : ""}
                 onchange="saveDeepResearchCopy(this)" style="width:18px;height:18px;cursor:pointer;">
             </div>
-            <p style="font-size:12px; color:var(--text-muted); margin:8px 0 0;">${t("drive.dr_copy_disclosure")}</p>
+            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.dr_copy_disclosure")}</p></details>
           </div>`;
       }
 
