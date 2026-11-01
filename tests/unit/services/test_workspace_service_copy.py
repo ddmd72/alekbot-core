@@ -28,7 +28,7 @@ def _call(known=None):
 
 
 class TestCopyFromChat:
-    async def test_upload_into_files(self):
+    async def test_upload_into_binary_files(self):
         conversion = _conversion()
         svc, store = _svc(conversion)
         r = await svc.run(_call(), "copy", {"source": '"lease (1).pdf"', "path": "binary_files/lease.pdf"})
@@ -53,18 +53,22 @@ class TestCopyFromChat:
         assert not r.failed
         assert store.live_text(USER, "projects/morning-briefing.md") == "Morning briefing\n1. Read the news."
 
-    async def test_a_binary_upload_goes_only_into_files(self):
+    async def test_a_binary_upload_goes_only_into_binary_files(self):
         svc, store = _svc(_conversion(b"%PDF-1.4 \xff\xfe"))
         r = await svc.run(_call(), "copy", {"source": "lease.pdf", "path": "projects/lease.pdf"})
-        assert r.text == ("SYSTEM: invalid workspace path 'projects/lease.pdf': only text files go outside binary_files/; "
-                          "copy binary files under binary_files/.")
+        assert r.text == ("SYSTEM: invalid workspace path 'projects/lease.pdf': "
+                          "binary files go only under binary_files/.")
         assert store.versions_of(USER, "projects/lease.pdf") == []
 
-    async def test_drive_and_skill_sources_are_refused(self):
-        svc, _ = _svc(_conversion())
-        for source, tool in (("drive:01ABC", "work_with_drive_files"), ("skill:x/r.md", "open_file")):
-            r = await svc.run(_call(), "copy", {"source": source, "path": "binary_files/x.pdf"})
-            assert r.failed and tool in r.text
+    async def test_a_drive_source_is_read_and_a_skill_source_is_refused(self):
+        conversion = _conversion()
+        svc, _ = _svc(conversion)
+        r = await svc.run(_call(), "copy", {"source": "drive:01ABC", "path": "binary_files/x.pdf"})
+        assert not r.failed
+        conversion.resolve_bytes.assert_awaited_once_with("drive:01ABC", USER)
+        r = await svc.run(_call(), "copy", {"source": "skill:x/r.md", "path": "binary_files/x.pdf"})
+        assert r.failed and "open_file" in r.text
+        conversion.resolve_bytes.assert_awaited_once()  # the skill source never reached the conversion
 
     async def test_missing_and_foreign_sources(self):
         svc, _ = _svc(_conversion([FileNotFoundError("x"), PermissionError("y")]))
@@ -107,7 +111,7 @@ class TestCopyWithinTheWorkspace:
         svc, store = _svc()
         store.seed(USER, "binary_files/a.png", b"\x89PNG\xff\xfe")  # not UTF-8: binary, whatever the new extension says
         r = await svc.run(_call(), "copy", {"source": "binary_files/a.png", "path": "projects/a.md"})
-        assert r.failed and "copy binary files under binary_files/" in r.text
+        assert r.failed and "binary files go only under binary_files/" in r.text
 
     async def test_missing_workspace_source(self):
         svc, _ = _svc()

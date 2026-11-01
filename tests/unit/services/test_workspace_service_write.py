@@ -75,10 +75,10 @@ class TestCreate:
                                        "it). View it again and redo your change.")
         assert store.live_text(USER, P) == "theirs"
 
-    async def test_files_folder_is_copy_only(self):
+    async def test_binary_files_folder_is_copy_only(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": "binary_files/a.md", "content": "x"})
-        assert r.text == "SYSTEM: invalid workspace path 'binary_files/a.md': binary_files/ holds copies only; use copy."
+        assert r.text == "SYSTEM: invalid workspace path 'binary_files/a.md': binary_files/ holds binary files only; use copy."
 
     async def test_text_kinds_only(self):
         svc, _ = _svc()
@@ -153,11 +153,11 @@ class TestStrReplace:
         assert any(rec.levelno == logging.WARNING and "result=not_found" in rec.getMessage()
                    for rec in caplog.records)
 
-    async def test_files_folder_refused(self):
+    async def test_binary_files_folder_refused(self):
         svc, store = _svc()
-        store.seed(USER, "binary_files/a.txt", "x")
+        store.seed(USER, "binary_files/a.txt", b"\xff\xfe")  # binary: the only kind that lives there
         r = await svc.run(_call(), "str_replace", {"path": "binary_files/a.txt", "old_str": "x", "new_str": "y"})
-        assert r.failed and "binary_files/ holds copies only" in r.text
+        assert r.failed and "binary_files/ holds binary files only" in r.text
 
     async def test_new_str_may_be_empty(self):
         svc, store = _svc()

@@ -6,6 +6,7 @@ import pytest
 
 import src.domain.workspace as ws
 from src.domain.llm import ToolCall
+from src.domain.user_drive import DriveRefRefused
 from src.domain.workspace import WorkspaceCall, WorkspaceRefused, WorkspaceReferences, parse_generation
 from src.infrastructure.workspace_tools import build_workspace_tool_declaration, make_workspace_handler
 from src.services.dry_run_workspace import DRY_RUN_ACCEPTED, DryRunWorkspace
@@ -31,24 +32,31 @@ def _conversion(data: bytes):
 
 
 class TestCopySteer:
-    def test_source_text_says_a_text_file_may_go_to_any_folder(self):
+    def test_source_text_says_where_a_text_file_and_a_binary_file_may_go(self):
         text = build_workspace_tool_declaration()["parameters"]["properties"]["source"]["description"]
-        assert "any folder" in text and "binary file only under files/" in text
+        assert "A text file may be copied into projects/, references/ or scratch/" in text
+        assert "a binary file only into binary_files/" in text
 
     def test_wrong_store_message_points_to_copy_with_both_rules(self):
         with pytest.raises(WorkspaceRefused) as e:
             ws.parse_workspace_path("briefing.txt")
         assert str(e.value).endswith(
             'use copy with source "briefing.txt" and a destination path '
-            "(a text file: any folder; a binary file: under files/)"
+            "(a text file: projects/, references/ or scratch/; a binary file: under binary_files/)"
         )
 
 
 class TestCopyGuards:
-    async def test_drive_ref_anywhere_in_the_source_is_refused(self):
-        svc, _ = _svc(_conversion(b"x"))
-        r = await svc.run(_call(), "copy", {"source": "see drive:abc123", "path": "files/a.pdf"})
-        assert r.failed and "on the user's drive" in r.text
+    async def test_drive_ref_anywhere_in_the_source_goes_to_drive_resolution(self):
+        """Drive sources are now accepted (D10); a ref embedded in other words is still recognised as a drive ref, so it
+        goes to the drive resolution (whose refusal line is shown), never to the chat-file lookup."""
+        conversion = AsyncMock()
+        conversion.resolve_bytes = AsyncMock(side_effect=DriveRefRefused("That drive link is not a file ref"))
+        svc, store = _svc(conversion)
+        r = await svc.run(_call(), "copy", {"source": "see drive:abc123", "path": "binary_files/a.pdf"})
+        assert r.failed and r.text == "SYSTEM: That drive link is not a file ref."
+        conversion.resolve_bytes.assert_awaited_once_with("see drive:abc123", USER)
+        assert store.versions_of(USER, "binary_files/a.pdf") == []
 
     async def test_text_upload_over_3mb_into_projects_is_refused(self):
         svc, store = _svc(_conversion(b"a" * (ws.MAX_TEXT_FILE_BYTES + 1)))
