@@ -14,12 +14,14 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
 from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
+from ..domain.user_drive import DriveFileTooLargeError, DriveNotConnectedError, DrivePathError, DriveRefRefused
 from ..domain.workspace import (
     COMMANDS,
-    COPY_FOLDER,
+    BINARY_FOLDER,
     FOLDERS,
     GREP_MAX_PATTERN_CHARS,
     GREP_MAX_SCAN_BYTES,
+    MAX_FILE_BYTES,
     MUTATING_COMMANDS,
     TEXT_EXTENSIONS,
     TEXT_FOLDERS,
@@ -202,7 +204,7 @@ class WorkspaceService:
     @staticmethod
     def _binary(path: str, generation: int, log: _LogFields) -> WorkspaceResult:
         log.result, log.gen = "refused:binary", str(generation)
-        # Recorded: `copy` may overwrite a files/ copy this execution has looked at (§7.3 copy).
+        # Recorded: `copy` may overwrite a binary_files/ copy this execution has looked at (§7.3 copy).
         return WorkspaceResult(text=f"SYSTEM: {binary_message(path)}.", failed=True, generations={path: generation})
 
     async def _view_version(
@@ -306,7 +308,7 @@ class WorkspaceService:
         path = parse_workspace_path(raw)
         if folder_of(path) not in TEXT_FOLDERS:
             raise WorkspaceRefused(
-                f"invalid workspace path '{path}': files/ holds copies only; use copy", reason="folder",
+                f"invalid workspace path '{path}': binary_files/ holds binary files only; use copy", reason="folder",
             )
         if workspace_kind(path) != "text":
             raise WorkspaceRefused(
@@ -403,12 +405,12 @@ class WorkspaceService:
         log.path = src
         if dst == src:
             raise WorkspaceRefused(f"new_path is the same as path ({src})", reason="path")
-        src_copy, dst_copy = folder_of(src) == COPY_FOLDER, folder_of(dst) == COPY_FOLDER
+        src_copy, dst_copy = folder_of(src) == BINARY_FOLDER, folder_of(dst) == BINARY_FOLDER
         if src_copy and not dst_copy:
-            raise WorkspaceRefused(f"invalid workspace path '{dst}': a file in files/ stays in files/", reason="folder")
+            raise WorkspaceRefused(f"invalid workspace path '{dst}': a file in binary_files/ stays in binary_files/", reason="folder")
         if dst_copy and not src_copy:
             raise WorkspaceRefused(
-                f"invalid workspace path '{dst}': a file may not move into files/ (it holds copies only)",
+                f"invalid workspace path '{dst}': a file may not move into binary_files/ (it holds binary files only)",
                 reason="folder",
             )
         if not dst_copy and workspace_kind(dst) != "text":
@@ -517,22 +519,22 @@ class WorkspaceService:
             raise WorkspaceRefused(
                 "copy needs a source: a chat file name, a delivered-document key or a workspace path", reason="source",
             )
-        if drive_ref.is_drive_ref(source):   # tagged or not (MULTI_DRIVE_RFC §9)
-            raise WorkspaceRefused(
-                f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it through "
-                "work_with_drive_files",
-                reason="wrong_store",
-            )
         if source.startswith("skill:"):
             raise WorkspaceRefused(
                 f"'{source}' is a skill file; read it with open_file instead of copying it", reason="wrong_store",
             )
         data = await self._read_source(call, source)
-        # §6 / §0.2: text (an upload or a workspace file) may land in any folder; binary only in files/.
-        if folder_of(dst) != COPY_FOLDER and not is_text(dst, data):
+        # §6: binary_files/ holds binary files only; a text file lands in projects/, references/ or scratch/.
+        text = is_text(dst, data)
+        if folder_of(dst) == BINARY_FOLDER and text:
             raise WorkspaceRefused(
-                f"invalid workspace path '{dst}': only text files go outside files/; copy binary files under files/",
+                f"invalid workspace path '{dst}': binary_files/ holds binary files only; copy a text file into "
+                "projects/, references/ or scratch/",
                 reason="kind",
+            )
+        if folder_of(dst) != BINARY_FOLDER and not text:
+            raise WorkspaceRefused(
+                f"invalid workspace path '{dst}': binary files go only under binary_files/", reason="kind",
             )
         return data
 
@@ -547,9 +549,33 @@ class WorkspaceService:
                 ) from None
         if self._file_conversion is None:
             raise WorkspaceRefused("copying chat files and delivered documents is unavailable here", reason="source")
+        is_drive = drive_ref.is_drive_ref(source)   # tagged or not (MULTI_DRIVE_RFC §9)
         try:
             return await self._file_conversion.resolve_bytes(source, call.user_id)
+        except DriveRefRefused as e:
+            raise WorkspaceRefused(e.line, reason="source") from None
+        except DriveNotConnectedError:
+            raise WorkspaceRefused(
+                "the user's drive is not connected (or needs reconnecting); tell the user, then copy again",
+                reason="source",
+            ) from None
+        except DriveFileTooLargeError:
+            raise WorkspaceRefused(
+                f"'{source}' is too large to copy into the workspace "
+                f"(file cap {format_size(MAX_FILE_BYTES)}); open it with work_with_drive_files instead",
+                reason="caps",
+            ) from None
+        except DrivePathError as e:
+            raise WorkspaceRefused(
+                f"'{source}' cannot be copied: {e}. Pass the ref of a file, exactly as the drive tool returned it",
+                reason="source",
+            ) from None
         except FileNotFoundError:
+            if is_drive:
+                raise WorkspaceRefused(
+                    f"'{source}' not found on the user's drive — pass the file ref exactly as the drive tool "
+                    "returned it", reason="not_found",
+                ) from None
             raise WorkspaceRefused(
                 f"'{source}' not found — pass the file name from its [File: …] label, or the delivered-document key",
                 reason="source",

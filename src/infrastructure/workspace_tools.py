@@ -35,8 +35,10 @@ _DESCRIPTION = (
     "initiative otherwise. How to use a file is up to that instruction; when it says nothing, use your judgement. "
     '"Keep state in the workspace" means: keep one file for it, view it at the start, update it before you finish. '
     "Folders: projects/ (one file per task or recurring job), references/ (where things live and how to find them), "
-    "scratch/ (drafts; deleted 7 days after the last write), files/ (byte-exact copies of chat uploads or delivered "
-    "documents, made with copy; look at one with open_file and the ref workspace:files/<name>). Keep files short and "
+    "scratch/ (drafts; deleted 7 days after the last write), binary_files/ (the only place for binary files — PDF, "
+    "images, scans: copy puts them there byte for byte; you cannot create or edit them and grep does not search "
+    "them; look at one with open_file and the ref workspace:binary_files/<name>); text files go to the other folders "
+    "(copy accepts a text file for any of them). Keep files short and "
     "current: replace what changed with str_replace, do not append a log. Facts about the user never go here: what "
     "the user says reaches memory by itself; facts you read in a file or other source go through "
     "propose_memory_facts, only when the user asks. Something to do at a given time is a reminder. Every change "
@@ -72,7 +74,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "Workspace path, e.g. projects/garden-shed.md: lowercase letters, digits, - _ . and /, starting "
-                        "with projects/, references/, scratch/ or files/, with a file extension, "
+                        "with projects/, references/, scratch/ or binary_files/, with a file extension, "
                         f"at most {MAX_PATH_CHARS} characters. For view, history and grep also a folder (projects/) or \"\" for the whole workspace. "
                         "For copy: the destination."
                     ),
@@ -131,16 +133,17 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 "new_path": {
                     "type": "string",
                     "description": (
-                        "rename: the new path; it must not exist. A file in files/ stays in files/; a text file "
-                        "cannot move into files/."
+                        "rename: the new path; it must not exist. A file in binary_files/ stays in binary_files/; "
+                        "nothing else can move into binary_files/."
                     ),
                 },
                 "source": {
                     "type": "string",
                     "description": (
-                        "copy: a chat file name from a [File: …] label, a delivered-document key, or a workspace "
-                        "path. A text file may be copied into any folder (into projects/ to edit it later); a "
-                        "binary file only under files/."
+                        "copy: a chat file name from a [File: …] label, a delivered-document key, a drive file ref "
+                        "exactly as the drive tool returned it, or a workspace path. A text file may be copied into "
+                        "projects/, references/ or scratch/ (into projects/ to edit it later); a binary file only "
+                        "into binary_files/, which holds binary files only."
                     ),
                 },
             },
