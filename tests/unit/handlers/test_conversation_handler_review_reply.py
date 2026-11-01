@@ -191,7 +191,16 @@ async def world_with_question(**kw: Any) -> tuple:
 # ------------------------------------------------------------------------------------------------ taken at intake
 
 class TestReplyTaken:
-    async def test_a_thread_reply_with_a_digit_is_applied_noted_in_the_thread_and_never_reaches_the_model(self):
+    async def test_a_thread_reply_with_a_digit_is_applied_noted_in_the_thread_and_never_reaches_the_model(
+        self, monkeypatch
+    ):
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW if tz is None else NOW.astimezone(tz)
+
+        # the handler stamps the reply with the wall clock; pin it so the written month is not date-bound
+        monkeypatch.setattr("src.handlers.conversation_handler.datetime", _FrozenDatetime)
         world, fact = await world_with_question()
         before = set(world.docs)
         rig = Rig(world)
