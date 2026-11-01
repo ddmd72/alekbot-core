@@ -562,7 +562,7 @@ class WorkspaceService:
         except DriveFileTooLargeError:
             raise WorkspaceRefused(
                 f"'{source}' is too large to copy into the workspace "
-                f"(file cap {format_size(MAX_FILE_BYTES)}); open it with work_with_drive_files instead",
+                f"(file cap {MAX_FILE_BYTES // (1024 * 1024)} MB); open it with work_with_drive_files instead",
                 reason="caps",
             ) from None
         except DrivePathError as e:

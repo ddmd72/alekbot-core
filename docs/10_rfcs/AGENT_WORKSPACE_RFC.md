@@ -381,7 +381,7 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 | `offset` | integer | view | First line to show (1-based); empty, 0 or negative → 1. |
 | `limit` | integer | view | Number of lines; empty, 0 or negative → 2,000. |
 | `depth` | integer | view (folder) | Folder levels to open; empty, 0 or negative → 3. |
-| `pattern` | string | grep | What to search for; literal unless `regex` is true. |
+| `pattern` | string | grep | What to search for; literal unless `regex` is true. With `regex`, `^` and `$` match the start and end of a LINE; list markers, indentation and markup before the text count as part of the line, so `^T1` will not match `- T1`. |
 | `context` | integer | grep | Lines before and after each match; empty or negative → 1; at most 5. |
 | `ignore_case` | boolean | grep | Ignore case. |
 | `files_only` | boolean | grep | List files with match counts instead of lines (like `git grep -l`). |

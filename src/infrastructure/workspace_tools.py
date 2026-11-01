@@ -93,7 +93,11 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "grep: the text to search for, matched literally unless regex is true.",
+                    "description": (
+                        "grep: the text to search for, matched literally unless regex is true. With regex true, ^ and $ "
+                        "match the start and end of a LINE; list markers, indentation and markup before the text count "
+                        "as part of the line, so ^T1 will not match \"- T1\"."
+                    ),
                 },
                 "context": {
                     "type": "integer",
