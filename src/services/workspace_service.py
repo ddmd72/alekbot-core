@@ -7,9 +7,10 @@ result reports. `run` never raises for a rule, a conflict, a missing file or a s
 store error at ERROR, everything else at INFO. Content is never logged.
 """
 
+import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
 from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
@@ -17,6 +18,8 @@ from ..domain.workspace import (
     COMMANDS,
     COPY_FOLDER,
     FOLDERS,
+    GREP_MAX_PATTERN_CHARS,
+    GREP_MAX_SCAN_BYTES,
     MUTATING_COMMANDS,
     TEXT_EXTENSIONS,
     TEXT_FOLDERS,
@@ -24,6 +27,7 @@ from ..domain.workspace import (
     WorkspaceBlob,
     WorkspaceCall,
     WorkspaceDeleteMeta,
+    WorkspaceEntry,
     WorkspaceResult,
     WorkspaceWriteMeta,
     apply_str_replace,
@@ -37,9 +41,12 @@ from ..domain.workspace import (
     format_size,
     is_text,
     number_lines,
+    parse_context,
+    parse_flag,
     parse_generation,
     parse_workspace_path,
     prior_generation_before_fire,
+    render_grep,
     render_history,
     render_listing,
     render_missing,
@@ -50,10 +57,12 @@ from ..domain.workspace import (
 )
 from ..ports.workspace_store_port import WorkspaceStorePort
 from ..utils.logger import logger
+from ..utils.safe_regex import InvalidPattern, compile_line_matcher
 
 if TYPE_CHECKING:
     from .file_conversion_service import FileConversionService
 
+_GREP_READ_CONCURRENCY = 8
 _UNAVAILABLE = "SYSTEM: the workspace is unavailable right now; nothing was changed."
 _CONFLICT = (
     "SYSTEM: {path} changed since you read it (another conversation or run wrote it). "
@@ -68,6 +77,8 @@ class _LogFields:
     had_history: str = "-"
     nbytes: int = 0
     gen: str = "-"
+    files: Optional[int] = None
+    matches: int = 0
 
 
 def _decode(data: bytes) -> Optional[str]:
@@ -120,6 +131,8 @@ class WorkspaceService:
             return await self._view(call, args, log)
         if command == "history":
             return await self._history(call, args, log)
+        if command == "grep":
+            return await self._grep(call, args, log)
         if command == "create":
             return await self._create(call, args, log)
         if command == "str_replace":
@@ -143,8 +156,10 @@ class WorkspaceService:
         else:
             emit = logger.info
         # §16 form: one token per field (a raw path may hold spaces or newlines; capped), fire=<note_id>@<due_at>.
+        grep_fields = f" files={f.files} matches={f.matches}" if f.files is not None else ""
         emit(
-            "[Workspace] op=%s user=%s path=%s origin=%s fire=%s had_history=%s bytes=%d gen=%s result=%s ms=%d",
+            "[Workspace] op=%s user=%s path=%s origin=%s fire=%s had_history=%s bytes=%d gen=%s result=%s ms=%d"
+            + grep_fields,
             command, call.user_id[:8], "_".join(f.path.split())[:120] or '""', call.origin,
             (call.fire_key or "-").removeprefix("reminder:"), f.had_history, f.nbytes, f.gen, f.result,
             int((time.monotonic() - started) * 1000),
@@ -157,7 +172,7 @@ class WorkspaceService:
         log.path = path
         if path == "" or path.endswith("/"):
             entries = await self._store.list(call.user_id, path, include_versions=True)
-            return WorkspaceResult(text=render_listing(path, entries))
+            return WorkspaceResult(text=render_listing(path, entries, args.get("depth")))
         generation = parse_generation(args.get("generation"))
         if generation is not None:
             return await self._view_version(call, path, generation, args, log)
@@ -223,6 +238,61 @@ class WorkspaceService:
         log.path = path
         entries = await self._store.list(call.user_id, path, include_versions=True)
         return WorkspaceResult(text=render_history(path, entries))
+
+    # -- grep ----------------------------------------------------------------------------------------------------
+
+    async def _grep(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        pattern = str(args.get("pattern") if args.get("pattern") is not None else "")
+        if not pattern:
+            raise WorkspaceRefused("grep needs a pattern: the text to search for", reason="pattern")
+        if len(pattern) > GREP_MAX_PATTERN_CHARS:
+            raise WorkspaceRefused(
+                f"pattern is {len(pattern)} characters; at most {GREP_MAX_PATTERN_CHARS}. Search for a shorter part of it",
+                reason="pattern",
+            )
+        path = parse_workspace_path(args.get("path"), allow_folder=True)
+        log.path = path
+        try:
+            matcher = compile_line_matcher(
+                pattern, regex=parse_flag(args.get("regex")), ignore_case=parse_flag(args.get("ignore_case")),
+            )
+        except InvalidPattern as e:
+            raise WorkspaceRefused(str(e), reason="pattern") from e
+        entries = await self._store.list(call.user_id, path)   # one call: scope and sizes before any read
+        in_path = [e for e in entries if e.path == path or path == "" or path.endswith("/")]
+        scope = [e for e in in_path if e.live and workspace_kind(e.path) == "text"]
+        if path and not path.endswith("/") and not scope:
+            if any(e.live for e in in_path):
+                raise WorkspaceRefused(f"{path} is not a text file; grep searches text files only", reason="binary")
+            raise FileNotFoundError(path)
+        scope_bytes = sum(e.size for e in scope)
+        log.nbytes = scope_bytes
+        if scope_bytes > GREP_MAX_SCAN_BYTES:
+            raise WorkspaceRefused(
+                f"{scope_bytes / (1024 * 1024):.1f} MB of text in scope, over the "
+                f"{GREP_MAX_SCAN_BYTES // (1024 * 1024)} MB search limit; narrow path",
+                reason="scan_size",
+            )
+        gate = asyncio.Semaphore(_GREP_READ_CONCURRENCY)
+
+        async def fetch(entry: WorkspaceEntry) -> Optional[Tuple[str, str]]:
+            async with gate:
+                try:
+                    blob = await self._store.read(call.user_id, entry.path)
+                except FileNotFoundError:   # deleted since the list
+                    return None
+            text = _decode(blob.data)
+            return None if text is None else (entry.path, text)
+
+        fetched = await asyncio.gather(*(fetch(e) for e in sorted(scope, key=lambda e: e.path)))
+        files = [f for f in fetched if f is not None]
+        text, matches = await asyncio.to_thread(
+            render_grep, pattern, path, files, matcher,
+            context=parse_context(args.get("context")), files_only=parse_flag(args.get("files_only")),
+        )
+        log.files = len(files)
+        log.matches = matches
+        return WorkspaceResult(text=text)
 
     # -- text writes ---------------------------------------------------------------------------------------------
 
