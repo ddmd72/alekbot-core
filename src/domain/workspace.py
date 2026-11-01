@@ -403,7 +403,7 @@ def _day(dt: datetime) -> str:
 
 
 def _count(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
+    return f"{n} {word}{'' if n == 1 else ('es' if word.endswith('ch') else 's')}"
 
 
 def binary_message(path: str) -> str:
