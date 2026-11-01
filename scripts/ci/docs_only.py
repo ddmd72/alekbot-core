@@ -21,6 +21,7 @@ _CODE_TREES = ("src", "tests", "scripts", "prompts_snapshot")
 # tests/unit/scripts/test_docs_only.py fails when another test starts reading docs.
 DOC_READING_TESTS: tuple[str, ...] = (
     "tests/unit/domain/test_drive_search_v2_frozen_core.py",
+    "tests/unit/infrastructure/test_workspace_tools.py",
     "tests/unit/test_facts_have_no_ttl_policy.py",
 )
 

@@ -156,13 +156,19 @@ smart_local:propose_memory_facts.facts[].source  # stored tests/unit/agents/core
 smart_local:propose_memory_facts.facts[].text  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_proposed_facts_are_drafted_and_reach_the_session_on_save
 smart_local:workspace.command  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.content  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.context  # read-only grep window, never stored
+smart_local:workspace.depth  # read-only view depth, never stored
+smart_local:workspace.files_only  # read-only grep output switch, never stored
 smart_local:workspace.generation  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.ignore_case  # read-only grep matcher flag, never stored
 smart_local:workspace.limit  # read-only view window, never stored
 smart_local:workspace.new_path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.new_str  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.offset  # read-only view window, never stored
 smart_local:workspace.old_str  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.pattern  # read-only grep input, never stored
+smart_local:workspace.regex  # read-only grep matcher flag, never stored
 smart_local:workspace.source  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 tasks:create_task.body  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
 tasks:create_task.due_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
