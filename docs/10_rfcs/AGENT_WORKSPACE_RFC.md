@@ -20,7 +20,7 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 | D1 | 10-19 | **Pull-only.** Smart reads or writes the workspace only when (a) the user explicitly asks, (b) an instruction it follows — a loaded skill's text, a reminder's instruction — names a workspace file or asks it to keep state, or (c) a firing reminder carries a workspace file (D15). No index or contract in the prompt, no `workspace` system skill, no skill-load write gate. |
 | D2 | 10-19 | **One local tool `workspace`** with commands `view`, `create`, `str_replace`, `delete`, `rename`, `copy`, `history`, `restore`. No grep, glob or diff. Served by `DelegationEngine(local_tools=)` like `use_skill` and `propose_memory_facts`, declared on every Smart path where the service is configured, outside `if skills:`. |
 | D3 | 10-14, 10-19 | **Storage = a dedicated versioned GCS bucket**, key `{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ files/`, generation preconditions on every mutation, lifecycle as rev 1 §5.4. Not Firestore, not the drive, not the media bucket. |
-| D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 256 KB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
+| D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 3 MB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
 | D5 | 10-19 | **Writes allowed on all Smart paths** (chat, reminders, daily review, `ask_alek`/`tell_alek`, `/worker`). Every object carries its `origin` — `chat`, `background:<task_type>`, `voice:ask_alek`, `voice:tell_alek` — plus a fire key for reminder runs, shown in the `view` header. |
 | ~~D6~~ | 10-19 | ~~Reminders get `reminder_skill` and `state_file`.~~ **Superseded by D15.** |
 | ~~D7~~ | 10-19 | ~~Workspace files are never executed; procedures live in skills.~~ **Superseded by D16 and D17.** |
@@ -303,8 +303,8 @@ When the key resolves empty (no secret, emulator), no adapter is built, Smart ge
 
 **Path rule** (domain, pure, `parse_workspace_path`): lowercase `[a-z0-9-/._]`; starts with `projects/`,
 `references/`, `scratch/` or `files/`; segments non-empty, never `.` or `..`, starting with `[a-z0-9]`; no leading or
-trailing `/`, no `//`; the last segment has an extension; at most 120 chars and 4 segments. A `workspace:` prefix is
-accepted and stripped. `view` and `history` also accept a folder prefix (`projects/`, `projects/garden/`) or the empty
+trailing `/`, no `//`; the last segment has an extension; at most 200 chars and 8 segments. A `workspace:` prefix is
+accepted and stripped. `view`, `history` and `grep` also accept a folder prefix (`projects/`, `projects/garden/`) or the empty
 path (the whole workspace).
 
 **Kinds.** A file is `text` when its extension is `.md .txt .csv .tsv .json .yaml .yml` (the skill-file set,
@@ -320,9 +320,15 @@ path (the whole workspace).
 | Live files per user | 100 | D4. A command that would add a file beyond it is refused: "workspace full (100 files); delete or merge first". Soft: two concurrent creates can land at 101. |
 | Live bytes per user | 100 MB | D4. Checked the same way, counting the new size. |
 | File | 10 MB | D4. Under Gemini's 20 MB inline cap for `open_file` vision. |
-| Text file | 256 KB | Same as skill files (`domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 256 KB cannot be copied. |
+| Text file | 3 MB | Independent of the skill-file cap (256 KB, `domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 3 MB cannot be copied. A workspace text file over 256 KB cannot be saved into a skill (`draft_skill from_file`). |
+| `open_file` of a text file | 512 KB | `open_file` puts the whole file into the orchestrator's context (~100–130k tokens of Cyrillic at the cap), so above 512 KB it returns a `[System: …]` note telling the orchestrator to read in parts with `view` (`offset`, `limit`). Storage and reading limits differ on purpose. The way into a large file is `grep` (find the lines) and then `view` with `offset` (§7.4). |
 | `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `offset`/`limit` that are empty, zero or negative mean the defaults. |
-| Listing / history | 100 entries (newest first), then "…N more" | Equal to the file cap. |
+| History | 100 entries (newest first), then "…N more" | Equal to the file cap. |
+| Folder tree (`view`) | 100 file lines, folders first then files, alphabetical; folders deeper than `depth` (default 3) collapse | The cap equals the file cap, so it is only a safety net. |
+| `grep` pattern | 200 characters | `GREP_MAX_PATTERN_CHARS`. |
+| `grep` context | 1 line each side by default, at most 5 | `GREP_DEFAULT_CONTEXT`, `GREP_MAX_CONTEXT`. |
+| `grep` matches shown | 50 matching lines and 20 KB of output, then a trailer | `GREP_MAX_MATCHES`, `GREP_MAX_OUTPUT_BYTES`. |
+| `grep` scope | 20 MB of live text files | `GREP_MAX_SCAN_BYTES`; summed from one `list` before anything is read, over it the call is refused ("narrow path"). |
 
 The caps are checked by one `list(user_id, "")` call inside the commands that add a live file: `create` of a new
 path, `copy`, and `restore` of a deleted file. `rename` adds no file and no bytes, so it is not checked. Constants
@@ -352,7 +358,11 @@ right after the `propose_memory_facts` block (`smart_response_agent.py:503-512`)
 > history shows who wrote each one, restore brings one back. If a view header says an earlier attempt of this same
 > reminder fire wrote the file, its result may not have reached the user: view the generation it names and work from
 > that. If a file a skill or reminder names is missing, view shows whether it was deleted or renamed: tell the user
-> and offer to restore it; never recreate it silently. A file that never existed may be created.
+> and offer to restore it; never recreate it silently. A file that never existed may be created. To see the
+> structure, view with path "" shows the tree of the whole workspace and view projects/ just that folder (depth
+> opens collapsed levels). To find text, grep (literal by default; regex: true for a regular expression), narrowed
+> by path; the result says where it searched; start with files_only on a big workspace, then view the file with
+> offset near the hit. Large files are read in parts with offset and limit.
 
 ### 7.2 Parameters
 
@@ -362,10 +372,16 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 
 | Parameter | Type | Used by | Description (abridged) |
 |-----------|------|---------|------------------------|
-| `command` | enum | all | `view` `create` `str_replace` `delete` `rename` `copy` `history` `restore` |
-| `path` | string | all | Workspace path, e.g. `projects/garden-shed.md`; for `view`/`history` also a folder (`projects/`) or `""` for everything; for `copy` the destination. |
+| `command` | enum | all | `view` `create` `str_replace` `delete` `rename` `copy` `history` `restore` `grep` |
+| `path` | string | all | Workspace path, e.g. `projects/garden-shed.md`; for `view`/`history`/`grep` also a folder (`projects/`) or `""` for everything; for `copy` the destination. |
 | `offset` | integer | view | First line to show (1-based); empty, 0 or negative → 1. |
 | `limit` | integer | view | Number of lines; empty, 0 or negative → 2,000. |
+| `depth` | integer | view (folder) | Folder levels to open; empty, 0 or negative → 3. |
+| `pattern` | string | grep | What to search for; literal unless `regex` is true. |
+| `context` | integer | grep | Lines before and after each match; empty or negative → 1; at most 5. |
+| `ignore_case` | boolean | grep | Ignore case. |
+| `files_only` | boolean | grep | List files with match counts instead of lines (like `git grep -l`). |
+| `regex` | boolean | grep | Read `pattern` as an RE2 regular expression. |
 | `generation` | string | view, restore | `view`: read that earlier version (read-only). `restore`: the version to bring back. Both from `history` or a view header. |
 | `content` | string | create | The full text of the file. |
 | `old_str` | string | str_replace | Exact text to replace; must occur exactly once. |
@@ -382,7 +398,8 @@ in the `propose_memory_facts` style (`memory_fact_tools.py`).
 |---------|-----------|--------|
 | `view` file | Two GETs (metadata, then media at that generation). Records `{path: generation}` in the session. Text: header (§7.4) + line-numbered window (`cat -n` form). Binary: refused with the `open_file` pointer. When the live version's `fire` equals this run's fire key, one more `list(include_versions=True)` on the path finds the generation from before this fire (§7.4). | header + lines; "…lines N–M of T; view with offset to read on" when cut |
 | `view` file + `generation` | Reads that version, live or noncurrent. Read-only: not recorded in the session, so a later `create` cannot overwrite on its strength. | header ("version G, not current") + lines |
-| `view` folder / `""` | One `list(prefix, include_versions=True)`: live files listed, deleted files counted. | listing (§7.4) |
+| `view` folder / `""` | One `list(prefix, include_versions=True)`: live files drawn as a tree (folders first, alphabetical, `depth` levels), deleted files counted. | tree (§7.4) |
+| `grep` | One `list(path)`; the live text files in scope are summed by size (over 20 MB: refused) and then read through `WorkspaceStorePort.read` (at most 8 at a time); matching and rendering run in a worker thread. Read-only: takes no write lock slot, records no generation. | matches, `searched …` line (§7.4) |
 | `view` missing path | One `list(include_versions=True)` on the path. | "deleted … by …" or "renamed to …" + versions (§7.4), or "never existed" |
 | `create` | Under `projects/`, `references/`, `scratch/` only, text kinds only. New path → caps list, one versions list of the path (logged as `had_history`), put with `if_generation_match=0`. Existing path → allowed only when this execution viewed its current version; put with `if_generation_match` = that generation (overwrite). | "created" / "overwritten", path, generation, lines |
 | `str_replace` | Same folders. Self-guarding (D13): read the current generation; `old_str` must match exactly once ("not found" / "found N matches; include more context"); put with `if_generation_match` = that generation. On 412: re-read, re-apply once; a second 412 → conflict. Updates the session generation. | "replaced", generation, the changed lines with numbers |
@@ -422,15 +439,59 @@ If no such version exists, the line reads `… The file did not exist before thi
 model's call under its instruction; the tool description says to work from the earlier version. For `chat` /
 `voice:*` origins the fire parenthesis is omitted.
 
-Folder listing:
+Folder tree (`view` of a folder or `""`; there is no separate `init` command). Two spaces per level, folders first
+then files, both alphabetical, the viewed prefix is level 0. Folders deeper than `depth` levels (default 3) show as
+`name/ · N files · SIZE` without children, with a hint line:
 
 ```
-workspace:projects/ — 3 files
-  projects/garden-shed.md · 4.2 KB · 2026-10-18 · chat
-  projects/morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder
-  projects/conference-talk.md · 1.0 KB · 2026-10-02 · voice:tell_alek
-(2 deleted files in this folder — history projects/ lists them)
+workspace (all folders) — 7 files
+projects/ · 4 files
+  trips/ · 2 files
+    list.md · 0.5 KB · 2026-10-03 · chat
+    packing.md · 1.0 KB · 2026-10-02 · voice:tell_alek
+  garden-shed.md · 4.2 KB · 2026-10-18 · chat
+  morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder
+references/ · 3 files
+  …
+(deeper folders are collapsed — view that folder to open it)
+(2 deleted files — history with an empty path lists them)
 ```
+
+A folder view of `projects/` is the same tree rooted there (`workspace:projects/ — 4 files`, its children at the left
+edge). An empty workspace reads `workspace (all folders) — empty`.
+
+**`grep`** (modelled on `git grep -n -C<n> [-i] [-l] [-E] <pattern> -- <pathspec>`). `pattern` is literal text unless
+`regex` is true. `path` is a file, a folder or `""`; only live text files, current version, are searched. A match is one
+matching line; overlapping or adjacent context windows are merged, other groups in a file are separated by `--`; `:`
+marks a matching line and `-` a context line. Line numbers are `view`'s, so the model can `view` the file with `offset`
+near a hit (said in the tool description, not in every result). The second line says where it searched: top-level
+folders with live text file counts (`searched 12 text files: projects/ (8), references/ (4)`), or
+`searched 1 text file: <path>` for a single file; it is in every result.
+
+```
+grep "deadline" in projects/ — 3 matches in 2 files
+searched 2 text files: projects/ (2)
+projects/garden-shed.md
+11-previous line
+12:the deadline is friday
+13-next line
+--
+40:another deadline here
+projects/trips/packing.md
+7:deadline
+8-next
+```
+
+`files_only` prints `path · N matches` per file after the two header lines. No match: `grep "x" in projects/ — no
+matches in N files searched`, then the `searched` line. Capped by the match or byte limit (§6), the output ends with
+`…more matches not shown — narrow path or pattern, or add files_only`. Lines are cut at 2,000 characters like `view`.
+Failures are `SYSTEM:` lines: empty or over-long pattern, invalid regex (with the engine's message), missing path,
+wrong store, scope over 20 MB.
+
+*Regex engine decision.* `regex: true` uses RE2 (`google-re2`, `src/utils/safe_regex.py`): it matches in time linear in
+the input, so a regular expression written by a model cannot stall the 1-vCPU service the way a backtracking engine
+can. The price is no backreferences and no lookaround; a pattern RE2 rejects is refused with "RE2 syntax: no
+backreferences or lookaround". Literal mode uses no regex engine (`str` search, `casefold` for `ignore_case`).
 
 Missing path (`render_missing`), from the newest noncurrent version's patched metadata:
 
@@ -454,7 +515,7 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 | `create` on an existing path whose current version was not viewed in this execution | `SYSTEM: <path> exists. View it first and use str_replace, or view it and create again to overwrite.` |
 | Precondition conflict (another run wrote it) | `SYSTEM: <path> changed since you read it (another conversation or run wrote it). View it again and redo your change.` |
 | `str_replace` no match / several | `SYSTEM: old_str not found in <path>` / `found N matches; include more surrounding text.` |
-| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 256 KB` |
+| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 3 MB` |
 | Binary `view` | `SYSTEM: <path> is binary; open it with open_file and file_ref workspace:<path>.` |
 | Unknown `generation` | `SYSTEM: <path> has no version <G>; history lists them.` |
 | Store failure | `SYSTEM: the workspace is unavailable right now; nothing was changed.` (ERROR logged) |
@@ -738,7 +799,7 @@ from uploads and `workspace:` refs are unavailable (local only).
 
 | Layer | File | Responsibility |
 |-------|------|----------------|
-| domain | `domain/workspace.py` (new) | Folders, kinds, caps; `parse_workspace_path`; `WorkspaceEntry` (path, generation, size, updated, origin, fire, write_id, live, deleted_at, deleted_by, renamed_to), `WorkspaceBlob`, `WorkspaceWriteMeta`, `WorkspaceDeleteMeta` (pydantic); `fire_key(note_id, due_at)`; `parse_reminder_field` (remove / not provided); `number_lines` / windowing; `apply_str_replace` (unique match); `render_view_header` (incl. same-fire line), `render_listing`, `render_missing`, `render_history`; `find_references(path, skills, notes)`. Pure. |
+| domain | `domain/workspace.py` (new) | Folders, kinds, caps; `parse_workspace_path`; `WorkspaceEntry` (path, generation, size, updated, origin, fire, write_id, live, deleted_at, deleted_by, renamed_to), `WorkspaceBlob`, `WorkspaceWriteMeta`, `WorkspaceDeleteMeta` (pydantic); `fire_key(note_id, due_at)`; `parse_reminder_field` (remove / not provided); `number_lines` / windowing; `apply_str_replace` (unique match); `render_view_header` (incl. same-fire line), `render_listing` (the tree), `render_grep`, `render_missing`, `render_history`; `find_references(path, skills, notes)`. Pure. |
 | domain | `domain/exceptions.py` | `WorkspaceConflict`, `WorkspaceRefused`. Missing objects raise `FileNotFoundError` (the `FileStoragePort` contract). |
 | domain | `domain/agent_note.py` | `workspace_file` on `AgentNote`/`NoteCreate`/`NoteUpdate`; `clear_workspace_file`. |
 | domain | `domain/skill.py` | `visible_skill_names` → `{name: version}` (§11.2). |

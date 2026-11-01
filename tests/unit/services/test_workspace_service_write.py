@@ -89,7 +89,7 @@ class TestCreate:
     async def test_text_size(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": P, "content": "x" * (MAX_TEXT_FILE_BYTES + 1)})
-        assert r.text == f"SYSTEM: {P}: text file over 256 KB."
+        assert r.text == f"SYSTEM: {P}: text file over 3 MB."
 
     async def test_file_cap(self):
         svc, store = _svc()

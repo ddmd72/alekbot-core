@@ -3,6 +3,7 @@ lock first, shielded mutations that record and log themselves, one session per e
 import asyncio
 import json
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -46,38 +47,41 @@ class TestDeclaration:
         assert params["required"] == ["command"]
         assert params["properties"]["command"]["enum"] == list(COMMANDS)
         assert set(params["properties"]) == {
-            "command", "path", "offset", "limit", "generation", "content", "old_str", "new_str", "new_path", "source",
+            "command", "path", "offset", "limit", "depth", "pattern", "context", "ignore_case", "files_only", "regex",
+            "generation", "content", "old_str", "new_str", "new_path", "source",
         }
+        assert params["properties"]["depth"]["type"] == params["properties"]["context"]["type"] == "integer"
+        for flag in ("ignore_case", "files_only", "regex"):
+            assert params["properties"][flag]["type"] == "boolean"
+        assert params["properties"]["pattern"]["type"] == "string"
         assert all(p.get("description") for p in params["properties"].values())
         assert params["properties"]["offset"]["type"] == params["properties"]["limit"]["type"] == "integer"
         assert params["properties"]["generation"]["type"] == "string"
 
     def test_no_null_unions_or_advertised_constraints(self):
-        raw = json.dumps(build_workspace_tool_declaration())
-        for banned in ("anyOf", "null", "maxItems", "pattern", "maxLength", "minimum", "additionalProperties"):
+        decl = build_workspace_tool_declaration()
+        raw = json.dumps(decl)
+        for banned in ("anyOf", "null", "maxItems", "maxLength", "minimum", "additionalProperties"):
             assert banned not in raw
+        # `pattern` is a parameter name now (grep); the banned thing is the JSON-Schema keyword, which sits inside a
+        # property's schema, never as a property name. Check every property schema (and the parameters object) for it.
+        for name, schema in decl["parameters"]["properties"].items():
+            assert "pattern" not in schema, f"{name} advertises a JSON-Schema pattern constraint"
+        assert "pattern" not in decl["parameters"]
 
     def test_description_is_the_rfc_text(self):
-        """Byte-identical to AGENT_WORKSPACE_RFC §7.1 (the blockquote, lines joined with single spaces)."""
-        assert build_workspace_tool_declaration()["description"] == (
-            "Your workspace: files you keep for your own work between conversations and runs — a knowledge base you "
-            "build and follow. Use it when the user asks you to, when an instruction you are following (a skill, a "
-            "reminder) names a workspace file or asks you to keep state, or when a firing reminder carries a "
-            "workspace file; not on your own initiative otherwise. How to use a file is up to that instruction; when "
-            'it says nothing, use your judgement. "Keep state in the workspace" means: keep one file for it, view it '
-            "at the start, update it before you finish. Folders: projects/ (one file per task or recurring job), "
-            "references/ (where things live and how to find them), scratch/ (drafts; deleted 7 days after the last "
-            "write), files/ (byte-exact copies of chat uploads or delivered documents, made with copy; look at one "
-            "with open_file and the ref workspace:files/<name>). Keep files short and current: replace what changed "
-            "with str_replace, do not append a log. Facts about the user never go here: what the user says reaches "
-            "memory by itself; facts you read in a file or other source go through propose_memory_facts, only when "
-            "the user asks. Something to do at a given time is a reminder. Every change keeps the previous version: "
-            "history shows who wrote each one, restore brings one back. If a view header says an earlier attempt of "
-            "this same reminder fire wrote the file, its result may not have reached the user: view the generation "
-            "it names and work from that. If a file a skill or reminder names is missing, view shows whether it was "
-            "deleted or renamed: tell the user and offer to restore it; never recreate it silently. A file that "
-            "never existed may be created."
-        )
+        """Byte-identical to AGENT_WORKSPACE_RFC §7.1: the first blockquote after "**Description", lines joined with
+        single spaces. Read from the RFC so the two cannot drift apart."""
+        rfc = (Path(__file__).resolve().parents[3] / "docs/10_rfcs/AGENT_WORKSPACE_RFC.md").read_text(encoding="utf-8")
+        lines = rfc[rfc.index("**Description (draft, exact text):**"):].splitlines()[1:]
+        quote = []
+        for line in lines:
+            if line.startswith("> "):
+                quote.append(line[2:])
+            elif quote:
+                break
+        assert len(quote) > 5
+        assert build_workspace_tool_declaration()["description"] == " ".join(quote)
 
 
 class TestSession:
@@ -148,8 +152,8 @@ class TestRefusalsAndLogs:
         store.seed(USER, P, "x")
         handle = _handler(store)
         with caplog.at_level(logging.INFO):
-            r = await handle(_call(command="grep", path=P))
-        assert r.failed and r.result_str.startswith("SYSTEM: unknown workspace command 'grep'; use one of: view,")
+            r = await handle(_call(command="teleport", path=P))
+        assert r.failed and r.result_str.startswith("SYSTEM: unknown workspace command 'teleport'; use one of: view,")
         assert "result=refused:command" in caplog.text
         assert not (await handle(_call(command="view", path=P))).failed
 

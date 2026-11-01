@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set
 from ..domain.llm import ToolCall
 from ..domain.workspace import (
     COMMANDS,
+    MAX_PATH_CHARS,
     MUTATING_COMMANDS,
     WORKSPACE_TOOL,
     WorkspaceCall,
@@ -43,7 +44,10 @@ _DESCRIPTION = (
     "earlier attempt of this same reminder fire wrote the file, its result may not have reached the user: view the "
     "generation it names and work from that. If a file a skill or reminder names is missing, view shows whether it "
     "was deleted or renamed: tell the user and offer to restore it; never recreate it silently. A file that never "
-    "existed may be created."
+    "existed may be created. To see the structure, view with path \"\" shows the tree of the whole workspace and view "
+    "projects/ just that folder (depth opens collapsed levels). To find text, grep (literal by default; regex: true "
+    "for a regular expression), narrowed by path; the result says where it searched; start with files_only on a big workspace, then view the file with "
+    "offset near the hit. Large files are read in parts with offset and limit."
 )
 
 
@@ -60,7 +64,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "enum": list(COMMANDS),
                     "description": (
-                        "view, create, str_replace, delete, rename, copy, history or restore. Parameters a command "
+                        "view, create, str_replace, delete, rename, copy, history, restore or grep. Parameters a command "
                         "does not use are ignored."
                     ),
                 },
@@ -68,8 +72,8 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "Workspace path, e.g. projects/garden-shed.md: lowercase letters, digits, - _ . and /, starting "
-                        "with projects/, references/, scratch/ or files/, with a file extension, at most 120 "
-                        "characters. For view and history also a folder (projects/) or \"\" for the whole workspace. "
+                        "with projects/, references/, scratch/ or files/, with a file extension, "
+                        f"at most {MAX_PATH_CHARS} characters. For view, history and grep also a folder (projects/) or \"\" for the whole workspace. "
                         "For copy: the destination."
                     ),
                 },
@@ -80,6 +84,27 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 "limit": {
                     "type": "integer",
                     "description": "view: number of lines to show. Empty, 0 or negative means 2000.",
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "view of a folder or \"\": how many folder levels to open. Empty, 0 or negative means 3.",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "grep: the text to search for, matched literally unless regex is true.",
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "grep: lines shown before and after each match; 0 shows only the matching lines. Empty means 1; at most 5.",
+                },
+                "ignore_case": {"type": "boolean", "description": "grep: ignore upper/lower case."},
+                "files_only": {
+                    "type": "boolean",
+                    "description": "grep: list the files with their match counts instead of the matching lines.",
+                },
+                "regex": {
+                    "type": "boolean",
+                    "description": "grep: read pattern as a regular expression (RE2: no backreferences or lookaround).",
                 },
                 "generation": {
                     "type": "string",
@@ -92,7 +117,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "create: the full text of the file — text files only (.md .txt .csv .tsv .json .yaml .yml) "
-                        "under projects/, references/ or scratch/, at most 256 KB."
+                        "under projects/, references/ or scratch/, at most 3 MB."
                     ),
                 },
                 "old_str": {

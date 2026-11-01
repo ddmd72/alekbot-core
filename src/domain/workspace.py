@@ -9,17 +9,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel
 
 from .drive_ref import REF_PREFIX as DRIVE_REF_PREFIX
 from .exceptions import WorkspaceRefused
-from .skill import MAX_SKILL_FILE_BYTES, SKILL_FILE_EXTENSIONS
+from .skill import SKILL_FILE_EXTENSIONS
 
 WORKSPACE_TOOL = "workspace"
 WORKSPACE_REF_PREFIX = "workspace:"
-COMMANDS: Tuple[str, ...] = ("view", "create", "str_replace", "delete", "rename", "copy", "history", "restore")
+COMMANDS: Tuple[str, ...] = ("view", "create", "str_replace", "delete", "rename", "copy", "history", "restore", "grep")
 MUTATING_COMMANDS = frozenset({"create", "str_replace", "delete", "rename", "copy", "restore"})
 
 FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/", "files/")
@@ -32,13 +32,23 @@ TEXT_EXTENSIONS: Tuple[str, ...] = SKILL_FILE_EXTENSIONS
 MAX_FILES_PER_USER = 100
 MAX_BYTES_PER_USER = 100 * 1024 * 1024
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_TEXT_FILE_BYTES = MAX_SKILL_FILE_BYTES
-MAX_PATH_CHARS = 120
-MAX_PATH_SEGMENTS = 4
+MAX_TEXT_FILE_BYTES = 3 * 1024 * 1024
+# open_file inlines a whole text file into the orchestrator's context, so it refuses above this and points to `view`
+# windows; the storage cap above is deliberately larger (§6).
+OPEN_FILE_MAX_TEXT_BYTES = 512 * 1024
+MAX_PATH_CHARS = 200
+MAX_PATH_SEGMENTS = 8
 VIEW_DEFAULT_LINES = 2000
 VIEW_MAX_LINE_CHARS = 2000
 VIEW_MAX_BYTES = 100 * 1024
 LISTING_MAX_ENTRIES = 100
+LISTING_DEFAULT_DEPTH = 3
+GREP_DEFAULT_CONTEXT = 1
+GREP_MAX_CONTEXT = 5
+GREP_MAX_MATCHES = 50
+GREP_MAX_OUTPUT_BYTES = 20 * 1024
+GREP_MAX_SCAN_BYTES = 20 * 1024 * 1024
+GREP_MAX_PATTERN_CHARS = 200
 
 # The reminder field workspace_file (§8.3, D15): "remove" clears (the draft_skill vocabulary); fillers a model writes
 # into unused fields mean "not provided", so the field is never cleared by accident.
@@ -278,7 +288,7 @@ def check_file_size(path: str, data: bytes) -> None:
     if len(data) > MAX_FILE_BYTES:
         raise WorkspaceRefused(f"{path}: file over {MAX_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
     if len(data) > MAX_TEXT_FILE_BYTES and is_text(path, data):
-        raise WorkspaceRefused(f"{path}: text file over {MAX_TEXT_FILE_BYTES // 1024} KB", reason="caps")
+        raise WorkspaceRefused(f"{path}: text file over {MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -393,7 +403,7 @@ def _day(dt: datetime) -> str:
 
 
 def _count(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
+    return f"{n} {word}{'' if n == 1 else ('es' if word.endswith('ch') else 's')}"
 
 
 def binary_message(path: str) -> str:
@@ -430,22 +440,188 @@ def render_same_fire_line(prior_generation: Optional[int]) -> str:
     return head + f"The version before this fire is generation {prior_generation}.)"
 
 
-def render_listing(prefix: str, entries: Sequence[WorkspaceEntry]) -> str:
-    """A folder `view`: live files newest first (cap 100), deleted files counted (§6, §7.4)."""
-    live = sorted((e for e in entries if e.live), key=lambda e: (e.updated, e.generation), reverse=True)
-    deleted = {e.path for e in entries if not e.live} - {e.path for e in live}
+@dataclass
+class _Node:
+    folders: Dict[str, "_Node"] = field(default_factory=dict)
+    files: Dict[str, WorkspaceEntry] = field(default_factory=dict)
+
+    def count(self) -> int:
+        return len(self.files) + sum(f.count() for f in self.folders.values())
+
+    def size(self) -> int:
+        return sum(e.size for e in self.files.values()) + sum(f.size() for f in self.folders.values())
+
+
+def parse_depth(raw: object) -> int:
+    """`depth` of a folder view: empty, zero, negative or unreadable means the default (§7.4)."""
+    return _positive_int(raw) or LISTING_DEFAULT_DEPTH
+
+
+def parse_context(raw: object) -> int:
+    """`context` of grep: empty, negative or unreadable means 1; 0 is allowed; above 5 means 5 (§7.4)."""
+    if isinstance(raw, bool) or raw is None:
+        return GREP_DEFAULT_CONTEXT
+    text = str(raw).strip()
+    if not (text.isascii() and text.lstrip("-").isdigit()):
+        return GREP_DEFAULT_CONTEXT
+    n = int(text)
+    return GREP_DEFAULT_CONTEXT if n < 0 else min(n, GREP_MAX_CONTEXT)
+
+
+def parse_flag(raw: object) -> bool:
+    """A boolean a model may send as true/false, "true"/"false", "" or null; only an explicit yes is true."""
+    if isinstance(raw, bool):
+        return raw
+    return str(raw if raw is not None else "").strip().lower() in ("true", "yes", "1")
+
+
+def render_listing(prefix: str, entries: Sequence[WorkspaceEntry], depth: object = None) -> str:
+    """A folder `view`: a tree of the live files, folders first then files, both alphabetical; folders deeper than
+    `depth` levels below the viewed prefix collapse to a count and size; deleted files counted (§6, §7.4)."""
+    live = {e.path: e for e in entries if e.live}
+    deleted = {e.path for e in entries if not e.live} - set(live)
+    max_depth = parse_depth(depth)
+    root = _Node()
+    for path, e in live.items():
+        rel = path[len(prefix):] if path.startswith(prefix) else path
+        *folders, name = rel.split("/")
+        node = root
+        for part in folders:
+            node = node.folders.setdefault(part, _Node())
+        node.files[name] = e
     label = f"workspace:{prefix}" if prefix else "workspace (all folders)"
-    lines = [f"{label} — {_count(len(live), 'file')}" if live else f"{label} — empty"]
-    lines += [
-        f"  {e.path} · {format_size(e.size)} · {_day(e.updated)} · {e.origin or 'unknown'}"
-        for e in live[:LISTING_MAX_ENTRIES]
-    ]
-    if len(live) > LISTING_MAX_ENTRIES:
-        lines.append(f"  …{len(live) - LISTING_MAX_ENTRIES} more")
+    total = len(live)
+    lines = [f"{label} — {_count(total, 'file')}" if total else f"{label} — empty"]
+    shown = 0
+    collapsed = False
+
+    def walk(node: _Node, level: int) -> None:
+        nonlocal shown, collapsed
+        indent = "  " * (level - 1)
+        for name in sorted(node.folders):
+            child = node.folders[name]
+            if level > max_depth:
+                collapsed = True
+                lines.append(f"{indent}{name}/ · {_count(child.count(), 'file')} · {format_size(child.size())}")
+                continue
+            lines.append(f"{indent}{name}/ · {_count(child.count(), 'file')}")
+            walk(child, level + 1)
+        for name in sorted(node.files):
+            e = node.files[name]
+            if shown >= LISTING_MAX_ENTRIES:
+                return
+            shown += 1
+            lines.append(f"{indent}{name} · {format_size(e.size)} · {_day(e.updated)} · {e.origin or 'unknown'}")
+
+    walk(root, 1)
+    if collapsed:
+        lines.append("(deeper folders are collapsed — view that folder to open it)")
+    if shown >= LISTING_MAX_ENTRIES and shown < len(live):
+        lines.append(f"…{len(live) - shown} more files not shown")
     if deleted:
         where = f"in this folder — history {prefix} lists them" if prefix else "— history with an empty path lists them"
         lines.append(f"({_count(len(deleted), 'deleted file')} {where})")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# grep (§7.4): git-grep-style output over the live text files of a scope
+# ---------------------------------------------------------------------------------------------------------------------
+
+GREP_TRAILER = "…more matches not shown — narrow path or pattern, or add files_only"
+LineMatcher = Callable[[str], bool]
+
+
+def matching_lines(text: str, matcher: LineMatcher) -> List[int]:
+    """1-based numbers of the lines the matcher accepts; numbering is `view`'s (`splitlines`)."""
+    return [n for n, line in enumerate(text.splitlines(), 1) if matcher(line)]
+
+
+def _grep_windows(hits: Sequence[int], context: int, total: int) -> List[Tuple[int, int]]:
+    """Context windows around the hits, overlapping or adjacent ones merged."""
+    windows: List[Tuple[int, int]] = []
+    for n in hits:
+        lo, hi = max(1, n - context), min(total, n + context)
+        if windows and lo <= windows[-1][1] + 1:
+            windows[-1] = (windows[-1][0], max(windows[-1][1], hi))
+        else:
+            windows.append((lo, hi))
+    return windows
+
+
+def _cut_line(line: str) -> str:
+    return line[:VIEW_MAX_LINE_CHARS] + " …[line cut]" if len(line) > VIEW_MAX_LINE_CHARS else line
+
+
+def _searched_line(scope: str, files: Sequence[Tuple[str, str]]) -> str:
+    """Where the grep looked: the file, or the live text files per top-level folder (alphabetical)."""
+    word = f"{len(files)} text file{'' if len(files) == 1 else 's'}"
+    if scope and not scope.endswith("/") and len(files) == 1:
+        return f"searched {word}: {scope}"
+    per: Dict[str, int] = {}
+    for path, _ in files:
+        per[folder_of(path)] = per.get(folder_of(path), 0) + 1
+    if not per:
+        return f"searched {word}"
+    return f"searched {word}: " + ", ".join(f"{k} ({per[k]})" for k in sorted(per))
+
+
+def render_grep(
+    pattern: str,
+    scope: str,
+    files: Sequence[Tuple[str, str]],
+    matcher: LineMatcher,
+    *,
+    context: int = GREP_DEFAULT_CONTEXT,
+    files_only: bool = False,
+) -> Tuple[str, int]:
+    """(text, number of matches found) of a grep over `files` (path, decoded text), already in the order to show.
+
+    A match is one matching line. At most GREP_MAX_MATCHES match lines and GREP_MAX_OUTPUT_BYTES are shown, then the
+    trailer; the header counts everything found.
+    """
+    found = [(path, text, matching_lines(text, matcher)) for path, text in files]
+    found = [f for f in found if f[2]]
+    total = sum(len(f[2]) for f in found)
+    where = scope or "workspace"
+    if not found:
+        head = f'grep "{pattern}" in {where} — no matches in {_count(len(files), "file")} searched'
+        return head + "\n" + _searched_line(scope, files), 0
+    context = max(0, min(context, GREP_MAX_CONTEXT))
+    lines = [f'grep "{pattern}" in {where} — {_count(total, "match")} in {_count(len(found), "file")}']
+    lines.append(_searched_line(scope, files))
+    used = sum(len(x.encode("utf-8")) + 1 for x in lines)
+    capped = False
+    budget = GREP_MAX_MATCHES
+    for path, text, hits in found:
+        if files_only:
+            block = [f"{path} · {_count(len(hits), 'match')}"]
+        else:
+            if budget <= 0:
+                capped = True
+                break
+            taken = hits[:budget]
+            if len(taken) < len(hits):
+                capped = True
+            budget -= len(taken)
+            hit_set = set(hits)
+            src = text.splitlines()
+            block = [path]
+            for k, (lo, hi) in enumerate(_grep_windows(taken, context, len(src))):
+                if k:
+                    block.append("--")
+                block += [f"{n}{':' if n in hit_set else '-'}{_cut_line(src[n - 1])}" for n in range(lo, hi + 1)]
+        size = sum(len(b.encode("utf-8")) + 1 for b in block)
+        if used + size > GREP_MAX_OUTPUT_BYTES:
+            capped = True
+            break
+        used += size
+        lines += block
+        if capped:
+            break
+    if capped:
+        lines.append(GREP_TRAILER)
+    return "\n".join(lines), total
 
 
 def render_missing(path: str, versions: Sequence[WorkspaceEntry]) -> str:

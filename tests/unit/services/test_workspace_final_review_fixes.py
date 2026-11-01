@@ -50,10 +50,10 @@ class TestCopyGuards:
         r = await svc.run(_call(), "copy", {"source": "see drive:abc123", "path": "files/a.pdf"})
         assert r.failed and "on the user's drive" in r.text
 
-    async def test_text_upload_over_256kb_into_projects_is_refused(self):
-        svc, store = _svc(_conversion(b"a" * (256 * 1024 + 1)))
+    async def test_text_upload_over_3mb_into_projects_is_refused(self):
+        svc, store = _svc(_conversion(b"a" * (ws.MAX_TEXT_FILE_BYTES + 1)))
         r = await svc.run(_call(), "copy", {"source": "big.txt", "path": "projects/big.md"})
-        assert r.failed and "text file over 256 KB" in r.text
+        assert r.failed and "text file over 3 MB" in r.text
         assert store.live_text(USER, "projects/big.md") is None
 
     async def test_overwrite_with_a_stale_known_generation_is_a_conflict(self):
@@ -121,7 +121,7 @@ class TestRefusalLogLevel:
 
     async def test_unknown_command_logs_info(self, caplog):
         with caplog.at_level(logging.INFO):
-            await self._handler()(ToolCall(name="workspace", args={"command": "grep"}))
+            await self._handler()(ToolCall(name="workspace", args={"command": "teleport"}))
         recs = [r for r in caplog.records if "refused:command" in r.getMessage()]
         assert recs and recs[0].levelno == logging.INFO
 

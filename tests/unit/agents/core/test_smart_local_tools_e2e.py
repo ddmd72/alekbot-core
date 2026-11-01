@@ -74,8 +74,13 @@ WS_HISTORY = {"command": "history", "path": SHED}
 WS_RESTORE = {"command": "restore", "path": SHED, "generation": "1"}      # the generation is read from the fake at run time
 WS_VIEW_VERSION = {"command": "view", "path": SHED, "generation": "1"}    # idem
 WS_DELETE = {"command": "delete", "path": SHED_NOTES}
+WS_TREE = {"command": "view", "path": "", "depth": 1}
+WS_GREP = {"command": "grep", "path": "projects/", "pattern": "PLANNING +permission", "regex": True,
+           "ignore_case": True, "context": 0}
+WS_GREP_FILES = {"command": "grep", "path": "", "pattern": "planning permission", "ignore_case": True,
+                 "files_only": True}
 WORKSPACE_CALLS = [WS_CREATE, WS_VIEW, WS_STR_REPLACE, WS_COPY, WS_RENAME, WS_HISTORY, WS_RESTORE, WS_VIEW_VERSION,
-                   WS_DELETE]
+                   WS_DELETE, WS_TREE, WS_GREP, WS_GREP_FILES]
 
 
 class World:
@@ -228,6 +233,29 @@ async def test_workspace_commands_land_in_the_bucket():
     assert world.gcs.names(WORKSPACE_BUCKET) == [key(SHED)]
     written = [v for path in (SHED, SHED_COPY, SHED_NOTES) for v in world.gcs.versions(WORKSPACE_BUCKET, key(path))]
     assert len(written) == 5 and {v.metadata["origin"] for v in written} == {"chat"}
+    assert _script_consumed(llm)
+
+
+async def test_workspace_tree_and_grep_read_the_bucket_and_write_nothing():
+    world = World()
+    await world.workspace_store.put("u1", SHED, SHED_V1.encode(), WorkspaceWriteMeta(origin="chat"), 0)
+    await world.workspace_store.put("u1", "references/a.md", b"Nothing about it here.\n", WorkspaceWriteMeta(origin="chat"), 0)
+    await world.workspace_store.put("u1", "projects/trips/a/b/c.md", b"x\n", WorkspaceWriteMeta(origin="chat"), 0)
+    before = world.gcs.names(WORKSPACE_BUCKET)
+    steps = [tools(("workspace", WS_TREE)), tools(("workspace", WS_GREP)), tools(("workspace", WS_GREP_FILES)),
+             text("The shed file mentions it.")]
+    llm = ScriptedLLM(steps)
+
+    response = await world.agent(llm).execute(smart_message("Where did I write about the planning permission?"))
+
+    assert response.status == AgentStatus.SUCCESS
+    results = tool_results(llm)
+    assert [name for name, _ in results] == ["workspace"] * 3
+    tree, found, listed = [result for _, result in results]
+    assert "projects/" in tree and "deeper folders are collapsed" in tree and "c.md" not in tree   # depth 1
+    assert "Planning permission" in found and "a.md" not in found                            # regex, ignore_case, context 0
+    assert SHED in listed and "Planning permission" not in listed                             # files_only: counts, no lines
+    assert world.gcs.names(WORKSPACE_BUCKET) == before                                       # read-only commands
     assert _script_consumed(llm)
 
 

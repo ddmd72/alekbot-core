@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.domain.workspace import OPEN_FILE_MAX_TEXT_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService, _is_drive_ref
 from tests.unit.services.workspace_fakes import InMemoryWorkspaceStore
@@ -66,3 +67,53 @@ async def test_uploads_still_go_to_file_storage():
     storage.download.return_value = b"x"
     assert await _service(InMemoryWorkspaceStore(), storage).resolve_bytes("report.pdf", USER) == b"x"
     storage.download.assert_awaited_once_with("report.pdf", USER)
+
+
+# --- open_file's text limit (OPEN_FILE_MAX_TEXT_BYTES) ---
+
+
+def _text_of(size: int) -> str:
+    return "x" * size
+
+
+async def test_text_exactly_at_the_limit_is_returned_in_full():
+    store = InMemoryWorkspaceStore()
+    body = _text_of(OPEN_FILE_MAX_TEXT_BYTES)
+    store.seed(USER, "projects/a.md", body)
+    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    assert text == f"[File: workspace:projects/a.md]\n{body}\n[/File: workspace:projects/a.md]"
+
+
+async def test_text_one_byte_over_the_limit_returns_a_view_note():
+    store = InMemoryWorkspaceStore()
+    store.seed(USER, "projects/a.md", _text_of(OPEN_FILE_MAX_TEXT_BYTES + 1))
+    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    assert text.startswith("[System: 'workspace:projects/a.md'")
+    assert "view" in text
+    assert "projects/a.md" in text
+    assert "offset" in text
+    assert "[File:" not in text
+
+
+async def test_over_the_limit_note_does_not_carry_the_content():
+    store = InMemoryWorkspaceStore()
+    store.seed(USER, "projects/a.md", "SECRETMARK" + _text_of(OPEN_FILE_MAX_TEXT_BYTES))
+    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    assert "SECRETMARK" not in text
+    assert len(text) < 1000
+
+
+async def test_text_between_half_the_limit_and_the_limit_is_read_normally():
+    store = InMemoryWorkspaceStore()
+    body = _text_of(OPEN_FILE_MAX_TEXT_BYTES // 2 + 1024)
+    store.seed(USER, "projects/b.md", body)
+    text = await _service(store).resolve_content("workspace:projects/b.md", USER)
+    assert text == f"[File: workspace:projects/b.md]\n{body}\n[/File: workspace:projects/b.md]"
+
+
+async def test_raw_bytes_path_is_not_limited():
+    store = InMemoryWorkspaceStore()
+    body = _text_of(OPEN_FILE_MAX_TEXT_BYTES + 100 * 1024)
+    store.seed(USER, "projects/c.md", body)
+    data = await _service(store)._download_by_ref("workspace:projects/c.md", USER)
+    assert data == body.encode("utf-8")

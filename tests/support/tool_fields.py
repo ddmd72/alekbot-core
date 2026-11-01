@@ -74,7 +74,11 @@ READ_ONLY: FrozenSet[str] = frozenset({
     "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
     "drive:get_recording_link", "drive:find_passages", "drive:read_passages", "drive_notes:get_note",
 })
-READ_ONLY_FIELDS: FrozenSet[str] = frozenset({"smart_local:workspace.offset", "smart_local:workspace.limit"})
+READ_ONLY_FIELDS: FrozenSet[str] = frozenset({
+    "smart_local:workspace.offset", "smart_local:workspace.limit",
+    "smart_local:workspace.depth", "smart_local:workspace.pattern", "smart_local:workspace.context",
+    "smart_local:workspace.ignore_case", "smart_local:workspace.files_only", "smart_local:workspace.regex",
+})
 
 
 def flatten(schema: Mapping[str, Any], prefix: str = "") -> List[str]:

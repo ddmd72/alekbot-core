@@ -34,7 +34,12 @@ from ..domain.user_drive import (
     DriveRefRefused,
     format_size,
 )
-from ..domain.workspace import WORKSPACE_REF_PREFIX, parse_workspace_path, workspace_kind
+from ..domain.workspace import (
+    OPEN_FILE_MAX_TEXT_BYTES,
+    WORKSPACE_REF_PREFIX,
+    parse_workspace_path,
+    workspace_kind,
+)
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
     MAX_FILE_BYTES,
@@ -188,6 +193,10 @@ class FileConversionService:
     async def _resolve_workspace_content(self, ref: str, user_id: str) -> str:
         path, data = await self._read_workspace(ref, user_id)
         if workspace_kind(path) == "text":
+            if len(data) > OPEN_FILE_MAX_TEXT_BYTES:
+                return (f"[System: '{ref}' is {format_size(len(data))}; open_file reads a workspace text file only up "
+                        f"to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
+                        f"command view, path {path}, offset and limit (lines).]")
             try:
                 # The skill: rule — text kinds are decoded, never mime-guessed (§12).
                 return f"[File: {ref}]\n{data.decode('utf-8')}\n[/File: {ref}]"
