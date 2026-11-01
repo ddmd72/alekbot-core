@@ -95,7 +95,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 },
                 "context": {
                     "type": "integer",
-                    "description": "grep: lines shown before and after each match. Empty means 1; at most 5.",
+                    "description": "grep: lines shown before and after each match; 0 shows only the matching lines. Empty means 1; at most 5.",
                 },
                 "ignore_case": {"type": "boolean", "description": "grep: ignore upper/lower case."},
                 "files_only": {
