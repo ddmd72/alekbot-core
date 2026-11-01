@@ -135,7 +135,7 @@ class TestViewFolder:
         store.seed(USER, "references/r.md", "r")
         store.calls.clear()
         r = await svc.run(_call(), "view", {"path": "projects/"})
-        assert r.text.startswith("workspace:projects/ — 1 file\n  projects/a.md · 1 B · ")
+        assert r.text.startswith("workspace:projects/ — 1 file\na.md · 1 B · ")
         assert r.text.endswith("(1 deleted file in this folder — history projects/ lists them)")
         assert store.calls == [("list", "projects/")]
         assert dict(r.generations) == {}
@@ -189,8 +189,8 @@ class TestLogAndFailures:
 
     async def test_unknown_command(self):
         svc, _ = _svc()
-        r = await svc.run(_call(), "grep", {"path": P})
-        assert r.failed and r.text.startswith("SYSTEM: unknown command 'grep'; use one of: view, create,")
+        r = await svc.run(_call(), "teleport", {"path": P})
+        assert r.failed and r.text.startswith("SYSTEM: unknown command 'teleport'; use one of: view, create,")
 
     async def test_refused_read_logs_at_info_with_the_reason(self, caplog):
         svc, _ = _svc()

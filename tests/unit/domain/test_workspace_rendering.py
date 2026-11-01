@@ -186,9 +186,9 @@ class TestListing:
         ]
         assert render_listing("projects/", entries) == (
             "workspace:projects/ — 3 files\n"
-            "  projects/morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder\n"
-            "  projects/garden-shed.md · 4.2 KB · 2026-10-18 · chat\n"
-            "  projects/summer-trip.md · 1.0 KB · 2026-10-02 · voice:send_to_chat\n"
+            "garden-shed.md · 4.2 KB · 2026-10-18 · chat\n"
+            "morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder\n"
+            "summer-trip.md · 1.0 KB · 2026-10-02 · voice:send_to_chat\n"
             "(2 deleted files in this folder — history projects/ lists them)"
         )
 

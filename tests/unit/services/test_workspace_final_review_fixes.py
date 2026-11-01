@@ -121,7 +121,7 @@ class TestRefusalLogLevel:
 
     async def test_unknown_command_logs_info(self, caplog):
         with caplog.at_level(logging.INFO):
-            await self._handler()(ToolCall(name="workspace", args={"command": "grep"}))
+            await self._handler()(ToolCall(name="workspace", args={"command": "teleport"}))
         recs = [r for r in caplog.records if "refused:command" in r.getMessage()]
         assert recs and recs[0].levelno == logging.INFO
 
