@@ -40,18 +40,18 @@ class TestViewFile:
 
     async def test_binary_is_refused_but_recorded(self):
         svc, store = _svc()
-        e = store.seed(USER, "files/lease.pdf", b"%PDF-1.4")
-        r = await svc.run(_call(), "view", {"path": "files/lease.pdf"})
+        e = store.seed(USER, "binary_files/lease.pdf", b"%PDF-1.4")
+        r = await svc.run(_call(), "view", {"path": "binary_files/lease.pdf"})
         assert r.failed
-        assert r.text == ("SYSTEM: files/lease.pdf is binary; open it with open_file and file_ref "
-                          "workspace:files/lease.pdf.")
-        assert dict(r.generations) == {"files/lease.pdf": e.generation}
-        assert store.calls == [("list", "files/lease.pdf")]  # metadata only, no download for a refusal
+        assert r.text == ("SYSTEM: binary_files/lease.pdf is binary; open it with open_file and file_ref "
+                          "workspace:binary_files/lease.pdf.")
+        assert dict(r.generations) == {"binary_files/lease.pdf": e.generation}
+        assert store.calls == [("list", "binary_files/lease.pdf")]  # metadata only, no download for a refusal
 
     async def test_text_extension_that_is_not_utf8_is_binary(self):
         svc, store = _svc()
-        store.seed(USER, "files/a.txt", b"\xff\xfe")
-        r = await svc.run(_call(), "view", {"path": "files/a.txt"})
+        store.seed(USER, "binary_files/a.txt", b"\xff\xfe")
+        r = await svc.run(_call(), "view", {"path": "binary_files/a.txt"})
         assert r.failed and "is binary" in r.text
 
     async def test_wrong_store(self):

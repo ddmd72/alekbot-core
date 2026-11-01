@@ -77,8 +77,8 @@ class TestCreate:
 
     async def test_files_folder_is_copy_only(self):
         svc, _ = _svc()
-        r = await svc.run(_call(), "create", {"path": "files/a.md", "content": "x"})
-        assert r.text == "SYSTEM: invalid workspace path 'files/a.md': files/ holds copies only; use copy."
+        r = await svc.run(_call(), "create", {"path": "binary_files/a.md", "content": "x"})
+        assert r.text == "SYSTEM: invalid workspace path 'binary_files/a.md': binary_files/ holds copies only; use copy."
 
     async def test_text_kinds_only(self):
         svc, _ = _svc()
@@ -100,7 +100,7 @@ class TestCreate:
 
     async def test_byte_cap_counts_the_new_size(self):
         svc, store = _svc()
-        store.seed(USER, "files/big.pdf", b"x", size=MAX_BYTES_PER_USER - 3)
+        store.seed(USER, "binary_files/big.pdf", b"x", size=MAX_BYTES_PER_USER - 3)
         assert not (await svc.run(_call(), "create", {"path": "projects/ok.md", "content": "abc"})).failed
         r = await svc.run(_call(), "create", {"path": P, "content": "d"})
         assert r.text == "SYSTEM: workspace full (100 MB); delete or merge first."
@@ -155,9 +155,9 @@ class TestStrReplace:
 
     async def test_files_folder_refused(self):
         svc, store = _svc()
-        store.seed(USER, "files/a.txt", "x")
-        r = await svc.run(_call(), "str_replace", {"path": "files/a.txt", "old_str": "x", "new_str": "y"})
-        assert r.failed and "files/ holds copies only" in r.text
+        store.seed(USER, "binary_files/a.txt", "x")
+        r = await svc.run(_call(), "str_replace", {"path": "binary_files/a.txt", "old_str": "x", "new_str": "y"})
+        assert r.failed and "binary_files/ holds copies only" in r.text
 
     async def test_new_str_may_be_empty(self):
         svc, store = _svc()

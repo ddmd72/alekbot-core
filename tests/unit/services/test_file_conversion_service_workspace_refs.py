@@ -27,18 +27,18 @@ async def test_text_ref_is_returned_verbatim_in_markers():
 
 async def test_binary_ref_goes_through_conversion():
     store = InMemoryWorkspaceStore()
-    store.seed(USER, "files/lease.pdf", b"%PDF-1.4")
+    store.seed(USER, "binary_files/lease.pdf", b"%PDF-1.4")
     with patch("src.services.file_conversion_service.convert_file_to_text",
                AsyncMock(return_value="LEASE TEXT")) as convert:
-        text = await _service(store).resolve_content("workspace:files/lease.pdf", USER)
+        text = await _service(store).resolve_content("workspace:binary_files/lease.pdf", USER)
     assert text == "LEASE TEXT"
-    assert convert.await_args.args[1:3] == ("workspace:files/lease.pdf", "application/pdf")
+    assert convert.await_args.args[1:3] == ("workspace:binary_files/lease.pdf", "application/pdf")
 
 
 async def test_resolve_bytes():
     store = InMemoryWorkspaceStore()
-    store.seed(USER, "files/photo.jpg", b"\xff\xd8jpeg")
-    assert await _service(store).resolve_bytes("workspace:files/photo.jpg", USER) == b"\xff\xd8jpeg"
+    store.seed(USER, "binary_files/photo.jpg", b"\xff\xd8jpeg")
+    assert await _service(store).resolve_bytes("workspace:binary_files/photo.jpg", USER) == b"\xff\xd8jpeg"
 
 
 async def test_only_the_requesting_users_objects():
@@ -59,7 +59,7 @@ async def test_invalid_path_is_not_found():
 
 
 def test_never_a_drive_ref():
-    assert not _is_drive_ref("workspace:files/a.pdf")
+    assert not _is_drive_ref("workspace:binary_files/a.pdf")
 
 
 async def test_uploads_still_go_to_file_storage():

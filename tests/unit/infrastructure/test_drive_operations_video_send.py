@@ -47,7 +47,7 @@ async def test_a_failed_upload_is_a_failure_outcome(call):
     if call == "open":
         out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
-        out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
+        out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/clip.mp4")
     assert (out.op, out.cls, out.success) == (DriveOp.OPEN, OutcomeClass.FAILED, False)
     assert out.text == VIDEO_NOT_SENT and "sent to the user" not in out.text
     assert len(note.files) == 1
@@ -60,5 +60,5 @@ async def test_a_successful_upload_is_unchanged(call, tail):
     if call == "open":
         out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
-        out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
+        out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/clip.mp4")
     assert out.cls is OutcomeClass.OK and out.success and out.text.endswith(tail)
