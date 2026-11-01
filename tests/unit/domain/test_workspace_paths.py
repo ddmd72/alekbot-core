@@ -44,8 +44,8 @@ class TestPathRule:
         ("projects//a.md", "no '//'"),
         ("notes/a.md", "start with projects/, references/, scratch/ or files/"),
         ("projects/a", "needs an extension"),
-        ("projects/a/b/c/d.md", "at most 4 segments"),
-        ("projects/" + "a" * 120 + ".md", "at most 120 characters"),
+        ("projects/a/b/c/d/e/f/g/h.md", "at most 8 segments"),  # 9 segments
+        ("projects/" + "a" * 189 + ".md", "at most 200 characters"),  # 201 characters
         ("projects/a.md/", "no trailing '/'"),
         ("", "a path is required"),
     ])

@@ -70,7 +70,7 @@ class TestCaps:
         assert str(e.value) == "files/a.pdf: file over 10 MB"
         with pytest.raises(WorkspaceRefused) as e:
             check_file_size("projects/a.md", b"x" * (MAX_TEXT_FILE_BYTES + 1))
-        assert str(e.value) == "projects/a.md: text file over 256 KB"
+        assert str(e.value) == "projects/a.md: text file over 3 MB"
         check_file_size("files/a.txt", b"\xff" * (MAX_TEXT_FILE_BYTES + 1))  # not UTF-8: binary, 10 MB cap
 
 
