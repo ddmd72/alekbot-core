@@ -7,7 +7,7 @@ owner decisions D1–D17).
 ## Decision
 
 Smart keeps files for its own work — a knowledge base it builds and follows — in a dedicated versioned GCS bucket, key
-`{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ files/`, one local tool `workspace` with eight
+`{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ binary_files/`, one local tool `workspace` with eight
 commands. The workspace is **pulled**: used only when the user asks, an instruction it follows (a skill, a reminder)
 names a file or asks it to keep state, or a firing reminder carries a workspace file; nothing is injected into the
 prompt. A file has no required structure; how to use it is the instruction's business (D16). Writes are allowed on
