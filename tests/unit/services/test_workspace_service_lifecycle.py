@@ -99,12 +99,12 @@ class TestRename:
 
     async def test_folder_rules(self):
         svc, store = _svc()
-        store.seed(USER, "files/lease.pdf", b"%PDF")
+        store.seed(USER, "binary_files/lease.pdf", b"%PDF")
         store.seed(USER, P, "x")
-        r = await svc.run(_call(), "rename", {"path": "files/lease.pdf", "new_path": "projects/lease.pdf"})
-        assert r.failed and "a file in files/ stays in files/" in r.text
-        r = await svc.run(_call(), "rename", {"path": P, "new_path": "files/a.md"})
-        assert r.failed and "a file may not move into files/" in r.text
+        r = await svc.run(_call(), "rename", {"path": "binary_files/lease.pdf", "new_path": "projects/lease.pdf"})
+        assert r.failed and "a file in binary_files/ stays in binary_files/" in r.text
+        r = await svc.run(_call(), "rename", {"path": P, "new_path": "binary_files/a.md"})
+        assert r.failed and "a file may not move into binary_files/" in r.text
 
     async def test_source_delete_conflict_rolls_back(self):
         svc, store = _svc()

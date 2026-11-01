@@ -24,8 +24,8 @@ def _seeded():
     store.seed(USER, "projects/garden-shed.md", "intro\nthe Deadline is friday\noutro")
     store.seed(USER, "projects/trips/packing.md", "deadline")
     store.seed(USER, "references/a.md", "no hit here")
-    store.seed(USER, "files/big.txt", "deadline in files")
-    store.seed(USER, "files/photo.png", b"deadline\x00\xff")
+    store.seed(USER, "scratch/big.txt", "deadline in files")
+    store.seed(USER, "binary_files/photo.png", b"deadline\x00\xff")
     return svc, store
 
 
@@ -49,9 +49,9 @@ class TestScope:
     async def test_whole_workspace_skips_binary_and_lists_folders(self):
         svc, _ = _seeded()
         r = await _grep(svc, pattern="deadline", path="")
-        assert r.text.splitlines()[1] == "searched 4 text files: files/ (1), projects/ (2), references/ (1)"
+        assert r.text.splitlines()[1] == "searched 4 text files: projects/ (2), references/ (1), scratch/ (1)"
         assert "photo.png" not in r.text
-        assert "files/big.txt" in r.text
+        assert "scratch/big.txt" in r.text
 
     async def test_single_file(self):
         svc, _ = _seeded()
@@ -82,19 +82,19 @@ class TestScope:
 
     async def test_binary_single_file_is_refused(self):
         svc, store = _seeded()
-        r = await _grep(svc, pattern="x", path="files/photo.png")
+        r = await _grep(svc, pattern="x", path="binary_files/photo.png")
         assert r.failed and "not a text file" in r.text
         assert not [c for c in store.calls if c[0] == "read"]
 
     async def test_non_utf8_text_file_is_skipped(self):
         svc, store = _svc()
-        store.seed(USER, "files/a.txt", b"\xff\xfe deadline")
-        store.seed(USER, "files/b.txt", "deadline")
-        r = await _grep(svc, pattern="deadline", path="files/")
-        assert r.text.splitlines()[1] == "searched 1 text file: files/ (1)"
+        store.seed(USER, "scratch/a.txt", b"\xff\xfe deadline")
+        store.seed(USER, "scratch/b.txt", "deadline")
+        r = await _grep(svc, pattern="deadline", path="scratch/")
+        assert r.text.splitlines()[1] == "searched 1 text file: scratch/ (1)"
 
     async def test_empty_scope(self):
-        svc, _ = _seeded()
+        svc, _ = _svc()  # scratch/ is empty here (the shared seed now keeps a text file in it)
         r = await _grep(svc, pattern="x", path="scratch/")
         assert r.text == 'grep "x" in scratch/ — no matches in 0 files searched\nsearched 0 text files'
 
@@ -131,7 +131,7 @@ class TestModes:
         r = await _grep(svc, pattern="friday", path="projects/", context=0)
         assert r.text.splitlines()[2:] == ["projects/garden-shed.md", "2:the Deadline is friday"]
         r = await _grep(svc, pattern="deadline", path="", files_only="true")
-        assert r.text.splitlines()[2:] == ["files/big.txt · 1 match", "projects/trips/packing.md · 1 match"]
+        assert r.text.splitlines()[2:] == ["projects/trips/packing.md · 1 match", "scratch/big.txt · 1 match"]
         r = await _grep(svc, pattern="friday", path="projects/", context=-3)
         assert "1-intro" in r.text
 
@@ -172,7 +172,7 @@ class TestFailures:
 
     async def test_binary_bytes_do_not_count_toward_the_limit(self):
         svc, store = _svc()
-        store.seed(USER, "files/huge.bin", b"x", size=GREP_MAX_SCAN_BYTES * 2)
+        store.seed(USER, "binary_files/huge.bin", b"x", size=GREP_MAX_SCAN_BYTES * 2)
         store.seed(USER, "projects/a.md", "deadline")
         assert not (await _grep(svc, pattern="deadline", path="")).failed
 

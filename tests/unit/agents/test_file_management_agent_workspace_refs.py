@@ -1,4 +1,4 @@
-"""open_file reads workspace copies only under files/ — notes are read with the workspace tool, which frames them
+"""open_file reads workspace copies only under binary_files/ — notes are read with the workspace tool, which frames them
 as data — and delete_file refuses workspace refs (AGENT_WORKSPACE_RFC §12)."""
 from unittest.mock import AsyncMock, MagicMock
 
@@ -40,16 +40,16 @@ def agent(conversion, storage):
 class TestOpen:
     async def test_a_pdf_copy_opens_for_vision(self, agent, conversion):
         conversion.resolve_bytes.return_value = b"%PDF"
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "application/pdf"
-        conversion.resolve_bytes.assert_awaited_once_with("workspace:files/lease.pdf", "user1")
+        conversion.resolve_bytes.assert_awaited_once_with("workspace:binary_files/lease.pdf", "user1")
 
     async def test_a_text_copy_opens_as_text(self, agent, conversion):
-        conversion.resolve_content.return_value = "[File: workspace:files/notes.txt]\nhi\n[/File: workspace:files/notes.txt]"
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:files/notes.txt"))
+        conversion.resolve_content.return_value = "[File: workspace:binary_files/notes.txt]\nhi\n[/File: workspace:binary_files/notes.txt]"
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/notes.txt"))
         assert resp.status == AgentStatus.SUCCESS and "hi" in resp.result
-        conversion.resolve_content.assert_awaited_once_with("workspace:files/notes.txt", "user1")
+        conversion.resolve_content.assert_awaited_once_with("workspace:binary_files/notes.txt", "user1")
 
     async def test_a_note_outside_files_is_refused(self, agent, conversion):
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:projects/garden-shed.md"))
@@ -63,25 +63,25 @@ class TestOpen:
         assert resp.status == AgentStatus.FAILED and "invalid workspace path" in resp.error
 
     async def test_a_missing_copy(self, agent, conversion):
-        conversion.resolve_bytes.side_effect = FileNotFoundError("files/lease.pdf")
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:files/lease.pdf"))
+        conversion.resolve_bytes.side_effect = FileNotFoundError("binary_files/lease.pdf")
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
         assert resp.status == AgentStatus.FAILED and "is not in your workspace" in resp.error
         assert "re-upload" not in resp.error
 
     async def test_a_store_error_has_its_own_message(self, agent, conversion):
         conversion.resolve_bytes.side_effect = RuntimeError("gcs down")
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
         assert resp.status == AgentStatus.FAILED
         assert resp.error == "The workspace could not be read right now (RuntimeError); try again later."
 
 
 class TestDelete:
     async def test_refused(self, agent, storage):
-        resp = await agent.execute(_message(Intent.DELETE_FILE, "workspace:files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.DELETE_FILE, "workspace:binary_files/lease.pdf"))
         assert resp.status == AgentStatus.FAILED and "workspace tool's delete" in resp.error
         storage.delete.assert_not_called()
 
 
 def test_the_manifest_names_workspace_copies():
-    assert "workspace:files/<name>" in FILE_MANAGEMENT.capability_descriptions[Intent.OPEN_FILE]
-    assert "workspace:files/lease.pdf" in FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]
+    assert "workspace:binary_files/<name>" in FILE_MANAGEMENT.capability_descriptions[Intent.OPEN_FILE]
+    assert "workspace:binary_files/lease.pdf" in FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]

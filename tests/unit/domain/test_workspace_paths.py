@@ -29,7 +29,7 @@ class TestPathRule:
         ("workspace:projects/garden-shed.md", "projects/garden-shed.md"),
         ("  references/where_things_live.txt ", "references/where_things_live.txt"),
         ("scratch/a/b/draft.v2.md", "scratch/a/b/draft.v2.md"),
-        ("files/lease.pdf", "files/lease.pdf"),
+        ("binary_files/lease.pdf", "binary_files/lease.pdf"),
     ])
     def test_valid_file_paths(self, raw, expected):
         assert parse_workspace_path(raw) == expected
@@ -42,7 +42,7 @@ class TestPathRule:
         ("projects/.hidden.md", "starts with a letter or digit"),
         ("/projects/a.md", "no leading '/'"),
         ("projects//a.md", "no '//'"),
-        ("notes/a.md", "start with projects/, references/, scratch/ or files/"),
+        ("notes/a.md", "start with projects/, references/, scratch/ or binary_files/"),
         ("projects/a", "needs an extension"),
         ("projects/a/b/c/d/e/f/g/h.md", "at most 8 segments"),  # 9 segments
         ("projects/" + "a" * 189 + ".md", "at most 200 characters"),  # 201 characters
@@ -86,21 +86,21 @@ class TestPathRule:
 
 class TestKinds:
     @pytest.mark.parametrize("path,kind", [
-        ("projects/a.md", "text"), ("references/r.txt", "text"), ("files/data.csv", "text"),
-        ("files/t.tsv", "text"), ("files/c.json", "text"), ("files/c.yaml", "text"), ("files/c.yml", "text"),
-        ("files/lease.pdf", "binary"), ("files/photo.jpg", "binary"),
+        ("projects/a.md", "text"), ("references/r.txt", "text"), ("binary_files/data.csv", "text"),
+        ("binary_files/t.tsv", "text"), ("binary_files/c.json", "text"), ("binary_files/c.yaml", "text"), ("binary_files/c.yml", "text"),
+        ("binary_files/lease.pdf", "binary"), ("binary_files/photo.jpg", "binary"),
     ])
     def test_kind_from_extension(self, path, kind):
         assert workspace_kind(path) == kind
 
     def test_text_needs_utf8_too(self):
-        assert is_text("files/a.txt", "привіт".encode("utf-8"))
-        assert not is_text("files/a.txt", b"\xff\xfe\x00bad")
-        assert not is_text("files/a.pdf", b"plain")
+        assert is_text("binary_files/a.txt", "привіт".encode("utf-8"))
+        assert not is_text("binary_files/a.txt", b"\xff\xfe\x00bad")
+        assert not is_text("binary_files/a.pdf", b"plain")
 
     def test_folder_of(self):
         assert folder_of("projects/a/b.md") == "projects/"
-        assert folder_of("files/lease.pdf") == "files/"
+        assert folder_of("binary_files/lease.pdf") == "binary_files/"
 
 
 class TestCommands:
@@ -154,7 +154,7 @@ class TestWorkspaceFile:
         ("projects/morning-briefing.md", "projects/morning-briefing.md"),
         ("workspace:references/sources.txt", "references/sources.txt"),
         ("scratch/draft.md", "scratch/draft.md"),       # any folder (D17); scratch expires (§10 row 12)
-        ("files/lease.pdf", "files/lease.pdf"),         # any kind: what the run does with it is the instruction's
+        ("binary_files/lease.pdf", "binary_files/lease.pdf"),         # any kind: what the run does with it is the instruction's
     ])
     def test_any_valid_path(self, raw, expected):
         assert validate_workspace_file(raw) == expected

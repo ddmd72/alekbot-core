@@ -19,14 +19,14 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 |---|------|----------|
 | D1 | 10-19 | **Pull-only.** Smart reads or writes the workspace only when (a) the user explicitly asks, (b) an instruction it follows — a loaded skill's text, a reminder's instruction — names a workspace file or asks it to keep state, or (c) a firing reminder carries a workspace file (D15). No index or contract in the prompt, no `workspace` system skill, no skill-load write gate. |
 | D2 | 10-19 | **One local tool `workspace`** with commands `view`, `create`, `str_replace`, `delete`, `rename`, `copy`, `history`, `restore`. No grep, glob or diff. Served by `DelegationEngine(local_tools=)` like `use_skill` and `propose_memory_facts`, declared on every Smart path where the service is configured, outside `if skills:`. |
-| D3 | 10-14, 10-19 | **Storage = a dedicated versioned GCS bucket**, key `{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ files/`, generation preconditions on every mutation, lifecycle as rev 1 §5.4. Not Firestore, not the drive, not the media bucket. |
+| D3 | 10-14, 10-19 | **Storage = a dedicated versioned GCS bucket**, key `{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ binary_files/`, generation preconditions on every mutation, lifecycle as rev 1 §5.4. Not Firestore, not the drive, not the media bucket. |
 | D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 3 MB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
 | D5 | 10-19 | **Writes allowed on all Smart paths** (chat, reminders, daily review, `ask_alek`/`tell_alek`, `/worker`). Every object carries its `origin` — `chat`, `background:<task_type>`, `voice:ask_alek`, `voice:tell_alek` — plus a fire key for reminder runs, shown in the `view` header. |
 | ~~D6~~ | 10-19 | ~~Reminders get `reminder_skill` and `state_file`.~~ **Superseded by D15.** |
 | ~~D7~~ | 10-19 | ~~Workspace files are never executed; procedures live in skills.~~ **Superseded by D16 and D17.** |
 | D8 | 10-19 | **A missing workspace file named by a reminder or a skill is reported, with a restore offer** — never silently recreated. A file that never existed is fine: the first run may create it. |
 | D9 | 10-19 | **Local dev shares the live bucket**, as it shares live Firestore; the RFC says so. |
-| D10 | 10-19 | **`files/` kept** for byte-exact copies of chat uploads and delivered documents; `drive:` dropped as a copy source. |
+| D10 | 10-19, 11-01 | **`binary_files/`** (renamed from `files/`, 2026-11-01) holds binary files only, byte-exact copies of chat uploads, delivered documents and drive files; text files live in `projects/`, `references/` and `scratch/`. `drive:` is a supported `copy` source (owner delta 2026-11-01); `skill:` stays dropped. |
 | D11 | 10-20 | **All whitelisted users at once**, no per-user flag. |
 | D12 | 10-20 | **First step after deploy: convert the owner's morning briefing** to a workspace file + a short reminder (§15, A1). |
 | D13 | 10-20 | Agreed defaults: no consolidation-token line (rev 1 R9 dropped; revisit trigger §11.5); no dry runs; voice origins `voice:ask_alek` / `voice:tell_alek`; `str_replace` needs no prior view; live acceptance is an owner step. |
@@ -51,7 +51,7 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 | `kind` custom metadata | Dropped; kind derives from the extension | One source of truth. |
 | Port with `stat`, `versions`, `purge_user` | Port = `list`, `read`, `put`, `delete` | Reviewer finding. `list(include_versions=True)` covers history and stat; erasure is an owner `gcloud` command (§19). |
 | `PromptBuilderPort.workspace_index`, assembly placement, per-request index log, `delegation.tool_arg_path` span attribute | Dropped | No index. The `[Workspace]` log line carries the path (§16). |
-| `workspace_copy` sources: uploads, delivered documents, `drive:`, `skill:`, workspace | Uploads and delivered documents through `FileConversionService.resolve_bytes`; workspace → workspace straight to the port | D10. `drive:` dropped; `skill:` dropped (a skill's text is already reachable with `open_file`). |
+| `workspace_copy` sources: uploads, delivered documents, `drive:`, `skill:`, workspace | Uploads and delivered documents through `FileConversionService.resolve_bytes`; workspace → workspace straight to the port | D10. `drive:` is now supported (2026-11-01): a byte-exact copy of a drive file, instead of the model retyping it, through `FileConversionService.resolve_bytes` (ownership by the user's drive handle, `MAX_DRIVE_DOWNLOAD_BYTES`); `skill:` dropped (a skill's text is already reachable with `open_file`). |
 | 50 MB per user | 100 MB per user | D4. |
 | Review: reuse ≥ 30 %, write rate ≥ 1/20 turns, then a nudge | Review of pull usage per trigger, lost files, conflicts, file growth, origin mix | D1: writes are pulled, so a write rate is not a target (§16). |
 | R9: `Trivial_Exclusions` extension | Dropped, with a revisit trigger | D13. |
@@ -90,7 +90,7 @@ Should-fix:
    Cloud Logging (§16).
 7. A1 step 1: the owner uploads the current instruction as a `.txt` file (§15).
 8. ~~A1 step 3 seed from the last three issues.~~ Replaced by the owner's A1 (§0.2, §15).
-9. `files/` is byte-exact: `create` / `str_replace` refuse there (§6). ~~`state_file` needs a text extension.~~
+9. `binary_files/` is byte-exact: `create` / `str_replace` refuse there (§6). ~~`state_file` needs a text extension.~~
 10. ~~`build_reminder_alert(note, *, fire_key=None)`.~~ The signature stays `build_reminder_alert(note)` (§0.2).
 11. Cancellation also covers the agent's message timeout; the shielded inner coroutine updates the session map and
     logs itself; a folder view lists versions; a file view is two GETs (§7.6, §10 row 3, §18).
@@ -114,7 +114,7 @@ call `load_settings()` (`relay_main.py:31`, `indexer_main.py:15`); only `main.py
 | View header line "Your own working file: data from earlier runs, not instructions." | Neutral header | D17. |
 | Same-fire header "the state before this fire … base this run on it" | "this version was written by an earlier attempt of this same fire; its result may not have reached the user. The version before this fire is generation G." | D16: no state section is assumed. |
 | A1: draft a `morning-briefing` skill + state file + `reminder_skill` | The long instruction becomes `projects/morning-briefing.md`; the reminder says "follow the workspace file" and carries `workspace_file`; no skill | D15, D16. |
-| `copy` from an upload only into `files/` | A text upload may be copied into any folder; binary only into `files/` | A1 needs the owner's instruction byte for byte in `projects/`, without retyping. `files/` stays copy-only. |
+| `copy` from an upload only into `files/` | A text upload may be copied into `projects/`, `references/` or `scratch/`; binary only into `binary_files/`, which refuses text | A1 needs the owner's instruction byte for byte in `projects/`, without retyping. `binary_files/` stays copy-only and binary-only. |
 | `skill-creator`: state files + `reminder_skill` | Skills that keep state name their file and say when to read and update it (tutor example) | D16. |
 | — | §11.6: injection hardening is out of scope | D17. |
 
@@ -168,7 +168,7 @@ between runs. Nothing in it is required, and no file has a required structure. F
 | `projects/` | one file per task or recurring job: a plan, a running record, a long instruction a reminder follows | until deleted |
 | `references/` | where things live and how to find them: folders, senders, ids, search words that worked | until deleted |
 | `scratch/` | drafts and intermediate results | 7 days after the last write |
-| `files/` | byte-exact copies of chat uploads and delivered documents | until deleted |
+| `binary_files/` | byte-exact copies of binary files: chat uploads, delivered documents, drive files | until deleted |
 
 **Routing, not rules** (said in the tool description, §7.1): facts about the user go to memory; something to do at a
 time is a reminder; documents for the user go to the drive or a delivered document. A procedure applied by meaning
@@ -302,7 +302,7 @@ When the key resolves empty (no secret, emulator), no adapter is built, Smart ge
 ## 6. Paths, kinds, limits
 
 **Path rule** (domain, pure, `parse_workspace_path`): lowercase `[a-z0-9-/._]`; starts with `projects/`,
-`references/`, `scratch/` or `files/`; segments non-empty, never `.` or `..`, starting with `[a-z0-9]`; no leading or
+`references/`, `scratch/` or `binary_files/`; segments non-empty, never `.` or `..`, starting with `[a-z0-9]`; no leading or
 trailing `/`, no `//`; the last segment has an extension; at most 200 chars and 8 segments. A `workspace:` prefix is
 accepted and stripped. `view`, `history` and `grep` also accept a folder prefix (`projects/`, `projects/garden/`) or the empty
 path (the whole workspace).
@@ -310,17 +310,20 @@ path (the whole workspace).
 **Kinds.** A file is `text` when its extension is `.md .txt .csv .tsv .json .yaml .yml` (the skill-file set,
 `domain/skill.py:30`) and it decodes as UTF-8; every other file is `binary`.
 - `create` and `str_replace` write text, and only under `projects/`, `references/` and `scratch/`.
-- `files/` is byte-exact (content integrity, not safety): it is filled only by `copy` and changed only by `copy`,
-  `rename`, `delete`, `restore`. Binary files live only there.
-- `copy` of a text file (an upload or a workspace file) may land in any folder; a text copy outside `files/` is then
-  an ordinary editable file.
+- `binary_files/` is byte-exact (content integrity, not safety): it is filled only by `copy` and changed only by
+  `copy`, `rename`, `delete`, `restore`. Binary files live only there, and only binary files: `copy` of a text file
+  into it is refused ("copy a text file into projects/, references/ or scratch/"), and a binary file copied anywhere
+  else is refused ("binary files go only under binary_files/"). A text-extension file that does not decode as UTF-8
+  is binary.
+- `copy` of a text file (an upload, a drive file or a workspace file) may land in any folder EXCEPT `binary_files/`;
+  the copy is then an ordinary editable file.
 
 | Limit | Value | Why |
 |-------|-------|-----|
 | Live files per user | 100 | D4. A command that would add a file beyond it is refused: "workspace full (100 files); delete or merge first". Soft: two concurrent creates can land at 101. |
 | Live bytes per user | 100 MB | D4. Checked the same way, counting the new size. |
 | File | 10 MB | D4. Under Gemini's 20 MB inline cap for `open_file` vision. |
-| Text file | 3 MB | Independent of the skill-file cap (256 KB, `domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 3 MB cannot be copied. A workspace text file over 256 KB cannot be saved into a skill (`draft_skill from_file`). |
+| Text file | 3 MB | Independent of the skill-file cap (256 KB, `domain/skill.py:31`). Applies in every folder: a UTF-8 text-extension upload over 3 MB cannot be copied. A workspace text file over 256 KB cannot be saved into a skill (`draft_skill from_file`). |
 | `open_file` of a text file | 512 KB | `open_file` puts the whole file into the orchestrator's context (~100–130k tokens of Cyrillic at the cap), so above 512 KB it returns a `[System: …]` note telling the orchestrator to read in parts with `view` (`offset`, `limit`). Storage and reading limits differ on purpose. The way into a large file is `grep` (find the lines) and then `view` with `offset` (§7.4). |
 | `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `offset`/`limit` that are empty, zero or negative mean the defaults. |
 | History | 100 entries (newest first), then "…N more" | Equal to the file cap. |
@@ -350,9 +353,10 @@ right after the `propose_memory_facts` block (`smart_response_agent.py:503-512`)
 > initiative otherwise. How to use a file is up to that instruction; when it says nothing, use your judgement.
 > "Keep state in the workspace" means: keep one file for it, view it at the start, update it before you finish.
 > Folders: projects/ (one file per task or recurring job), references/ (where things live and how to find them),
-> scratch/ (drafts; deleted 7 days after the last write), files/ (byte-exact copies of chat uploads or delivered
-> documents, made with copy; look at one with open_file and the ref workspace:files/<name>). Keep files short and
-> current: replace what changed with str_replace, do not append a log. Facts about the user never go here: what the
+> scratch/ (drafts; deleted 7 days after the last write), binary_files/ (the only place for binary files — PDF,
+> images, scans: copy puts them there byte for byte; you cannot create or edit them and grep does not search them;
+> look at one with open_file and the ref workspace:binary_files/<name>); text files go to the other folders (copy
+> accepts a text file for any of them). Keep files short and current: replace what changed with str_replace, do not append a log. Facts about the user never go here: what the
 > user says reaches memory by itself; facts you read in a file or other source go through propose_memory_facts, only
 > when the user asks. Something to do at a given time is a reminder. Every change keeps the previous version:
 > history shows who wrote each one, restore brings one back. If a view header says an earlier attempt of this same
@@ -377,7 +381,7 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 | `offset` | integer | view | First line to show (1-based); empty, 0 or negative → 1. |
 | `limit` | integer | view | Number of lines; empty, 0 or negative → 2,000. |
 | `depth` | integer | view (folder) | Folder levels to open; empty, 0 or negative → 3. |
-| `pattern` | string | grep | What to search for; literal unless `regex` is true. |
+| `pattern` | string | grep | What to search for; literal unless `regex` is true. With `regex`, `^` and `$` match the start and end of a LINE; list markers, indentation and markup before the text count as part of the line, so `^T1` will not match `- T1`. |
 | `context` | integer | grep | Lines before and after each match; empty or negative → 1; at most 5. |
 | `ignore_case` | boolean | grep | Ignore case. |
 | `files_only` | boolean | grep | List files with match counts instead of lines (like `git grep -l`). |
@@ -387,7 +391,7 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 | `old_str` | string | str_replace | Exact text to replace; must occur exactly once. |
 | `new_str` | string | str_replace | Replacement text (may be empty). |
 | `new_path` | string | rename | The new path. |
-| `source` | string | copy | A chat file name from a `[File: …]` label, a delivered-document key, or a workspace path. |
+| `source` | string | copy | A chat file name from a `[File: …]` label, a delivered-document key, a drive file ref exactly as the drive tool returned it, or a workspace path. |
 
 ### 7.3 Commands
 
@@ -404,13 +408,13 @@ in the `propose_memory_facts` style (`memory_fact_tools.py`).
 | `create` | Under `projects/`, `references/`, `scratch/` only, text kinds only. New path → caps list, one versions list of the path (logged as `had_history`), put with `if_generation_match=0`. Existing path → allowed only when this execution viewed its current version; put with `if_generation_match` = that generation (overwrite). | "created" / "overwritten", path, generation, lines |
 | `str_replace` | Same folders. Self-guarding (D13): read the current generation; `old_str` must match exactly once ("not found" / "found N matches; include more context"); put with `if_generation_match` = that generation. On 412: re-read, re-apply once; a second 412 → conflict. Updates the session generation. | "replaced", generation, the changed lines with numbers |
 | `delete` | Generation from the session, else from one `list` call; `delete(…, if_generation_match, meta={deleted_by, deleted_fire})` (§5.3). Warns on references (§8.4). | "deleted; restorable from history" + warnings |
-| `rename` | §5.3. `new_path` must not exist. A file in `files/` stays in `files/`; a file may not move into `files/`. Warns on references to the old path. No cap check. | "renamed", new generation + warnings |
-| `copy` | Source = workspace path → port `read` + `put`. Source = chat upload or delivered key → `FileConversionService.resolve_bytes` (ownership check, `file_conversion_service.py:140-162`). Binary → destination under `files/`; text → any folder. `drive:` and `skill:` sources are refused with the right tool named. The destination must not exist, or this execution must have viewed its current version. | "copied", path, size |
+| `rename` | §5.3. `new_path` must not exist. A file in `binary_files/` stays in `binary_files/`; nothing else may move into `binary_files/`. Warns on references to the old path. No cap check. | "renamed", new generation + warnings |
+| `copy` | Source = workspace path → port `read` + `put`. Source = chat upload or delivered key → `FileConversionService.resolve_bytes` (ownership check, `file_conversion_service.py:140-162`). Source = `drive:` ref (tagged or not) → the same `resolve_bytes` (the drive handle of the user's own connection; `MAX_DRIVE_DOWNLOAD_BYTES`); a stale or foreign ref, a folder, a not-connected drive, a missing file and a file over the workspace cap are refused with a `SYSTEM:` line naming the fix. Binary → destination under `binary_files/`; text → `projects/`, `references/` or `scratch/` (text into `binary_files/` and binary elsewhere are refused). `skill:` sources are refused with `open_file` named. The destination must not exist, or this execution must have viewed its current version. | "copied", path, size |
 | `history` file / folder | `list(include_versions=True)`, exact-name filtered for a file: generation, time (UTC), size, origin, fire key, `current` / `deleted by …` / `renamed to …`. A folder also lists deleted files. | version table |
 | `restore` | Reads the chosen generation; puts it as a new live version with `if_generation_match` = current generation, or 0 when the path is deleted (then caps checked); `restored_from` set; origin = this run. Nothing is lost: the replaced version becomes noncurrent. | "restored generation G as generation H" |
 
 **Wrong store.** A `drive:` ref, a `skill:` ref, or an upload name passed as `path` is refused with the right tool
-named (`open_file_from_drive`, `open_file`, or `copy` with `source`).
+named (`open_file_from_drive`, `open_file`, or `copy` with `source`). A `drive:` ref is a valid `copy` `source`, never a `path`.
 
 ### 7.4 What `view` and `history` show
 
@@ -511,7 +515,7 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 
 | Case | Result (`failed=True`) |
 |------|------------------------|
-| Invalid path / wrong folder for the command or kind | `SYSTEM: invalid workspace path …: <rule>.` (e.g. "files/ holds copies only; use copy") |
+| Invalid path / wrong folder for the command or kind | `SYSTEM: invalid workspace path …: <rule>.` (e.g. "binary_files/ holds binary files only; use copy") |
 | `create` on an existing path whose current version was not viewed in this execution | `SYSTEM: <path> exists. View it first and use str_replace, or view it and create again to overwrite.` |
 | Precondition conflict (another run wrote it) | `SYSTEM: <path> changed since you read it (another conversation or run wrote it). View it again and redo your change.` |
 | `str_replace` no match / several | `SYSTEM: old_str not found in <path>` / `found N matches; include more surrounding text.` |
@@ -782,15 +786,15 @@ Minimal support so copied documents work with the existing readers. `FileConvers
 - `resolve_bytes` (`:255-263`): consumers are `open_file` vision (`file_management_agent.py:270-299`), `edit_image`
   (`image_generation_agent.py:214`), `save_file_to_drive` sources (`file_management_agent.py:560, 610, 620`) and
   `draft_skill` `from_file` (§11.2).
-- `FileManagementAgent._fetch` (`:194-255`): accepts `workspace:` refs **only under `files/`**; a ref to a file in
+- `FileManagementAgent._fetch` (`:194-255`): accepts `workspace:` refs **only under `binary_files/`**; a ref to a file in
   another folder is refused with "view it with the workspace tool". One reader per kind of file, so every note comes
   with its header (writer, generation, same-fire line).
 - `FileManagementAgent._delete` (`:354-379`): refuses `workspace:` refs with "use the workspace tool's delete" (the
   `skill:` precedent at `:370`).
-- `open_file`'s description and `file_ref` schema (`agent_manifest.py:535-541, 603-608`) name `workspace:files/<name>`.
+- `open_file`'s description and `file_ref` schema (`agent_manifest.py:535-541, 603-608`) name `workspace:binary_files/<name>`.
 
 A byte read of any folder stays allowed in `FileConversionService` (needed for `from_file: workspace:scratch/…`);
-the `files/`-only rule is `open_file`'s. A `workspace:` ref prefetched for another specialist (`create_pdf`,
+the `binary_files/`-only rule is `open_file`'s. A `workspace:` ref prefetched for another specialist (`create_pdf`,
 `create_html_page`) arrives as plain `[File: …]` content without the view header, as every uploaded file does today.
 `FileConversionService` exists only when the media bucket is set (`service_container.py:350-357`); without it, `copy`
 from uploads and `workspace:` refs are unavailable (local only).
@@ -818,7 +822,7 @@ from uploads and `workspace:` refs are unavailable (local only).
 | agents | `agents/core/smart_response_agent.py` | `workspace_service` constructor arg (`TYPE_CHECKING`, like `MemoryFactService` at `:65`); declare + build the handler outside `if skills:`; derive `run_origin`; pass the version map to `use_skill`. |
 | agents | `agents/notes_agent.py` | Validate and bind `workspace_file` by code (§8.3): `_run`-local guard, refuse-all on several create/update, appended system line, `instruction` description sentence; render in its list and receipts; constructor flag `workspace_enabled`. |
 | agents | `agents/alek_gateway_agent.py` | `run_origin` = `voice:ask_alek` / `voice:tell_alek`. |
-| agents | `agents/file_management_agent.py` | `workspace:files/` in `_fetch`; refusal in `_delete`. |
+| agents | `agents/file_management_agent.py` | `workspace:binary_files/` in `_fetch`; refusal in `_delete`. |
 | agents | `agents/core/router_agent.py` | `workspace_file` in `agent_notes`. |
 | handlers | `handlers/worker_handler.py` | Build the fire key; pass `origin_detail` (+ `fire_key`) to both Smart-bound `notify` calls. |
 | web | `web/user_cabinet_app.py`, `web/static/cabinet.html` | GET returns `workspace_file`; the list shows it read-only. |
@@ -891,8 +895,8 @@ redoes the change; `history` shows both versions.
 the next fire the run reports "deleted … by chat" and offers restore; `restore` brings it back.
 **A5 — Rename.** Renaming a file a skill names warns with the skill's name; a `view` of the old path says where it
 went.
-**A6 — Files.** A chat PDF is copied to `files/lease.pdf`; `open_file` with `workspace:files/lease.pdf` shows it;
-`edit_image` works from a copied photo.
+**A6 — Binary files.** A chat PDF is copied to `binary_files/lease.pdf`; `open_file` with `workspace:binary_files/lease.pdf` shows it;
+`edit_image` works from a copied photo. A PDF on the drive is copied from its `drive:` ref into `binary_files/scan.pdf` byte for byte; a text file on the drive is copied into `projects/`; copying a text file into `binary_files/` is refused with the fix named.
 **A7 — Skill with state.** A skill drafted with `skill-creator` names `workspace:projects/<x>.md`; after
 `$skill save`, using it creates the file on the first run and updates it on the next.
 **A8 — Voice errand.** A `tell_alek` errand that updates a project file shows `voice:tell_alek` in `history`.
@@ -936,7 +940,7 @@ New behaviour gets new tests; an existing test broken by the change goes to a re
 e.g. assertions on Smart's exact tool list or on NOTES having no `context_schemas`. `test_reminders_service.py`
 stays untouched by construction (§8.3).
 
-- **Domain:** path rule (valid/invalid, traversal, `:`, folders, prefixes), kinds, folder rules (`files/` copy-only),
+- **Domain:** path rule (valid/invalid, traversal, `:`, folders, prefixes), kinds, folder rules (`binary_files/` copy-only and binary-only),
   caps; `apply_str_replace` (one, none, several); windows, line cuts, `offset`/`limit` defaults for `""`, 0, negative;
   neutral header with and without fire key; the same-fire line with a prior generation and with none; listing with
   deleted count; `render_missing` for deleted-by, renamed-to and never-existed; history; `find_references` (skill
@@ -953,7 +957,9 @@ stays untouched by construction (§8.3).
 - **Service:** every command and error; `view` with `generation` (read-only, not recorded); same-fire detection;
   conflict on a concurrent write; `str_replace` re-apply once then conflict; rename rollback via
   `if_generation_match`; restore of a deleted file; copy from each source shape (text upload into `projects/`, binary
-  only into `files/`) and refusals (`drive:`, `skill:`); `create`/`str_replace` refused under `files/`; caps (rename
+  only into `binary_files/`, text into `binary_files/` refused, a non-UTF-8 text-extension file treated as binary; a
+  `drive:` source, text and binary, and each mapped drive error: stale ref, not connected, too large, folder, not
+  found) and refusals (`skill:`; `drive:` as `path`); `create`/`str_replace` refused under `binary_files/`; caps (rename
   not checked); warnings; `had_history`.
 - **Handler:** lock FIFO across a gather batch (view + str_replace + str_replace of one file); shield (cancel the
   outer mid-rename, by turn-budget cut and by message timeout: both steps land, session map updated, log line
@@ -972,7 +978,7 @@ stays untouched by construction (§8.3).
 - **Origin:** `notify` sets `run_origin` from `origin_detail` and falls back to the kind; `run_fire_key`; the gateway
   sets `voice:*`; the worker passes `origin_detail` and the fire key at both call sites.
 - **File pipeline:** `workspace:` through `resolve_content`/`resolve_bytes`; `_is_drive_ref` order; `open_file`
-  refuses non-`files/` refs; `delete_file` refusal; `from_file: workspace:…` in `SkillService`, incl. its not-found
+  refuses non-`binary_files/` refs; `delete_file` refusal; `from_file: workspace:…` in `SkillService`, incl. its not-found
   message.
 - **Manifest:** `test_manifest_prose_matches_tool_schema.py` passes with the new prose; the field name is unique.
 - **Config/deploy:** key registered; `--set-secrets` pin; `google-cloud-storage` pin; wiring (container builds the
@@ -1032,9 +1038,9 @@ None needing the owner. Calls made in this revision and listed for review:
    view header does), so `build_reminder_alert` keeps its signature.
 2. `workspace_file` need not exist at bind time, and any folder is accepted (D17); a file in `scratch/` that fires less
    than weekly will expire (§10 row 12).
-3. `open_file` accepts `workspace:` refs only under `files/`; `FileConversionService` reads any folder, because
+3. `open_file` accepts `workspace:` refs only under `binary_files/`; `FileConversionService` reads any folder, because
    `from_file: workspace:scratch/…` needs it.
-4. `copy` puts a text upload into any folder (A1 needs it); binary stays in `files/`, and `files/` stays copy-only.
+4. `copy` puts a text upload into `projects/`, `references/` or `scratch/` (A1 needs it); binary stays in `binary_files/`, which stays copy-only and binary-only.
 5. The Cabinet shows the field read-only in slice 1.
 6. A delete's identity check uses its own `delete_id` rather than `deleted_by`: the origin label is not unique per
    operation.

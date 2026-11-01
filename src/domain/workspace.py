@@ -22,9 +22,9 @@ WORKSPACE_REF_PREFIX = "workspace:"
 COMMANDS: Tuple[str, ...] = ("view", "create", "str_replace", "delete", "rename", "copy", "history", "restore", "grep")
 MUTATING_COMMANDS = frozenset({"create", "str_replace", "delete", "rename", "copy", "restore"})
 
-FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/", "files/")
+FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/", "binary_files/")
 TEXT_FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/")
-COPY_FOLDER = "files/"
+BINARY_FOLDER = "binary_files/"
 SCRATCH_FOLDER = "scratch/"
 TEXT_EXTENSIONS: Tuple[str, ...] = SKILL_FILE_EXTENSIONS
 
@@ -99,9 +99,9 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
         return path.rstrip("/") + "/"
     if "/" not in path:
         raise WorkspaceRefused(
-            f"'{text}' is not a workspace path (paths start with projects/, references/, scratch/ or files/); "
+            f"'{text}' is not a workspace path (paths start with projects/, references/, scratch/ or binary_files/); "
             f"to keep a chat file, use copy with source \"{text}\" and a destination path "
-            "(a text file: any folder; a binary file: under files/)",
+            "(a text file: projects/, references/ or scratch/; a binary file: under binary_files/)",
             reason="wrong_store",
         )
     if len(path) > MAX_PATH_CHARS:
@@ -118,7 +118,7 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
     if any(not _SEGMENT.fullmatch(s) for s in segments):
         raise _invalid(text, "every segment starts with a letter or digit; '.' and '..' are not allowed")
     if segments[0] + "/" not in FOLDERS:
-        raise _invalid(text, "start with projects/, references/, scratch/ or files/")
+        raise _invalid(text, "start with projects/, references/, scratch/ or binary_files/")
     if is_folder:
         if not allow_folder:
             raise _invalid(text, "a file path has no trailing '/'")

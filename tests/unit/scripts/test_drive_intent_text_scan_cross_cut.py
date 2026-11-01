@@ -1,4 +1,4 @@
-"""The owner-text scan after the cross-cut review (R2): preference facts, the workspace's scratch/ and files/, and the
+"""The owner-text scan after the cross-cut review (R2): preference facts, the workspace's scratch/ and binary_files/, and the
 owner-only scope are stated."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -33,12 +33,12 @@ async def test_a_missing_fact_reader_reports_both_stores_as_not_scanned():
 async def test_the_workspace_scan_reads_scratch_and_the_text_files_of_files():
     entries = {"projects/": [], "references/": [],
                "scratch/": [SimpleNamespace(path="scratch/tmp.md", generation=1)],
-               "files/": [SimpleNamespace(path="files/notes.md", generation=2),
-                          SimpleNamespace(path="files/scan.pdf", generation=3)]}
+               "binary_files/": [SimpleNamespace(path="binary_files/notes.md", generation=2),
+                          SimpleNamespace(path="binary_files/scan.pdf", generation=3)]}
     workspace = SimpleNamespace(list=AsyncMock(side_effect=lambda user, folder: entries[folder]),
                                 read=AsyncMock(return_value=SimpleNamespace(data=b"call move_file_in_drive")))
     items, _, _ = await script.collect(script.ScanSources(workspace=workspace), "u1", "a1", NOW)
-    assert [(i.store, i.key) for i in items] == [("workspace", "scratch/tmp.md"), ("workspace", "files/notes.md")]
+    assert [(i.store, i.key) for i in items] == [("workspace", "scratch/tmp.md"), ("workspace", "binary_files/notes.md")]
 
 
 def test_the_scan_states_that_only_the_owner_is_scanned_and_skill_files_are_redrafted_in_chat():

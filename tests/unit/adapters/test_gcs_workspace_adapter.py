@@ -57,8 +57,8 @@ class TestPut:
         assert blob.custom_time is None
 
     async def test_fire_restored_from_and_overwrite_precondition(self, client):
-        blob = client.bucket.return_value.blob.return_value = _Blob(name="u1/files/lease.pdf")
-        await _adapter(client).put("u1", "files/lease.pdf", b"%PDF",
+        blob = client.bucket.return_value.blob.return_value = _Blob(name="u1/binary_files/lease.pdf")
+        await _adapter(client).put("u1", "binary_files/lease.pdf", b"%PDF",
                                    WorkspaceWriteMeta(origin="background:execute_reminder", fire=F, restored_from=101),
                                    105)
         assert blob.metadata == {"origin": "background:execute_reminder", "write_id": "w1", "fire": F,

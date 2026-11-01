@@ -78,7 +78,7 @@ def _sources(**over):
     facts = SimpleNamespace(get_active_facts_ordered=AsyncMock(return_value=[SimpleNamespace(id="f1", text="Be brief")]))
     entries = {"projects/": [SimpleNamespace(path="projects/inbox.md", generation=7),
                              SimpleNamespace(path="projects/scan.pdf", generation=8)], "references/": [],
-               "scratch/": [], "files/": []}   # R2 (plan_arbiter_xcut): scratch/ and files/ are scanned too
+               "scratch/": [], "binary_files/": []}   # R2 (plan_arbiter_xcut): scratch/ and binary_files/ are scanned too
     workspace = SimpleNamespace(list=AsyncMock(side_effect=lambda user, folder: entries[folder]),
                                 read=AsyncMock(return_value=SimpleNamespace(data=b"open_file_from_drive the lease")))
     profiles = SimpleNamespace(get_override_tokens=AsyncMock(side_effect=lambda owner, oid: (
@@ -109,7 +109,7 @@ async def test_collect_reads_every_store_read_only():
     # R2 (plan_arbiter_xcut): directives are read from agent_directive and from preference, in that order
     assert src.facts.get_active_facts_ordered.await_args_list == [
         call("a1", domain=FactDomain.AGENT_DIRECTIVE.value), call("a1", domain=FactDomain.PREFERENCE.value)]
-    assert [c.args[1] for c in src.workspace.list.await_args_list] == ["projects/", "references/", "scratch/", "files/"]
+    assert [c.args[1] for c in src.workspace.list.await_args_list] == ["projects/", "references/", "scratch/", "binary_files/"]
     src.notes.list_active_notes.assert_awaited_once_with("u1", NOW)
     src.drafts.list_drafts.assert_awaited_once_with("u1", NOW)
     assert set(exports) == {"recipe-box.v4", "recipe-box.v4.files/references/rules.md"}

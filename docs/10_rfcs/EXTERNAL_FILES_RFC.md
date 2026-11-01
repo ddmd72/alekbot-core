@@ -187,7 +187,7 @@ Facts that shape the design:
 |---|---|---|---|
 | Chat upload | stored name (unchanged) | GCS uploads | `[File: "<ref>" (size)]` |
 | Delivered document | `docs/…`, `email_review/…`, `deep_research/…`, `video_generation/…` + `/{user}/{uuid}-{name}` (unchanged) | GCS media | the delivery note |
-| Workspace / skill | `workspace:files/…` / `skill:<name>/<path>` (unchanged) | workspace bucket / Firestore | — |
+| Workspace / skill | `workspace:binary_files/…` / `skill:<name>/<path>` (unchanged) | workspace bucket / Firestore | — |
 | Drive | `drive:<item id>` (unchanged) | user drive | `[Drive: <path> (size) ref=drive:<id>]` |
 | **Email attachment (new, D4)** | `email:<message id>/<part id>` | the user's Gmail, fetched on open | `[Email file: "<name>" (size) ref=email:<message id>/<part id>]`, name escaped like a wrapper attribute |
 
@@ -224,7 +224,7 @@ hint), recordings opened as transcripts, archived transcripts, the drive access 
 
 | Intent | Agent | Opens |
 |---|---|---|
-| `open_file` | FileManagement | chat uploads, delivered documents, workspace `files/` copies, skill files |
+| `open_file` | FileManagement | chat uploads, delivered documents, workspace `binary_files/` copies, skill files |
 | `open_file_from_drive` | FileManagement | `drive:` refs |
 | `open_email_attachment` (new; replaces `get_email_attachment`) | EmailSearch | `email:` refs in `file_ref`, or an email id plus attachment name (D12, §4.7) |
 

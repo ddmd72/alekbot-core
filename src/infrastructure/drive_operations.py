@@ -98,7 +98,7 @@ from ..domain.user_drive import (
     format_size,
     prepare_drive_text_file,
 )
-from ..domain.workspace import COPY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
+from ..domain.workspace import BINARY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
 from ..utils.file_conversion import is_native_binary
 from ..domain.drive_index_params import OPEN_MAX_CHARS
 from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
@@ -573,13 +573,13 @@ class DriveOperations:
             ), OutcomeClass.FAILED)
 
     async def _fetch_workspace(self, context: Mapping[str, Any], ref: str, user_id: str) -> DriveOutcome:
-        """`workspace:` refs open only under files/ (AGENT_WORKSPACE_RFC §12): a note in another folder is read with
+        """`workspace:` refs open only under binary_files/ (AGENT_WORKSPACE_RFC §12): a note in another folder is read with
         the workspace tool, which shows it with its view header (writer, generation). One reader per kind of file."""
         try:
             path = parse_workspace_path(ref)
         except WorkspaceRefused as e:
             return _fail(DriveOp.OPEN, str(e), OutcomeClass.REFUSED)
-        if folder_of(path) != COPY_FOLDER:
+        if folder_of(path) != BINARY_FOLDER:
             return _fail(DriveOp.OPEN,
                          f"'{ref}' is a workspace note; view it with the workspace tool (command view, path {path}).",
                          OutcomeClass.REFUSED)

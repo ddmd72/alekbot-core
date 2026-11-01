@@ -399,7 +399,7 @@ One-time project setup (OneDrive App Folder) and Deploy units (Drive indexer).
 **A third store: the agent workspace** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md`). Smart's own working files live in a
 dedicated versioned bucket, reached through the `workspace` tool. `copy` puts byte-exact copies of chat uploads and
 delivered documents under `files/` (read through `FileConversionService.resolve_bytes`, ownership check included);
-`open_file` opens them with `workspace:files/<name>` and refuses workspace notes in other folders ("view it with the
+`open_file` opens them with `workspace:binary_files/<name>` and refuses workspace notes in other folders ("view it with the
 workspace tool"); `delete_file` refuses every `workspace:` ref. A `workspace:` ref prefetched for another specialist
 arrives without the workspace view header (writer, generation) — accepted, like every uploaded file today (RFC §12).
 
@@ -473,4 +473,4 @@ URL (§2.4). Agent re-fetch of delivered documents moved to server-side `open_fi
 "generated documents not fetchable (404)" limitation. Decision:
 [private_file_storage_token_redirect.md](../../04_solution_strategy/decisions/private_file_storage_token_redirect.md).
 2026-10-20: `workspace:` refs (AGENT_WORKSPACE_RFC §12) — FileConversionService reads them through
-WorkspaceStorePort; open_file accepts only `workspace:files/…`; delete_file refuses them.
+WorkspaceStorePort; open_file accepts only `workspace:binary_files/…`; delete_file refuses them.

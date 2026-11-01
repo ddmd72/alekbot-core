@@ -95,7 +95,7 @@ async def test_copy_passes_every_source_kind_through(ops, source):
     assert ops.copy.await_args.kwargs["folder"] == "Contracts" and ops.copy.await_args.kwargs["file_name"] == "x.pdf"
 
 
-@pytest.mark.parametrize("source", ["new.pdf", "docs/u1/v2.pdf", "workspace:files/v2.pdf", "skill:s/a.md", "drive:f2"])
+@pytest.mark.parametrize("source", ["new.pdf", "docs/u1/v2.pdf", "workspace:binary_files/v2.pdf", "skill:s/a.md", "drive:f2"])
 async def test_replace_passes_every_source_kind_through_in_its_direction(ops, source):
     run, _ = _run(ops)
     await _call(run, tt.REPLACE_FILE_CONTENT, target_ref="drive:f1", new_content_ref=source)

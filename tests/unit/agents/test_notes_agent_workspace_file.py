@@ -178,7 +178,7 @@ class TestValidation:
         agent._call_llm.assert_not_awaited()
         port.update_note.assert_not_called()
 
-    @pytest.mark.parametrize("raw", ["scratch/draft.md", "files/lease.pdf", "references/never-written-yet.md"])
+    @pytest.mark.parametrize("raw", ["scratch/draft.md", "binary_files/lease.pdf", "references/never-written-yet.md"])
     async def test_any_folder_and_a_file_that_does_not_exist_yet(self, raw):
         agent, port, _ = _agent()
         agent._call_llm = AsyncMock(side_effect=[_tools(UPDATE), _text()])

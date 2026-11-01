@@ -115,12 +115,12 @@ async def test_an_append_with_empty_text_is_a_request_error_and_never_reaches_th
     assert drive.appends == []
 
 
-# -- opening non-text workspace:files/ items -----------------------------------------------------------------------
+# -- opening non-text workspace:binary_files/ items -----------------------------------------------------------------------
 
 async def test_a_workspace_video_is_delivered_as_a_file_through_the_notification():
     conv, note = FakeConversion(data=b"frames"), FakeNotification()
     ops = _ops(conversion_service=conv, notification=note, drive_service=FakeDrive())
-    out = await ops.fetch_stored(CTX, "u1", "workspace:files/shed-tour.mp4")
+    out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/shed-tour.mp4")
     assert out.cls is OutcomeClass.OK and out.success
     assert out.text.endswith("has been sent to the user as a file attachment.")
     assert note.files == [dict(user_id="u1", account_id="a1", file_bytes=b"frames", filename="shed-tour.mp4",
@@ -131,13 +131,13 @@ async def test_a_workspace_video_is_delivered_as_a_file_through_the_notification
 async def test_a_workspace_video_over_the_attach_cap_is_answered_with_text_and_not_sent():
     conv, note = FakeConversion(data=b"x" * (MAX_VIDEO_ATTACH_BYTES + 1)), FakeNotification()
     ops = _ops(conversion_service=conv, notification=note, drive_service=FakeDrive())
-    out = await ops.fetch_stored(CTX, "u1", "workspace:files/shed-tour.mp4")
+    out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/shed-tour.mp4")
     assert out.cls is OutcomeClass.OK and "is too large" in out.text and note.files == []
 
 
 async def test_a_workspace_video_with_no_notification_is_a_failure():
     ops = _ops(conversion_service=FakeConversion(), drive_service=FakeDrive())
-    out = await ops.fetch_stored(CTX, "u1", "workspace:files/shed-tour.mp4")
+    out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/shed-tour.mp4")
     assert out.cls is OutcomeClass.FAILED and not out.success
     assert out.text == "File delivery is not configured — cannot resend the video as a file."
 
@@ -145,10 +145,10 @@ async def test_a_workspace_video_with_no_notification_is_a_failure():
 async def test_a_workspace_file_of_an_other_kind_is_read_as_text():
     conv = FakeConversion(text="boiler warranty, 5 years")
     ops = _ops(conversion_service=conv, drive_service=FakeDrive())
-    out = await ops.fetch_stored(CTX, "u1", "workspace:files/boiler.warranty")
+    out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/boiler.warranty")
     assert out.cls is OutcomeClass.OK and out.body
     assert out.text == "boiler warranty, 5 years"
-    assert conv.text_reads == ["workspace:files/boiler.warranty"] and conv.byte_reads == []
+    assert conv.text_reads == ["workspace:binary_files/boiler.warranty"] and conv.byte_reads == []
 
 
 # -- a drive video, no notification --------------------------------------------------------------------------------

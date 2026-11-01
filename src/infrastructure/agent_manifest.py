@@ -536,7 +536,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             'Requires: context={"file_ref": "<filename from file label>"} '
             "Also opens skill files listed under 'Files' in a loaded skill: pass the ref as "
             "shown, e.g. skill:<name>/<path>."
-            " Also opens copies kept in the workspace: pass workspace:files/<name>."
+            " Also opens copies kept in the workspace: pass workspace:binary_files/<name>."
         ),
         Intent.DELETE_FILE: (
             "Delete a chat file ([File: ...] label) from storage. A drive file ([Drive: ...] label) "
@@ -549,7 +549,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             "file_ref": (
                 "Filename from the file label in conversation (e.g. 'report.docx'), a skill file ref "
                 "(e.g. 'skill:flight-status/references/airlines.md'), or a workspace copy "
-                "(e.g. 'workspace:files/lease.pdf')"
+                "(e.g. 'workspace:binary_files/lease.pdf')"
             ),
         },
         Intent.DELETE_FILE: {

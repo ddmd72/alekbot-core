@@ -122,7 +122,7 @@ async def test_opening_a_path_is_a_correctable_ref_error_not_a_storage_lookup(op
     assert "file_ref is required" in res.result_str and "drive: ref" in res.result_str
 
 
-@pytest.mark.parametrize("ref", ["drive:abc", "lease.pdf", "workspace:files/a.pdf", "skill:x/y.md",
+@pytest.mark.parametrize("ref", ["drive:abc", "lease.pdf", "workspace:binary_files/a.pdf", "skill:x/y.md",
                                  "docs/report.docx", "email_review/2026-10-22.html"])
 async def test_opening_other_refs_still_goes_to_the_service(ops, ref):
     run, _ = _run(ops)
