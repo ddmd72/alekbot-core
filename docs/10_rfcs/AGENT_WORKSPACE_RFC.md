@@ -20,7 +20,7 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 | D1 | 10-19 | **Pull-only.** Smart reads or writes the workspace only when (a) the user explicitly asks, (b) an instruction it follows — a loaded skill's text, a reminder's instruction — names a workspace file or asks it to keep state, or (c) a firing reminder carries a workspace file (D15). No index or contract in the prompt, no `workspace` system skill, no skill-load write gate. |
 | D2 | 10-19 | **One local tool `workspace`** with commands `view`, `create`, `str_replace`, `delete`, `rename`, `copy`, `history`, `restore`. No grep, glob or diff. Served by `DelegationEngine(local_tools=)` like `use_skill` and `propose_memory_facts`, declared on every Smart path where the service is configured, outside `if skills:`. |
 | D3 | 10-14, 10-19 | **Storage = a dedicated versioned GCS bucket**, key `{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ files/`, generation preconditions on every mutation, lifecycle as rev 1 §5.4. Not Firestore, not the drive, not the media bucket. |
-| D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 256 KB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
+| D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 3 MB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
 | D5 | 10-19 | **Writes allowed on all Smart paths** (chat, reminders, daily review, `ask_alek`/`tell_alek`, `/worker`). Every object carries its `origin` — `chat`, `background:<task_type>`, `voice:ask_alek`, `voice:tell_alek` — plus a fire key for reminder runs, shown in the `view` header. |
 | ~~D6~~ | 10-19 | ~~Reminders get `reminder_skill` and `state_file`.~~ **Superseded by D15.** |
 | ~~D7~~ | 10-19 | ~~Workspace files are never executed; procedures live in skills.~~ **Superseded by D16 and D17.** |
@@ -303,7 +303,7 @@ When the key resolves empty (no secret, emulator), no adapter is built, Smart ge
 
 **Path rule** (domain, pure, `parse_workspace_path`): lowercase `[a-z0-9-/._]`; starts with `projects/`,
 `references/`, `scratch/` or `files/`; segments non-empty, never `.` or `..`, starting with `[a-z0-9]`; no leading or
-trailing `/`, no `//`; the last segment has an extension; at most 120 chars and 4 segments. A `workspace:` prefix is
+trailing `/`, no `//`; the last segment has an extension; at most 200 chars and 8 segments. A `workspace:` prefix is
 accepted and stripped. `view` and `history` also accept a folder prefix (`projects/`, `projects/garden/`) or the empty
 path (the whole workspace).
 
@@ -320,7 +320,8 @@ path (the whole workspace).
 | Live files per user | 100 | D4. A command that would add a file beyond it is refused: "workspace full (100 files); delete or merge first". Soft: two concurrent creates can land at 101. |
 | Live bytes per user | 100 MB | D4. Checked the same way, counting the new size. |
 | File | 10 MB | D4. Under Gemini's 20 MB inline cap for `open_file` vision. |
-| Text file | 256 KB | Same as skill files (`domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 256 KB cannot be copied. |
+| Text file | 3 MB | Independent of the skill-file cap (256 KB, `domain/skill.py:31`). Applies in every folder, `files/` included: a UTF-8 text-extension upload over 3 MB cannot be copied. A workspace text file over 256 KB cannot be saved into a skill (`draft_skill from_file`). |
+| `open_file` of a text file | 512 KB | `open_file` puts the whole file into the orchestrator's context (~100–130k tokens of Cyrillic at the cap), so above 512 KB it returns a `[System: …]` note telling the orchestrator to read in parts with `view` (`offset`, `limit`). Storage and reading limits differ on purpose. The workspace has no search command: `view` windows are the only way into a large file. |
 | `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `offset`/`limit` that are empty, zero or negative mean the defaults. |
 | Listing / history | 100 entries (newest first), then "…N more" | Equal to the file cap. |
 
@@ -454,7 +455,7 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 | `create` on an existing path whose current version was not viewed in this execution | `SYSTEM: <path> exists. View it first and use str_replace, or view it and create again to overwrite.` |
 | Precondition conflict (another run wrote it) | `SYSTEM: <path> changed since you read it (another conversation or run wrote it). View it again and redo your change.` |
 | `str_replace` no match / several | `SYSTEM: old_str not found in <path>` / `found N matches; include more surrounding text.` |
-| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 256 KB` |
+| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 3 MB` |
 | Binary `view` | `SYSTEM: <path> is binary; open it with open_file and file_ref workspace:<path>.` |
 | Unknown `generation` | `SYSTEM: <path> has no version <G>; history lists them.` |
 | Store failure | `SYSTEM: the workspace is unavailable right now; nothing was changed.` (ERROR logged) |

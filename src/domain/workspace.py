@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from .drive_ref import REF_PREFIX as DRIVE_REF_PREFIX
 from .exceptions import WorkspaceRefused
-from .skill import MAX_SKILL_FILE_BYTES, SKILL_FILE_EXTENSIONS
+from .skill import SKILL_FILE_EXTENSIONS
 
 WORKSPACE_TOOL = "workspace"
 WORKSPACE_REF_PREFIX = "workspace:"
@@ -32,9 +32,12 @@ TEXT_EXTENSIONS: Tuple[str, ...] = SKILL_FILE_EXTENSIONS
 MAX_FILES_PER_USER = 100
 MAX_BYTES_PER_USER = 100 * 1024 * 1024
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_TEXT_FILE_BYTES = MAX_SKILL_FILE_BYTES
-MAX_PATH_CHARS = 120
-MAX_PATH_SEGMENTS = 4
+MAX_TEXT_FILE_BYTES = 3 * 1024 * 1024
+# open_file inlines a whole text file into the orchestrator's context, so it refuses above this and points to `view`
+# windows; the storage cap above is deliberately larger (§6).
+OPEN_FILE_MAX_TEXT_BYTES = 512 * 1024
+MAX_PATH_CHARS = 200
+MAX_PATH_SEGMENTS = 8
 VIEW_DEFAULT_LINES = 2000
 VIEW_MAX_LINE_CHARS = 2000
 VIEW_MAX_BYTES = 100 * 1024
@@ -278,7 +281,7 @@ def check_file_size(path: str, data: bytes) -> None:
     if len(data) > MAX_FILE_BYTES:
         raise WorkspaceRefused(f"{path}: file over {MAX_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
     if len(data) > MAX_TEXT_FILE_BYTES and is_text(path, data):
-        raise WorkspaceRefused(f"{path}: text file over {MAX_TEXT_FILE_BYTES // 1024} KB", reason="caps")
+        raise WorkspaceRefused(f"{path}: text file over {MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
 
 
 # ---------------------------------------------------------------------------------------------------------------------

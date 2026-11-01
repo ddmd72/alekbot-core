@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Set
 from ..domain.llm import ToolCall
 from ..domain.workspace import (
     COMMANDS,
+    MAX_PATH_CHARS,
     MUTATING_COMMANDS,
     WORKSPACE_TOOL,
     WorkspaceCall,
@@ -68,8 +69,8 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "Workspace path, e.g. projects/garden-shed.md: lowercase letters, digits, - _ . and /, starting "
-                        "with projects/, references/, scratch/ or files/, with a file extension, at most 120 "
-                        "characters. For view and history also a folder (projects/) or \"\" for the whole workspace. "
+                        "with projects/, references/, scratch/ or files/, with a file extension, "
+                        f"at most {MAX_PATH_CHARS} characters. For view and history also a folder (projects/) or \"\" for the whole workspace. "
                         "For copy: the destination."
                     ),
                 },
@@ -92,7 +93,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "description": (
                         "create: the full text of the file — text files only (.md .txt .csv .tsv .json .yaml .yml) "
-                        "under projects/, references/ or scratch/, at most 256 KB."
+                        "under projects/, references/ or scratch/, at most 3 MB."
                     ),
                 },
                 "old_str": {
