@@ -77,7 +77,7 @@ async def test_instant_is_aware_utc_across_a_month_end(world, monkeypatch):
     assert stamp.utcoffset() == timedelta(0) and stamp == OCT_END.utc
 
 
-@pytest.mark.parametrize("path", ["projects/a.md", "references/r.md", "files/f.txt"])
+@pytest.mark.parametrize("path", ["projects/a.md", "references/r.md", "binary_files/f.txt"])
 async def test_other_folders_carry_no_custom_time(world, monkeypatch, path):
     client, adapter = world
     pin_datetime(monkeypatch, adapter_module, UTC_MIDNIGHT)

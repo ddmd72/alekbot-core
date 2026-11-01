@@ -183,9 +183,9 @@ class TestGrep:
         assert empty == 'grep "deadline" in scratch/ — no matches in 0 files searched\nsearched 0 text files'
 
     def test_searched_line_lists_every_top_folder_alphabetically(self):
-        files = [("scratch/s.md", "q"), ("files/t.txt", "q"), ("references/r.md", "q"), ("projects/p.md", "q")]
+        files = [("scratch/s.md", "q"), ("binary_files/t.txt", "q"), ("references/r.md", "q"), ("projects/p.md", "q")]
         text, _ = _grep(files, needle="q", scope="")
-        assert text.splitlines()[1] == "searched 4 text files: files/ (1), projects/ (1), references/ (1), scratch/ (1)"
+        assert text.splitlines()[1] == "searched 4 text files: binary_files/ (1), projects/ (1), references/ (1), scratch/ (1)"
 
     def test_match_cap_ends_with_trailer(self):
         body = "\n".join(["deadline"] * (GREP_MAX_MATCHES + 10))
