@@ -2,7 +2,7 @@
 Read-only scan of the owner's stored texts for the drive's old intents (DRIVE_SPECIALIST_RFC §10 step 6) — or, with
 `--include-new`, for `work_with_drive_files` too (the rollback scan, §13 step 5). OWNER-run: it reads personal data
 (Firestore: custom skills and their files, unexpired skill drafts not yet saved, reminders, standing directives,
-prompt overrides; GCS: the workspace's `projects/`, `references/`, `scratch/` and `files/` text files), and writes
+prompt overrides; GCS: the workspace's `projects/`, `references/`, `scratch/` and `binary_files/` text files), and writes
 only under the gitignored scripts/memory/. Standing directives are read from the `agent_directive` domain and from
 `preference` (the SUBJECT x SCOPE rule demotes situational agent rules there). **Only the owner (DEV_USER_ID) is
 scanned**; another whitelisted user with custom skills, reminders or workspace files is not
@@ -43,7 +43,7 @@ from src.domain.workspace import workspace_kind
 
 _REPO = Path(__file__).resolve().parents[2]
 _MEMORY = _REPO / "scripts" / "memory"
-WORKSPACE_FOLDERS = ("projects/", "references/", "scratch/", "files/")
+WORKSPACE_FOLDERS = ("projects/", "references/", "scratch/", "binary_files/")
 DIRECTIVE_DOMAINS = ((FactDomain.AGENT_DIRECTIVE, "directive"), (FactDomain.PREFERENCE, "preference"))
 
 
