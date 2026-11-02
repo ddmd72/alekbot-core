@@ -143,8 +143,13 @@ holds no drive id; the connection's `drive_identity` names the drive.
   tag). `DriveConnectionService.resolve_ref` finds the connection. An **untagged** ref (written before the connections) is
   never resolved: the answer is "Ref … is from before the drives were reorganised; search for the file again." A tag of a
   DISCONNECTED connection answers "belongs to a drive that is no longer connected."
-- **Stage 1 behaviour.** Search, the Cabinet card and the deep-research copy act on the primary connection (else the
-  oldest live one). Several connections, mounts in paths and a connection list are stage 2.
+- **Mounts and canonical paths (slice 2a).** Every path the model or the user reads is `<mount>/<path>`
+  (`Drive/R&D/Tom's plan.docx`; `src/domain/drive_mounts.py`: `canonical_path`, `resolve_path`, `MountTable`). The primary
+  is the connection `drive_user_settings` points at; **a path without a drive name is on the primary**, and a pre-2a
+  relative path in history still resolves there. Below the chat-facing producers paths stay connection-relative (index,
+  mirror, stored note snapshots); the mount is added where a value is built for the model. A held former name resolves
+  with a notice. `list_folder("/")` lists the drives; the specialist's `drive_state` block carries a `drives` line per live
+  connection. Writes act on the primary only until 2b. Several connections in the Cabinet are stage 2b.
 - **Disconnect** (`DELETE /api/drive/disconnect`): the connection ends first (DISCONNECTED, primary handed on), then its
   grant is removed under the revoke rule (only when no other connection uses the credential), the adapter's caches are
   dropped (`forget`), and a `drive_sync` task lets the indexer purge the connection's index. The purge keeps the user's
@@ -1796,6 +1801,15 @@ user's words in one language — a name, a place, a person, a topic, a **documen
 "receipts", "what expires") or what to find inside (a phrase, a number, an amount, an id); "everything about X" puts X.
 A file format goes in `kind`; **a time span ("last year", "2023–2024") goes in the date fields**, not in the
 words. No query-time model, no modes, no new fields (D19, D28): one query embedding is the only call.
+
+**Which drive (slice 2a).** `search_drive` and `find_passages` take an optional `drives` (one drive name, as `drive_state`
+lists it; a comma list is refused until 2b). Empty searches the drive the `folder` names, else the primary. A folder that
+starts with a drive's name is searched on that drive; an unprefixed folder is in the named drive; a prefix naming another
+drive is refused. An unknown name is refused with the list of drives. Every live drive not searched is named: tiered
+results end the coverage line with `drives not searched: …` (coverage becomes incomplete, so "complete" stays a reliable
+not-found), other results add a `Not searched:` sentence, and the reading line `R_NOT_SEARCHED` tells the specialist to
+say so. `read_passages` takes no `drives` (its ref names the drive). Note receipts print the canonical path with the
+current name of the note's connection (a disconnected one keeps its last name).
 
 **The pipeline, in order:**
 1. **Gate** (step 0, read uncached): the opt-in flag, the sync state and the connection — `disabled`, `disconnected`
