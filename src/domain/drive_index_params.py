@@ -23,6 +23,7 @@ PROBE_CHILDREN = 200
 ITEM_CALLS_PER_TICK = 20                    # RFC Δ9: probes, parent lookups, re-listing pages
 RELIST_PAGE = 200                           # children per re-listing page (one item call)
 FOLDER_INMEM_CARDS = 1_000
+CABINET_UNREADABLE_MAX = 5                  # files the Cabinet card lists as "could not be read"; the rest is "+N more"
 CASCADE_OPS_PER_TICK = 2_000
 NAME_MIN_TRIGRAMS = 3
 NAME_QUERY_KEYS_MAX = 30                    # Firestore array-contains-any limit

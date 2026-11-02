@@ -300,6 +300,14 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                        if is_unread(r, admitted, images, media) and r.state is not RecordState.PENDING)
         return sum(1 for r in self._conn(scope) if is_unread(r, admitted, images, media))
 
+    async def unreadable_records(self, scope: ConnectionScope, kinds: AbstractSet[str],
+                                 triaged: AbstractSet[str] = frozenset(), *, transcribed: AbstractSet[str] = frozenset(),
+                                 limit: int) -> List[DriveIndexRecord]:
+        admitted, images, media = frozenset(kinds), frozenset(triaged), frozenset(transcribed) - frozenset(kinds)
+        found = [r for r in self._conn(scope)
+                 if is_unread(r, admitted, images, media) and r.state is not RecordState.PENDING]
+        return sorted(found, key=lambda r: r.item_id)[:max(0, limit)]
+
     async def count_by_state(self, scope: ConnectionScope) -> Dict[str, int]:
         counts: Dict[str, int] = {}
         for rec in self._conn(scope):
