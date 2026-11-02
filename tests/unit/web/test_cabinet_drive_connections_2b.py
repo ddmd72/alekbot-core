@@ -213,7 +213,7 @@ async def test_a_user_with_no_connection_gets_an_empty_list_and_the_default_name
     w = World()
     status, body = await call(w.app(), "get", "/api/drive/connections")
     assert status == 200 and body["connections"] == [] and body["primary_connection_id"] is None
-    assert body["default_name"] and body["reconnect_needed"] is False
+    assert body["default_name"] and "reconnect_needed" not in body
 
 
 async def test_a_disconnected_connection_is_not_listed_and_another_users_never():

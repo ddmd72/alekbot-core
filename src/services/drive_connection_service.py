@@ -268,7 +268,7 @@ class DriveConnectionService:
         logger.info(f"🔗 Drive primary of user={user_id[:8]} set to {connection_id[:8]}")
 
     async def status(self, user_id: str) -> DriveConnectionStatus:
-        """`DriveConnectionStatus.of(primary connection)` (the Cabinet's `/api/drive/status` until stage 2). The
+        """`DriveConnectionStatus.of(primary connection)` (the drive gate's and search's read). The
         pointed connection is read in any state (a primary that needs a reconnect reads "connected, needs reconnect");
         without a live pointed one, the oldest live connection."""
         pointed = await self._pointed(user_id)

@@ -51,3 +51,11 @@ def test_every_drive_url_the_page_fetches_is_a_route():
 def test_no_fetch_of_a_retired_route_remains():
     for gone in ("/api/drive/status", "/api/drive/indexing", "/api/drive/disconnect"):
         assert gone not in _HTML
+
+
+def test_a_disconnected_drive_keeps_no_index_so_the_page_has_no_kept_hint_and_no_gone_banner():
+    # D9: a 2b disconnect purges at once; a row's own Reconnect covers a rejected or missing grant
+    for dead in ("index_kept_hint", "reconnect_hint_missing", "data.reconnect_needed ?"):
+        assert dead not in _HTML.split("function renderDriveStatus", 1)[1].split("function renderDriveConnection", 1)[0] \
+            if dead.startswith("data.") else dead not in _HTML, dead
+    assert "if (enabled && !linked)" not in _HTML

@@ -1466,7 +1466,7 @@ def create_user_cabinet_blueprint(
     def _indexing_json(status: DriveIndexingStatus) -> dict:
         """The index block of the drive card (USER_DRIVE_INDEXING_RFC §6): an error is a category, never
         a raw message. `available` is false on a deployment with no drive queue (the first deploy pass),
-        where turning search on would show "building" forever; `index_kept` gates the "kept about 30 days"
+        where turning search on would show "building" forever; `index_kept` gates the "search still answers" line
         and "search still answers" lines (§7.7)."""
         return {
             "enabled": status.enabled,
@@ -1666,7 +1666,7 @@ def create_user_cabinet_blueprint(
     @drive_route
     async def drive_connections_list():
         """The drive card: one row per live connection, the default name "Add a drive" prefills, the primary's id.
-        `reconnect_needed` (R1) tells a user with no live connection that a past one wants its reconnect."""
+        A row whose grant is rejected or gone carries its own `reconnect`; there is no drive-level reconnect flag."""
         user_id = g.user_id
         live = await drive_connections.list_for_user(user_id)
         primary = await drive_connections.primary(user_id)
@@ -1683,8 +1683,6 @@ def create_user_cabinet_blueprint(
             "primary_connection_id": primary_id,
             "mirror_root": await _mirror_root(user_id) if drive_search_service is not None else False,
         }
-        if reconnect is not None and not live:
-            body["reconnect_needed"] = await _reconnect_needed(user_id, Integration.DRIVE)
         return jsonify(body), 200
 
     @bp.route("/api/drive/connections/<connection_id>/name", methods=["PUT"])

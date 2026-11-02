@@ -1562,7 +1562,6 @@
           "drive.reconnect_hint": "Access to your drive expired. Search still answers from the stored index, but nothing new is indexed until you reconnect.",
           "drive.reconnect_hint_neutral": "Access to your drive expired. Reconnect it so the bot can work with your files again.",
           "drive.reconnect": "Reconnect drive",
-          "drive.reconnect_hint_missing": "The saved connection to your drive is gone. Nothing new is indexed until you reconnect.",
           "drive.index_searchable": "Searchable items",
           "drive.index_chunks": "Readable passages",
           "drive.index_model_usage": "AI model use this month (spent of the monthly limit): {classes}",
@@ -1573,7 +1572,6 @@
           "drive.index_usd_transcribe": "transcribing recordings",
           "drive.index_initial_build": "First full description of the drive: {spent} of {allowance} spent",
           "drive.index_initial_build_done": "First full description of the drive: finished ({spent} spent)",
-          "drive.index_kept_hint": "Your drive is disconnected. The index is kept for about 30 days in case it comes back; turn search off to delete it now.",
           "drive.index_pending": "Waiting",
           "drive.index_failed": "Could not be read",
           "drive.index_indexed": "Indexed",
@@ -1740,7 +1738,6 @@
           "drive.reconnect_hint": "Доступ до диска закінчився. Пошук і далі відповідає зі збереженого індексу, але нічого нового не індексується, доки ти не перепідключиш диск.",
           "drive.reconnect_hint_neutral": "Доступ до диска закінчився. Перепідключи його, щоб бот знову міг працювати з твоїми файлами.",
           "drive.reconnect": "Перепідключити диск",
-          "drive.reconnect_hint_missing": "Збережене підключення до диска зникло. Нічого нового не індексується, доки ти не перепідключиш диск.",
           "drive.index_searchable": "Елементів для пошуку",
           "drive.index_chunks": "Фрагментів для пошуку за змістом",
           "drive.index_model_usage": "Робота ШІ-моделі цього місяця (витрачено з місячного ліміту): {classes}",
@@ -1751,7 +1748,6 @@
           "drive.index_usd_transcribe": "розшифровка записів",
           "drive.index_initial_build": "Перший повний опис диска: витрачено {spent} з {allowance}",
           "drive.index_initial_build_done": "Перший повний опис диска: завершено (витрачено {spent})",
-          "drive.index_kept_hint": "Диск відключено. Індекс зберігається близько 30 днів на випадок, якщо диск повернеться; вимкни пошук, щоб видалити його зараз.",
           "drive.index_pending": "В очікуванні",
           "drive.index_failed": "Не вдалося прочитати",
           "drive.index_indexed": "Проіндексовано",
@@ -1918,7 +1914,6 @@
           "drive.reconnect_hint": "L'accès à ton disque a expiré. La recherche répond toujours depuis l'index enregistré, mais rien de nouveau n'est indexé tant que tu ne te reconnectes pas.",
           "drive.reconnect_hint_neutral": "L'accès à ton disque a expiré. Reconnecte-le pour que le bot puisse de nouveau travailler avec tes fichiers.",
           "drive.reconnect": "Reconnecter le disque",
-          "drive.reconnect_hint_missing": "La connexion enregistrée à ton disque a disparu. Rien de nouveau n'est indexé tant que tu ne te reconnectes pas.",
           "drive.index_searchable": "Éléments consultables",
           "drive.index_chunks": "Passages lisibles",
           "drive.index_model_usage": "Utilisation du modèle d'IA ce mois-ci (dépensé sur la limite mensuelle) : {classes}",
@@ -1929,7 +1924,6 @@
           "drive.index_usd_transcribe": "transcription des enregistrements",
           "drive.index_initial_build": "Première description complète du drive : {spent} dépensés sur {allowance}",
           "drive.index_initial_build_done": "Première description complète du drive : terminée ({spent} dépensés)",
-          "drive.index_kept_hint": "Ton disque est déconnecté. L'index est conservé environ 30 jours au cas où il reviendrait ; désactive la recherche pour le supprimer maintenant.",
           "drive.index_pending": "En attente",
           "drive.index_failed": "Illisibles",
           "drive.index_indexed": "Indexés",
@@ -2096,7 +2090,6 @@
           "drive.reconnect_hint": "El acceso a tu disco ha caducado. La búsqueda sigue respondiendo desde el índice guardado, pero no se indexa nada nuevo hasta que vuelvas a conectarlo.",
           "drive.reconnect_hint_neutral": "El acceso a tu disco ha caducado. Vuelve a conectarlo para que el bot pueda trabajar de nuevo con tus archivos.",
           "drive.reconnect": "Reconectar disco",
-          "drive.reconnect_hint_missing": "La conexión guardada con tu disco ya no existe. No se indexa nada nuevo hasta que vuelvas a conectarlo.",
           "drive.index_searchable": "Elementos buscables",
           "drive.index_chunks": "Fragmentos legibles",
           "drive.index_model_usage": "Uso del modelo de IA este mes (gastado del límite mensual): {classes}",
@@ -2107,7 +2100,6 @@
           "drive.index_usd_transcribe": "transcripción de grabaciones",
           "drive.index_initial_build": "Primera descripción completa del disco: {spent} gastados de {allowance}",
           "drive.index_initial_build_done": "Primera descripción completa del disco: terminada ({spent} gastados)",
-          "drive.index_kept_hint": "Tu disco está desconectado. El índice se conserva unos 30 días por si vuelve; desactiva la búsqueda para borrarlo ahora.",
           "drive.index_pending": "En espera",
           "drive.index_failed": "No se pudieron leer",
           "drive.index_indexed": "Indexados",
@@ -3889,8 +3881,6 @@
           return;
         }
         const linked = data.connections.length > 0;
-        // R1: the saved connection is gone while a past connection is on record (SECRETS_AT_REST_RFC §6.2)
-        const missing = !linked && !!data.reconnect_needed;
         // The copy switch: offered only while a drive is linked; disconnecting the last drive turns it off server-side.
         const drCopyHtml = linked && typeof data.dr_copy === "boolean"
           ? renderDeepResearchCopy(data.dr_copy)
@@ -3898,8 +3888,6 @@
         const rowsHtml = data.connections.map((row) => renderDriveConnection(row, data)).join("");
         const actionButtons = linked
           ? renderAddDrive(data)
-          : missing
-          ? connectButton(data.connect_href, t("drive.reconnect"))
           : connectButton(data.connect_href, t("platform.connect_drive"));
         container.innerHTML = `
           <div class="card integration-card tasks-card reveal">
@@ -3908,8 +3896,7 @@
             </div>
             <h3 class="integration-title">${t("platform.drive_title")}</h3>
             <p class="integration-description">${t("platform.drive_desc")}</p>
-            ${linked ? "" : `<div class="integration-status"><div class="status-dot ${missing ? "needs-reconnect" : "disconnected"}"></div><span>${missing ? t("drive.needs_reconnect") : t("platform.not_connected")}</span></div>`}
-            ${missing ? `<div style="margin-bottom:16px; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${t("drive.reconnect_hint_missing")}</div>` : ""}
+            ${linked ? "" : `<div class="integration-status"><div class="status-dot disconnected"></div><span>${t("platform.not_connected")}</span></div>`}
             ${rowsHtml}
             ${drCopyHtml}
 
@@ -4242,11 +4229,7 @@
         const c = ix.counters || {};
         const num = (v) => Number(v) || 0;
         let details = "";
-        if (enabled && !linked) {
-          details = ix.index_kept
-            ? `<div style="font-size:13px; color:var(--text-muted); margin-top:10px;">${t("drive.index_kept_hint")}</div>`
-            : "";
-        } else if (enabled) {
+        if (enabled) {
           const counts = [`${t("drive.index_searchable")}: ${num(c.carded)}`];
           if (num(ix.readable_chunks)) counts.push(`${t("drive.index_chunks")}: ${num(ix.readable_chunks)}`);
           // §25.4.5: this month's model dollars per class against its cap, shown once anything was spent, and the

@@ -1,8 +1,8 @@
 """What the drive gate, search and the Cabinet's drive status read about a connection (MULTI_DRIVE_RFC §3).
 
 The successor of the per-user connection status of the single-drive code, without the drive id (which lives on the
-`DriveConnection` as `drive_identity`). Its one stage-1 consumer, `/api/drive/status`, retires with the Cabinet's
-connection list in stage 2.
+`DriveConnection` as `drive_identity`). Its consumers are the drive gate and search; the Cabinet's retired
+`/api/drive/status` was replaced by the per-connection list (stage 2b).
 """
 from __future__ import annotations
 
