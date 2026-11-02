@@ -22,7 +22,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
-from scripts.validation.drive_eval.eval_connection import EVAL_CONNECTION_ID, EvalDriveConnections, eval_connection
+from scripts.validation.drive_eval.eval_connection import (
+    EVAL_CONNECTION_ID, EvalDriveConnections, drive_relative, eval_connection,
+)
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import Priority, inaccessible
@@ -286,7 +288,7 @@ def request_for(case: Dict[str, Any]) -> DriveSearchRequest:
 def _card_paths(card: Any, drive: FixtureDrive) -> List[str]:
     item_id = ref_item_id(getattr(card, "ref", "") or "")
     own = (drive.path_of(item_id) if item_id else None) or str(getattr(card, "path", "")).strip("/")
-    return [own] + [str(p).strip("/") for p in getattr(card, "also_at", ()) or ()]
+    return [drive_relative(own, drive)] + [drive_relative(str(p), drive) for p in getattr(card, "also_at", ()) or ()]
 
 
 def _windows(cards: Sequence[Any], drive: FixtureDrive) -> Dict[str, str]:

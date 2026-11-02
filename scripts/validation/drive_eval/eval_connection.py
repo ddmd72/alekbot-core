@@ -19,14 +19,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional, Union
 
-from scripts.validation.drive_eval.fixture_drive import DRIVE_ID
+from scripts.validation.drive_eval.fixture_drive import DRIVE_ID, FixtureDrive, item_id_for
 from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity
 from src.domain import drive_ref
-from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection import DEFAULT_MOUNT_NAME, DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_connection_status import DriveConnectionStatus
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_mount_table import MountTable
+from src.domain.drive_mount_name_change import mount_name_key
 from src.domain.drive_mounts import mount_table
 from src.domain.drive_ref import DriveRef
 from src.domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, stale_ref_line
@@ -43,6 +44,17 @@ _EVAL_DRIVE_IDENTITY = onedrive_drive_identity(DRIVE_ID)   # the identity the fi
 # A technical value: the eval counts an initial build as production does, which needs a provider account.
 _EVAL_PROVIDER_ACCOUNT = ProviderAccount(realm="eval", subject="eval-subject", label="")
 _CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def drive_relative(path: str, drive: FixtureDrive) -> str:
+    """`path` as the gold files write it (relative to the drive): a leading segment naming the eval connection's mount
+    is dropped, since cards now print `<mount>/<path>`. A path that is itself in the tree (a real path whose first
+    folder happens to share the mount's name) stays as it is."""
+    text = str(path).strip("/")
+    if drive.path_of(item_id_for(text)) is not None:
+        return text
+    head, _, rest = text.partition("/")
+    return rest if mount_name_key(head) == mount_name_key(DEFAULT_MOUNT_NAME) else text
 
 
 def eval_connection(user_id: str, *, indexing_enabled: bool = True, transcribe_enabled: bool = False,
