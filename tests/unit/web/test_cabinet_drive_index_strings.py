@@ -10,7 +10,7 @@ _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabine
 LANGS = ("en", "uk", "fr", "es")
 NEW_KEYS = (
     "drive.index_title", "drive.index_disclosure", "drive.index_off_confirm", "drive.needs_reconnect",
-    "drive.reconnect_hint", "drive.reconnect", "drive.index_searchable", "drive.index_kept_hint",
+    "drive.reconnect_hint", "drive.reconnect", "drive.index_searchable",
     "drive.index_pending", "drive.index_failed", "drive.index_building", "drive.index_full",
     "drive.index_last_sync", "drive.index_never", "drive.index_problem", "toast.drive_index_on",
     "toast.drive_index_off", "toast.drive_index_failed",

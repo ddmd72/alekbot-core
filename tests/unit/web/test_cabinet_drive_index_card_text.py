@@ -53,12 +53,6 @@ def test_the_reconnect_hint_follows_whether_search_keeps_an_index():
     assert "index_kept" in render
 
 
-def test_the_kept_hint_shows_only_while_the_index_is_kept():
-    html, _ = _dicts()
-    render = re.search(r"function renderDriveIndexing\(ix, linked\) \{(.*?)\n      \}", html, re.S).group(1)
-    assert re.search(r"ix\.index_kept[^\n]*\n?[^\n]*drive\.index_kept_hint", render)
-
-
 def test_no_switch_is_offered_where_indexing_cannot_run():
     html, _ = _dicts()
     # MULTI_DRIVE_RFC §11.7: each connection row offers its own switch, under the same rule

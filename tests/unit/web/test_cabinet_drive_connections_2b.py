@@ -577,7 +577,8 @@ async def test_after_the_last_drive_is_disconnected_the_list_asks_no_reconnect()
     conn = await w.connect()
     assert (await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}"))[0] == 200
     _, body = await call(w.app(), "get", "/api/drive/connections")
-    assert (body["connections"], body["reconnect_needed"]) == ([], False)
+    # no drive-level reconnect flag (a disconnect is not a loss; a row's own `reconnect` covers a rejected grant)
+    assert body["connections"] == [] and "reconnect_needed" not in body
 
 
 async def test_a_failed_enqueue_keeps_the_indexing_switch(caplog):
