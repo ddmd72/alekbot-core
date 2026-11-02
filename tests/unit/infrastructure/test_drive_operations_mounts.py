@@ -1,6 +1,7 @@
 """DriveOperations and the mount tree (MULTI_DRIVE_RFC §11.1, slice 2a part P1): a path is `<mount>/<path>`, canonical in
 everything printed and relative below; `/` lists the drives; only the primary can be changed; a move across drives is
 refused; a held former name answers with its notice. Technical ids and the invented cast only."""
+from tests.support.drive_access_stub import allow_access
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ import pytest
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_line import DriveLine
 from src.domain.drive_mount_name_change import MountNameChange
-from src.domain.drive_mounts import CROSS_DRIVE_LINE, READ_ONLY_LINE, RENAME_NOTICE
+from src.domain.drive_mounts import CROSS_DRIVE_LINE, RENAME_NOTICE
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search_line import SearchLine
 from src.infrastructure.drive_operations import DriveOperations
@@ -75,7 +76,7 @@ async def world():
     w.acme_plan = w.drive.plant(w.two.handle, w.acme_rd, "Hamburg.txt", b"hh")
     w.search = StubSearch()
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                       connections=w.connections)
+                                       connections=w.connections, access=allow_access())
     w.service = UserDriveService(w.drive, w.connections)
     w.ops = DriveOperations(conversion_service=conversion, drive_service=w.service, drive_search=w.search)
     return w
@@ -157,35 +158,9 @@ class TestWrites:
         out = await world.ops.save_text(CTX, "usr-1", "hi", file_name="note.md", folder="Drive/R&D", wait_s=5)
         assert f"Saved [Drive: Drive/R&D/note.md" in out.text
 
-    async def test_a_folder_ref_of_the_second_drive_is_refused_as_read_only(self, world):
-        folder = await world.ops.folder_path("usr-1", f"drive:b2:{world.acme_rd}")
-        assert folder == "Acme/R&D"
-        out = await world.ops.save_text(CTX, "usr-1", "hi", file_name="note.md", folder=folder, wait_s=5)
-        assert not out.success and out.text == READ_ONLY_LINE and out.cls is OutcomeClass.REFUSED
-        assert "note.md" not in _names(world, world.two)
-        assert {method for method, _ in world.drive.calls} <= {"get_item"}   # only the folder ref's own read
-
-    async def test_a_new_folder_on_the_second_drive_is_refused_before_any_call(self, world):
-        out = await world.ops.create_folder(CTX, "usr-1", "Acme/New", wait_s=5)
-        assert out.text == READ_ONLY_LINE and world.drive.calls == []
-
     async def test_a_new_folder_on_the_primary_prints_canonical_paths(self, world):
         out = await world.ops.create_folder(CTX, "usr-1", "Drive/Springfield/Maps", wait_s=5)
         assert "Drive/Springfield/Maps/" in out.text and "Created: Drive/Springfield, Drive/Springfield/Maps." in out.text
-
-    @pytest.mark.parametrize("call", ["move", "append", "replace", "delete"])
-    async def test_a_ref_write_on_the_second_drive_is_refused_and_nothing_changes(self, world, call):
-        ref = f"drive:b2:{world.acme_plan}"
-        if call == "move":
-            out = await world.ops.move(CTX, "usr-1", ref, new_name="x.txt", wait_s=5)
-        elif call == "append":
-            out = await world.ops.append(CTX, "usr-1", ref, "more", wait_s=5)
-        elif call == "replace":
-            out = await world.ops.replace(CTX, "usr-1", ref, f"drive:a1:{world.plan}", wait_s=5)
-        else:
-            out = await world.ops.delete(CTX, "usr-1", ref, wait_s=5)
-        assert out.text == READ_ONLY_LINE and out.cls is OutcomeClass.REFUSED
-        assert world.drive.calls == [] and world.drive.tree(world.two.handle).nodes[world.acme_plan].data == b"hh"
 
     async def test_a_move_to_another_drive_is_cross_drive_and_nothing_moves(self, world):
         out = await world.ops.move(CTX, "usr-1", f"drive:a1:{world.plan}", folder="Acme/R&D", wait_s=5)

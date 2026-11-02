@@ -5,6 +5,7 @@ Separate from test_file_conversion_service.py which covers file_conversion utili
 Mocking: FileStoragePort, aiofiles, convert_file_to_text.
 """
 
+from tests.support.drive_access_stub import allow_access
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -49,7 +50,7 @@ def mock_storage():
 
 @pytest.fixture
 def service(mock_storage):
-    return FileConversionService(storage=mock_storage)
+    return FileConversionService(storage=mock_storage, access=allow_access())
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +289,7 @@ def mock_media():
 
 @pytest.fixture
 def service_with_media(mock_storage, mock_media):
-    return FileConversionService(storage=mock_storage, media_storage=mock_media)
+    return FileConversionService(storage=mock_storage, media_storage=mock_media, access=allow_access())
 
 
 class TestDeliveredDocumentDispatch:
@@ -338,6 +339,6 @@ class TestDeliveredDocumentDispatch:
             await service_with_media.resolve_bytes("docs/onlyonepart.pdf", "user1")
 
     async def test_delivered_key_without_media_storage_not_found(self, mock_storage):
-        svc = FileConversionService(storage=mock_storage, media_storage=None)
+        svc = FileConversionService(storage=mock_storage, media_storage=None, access=allow_access())
         with pytest.raises(FileNotFoundError):
             await svc.resolve_bytes("docs/user1/uuid-x.pdf", "user1")

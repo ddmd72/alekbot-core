@@ -1,5 +1,6 @@
 """The indexer's PDF download cap in the tick, and the chat/open cap that stays below it
 (decisions/drive_indexer_pdf_download_cap.md)."""
+from tests.support.drive_access_stub import allow_access
 from dataclasses import replace
 from unittest.mock import AsyncMock
 
@@ -78,7 +79,7 @@ async def test_chat_open_refuses_the_pdf_the_indexer_admits():
     repo = FakeDriveConnectionRepository()
     await repo.create(connection("u1", "conn-1", ref_tag="a1"))   # the ref's tag names this connection (§9)
     connections = DriveConnectionService(repo, AsyncMock(spec=OAuthCredentialsPort))
-    svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connections)
+    svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connections, access=allow_access())
     with pytest.raises(DriveFileTooLargeError):
         await svc.resolve_bytes("drive:a1:i1", "u1")
     drive.download.assert_not_called()

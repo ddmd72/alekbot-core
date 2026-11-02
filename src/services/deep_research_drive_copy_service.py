@@ -11,8 +11,9 @@ not connected, or failed. No retry, no queue, and it never raises: the delivery 
 of the copy.
 
 The copy is an ordinary drive file: with drive indexing on, the indexer picks it up like any HTML (the
-save nudges it). It goes to the primary connection (MULTI_DRIVE_RFC §11.5, D7): with no primary it is
-"not connected", never written elsewhere.
+save nudges it). It goes to the primary connection (MULTI_DRIVE_RFC §11.5, D7) under that connection's write folder
+(the report folder is created inside it): with no primary it is "not connected", never written elsewhere; a primary
+the access policy refuses (no write folder) is "failed", logged.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from ..domain.deep_research_drive_copy import (
 from ..domain.drive_mounts import canonical_path
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
-from ..domain.user_drive import DriveNotConnectedError
+from ..domain.user_drive import DriveAccessRefused, DriveNotConnectedError, join_drive_path
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
@@ -99,10 +100,16 @@ class DeepResearchDriveCopyService:
         filename = deep_research_drive_filename(day, title, query)
         try:
             primary = await self._drive.primary(user_id)
-            saved = await self._drive.save(primary.handle, html, filename, REPORT_CONTENT_TYPE, folder)
+            base = await self._drive.write_folder_path(primary.handle)
+            saved = await self._drive.save(primary.handle, html, filename, REPORT_CONTENT_TYPE,
+                                           join_drive_path(base, folder) if base else folder)
         except DriveNotConnectedError:
             logger.info("[DeepResearchDriveCopy] drive not connected for user=%s; not copied", user_id[:8])
             return UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED, ""
+        except DriveAccessRefused as refused:
+            logger.warning("[DeepResearchDriveCopy] refused by the access policy for user=%s; not copied (%s)",
+                           user_id[:8], refused.line)
+            return UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED, ""
         except Exception:
             logger.error("[DeepResearchDriveCopy] save failed for user=%s; not copied", user_id[:8],
                          exc_info=True)

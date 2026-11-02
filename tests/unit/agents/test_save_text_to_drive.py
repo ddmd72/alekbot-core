@@ -1,5 +1,6 @@
 """Saving a composed text as a new text file (USER_DRIVE_RFC §4.7.1): `save_file_to_drive`'s text mode until the cut,
 DriveOperations.save_text (the specialist's `save_text_file`) since (DRIVE_SPECIALIST_RFC §5.5, §8.1)."""
+from tests.support.drive_access_stub import CAPABILITIES
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,6 +25,7 @@ class _MemoryDrive:
     def port(self):
         port = AsyncMock(spec=UserDrivePort)
         port.get_root.return_value = ROOT
+        port.capabilities.return_value = CAPABILITIES
         port.list_children.side_effect = self._list
         port.download.side_effect = self._download
         port.upload.side_effect = self._upload

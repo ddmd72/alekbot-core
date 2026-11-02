@@ -1,6 +1,7 @@
 """FileConversionService reads `workspace:` refs through WorkspaceStorePort (AGENT_WORKSPACE_RFC §12): text verbatim in
 [File] markers (no mime guessing), binary through conversion, raw bytes for open_file vision / edit_image /
 save_file_to_drive / draft_skill from_file. Any folder; only the requesting user's objects."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,7 +15,7 @@ USER = "u1"
 
 
 def _service(store=None, storage=None):
-    return FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store)
+    return FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store, access=allow_access())
 
 
 async def test_text_ref_is_returned_verbatim_in_markers():
