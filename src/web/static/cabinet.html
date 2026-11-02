@@ -649,6 +649,11 @@
       .disclosure { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
       .disclosure summary { cursor: pointer; user-select: none; }
       .disclosure p { margin: 8px 0 0; }
+      .drive-row { align-self: stretch; }
+      .drive-row > summary { list-style: none; user-select: none; }
+      .drive-row > summary::-webkit-details-marker { display: none; }
+      .drive-row > summary::before { content: "▸"; color: var(--text-muted); }
+      .drive-row[open] > summary::before { content: "▾"; }
 
       .integration-status {
         display: flex;
@@ -3868,7 +3873,7 @@
       }
 
       let driveData = null;   // the last connection list: a local change redraws from it without a new read
-      const driveUi = {};     // connection_id -> {picker, draft, nameError, nameWarning, scopeError, folderError, confirm}
+      const driveUi = {};     // connection_id -> {open, picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
       let driveAddError = "";
       const driveUiOf = (id) => (driveUi[id] = driveUi[id] || {});
       const redrawDrive = () => { if (driveData) renderDriveStatus(driveData); };
@@ -3882,8 +3887,9 @@
         }
         const linked = data.connections.length > 0;
         // The copy switch: offered only while a drive is linked; disconnecting the last drive turns it off server-side.
-        const drCopyHtml = linked && typeof data.dr_copy === "boolean"
-          ? renderDeepResearchCopy(data.dr_copy)
+        // Reports are copied to the primary drive, so the switch sits in its row; here only while no drive is primary.
+        const drCopyHtml = linked && typeof data.dr_copy === "boolean" && !data.connections.some((c) => c.primary)
+          ? `<div style="${DRIVE_BOX}">${renderDeepResearchCopy(data.dr_copy)}</div>`
           : "";
         const rowsHtml = data.connections.map((row) => renderDriveConnection(row, data)).join("");
         const actionButtons = linked
@@ -3929,8 +3935,13 @@
         const indexingHtml = ix && (ix.available || ix.enabled) ? renderDriveIndexing(ix, true) : "";
         const heirs = data.connections.filter((c) => c.connection_id !== id && c.state === "active" && c.write_folder);
         const primaryHtml = row.primary
-          ? `<span class="status-badge" style="font-size:12px; padding:2px 10px; border-radius:100px; background:var(--accent); color:white;">${t("drive.primary_badge")}</span>`
-          : `<button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button>`;
+          ? `<span class="status-badge" style="margin-left:auto; font-size:12px; padding:2px 10px; border-radius:100px; background:var(--accent); color:white;">${t("drive.primary_badge")}</span>`
+          : "";
+        const makePrimaryHtml = row.primary
+          ? ""
+          : `<div style="margin-top:10px;"><button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button></div>`;
+        // Collapsed to its one status line; it stays open across redraws, and opens by itself when it needs a reconnect
+        const open = ui.open === undefined ? needsReconnect : ui.open;
         const disconnectHtml = ui.confirm
           ? `<div style="${DRIVE_NOTE}">${escapeHtml(t("drive.disconnect_confirm").replace("{name}", row.mount_name))}
                ${row.primary && heirs.length
@@ -3942,14 +3953,15 @@
              </div>`
           : `<button class="btn btn-secondary" onclick="askDisconnectDrive('${q}')">${t("platform.disconnect")}</button>`;
         return `
-          <div style="${DRIVE_BOX}">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <details class="drive-row" style="${DRIVE_BOX}" ${open ? "open" : ""} ontoggle="driveUiOf('${q}').open = this.open">
+            <summary style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; cursor:pointer;">
               <div class="integration-status" style="margin:0;">
                 <div class="status-dot ${statusDotClass}"></div>
-                <span>${escapeHtml(row.provider_label)}${row.account_label ? " · " + escapeHtml(row.account_label) : ""} · ${statusText}</span>
+                <span><strong>${escapeHtml(row.mount_name)}</strong> · ${escapeHtml(row.provider_label)}${row.account_label ? " · " + escapeHtml(row.account_label) : ""} · ${statusText}</span>
               </div>
               ${primaryHtml}
-            </div>
+            </summary>
+            ${makePrimaryHtml}
             <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
               <label for="drive-name-${q}" style="font-size:14px; font-weight:500;">${t("drive.name")}</label>
               <input id="drive-name-${q}" type="text" value="${escapeHtml(row.mount_name)}" maxlength="64" style="flex:1; min-width:0;">
@@ -3966,12 +3978,13 @@
               <input type="checkbox" id="drive-sbd-${q}" ${row.searched_by_default ? "checked" : ""}
                 onchange="saveDriveSearchedByDefault(this, '${q}')" style="width:18px;height:18px;cursor:pointer;">
             </div>
+            ${row.primary && typeof data.dr_copy === "boolean" ? `<div style="margin-top:12px;">${renderDeepResearchCopy(data.dr_copy)}</div>` : ""}
             ${row.transcribe_enabled ? `<div style="${DRIVE_NOTE}">${t("drive.transcribe_on")}</div>` : ""}
             ${row.note ? `<div style="${DRIVE_NOTE}"><strong>${t("drive.note")}</strong> ${escapeHtml(row.note)}</div>` : ""}
             ${ui.folderError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.folderError)}</div>` : ""}
             <div style="margin-top:12px;">${indexingHtml}</div>
             <div>${disconnectHtml}</div>
-          </div>`;
+          </details>`;
       }
 
       function renderDriveWriteFolder(row, ui, q) {
@@ -3991,19 +4004,20 @@
           </div>`;
       }
 
+      // Every scope action is saved at once, like the write folder: an unsaved pick looked chosen while the drive
+      // kept its default scope.
       function renderDriveScope(row, ui, q) {
-        const draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders };
-        const folders = draft.folders.map((f, i) =>
+        const scope = row.scope;
+        const folders = scope.folders.map((f, i) =>
           `<li>${escapeHtml(f.path || f.id)} <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="removeDriveScopeFolder('${q}', ${i})">×</button></li>`).join("");
         return `
           <div style="margin-top:12px;">
             <div style="font-size:14px; font-weight:500;">${t("drive.scope")}</div>
-            <label style="font-size:13px; cursor:pointer;"><input type="checkbox" ${draft.whole_drive ? "checked" : ""}
+            <label style="font-size:13px; cursor:pointer;"><input type="checkbox" ${scope.whole_drive ? "checked" : ""}
               onchange="toggleDriveScopeWhole('${q}', this.checked)"> ${t("drive.scope_whole")}</label>
-            ${draft.whole_drive ? "" : `<ul style="margin:4px 0 4px 18px; font-size:13px;">${folders || `<li>${t("drive.scope_default")}</li>`}</ul>`}
+            ${scope.whole_drive ? "" : `<ul style="margin:4px 0 4px 18px; font-size:13px;">${folders || `<li>${t("drive.scope_default")}</li>`}</ul>`}
             <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" ${draft.whole_drive ? "disabled" : ""} onclick="openDrivePicker('${q}', 'scope')">${t("drive.add_folder")}</button>
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="saveDriveScope('${q}')">${t("drive.save")}</button>
+              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" ${scope.whole_drive ? "disabled" : ""} onclick="openDrivePicker('${q}', 'scope')">${t("drive.add_folder")}</button>
             </div>
             ${ui.scopeError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.scopeError)}</div>` : ""}
           </div>`;
@@ -4121,33 +4135,33 @@
         if (out.ok) await loadDriveStatus(); else redrawDrive();
       }
 
-      function toggleDriveScopeWhole(id, whole) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
-        const ui = driveUiOf(id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        ui.draft.whole_drive = whole;
-        if (whole) ui.draft.folders = [];
-        redrawDrive();
+      function driveScopeOf(id) {
+        return driveData.connections.find((c) => c.connection_id === id).scope;
       }
 
-      function removeDriveScopeFolder(id, index) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
+      // The server keeps no folders under "whole drive", so the page remembers them (until it is reloaded) and
+      // unticking the box brings them back.
+      async function toggleDriveScopeWhole(id, whole) {
         const ui = driveUiOf(id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        ui.draft.folders.splice(index, 1);
-        redrawDrive();
+        const ids = driveScopeOf(id).folders.map((f) => f.id);
+        if (whole) ui.foldersBeforeWhole = ids;
+        const saved = await saveDriveScope(id, whole, whole ? [] : (ui.foldersBeforeWhole || ids));
+        if (saved && !whole) ui.foldersBeforeWhole = null;
       }
 
-      async function saveDriveScope(id) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
+      async function removeDriveScopeFolder(id, index) {
+        await saveDriveScope(id, false, driveScopeOf(id).folders.filter((_, i) => i !== index).map((f) => f.id));
+      }
+
+      async function saveDriveScope(id, wholeDrive, folderIds) {
         const ui = driveUiOf(id);
-        const draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders };
         const out = await driveCall("PUT", `/api/drive/connections/${encodeURIComponent(id)}/scope`,
-          { whole_drive: draft.whole_drive, folder_ids: draft.folders.map((f) => f.id) });
+          { whole_drive: wholeDrive, folder_ids: folderIds });
         ui.scopeError = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
-        if (out.ok) { ui.draft = null; showToast(t("toast.drive_saved"), "success"); }
+        if (out.ok) { ui.picker = null; showToast(t("toast.drive_saved"), "success"); }
         _driveStatusSnapshot = null;
         if (out.ok) await loadDriveStatus(); else redrawDrive();
+        return out.ok;
       }
 
       async function loadDrivePickerFolders(id) {
@@ -4189,11 +4203,8 @@
           await saveDriveWriteFolder(id, f.id);
           return;
         }
-        const row = driveData.connections.find((c) => c.connection_id === id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        if (!ui.draft.folders.some((x) => x.id === f.id)) ui.draft.folders.push({ id: f.id, path: f.path });
-        ui.picker = null;
-        redrawDrive();
+        const ids = driveScopeOf(id).folders.map((x) => x.id);
+        await saveDriveScope(id, false, ids.includes(f.id) ? ids : ids.concat(f.id));
       }
 
       function askDisconnectDrive(id) {
@@ -4286,14 +4297,12 @@
 
       function renderDeepResearchCopy(enabled) {
         return `
-          <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
               <label style="font-size:14px; font-weight:500; cursor:pointer;" for="drive-dr-copy-toggle">${t("drive.dr_copy_title")}</label>
               <input type="checkbox" id="drive-dr-copy-toggle" ${enabled ? "checked" : ""}
                 onchange="saveDeepResearchCopy(this)" style="width:18px;height:18px;cursor:pointer;">
             </div>
-            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.dr_copy_disclosure")}</p></details>
-          </div>`;
+            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.dr_copy_disclosure")}</p></details>`;
       }
 
       async function saveDeepResearchCopy(input) {
