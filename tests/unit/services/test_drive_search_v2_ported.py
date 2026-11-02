@@ -169,8 +169,8 @@ async def test_large_subtree_falls_back_to_user_wide_streams_filtered_by_chain(m
     w.file("x17.bin", kind="other", item="OUT1")   # same name outside the folder
     log = log_line(monkeypatch)
     result = await w.search("x17", folder="Work")
-    assert result.cards[0].item_id == x17 and result.cards[0].path == "Work/Alpha/b/a/x17.bin"
-    assert all(c.path.startswith("Work/") for c in result.cards)
+    assert result.cards[0].item_id == x17 and result.cards[0].path == "Drive/Work/Alpha/b/a/x17.bin"
+    assert all(c.path.startswith("Drive/Work/") for c in result.cards)
     assert w.repo.card_calls == [(CARD_FETCH, None)] and "scope=folder-wide" in log.info.call_args[0][0]
 
 
@@ -370,7 +370,7 @@ async def test_folder_scope_finds_a_weakly_named_file_deep_in_the_subtree_by_con
     w.file("other.pdf", chunks=["the boiler warranty of the neighbours"])
     log = log_line(monkeypatch)
     scoped = await w.search("boiler warranty", folder="Work")
-    assert tiers(scoped) == [target] and card(scoped, target).path == "Work/2024/Q3/misc/IMG_0001.pdf"
+    assert tiers(scoped) == [target] and card(scoped, target).path == "Drive/Work/2024/Q3/misc/IMG_0001.pdf"
     line = log.info.call_args[0][0]
     assert "scope=folder-memory" in line and "content=memory" in line
 
