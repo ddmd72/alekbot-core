@@ -27,7 +27,7 @@ from .drive_card import owner_note_line
 from .drive_deleted_search import DeletedHit
 from .drive_keys import name_keys_v2
 from .drive_match import Concept
-from .drive_note import DriveNote, NoteContent, binding_identity, note_ref
+from .drive_note import DriveNote, NoteContent, binding_identity, is_drive_note, note_ref
 from .drive_note_merge import NOTE_STORE_KEYS_VERSION, note_store_keys
 
 # part B's `drive_note_merge.note_store_keys`: (content, name) -> (the note document's keys, their version)
@@ -78,16 +78,20 @@ def note_ref_line(note_id: str, *, dormant: bool = False) -> str:
     return (DORMANT_REF_LINE if dormant else REF_LINE).format(ref=note_ref(note_id))
 
 
-def note_hit(note: DriveNote, *, dormant: bool, nonce: str, matched: str, day: str = "") -> DeletedHit:
+def note_hit(note: DriveNote, *, dormant: bool, nonce: str, matched: str, day: str = "",
+             drive_name: str = "") -> DeletedHit:
     """One note entry: the item's last known name and path head it (`gone from the drive …` or, `dormant`, `on a drive
     that is not connected`), then the ref line and the note line with how it matched (`matched` is the matched line,
     or MEANING_LINE for the meaning fallback). The wrapper's ref is the note's `drive_note:` ref; there is no drive
     file to open (`item` None). `item_key` (the item's identity, MULTI_DRIVE_RFC §7.2) lets an archived transcript of
-    the same item (its ledger document's `source_identity`) share the entry."""
+    the same item (its ledger document's `source_identity`) share the entry. An archived whole-drive note (§11.10) is
+    labelled `drive <last name>` (`drive_name`, else the name its snapshot holds) and has no path or item key."""
     snapshot = note.snapshot
     name = snapshot.name if snapshot is not None else ""
     path = (snapshot.path or name) if snapshot is not None else ""
     identity = binding_identity(note)
+    if is_drive_note(note):
+        name, path, identity = f"drive {drive_name or name}".rstrip(), "", ""
     line = owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
     return DeletedHit(
         name=name or note.ref, path=path, day=day,

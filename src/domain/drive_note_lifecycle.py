@@ -31,7 +31,7 @@ from typing import Collection, Iterable, List, Optional, Sequence, Tuple
 
 from .drive_content_identity import ContentIdentity
 from .drive_index import DriveChange, DriveIndexRecord, DriveSyncState
-from .drive_note import DriveNote, NoteSnapshot, NoteState, on_connection
+from .drive_note import DriveNote, NoteSnapshot, NoteState, is_drive_note, on_connection
 from .drive_note_check import NoteCheck
 from .drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
 
@@ -111,13 +111,15 @@ def audit_cursor(state: DriveSyncState) -> Optional[AuditKey]:
 def audit_candidates(notes: Iterable[DriveNote], *, ref_tag: str, now: datetime,
                      after: Optional[AuditKey] = None) -> List[DriveNote]:
     """The active notes the audit may read by id (§7.4): bound on the index's connection (`ref_tag`, MULTI_DRIVE_RFC §9;
-    a note of another connection is dormant here, and is never read), not an erase stub, not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS, and —
+    a note of another connection is dormant here, and is never read; a whole-drive note has no item and is never read), not an erase stub, not seen by the bot in the last NOTE_AUDIT_SKIP_DAYS, and —
     in a pass that resumes — after the pass cursor `after`, so a note that failed is not tried twice in one pass. In
     `audit_key` order."""
     horizon = now - timedelta(days=NOTE_AUDIT_SKIP_DAYS)
     found: List[DriveNote] = []
     for note in notes:
         if note.state != NoteState.ACTIVE.value or note.erase_pending:
+            continue
+        if is_drive_note(note):                  # §11.10: a drive note has no item; read by id it would answer "not found"
             continue
         if not on_connection(note, ref_tag):
             continue

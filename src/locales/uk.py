@@ -247,6 +247,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_STATUS_NO_CARD.value: "🔎 Цей файл зараз не має картки в пошуку, тож пошук нотатку поки не покаже.",
     UIMessage.DRIVE_NOTE_STATUS_ARCHIVED.value: "🔎 Файлу вже немає на диску: цю нотатку знайде лише пошук серед видалених файлів.",
     UIMessage.DRIVE_NOTE_STATUS_OTHER_DRIVE.value: "🔎 Її диск не під'єднано, тож пошук не покаже цю нотатку, доки той диск знову не під'єднають.",
+    UIMessage.DRIVE_NOTE_ON_DRIVE.value: "диск {name}",
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ Щоб назавжди стерти нотатку для {path} разом з усією історією (версій: {versions}), встав команду нижче протягом {minutes} хвилин. Доки ти цього не зробиш, нічого не стерто.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ Щоб назавжди стерти всі твої нотатки до файлів (нотаток: {count}) разом з історією, встав команду нижче протягом {minutes} хвилин. Доки ти цього не зробиш, нічого не стерто.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Назавжди стерто нотаток разом з історією: {count}.",

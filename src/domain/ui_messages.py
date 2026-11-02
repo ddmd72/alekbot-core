@@ -157,6 +157,7 @@ class UIMessage(Enum):
     DRIVE_NOTE_STATUS_NO_CARD = "drive_note_status_no_card"
     DRIVE_NOTE_STATUS_ARCHIVED = "drive_note_status_archived"
     DRIVE_NOTE_STATUS_OTHER_DRIVE = "drive_note_status_other_drive"
+    DRIVE_NOTE_ON_DRIVE = "drive_note_on_drive"
     DRIVE_NOTE_ERASE_REQUEST = "drive_note_erase_request"
     DRIVE_NOTE_ERASE_ALL_REQUEST = "drive_note_erase_all_request"
     DRIVE_NOTE_ERASED = "drive_note_erased"

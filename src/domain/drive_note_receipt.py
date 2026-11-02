@@ -18,7 +18,7 @@ Public interface:
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_note import (
     DRIVE_NOTE_ERASE_DELIVERY, ERASE_CODE_TTL, ERASE_SCOPE_ALL, STATUS_ARCHIVED, STATUS_INDEXING_OFF,
@@ -47,8 +47,12 @@ def _label(value: str) -> str:
     return value.replace("_", " ")
 
 
-def _place(data: Mapping[str, Any]) -> str:
-    """Where the note is: the file's last known path, else its ref (a note with no snapshot)."""
+def _place(data: Mapping[str, Any], strings: Optional[Strings] = None) -> str:
+    """Where the note is: the file's last known path, else its ref (a note with no snapshot). A whole-drive note
+    (`drive`, §11.10) is `drive <name>` — localized when `strings` is given (the receipt), English in the history lines."""
+    if data.get("drive") and data.get("path"):
+        template = strings(UIMessage.DRIVE_NOTE_ON_DRIVE) if strings is not None else "drive {name}"
+        return template.format(name=data["path"])
     return str(data.get("path") or data.get("ref") or data.get("note_ref") or "?")
 
 
@@ -79,7 +83,7 @@ def render_drive_note_receipt(data: Mapping[str, Any], strings: Strings) -> str:
     """The receipt (§4.6): a localized header with the path and version, the stored note, one searchability line on a
     save, and the undo hint. A delete says the history is kept and undo is possible; a no-op says nothing changed."""
     action = data.get("action") or ""
-    place = _place(data)
+    place = _place(data, strings)
     version = data.get("version") or 0
     noop = bool(data.get("noop"))
     if action == "clear":
@@ -117,7 +121,7 @@ def render_drive_note_erase(data: Mapping[str, Any], strings: Strings) -> Tuple[
         line = strings(UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST).format(count=data.get("note_count") or 0,
                                                                      minutes=minutes)
     else:
-        line = strings(UIMessage.DRIVE_NOTE_ERASE_REQUEST).format(path=_place(data),
+        line = strings(UIMessage.DRIVE_NOTE_ERASE_REQUEST).format(path=_place(data, strings),
                                                                  versions=data.get("version_count") or 0,
                                                                  minutes=minutes)
     return line, f"`{data.get('command') or ''}`"

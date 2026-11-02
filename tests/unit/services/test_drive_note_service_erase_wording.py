@@ -26,7 +26,7 @@ async def test_a_partial_erase_names_the_counts_and_no_cause():
     users.get_user.return_value = SimpleNamespace(config=SimpleNamespace(drive_indexing_enabled=True))
     service = DriveNoteService(notes, AsyncMock(spec=UserDrivePort), AsyncMock(spec=DriveIndexRepository),
                                AsyncMock(spec=EmbeddingService), AsyncMock(spec=SecurityPort), users,
-                               embedding_space="s", erase_requests=store)
+                               access=AsyncMock(), embedding_space="s", erase_requests=store)
     with pytest.raises(DriveNoteRefused) as info:
         await service.erase("u", "c1")
     assert info.value.reason == NoteRefusal.CONFLICT

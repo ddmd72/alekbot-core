@@ -17,7 +17,9 @@ from src.agents.drive_agent import DriveAgent
 from src.domain import drive_note_tool_texts as nt
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
-from src.domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, NoteProvenance
+from src.domain.drive_note import (
+    DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, NoteProvenance, connection_binding_key,
+)
 from src.domain.turn_identity import TURN_ID_CONTEXT_KEY
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.drive_note_tools import DRIVE_NOTE_CONTEXT_KEY
@@ -293,3 +295,66 @@ def test_the_scripted_calls_use_every_declared_field():
     assert unused("drive_notes", nt.DELETE_NOTE, [DELETE]) == []
     assert unused("drive_notes", nt.UNDO_NOTE, [UNDO]) == []
     assert unused("drive_notes", nt.ERASE_NOTE, [ERASE]) == []
+
+
+# ------------------------------------------------------------------------- whole-drive notes (MULTI_DRIVE_RFC §11.10)
+
+DRIVE_CALLS = {
+    nt.GET_NOTE: {"whole_drive_name": "Drive"},
+    nt.CREATE_NOTE: {"whole_drive_name": "Drive", "text": "Family documents: Jamie's birth certificate"},
+    nt.ADD_TO_NOTE: {"whole_drive_name": "Drive", "text": "and the lab report"},
+    nt.REPLACE_NOTE_TEXT: {"whole_drive_name": "Drive", "text": "Family documents"},
+    nt.SET_NOTE_TYPE: {"whole_drive_name": "Drive", "doc_type": "invoice"},
+    nt.CLEAR_NOTE_TYPE: {"whole_drive_name": "Drive"},
+    nt.ADD_LIFE_AREAS: {"whole_drive_name": "Drive", "life_areas": ["finance"]},
+    nt.REMOVE_LIFE_AREAS: {"whole_drive_name": "Drive", "life_areas": ["finance"]},
+    nt.DELETE_NOTE: {"whole_drive_name": "Drive"},
+    nt.UNDO_NOTE: {"whole_drive_name": "Drive"},
+    nt.ERASE_NOTE: {"whole_drive_name": "Drive"},
+}
+
+
+async def test_whole_drive_name_on_every_note_tool_stores_a_drive_note_and_erases_it():
+    world = World()
+    key = connection_binding_key("conn-1")
+    c = DRIVE_CALLS
+
+    async def run(turn: str, *calls: Tuple[str, dict]) -> AgentResponse:
+        model = specialist(list(calls))
+        response = await world.run(model, **{TURN_ID_CONTEXT_KEY: turn})
+        assert consumed(model)
+        return response
+
+    first = await run("t1", (nt.GET_NOTE, c[nt.GET_NOTE]), (nt.CREATE_NOTE, c[nt.CREATE_NOTE]),
+                      (nt.ADD_TO_NOTE, c[nt.ADD_TO_NOTE]))
+    note = await world.env.notes.find_bound(U, key)
+    assert note.text == "Family documents: Jamie's birth certificate and the lab report" and note.current_version == 2
+    assert (note.binding.connection_id, note.match_keys, note.state) == ("conn-1", [key], "active")
+    assert receipts(first)[-1]["drive"] is True and receipts(first)[-1]["path"] == "Drive"
+    assert first.history_context[DRIVE_NOTE_CONTEXT_KEY][-1].startswith("[Drive note: Drive ref=drive_note:")
+
+    await run("t2", (nt.GET_NOTE, c[nt.GET_NOTE]), (nt.REPLACE_NOTE_TEXT, c[nt.REPLACE_NOTE_TEXT]),
+              (nt.SET_NOTE_TYPE, c[nt.SET_NOTE_TYPE]), (nt.ADD_LIFE_AREAS, c[nt.ADD_LIFE_AREAS]))
+    note = await world.env.notes.find_bound(U, key)
+    assert (note.text, note.doc_type, note.life_areas) == ("Family documents", "invoice", ["finance"])
+
+    await run("t3", (nt.CLEAR_NOTE_TYPE, c[nt.CLEAR_NOTE_TYPE]), (nt.REMOVE_LIFE_AREAS, c[nt.REMOVE_LIFE_AREAS]))
+    note = await world.env.notes.find_bound(U, key)
+    assert (note.text, note.doc_type, note.life_areas) == ("Family documents", "", [])
+
+    await run("t4", (nt.DELETE_NOTE, c[nt.DELETE_NOTE]))
+    assert (await world.env.notes.find_bound(U, key)).state == "cleared"
+    await run("t5", (nt.UNDO_NOTE, c[nt.UNDO_NOTE]))
+    assert (await world.env.notes.find_bound(U, key)).state == "active"
+
+    erase = await run("t6", (nt.ERASE_NOTE, c[nt.ERASE_NOTE]))
+    (request,) = [i.data for i in erase.delivery_items if i.type == DRIVE_NOTE_ERASE_DELIVERY]
+    assert request["drive"] is True and request["path"] == "Drive"
+    assert len(world.env.store.data) == 1                       # the stored erase request; nothing erased yet
+    assert await world.env.notes.find_bound(U, key) is not None
+
+
+def test_the_drive_calls_use_the_whole_drive_name_field():
+    for tool, call in DRIVE_CALLS.items():
+        assert "whole_drive_name" in call
+        assert "whole_drive_name" not in unused("drive_notes", tool, [{**call}])

@@ -219,6 +219,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_STATUS_NO_CARD.value: "🔎 Ce fichier n'a pas de fiche de recherche pour l'instant : la recherche n'affiche pas encore la note.",
     UIMessage.DRIVE_NOTE_STATUS_ARCHIVED.value: "🔎 Le fichier n'est plus sur le disque : seule une recherche dans les fichiers supprimés trouve cette note.",
     UIMessage.DRIVE_NOTE_STATUS_OTHER_DRIVE.value: "🔎 Son disque n'est pas connecté : la recherche n'affichera pas cette note tant que ce disque n'est pas reconnecté.",
+    UIMessage.DRIVE_NOTE_ON_DRIVE.value: "le disque {name}",
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ Pour effacer définitivement la note de {path} et tout son historique (versions : {versions}), colle la commande ci-dessous dans les {minutes} minutes. Rien n'est effacé tant que tu ne l'as pas fait.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ Pour effacer définitivement toutes tes notes de fichiers (notes : {count}) et leur historique, colle la commande ci-dessous dans les {minutes} minutes. Rien n'est effacé tant que tu ne l'as pas fait.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notes effacées définitivement, avec leur historique : {count}.",
