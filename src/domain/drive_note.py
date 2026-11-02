@@ -8,6 +8,8 @@ SCD2 versions under `versions/v{n}` (D2). Never on the drive (D1), never a memor
 adapter-built item identity (D15, MULTI_DRIVE_RFC §7.2): the binding key `i:{identity}` and the ref key
 `r:{tag}:{item_id}` of its connection's ref tag (§9) are the only match keys; the snapshot's content key is data for a
 future migration, never a lookup. A note belongs to the connection whose tag its `r:` key carries.
+A drive note (MULTI_DRIVE_RFC §11.10) is about a whole connection: its binding carries the connection id, its only
+match key is `c:{connection_id}` (no `i:`, no `r:`), and its binding's `ref_tag` is the connection's tag.
 
 Public interface:
     NoteState, NoteAction, NoteOrigin, BoundBy, NoteRefusal          (str enums; stored as plain strings)
@@ -20,6 +22,7 @@ Public interface:
     resolve_doc_type(value) -> str;  resolve_life_areas(values) -> tuple
     note_content(text, doc_type, life_areas) -> NoteContent
     item_binding_key(identity), tagged_ref_key(tag, item_id), note_match_keys(binding)   (MULTI_DRIVE_RFC §7.2, §9)
+    connection_binding_key(connection_id);  is_drive_note(note);  drive_note_connection_id(note)   (§11.10)
     binding_identity(note) -> str;  note_ref_tag(note) -> str;  on_connection(note, ref_tag) -> bool
     deterministic_note_id(binding_key) -> str;  note_doc_id(user_id, note_id);  note_ref(note_id)
     parse_note_ref(ref), parse_note_target(ref) -> Optional[NoteTarget]
@@ -43,6 +46,7 @@ from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tupl
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .connection_scope import check_connection_id
 from .drive_index import DriveChange, DriveIndexRecord, RecordState
 from .drive_index_params import NOTE_KEYS_MAX   # §5.4: the note's key cap; defined beside the keyer's caps (S2 Core delta B1)
 from .drive_index_policy import kind_of
@@ -71,6 +75,7 @@ DRIVE_NOTE_RECEIPT_DELIVERY = "drive_note_receipt"   # §4.6: DeliveryItem type 
 DRIVE_NOTE_ERASE_DELIVERY = "drive_note_erase"       # §4.6, §4.8: DeliveryItem type of an erase request
 NOTE_REF_PREFIX = "drive_note:"                    # §4.4, §6.4: the note itself, usable with no drive
 BINDING_KEY_PREFIX = "i:"
+CONNECTION_KEY_PREFIX = "c:"                       # MULTI_DRIVE_RFC §11.10: a drive note's binding
 REF_KEY_PREFIX = "r:"
 VERSIONS_SUBCOLLECTION = "versions"
 ERASE_COMMAND = "$drive-notes erase"
@@ -165,11 +170,13 @@ class NoteBinding(BaseModel):
     """The item the note is bound to (D15, MULTI_DRIVE_RFC §7.2, §9): its adapter-built `identity` (the `i:` key), its
     provider item id and the ref tag of the connection it was bound on (the `r:` key). A binding stored before the
     connections existed has no `identity` / `ref_tag` (its `provider_key` / `drive_id` are ignored on read): the match
-    keys carry both (`binding_identity`, `note_ref_tag`)."""
+    keys carry both (`binding_identity`, `note_ref_tag`). A drive binding (MULTI_DRIVE_RFC §11.10) has `connection_id`
+    set, `item_id` and `identity` empty and `ref_tag` the connection's tag."""
     model_config = _DOC_CONFIG
     item_id: str
     identity: str = ""
     ref_tag: str = ""
+    connection_id: str = ""
     bound_at: Optional[datetime] = None
     bound_by: str = BoundBy.CHAT.value
 
@@ -291,11 +298,13 @@ class NoteProvenance:
 
 @dataclass(frozen=True)
 class NoteTarget:
-    """A parsed `file_ref`: exactly one of `note_id` (a `drive_note:` ref) and `item_id` (a `drive:` ref) is set. `tag`
-    is the drive ref's connection tag; "" for an untagged ref, which the service answers "search again" (D13)."""
+    """A parsed note target: exactly one of `note_id` (a `drive_note:` ref), `item_id` (a `drive:` ref) and
+    `connection_id` (a whole drive, MULTI_DRIVE_RFC §11.10) is set. `tag` is the drive ref's connection tag; "" for an
+    untagged ref, which the service answers "search again" (D13)."""
     note_id: str = ""
     item_id: str = ""
     tag: str = ""
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -473,6 +482,29 @@ def tagged_ref_key(tag: str, item_id: str) -> str:
     return f"{REF_KEY_PREFIX}{DriveRef(tag=tag, item_id=item_id).tag}:{item_id}"
 
 
+def connection_binding_key(connection_id: str) -> str:
+    """`c:{connection_id}` (MULTI_DRIVE_RFC §11.10): a drive note's binding and only match key. ValueError for an
+    empty id or one that is not a connection id."""
+    check_connection_id(connection_id)
+    return f"{CONNECTION_KEY_PREFIX}{connection_id}"
+
+
+def drive_note_connection_id(note: DriveNote) -> str:
+    """The connection a drive note is about: its binding's, else (an erase stub has no binding) the rest of its `c:`
+    match key. "" for a note about an item."""
+    if note.binding is not None and note.binding.connection_id:
+        return note.binding.connection_id
+    for key in note.match_keys:
+        if key.startswith(CONNECTION_KEY_PREFIX) and len(key) > len(CONNECTION_KEY_PREFIX):
+            return key[len(CONNECTION_KEY_PREFIX):]
+    return ""
+
+
+def is_drive_note(note: DriveNote) -> bool:
+    """The note is about a whole drive (a connection binding), not an item."""
+    return bool(drive_note_connection_id(note))
+
+
 def binding_identity(note: DriveNote) -> str:
     """The identity the note is bound to: its binding's, else (a binding stored before the field, or an erase stub,
     which has none) the rest of its `i:` match key. "" when neither holds one."""
@@ -507,7 +539,10 @@ def on_connection(note: DriveNote, ref_tag: str) -> bool:
 
 def note_match_keys(binding: NoteBinding) -> List[str]:
     """The binding key `i:{identity}` and the tagged ref key `r:{tag}:{item_id}`; never a content key (D15), never a
-    provider URL. ValueError for a binding without its identity or tag."""
+    provider URL. A drive binding: `c:{connection_id}` alone (§11.10). ValueError for an item binding without its
+    identity or tag."""
+    if binding.connection_id:
+        return [connection_binding_key(binding.connection_id)]
     return [item_binding_key(binding.identity), tagged_ref_key(binding.ref_tag, binding.item_id)]
 
 
@@ -711,15 +746,17 @@ def is_owner_turn(context: Mapping[str, Any]) -> bool:
 
 
 def item_ref(note: DriveNote) -> str:
-    """The `drive:<tag>:<item_id>` ref of the bound item ("" for a stub, or a binding with no known tag)."""
+    """The `drive:<tag>:<item_id>` ref of the bound item ("" for a stub, a drive note, or a binding with no known
+    tag)."""
     tag = note_ref_tag(note)
-    if note.binding is None or not tag:
+    if note.binding is None or not tag or is_drive_note(note):
         return ""
     return drive_ref.format(tag, note.binding.item_id)
 
 
 __all__ = [
-    "ARCHIVE_SCAN_MAX", "BINDING_KEY_PREFIX", "BoundBy",
+    "ARCHIVE_SCAN_MAX", "BINDING_KEY_PREFIX", "BoundBy", "CONNECTION_KEY_PREFIX", "connection_binding_key",
+    "drive_note_connection_id", "is_drive_note",
     "binding_identity", "indexer_writer", "item_binding_key", "note_ref_tag", "on_connection", "tagged_ref_key",
     "DRIVE_FILE_NOTES_SKILL", "DRIVE_NOTE_ERASE_DELIVERY", "DRIVE_NOTE_RECEIPT_DELIVERY", "DriveNote",
     "DriveNoteConflict", "DriveNoteRefused", "DriveNoteVersion", "ERASE_ALL_COMMAND", "ERASE_CODE_TTL",

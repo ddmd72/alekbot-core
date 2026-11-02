@@ -31,6 +31,7 @@ class ExcerptFile:
     content_hash: Optional[str] = None
     also_at: Tuple[str, ...] = ()
     chunks: Tuple[ExcerptChunk, ...] = ()
+    ref_tag: str = ""        # the connection the file was read from (MULTI_DRIVE_RFC §9); `ref` carries it
 
     def drive_item(self) -> DriveItem:
         """The `drive_context` item, built as `DriveSearchCard.drive_item` builds it."""

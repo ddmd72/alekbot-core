@@ -209,6 +209,10 @@ class DriveSearchCard:
     # DRIVE_FILE_NOTES_RFC §6.2: the owner's note as one rendered line (`drive_card.note_line`), "" for none; printed
     # right after the summary, which is then `card_text(rec, owner=False)`, so the render cut never spends on the note
     owner_note: str = ""
+    # MULTI_DRIVE_RFC §9, §11.4: the ref tag of the connection the card was read from (its `ref` carries it), and the
+    # canonical paths of the same content on the other searched connections ("also on")
+    ref_tag: str = ""
+    also_on: Tuple[str, ...] = ()
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -523,7 +527,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str, ref_ta
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=content_key_of(rec.content_identity), nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
         inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy if scorable(rec) else None,
-        scene_labels=rec.photo_scene_labels, owner_note=note_line(rec),
+        scene_labels=rec.photo_scene_labels, owner_note=note_line(rec), ref_tag=ref_tag,
     )
 
 

@@ -1,12 +1,14 @@
-"""The mount tree: names, paths and the `drives` value (MULTI_DRIVE_RFC §11.1, §11.2, §11.8; slice 2a).
+"""The mount tree: names, paths and the `drives` value (MULTI_DRIVE_RFC §11.1, §11.2, §11.8, §11.10; slices 2a, 2b).
 
 Every path the model or the user reads starts with its drive's mount name (`Drive/R&D/Tom's plan.docx`); inside the
 code a path stays connection-relative. `resolve_path` turns a written path into (mount, relative path); a path without
-a mount name is on the primary (or a given default). A mount name shadows a primary top-level folder of the same name.
+a mount name is on the primary (or a given default; with neither, the one live mount when there is exactly one). A
+mount name shadows a primary top-level folder of the same name.
 A renamed drive answers to its former name for `HOLD` after the rename, with `RENAME_NOTICE`.
 
 Names are compared by `mount_name_key` (NFC, trimmed, inner whitespace collapsed, case-folded). `validate_mount_name`
-holds every naming rule of §11.8; its only caller is the Cabinet's name field (slice 2b).
+holds every naming rule of §11.8; its caller is `DriveConnectionService.rename` (the Cabinet's name field), inside the
+repository transaction; `renamed_history` is the history a rename stores.
 
 Public interface:
     HOLD, MAX_NAME_CHARS, FORBIDDEN_NAME_CHARS, RESERVED_NAMES, TREE_ROOT
@@ -21,20 +23,23 @@ Public interface:
     default_mount_name(connections, now) -> str
     validate_mount_name(raw, *, connection_id, connections, primary_connection_id, primary_top_folders, now)
         -> MountNameCheck
-    mount_line(mount, search) -> MountLine
+    renamed_history(connection, name, at) -> Tuple[MountNameChange, ...]
+    mount_line(mount, search, *, write_folder_path=None, note="") -> MountLine
     render_mount_line(line) -> str
     render_mount_listing(lines) -> str
-    Texts: RENAME_NOTICE, UNKNOWN_DRIVE_LINE, ONE_DRIVE_LINE, CROSS_DRIVE_LINE, READ_ONLY_LINE, FOLDER_DRIVE_MISMATCH,
+    drive_note_line(text) -> str;  NOTE_LINE_MAX
+    Texts: RENAME_NOTICE, UNKNOWN_DRIVE_LINE, CROSS_DRIVE_LINE, READ_ONLY_LINE, FOLDER_DRIVE_MISMATCH,
     NAME_EMPTY, NAME_TOO_LONG, NAME_FORBIDDEN_CHARS, NAME_DOT, NAME_RESERVED, NAME_TAKEN, NAME_HELD, SHADOW_WARNING,
-    MOUNT_LISTING_HEADING
+    MOUNT_LISTING_HEADING, PRIMARY_NEEDS_WRITE_FOLDER_LINE, NO_PRIMARY_LINE, HEIR_INVALID_LINE
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 
-from .drive_connection import DEFAULT_MOUNT_NAME, DriveConnection
+from .drive_connection import DEFAULT_MOUNT_NAME, ROOT_FOLDER, DriveConnection
 from .drive_connection_state import ConnectionState
 from .drive_connection_status import DriveConnectionStatus
 from .drive_line import DriveLine
@@ -51,11 +56,12 @@ from .user_drive import DriveNotConnectedError, split_folder_path
 __all__ = [
     "HOLD", "MAX_NAME_CHARS", "FORBIDDEN_NAME_CHARS", "RESERVED_NAMES", "TREE_ROOT",
     "mount_name_key", "held_former_names", "mount_table", "canonical_path", "is_tree_root", "resolve_path",
-    "resolve_drives", "unknown_drive_line", "default_mount_name", "validate_mount_name", "mount_line",
-    "render_mount_line", "render_mount_listing",
-    "RENAME_NOTICE", "UNKNOWN_DRIVE_LINE", "ONE_DRIVE_LINE", "CROSS_DRIVE_LINE", "READ_ONLY_LINE",
+    "resolve_drives", "unknown_drive_line", "default_mount_name", "validate_mount_name", "renamed_history",
+    "mount_line", "render_mount_line", "render_mount_listing", "drive_note_line", "NOTE_LINE_MAX",
+    "RENAME_NOTICE", "UNKNOWN_DRIVE_LINE", "CROSS_DRIVE_LINE", "READ_ONLY_LINE",
     "FOLDER_DRIVE_MISMATCH", "NAME_EMPTY", "NAME_TOO_LONG", "NAME_FORBIDDEN_CHARS", "NAME_DOT", "NAME_RESERVED",
-    "NAME_TAKEN", "NAME_HELD", "SHADOW_WARNING", "MOUNT_LISTING_HEADING",
+    "NAME_TAKEN", "NAME_HELD", "SHADOW_WARNING", "MOUNT_LISTING_HEADING", "PRIMARY_NEEDS_WRITE_FOLDER_LINE",
+    "NO_PRIMARY_LINE", "HEIR_INVALID_LINE",
 ]
 
 HOLD = timedelta(days=30)
@@ -63,14 +69,17 @@ MAX_NAME_CHARS = 40
 FORBIDDEN_NAME_CHARS = '/\\:*?"<>|'
 RESERVED_NAMES = ("_Transcripts", "Archive", "Long paths", "Inbox")
 TREE_ROOT = "/"
+NOTE_LINE_MAX = 200          # §11.10: the drive note's preflight line is bounded to its first 200 characters
 
 # Texts (English, code-built; no provider names)
 RENAME_NOTICE = "{former} is now called {current}."
 UNKNOWN_DRIVE_LINE = 'There is no drive named "{name}". The drives are: {names}.'
-ONE_DRIVE_LINE = "Name one drive per search for now. The drives are: {names}."
 CROSS_DRIVE_LINE = "Moving or copying a file between drives is not available yet."
 NO_TOP_LEVEL_DESTINATION_LINE = "Name a folder on Drive: a drive's top level cannot be a destination."
 READ_ONLY_LINE = "Only the primary drive can be changed for now; this drive is read-only."
+PRIMARY_NEEDS_WRITE_FOLDER_LINE = "Only a connected drive with a write folder can be the primary."
+NO_PRIMARY_LINE = "No drive is the primary yet: the owner chooses one in the Cabinet."
+HEIR_INVALID_LINE = "The new primary must be another connected drive with a write folder."
 FOLDER_DRIVE_MISMATCH = "The folder {folder} is on {mount_a}, not on {mount_b}."
 NAME_EMPTY = "A drive name is required."
 NAME_TOO_LONG = "A drive name can have at most 40 characters."
@@ -84,6 +93,7 @@ MOUNT_LISTING_HEADING = "Drives (a path without a drive name is on the primary d
 
 _LIVE = (ConnectionState.ACTIVE, ConnectionState.NEEDS_RECONNECT)
 _RESERVED_KEYS = frozenset(mount_name_key(n) for n in RESERVED_NAMES)
+_WHITESPACE = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------------------------------------- the tree
@@ -129,9 +139,10 @@ def is_tree_root(path: Optional[str]) -> bool:
 
 def resolve_path(table: MountTable, path: Optional[str], *, default: Optional[Mount] = None) -> PathTarget:
     """The mount and connection-relative path of a written path. The first segment names a mount by its current name,
-    else by a held former name (with RENAME_NOTICE); otherwise the whole path is on `default`, else the primary. A mount
-    shadows a primary top-level folder of the same name. DrivePathError for `\\`, `.` or `..`; DriveNotConnectedError
-    when the path names no mount and there is neither a default nor a primary."""
+    else by a held former name (with RENAME_NOTICE); otherwise the whole path is on `default`, else the primary, else
+    the one live mount when the table holds exactly one (E-7: a first drive is not primary until its write folder is
+    chosen). A mount shadows a primary top-level folder of the same name. DrivePathError for `\\`, `.` or `..`;
+    DriveNotConnectedError when the path names no mount and none of those exists."""
     segments = split_folder_path(path or "")
     if segments:
         found = table.by_name(segments[0])
@@ -144,6 +155,8 @@ def resolve_path(table: MountTable, path: Optional[str], *, default: Optional[Mo
                 notice = RENAME_NOTICE.format(former=former, current=mount.name)
             return PathTarget(mount=mount, path="/".join(segments[1:]), named=True, notice=notice)
     target = default if default is not None else table.primary()
+    if target is None and len(table.mounts) == 1:
+        target = table.mounts[0]
     if target is None:
         raise DriveNotConnectedError("no drive to resolve the path in")
     return PathTarget(mount=target, path="/".join(segments), named=False)
@@ -160,36 +173,37 @@ def unknown_drive_line(name: str, table: MountTable) -> str:
 
 
 def resolve_drives(table: MountTable, value: Optional[str]) -> Union[DriveSelection, str]:
-    """The mounts a search reads (2a: one), or the refusal line.
-    - empty: the primary (else the oldest live mount; none: no mount);
-    - one name: that mount by current or held former name (a former name adds RENAME_NOTICE); unknown: the
-      UNKNOWN_DRIVE_LINE refusal;
-    - two or more names (comma-separated, empties dropped, de-duplicated by key): the ONE_DRIVE_LINE refusal.
+    """The mounts a search reads, or the refusal line (D4; E43 dropped in 2b).
+    - empty: every live mount searched by default (table order; NEEDS_RECONNECT included, its gate answers); when none
+      is, the primary, else the oldest live mount (E-6: an empty value never reads nothing while a mount exists);
+    - names (comma-separated, empties dropped, de-duplicated by key): those mounts, table order, each by current or
+      held former name (each former name adds its RENAME_NOTICE, joined by newlines); the first unknown name: the
+      UNKNOWN_DRIVE_LINE refusal.
     `not_searched` lists the current names of the other live mounts, table order."""
     wanted: Dict[str, str] = {}
     for piece in (value or "").split(","):
         name = piece.strip()
         if name and mount_name_key(name) not in wanted:
             wanted[mount_name_key(name)] = name
-    if len(wanted) > 1:
-        return ONE_DRIVE_LINE.format(names=_names(table))
-    notice = ""
+    notices: List[str] = []
+    chosen_ids: Set[str] = set()
     if not wanted:
-        chosen = table.primary() or (table.mounts[0] if table.mounts else None)
-        if chosen is None:
-            return DriveSelection(mounts=())
+        flagged = [m for m in table.mounts if m.connection.searched_by_default]
+        fallback = table.primary() or (table.mounts[0] if table.mounts else None)
+        chosen_ids = {m.connection_id for m in flagged} or ({fallback.connection_id} if fallback else set())
     else:
-        name = next(iter(wanted.values()))
-        found = table.by_name(name)
-        if found is None:
-            return unknown_drive_line(name, table)
-        chosen, via_former = found
-        if via_former:
-            key = mount_name_key(name)
-            former = next(n for n in chosen.former_names if mount_name_key(n) == key)
-            notice = RENAME_NOTICE.format(former=former, current=chosen.name)
-    others = tuple(m.name for m in table.mounts if m.connection_id != chosen.connection_id)
-    return DriveSelection(mounts=(chosen,), not_searched=others, notice=notice)
+        for key, name in wanted.items():
+            found = table.by_name(name)
+            if found is None:
+                return unknown_drive_line(name, table)
+            mount, via_former = found
+            chosen_ids.add(mount.connection_id)
+            if via_former:
+                former = next(n for n in mount.former_names if mount_name_key(n) == key)
+                notices.append(RENAME_NOTICE.format(former=former, current=mount.name))
+    chosen = tuple(m for m in table.mounts if m.connection_id in chosen_ids)
+    others = tuple(m.name for m in table.mounts if m.connection_id not in chosen_ids)
+    return DriveSelection(mounts=chosen, not_searched=others, notice="\n".join(notices))
 
 
 # ---------------------------------------------------------------------------------------------- names
@@ -268,25 +282,55 @@ def _primary_name(connections: Sequence[DriveConnection], primary_connection_id:
     return primary.mount_name if primary is not None else ""
 
 
+def renamed_history(connection: DriveConnection, name: str, at: datetime) -> Tuple[MountNameChange, ...]:
+    """The `name_history` a rename to `name` at `at` stores: the stored history plus `{name, at}`. A connection stored
+    before the history existed first gets its current name at its creation instant, so the name it leaves is held."""
+    history = connection.name_history or (MountNameChange(name=connection.mount_name, at=connection.created_at),)
+    return (*history, MountNameChange(name=name, at=at))
+
+
 # ---------------------------------------------------------------------------------------------- lines
 
-def mount_line(mount: Mount, search: Optional[SearchLine]) -> MountLine:
-    """The line of one mount; 2a: writable and searched by default exactly when primary."""
+def drive_note_line(text: str) -> str:
+    """The owner's drive note as one preflight line (§11.10): whitespace runs to one space, double quotes to single
+    (the line quotes it), cut to NOTE_LINE_MAX characters plus `…` when longer."""
+    line = _WHITESPACE.sub(" ", text).strip().replace('"', "'")
+    return line if len(line) <= NOTE_LINE_MAX else line[:NOTE_LINE_MAX] + "…"
+
+
+def mount_line(mount: Mount, search: Optional[SearchLine], *, write_folder_path: Optional[str] = None,
+               note: str = "") -> MountLine:
+    """The line of one mount: writable when the connection has a write folder; `write_folder_path` (the write folder's
+    connection-relative path, read by the caller) prints a write folder below the root; `note` is the owner's drive
+    note, bounded here."""
+    connection = mount.connection
+    folder = connection.write_folder_id
+    write_folder = ""
+    if folder is not None and folder != ROOT_FOLDER and write_folder_path:
+        write_folder = canonical_path(mount.name, write_folder_path)
     return MountLine(name=mount.name, primary=mount.primary,
-                     drive=DriveLine.of(DriveConnectionStatus.of(mount.connection)), search=search,
-                     writable=mount.primary, searched_by_default=mount.primary)
+                     drive=DriveLine.of(DriveConnectionStatus.of(connection)), search=search,
+                     writable=folder is not None, searched_by_default=connection.searched_by_default,
+                     write_folder=write_folder, note=drive_note_line(note) if note else "")
 
 
 def render_mount_line(line: MountLine) -> str:
-    """`- Drive: primary; connected; search on; writable; searched by default` (no search part when `search` is None)."""
+    """`- Drive: primary; connected; search on; writable; searched by default` (no search part when `search` is None);
+    a write folder below the root prints `writable only in <path>`; the owner's note ends the line as
+    `owner's note: "<note>"`."""
     parts: List[str] = []
     if line.primary:
         parts.append("primary")
     parts.append(line.drive.value)
     if line.search is not None:
         parts.append(f"search {line.search.value}")
-    parts.append("writable" if line.writable else "read-only")
+    if not line.writable:
+        parts.append("read-only")
+    else:
+        parts.append(f"writable only in {line.write_folder}" if line.write_folder else "writable")
     parts.append("searched by default" if line.searched_by_default else "searched only when named")
+    if line.note:
+        parts.append(f'owner\'s note: "{line.note}"')
     return f"- {line.name}: " + "; ".join(parts)
 
 
