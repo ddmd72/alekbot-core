@@ -451,6 +451,14 @@ profile fails every commission with "PromptBuilder failed" (`preload_cache("driv
 uploads the prompt layer before the release whose code needs it ("Every deploy" below), and `PROTOCOL_AGENT_SELECTION`,
 which names `work_with_drive_files`, goes up right before that release, not earlier.
 
+**Several drives (`docs/10_rfcs/MULTI_DRIVE_RFC.md`, slice 2b).** The code adds no service, secret or Firestore index: a
+connection read filters on `user_id` alone, a drive note is found by the existing `match_keys` index, and the new
+connection fields (`searched_by_default`, `write_folder_id`, the scope) and the sync state's `applied_scope` are plain
+document fields. Four tokens change with it and ship by upload, not by deploy: `COGNITIVE_PROCESS_DRIVE`,
+`PROTOCOL_DRIVE_SEARCH`, `PROTOCOL_DRIVE_NOTES` and `PROTOCOL_AGENT_SELECTION`. A connection stored before 2b has no
+`write_folder_id` and reads as the drive's root, so the migrated primary keeps writing where it wrote; a connection
+created from 2b on starts read-only until the owner picks a write folder in the Cabinet.
+
 ---
 
 ## Every deploy
