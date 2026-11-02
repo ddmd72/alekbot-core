@@ -3882,8 +3882,9 @@
         }
         const linked = data.connections.length > 0;
         // The copy switch: offered only while a drive is linked; disconnecting the last drive turns it off server-side.
-        const drCopyHtml = linked && typeof data.dr_copy === "boolean"
-          ? renderDeepResearchCopy(data.dr_copy)
+        // Reports are copied to the primary drive, so the switch sits in its row; here only while no drive is primary.
+        const drCopyHtml = linked && typeof data.dr_copy === "boolean" && !data.connections.some((c) => c.primary)
+          ? `<div style="${DRIVE_BOX}">${renderDeepResearchCopy(data.dr_copy)}</div>`
           : "";
         const rowsHtml = data.connections.map((row) => renderDriveConnection(row, data)).join("");
         const actionButtons = linked
@@ -3966,6 +3967,7 @@
               <input type="checkbox" id="drive-sbd-${q}" ${row.searched_by_default ? "checked" : ""}
                 onchange="saveDriveSearchedByDefault(this, '${q}')" style="width:18px;height:18px;cursor:pointer;">
             </div>
+            ${row.primary && typeof data.dr_copy === "boolean" ? `<div style="margin-top:12px;">${renderDeepResearchCopy(data.dr_copy)}</div>` : ""}
             ${row.transcribe_enabled ? `<div style="${DRIVE_NOTE}">${t("drive.transcribe_on")}</div>` : ""}
             ${row.note ? `<div style="${DRIVE_NOTE}"><strong>${t("drive.note")}</strong> ${escapeHtml(row.note)}</div>` : ""}
             ${ui.folderError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.folderError)}</div>` : ""}
@@ -4284,14 +4286,12 @@
 
       function renderDeepResearchCopy(enabled) {
         return `
-          <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
               <label style="font-size:14px; font-weight:500; cursor:pointer;" for="drive-dr-copy-toggle">${t("drive.dr_copy_title")}</label>
               <input type="checkbox" id="drive-dr-copy-toggle" ${enabled ? "checked" : ""}
                 onchange="saveDeepResearchCopy(this)" style="width:18px;height:18px;cursor:pointer;">
             </div>
-            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.dr_copy_disclosure")}</p></details>
-          </div>`;
+            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.dr_copy_disclosure")}</p></details>`;
       }
 
       async function saveDeepResearchCopy(input) {
