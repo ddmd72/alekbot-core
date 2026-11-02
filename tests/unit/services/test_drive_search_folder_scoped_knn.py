@@ -130,7 +130,7 @@ async def test_passages_of_a_folder_past_the_chunk_bound_come_from_its_files_onl
     calls = record_scoped(w.repo)
     log = log_line(monkeypatch)
     result = await w.find(folder="Library")
-    assert [f.item_id for f in result.files] == [novel] and result.folder_path == "Library"
+    assert [f.item_id for f in result.files] == [novel] and result.folder_path == "Drive/Library"
     assert calls["chunks"] == [(2, (novel,))] and calls["wide"] == [] and w.repo.knn_limits == []
     assert "scope=folder-scoped" in log.info.call_args[0][0]
 

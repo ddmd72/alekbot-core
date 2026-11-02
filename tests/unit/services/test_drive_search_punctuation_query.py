@@ -25,5 +25,5 @@ async def test_the_service_runs_the_filter_only_path():
     await w.settle()
     calls = len(w.emb.calls)
     result = await w.search("???", kind="pdf")
-    assert paths(result) == ["new.pdf", "old.pdf"] and result.matched_total == 2
+    assert paths(result) == ["Drive/new.pdf", "Drive/old.pdf"] and result.matched_total == 2
     assert len(w.emb.calls) == calls and w.repo.card_limits == []

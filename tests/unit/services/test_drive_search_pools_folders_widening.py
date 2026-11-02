@@ -126,7 +126,7 @@ class TestFolderLookupNeverGuesses:
         w.drive.add("march.pdf", parent=t1)
         await w.settle()
         result = await w.search("march", folder="Taxes/2025")
-        assert result.status == STATUS_OK and paths(result) == ["Finance/Taxes/2025/march.pdf"]
+        assert result.status == STATUS_OK and paths(result) == ["Drive/Finance/Taxes/2025/march.pdf"]
 
     async def test_single_exact_path_match_from_a_full_name_page_is_used(self, monkeypatch):
         """An exact full path is unique in a drive: one exact match is not a guess even when the name page
@@ -142,7 +142,7 @@ class TestFolderLookupNeverGuesses:
         monkeypatch.setattr(search_mod, "FOLDER_INMEM_CARDS", 3)   # the root has more children: descent cut
         monkeypatch.setattr(search_mod, "NAME_FETCH", 2)           # the name page for 'w:2025' is full
         result = await w.search("march", folder="Taxes/2025")
-        assert result.status == STATUS_OK and paths(result) == ["Taxes/2025/march.pdf"]
+        assert result.status == STATUS_OK and paths(result) == ["Drive/Taxes/2025/march.pdf"]
 
     async def test_single_suffix_match_with_a_cut_descent_and_a_full_name_page_is_refused(self, monkeypatch):
         w = World(page_size=10_000)
@@ -211,7 +211,7 @@ class TestSearchDecisions:
         await w.settle()
         result = await w.search("", kind="pdf")
         assert len(result.cards) == 8 and result.cards[0].name == "original.pdf"
-        assert result.cards[0].also_at == ("Old/copy.pdf",)
+        assert result.cards[0].also_at == ("Drive/Old/copy.pdf",)
 
     async def test_matched_at_least_when_the_widened_fetch_was_full(self, w, monkeypatch):
         """The count is a lower bound once the fetch hit its cap."""
@@ -232,9 +232,9 @@ class TestSearchDecisions:
         await w.settle()
         w.set_state(folder, has_card=False)
         by_ref = await w.search("lease", folder=f"drive:a1:{folder}")
-        assert by_ref.status == STATUS_OK and paths(by_ref) == ["Contracts/lease.pdf"]
+        assert by_ref.status == STATUS_OK and paths(by_ref) == ["Drive/Contracts/lease.pdf"]
         by_path = await w.search("lease", folder="Contracts")
-        assert by_path.status == STATUS_OK and paths(by_path) == ["Contracts/lease.pdf"]
+        assert by_path.status == STATUS_OK and paths(by_path) == ["Drive/Contracts/lease.pdf"]
 
     async def test_could_not_resolve_from_a_full_name_page_alone(self, w, monkeypatch):
         """The descent read everything and found nothing; only the name page was full."""
