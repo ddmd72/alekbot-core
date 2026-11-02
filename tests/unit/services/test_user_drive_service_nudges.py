@@ -1,5 +1,6 @@
 """UserDriveService nudges the drive index after each successful mutation
 (USER_DRIVE_INDEXING_RFC §7.1 step 1, §13; RFC Δ3)."""
+from tests.support.drive_access_stub import policy_connections
 from unittest.mock import AsyncMock
 
 import pytest
@@ -41,7 +42,7 @@ def queue():
 
 @pytest.fixture
 def service(drive, queue):
-    return UserDriveService(drive, connection_service(), nudge_queue=queue)
+    return UserDriveService(drive, policy_connections(drive, H), nudge_queue=queue)
 
 
 def _only_nudge(queue):
@@ -125,7 +126,7 @@ class TestNudgeNeverHurtsTheMutation:
     async def test_failed_enqueue_is_logged_not_raised(self, drive, caplog):
         queue = AsyncMock()
         queue.enqueue_worker_task.side_effect = RuntimeError("queue down")
-        service = UserDriveService(drive, connection_service(), nudge_queue=queue)
+        service = UserDriveService(drive, policy_connections(drive, H), nudge_queue=queue)
         drive.get_item.return_value = _file("f", "a.txt")
         out = await service.delete(H, "f")
         assert out.item.item_id == "f"
@@ -146,7 +147,7 @@ class TestNudgeNeverHurtsTheMutation:
         assert queue.tasks == []
 
     async def test_without_queue_nothing_is_sent(self, drive):
-        service = UserDriveService(drive, connection_service())
+        service = UserDriveService(drive, policy_connections(drive, H))
         drive.get_item.return_value = _file("f", "a.txt")
         await service.delete(H, "f")   # no queue configured: the mutation runs, nothing else happens
         drive.delete.assert_awaited_once_with(H, "f")

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Sequence
 
 from . import drive_ref
 from .drive_content_identity import ContentIdentity
+from .drive_item_access import ItemAccess
 from .drive_media_facts import DriveMediaFacts
 
 DEFAULT_INBOX_FOLDER = "Inbox"
@@ -78,6 +79,16 @@ class DriveRefRefused(Exception):
         self.line = line
 
 
+class DriveAccessRefused(Exception):
+    """An operation the connection's access policy refuses (MULTI_DRIVE_RFC §11.3: outside the scope or the write
+    folder, a read-only drive, a protected folder, what the item's access forbids). `line` is the code-built answer
+    (`drive_access_policy`), the whole reply to the model; nothing reached the provider."""
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        self.line = line
+
+
 class DriveRootProtectedError(Exception):
     """An operation would delete or move the area root."""
 
@@ -110,7 +121,8 @@ class DriveItem:
     Neutral shapes (MULTI_DRIVE_RFC §7.2), all built by the adapter: `identity` (`{id_space}:{…}`, unique across
     providers, opaque to domain) and `drive_identity` (the drive's, same form); `content_version` (changes whenever
     the content does; "" for a folder); `content_identity` (None when the provider gave no hash); `media` (typed
-    facts). `ctag` is the single-drive name of `content_version`, kept until its readers move (slice 1b)."""
+    facts); `access` (what the provider lets the bot do with it, §11.3; all allowed in an App Folder). `ctag` is the
+    single-drive name of `content_version`, kept until its readers move (slice 1b)."""
     item_id: str
     name: str
     path: str
@@ -126,6 +138,7 @@ class DriveItem:
     content_version: str = ""
     content_identity: Optional[ContentIdentity] = None
     media: DriveMediaFacts = DriveMediaFacts()
+    access: ItemAccess = ItemAccess()
 
 
 class DriveFileTooLargeError(Exception):

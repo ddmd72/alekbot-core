@@ -112,7 +112,9 @@ class TestRefusals:
             resolve_path(two_drives(), path)
 
     def test_no_primary_and_no_default_is_not_connected(self):
-        table = mount_table([conn("conn-2", "Acme", "b7")], None, T1)
+        # MULTI_DRIVE_RFC E64: one live mount with no primary takes an unprefixed path (test_drive_mounts_2b.py);
+        # with two live mounts and no primary nothing tells which one, so the refusal stands
+        table = mount_table([conn("conn-2", "Acme", "b7"), conn("conn-3", "Acme Hamburg", "c4", minutes=1)], None, T1)
         with pytest.raises(DriveNotConnectedError):
             resolve_path(table, "R&D")
 

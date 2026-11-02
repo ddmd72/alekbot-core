@@ -1,5 +1,6 @@
 """UserDriveService refusals that name a path print it canonical (`<mount>/<path>`), read lazily on the raise path only
-(MULTI_DRIVE_RFC §11.1, slice 2a E-6); a success reads no connection."""
+(MULTI_DRIVE_RFC §11.1, slice 2a E-6); a success reads no connection beyond the access policy's one fresh read per
+operation (slice 2b, design E-13)."""
 import pytest
 
 from src.domain.user_drive import DrivePathError
@@ -73,16 +74,27 @@ async def test_a_folder_moved_into_itself(world):
         "'Drive/R&D' cannot be moved into itself"
 
 
-async def test_a_success_reads_no_connection(world):
-    reads = world.repo.gets
-    await world.service.list_folder(world.h, "R&D")
-    await world.service.append_text(world.h, world.txt, "more")
-    await world.service.move(world.h, world.txt, "R&D/Sub", None)
-    assert world.repo.gets == reads
+async def test_a_success_reads_only_the_policys_connection(world):
+    # slice 2b (design E-13): the access policy reads the connection fresh, one document read per operation; the
+    # canonical-path lookup adds none on a success
+    for call in (lambda: world.service.list_folder(world.h, "R&D"),
+                 lambda: world.service.append_text(world.h, world.txt, "more"),
+                 lambda: world.service.move(world.h, world.txt, "R&D/Sub", None)):
+        reads = world.repo.gets
+        await call()
+        assert world.repo.gets == reads + 1
 
 
 async def test_a_lookup_that_fails_leaves_the_relative_path(world):
+    # slice 2b (design P-B, E-13): the access policy's read comes first and succeeds; the canonical-path lookup after
+    # it is the read that fails
+    healthy = world.repo.get
+    reads = []
+
     async def broken(user_id, connection_id):
-        raise RuntimeError("down")
+        reads.append(connection_id)
+        if len(reads) > 1:
+            raise RuntimeError("down")
+        return await healthy(user_id, connection_id)
     world.repo.get = broken
     assert await _refusal(world.service.list_folder(world.h, "R&D/Missing")) == "No folder 'R&D/Missing' on the drive"

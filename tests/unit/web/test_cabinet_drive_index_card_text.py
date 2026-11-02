@@ -47,20 +47,17 @@ def test_every_non_zero_counter_is_rendered():
 
 def test_the_reconnect_hint_follows_whether_search_keeps_an_index():
     html, _ = _dicts()
-    render = re.search(r"function renderDriveStatus\(data\) \{(.*?)\n      \}", html, re.S).group(1)
+    # MULTI_DRIVE_RFC §11.7: the hint is per connection row of the list
+    render = re.search(r"function renderDriveConnection\(row, data\) \{(.*?)\n      \}", html, re.S).group(1)
     assert 't("drive.reconnect_hint")' in render and 't("drive.reconnect_hint_neutral")' in render
     assert "index_kept" in render
 
 
-def test_the_kept_hint_shows_only_while_the_index_is_kept():
-    html, _ = _dicts()
-    render = re.search(r"function renderDriveIndexing\(ix, linked\) \{(.*?)\n      \}", html, re.S).group(1)
-    assert re.search(r"ix\.index_kept[^\n]*\n?[^\n]*drive\.index_kept_hint", render)
-
-
 def test_no_switch_is_offered_where_indexing_cannot_run():
     html, _ = _dicts()
-    assert "(data.indexing.available || data.indexing.enabled)" in html
+    # MULTI_DRIVE_RFC §11.7: each connection row offers its own switch, under the same rule
+    render = re.search(r"function renderDriveConnection\(row, data\) \{(.*?)\n      \}", html, re.S).group(1)
+    assert "ix && (ix.available || ix.enabled) ? renderDriveIndexing(ix, true)" in render
 
 
 def test_the_inaccessible_label_is_translated_and_the_notice_gate_is_never_shown():

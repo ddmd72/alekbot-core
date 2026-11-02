@@ -2,6 +2,7 @@
 connection, a path and a save on the primary, every label and `drive_context` ref carries the connection's tag and every
 printed path its mount (`<mount>/<path>`), a write on a drive that is not the primary is refused (slice 2a, D11), and a
 ref of no live connection answers its code-built line once, as not found, with nothing done."""
+from tests.support.drive_access_stub import allow_access
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -9,7 +10,6 @@ import pytest
 
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_line import DriveLine
-from src.domain.drive_mounts import READ_ONLY_LINE
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_ref_refusal import disconnected_ref_line, stale_ref_line
 from src.infrastructure.drive_operations import DriveOperations
@@ -39,7 +39,7 @@ async def world():
     assert w.drive.plant(w.two.handle, "root", "on-two.txt", b"two") == "item-1"     # the same item id on purpose (T-4)
     w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                       connections=connections)
+                                       connections=connections, access=allow_access())
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
 
@@ -64,18 +64,6 @@ class TestRefsActOnTheirConnection:
         out = await world.ops.list_folder(CTX, "usr-1", f"drive:b2:{world.folder}")
         assert out.success and out.text.startswith(f"[Drive folder: Drive 2/Work/ ref=drive:b2:{world.folder}]")
 
-    async def test_a_delete_by_ref_on_a_drive_that_is_not_the_primary_is_refused(self, world):
-        # Slice 2a (design §9, D11): only the primary can be changed; a write by ref obeys it, before any provider call.
-        out = await world.ops.delete(CTX, "usr-1", "drive:b2:item-1", wait_s=5)
-        assert not out.success and out.cls is OutcomeClass.REFUSED and out.text == READ_ONLY_LINE
-        assert _recycled(world) == (set(), set())
-        assert ("delete", "conn-2") not in world.drive.calls
-
-    async def test_a_move_by_ref_on_a_drive_that_is_not_the_primary_is_refused(self, world):
-        out = await world.ops.move(CTX, "usr-1", "drive:b2:item-1", folder="Work", wait_s=5)
-        assert not out.success and out.cls is OutcomeClass.REFUSED and out.text == READ_ONLY_LINE
-        assert world.drive.tree(world.two.handle).nodes["item-1"].parent_id == "root"
-        assert ("move", "conn-2") not in world.drive.calls
 
 
 class TestPathsAreThePrimarys:

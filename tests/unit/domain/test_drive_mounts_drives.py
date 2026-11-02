@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.domain import drive_mounts
-from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection import ROOT_FOLDER, DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_line import DriveLine
 from src.domain.drive_mount_line import MountLine
@@ -27,20 +27,22 @@ T1 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 NEEDS = ConnectionState.NEEDS_RECONNECT
 
 
-def conn(connection_id, name, tag, *, minutes=0, history=(), state=ConnectionState.ACTIVE):
+def conn(connection_id, name, tag, *, minutes=0, history=(), state=ConnectionState.ACTIVE, searched=True,
+         write=ROOT_FOLDER):
     return DriveConnection(connection_id=connection_id, user_id="usr-1", account_id="acc-1",
                            credential_id=f"cred-{connection_id}", kind="fake_a",
                            drive_identity=f"fake_a:{connection_id}", ref_tag=tag, mount_name=name,
                            created_at=T0 + timedelta(minutes=minutes), state=state,
                            disconnected_at=T1 if state is ConnectionState.DISCONNECTED else None,
-                           name_history=tuple(history))
+                           name_history=tuple(history), searched_by_default=searched, write_folder_id=write)
 
 
-def three(now=T1 + timedelta(days=1)):
+def three(now=T1 + timedelta(days=1), *, drive_2_searched=True):
     """`Drive` (primary), `Drive 2`, and `Acme Hamburg` (formerly `Acme`, renamed at T1)."""
     hamburg = conn("conn-3", "Acme Hamburg", "c3", minutes=2,
                    history=(MountNameChange("Acme", T0), MountNameChange("Acme Hamburg", T1)))
-    return mount_table([conn("conn-1", "Drive", "a1"), conn("conn-2", "Drive 2", "b7", minutes=1), hamburg],
+    return mount_table([conn("conn-1", "Drive", "a1"),
+                        conn("conn-2", "Drive 2", "b7", minutes=1, searched=drive_2_searched), hamburg],
                        "conn-1", now)
 
 
@@ -51,15 +53,19 @@ def chosen(selection):
 
 class TestResolveDrives:
     @pytest.mark.parametrize("value", [None, "", "  ", ",", " , "])
-    def test_empty_is_the_primary_and_the_others_are_not_searched(self, value):
-        assert chosen(resolve_drives(three(), value)) == (["Drive"], ("Drive 2", "Acme Hamburg"), "")
+    def test_empty_reads_the_drives_searched_by_default_and_names_the_others(self, value):
+        # 2b (design §1.7, D4, E43 dropped): an empty value reads every live mount searched by default
+        assert chosen(resolve_drives(three(drive_2_searched=False), value)) == (
+            ["Drive", "Acme Hamburg"], ("Drive 2",), "")
 
     def test_empty_with_one_drive_has_nothing_not_searched(self):
         table = mount_table([conn("conn-1", "Drive", "a1")], "conn-1", T1)
         assert chosen(resolve_drives(table, "")) == (["Drive"], (), "")
 
     def test_empty_without_a_primary_falls_to_the_oldest_live_mount(self):
-        table = mount_table([conn("conn-1", "Drive", "a1", state=NEEDS), conn("conn-2", "Acme", "b7", minutes=1)],
+        # 2b (design §1.7, E-6): the fallback applies when no live mount is searched by default
+        table = mount_table([conn("conn-1", "Drive", "a1", state=NEEDS, searched=False),
+                             conn("conn-2", "Acme", "b7", minutes=1, searched=False)],
                             None, T1)
         assert chosen(resolve_drives(table, "")) == (["Drive"], ("Acme",), "")
 
@@ -83,13 +89,14 @@ class TestResolveDrives:
     def test_the_same_name_twice_is_one_name(self):
         assert chosen(resolve_drives(three(), "Drive 2, drive 2,")) == (["Drive 2"], ("Drive", "Acme Hamburg"), "")
 
-    def test_two_names_are_refused(self):
-        assert resolve_drives(three(), "Acme Hamburg, Drive") == (
-            "Name one drive per search for now. The drives are: Drive, Drive 2, Acme Hamburg.")
+    def test_two_names_select_both_in_table_order(self):
+        # 2b (design §1.7, E43 dropped): several names are allowed
+        assert chosen(resolve_drives(three(), "Acme Hamburg, Drive")) == (["Drive", "Acme Hamburg"], ("Drive 2",), "")
 
-    def test_two_names_are_refused_even_when_one_is_unknown(self):
-        assert resolve_drives(three(), "Springfield, Drive") == drive_mounts.ONE_DRIVE_LINE.format(
-            names="Drive, Drive 2, Acme Hamburg")
+    def test_two_names_with_one_unknown_are_refused_with_the_list(self):
+        # 2b (design §1.7): ONE_DRIVE_LINE is deleted; the unknown name answers UNKNOWN_DRIVE_LINE
+        assert resolve_drives(three(), "Springfield, Drive") == (
+            'There is no drive named "Springfield". The drives are: Drive, Drive 2, Acme Hamburg.')
 
     def test_an_unknown_name_is_refused_with_the_list(self):
         assert resolve_drives(three(), " Springfield ") == (
@@ -148,19 +155,22 @@ class TestMountLines:
         assert render_mount_line(line) == "- Drive: primary; connected; search on; writable; searched by default"
 
     def test_a_second_drive_needing_a_reconnect(self):
+        # 2b (design §1.7): writable = has a write folder (default root), searched by default = the connection's flag
         table = mount_table([conn("conn-1", "Drive", "a1"), conn("conn-2", "Acme", "b7", minutes=1, state=NEEDS)],
                             "conn-1", T1)
         line = mount_line(table.by_connection("conn-2"), SearchLine.BUILDING)
-        assert (line.drive, line.writable, line.searched_by_default) == (DriveLine.RECONNECT_NEEDED, False, False)
+        assert (line.drive, line.writable, line.searched_by_default) == (DriveLine.RECONNECT_NEEDED, True, True)
         assert render_mount_line(line) == (
-            "- Acme: reconnect needed; search still building; read-only; searched only when named")
+            "- Acme: reconnect needed; search still building; writable; searched by default")
 
     def test_the_listing_line_has_no_search_part(self):
         line = mount_line(three().primary(), None)
         assert render_mount_line(line) == "- Drive: primary; connected; writable; searched by default"
 
     def test_the_listing(self):
-        table = mount_table([conn("conn-1", "Drive", "a1"), conn("conn-2", "Acme", "b7", minutes=1)], "conn-1", T1)
+        # 2b (design §1.7): the read-only, unflagged parts come from the connection's settings (D11), not from primacy
+        table = mount_table([conn("conn-1", "Drive", "a1"),
+                             conn("conn-2", "Acme", "b7", minutes=1, searched=False, write=None)], "conn-1", T1)
         assert render_mount_listing([mount_line(m, None) for m in table.mounts]) == (
             "Drives (a path without a drive name is on the primary drive):\n"
             "- Drive: primary; connected; writable; searched by default\n"
@@ -172,7 +182,6 @@ class TestTexts:
         assert drive_mounts.RENAME_NOTICE.format(former="Acme", current="Acme Hamburg") == (
             "Acme is now called Acme Hamburg.")
         assert drive_mounts.CROSS_DRIVE_LINE == "Moving or copying a file between drives is not available yet."
-        assert drive_mounts.READ_ONLY_LINE == "Only the primary drive can be changed for now; this drive is read-only."
         assert drive_mounts.FOLDER_DRIVE_MISMATCH.format(folder="Acme/R&D", mount_a="Acme", mount_b="Drive") == (
             "The folder Acme/R&D is on Acme, not on Drive.")
         assert drive_mounts.TREE_ROOT == "/"

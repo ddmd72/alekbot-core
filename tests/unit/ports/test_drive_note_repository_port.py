@@ -13,6 +13,8 @@ _EXPECTED = {
     "write_version",
     # the tick (§5.1 b) and the deleted-files search (§6.4)
     "changed_since", "embedding_pending", "archived", "active", "find_nearest",
+    # a disconnect archives the gone drive's cleared notes too (MULTI_DRIVE_RFC E73, slice 2b)
+    "cleared",
     # lifecycle, the parent in place (§7.1, §7.2, §7.5, §5.1 b step 5)
     "archive", "reactivate", "refresh_snapshot", "set_vector",
     # erase (§4.8)

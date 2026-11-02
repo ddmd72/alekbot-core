@@ -66,8 +66,7 @@ class MicrosoftOAuthProvider(OAuthProviderPort):
             "code_challenge": _pkce_challenge(flow.pkce_verifier),
             "code_challenge_method": "S256",
         }
-        if flow.intent is FlowIntent.ADD:
-            params["prompt"] = "select_account"
+        params["prompt"] = "select_account"     # every intent shows the account chooser (owner, 2026-11-02)
         if flow.intent is FlowIntent.RECONNECT and flow.hint_label:
             params["login_hint"] = flow.hint_label
         return f"{_AUTH_URL}?{urlencode(params)}"

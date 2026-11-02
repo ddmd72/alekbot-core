@@ -1,6 +1,7 @@
 """FileConversionService and DeepResearchDriveCopyService by connection (MULTI_DRIVE_RFC §9, §11.5, D7; slice 1b part D):
 a drive ref's tag is resolved to its connection's handle before any drive call, a ref of no live connection raises its
 code-built line, and the deep-research copy lands on the primary (none: "not connected", nothing written)."""
+from tests.support.drive_access_stub import allow_access
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -40,7 +41,7 @@ async def world():
     assert w.drive.plant(w.one.handle, "root", "one.txt", b"from one") == "item-1"
     assert w.drive.plant(w.two.handle, "root", "two.txt", b"from two") == "item-1"   # the same item id on purpose (T-4)
     w.conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                         connections=w.connections)
+                                         connections=w.connections, access=allow_access())
     return w
 
 
@@ -60,7 +61,7 @@ class TestConversionResolvesTheTag:
             await world.conversion.get_drive_item("drive:a1:item-1", "usr-2")
 
     async def test_without_connections_drive_refs_are_unavailable(self, world):
-        bare = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=world.drive)
+        bare = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=world.drive, access=allow_access())
         with pytest.raises(FileNotFoundError):
             await bare.get_drive_item("drive:a1:item-1", "usr-1")
 

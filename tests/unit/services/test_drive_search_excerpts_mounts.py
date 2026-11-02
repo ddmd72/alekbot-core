@@ -1,12 +1,13 @@
 """Passages through the mount tree (multi-drive 2a, design §1 S-10, §3): canonical head, page, folder-note and scope
-lines; `drives` and a mount prefix select the drive; `file_refs` ignore `drives`."""
+lines; `drives` and a mount prefix select the drive; `file_refs` ignore `drives`. Slice 2b (E9, D4): an empty
+`drives` reads every drive searched by default and several names are read."""
 from typing import List
 
 from src.domain import drive_ref
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_excerpt_render import _scope, render_excerpts
 from src.domain.drive_excerpt_request import ExcerptRequest
-from src.domain.drive_mounts import FOLDER_DRIVE_MISMATCH, ONE_DRIVE_LINE, UNKNOWN_DRIVE_LINE
+from src.domain.drive_mounts import FOLDER_DRIVE_MISMATCH, UNKNOWN_DRIVE_LINE
 from src.domain.drive_search import STATUS_DRIVE_REFUSED, STATUS_OK
 
 from .drive_mounts_harness import MountedWorld, renamed_acme
@@ -83,7 +84,8 @@ async def test_a_file_with_no_text_is_named_by_its_canonical_path_on_a_folder_ca
 
 
 async def test_drives_names_the_other_drive_and_reports_the_rest_as_not_searched():
-    w = await _world()
+    # slice 2b (E9, D4): `Acme` is not searched by default; naming it reads it, an empty value leaves it out
+    w = await _world(acme_searched=False)
     result = await w.passages(drives="Acme")
     assert result.status == STATUS_OK and result.ref_tag == "b2" and result.not_searched_drives == ("Drive",)
     default = await w.passages()
@@ -95,11 +97,22 @@ async def test_one_mount_reports_nothing_as_not_searched():
     assert (await w.passages()).not_searched_drives == ()
 
 
-async def test_two_names_and_an_unknown_name_are_refused():
+async def test_empty_drives_reads_every_drive_searched_by_default():
+    # slice 2b (E9, D4)
     w = await _world()
+    result = await w.passages()
+    assert result.status == STATUS_OK and result.not_searched_drives == ()
+    assert sorted((f.path, f.ref_tag) for f in result.files) == [
+        ("Drive/R&D/Tom's plan.docx", "a1"), ("Drive/menu.docx", "a1")]
+
+
+async def test_two_names_are_read_and_an_unknown_name_is_refused():
+    # slice 2b (design §1.7, E43 dropped): several names are read; ONE_DRIVE_LINE is deleted
+    w = await _world(acme_searched=False)
     two = await w.passages(drives="Acme, Drive")
-    assert two.status == STATUS_DRIVE_REFUSED and two.refusal == ONE_DRIVE_LINE.format(names="Drive, Acme")
-    assert render_excerpts(two, nonce=lambda: "n").text == two.refusal
+    assert two.status == STATUS_OK and two.refusal == "" and two.not_searched_drives == ()
+    assert sorted((f.path, f.ref_tag) for f in two.files) == [
+        ("Drive/R&D/Tom's plan.docx", "a1"), ("Drive/menu.docx", "a1")]
     unknown = await w.passages(drives="Acme Lviv")
     assert unknown.refusal == UNKNOWN_DRIVE_LINE.format(name="Acme Lviv", names="Drive, Acme")
 

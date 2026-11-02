@@ -3,7 +3,7 @@
 The credential is the grant (tokens, provider account); the connection is the mount a grant reads. Stored at
 `{prefix}drive_connections/{user_id}:{connection_id}` (structural tenancy, as credentials).
 
-Fields (stage 1; stage 2 adds the scope, write folder and searched-by-default fields):
+Fields:
 - `connection_id`: random, immutable, globally unique; no `:` or `/` (it prefixes every connection-scoped key).
 - `user_id`, `account_id`: the tenant.
 - `credential_id`: the grant the adapter reads (`DriveHandle.credential_id`); a reconnect may point it at a new grant.
@@ -19,15 +19,19 @@ Fields (stage 1; stage 2 adds the scope, write folder and searched-by-default fi
   the key of its initial build, so a tick reads it here and never decrypts the credential; None on a connection stored
   before the field (the fan-out backfills it).
 - `state`, `created_at`, `disconnected_at`: `disconnected_at` is set exactly when the state is DISCONNECTED.
+- The Cabinet settings (stage 2, §11.3, D4, D11; written only by `DriveConnectionService`): `searched_by_default` (an
+  empty `drives` value searches it); `write_folder_id` (None: read-only; `ROOT_FOLDER`: the drive's root, the migrated
+  connection's and the dataclass default; else a folder id; a new connection starts None); `scope_folder_ids` and
+  `scope_whole_drive` (never both; neither: the feed's default scope).
 
 Drives read reconnect state only from here (`state`), never from the credential.
 
 Public interface:
     DriveConnection (frozen; change it with `dataclasses.replace` or `with_state`)
-    DriveConnection.handle -> DriveHandle;  .scope -> ConnectionScope;  .doc_id -> str
+    DriveConnection.handle -> DriveHandle;  .scope -> ConnectionScope;  .doc_id -> str;  .scope_key -> str
     DriveConnection.with_state(to, now) -> DriveConnection     ValueError when the transition is not allowed
     connection_doc_id(scope) -> str
-    DEFAULT_MOUNT_NAME
+    DEFAULT_MOUNT_NAME, ROOT_FOLDER
 """
 from __future__ import annotations
 
@@ -43,6 +47,7 @@ from .drive_ref import is_valid_tag
 from .provider_account import ProviderAccount
 
 DEFAULT_MOUNT_NAME = "Drive"
+ROOT_FOLDER = ""        # "the drive's root" as a write folder
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,6 +67,10 @@ class DriveConnection:
     disconnected_at: Optional[datetime] = None
     provider_account: Optional[ProviderAccount] = None
     name_history: Tuple[MountNameChange, ...] = ()
+    searched_by_default: bool = True
+    write_folder_id: Optional[str] = ROOT_FOLDER
+    scope_folder_ids: Tuple[str, ...] = ()
+    scope_whole_drive: bool = False
 
     def __post_init__(self) -> None:
         check_connection_id(self.connection_id)
@@ -74,6 +83,10 @@ class DriveConnection:
             raise ValueError("disconnected_at is set exactly when the state is DISCONNECTED")
         if self.name_history and mount_name_key(self.name_history[-1].name) != mount_name_key(self.mount_name):
             raise ValueError("the last name_history entry must be the current mount_name")
+        if self.scope_whole_drive and self.scope_folder_ids:
+            raise ValueError("a drive connection's scope is folders or the whole drive, not both")
+        if not all(isinstance(f, str) and f for f in self.scope_folder_ids):
+            raise ValueError("a scope folder id is a non-empty string")
 
     @property
     def handle(self) -> DriveHandle:
@@ -87,6 +100,12 @@ class DriveConnection:
     @property
     def doc_id(self) -> str:
         return connection_doc_id(self.scope)
+
+    @property
+    def scope_key(self) -> str:
+        """`drive_access_policy.scope_key` of this connection's scope."""
+        from .drive_access_policy import scope_key   # the policy imports this module (ROOT_FOLDER)
+        return scope_key(self.scope_folder_ids, self.scope_whole_drive)
 
     def with_state(self, to: ConnectionState, now: datetime) -> DriveConnection:
         """The connection moved to `to` at `now` (DISCONNECTED stamps `disconnected_at`). ValueError when

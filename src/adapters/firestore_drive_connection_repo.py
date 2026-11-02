@@ -4,29 +4,35 @@
 Collections (env-prefixed): `{prefix}drive_connections`, doc id `{user_id}:{connection_id}` (`DriveConnection.doc_id`),
 and `{prefix}drive_user_settings`, doc id `{user_id}`. Every field is plaintext: a connection holds no secret (the grant
 is the credential's). Stored fields: `connection_id, user_id, account_id, credential_id, kind, drive_identity, ref_tag,
-mount_name, name_history, indexing_enabled, transcribe_enabled, state, created_at, disconnected_at, updated_at`
-(`name_history`: a list of `{name, at}`, oldest first; absent on a document stored before it, read as none); settings:
+mount_name, name_history, indexing_enabled, transcribe_enabled, state, created_at, disconnected_at, updated_at,
+searched_by_default, write_folder_id, scope_folder_ids, scope_whole_drive` (`name_history`: a list of `{name, at}`,
+oldest first; absent on a document stored before it, read as none. The four settings of slice 2b, absent on a document
+stored before them, read as the migrated connection's (MULTI_DRIVE_RFC §11.3): searched by default, the write folder at
+the root (`ROOT_FOLDER`; a stored null is read-only), the feed's default scope); settings:
 `user_id, primary_connection_id, updated_at`.
 
 - Tenancy is structural: every read is addressed by the user, and a document whose stored `user_id` or
   `connection_id` contradicts its address is treated as absent and logged at ERROR (I3).
-- `create`, `update` and `transition` are one transaction each on the one document: create never overwrites,
-  `update` writes only the fields given and never `state` / `disconnected_at`, `transition` applies `can_transition`
-  to the state it read.
+- `create`, `update`, `update_settings` and `transition` are one transaction each on the one document: create never
+  overwrites, `update` writes only the fields given and `update_settings` the four settings, never `state` /
+  `disconnected_at`; `transition` applies `can_transition` to the state it read. `rename` is one transaction over the
+  user's documents (a query read inside it), so two renames cannot both take one name.
 - Connections are never deleted (a DISCONNECTED document keeps its tag reserved).
 - No composite index: `list_for_user` filters on `user_id` alone and `list_by_state` on `state` alone (one `in`); the
   `indexing_enabled` filter and both orders are applied in memory (a handful of connections per user).
 """
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
 from ..domain.connection_scope import ConnectionScope
-from ..domain.drive_connection import DriveConnection, connection_doc_id
+from ..domain.drive_connection import ROOT_FOLDER, DriveConnection, connection_doc_id
 from ..domain.drive_connection_state import ConnectionState, can_transition
 from ..domain.drive_mount_name_change import MountNameChange
+from ..domain.drive_mount_name_check import MountNameCheck
+from ..domain.drive_mounts import renamed_history
 from ..domain.drive_user_settings import DriveUserSettings
 from ..domain.provider_account import ProviderAccount
 from ..ports.drive_connection_repository import DriveConnectionRepository
@@ -55,15 +61,28 @@ def _to_doc(connection: DriveConnection, now: datetime) -> Dict[str, Any]:
         "drive_identity": connection.drive_identity,
         "ref_tag": connection.ref_tag,
         "mount_name": connection.mount_name,
-        "name_history": [{"name": c.name, "at": c.at} for c in connection.name_history],
+        "name_history": _history_doc(connection.name_history),
         "indexing_enabled": connection.indexing_enabled,
         "transcribe_enabled": connection.transcribe_enabled,
         "state": connection.state.value,
         "created_at": connection.created_at,
         "disconnected_at": connection.disconnected_at,
         **_account_fields(connection.provider_account),
+        **_settings_fields(connection.searched_by_default, connection.write_folder_id, connection.scope_folder_ids,
+                           connection.scope_whole_drive),
         "updated_at": now,
     }
+
+
+def _history_doc(history: Sequence[MountNameChange]) -> List[Dict[str, Any]]:
+    return [{"name": c.name, "at": c.at} for c in history]
+
+
+def _settings_fields(searched_by_default: bool, write_folder_id: Optional[str], scope_folder_ids: Sequence[str],
+                     scope_whole_drive: bool) -> Dict[str, Any]:
+    """The stored form of the four Cabinet settings (a None write folder is stored as null: read-only)."""
+    return {"searched_by_default": searched_by_default, "write_folder_id": write_folder_id,
+            "scope_folder_ids": list(scope_folder_ids), "scope_whole_drive": scope_whole_drive}
 
 
 def _account_fields(account: Optional[ProviderAccount]) -> Dict[str, Any]:
@@ -103,6 +122,11 @@ def _from_doc(data: Dict[str, Any]) -> DriveConnection:
         provider_account=ProviderAccount(realm=data["provider_realm"], subject=data["provider_subject"], label="")
         if data.get("provider_realm") and data.get("provider_subject") else None,
         name_history=_name_history(data.get("name_history")),
+        searched_by_default=bool(data.get("searched_by_default", True)),
+        # absent: a document stored before 2b, the migrated connection, whose write folder is the root (§11.3)
+        write_folder_id=data["write_folder_id"] if "write_folder_id" in data else ROOT_FOLDER,
+        scope_folder_ids=tuple(data.get("scope_folder_ids") or ()),
+        scope_whole_drive=bool(data.get("scope_whole_drive", False)),
     )
 
 
@@ -207,6 +231,47 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
 
         updated: Optional[DriveConnection] = await _update(self._db.transaction())
         return updated
+
+    async def update_settings(self, user_id: str, connection_id: str, *, searched_by_default: bool,
+                              write_folder_id: Optional[str], scope_folder_ids: Sequence[str],
+                              scope_whole_drive: bool) -> Optional[DriveConnection]:
+        fields = _settings_fields(searched_by_default, write_folder_id, scope_folder_ids, scope_whole_drive)
+        ref = self._ref(user_id, connection_id)
+
+        @firestore.async_transactional
+        async def _update(transaction: Any) -> Optional[DriveConnection]:
+            data = self._owned(await ref.get(transaction=transaction), user_id, connection_id)
+            if data is None:
+                return None
+            stored = _from_doc({**data, **fields})      # the domain's rules first: nothing invalid is written
+            transaction.update(ref, {**fields, "updated_at": datetime.now(timezone.utc)})
+            return stored
+
+        updated: Optional[DriveConnection] = await _update(self._db.transaction())
+        return updated
+
+    async def rename(self, user_id: str, connection_id: str, at: datetime,
+                     check: Callable[[Sequence[DriveConnection]], MountNameCheck]) -> Optional[MountNameCheck]:
+        ref = self._ref(user_id, connection_id)
+        query = self._col.where(filter=FieldFilter("user_id", "==", user_id))
+
+        @firestore.async_transactional
+        async def _rename(transaction: Any) -> Optional[MountNameCheck]:
+            snaps = await query.get(transaction=transaction)
+            every = sorted((_from_doc(data) for data in (self._owned(s, user_id) for s in snaps) if data is not None),
+                           key=lambda c: (c.created_at, c.connection_id))
+            current = next((c for c in every if c.connection_id == connection_id), None)
+            if current is None or current.state is ConnectionState.DISCONNECTED:
+                return None
+            result = check(every)
+            if result.ok and result.name != current.mount_name:
+                transaction.update(ref, {"mount_name": result.name,
+                                         "name_history": _history_doc(renamed_history(current, result.name, at)),
+                                         "updated_at": datetime.now(timezone.utc)})
+            return result
+
+        checked: Optional[MountNameCheck] = await _rename(self._db.transaction())
+        return checked
 
     async def transition(self, user_id: str, connection_id: str, to: ConnectionState, now: datetime) -> bool:
         ref = self._ref(user_id, connection_id)

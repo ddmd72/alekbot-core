@@ -1,4 +1,5 @@
 """UserDriveService rules (docs/10_rfcs/USER_DRIVE_RFC.md §4.7–§4.11)."""
+from tests.support.drive_access_stub import policy_connections
 from unittest.mock import AsyncMock
 
 import pytest
@@ -33,7 +34,7 @@ def drive():
 
 @pytest.fixture
 def service(drive):
-    return UserDriveService(drive, connection_service())
+    return UserDriveService(drive, policy_connections(drive, H))
 
 
 class TestResolveFolder:

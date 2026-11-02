@@ -64,8 +64,9 @@ def test_the_block_names_the_intent_and_keeps_todays_two_lines_verbatim():
         block = _block(body)
         keys = re.findall(r"^\s*(\w+):", block[len("drive_specialist {"):], re.M)
         # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the block gains two few-shot pairs (context yes, method no);
-        # their wording is not pinned, their shape is.
-        assert keys == ["intent", "knowledge_base", "untrusted", "examples",
+        # their wording is not pinned, their shape is. MULTI_DRIVE_RFC §11.9 (design md2b §3.1): a `settings` line
+        # after `untrusted` sends drive settings to the Cabinet.
+        assert keys == ["intent", "knowledge_base", "untrusted", "settings", "examples",
                         "good_query", "bad_query", "note", "good_query", "bad_query", "note"], (name, keys)
         assert 'intent: "work_with_drive_files"' in block
         assert KNOWLEDGE_BASE in block and UNTRUSTED in block

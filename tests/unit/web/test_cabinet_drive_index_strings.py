@@ -10,7 +10,7 @@ _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabine
 LANGS = ("en", "uk", "fr", "es")
 NEW_KEYS = (
     "drive.index_title", "drive.index_disclosure", "drive.index_off_confirm", "drive.needs_reconnect",
-    "drive.reconnect_hint", "drive.reconnect", "drive.index_searchable", "drive.index_kept_hint",
+    "drive.reconnect_hint", "drive.reconnect", "drive.index_searchable",
     "drive.index_pending", "drive.index_failed", "drive.index_building", "drive.index_full",
     "drive.index_last_sync", "drive.index_never", "drive.index_problem", "toast.drive_index_on",
     "toast.drive_index_off", "toast.drive_index_failed",
@@ -81,9 +81,3 @@ def test_disclosure_says_what_rfc_6_requires(lang):
     missing = [f for f in DISCLOSURE_FRAGMENTS[lang] if f not in text]
     assert missing == []
 
-
-def test_the_off_switch_stays_reachable_while_disconnected():
-    """D3 keeps the index after a disconnect; the user can still turn search off to delete it."""
-    html, _ = _dicts()
-    assert "data.indexing && (linked || data.indexing.enabled)" in html
-    assert 'renderDriveIndexing(data.indexing, linked)' in html

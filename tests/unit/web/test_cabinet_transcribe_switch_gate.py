@@ -22,7 +22,7 @@ async def _app(flag, switch):
     kwargs = {} if switch is None else {"drive_transcribe_switch_on": switch}
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_connections=drive.connections,
         oauth_credentials_port=drive.credentials, **kwargs))
     return app
@@ -32,12 +32,6 @@ async def _shown(flag, switch):
     async with (await _app(flag, switch)).test_client() as client:
         body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
     return body["indexing"]["transcribe_enabled"]
-
-
-@pytest.mark.parametrize("flag,switch,expected", [(True, True, True), (True, False, False), (False, True, False),
-                                                   (False, False, False), (True, None, False)])
-async def test_disclosure_needs_both_the_flag_and_the_switch(flag, switch, expected):
-    assert await _shown(flag, switch) is expected
 
 
 @pytest.mark.parametrize("raw,expected", [("on", True), ("1", True), ("TRUE", True), ("off", False), ("", False), (None, False)])

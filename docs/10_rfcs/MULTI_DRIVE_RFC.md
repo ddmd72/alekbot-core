@@ -1,6 +1,6 @@
 # RFC: Multi-drive, stages 1 and 2: connections, handles, tagged refs, mounts
 
-**Status:** ACCEPTED (rev 1.3, 2026-10-30). Slices 1a and 1b built (1b: code final, deploy by wipe and rebuild, D20). Slice 2a built (mount tree and canonical paths; E39–E57).
+**Status:** ACCEPTED (rev 1.3, 2026-10-30). Slices 1a and 1b built (1b: code final, deploy by wipe and rebuild, D20). Slice 2a built (mount tree and canonical paths; E39–E57). Slice 2b built (the access policy, Cabinet settings, scope and write folder, search across drives, drive notes, disconnect; E58–E86).
 **Owner:** AI Engineering
 **Milestone:** Multi-drive programme. Stage 0 (secrets at rest) is done: [SECRETS_AT_REST_RFC.md](SECRETS_AT_REST_RFC.md),
 S1–S5. This RFC is stage 1 (connections: preparatory, the user sees nothing change) and stage 2 (the product core for
@@ -10,7 +10,7 @@ and out of scope; §6, §7 and §11.3 define the seams it plugs into.
 **Revisions:** rev 1 (2026-10-30); rev 1.1 (2026-10-30, review round 1: cut-over keeps paid transcripts, provider-neutral
 scopes and the account-wide feed moved into stage 2); rev 1.2 (2026-10-30, accepted; slice 1a built: the engineering decisions of the slice added as
 E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`; the flow no longer stores the hint label); rev 1.3 (2026-10-30, slice 1b built: owner decision D20, no migration, so §12 is "wipe and rebuild" and the
-cut-over script, copy-back, purge-new and the I6/I7 re-attachment machinery are dropped; the engineering decisions of the slice added as E33–E38).
+cut-over script, copy-back, purge-new and the I6/I7 re-attachment machinery are dropped; the engineering decisions of the slice added as E33–E38); rev 1.4 (2026-11-02, slice 2b built: engineering decisions E58–E86 added, E36 resolved, §11.3 and §11.10 aligned with the code).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md), [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (index,
 tick, transcripts, mirror), [DRIVE_SPECIALIST_RFC.md](DRIVE_SPECIALIST_RFC.md), [DRIVE_FILE_NOTES_RFC.md](DRIVE_FILE_NOTES_RFC.md).
 **Peer:** [EXTERNAL_FILES_RFC.md](EXTERNAL_FILES_RFC.md) (accepted, not built). The tagged ref of §9 is the drive row of
@@ -462,7 +462,7 @@ D9 would hold only for the sweep's 30 days (E23).
 The default comes from the adapter's `feed_scope`: `AREA` → the area root (an App Folder, the migrated connection: today);
 `ACCOUNT` → empty, so nothing is indexed or read until the owner picks folders or "whole drive" in the Cabinet (the
 read side of D11). On an `ACCOUNT` feed (one cursor for the whole account) the planner keeps a change only if its
-parent chain reaches a scope folder: it resolves unseen parents with `get_item`, memoised per tick, and treats a folder
+parent chain reaches a scope folder: it resolves unseen parents with `get_change` (parent id; `DriveItem` carries none), memoised per tick, and treats a folder
 moving into or out of scope as the existing folder cascade. Items the adapter places outside any parent chain (shared
 items with no reachable parent) are in scope only under "whole drive" (D2: the adapter decides where they enter the
 tree). This is stage 2 and provider-neutral; T-4's `fake_b` exercises it.
@@ -597,10 +597,10 @@ R&D, Tom's plan". It is written in chat or on a call through the drive specialis
 everything else about a drive is the Cabinet's (§11.9). **Design:** the same notes store, SCD2 versions, receipts, undo
 and erase, with a **connection binding** `c:{connection_id}` in `match_keys` in place of the item binding `i:` (no `r:`
 key: a drive note is addressed by the drive's name, resolved to the connection at call time).
-- **Tools.** The existing note tools take exactly one target: `file_ref` (as today, for a file or a folder) or the new
+- **Tools.** The existing note tools take exactly one target: `item_ref` (as today, for a file or a folder) or the new
   `whole_drive_name` (a current or held former drive name, §11.8); both or neither are refused. Its own parameter
   description reads: "Only for a note about the entire drive. For a file or a folder, even a top-level one, pass
-  file_ref." So "note that Acme/R&D is Tom's" cannot land on the whole drive by filling a drive name. Same owner-turn gating (`is_owner_turn`, declared and
+  item_ref." So "note that Acme/R&D is Tom's" cannot land on the whole drive by filling a drive name. Same owner-turn gating (`is_owner_turn`, declared and
   re-checked per call), same per-run cap of writes, counted in `NOTES_PER_USER_MAX`, same `DRIVE_NOTES_ENABLED` switch.
   The receipt names the drive: `Note on drive Acme saved (v1): "Acme work files: R&D, Tom's plan"`.
 - **A rename** changes nothing in the note (the binding is the connection id); receipts and the preflight print the
@@ -686,7 +686,7 @@ New requirement ids continue the series (the last is REQ-ARCH-32). The plan name
 | T-10 | Wipe script (in-memory Firestore; D20 replaces the rev 1 cut-over test) | a dry run counts per collection and writes nothing; `--apply` deletes every drive document of the user and nothing else (other users', the monthly usage and the credentials stay); a re-run finds nothing; an empty user id is refused (`tests/unit/scripts/test_drive_wipe.py`). |
 | T-11 | OAuth flow | a flow is single use, expires at 10 min, is refused for another session user, and a reconnect with another subject stores and revokes nothing. |
 | T-12 | Drive names | `validate_mount_name` cases (length, portable set, casefold uniqueness, reserved names, held former names); a rename keeps every ref and resolves a former-name path for 30 days with the notice; no tool, agent or background path can write a connection setting (the specialist's tool list has no settings writer; a settings commission returns the Cabinet line). |
-| T-13 | Drive notes | a `c:` note is written, undone and erased through the note tools by `whole_drive_name`; a folder note with `file_ref` never lands on the drive; exactly one target; owner-turn gating; shown in the preflight bounded; skipped by the indexer's notes step; archived on disconnect and found by the deleted-files search; kept across a reconnect. |
+| T-13 | Drive notes | a `c:` note is written, undone and erased through the note tools by `whole_drive_name`; a folder note with `item_ref` never lands on the drive; exactly one target; owner-turn gating; shown in the preflight bounded; skipped by the indexer's notes step; archived on disconnect and found by the deleted-files search; kept across a reconnect. |
 | T-14 | Keys are the runtime's (I6) | every user-scoped key (transcript store, ledger, archive, mirror root, initial build, `i:`, `r:`) is built by the product function named in I6; the key tests pin each form, and no second formula is written elsewhere (a review rule; the script that was its second writer is gone). |
 | T-15 | Paid transcripts kept (I8) | a disconnect retains the heads its records carried, and the sweep skips them after 30 days; with another connection of the user (disconnected ones included) the purge keeps the store; a later connection with the same content re-attaches without a paid window. |
 
@@ -752,7 +752,7 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E33 | A connect is a reconnect of a live connection of the same kind when it carries the same `credential_id`, else the same `drive_identity`; otherwise a new connection. DISCONNECTED is terminal and its tag stays reserved. | The credential store keeps one record per user, kind and provider account, so a consent of the same account keeps its credential id; the identity also catches an account whose credential was deleted while the connection stayed `ACTIVE`. | Matching by account label (personal, not stable); reviving a DISCONNECTED connection. |
 | E34 | A connect whose drive identity cannot be read fails, and the connect service removes the credential it just saved. A reconnect falls back to the matching connection's stored identity. | No credential without its connection, and no connection with a guessed identity (the mirror roots and ledger key on it). | Storing an empty identity and healing later. |
 | E35 | `DriveConnection` carries `provider_account` (realm and subject; the label stays in the credential). The fan-out backfills it on a connection stored without it. | The initial build is keyed by the account (D8); a tick reads the key from the connection and never decrypts the credential, so a KMS failure cannot read as "no initial build". | Reading the credential on every tick. |
-| E36 | Caps (carded records, readable chunks) are per connection in stage 1; the monthly dollars and the initial build stay per user and per account. Revisit in 2b, where several connections share one user. | Stage 1 has one connection, so the two readings agree; the choice matters only with a second drive. | Deciding the per-user split before a second connection exists. |
+| E36 | Caps (carded records, readable chunks) are per connection in stage 1; the monthly dollars and the initial build stay per user and per account. Resolved in 2b: per connection. The alert texts say "per drive"; the constants keep their names. | Per-user needs a cross-connection count in every tick and a rule for which drive yields; two drives each get a full allowance, money stays per user. | A per-user split of the caps; renaming the constants (about ten files for no behaviour). |
 | E37 | E24's streaming path is not built: the transcript stage refuses a `MediaSource` that needs request headers (charges the file, logs an ERROR, never logs the URL or headers). | OneDrive gives a pre-signed URL; building a byte stream for a header-carrying source belongs with the first adapter that needs it (stage 3). | Passing headers to the parser sandbox (the bearer token would enter it). |
 | E38 | Money keeps its existing server-side increments (`firestore.Increment` on the usage document and the initial-build spend under one in-process lock plus a transaction); no new money store for connections. | Two connections' ticks add to the same user documents; increments lose nothing under concurrency (T-9). | A per-connection money document summed at read time. |
 | E39 | A path is connection-relative below the chat-facing producers; the canonical `<mount>/<path>` is applied once, where a value the model or the user reads is built. Renderers are unchanged. | Index matching, mirror roots and move-into-self checks compare relative paths; the producers are few and enumerable. | A mount argument on every renderer; rewriting `DriveItem.path` inside `UserDriveService`. |
@@ -774,6 +774,35 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E55 | Mount names are printed bare in the state block and the listing. | The portable set (§11.1) forbids quotes and brackets. | Quoting. |
 | E56 | `DriveConnectionService.rename` is 2b; the repository's `update(mount_name=…)` must not be used for renames (it skips `name_history`). | The history is the hold of E18. | Renaming through `update`. |
 | E57 | The search key includes `drives`. | An identical-search skip never swallows a search on another drive. | Keying on the query and folder only. |
+| E58 | `write_folder_id` defaults to the root on the dataclass and for a stored document without the field; only `_create` sets None. | The migrated connection keeps writing (§11.3); a new drive starts read-only (D11). | Default None: dozens of test files turn read-only and the live connection needs a deploy step. |
+| E59 | A filtered scope keeps skeleton ancestor records (`Reason.SCOPE_ANCESTOR`, no card) for the folders above a scope folder. | Printed paths must resolve through the chain; without them everything under a scope folder is hidden. | Paths relative to the scope folder. |
+| E60 | Ancestry is read with `get_change` (parent id), not `get_item`. | `DriveItem` has no parent id; §11.3 and E-3 name the same call. | Adding a parent id to `DriveItem`. |
+| E61 | The passages ledger is keyed by ref tag, not by `ChunkId` alone. | Item ids may repeat across connections; `(item_id, generation, index)` would collide when two drives are read in one commission. | Keying by item id. |
+| E62 | The note tools' parameter stays `item_ref` (§11.10 said `file_ref` before 2b). | The shipped name is `item_ref`; renaming costs a prompt and tool-schema change for nothing. | Renaming to `file_ref`. |
+| E63 | An empty `drives` with no searched-by-default drive reads the primary. | A search never reads nothing; a user who unticked every drive still gets an answer. | An empty result. |
+| E64 | With no primary and one live mount, an unprefixed path resolves to it. | A new first drive is read-only and not primary until a write folder is chosen (D11, E74); reads must still work. | Refusing unprefixed paths. |
+| E65 | Note receipts reuse `DRIVE_NOTE_SAVED` with a localized "drive {name}" place (one new UI message); the RFC's sample wording is illustrative. | One receipt path in four languages. | A second receipt message. |
+| E66 | In the deleted-files search a note is dormant when bound on a connection that is not live; drive notes are never dormant. | 2a's "not the searched connection" means nothing once search reads several. | Dormant by connection searched. |
+| E67 | A reconnect keeps `?credential=<id>`; there is no `?connection=` route. | The hint is already sent on RECONNECT (§5.2). | A second hint parameter. |
+| E68 | "Add a drive" applies the typed name after the consent returns, through the rename route. | The OAuth flow holds no plaintext personal data (§5.2). | A sealed name in the flow, with a signature change for every integration. |
+| E69 | The Cabinet link in prompt tokens is the public product domain already in the tree. | No new configuration, no per-environment token. | A configured URL. |
+| E70 | The access policy reads the connection fresh on every drive operation; the App Folder default walks no chain. | One document read per operation keeps a Cabinet change immediate (E2); no chain keeps the common path free. | A cached policy. |
+| E71 | A Cabinet scope change restarts the feed (cursor None, epoch + 1); narrowing purges through the filter and the epoch sweep. | The sweep already removes what a restart does not see. | A per-folder cascade from the Cabinet. |
+| E72 | Listing an account drive's root while folders are selected is refused (`OUTSIDE_SCOPE_LINE`). | The root is outside the scope; a virtual listing of scope folders is stage-3 polish. | A virtual root listing. |
+| E73 | A disconnect runs the core state change first, then archives notes (cleared notes too), then removes the grant; every later step is repeatable. | A refused heir must archive nothing; a re-run on DISCONNECTED finishes an interrupted one. | Archiving before the transition (design E-16). |
+| E74 | Setting the first write folder makes the connection primary when the user has none. | The path to a primary for a connection D11 starts read-only (I2). | A separate "make primary" step. |
+| E75 | `FixtureDrive` declares `writable=True`. | Its upload works and the eval saves through it. | A read-only fixture. |
+| E76 | T-4 stage 2 is two service-level files over the drive harness, not one `build_application_graph` test. | Stage 1 was built that way; the harness already carries the fakes. | A graph-level test. |
+| E77 | `FileConversionService` checks drive access on every drive read (review B1); the `access` dependency is required. | Conversion read a drive item outside the policy. | An optional access argument. |
+| E78 | A copy or replace across drives is refused, like a move (review B2). | D6: a file never crosses connections. | Allowing copy. |
+| E79 | A root write folder on an account-wide drive admits an item only when its parent chain reaches the root (review B3). | A shared item with no reachable parent is in the whole-drive scope, not under the root. | Root admits everything. |
+| E80 | The access dependencies of the conversion and note services are required and fail closed (review N1). | An optional argument that defaults to "no check" is a silent hole. | `access=None` meaning allow. |
+| E81 | Search filters records by the connection's scope; a narrowed scope still holds out-of-scope records until the tick re-indexes (review N2). | The indexer applies the scope, search is the second line; a failed lookup leaves the filter off with a warning. | Waiting for the purge. |
+| E82 | A refusal is built before any path is printed and never reveals whether an item exists (review N3). | No exists-oracle through the refusal text. | Printing the path in the refusal. |
+| E83 | Writes re-check the scope as well as the write folder (review N4). | A write folder the owner moved out of the scope accepts nothing. | Write folder alone. |
+| E84 | The mirror follows the write folder (none without one) and its orphan-root audit lists the write folder (review N6). | The bot writes only where it may; the audit must see the roots it created. | Mirror at the area root. |
+| E85 | Nested scope folders are normalised: a selected folder under another selected folder is dropped (review N8). | A delete inside the write folder could take a protected scope folder with its parent. | Keeping both. |
+| E86 | Every connect, add and reconnect of any integration shows the provider's account chooser (`select_account`; Google keeps `consent`). Owner decision, 2026-11-02. | A silent sign-in with the browser's account links the wrong account. | `prompt=login`, which forces password and second factor each time. |
 
 ## 17. Owner-only questions
 

@@ -57,23 +57,43 @@ class DriveOutcome:
     # are `drive:<ref_tag>:<item_id>`. One operation acts on one connection (D6), so one tag covers every item; an
     # outcome with items and no valid tag is refused at construction (a lost connection is a bug, not a ref).
     ref_tag: str = ""
+    # A search across connections (MULTI_DRIVE_RFC §11.4): one tag per item, in item order; empty: every item is on
+    # `ref_tag`. Given, it must hold one valid tag per item (then `ref_tag` may be empty).
+    item_tags: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.items and not is_valid_tag(self.ref_tag):
+        if self.item_tags:
+            if len(self.item_tags) != len(self.items) or not all(is_valid_tag(t) for t in self.item_tags):
+                raise ValueError(f"a drive outcome's item_tags need one valid tag per item, got {self.item_tags!r}")
+        elif self.items and not is_valid_tag(self.ref_tag):
             raise ValueError(f"a drive outcome with items needs its connection's ref tag, got {self.ref_tag!r}")
 
     @property
     def is_change(self) -> bool:
         return self.op in MUTATING_OPS
 
+    def _tag_of(self, item: DriveItem) -> str:
+        """The tag of one of `items` (the same object first, else an equal one); `ref_tag` without `item_tags` or for
+        an item that is not one of them."""
+        if not self.item_tags:
+            return self.ref_tag
+        for i, own in enumerate(self.items):
+            if own is item:
+                return self.item_tags[i]
+        for i, own in enumerate(self.items):
+            if own == item:
+                return self.item_tags[i]
+        return self.ref_tag
+
     def drive_context(self) -> List[Dict[str, str]]:
-        """Today's per-operation `drive_context` entries (§7.4), with tagged refs."""
-        return [drive_context_entry(item, self.ref_tag) for item in self.items]
+        """Today's per-operation `drive_context` entries (§7.4), with each item's tagged ref."""
+        tags = self.item_tags or (self.ref_tag,) * len(self.items)
+        return [drive_context_entry(item, tag) for item, tag in zip(self.items, tags)]
 
     def ref_of(self, item: DriveItem) -> str:
         """The tagged ref of one of this outcome's items."""
-        return item_ref(item, self.ref_tag)
+        return item_ref(item, self._tag_of(item))
 
     def label_of(self, item: DriveItem) -> str:
         """The `[Drive: …]` label of one of this outcome's items."""
-        return drive_label(item, self.ref_tag)
+        return drive_label(item, self._tag_of(item))

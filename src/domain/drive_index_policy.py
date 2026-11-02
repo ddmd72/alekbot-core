@@ -67,8 +67,9 @@ class Admission(str, Enum):
 
 _SECRET_PATTERNS = ("id_rsa*", "id_ed25519*", "*.pem", "*.p12", "*.pfx", "*.kdbx", "*.keychain*")
 _OS_PATTERNS = ("~$*", ".~lock.*#", "thumbs.db", "desktop.ini", ".ds_store", "*.tmp")   # .~lock: LibreOffice
-# Kept as records, never searchable: no card and no name keys (§3.4 lets a reason withhold the card).
-_UNSEARCHABLE_REASONS: FrozenSet[Reason] = frozenset({Reason.OS_ARTIFACT})
+# Kept as records, never searchable: no card and no name keys (§3.4 lets a reason withhold the card). A scope
+# ancestor (MULTI_DRIVE_RFC §11.3) is stored only so the parent chains of the records under a scope folder reach the root.
+_UNSEARCHABLE_REASONS: FrozenSet[Reason] = frozenset({Reason.OS_ARTIFACT, Reason.SCOPE_ANCESTOR})
 _MARKERS = frozenset({".git", "pyvenv.cfg"})
 # Folders only tools create, wherever they sit (RFC Δ16): an extracted repository without `.git` is still opaque.
 _GENERATED_DIRS = frozenset({"node_modules", "__pycache__", "site-packages"})

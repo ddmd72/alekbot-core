@@ -19,7 +19,7 @@ _AUTH = {"Authorization": "Bearer token"}
 
 
 async def _app(status, queue):
-    drive = await cabinet_drive(state=None)      # no drive connected (MULTI_DRIVE_RFC §4.4: the card reads connections)
+    drive = await cabinet_drive()      # one connected drive: the card reads connections (MULTI_DRIVE_RFC §4.4)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = status
     session_service = MagicMock()
@@ -27,7 +27,7 @@ async def _app(status, queue):
     app = Quart("test_drive_index_card")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
     ))
@@ -36,7 +36,8 @@ async def _app(status, queue):
 
 async def _indexing(status, queue=None):
     async with (await _app(status, queue)).test_client() as client:
-        return (await (await client.get("/api/drive/status", headers=_AUTH)).get_json())["indexing"]
+        body = await (await client.get("/api/drive/connections", headers=_AUTH)).get_json()
+        return body["connections"][0]["indexing"]
 
 
 @pytest.mark.parametrize("wired", [True, False])

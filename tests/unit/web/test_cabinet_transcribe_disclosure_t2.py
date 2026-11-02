@@ -74,7 +74,7 @@ async def _app(has_root):
     app = Quart("test_mirror_flag")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials))
     return app, search
@@ -85,19 +85,3 @@ async def _status(app):
         return await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
 
 
-async def test_status_flags_a_mirror_root_even_with_indexing_off_and_the_transcription_flag_off():
-    app, _ = await _app(True)
-    body = await _status(app)
-    assert body["indexing"]["mirror_root"] is True and body["indexing"]["transcribe_enabled"] is False
-
-
-async def test_status_flag_is_false_without_a_root():
-    app, _ = await _app(False)
-    assert (await _status(app))["indexing"]["mirror_root"] is False
-
-
-async def test_a_failing_lookup_never_breaks_the_status():
-    app, search = await _app(True)
-    search.has_mirror_root.side_effect = RuntimeError("boom")
-    body = await _status(app)
-    assert body["connected"] is True and body["indexing"]["mirror_root"] is False

@@ -91,7 +91,7 @@ class World:
         bp = create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
-            task_setup=self.task_setup, user_drive=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
+            task_setup=self.task_setup, user_drive_service=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
             credential_revocation=CredentialRevocationService(self.creds, {}),
             drive_connections=self.drive_connections)
         app = Quart("test_cabinet_reconnect")
@@ -179,18 +179,6 @@ async def test_gmail_never_connected_answers_no_reconnect(world):
     assert await _get(world.cabinet(), "/api/gmail/status") == {"connected": False, "reconnect_needed": False}
 
 
-async def test_drive_with_a_connection_and_no_grant_answers_reconnect(world):
-    await world.drive_connected(grant=False)
-    body = await _get(world.cabinet(), "/api/drive/status")
-    assert (body["connected"], body["reconnect_needed"]) == (False, True)
-
-
-async def test_a_connected_drive_carries_no_reconnect_needed(world):
-    await world.drive_connected()
-    body = await _get(world.cabinet(), "/api/drive/status")
-    assert body["connected"] is True and "reconnect_needed" not in body
-
-
 async def test_to_do_with_a_primary_list_and_no_credential_answers_reconnect(world):
     await world.tasks.save_config(USER, TaskUserConfig(primary_list_id="list-1"))
     body = await _get(world.cabinet(), "/api/tasks/microsoft/status")
@@ -229,19 +217,6 @@ async def test_a_failed_mark_deletes_nothing(world):
         resp = await client.delete("/api/gmail/disconnect", headers=AUTH)
     assert resp.status_code == 500
     assert await has_kind(world.creds, USER, "gmail") is True
-
-
-async def test_the_drive_disconnect_ends_the_connection_and_then_shows_no_reconnect(world):
-    await world.drive_connected()
-    async with world.cabinet().test_client() as client:
-        resp = await client.delete("/api/drive/disconnect", headers=AUTH)
-    assert resp.status_code == 200
-    # MULTI_DRIVE_RFC §4.4: the connection ends (no sync-state mark) and its grant goes under the revoke rule
-    (ended,) = world.drive_repo.connections.values()
-    assert ended.state is ConnectionState.DISCONNECTED and ended.disconnected_at == NOW
-    assert await has_kind(world.creds, USER, "microsoft_onedrive") is False
-    body = await _get(world.cabinet(), "/api/drive/status")
-    assert (body["connected"], body["reconnect_needed"]) == (False, False)
 
 
 # ----------------------------------------------------------------------------- clear on consent

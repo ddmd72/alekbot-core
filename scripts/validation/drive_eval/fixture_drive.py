@@ -401,7 +401,7 @@ class FixtureDrive(UserDrivePort):
         return MediaSource(url=f"fixture://{DRIVE_ID}/{item_id}")
 
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
-        return DriveCapabilities(max_path_chars=400)
+        return DriveCapabilities(max_path_chars=400, writable=True)     # its upload works; the eval saves through it
 
     async def forget(self, handle: DriveHandle) -> None:
         """The fixture holds no per-connection cache."""

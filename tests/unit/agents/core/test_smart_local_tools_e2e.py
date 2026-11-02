@@ -6,6 +6,7 @@ A real `SmartResponseAgent` (card A's `smart_rig`) over a scripted `LLMPort`; it
 session history and the tool result the model received. Every declared field of the three tools is sent by a scripted
 call (the calls are module constants; the last test checks them against the declarations).
 """
+from tests.support.drive_access_stub import allow_access
 from typing import Any, Dict
 
 from src.adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
@@ -98,7 +99,7 @@ class World:
         self.workspace_store = GcsWorkspaceAdapter(WORKSPACE_BUCKET, client=self.gcs.client())
         media = GcsFileStorageAdapter(MEDIA_BUCKET)
         media._client = self.gcs.client()
-        files = FileConversionService(storage=media, workspace=self.workspace_store)
+        files = FileConversionService(storage=media, workspace=self.workspace_store, access=allow_access())
         self.workspace = WorkspaceService(self.workspace_store, files)
         self.skills = SkillService(
             FirestoreSkillRepository(self.db, ENV), security,

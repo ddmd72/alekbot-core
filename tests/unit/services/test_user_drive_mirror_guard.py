@@ -1,5 +1,6 @@
 """The Step 1 guard (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.8): chat drive writes are refused under, into, or
 over the bot's `_Transcripts` folder."""
+from tests.support.drive_access_stub import policy_connections
 from unittest.mock import AsyncMock
 
 import pytest
@@ -64,7 +65,7 @@ def _connections() -> DriveConnectionService:
 
 @pytest.fixture
 def service(drive, mirror):
-    return UserDriveService(drive, _connections(), mirror_roots=mirror)
+    return UserDriveService(drive, policy_connections(drive, H), mirror_roots=mirror)
 
 
 async def test_save_into_the_mirror_refused_before_any_folder_is_created(service, drive):
@@ -128,7 +129,7 @@ async def test_lowercase_path_still_refused(service, drive, items):
 
 async def test_nfd_path_still_refused(drive, mirror, items):
     items["mr"] = _folder("mr", "Caf\u00e9 Записи")           # NFC on the drive
-    svc = UserDriveService(drive, _connections(), mirror_roots=mirror)
+    svc = UserDriveService(drive, policy_connections(drive, H), mirror_roots=mirror)
     with pytest.raises(DriveMirrorWriteRefused):
         await svc.ensure_folder(H, "CAFE\u0301 записи/sub")  # NFD, other case, from the chat
 
@@ -152,7 +153,7 @@ async def test_previous_root_refused(service, drive, items):
 async def test_previous_root_that_is_gone_is_skipped(drive, mirror, items):
     del items["old"]
     items["g"] = _file("g", "Docs/notes.txt", "text/plain")
-    svc = UserDriveService(drive, _connections(), mirror_roots=mirror)
+    svc = UserDriveService(drive, policy_connections(drive, H), mirror_roots=mirror)
     await svc.delete(H, "g")
     drive.delete.assert_awaited_once()
 
@@ -175,14 +176,14 @@ async def test_ordinary_writes_unaffected(service, drive, items):
 
 
 async def test_no_root_no_extra_call(drive, items):
-    svc = UserDriveService(drive, _connections(), mirror_roots=InMemoryDriveMirrorRepository())
+    svc = UserDriveService(drive, policy_connections(drive, H), mirror_roots=InMemoryDriveMirrorRepository())
     items["g"] = _file("g", "Docs/notes.txt", "text/plain")
     await svc.delete(H, "g")
     assert [c.args[1] for c in drive.get_item.await_args_list] == ["g"]
 
 
 async def test_no_mirror_repository_no_extra_call(drive, items):
-    svc = UserDriveService(drive, _connections())
+    svc = UserDriveService(drive, policy_connections(drive, H))
     items["g"] = _file("g", "Docs/notes.txt", "text/plain")
     await svc.delete(H, "g")
     assert [c.args[1] for c in drive.get_item.await_args_list] == ["g"]

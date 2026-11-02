@@ -2,6 +2,7 @@
 §27.11, plan G19). Untrusted speech inside the nonce wrapper with the reference reminder."""
 from unittest.mock import AsyncMock
 
+from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_index import KEYS_VERSION, MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState, RecordState, Scope
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
@@ -35,6 +36,9 @@ def _service_gate_open(rec, stored):
                                                       drive_identity=CONN.drive_identity, root_item_id="root",
                                                       applied_versions={MIGRATION_GATE_KEY: KEYS_VERSION})
     drive = AsyncMock(spec=UserDrivePort)
+    # the drive answers as the App Folder does (an AREA feed): with no scope folders chosen the scope covers the area
+    # root, so search's scope filter (MULTI_DRIVE_RFC E81) admits the record and the extent reads its own state
+    drive.capabilities.return_value = DriveCapabilities(max_path_chars=400)
     return DriveSearchService(repo, AsyncMock(), drive, AsyncMock(), embedding_space="s/8", nonce=lambda: "nonce0001")
 
 

@@ -3,6 +3,7 @@
 `resolve_content` is what `open_file` calls. With an audio service the file's bytes reach `transcribe` and the transcript comes
 back in the `[File: …]` wrapper; without one the user gets the honest "transcription is not available" alert.
 """
+from tests.support.drive_access_stub import allow_access
 import mimetypes
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -58,7 +59,7 @@ def storage():
 
 async def test_an_audio_file_is_transcribed_and_the_transcript_is_returned(storage):
     audio = RecordingTranscriber()
-    service = FileConversionService(storage=storage, audio_service=audio)
+    service = FileConversionService(storage=storage, audio_service=audio, access=allow_access())
 
     text = await service.resolve_content("memo.m4a", "u1")
 
@@ -67,7 +68,7 @@ async def test_an_audio_file_is_transcribed_and_the_transcript_is_returned(stora
 
 
 async def test_without_an_audio_service_the_user_is_told_transcription_is_unavailable(storage):
-    service = FileConversionService(storage=storage)
+    service = FileConversionService(storage=storage, access=allow_access())
 
     text = await service.resolve_content("memo.m4a", "u1")
 
@@ -79,6 +80,6 @@ async def test_a_failing_transcriber_gives_the_conversion_alert_not_an_exception
         async def transcribe(self, local_path, mime_type, languages=None):
             raise RuntimeError("provider down")
 
-    text = await FileConversionService(storage=storage, audio_service=Broken()).resolve_content("memo.m4a", "u1")
+    text = await FileConversionService(storage=storage, audio_service=Broken(), access=allow_access()).resolve_content("memo.m4a", "u1")
 
     assert text.startswith("[System:") and "memo.m4a" in text

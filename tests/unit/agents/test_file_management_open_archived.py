@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
+from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState, RecordState, Scope,
 )
@@ -96,7 +97,11 @@ def _search_gate_open(mirror, index):
     indexing switch and the drive identity the sync state is checked against."""
     index.get_sync_state.return_value = DriveSyncState(user_id="u1", drive_identity=DRIVE, root_item_id="root",
                                                        applied_versions={MIGRATION_GATE_KEY: KEYS_VERSION})
-    return DriveSearchService(index, AsyncMock(), AsyncMock(), AsyncMock(), embedding_space="s/8",
+    # the drive answers as the App Folder does (an AREA feed): with no scope folders chosen the scope covers the area
+    # root, so search's scope filter (MULTI_DRIVE_RFC E81) admits the record and the extent reads its own state
+    drive = AsyncMock()
+    drive.capabilities.return_value = DriveCapabilities(max_path_chars=400)
+    return DriveSearchService(index, AsyncMock(), drive, AsyncMock(), embedding_space="s/8",
                               nonce=lambda: "nonce0001", mirror=mirror)
 
 

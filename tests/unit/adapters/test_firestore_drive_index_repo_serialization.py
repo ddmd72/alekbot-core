@@ -119,7 +119,8 @@ def full_state() -> DriveSyncState:
         notes_space_at=T - timedelta(minutes=2), notes_space_id="N3", notes_tick_at=T - timedelta(minutes=1),
         # §3.4, §7.1, §7.4: the archive checks, the audit's clock and pass cursor (part C review verdict)
         note_checks=(NoteCheck("n1", "I1", "gone", T),), notes_audited_at=T, notes_audit_after_at=T,
-        notes_audit_after_id="n1")
+        notes_audit_after_id="n1",
+        applied_scope="whole")   # MULTI_DRIVE_RFC §11.3: the scope key the records were enumerated under
 
 
 def stored(value):

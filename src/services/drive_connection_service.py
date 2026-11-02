@@ -10,17 +10,23 @@ Rules (RFC §4.4):
   new connection: a random id, a new tag unique among every connection the user ever had (DISCONNECTED included, never
   reused), the lowest free name of `Drive`, `Drive 2`, … (E11; `drive_mounts.default_mount_name`: no live
   connection's current or held former name), recorded as the first `name_history` entry at the creation instant,
-  indexing and transcription off (the `DriveConnection` defaults). DISCONNECTED is terminal.
+  indexing and transcription off (the `DriveConnection` defaults), read-only (no write folder, D11), searched by
+  default, the feed's default scope. DISCONNECTED is terminal.
 - The primary pointer (`DriveUserSettings.primary_connection_id`) is read fresh on every use and written only here.
-  The first live connection becomes the primary; a disconnect of the primary hands it to the oldest other ACTIVE
-  connection, or clears it. I2: `set_primary` only names an ACTIVE connection.
+  I2: the primary is an ACTIVE connection with a write folder. A connection becomes the primary when the user has none
+  and it gets one (an activation of a connection that has a write folder, or the first write folder chosen, E-17); a
+  disconnect of the primary hands it to the heir the Cabinet named (RFC §11.7), or clears it.
+- The settings (§11.3, §11.8, D4, D11) are written only here, each a Cabinet action: `rename` (validated inside the
+  repository's transaction over the user's connections), `set_searched_by_default`, `set_scope` and
+  `set_write_folder` (the write folder lies inside the scope; both refusals are `DriveSettingRefused`).
 - Drives read reconnect state only from the connection; `flag_reconnect` keeps the credential's `needs_reconnect` in
   step (best effort: the connection is the source of truth), and a consent clears both (the connect service saves the
   credential with the flag down, `activate` moves the connection back to ACTIVE).
 - Every setting is a Cabinet action (D18); no chat path calls a setter.
 
 Errors: `DriveNotConnectedError` (domain) for a connection that is absent, another user's, or DISCONNECTED where a live
-one is needed (ACTIVE for `set_primary`).
+one is needed (ACTIVE for `set_primary`); `DriveSettingRefused` (domain) for a setting a rule refuses, with the line
+the Cabinet shows.
 
 Concurrency: `activate` runs under one in-process lock (two consents of one process never create two connections of
 one account); every state change is the repository's atomic `transition`.
@@ -34,6 +40,12 @@ Public interface:
     primary(user_id) -> Optional[DriveConnection]
     primary_handle(user_id) -> DriveHandle
     set_primary(user_id, connection_id) -> None
+    default_name(user_id) -> str
+    rename(user_id, connection_id, name, *, primary_top_folders=()) -> MountNameCheck
+    set_searched_by_default(user_id, connection_id, enabled) -> DriveConnection
+    set_scope(user_id, connection_id, *, folder_ids, whole_drive, capabilities, write_folder_ancestry,
+              folder_ancestries) -> DriveConnection
+    set_write_folder(user_id, connection_id, folder_id, *, capabilities, ancestry) -> DriveConnection
     status(user_id) -> DriveConnectionStatus
     resolve_ref(user_id, text) -> ResolvedDriveRef | DriveRefRefusal | None
     mounts(user_id) -> MountTable
@@ -41,25 +53,36 @@ Public interface:
     set_indexing(user_id, connection_id, enabled) -> DriveConnection
     set_transcribe(user_id, connection_id, enabled) -> DriveConnection
     flag_reconnect(handle) -> bool
-    disconnect(user_id, connection_id) -> bool
+    disconnect(user_id, connection_id, *, heir_id=None) -> bool
     reconnect_needed(user_id) -> List[DriveConnection]
 """
 import asyncio
 import secrets
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain import drive_ref
-from ..domain.drive_connection import DriveConnection
+from ..domain.drive_access_policy import (
+    SCOPE_BOTH_LINE, SCOPE_LEAVES_WRITE_FOLDER_LINE, WRITE_FOLDER_OUTSIDE_SCOPE_LINE, in_scope,
+)
+from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_capabilities import DriveCapabilities
+from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
+from ..domain.drive_connection_access import ConnectionAccess
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_connection_status import DriveConnectionStatus
+from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_mount_name_change import MountNameChange
+from ..domain.drive_mount_name_check import MountNameCheck
 from ..domain.drive_mount_table import MountTable
-from ..domain.drive_mounts import default_mount_name, mount_table
+from ..domain.drive_mounts import (
+    HEIR_INVALID_LINE, PRIMARY_NEEDS_WRITE_FOLDER_LINE, default_mount_name, mount_table, validate_mount_name,
+)
 from ..domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, stale_ref_line
 from ..domain.drive_resolved_ref import ResolvedDriveRef
+from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_user_settings import DriveUserSettings
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.provider_account import ProviderAccount
@@ -90,6 +113,16 @@ def _random_tag() -> str:
     return secrets.choice(drive_ref.TAG_FIRST_ALPHABET) + secrets.choice(drive_ref.TAG_ALPHABET)
 
 
+def _outermost(ids: Sequence[str], chains: Mapping[str, Ancestry]) -> Tuple[str, ...]:
+    """`ids` without the folders that lie under another selected one (their chain holds it)."""
+    for folder in ids:
+        chain = chains.get(folder)
+        if chain is None or chain.item_id != folder:
+            raise ValueError("set_scope needs each selected folder's own ancestry")
+    chosen = set(ids)
+    return tuple(f for f in ids if not any(a in chosen for a in chains[f].ids[1:]))
+
+
 class DriveConnectionService:
 
     def __init__(self, connections: DriveConnectionRepository, credentials: OAuthCredentialsPort, *,
@@ -109,7 +142,9 @@ class DriveConnectionService:
     async def activate(self, credential: OAuthCredential, drive_identity: str) -> DriveConnection:
         """The drive activation of a completed consent (RFC §5.2): create the connection of `credential` (a saved drive
         credential) or, when it matches a live connection of the user (module docstring), reconnect it (point it at
-        this credential, state ACTIVE). Sets the primary when the user has none. `drive_identity` is the adapter-built
+        this credential, state ACTIVE). Sets the primary when the user has none and the connection has a write folder
+        (a new connection has none, D11: it becomes the primary with its first write folder). `drive_identity` is the
+        adapter-built
         identity of the drive the grant reads (`get_root` after the save). Returns the stored connection. ValueError for
         a credential without `credential_id` or `account_id`, or an empty `drive_identity`."""
         if not credential.credential_id or not credential.account_id:
@@ -162,7 +197,7 @@ class DriveConnectionService:
                 connection_id=self._new_id(), user_id=credential.user_id, account_id=credential.account_id or "",
                 credential_id=credential.credential_id, kind=credential.kind, drive_identity=drive_identity,
                 ref_tag=tag, mount_name=name, created_at=now, name_history=(MountNameChange(name=name, at=now),),
-                provider_account=_stored_account(credential))
+                provider_account=_stored_account(credential), write_folder_id=None)       # D11: read-only at first
             if await self._connections.create(connection):
                 return connection
             taken_tags.add(tag)        # the id was taken: try another id and tag
@@ -172,11 +207,11 @@ class DriveConnectionService:
 
     async def _ensure_primary(self, connection: DriveConnection) -> None:
         """Point the primary at `connection` when the user has none (no pointer, or one at an absent or DISCONNECTED
-        connection) and `connection` is ACTIVE."""
+        connection) and `connection` is ACTIVE with a write folder (I2)."""
         current = await self._pointed(connection.user_id)
         if current is not None and current.state in _LIVE:
             return
-        if connection.state is ConnectionState.ACTIVE:
+        if connection.state is ConnectionState.ACTIVE and connection.write_folder_id is not None:
             await self._connections.save_settings(
                 DriveUserSettings(user_id=connection.user_id, primary_connection_id=connection.connection_id))
             logger.info(f"🔗 Drive primary of user={connection.user_id[:8]} -> {connection.connection_id[:8]}")
@@ -222,15 +257,18 @@ class DriveConnectionService:
         return primary.handle
 
     async def set_primary(self, user_id: str, connection_id: str) -> None:
-        """Point the primary at an ACTIVE connection of the user (I2); DriveNotConnectedError otherwise."""
+        """Point the primary at an ACTIVE connection of the user with a write folder (I2). DriveNotConnectedError for
+        one that is not ACTIVE; DriveSettingRefused(PRIMARY_NEEDS_WRITE_FOLDER_LINE) for a read-only one."""
         connection = await self._connections.get(user_id, connection_id)
         if connection is None or connection.state is not ConnectionState.ACTIVE:
             raise DriveNotConnectedError("Only a connected drive can be the primary")
+        if connection.write_folder_id is None:
+            raise DriveSettingRefused(PRIMARY_NEEDS_WRITE_FOLDER_LINE)
         await self._connections.save_settings(DriveUserSettings(user_id=user_id, primary_connection_id=connection_id))
         logger.info(f"🔗 Drive primary of user={user_id[:8]} set to {connection_id[:8]}")
 
     async def status(self, user_id: str) -> DriveConnectionStatus:
-        """`DriveConnectionStatus.of(primary connection)` (the Cabinet's `/api/drive/status` until stage 2). The
+        """`DriveConnectionStatus.of(primary connection)` (the drive gate's and search's read). The
         pointed connection is read in any state (a primary that needs a reconnect reads "connected, needs reconnect");
         without a live pointed one, the oldest live connection."""
         pointed = await self._pointed(user_id)
@@ -293,6 +331,105 @@ class DriveConnectionService:
                     f"connection={connection_id[:8]}")
         return stored
 
+    async def default_name(self, user_id: str) -> str:
+        """The name "Add a drive" prefills (`drive_mounts.default_mount_name` over every connection of the user)."""
+        return default_mount_name(await self._connections.list_for_user(user_id), self._clock())
+
+    async def rename(self, user_id: str, connection_id: str, name: str, *,
+                     primary_top_folders: Sequence[str] = ()) -> MountNameCheck:
+        """RFC §11.8: validate `name` (`validate_mount_name`, run inside the repository's transaction over the user's
+        connections) and, when valid and different, store it with its history entry. `primary_top_folders` (the
+        primary's top-level folder names, read by the caller) give the shadowing warning. Returns the check: an error
+        wrote nothing. DriveNotConnectedError for an absent or DISCONNECTED connection."""
+        settings = await self._connections.get_settings(user_id)
+        pointer = None if settings is None else settings.primary_connection_id
+        now = self._clock()
+
+        def check(every: Sequence[DriveConnection]) -> MountNameCheck:
+            return validate_mount_name(name, connection_id=connection_id, connections=every,
+                                       primary_connection_id=pointer, primary_top_folders=primary_top_folders,
+                                       now=now)
+
+        result = await self._connections.rename(user_id, connection_id, now, check)
+        if result is None:
+            raise DriveNotConnectedError("The drive connection is absent or no longer connected")
+        logger.info(f"🏷️ Drive rename: user={user_id[:8]} connection={connection_id[:8]} "
+                    f"{'stored' if result.ok else 'refused'}{' with a warning' if result.warning else ''}")
+        return result
+
+    async def set_searched_by_default(self, user_id: str, connection_id: str, enabled: bool) -> DriveConnection:
+        """Set whether an empty `drives` value searches the connection (D4). DriveNotConnectedError for an absent or
+        DISCONNECTED connection."""
+        connection = await self._live(user_id, connection_id)
+        return await self._write_settings(connection, searched_by_default=enabled)
+
+    async def set_scope(self, user_id: str, connection_id: str, *, folder_ids: Sequence[str], whole_drive: bool,
+                        capabilities: DriveCapabilities, write_folder_ancestry: Optional[Ancestry],
+                        folder_ancestries: Mapping[str, Ancestry]) -> DriveConnection:
+        """Set the folders to index or the whole drive (§11.3). The selection is normalised: de-duplicated, order kept,
+        and a folder whose ancestor is also selected is dropped (nested scope folders: a delete inside the write folder
+        could otherwise take a protected scope folder with its parent). `folder_ancestries` holds each selected
+        folder's chain and `write_folder_ancestry` the write folder's, both read by the caller through
+        `UserDriveService.ancestry` (this service makes no provider call); a selected folder without its chain is a
+        ValueError. DriveSettingRefused: SCOPE_BOTH_LINE for both; SCOPE_LEAVES_WRITE_FOLDER_LINE when the current
+        write folder would lie outside the new scope (the root as the write folder is inside only a whole-drive scope
+        or an AREA feed's default scope). DriveNotConnectedError for an absent or DISCONNECTED connection."""
+        connection = await self._live(user_id, connection_id)
+        ids = tuple(dict.fromkeys(folder_ids))
+        if whole_drive and ids:
+            raise DriveSettingRefused(SCOPE_BOTH_LINE)
+        ids = _outermost(ids, folder_ancestries)
+        folder = connection.write_folder_id
+        if folder is not None:
+            scope = ConnectionAccess(drive_name=connection.mount_name, root_item_id="", scope_folder_ids=frozenset(ids),
+                                     scope_whole_drive=whole_drive, write_folder_id=folder)
+            if not self._admits(scope, capabilities, folder, write_folder_ancestry):
+                raise DriveSettingRefused(SCOPE_LEAVES_WRITE_FOLDER_LINE.format(drive=connection.mount_name))
+        return await self._write_settings(connection, scope_folder_ids=ids, scope_whole_drive=whole_drive)
+
+    async def set_write_folder(self, user_id: str, connection_id: str, folder_id: Optional[str], *,
+                               capabilities: DriveCapabilities, ancestry: Optional[Ancestry]) -> DriveConnection:
+        """Set the write folder (§11.3, D11): None makes the drive read-only (refused while it is the primary,
+        PRIMARY_NEEDS_WRITE_FOLDER_LINE); ROOT_FOLDER or a folder id must lie inside the scope (`ancestry` is the
+        folder's chain, read by the caller) else WRITE_FOLDER_OUTSIDE_SCOPE_LINE; both as DriveSettingRefused. A user
+        with no live primary gets this connection as the primary when it is ACTIVE (E-17). DriveNotConnectedError for
+        an absent or DISCONNECTED connection."""
+        connection = await self._live(user_id, connection_id)
+        if folder_id is None:
+            settings = await self._connections.get_settings(user_id)
+            if settings is not None and settings.primary_connection_id == connection_id:
+                raise DriveSettingRefused(PRIMARY_NEEDS_WRITE_FOLDER_LINE)
+        else:
+            if folder_id != ROOT_FOLDER and ancestry is not None and ancestry.item_id != folder_id:
+                raise ValueError("the ancestry given is not the write folder's")
+            if not self._admits(ConnectionAccess.of(connection, ""), capabilities, folder_id, ancestry):
+                raise DriveSettingRefused(WRITE_FOLDER_OUTSIDE_SCOPE_LINE.format(drive=connection.mount_name))
+        stored = await self._write_settings(connection, write_folder_id=folder_id)
+        await self._ensure_primary(stored)
+        return stored
+
+    @staticmethod
+    def _admits(scope: ConnectionAccess, capabilities: DriveCapabilities, folder: str,
+                ancestry: Optional[Ancestry]) -> bool:
+        """The scope admits the write folder `folder`: the root only as the whole drive or an AREA default scope."""
+        if folder == ROOT_FOLDER:
+            return scope.scope_whole_drive or (not scope.scope_folder_ids
+                                               and capabilities.feed_scope is FeedScope.AREA)
+        return in_scope(scope, capabilities, ancestry)
+
+    async def _write_settings(self, connection: DriveConnection, **changes: Any) -> DriveConnection:
+        """Replace the changed settings (the domain's rules run on the result) and write the four whole."""
+        wanted = replace(connection, **changes)
+        stored = await self._connections.update_settings(
+            connection.user_id, connection.connection_id, searched_by_default=wanted.searched_by_default,
+            write_folder_id=wanted.write_folder_id, scope_folder_ids=wanted.scope_folder_ids,
+            scope_whole_drive=wanted.scope_whole_drive)
+        if stored is None:
+            raise DriveNotConnectedError("The drive connection is absent")
+        logger.info(f"⚙️ Drive settings of connection {connection.connection_id[:8]} (user={connection.user_id[:8]}) "
+                    f"changed: {', '.join(sorted(changes))}")
+        return stored
+
     # ------------------------------------------------------------------ state
 
     async def flag_reconnect(self, handle: DriveHandle) -> bool:
@@ -323,22 +460,26 @@ class DriveConnectionService:
             logger.error(f"💥 Setting needs_reconnect on credential {handle.credential_id[:8]} failed: "
                          f"{type(exc).__name__}", exc_info=True)
 
-    async def disconnect(self, user_id: str, connection_id: str) -> bool:
+    async def disconnect(self, user_id: str, connection_id: str, *, heir_id: Optional[str] = None) -> bool:
         """End the connection (DISCONNECTED, `disconnected_at` now; the document and tag stay reserved) and, when it was
-        the primary, hand the primary to the oldest other ACTIVE connection (or clear it). True only on the transition.
-        The purge, transcript retention (I8), note archive, `forget` and the revoke rule are run by the disconnect flow
-        that calls this, not here."""
+        the primary, hand the primary to `heir_id` (the Cabinet asks the owner first, RFC §11.7) or clear it; no heir is
+        chosen automatically. `heir_id` must be another ACTIVE connection with a write folder, checked before anything
+        is written: DriveSettingRefused(HEIR_INVALID_LINE) otherwise. True only on the transition. The purge,
+        transcript retention (I8), note archive, `forget` and the revoke rule are run by the disconnect flow that calls
+        this, not here."""
+        if heir_id is not None:
+            heir = await self._connections.get(user_id, heir_id)
+            if (heir_id == connection_id or heir is None or heir.state is not ConnectionState.ACTIVE
+                    or heir.write_folder_id is None):
+                raise DriveSettingRefused(HEIR_INVALID_LINE)
         if not await self._connections.transition(user_id, connection_id, ConnectionState.DISCONNECTED,
                                                   self._clock()):
             return False
         settings = await self._connections.get_settings(user_id)
         if settings is not None and settings.primary_connection_id == connection_id:
-            heir = next((c for c in await self._connections.list_for_user(user_id)
-                         if c.state is ConnectionState.ACTIVE and c.connection_id != connection_id), None)
-            await self._connections.save_settings(DriveUserSettings(
-                user_id=user_id, primary_connection_id=None if heir is None else heir.connection_id))
+            await self._connections.save_settings(DriveUserSettings(user_id=user_id, primary_connection_id=heir_id))
             logger.info(f"🔗 Drive primary of user={user_id[:8]} -> "
-                        f"{'none' if heir is None else heir.connection_id[:8]} after a disconnect")
+                        f"{'none' if heir_id is None else heir_id[:8]} after a disconnect")
         logger.info(f"🔌 Drive connection {connection_id[:8]} of user={user_id[:8]} disconnected")
         return True
 

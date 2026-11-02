@@ -52,14 +52,14 @@ class OAuthConnectService:
     # ------------------------------------------------------------------ start
 
     async def start(self, user_id: str, kind: str, *, credential_id: Optional[str] = None,
-                    return_path: str = "/cabinet") -> str:
-        """Store a flow and return the authorization URL. ValueError: unknown kind, or a reconnect of a credential
-        the user does not hold for this kind."""
+                    return_path: str = "/cabinet", add: bool = False) -> str:
+        """Store a flow and return the authorization URL. `add` marks "Add a drive" (intent ADD; a reconnect of a
+        credential wins over it). ValueError: unknown kind, or a reconnect of a credential the user does not hold."""
         spec = self._specs.get(kind)
         edge = self._edges.get(spec.realm) if spec else None
         if spec is None or edge is None:
             raise ValueError(f"unknown connector kind: {kind}")
-        intent, target_id, expected_subject, hint_label = FlowIntent.CONNECT, "", "", ""
+        intent, target_id, expected_subject, hint_label = (FlowIntent.ADD if add else FlowIntent.CONNECT), "", "", ""
         if credential_id is not None:
             existing = await self._credentials.get(user_id, credential_id)
             if existing is None or existing.kind != kind:

@@ -2,6 +2,7 @@
 the drive only through DriveOperations, so the dry run stubs every mutation of the class — every instance, the
 fixture's and the factory's — and refuses to install while a public method is unclassified. Lands before any dry run
 of the specialist; the agent-level test at the end is the hard gate before any owner run (review I1)."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -93,7 +94,7 @@ async def test_a_read_runs_for_real_and_is_logged_with_its_outcome():
     log = DriveOpLog()
     connections = EvalDriveConnections(eval_connection("u1"))
     ops = DriveOperations(conversion_service=FileConversionService(storage=MagicMock(), drive=drive,
-                                                                   connections=connections),
+                                                                   connections=connections, access=allow_access()),
                           drive_service=UserDriveService(drive, connections), drive_search=None)
     with DryRunDriveOperations(log):
         out = await ops.list_folder(CONTEXT, "u1", "Contracts")

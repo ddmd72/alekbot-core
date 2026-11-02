@@ -5,7 +5,8 @@ Eleven one-purpose tools, CRUD-shaped: no tool replaces more than its name says,
 removes or changes anything (an empty field is "not given"; a write that would leave a note empty is refused, Δ5). Flat
 string parameters (`life_areas` a string array); no `enum`, `pattern`, `maxItems` or `additionalProperties`: limits are
 stated in the descriptions and enforced in code. Every tool takes `item_ref` (never `file_ref` or `name`): a `drive:`
-ref, or the `drive_note:` ref a deleted-files result shows.
+ref, or the `drive_note:` ref a deleted-files result shows; or `whole_drive_name`, for a note about an entire drive
+(MULTI_DRIVE_RFC §11.10) — exactly one of the two, neither `required` in the schema.
 
 No result line carries the note's words (Δ8) except `get_note`'s, which wraps them as untrusted data: the owner sees
 the stored note in a receipt the system posts, and session history gets only `[Drive note: <path> ref=… v<n>]`.
@@ -52,7 +53,10 @@ _CLASSIFIER_RULE = ("only what the owner named or confirmed in this conversation
 _LENGTH = f"At most {NOTE_WORDS_MAX} words and {NOTE_CHARS_MAX} characters"
 
 ITEM_REF = ("The drive: ref of the file or folder, from a card, a listing, a [Drive: …] label, the commission or "
-            "the state block; or the drive_note:<id> ref a deleted-files result shows for a note on a deleted file.")
+            "the state block; or the drive_note:<id> ref a deleted-files result shows for a note on a deleted file. "
+            "Give this or whole_drive_name, never both.")
+WHOLE_DRIVE_NAME = ("Only for a note about the entire drive: its name as drive_state lists it. For a file or a "
+                    "folder, even a top-level one, pass item_ref.")
 CREATE_TEXT = (f"Optional: the owner's words about the item, in his language: what it is, who or what it relates to. "
                f"{_LENGTH}. Empty when the owner gave only a type or life areas.")
 ADD_TEXT = (f"The owner's words to add at the end of the note's text, in his language. The whole text stays within "
@@ -82,6 +86,7 @@ EMPTY_CREATE = ("There is nothing to write: give the note's text, its type or it
 STORE_DOWN = "The note store is unavailable right now; nothing was changed. Try again in a moment."
 UNEXPECTED = "The note could not be stored right now. Try again later."
 ITEM_REF_REQUIRED = "the file or folder's drive: ref, or a drive_note: ref"
+ONE_TARGET = "Give exactly one target: item_ref for a file or folder, or whole_drive_name for the whole drive."
 
 STATUS_SENTENCES: Dict[str, str] = {
     STATUS_SOON: "Search shows it within a few minutes.",
@@ -95,14 +100,16 @@ STATUS_SENTENCES: Dict[str, str] = {
 }
 
 
-def _place(path: str, ref: str, note_ref: str) -> str:
+def _place(path: str, ref: str, note_ref: str, *, drive: bool = False) -> str:
+    if drive and path:
+        return f"drive {path}"
     return path or ref or note_ref or "the file"
 
 
 def note_receipt_line(receipt: NoteReceipt) -> str:
     """The op line of a stored, cleared or restored note: the file, the version and the note ref, never the note's
     words (Δ8); the receipt the system posts carries them."""
-    place = _place(receipt.path, receipt.ref, receipt.note_ref)
+    place = _place(receipt.path, receipt.ref, receipt.note_ref, drive=receipt.drive)
     refs = f" Its note ref: {receipt.note_ref}." if receipt.note_ref else ""
     if receipt.action == "clear":
         if receipt.noop:
@@ -127,7 +134,8 @@ def note_receipt_line(receipt: NoteReceipt) -> str:
 
 def erase_request_line(request: EraseRequestReceipt) -> str:
     """The op line of an erase request: the owner got a code; the line never carries it (§9.1)."""
-    return (f"The owner got a code to erase the history of the note on {request.path or 'the file'} "
+    return (f"The owner got a code to erase the history of the note on "
+            f"{_place(request.path, '', '', drive=request.drive)} "
             f"({request.version_count} versions) for good; nothing is erased until he pastes it in the chat. Your part "
             "is done; you do not know the code.")
 
@@ -158,6 +166,7 @@ def _areas(description: str) -> Dict[str, Any]:
 
 
 def _tool(name: str, description: str, required: List[str], **params: Dict[str, Any]) -> Dict[str, Any]:
+    """`item_ref` and `whole_drive_name` are alternatives (exactly one, checked by the handler): neither is `required`."""
     return {"name": name, "description": description,
             "parameters": {"type": "object", "properties": dict(params), "required": required}}
 
@@ -165,33 +174,35 @@ def _tool(name: str, description: str, required: List[str], **params: Dict[str, 
 def drive_note_tool_declarations(*, writes: bool) -> List[Dict[str, Any]]:
     """`get_note`, then, when `writes` (an owner turn, §9.1), the ten writers; a fixed order (Δ16)."""
     ref = _string(ITEM_REF)
-    tools = [_tool(GET_NOTE, "Read the owner's note on a file or folder.", ["item_ref"], item_ref=ref)]
+    tools = [_tool(GET_NOTE, "Read the owner's note on a file, a folder or a whole drive.", [], item_ref=ref,
+                   whole_drive_name=_string(WHOLE_DRIVE_NAME))]
     if not writes:
         return tools
+    drive = _string(WHOLE_DRIVE_NAME)
     return tools + [
-        _tool(CREATE_NOTE, "Add the owner's note to a file or folder that has none.", ["item_ref"], item_ref=ref,
+        _tool(CREATE_NOTE, "Add the owner's note to a file, folder or whole drive that has none.", [], item_ref=ref, whole_drive_name=drive,
               text=_string(CREATE_TEXT), doc_type=_string(DOC_TYPE), life_areas=_areas(LIFE_AREAS)),
-        _tool(ADD_TO_NOTE, "Add the owner's words at the end of the note's text; the rest of the note is kept. On a "
-              "file with no note, this creates one.", ["item_ref", "text"], item_ref=ref, text=_string(ADD_TEXT)),
+        _tool(ADD_TO_NOTE, "Add the owner's words at the end of the note's text; the rest of the note is kept. On an "
+              "item with no note, this creates one.", ["text"], item_ref=ref, whole_drive_name=drive, text=_string(ADD_TEXT)),
         _tool(REPLACE_NOTE_TEXT, "Replace the whole text of the note. Refused unless get_note read this note earlier "
-              "in this run, and refused if the note changed since that read.", ["item_ref", "text"], item_ref=ref,
+              "in this run, and refused if the note changed since that read.", ["text"], item_ref=ref, whole_drive_name=drive,
               text=_string(REPLACE_TEXT)),
-        _tool(SET_NOTE_TYPE, "Set the document type of the note. On a file with no note, this creates one holding "
-              "only the type.", ["item_ref", "doc_type"], item_ref=ref, doc_type=_string(SET_DOC_TYPE)),
-        _tool(CLEAR_NOTE_TYPE, "Remove the document type from the note.", ["item_ref"], item_ref=ref),
-        _tool(ADD_LIFE_AREAS, "Add life areas to the note; the others are kept. On a file with no note, this creates "
-              "one holding only the areas.", ["item_ref", "life_areas"], item_ref=ref, life_areas=_areas(ADD_AREAS)),
-        _tool(REMOVE_LIFE_AREAS, "Remove the named life areas from the note.", ["item_ref", "life_areas"],
-              item_ref=ref, life_areas=_areas(REMOVE_AREAS)),
-        _tool(DELETE_NOTE, "Remove the note; its history is kept and undo brings it back.", ["item_ref"], item_ref=ref),
-        _tool(UNDO_NOTE, "Put the note back as it was before its last change.", ["item_ref"], item_ref=ref),
+        _tool(SET_NOTE_TYPE, "Set the document type of the note. On an item with no note, this creates one holding "
+              "only the type.", ["doc_type"], item_ref=ref, whole_drive_name=drive, doc_type=_string(SET_DOC_TYPE)),
+        _tool(CLEAR_NOTE_TYPE, "Remove the document type from the note.", [], item_ref=ref, whole_drive_name=drive),
+        _tool(ADD_LIFE_AREAS, "Add life areas to the note; the others are kept. On an item with no note, this creates "
+              "one holding only the areas.", ["life_areas"], item_ref=ref, whole_drive_name=drive, life_areas=_areas(ADD_AREAS)),
+        _tool(REMOVE_LIFE_AREAS, "Remove the named life areas from the note.", ["life_areas"],
+              item_ref=ref, whole_drive_name=drive, life_areas=_areas(REMOVE_AREAS)),
+        _tool(DELETE_NOTE, "Remove the note; its history is kept and undo brings it back.", [], item_ref=ref, whole_drive_name=drive),
+        _tool(UNDO_NOTE, "Put the note back as it was before its last change.", [], item_ref=ref, whole_drive_name=drive),
         _tool(ERASE_NOTE, "Ask to erase the note's whole history: the owner gets a code to paste; nothing is erased "
-              "now.", ["item_ref"], item_ref=ref),
+              "now.", [], item_ref=ref, whole_drive_name=drive),
     ]
 
 
 __all__ = [
     "ADD_LIFE_AREAS", "ADD_TO_NOTE", "CLEAR_NOTE_TYPE", "CREATE_NOTE", "DELETE_NOTE", "ERASE_NOTE", "GET_NOTE",
-    "NOTE_TOOLS", "NOTE_WRITE_TOOLS", "REMOVE_LIFE_AREAS", "REPLACE_NOTE_TEXT", "SET_NOTE_TYPE", "STATUS_SENTENCES",
+    "NOTE_TOOLS", "NOTE_WRITE_TOOLS", "ONE_TARGET", "WHOLE_DRIVE_NAME", "REMOVE_LIFE_AREAS", "REPLACE_NOTE_TEXT", "SET_NOTE_TYPE", "STATUS_SENTENCES",
     "UNDO_NOTE", "drive_note_tool_declarations", "erase_request_line", "note_receipt_line", "note_view_text",
 ]

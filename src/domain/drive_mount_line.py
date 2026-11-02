@@ -1,4 +1,4 @@
-"""One line of the drive specialist's `drives` block and of the `/` listing (MULTI_DRIVE_RFC §11.2):
+"""One line of the drive specialist's `drives` block and of the `/` listing (MULTI_DRIVE_RFC §11.2, §11.8, §11.10):
 `drive_mounts.mount_line` builds it, `drive_mounts.render_mount_line` prints it."""
 from __future__ import annotations
 
@@ -15,5 +15,8 @@ class MountLine:
     primary: bool
     drive: DriveLine                # connected | reconnect needed
     search: Optional[SearchLine]    # None in the `/` listing (no sync-state read there)
-    writable: bool                  # 2a: == primary
-    searched_by_default: bool       # 2a: == primary; 2b: the connection's flag
+    writable: bool                  # the connection has a write folder
+    searched_by_default: bool       # the connection's flag (D4)
+    write_folder: str = ""          # the canonical path of a write folder below the root; "" = the root or unknown
+    write_folder_unknown: bool = False  # a write folder below the root whose path could not be read
+    note: str = ""                  # the owner's note on the drive, already bounded (`drive_note_line`)

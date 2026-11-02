@@ -175,3 +175,26 @@ async def test_no_route_sets_a_cookie_and_no_connect_cookie_is_left_in_the_code(
     assert world.set_cookies() == []
     web = "\n".join(p.read_text(encoding="utf-8") for p in (SRC / "web").rglob("*") if p.suffix in {".py", ".html"})
     assert "_connect_user_id" not in web and "_oauth_state" not in web
+
+
+# ------------------------------------------------------------------------------------- the account chooser, add
+
+@pytest.mark.parametrize("kind", ["gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive"])
+async def test_every_connect_shows_the_account_chooser(world, kind):
+    resp, _ = await world.start(kind)
+    assert "select_account" in _query(resp.headers["Location"])["prompt"].split()
+
+
+async def test_a_reconnect_shows_the_chooser_and_keeps_its_hint(world):
+    await world.connect("gmail")
+    (held,) = await world.held("gmail")
+    resp, _ = await world.start("gmail", query=f"?credential={held.credential_id}")
+    query = _query(resp.headers["Location"])
+    assert "select_account" in query["prompt"].split() and query["login_hint"] == "alex@example.com"
+
+
+async def test_intent_add_stores_an_add_flow_for_the_drive_kind(world):
+    resp, _ = await world.start("microsoft_onedrive", query="?intent=add")
+    assert "select_account" in _query(resp.headers["Location"])["prompt"].split()
+    (flow,) = [doc["value"] for doc in world.flows.values()]
+    assert (flow["intent"], flow["target_id"]) == (FlowIntent.ADD.value, "")

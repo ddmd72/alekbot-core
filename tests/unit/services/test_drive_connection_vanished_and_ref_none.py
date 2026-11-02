@@ -1,6 +1,7 @@
 """Races and contract edges of slice 1b: a connection that vanishes between the liveness check and the settings write is
 "not connected" (indexing and transcription switches), and FileConversionService refuses with the stale-ref line when
 the connections service finds no drive ref in a text `drive_ref` called a drive ref. Technical ids only."""
+from tests.support.drive_access_stub import allow_access
 import pytest
 from unittest.mock import AsyncMock
 
@@ -41,7 +42,7 @@ async def test_file_conversion_refuses_with_the_stale_line_when_no_ref_is_found(
 
     connections.resolve_ref = finds_no_ref     # the service's contract allows None; the file service must still refuse
     svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=AsyncMock(spec=UserDrivePort),
-                                connections=connections)
+                                connections=connections, access=allow_access())
     with pytest.raises(DriveRefRefused) as refused:
         await svc.get_drive_item("drive:a1:item-1", "u1")
     assert refused.value.line == stale_ref_line("drive:a1:item-1")

@@ -1,5 +1,6 @@
 """draft_skill from_file accepts workspace:<path> (AGENT_WORKSPACE_RFC §11.2): read through FileConversionService
 and the workspace port, with its own not-found message. The skill body is still passed inline."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,7 +30,7 @@ def _svc(store, storage=None):
     repo.create_draft.return_value = True
     security = AsyncMock(spec=SecurityPort)
     security.validate.side_effect = _passed
-    conversion = FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store)
+    conversion = FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store, access=allow_access())
     return SkillService(repository=repo, security_port=security, file_conversion=conversion), repo
 
 

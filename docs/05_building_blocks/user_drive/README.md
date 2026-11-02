@@ -66,7 +66,13 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | Where a deleted file's note went; how to find, change, undo or erase it; `$drive-notes erase-all` | §4.24 (deleted files, erase) |
 | "What does the file say about X": how the specialist reads stored passages instead of opening files; the write gate after passages; why a scan is still opened | §4.25 |
 | Which drive a file is on; what a connection, a handle, a ref tag and the primary are; why a ref says "search again" | §1.2, §2.1 |
-| What a disconnect removes and what it keeps; why a connect failed or removed its grant | §1.2, §4.23 (mirror folder) |
+| What a mount, the primary, the write folder and "searched by default" are; why a drive is read-only; why a path was refused | §1.2 (mounts, the access policy) |
+| Which settings the user can change and where (scope, write folder, primary, rename, disconnect); why the bot cannot change them | §1.2 (the access policy), `src/agents/CLAUDE.md` → Drive |
+| Why a folder is or is not indexed; what changing the scope does to the index | §1.2 (scope), §3 (`applied_scope`, skeleton records), §5 |
+| Why a search read one drive or several; what "also on" and `drives not searched` mean; how passages work across drives | §6 (which drives) |
+| Why the mirror folder is where it is, or missing on a drive | §4.23 (the mirror folder) |
+| What a note on a whole drive is; where notes go at a disconnect | §4.24 |
+| What a disconnect removes and what it keeps (index, notes, grant, mirror); why a connect failed or removed its grant | §1.2, §4.23 (mirror folder), §4.24, §7 |
 | Which keys carry the connection and which belong to the user or the drive; why the transcript store survives a purge | §3 (keys by scope) |
 | Where a piece of code lives | §8 |
 
@@ -149,13 +155,50 @@ holds no drive id; the connection's `drive_identity` names the drive.
   relative path in history still resolves there. Below the chat-facing producers paths stay connection-relative (index,
   mirror, stored note snapshots); the mount is added where a value is built for the model. A held former name resolves
   with a notice. `list_folder("/")` lists the drives; the specialist's `drive_state` block carries a `drives` line per live
-  connection. Writes act on the primary only until 2b. Several connections in the Cabinet are stage 2b.
-- **Disconnect** (`DELETE /api/drive/disconnect`): the connection ends first (DISCONNECTED, primary handed on), then its
-  grant is removed under the revoke rule (only when no other connection uses the credential), the adapter's caches are
-  dropped (`forget`), and a `drive_sync` task lets the indexer purge the connection's index. The purge keeps the user's
-  transcript store and first marks the heads the connection's records carried `retained` (I8), so a later connection of
-  the same content re-attaches them without a paid window (§4.23). Mirror roots and ledger describe files on the drive
-  and stay. A disconnect that leaves no primary also turns the deep-research copy off.
+  connection. An unprefixed path is on the primary; with no primary and exactly one live mount it resolves to that
+  mount (a new first drive is read-only and not primary until a write folder is chosen).
+- **Settings and the access policy (slice 2b).** Five settings sit on the connection and are written only by
+  `DriveConnectionService`, from the Cabinet (the specialist has no tool for them; REQ-ARCH-34): `searched_by_default`
+  (an empty `drives` value searches it), the **scope** (`scope_folder_ids`, or `scope_whole_drive`; never both; neither =
+  the feed's default: the App Folder's root, or for an account-wide drive nothing), the **write folder**
+  (`write_folder_id`: None = read-only; `ROOT_FOLDER` = the drive's root, the value of a connection stored before 2b;
+  a connection created from 2b on starts read-only), the **primary** and the **name** (`rename`, with the former names
+  held, §11.8). The first write folder set for a user with no primary makes that connection the primary; a read-only
+  drive cannot be the primary. `set_scope` normalises nested selections (a folder under another selected one is
+  dropped) and refuses a scope that would leave the write folder outside it. Before every provider call
+  `UserDriveService` reads the connection fresh and runs the pure `drive_access_policy.decide`: reads stay inside the
+  scope; writes need a write folder, stay inside its subtree and inside the scope, never rename, move or delete a
+  scope folder or the write folder, and respect the item's own access; a move or copy across drives is refused. Ancestry
+  (`UserDriveService.ancestry`, one `get_change` per level) is walked only when a rule needs it, so the App Folder
+  default costs no extra call. A refusal is a code-built English line that prints no path and never says whether the
+  item exists; the conversion and note services take the access check as a required dependency (fail closed).
+  Code: `src/domain/drive_access_policy.py`, `drive_access_op.py`, `drive_access_decision.py`, `drive_ancestry.py`,
+  `drive_connection_access.py`, `drive_item_access.py`, `drive_setting_refused.py`.
+- **The Cabinet's drive card (slice 2b; `src/web/user_cabinet_app.py`).** `GET /api/drive/connections` returns one row per
+  live connection: `connection_id`, `mount_name`, `kind`, `provider_label`, `account_label`, `state`, `primary`,
+  `write_folder`, `scope` (`whole_drive`, `folders` with paths), `searched_by_default`, `indexing_enabled`,
+  `transcribe_enabled`, the drive `note`, the `indexing` status block, and `reconnect` (the credential id) when the grant
+  is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
+  gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
+  (a missing connection is 404): `/api/drive/connections/<id>/name`, `/scope`, `/write-folder`, `/searched-by-default`,
+  `/indexing`; `PUT /api/drive/primary`; `GET /api/drive/connections/<id>/folders?parent=` (the folder picker for scope
+  and write folder); `DELETE /api/drive/connections/<id>` (disconnect, optional `heir_id`). The scope and write-folder
+  routes read the chains of the chosen folders first (the service makes no provider call). **"Add a drive":** the
+  kind picker comes from `GET /api/connectors`; the button goes to `/auth/connect/<kind>?intent=add` (a reconnect uses
+  `?credential=<id>`). The OAuth flow carries no name, so the name typed in the card is applied after the consent
+  returns, through the rename route. Every connect, add and reconnect shows the provider's account chooser (Google
+  `consent select_account`, Microsoft `select_account`). `/api/drive/status`, `PUT /api/drive/indexing` and
+  `DELETE /api/drive/disconnect` are retired.
+- **Disconnect** (`DriveDisconnectService.disconnect`, per connection; other connections are never touched): the
+  connection ends first (DISCONNECTED, primary handed to the heir), then its drive notes are archived (cleared notes
+  too, §4.24), then its grant is removed under the revoke rule (only when no other live connection uses the
+  credential), the adapter's caches are dropped (`forget`), and a `drive_sync` task lets the indexer purge the
+  connection's index. Every step after the transition is repeatable, so a re-run on a DISCONNECTED connection finishes
+  an interrupted one. The purge keeps the user's transcript store and first marks the heads the connection's records
+  carried `retained` (I8), so a later connection of the same content re-attaches them without a paid window (§4.23).
+  **Removed:** the connection's index, its grant, its live notes (archived). **Kept:** the transcript store, the notes'
+  history, and everything on the drive itself (mirror folder, ledger, files). A disconnect that leaves no primary also
+  turns the deep-research copy off.
 
 ### 1.1 Deep research copies (opt-in)
 
@@ -176,8 +219,8 @@ HTML, with no indexer change.
 ## 2. Architecture
 
 ```
-Cabinet  PUT /api/drive/indexing {"enabled": true|false}
-           → DriveConnection.indexing_enabled (the card's connection) + drive_sync task (toggle key)
+Cabinet  PUT /api/drive/connections/<connection_id>/indexing {"enabled": true|false}
+           → DriveConnection.indexing_enabled + drive_sync task (toggle key)
 Cloud Scheduler every 10 min (minutes 3, 13, …) → main /worker start_drive_sync
            → DriveSyncSchedulerService: one drive_sync task {user_id, connection_id} per ACTIVE connection with indexing on
              (tick key `{connection_id}:tick:…`), staleness alert, cap alert, reconnect notice
@@ -267,6 +310,12 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   recording on any connection share one), the mirror roots `{user_id}:{drive_identity}`, the mirror ledger
   `{user_id}:{kind}:{sha256(mirror identity / source identity)[:32]}`, and owner notes. Firestore indexes use
   `connection_id` (records, chunks) or `drive_identity` (the ledger) in place of `user_id` forms.
+- **Scope on the index (slice 2b).** The sync state carries `applied_scope`, the key of the scope the stored records were
+  built under (`drive_access_policy.scope_key`); a tick that sees a different key restarts the feed (cursor cleared, epoch
+  plus one), and the epoch sweep drops what the new scope no longer holds. On an account-wide feed a change is kept only
+  when its parent chain reaches a scope folder; the folders on the way from the root to a scope folder are stored as
+  **skeleton ancestor records** (`Reason.SCOPE_ANCESTOR`, no card, never searchable) so printed paths resolve. The pure
+  rule is `src/domain/drive_index_scope.py`. Search applies the same scope as a second line (§6).
 - **One record per drive item** (`DriveIndexRecord`, doc id `{connection_id}:{item_id}`). Besides the observation it stores
   the neutral `identity`, the `content_identity` (family, digest, size; None when the provider gave no hash) and the typed
   `media` facts (taken date, camera, location, image and video size, durations, `package`, `malware`, `alias_of`). It stores the last observation
@@ -1450,6 +1499,10 @@ audio still running at the provider (it will be billed) and releases the rest.
 
 #### The mirror folder (T2, RFC §27.9; live since 2026-10-21, owner)
 
+**Where it lives with several drives (slice 2b).** The folder sits under the connection's **write folder**: a drive with
+no write folder (read-only) gets no mirror (the tick counts `mirror_no_write_folder`), and when the owner moves the write
+folder the mirror follows. The orphan-root audit (`MIRROR_AUDIT_DAYS`) lists the write folder, so a root created there is found.
+
 **In plain English.** With transcription on, the bot also writes each transcript as a Markdown file into a folder it owns on the drive, so the
 owner can read a transcript on his phone without asking the bot. The folder is **`_Transcripts`** at the App Folder root (D49: the underscore says
 "system folder", the name is the same in every UI language). Inside it the tree of the source folders is repeated, and a recording
@@ -1534,6 +1587,12 @@ first run makes the bot create `_Transcripts (Alek)`.
 adapter-built item identity (it outlives a connection, so a reconnect finds the note again), and the tagged ref key
 `r:{tag}:{item_id}` (`drive_note.tagged_ref_key`), which resolves a `drive:<tag>:<item_id>` ref. A note's binding carries
 the connection's ref tag. Notes written before the connections were wiped at the slice 1b deploy; nothing is migrated.
+
+**A note on a whole drive (slice 2b).** The same store holds a note about a whole drive, bound by `c:{connection_id}`
+(`drive_note.connection_binding_key`) instead of `i:`/`r:`. The note tools take exactly one target: `item_ref` (a file or
+folder) or `whole_drive_name` (a current or held former drive name); both or neither are refused. A rename changes nothing in the
+note. A receipt names the drive ("drive {name}", the same `DRIVE_NOTE_SAVED` message). Drive notes are never dormant. **At a disconnect** the connection's notes (the cleared ones too, `DriveNoteRepository.cleared`)
+are archived, so the deleted-files search still finds them (§1.2).
 
 **In plain English.** The owner tells the bot what a file or folder is ("this one is the bathroom repair invoice from Reformas
 Exemplo; it's an invoice, not a receipt"), or says "yes" when the bot proposes it. The bot keeps that as a **note**
@@ -1721,7 +1780,10 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
 
 `DriveIndexingService.tick(scope, nudge)` runs only on the indexer service, one connection at a time. The `drive_sync`
 payload is `{user_id, connection_id}` (plus the nudge); a payload without a connection is refused. The fan-out lists the
-`ACTIVE` connections with indexing on, so a user with two drives gets two ticks, each under its own lease.
+`ACTIVE` connections with indexing on, so a user with two drives gets two ticks, each under its own lease. Caps are
+per drive (the alert texts say "per drive"). **Scope (slice 2b):** the tick compares the sync state's `applied_scope` with
+the connection's scope key; a change restarts the feed and an out-of-scope held record is removed through the planner
+(§3). The account-wide feed's ancestry filter reads unseen parents by `get_change`, memoised per tick.
 1. **Gate** (`access_action` in `drive_index_planner.py`), from Firestore, never from the agent cache, on the connection
    and its sync state: connection absent or DISCONNECTED → purge, retaining the paid transcripts its records carried (I8;
    nothing stored → `disabled`); indexing off with anything stored → purge; indexing off with nothing stored →
@@ -1802,10 +1864,18 @@ user's words in one language — a name, a place, a person, a topic, a **documen
 A file format goes in `kind`; **a time span ("last year", "2023–2024") goes in the date fields**, not in the
 words. No query-time model, no modes, no new fields (D19, D28): one query embedding is the only call.
 
-**Which drive (slice 2a).** `search_drive` and `find_passages` take an optional `drives` (one drive name, as `drive_state`
-lists it; a comma list is refused until 2b). Empty searches the drive the `folder` names, else the primary. A folder that
-starts with a drive's name is searched on that drive; an unprefixed folder is in the named drive; a prefix naming another
-drive is refused. An unknown name is refused with the list of drives. Every live drive not searched is named: tiered
+**Which drives (slices 2a, 2b).** `search_drive` and `find_passages` take an optional `drives` (drive names, comma-separated,
+as `drive_state` lists them). Empty searches the drive the `folder` names, else every drive **searched by default**
+(none flagged: the primary). A folder that starts with a drive's name is searched on that drive; an unprefixed folder is
+in the named drive; a prefix naming another drive is refused. An unknown name is refused with the list of drives. One
+search runs per connection over its own index, then `merge_results` (`src/domain/drive_search_merge.py`) joins them: cards
+in (tier, mount order, own rank) order, mount order = primary first then by name; tier totals summed; coverage combined
+so anything one drive could not see stays named. Identical content on two drives (same content hash and family) is one
+card whose other copies' canonical paths are listed under `also on`. Passages are fetched per drive and merged the same
+way; their ledger is keyed by ref tag because item ids can repeat across drives. Each drive's search skips records
+outside that connection's scope (while a narrowed scope is still being re-indexed), and a failed capability lookup
+leaves that filter off with a warning after the summary line. A drive that cannot be searched (indexing off,
+disconnected) is named, not fatal. Every live drive not searched is named: tiered
 results end the coverage line with `drives not searched: …` (coverage becomes incomplete, so "complete" stays a reliable
 not-found), other results add a `Not searched:` sentence, and the reading line `R_NOT_SEARCHED` tells the specialist to
 say so. `read_passages` takes no `drives` (its ref names the drive). Note receipts print the canonical path with the
@@ -2216,6 +2286,11 @@ and index-time descriptions instead of query-time ranking. The full delta table 
 
 ## 7. Operations
 
+- **Several drives (slice 2b).** A disconnect is per connection (§1.2): look for the connection's state, then the
+  archived notes (`cleared()` lists the cleared ones the archive also takes), then the credential, then the purge task. A
+  scope change shows as a new `applied_scope` on the sync state and a feed restart in the tick (§3, §5); a drive that
+  suddenly lists nothing is first a scope or a missing write folder, not an index fault. A search warning
+  `capabilities of a connection failed, scope filter off` means only the second-line filter was skipped.
 - **Open bound lines** (main service, `make fetch-logs`; RFC §29): `[DriveOperations] open refused` (a pageable text over the cap
   was not downloaded), `open cut` (the head was delivered; `extent=` says why), `opened vision` (what the unbounded vision path
   delivers: the trigger to revisit is born-digital PDFs above about 30 pages opened often), and `extent lookup failed` (the open went
@@ -2265,7 +2340,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   incident alerts again. Counted on each fan-out pass for a user with indexing on by `count_capped`: two count
   aggregations with equality filters only, served by the single-field indexes (no composite index). The tick keeps no
   running count of held files (its `capped` is a per-tick event count on the log line). No user-facing message.
-- **Cabinet.** `/api/drive/status` reads the indexing block in its own try: on failure it logs ERROR and leaves the
+- **Cabinet.** `GET /api/drive/connections` reads each row's indexing block in its own try: on failure it logs ERROR and leaves the
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
   days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44). From Slice 2+4
@@ -2551,6 +2626,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Owner notes on files (§4.24) | `src/domain/drive_note*.py`, `src/services/drive_note_service.py`, `drive_note_lifecycle.py`, `drive_note_deleted_search.py`, `src/infrastructure/drive_note_tools.py`, `src/adapters/firestore_drive_note_repo.py`, `src/composition/drive_note_setup.py`; prompt `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
+| Access policy and settings (§1.2; slice 2b) | `src/domain/drive_access_policy.py`, `drive_access_op.py`, `drive_access_decision.py`, `drive_ancestry.py`, `drive_connection_access.py`, `drive_item_access.py`, `drive_setting_refused.py`, `drive_index_scope.py`, `drive_feed_scope.py`; services `src/services/drive_connection_service.py` (settings, rename), `drive_disconnect_service.py`, `user_drive_service.py` (`ancestry`) |
+| Search across drives (§6; slice 2b) | `src/domain/drive_search_merge.py` (`merge_results`, `merge_excerpts`), `drive_excerpt_ledger.py`, `src/services/drive_search_service.py` |
 | Connections (§1.2) | domain `src/domain/drive_connection.py`, `drive_connection_state.py`, `drive_connection_status.py`, `drive_handle.py`, `connection_scope.py`, `drive_user_settings.py`, `drive_ref.py`, `drive_untagged_ref.py`, `drive_ref_refusal.py`, `drive_resolved_ref.py`, `drive_capabilities.py`, `drive_media_facts.py`, `drive_content_identity.py`, `drive_media_source.py`; port `src/ports/drive_connection_repository.py`; adapter `src/adapters/firestore_drive_connection_repo.py`; service `src/services/drive_connection_service.py`; wiring `src/composition/drive_connection_setup.py` (the drive activation), `drive_provider_router.py`, `connector_registry.py`; scripts `scripts/infrastructure/drive_wipe.py`, `drive_connection_arg.py` |
 | Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py`, `src/ports/drive_connection_repository.py` |
 | Adapters | `src/adapters/microsoft/onedrive_adapter.py`, `src/adapters/firestore_drive_index_repo.py`, `src/adapters/in_memory_drive_index_repo.py` |

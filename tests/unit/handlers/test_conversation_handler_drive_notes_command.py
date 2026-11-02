@@ -82,7 +82,7 @@ class Env:
         codes = iter(f"c0ffe{i}" for i in range(10))
         self.service = DriveNoteService(
             self.notes, self.drive, AsyncMock(spec=DriveIndexRepository), AsyncMock(spec=EmbeddingService),
-            AsyncMock(spec=SecurityPort), connection_service(self.connections), embedding_space="s", nudge_queue=self.queue,
+            AsyncMock(spec=SecurityPort), connection_service(self.connections), access=AsyncMock(), embedding_space="s", nudge_queue=self.queue,
             erase_requests=self.store, clock=clock, new_code=lambda: next(codes))
         self.coordinator = MagicMock()
         self.handler = ConversationHandler(

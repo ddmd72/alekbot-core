@@ -12,6 +12,10 @@ instead of using file_conversion utilities directly.
 A `drive:<tag>:<item_id>` ref is resolved to its connection's handle through the injected
 DriveConnectionService before any drive call (MULTI_DRIVE_RFC §9); a ref that resolves to no live
 connection raises DriveRefRefused with the code-built line (D13).
+
+Access policy (MULTI_DRIVE_RFC §11.3, slice 2b): a drive ref is model-supplied, so its item is read through ONE helper,
+`_drive_item`, that runs the READ check of the injected `access` (UserDriveService) after the metadata read and before
+any download or any text that prints the item's path. `access` is required: a service without it would skip the check.
 """
 import mimetypes
 import os
@@ -21,6 +25,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 import aiofiles
 
 from ..domain import drive_ref
+from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
@@ -55,6 +60,7 @@ if TYPE_CHECKING:
     from ..ports.workspace_store_port import WorkspaceStorePort
     from .drive_connection_service import DriveConnectionService
     from .skill_file_resolver import SkillFileResolver
+    from .user_drive_service import UserDriveService
 
 
 def _is_delivered_key(ref: str) -> bool:
@@ -100,6 +106,8 @@ class FileConversionService:
         drive: Optional["UserDrivePort"] = None,
         workspace: Optional["WorkspaceStorePort"] = None,
         connections: Optional["DriveConnectionService"] = None,
+        *,
+        access: "UserDriveService",
     ) -> None:
         self._storage = storage
         self._audio_service = audio_service
@@ -117,6 +125,8 @@ class FileConversionService:
         # workspace:<path> refs (AGENT_WORKSPACE_RFC §12) — the port, not WorkspaceService, so there is no
         # service-to-service import and no cycle (REQ-ARCH-22). None → workspace refs are unavailable.
         self._workspace = workspace
+        # The access policy of the user's drives (MULTI_DRIVE_RFC §11.3): required, so an unwired service cannot skip it.
+        self._access = access
 
     async def _read_skill(self, ref: str, user_id: str) -> str:
         if self._skill_files is None:
@@ -126,8 +136,15 @@ class FileConversionService:
     async def get_drive_item(self, ref: str, user_id: str) -> DriveItem:
         """Metadata of a `drive:` ref. FileNotFoundError when it is not one or no drive is wired; DriveRefRefused
         (with its line) when it resolves to no live connection of the user."""
+        return (await self._drive_item(ref, user_id))[1]
+
+    async def _drive_item(self, ref: str, user_id: str) -> Tuple[DriveHandle, DriveItem]:
+        """The handle and metadata of a drive ref's item, once the access policy allows READ of it (checked right after
+        the metadata read, before any download or any text that prints the path)."""
         handle, item_id = await self._drive_target(ref, user_id)
-        return await self._require_drive().get_item(handle, item_id)
+        item = await self._require_drive().get_item(handle, item_id)
+        await self._access.check_access(handle, AccessOp.READ, item=item)
+        return handle, item
 
     async def _drive_target(self, ref: str, user_id: str) -> Tuple[DriveHandle, str]:
         """The handle of the connection a `drive:<tag>:<item_id>` ref names, and the item id (MULTI_DRIVE_RFC §9)."""
@@ -146,8 +163,7 @@ class FileConversionService:
         return self._drive
 
     async def _resolve_drive_content(self, ref: str, user_id: str) -> str:
-        handle, item_id = await self._drive_target(ref, user_id)
-        item = await self._require_drive().get_item(handle, item_id)
+        handle, item = await self._drive_item(ref, user_id)
         if item.is_folder:
             return (f"[System: '{item.path or '/'}' is a folder, not a file. "
                     f"List the folder to see what is inside.]")
@@ -170,8 +186,7 @@ class FileConversionService:
                 logger.debug("Failed to remove temp file %s", tmp_path)
 
     async def _resolve_drive_bytes(self, ref: str, user_id: str) -> bytes:
-        handle, item_id = await self._drive_target(ref, user_id)
-        item = await self._require_drive().get_item(handle, item_id)
+        handle, item = await self._drive_item(ref, user_id)
         if item.is_folder:
             raise DrivePathError(f"'{item.path or '/'}' is a folder, not a file")
         if item.size_bytes > MAX_DRIVE_DOWNLOAD_BYTES:

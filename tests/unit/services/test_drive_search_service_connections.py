@@ -2,6 +2,7 @@
 read and the Cabinet status read; the connection's own indexing switch and status in the gate; a ref of no live
 connection raises its code-built line; refs of two drives in one passages call are refused. The index reads here stop
 at the gate (a sync state stub keyed by connection scope, part C's port convention)."""
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from unittest.mock import AsyncMock
@@ -53,9 +54,12 @@ async def world():
     return w
 
 
-async def _two(world, *, first_indexing: bool = True):
+async def _two(world, *, first_indexing: bool = True, second_searched: bool = True):
     one = await seed(world.repo, connection_id="conn-1", tag="a1", indexing_enabled=first_indexing)
     two = await seed(world.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, created_at=T1)
+    if not second_searched:     # slice 2b (D4): the second drive is searched only when named
+        two = replace(two, searched_by_default=False)
+        world.repo.connections[("usr-1", "conn-2")] = two
     return one, two
 
 
@@ -65,12 +69,14 @@ class TestSearchReadsOneConnection:
         assert result.status == STATUS_DISCONNECTED and world.index.asked == []
 
     async def test_the_primarys_switch_off_is_disabled(self, world):
-        await _two(world, first_indexing=False)
+        # slice 2b (E9): an empty `drives` reads every drive searched by default; here only the primary is
+        await _two(world, first_indexing=False, second_searched=False)
         result = await world.service.search("usr-1", DriveSearchRequest(query="plan"))
         assert result.status == STATUS_DISABLED
 
     async def test_the_primarys_index_is_read(self, world):
-        one, _ = await _two(world)
+        # slice 2b (E9): an empty `drives` reads every drive searched by default; here only the primary is
+        one, _ = await _two(world, second_searched=False)
         result = await world.service.search("usr-1", DriveSearchRequest(query="plan"))
         assert result.status == STATUS_OK and result.envelope.building and not result.envelope.reconnect_needed
         assert world.index.asked == [one.scope]

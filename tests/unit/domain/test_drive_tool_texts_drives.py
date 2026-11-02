@@ -20,8 +20,10 @@ def test_no_other_tool_declares_drives():
     assert "drives" not in _params(tt.READ_PASSAGES) and "drives" not in _params(tt.OPEN_DRIVE_FILE)
 
 
-def test_the_drives_text_names_one_drive_and_the_primary_default():
-    assert "one drive" in tt.DRIVES and "primary" in tt.DRIVES and "drive_state" in tt.DRIVES
+def test_the_drives_text_names_several_drives_and_the_searched_by_default_default():
+    # slice 2b (design P-C, E9): names comma-separated; empty searches every drive searched by default
+    assert "comma-separated" in tt.DRIVES and "every drive searched by default" in tt.DRIVES
+    assert "drive_state" in tt.DRIVES and "one drive" not in tt.DRIVES and "primary" not in tt.DRIVES
 
 
 def test_the_file_refs_text_says_drives_is_not_used_with_them():
