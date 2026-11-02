@@ -11,7 +11,10 @@ from ..services.session_service import SessionService
 from ..services.credential_revocation_service import CredentialRevocationService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_connection_service import DriveConnectionService
+from ..services.drive_disconnect_service import DriveDisconnectService
+from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
+from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.localization_service import LocalizationService
@@ -20,10 +23,11 @@ from ..domain.email import GMAIL_INDEX_PROVIDER
 from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
-from ..domain.drive_connection import DriveConnection
+from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
+from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
-from ..domain.user_drive import DriveNotConnectedError
+from ..domain.user_drive import DriveItemNotFoundError, DriveNotConnectedError
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_review_answers import deciding_answer
 from ..domain.fact_review_digest import last_actor
@@ -43,7 +47,6 @@ from ..ports.task_queue import TaskQueue
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
-from ..ports.user_drive_port import UserDrivePort
 from ..utils.logger import exc_brief, logger
 from .cabinet_auth import make_auth_required
 
@@ -79,7 +82,7 @@ def create_user_cabinet_blueprint(
     agent_note_port: Optional[AgentNotePort] = None,
     recurrence_port: Optional[RecurrencePort] = None,
     twilio_verify_client: Optional[Any] = None,
-    user_drive: Optional[UserDrivePort] = None,
+    user_drive_service: Optional[UserDriveService] = None,
     drive_search_service: Optional[DriveSearchService] = None,
     drive_task_queue: Optional[TaskQueue] = None,
     drive_transcribe_switch_on: bool = False,
@@ -90,15 +93,17 @@ def create_user_cabinet_blueprint(
     reconnect: Optional[IntegrationReconnectService] = None,
     connectors: Optional[ConnectorRegistry] = None,
     drive_connections: Optional[DriveConnectionService] = None,
+    drive_notes: Optional[DriveNoteService] = None,
+    drive_disconnect: Optional[DriveDisconnectService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
 
     `credential_revocation` removes a stored grant under the revoke rule (MULTI_DRIVE_RFC §4.3): the Gmail, Google
     Tasks and drive disconnects go through it (501 without it). `connectors` is the connector registry: the cards' kinds
-    and `GET /api/connectors`. `drive_connections` owns the drive connections (§4.4): until stage 2's connection list
-    the drive card acts on one connection, the primary or else the oldest live one; `user_drive` (the router) only drops
-    a disconnected connection's caches.
+    and `GET /api/connectors`. `drive_connections` owns the drive connections (§4.4) and `user_drive_service` reads the
+    folders the pickers show and the chains `set_scope` / `set_write_folder` need; `drive_notes` gives each drive's note;
+    `drive_disconnect` runs a disconnect (the Cabinet is its only caller, REQ-ARCH-34).
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -1486,26 +1491,6 @@ def create_user_cabinet_blueprint(
                               "closed": status.initial_build_closed},
         }
 
-    async def _current_connection(user_id: str) -> Optional[DriveConnection]:
-        """The connection the drive card acts on until stage 2 (MULTI_DRIVE_RFC §11.7): the primary, else the oldest
-        live one (a primary that needs a reconnect is still the card's drive). Callers check `drive_connections`."""
-        if drive_connections is None:
-            return None
-        primary = await drive_connections.primary(user_id)
-        if primary is not None:
-            return primary
-        live = await drive_connections.list_for_user(user_id)
-        return live[0] if live else None
-
-    def _drive_label(connection: Optional[DriveConnection]) -> str:
-        """The provider's display name from the registry (never a literal here)."""
-        if connectors is None:
-            return ""
-        if connection is not None:
-            return connectors.get(connection.kind).label
-        kinds = connectors.kinds(Integration.DRIVE)
-        return connectors.get(kinds[0]).label if kinds else ""
-
     async def _has_credential(connection: DriveConnection) -> bool:
         """The connection's grant is stored (plaintext keys only, never a decrypt, E28)."""
         if oauth_credentials_port is None:
@@ -1525,44 +1510,6 @@ def create_user_cabinet_blueprint(
             logger.warning(f"Drive status: reading the transcript folder failed: {exc_brief(exc)}")
             return False
 
-    @bp.route("/api/drive/status", methods=["GET"])
-    @auth_required
-    async def drive_status():
-        """The drive card's connection (`_current_connection`); with indexing wired, the index too
-        (USER_DRIVE_INDEXING_RFC §6). A live connection whose grant is gone reads not connected, with Reconnect (R1)."""
-        if drive_connections is None:
-            return jsonify({"connected": False, "provider": ""}), 200
-        connection: Optional[DriveConnection] = None
-        try:
-            connection = await _current_connection(g.user_id)
-            connected = connection is not None and await _has_credential(connection)
-            body: dict = {
-                "connected": connected,
-                "provider": _drive_label(connection),
-                # The grant was rejected on refresh (§7.7): still stored, but only a reconnect helps.
-                "needs_reconnect": bool(connected and connection is not None
-                                        and connection.state is ConnectionState.NEEDS_RECONNECT),
-            }
-            if reconnect is not None and not connected:
-                body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.DRIVE)
-            if connected and connection is not None:
-                # the Cabinet's Reconnect link names it (`/auth/connect/<kind>?credential=<id>`)
-                body["credential_id"] = connection.credential_id
-        except Exception as exc:
-            logger.error(f"Error fetching drive status: {exc}", exc_info=True)
-            return jsonify({"error": "Internal server error"}), 500
-        if drive_search_service is not None:
-            try:
-                body["indexing"] = _indexing_json(await drive_search_service.indexing_status(g.user_id))
-                # The transcription disclosure shows only while the connection's own switch is on (§27.12, G24).
-                body["indexing"]["transcribe_enabled"] = _transcribe_enabled(connection)
-                # The bot's _Transcripts folder outlives an opt-out; its disclosure clause shows whenever one exists (Δ202).
-                body["indexing"]["mirror_root"] = await _mirror_root(g.user_id)
-            except Exception as exc:
-                # The connection card (Connect/Disconnect/Reconnect) must not depend on the index read.
-                logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
-        return jsonify(body), 200
-
     async def _nudge(connection: DriveConnection) -> bool:
         """A `drive_sync` task for the connection under a toggle key (RFC Δ2), so the indexer acts without waiting for
         the scheduler round. False (logged) when no drive queue is wired or the enqueue failed."""
@@ -1580,50 +1527,6 @@ def create_user_cabinet_blueprint(
             # The change is saved; the scheduler fan-out reaches the connection within TICK_INTERVAL.
             logger.error(f"Drive change saved but the sync task was not queued: {exc}", exc_info=True)
             return False
-
-    @bp.route("/api/drive/indexing", methods=["GET"])
-    @auth_required
-    async def drive_indexing_get():
-        """Whether drive indexing (search over the drive) is on for the card's connection (false with none)."""
-        if drive_connections is None:
-            return jsonify({"enabled": False}), 200
-        try:
-            connection = await _current_connection(g.user_id)
-            return jsonify({"enabled": bool(connection is not None and connection.indexing_enabled)}), 200
-        except Exception as exc:
-            logger.error(f"Error fetching drive indexing setting: {exc}", exc_info=True)
-            return jsonify({"error": "Internal server error"}), 500
-
-    @bp.route("/api/drive/indexing", methods=["PUT"])
-    @auth_required
-    async def drive_indexing_set():
-        """Turn drive indexing on or off for the card's connection (the primary until stage 2). Body: {"enabled": bool}.
-
-        Off purges the connection's index (an explicit request, §6); search reads the switch uncached, so the index is
-        hidden at once. Either way, with a drive queue wired, a `drive_sync` task for the connection is enqueued under
-        a toggle key (RFC Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler round.
-        With no drive queue the switch is saved, a WARNING is logged and nothing runs (`queued` false). 404 when no
-        drive is connected."""
-        if drive_connections is None:
-            return jsonify({"error": "Drive integration not configured"}), 501
-        try:
-            body = await request.get_json(force=True) or {}
-            enabled = body.get("enabled")
-            if not isinstance(enabled, bool):
-                return jsonify({"error": "enabled (bool) required"}), 400
-            connection = await _current_connection(g.user_id)
-            if connection is None:
-                return jsonify({"error": "Drive not connected"}), 404
-            connection = await drive_connections.set_indexing(g.user_id, connection.connection_id, enabled)
-        except DriveNotConnectedError:
-            return jsonify({"error": "Drive not connected"}), 404
-        except Exception as exc:
-            logger.error(f"Error updating drive indexing setting: {exc}", exc_info=True)
-            return jsonify({"error": "Internal server error"}), 500
-        queued = await _nudge(connection)
-        logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} "
-                    f"connection={connection.connection_id[:8]} (queued={queued})")
-        return jsonify({"enabled": enabled, "queued": queued}), 200
 
     @bp.route("/api/drive/deep-research-copy", methods=["GET"])
     @auth_required
@@ -1662,35 +1565,267 @@ def create_user_cabinet_blueprint(
         logger.info(f"📁 Deep research drive copy {'on' if enabled else 'off'} for user={g.user_id[:8]}")
         return jsonify({"enabled": enabled}), 200
 
-    @bp.route("/api/drive/disconnect", methods=["DELETE"])
-    @auth_required
-    async def drive_disconnect():
-        """Disconnect the card's drive (MULTI_DRIVE_RFC §4.3, §4.4, D9): the connection ends (DISCONNECTED; its tag stays
-        reserved, a later connect is a new connection; the primary passes to another drive or is cleared), then its
-        grant is removed under the revoke rule, the adapter's caches are dropped, and a `drive_sync` task for the
-        connection lets the indexer purge its index. No connection: nothing to do."""
-        if drive_connections is None or credential_revocation is None:
-            return jsonify({"error": "Drive integration not configured"}), 501
-        try:
-            connection = await _current_connection(g.user_id)
-            if connection is None:
-                return jsonify({"success": True}), 200
-            # The connection ends first, so R1 never reads a live connection without its grant.
-            await drive_connections.disconnect(g.user_id, connection.connection_id)
-            still_used = any(c.credential_id == connection.credential_id
-                             for c in await drive_connections.list_for_user(g.user_id))
-            if not still_used:
-                await credential_revocation.remove(g.user_id, connection.credential_id)
-            logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]} connection={connection.connection_id[:8]}")
-        except Exception as exc:
-            logger.error(f"Error disconnecting drive: {exc}", exc_info=True)
-            return jsonify({"error": "Internal server error"}), 500
-        if user_drive is not None:
+    # ---- connection list and per-connection settings (MULTI_DRIVE_RFC §11.7-§11.9) ------------------------------
+    # Every route below sits behind `auth_required` and acts only on the caller's own connections: a connection id
+    # of another user (or an unknown / disconnected one) answers 404, as the user's own lookup finds nothing.
+
+    def drive_route(handler):
+        """Map the drive services' refusals to the Cabinet's answers: a rule's line → 400 `{error: line}`, a missing
+        connection → 404, anything else → 500 (logged)."""
+        @wraps(handler)
+        async def wrapper(*args, **kwargs):
+            if drive_connections is None:
+                return jsonify({"error": "Drive integration not configured"}), 501
             try:
-                await user_drive.forget(connection.handle)
+                return await handler(*args, **kwargs)
+            except DriveSettingRefused as refused:
+                return jsonify({"error": refused.line}), 400
+            except DriveNotConnectedError:
+                return jsonify({"error": "Drive not connected"}), 404
+            except DriveItemNotFoundError:
+                return jsonify({"error": "Folder not found"}), 404
             except Exception as exc:
-                logger.warning(f"Dropping the disconnected drive's caches failed: {exc_brief(exc)}")
-        await _nudge(connection)
+                logger.error(f"Error in drive route {handler.__name__}: {exc}", exc_info=True)
+                return jsonify({"error": "Internal server error"}), 500
+        return wrapper
+
+    async def _own_connection(user_id: str, connection_id: str) -> DriveConnection:
+        """The caller's live connection `connection_id`; DriveNotConnectedError for an unknown, another user's or
+        DISCONNECTED one (the lookup is scoped by the caller's user id)."""
+        connection = await drive_connections.get(user_id, connection_id)
+        if connection is None or connection.state is ConnectionState.DISCONNECTED:
+            raise DriveNotConnectedError("The drive connection is absent")
+        return connection
+
+    async def _json_body() -> dict:
+        body = await request.get_json(force=True, silent=True)
+        return body if isinstance(body, dict) else {}
+
+    async def _item_path(connection: DriveConnection, item_id: str) -> str:
+        """An item's connection-relative path for the pickers' display; "" when unreadable (best effort)."""
+        if user_drive_service is None:
+            return ""
+        try:
+            return (await user_drive_service.get_item(connection.handle, item_id)).path
+        except Exception as exc:
+            logger.warning(f"Drive card: reading a folder path failed: {exc_brief(exc)}")
+            return ""
+
+    async def _write_folder_json(connection: DriveConnection) -> Optional[dict]:
+        if connection.write_folder_id is None:
+            return None
+        if connection.write_folder_id == ROOT_FOLDER:
+            return {"id": ROOT_FOLDER, "path": ""}
+        return {"id": connection.write_folder_id, "path": await _item_path(connection, connection.write_folder_id)}
+
+    async def _account_label(connection: DriveConnection) -> str:
+        """The grant's account label (one decrypt per row), best effort."""
+        if oauth_credentials_port is None:
+            return ""
+        try:
+            credential = await oauth_credentials_port.get(connection.user_id, connection.credential_id)
+            return credential.account.label if credential is not None else ""
+        except Exception as exc:
+            logger.warning(f"Drive card: reading the account label failed: {exc_brief(exc)}")
+            return ""
+
+    async def _connection_row(connection: DriveConnection, primary_id: Optional[str], note: str) -> dict:
+        grant_present = await _has_credential(connection)
+        needs_reconnect = connection.state is ConnectionState.NEEDS_RECONNECT or not grant_present
+        row: dict = {
+            "connection_id": connection.connection_id,
+            "mount_name": connection.mount_name,
+            "kind": connection.kind,
+            "provider_label": connectors.get(connection.kind).label if connectors is not None else "",
+            "account_label": await _account_label(connection),
+            "state": connection.state.value,
+            "primary": connection.connection_id == primary_id,
+            "write_folder": await _write_folder_json(connection),
+            "scope": {"whole_drive": connection.scope_whole_drive,
+                      "folders": [{"id": folder, "path": await _item_path(connection, folder)}
+                                  for folder in connection.scope_folder_ids]},
+            "searched_by_default": connection.searched_by_default,
+            "indexing_enabled": connection.indexing_enabled,
+            "transcribe_enabled": _transcribe_enabled(connection),
+            "note": note,
+            "indexing": None,
+            "reconnect": {"credential_id": connection.credential_id} if needs_reconnect else None,
+        }
+        if drive_search_service is not None:
+            try:
+                status = await drive_search_service.indexing_status(connection.user_id,
+                                                                    connection_id=connection.connection_id)
+                row["indexing"] = _indexing_json(status)
+            except Exception as exc:
+                # the list (rename, reconnect, disconnect) must not depend on the index read
+                logger.error(f"Error fetching drive indexing status: {exc}", exc_info=True)
+        return row
+
+    @bp.route("/api/drive/connections", methods=["GET"])
+    @auth_required
+    @drive_route
+    async def drive_connections_list():
+        """The drive card: one row per live connection, the default name "Add a drive" prefills, the primary's id.
+        `reconnect_needed` (R1) tells a user with no live connection that a past one wants its reconnect."""
+        user_id = g.user_id
+        live = await drive_connections.list_for_user(user_id)
+        primary = await drive_connections.primary(user_id)
+        primary_id = primary.connection_id if primary is not None else None
+        notes: dict = {}
+        if drive_notes is not None:
+            try:
+                notes = await drive_notes.drive_note_texts(user_id)
+            except Exception as exc:
+                logger.warning(f"Drive card: reading the drive notes failed: {exc_brief(exc)}")
+        body: dict = {
+            "connections": [await _connection_row(c, primary_id, notes.get(c.connection_id, "")) for c in live],
+            "default_name": await drive_connections.default_name(user_id),
+            "primary_connection_id": primary_id,
+            "mirror_root": await _mirror_root(user_id) if drive_search_service is not None else False,
+        }
+        if reconnect is not None and not live:
+            body["reconnect_needed"] = await _reconnect_needed(user_id, Integration.DRIVE)
+        return jsonify(body), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/name", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_rename(connection_id: str):
+        """Rename a drive. Body: {"name": str}. A refused name → 400 `{error}`; a valid one → `{name, warning}`."""
+        name = (await _json_body()).get("name")
+        if not isinstance(name, str):
+            return jsonify({"error": "name (string) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        top: list = []
+        primary = await drive_connections.primary(g.user_id)
+        if primary is not None and user_drive_service is not None:
+            try:
+                top = await user_drive_service.top_folder_names(primary.handle)
+            except Exception as exc:
+                logger.warning(f"Drive rename: reading the primary's folders failed: {exc_brief(exc)}")
+        check = await drive_connections.rename(g.user_id, connection.connection_id, name, primary_top_folders=top)
+        if not check.ok:
+            return jsonify({"error": check.error}), 400
+        return jsonify({"name": check.name, "warning": check.warning}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/scope", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_scope(connection_id: str):
+        """Set the indexed scope. Body: {"whole_drive": bool, "folder_ids": [str]}. The chains of the write folder and
+        of each selected folder are read first (the service makes no provider call); the change nudges the indexer."""
+        body = await _json_body()
+        whole, ids = body.get("whole_drive"), body.get("folder_ids", [])
+        if not isinstance(whole, bool) or not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+            return jsonify({"error": "whole_drive (bool) and folder_ids (list of ids) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        if user_drive_service is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        handle = connection.handle
+        capabilities = (await user_drive_service.access(handle))[1]
+        memo: dict = {}
+        write = connection.write_folder_id
+        write_ancestry = (await user_drive_service.ancestry(handle, write, memo=memo)
+                          if write not in (None, ROOT_FOLDER) else None)
+        ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in dict.fromkeys(ids)}
+        stored = await drive_connections.set_scope(
+            g.user_id, connection.connection_id, folder_ids=ids, whole_drive=whole, capabilities=capabilities,
+            write_folder_ancestry=write_ancestry, folder_ancestries=ancestries)
+        queued = await _nudge(stored)
+        return jsonify({"whole_drive": stored.scope_whole_drive, "folder_ids": list(stored.scope_folder_ids),
+                        "queued": queued}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/write-folder", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_write_folder(connection_id: str):
+        """Set the write folder. Body: {"folder_id": id | "" (the drive's root) | null (read-only)}."""
+        body = await _json_body()
+        if "folder_id" not in body or not (body["folder_id"] is None or isinstance(body["folder_id"], str)):
+            return jsonify({"error": "folder_id (string or null) required"}), 400
+        folder_id = body["folder_id"]
+        connection = await _own_connection(g.user_id, connection_id)
+        if user_drive_service is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        capabilities = (await user_drive_service.access(connection.handle))[1]
+        ancestry = (await user_drive_service.ancestry(connection.handle, folder_id)
+                    if folder_id not in (None, ROOT_FOLDER) else None)
+        stored = await drive_connections.set_write_folder(g.user_id, connection.connection_id, folder_id,
+                                                          capabilities=capabilities, ancestry=ancestry)
+        return jsonify({"write_folder": await _write_folder_json(stored)}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/searched-by-default", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_searched_by_default(connection_id: str):
+        """Whether an unnamed search reads this drive. Body: {"enabled": bool}."""
+        enabled = (await _json_body()).get("enabled")
+        if not isinstance(enabled, bool):
+            return jsonify({"error": "enabled (bool) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        stored = await drive_connections.set_searched_by_default(g.user_id, connection.connection_id, enabled)
+        return jsonify({"enabled": stored.searched_by_default}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/indexing", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_indexing(connection_id: str):
+        """Turn indexing (search over the drive) on or off for one connection. Body: {"enabled": bool}.
+
+        Off purges the connection's index (an explicit request, §6); search reads the switch uncached, so the index is
+        hidden at once. With a drive queue wired, a `drive_sync` task for the connection is enqueued under a toggle key
+        (RFC Δ2): the tick's gate purges or starts onboarding without waiting for the next scheduler round. With no
+        queue the switch is saved, a WARNING is logged and nothing runs (`queued` false)."""
+        enabled = (await _json_body()).get("enabled")
+        if not isinstance(enabled, bool):
+            return jsonify({"error": "enabled (bool) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        stored = await drive_connections.set_indexing(g.user_id, connection.connection_id, enabled)
+        queued = await _nudge(stored)
+        logger.info(f"🗂️ Drive indexing {'on' if enabled else 'off'} for user={g.user_id[:8]} "
+                    f"connection={connection.connection_id[:8]} (queued={queued})")
+        return jsonify({"enabled": enabled, "queued": queued}), 200
+
+    @bp.route("/api/drive/primary", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_primary_set():
+        """Make a connection the primary. Body: {"connection_id": str}."""
+        connection_id = (await _json_body()).get("connection_id")
+        if not isinstance(connection_id, str) or not connection_id:
+            return jsonify({"error": "connection_id (string) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        await drive_connections.set_primary(g.user_id, connection.connection_id)
+        return jsonify({"primary_connection_id": connection.connection_id}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/folders", methods=["GET"])
+    @auth_required
+    @drive_route
+    async def drive_connection_folders(connection_id: str):
+        """The folder picker: the folder children of `?parent=<item id>` (the root without it)."""
+        connection = await _own_connection(g.user_id, connection_id)
+        if user_drive_service is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        parent = request.args.get("parent") or None
+        folders = await user_drive_service.picker_folders(connection.handle, parent)
+        return jsonify({"folders": [{"id": f.item_id, "name": f.name, "path": f.path} for f in folders]}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>", methods=["DELETE"])
+    @auth_required
+    @drive_route
+    async def drive_connection_disconnect(connection_id: str):
+        """Disconnect one drive (MULTI_DRIVE_RFC §4.3, §4.4, D9, I2). Body (optional): {"heir_id": str}, the connection
+        that becomes the primary when this one was. `DriveDisconnectService` ends it, archives its notes, removes its
+        grant under the revoke rule, drops the caches and queues the purge; a bad heir → 400 with the line, nothing
+        written. A disconnect that leaves no primary turns the deep research copy off."""
+        if drive_disconnect is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        heir = (await _json_body()).get("heir_id")
+        if heir is not None and not isinstance(heir, str):
+            return jsonify({"error": "heir_id must be a string"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        await drive_disconnect.disconnect(g.user_id, connection.connection_id, heir_id=heir or None)
+        logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]} connection={connection.connection_id[:8]}")
         # The deep research copy needs a drive: a disconnect that leaves no primary turns it off, so the switch the
         # Cabinet hides while no drive is linked is never left on (owner, 2026-10-14). Best effort: the disconnect
         # already happened.
