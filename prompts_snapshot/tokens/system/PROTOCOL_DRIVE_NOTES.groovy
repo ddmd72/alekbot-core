@@ -35,6 +35,7 @@ uploaded_by: local_script
         ]
 
         which_file: [
+            "A note about a whole drive (what the drive is for, whose files it holds) takes whole_drive_name, the drive's name as drive_state lists it, and no item_ref. A note about a file or a folder, even a top-level folder, always takes item_ref. Never both.",
             "Use the drive: ref the commission names, or the one in the latest search result, listing or [Drive: …] label it points at. When 'this' could be more than one file, ask which one in question, naming the candidates.",
             "A file sent in this chat is not on the drive: save it there first with copy_file_to_drive, then note it by the saved file's ref.",
             "A deleted file's note is kept and archived. To change, undo, remove such a note or erase its history, use the drive_note: ref the deleted-files result shows; the note tools take it as item_ref. A new note on a file that is gone is refused.",

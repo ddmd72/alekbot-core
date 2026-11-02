@@ -115,6 +115,9 @@ Chat attachments are kept for 90 days; to keep a file, ask me to remember it on 
 
 *Your drive (long-term files)*
 Connect your drive in the Cabinet. Then:
+- Several drives: connect more than one in the Cabinet and name each; I search all of them unless you mark one "searched only when named", and a file on two drives shows once, with "also on"
+- "My work drive is Acme files" — I keep a note on a whole drive, like a file note, and use it to tell your drives apart
+- Every drive setting — its name, the folders I index, the folder I may write into, the primary drive, search, indexing, transcription, connect and disconnect — is set in the Cabinet; in chat I only point you there
 - "Remember this file" — I keep it in your drive's Inbox, or in the folder you name, under a clear name
 - "Write this down as a note" — I create a text file (md, txt, csv, json, html and similar) in your drive
 - "What's in Meetings?" — I browse your folders
@@ -229,6 +232,13 @@ Gmail:
 4. Daily review: check "Daily review" → select hour → I send you an inbox digest each morning at that time
 5. Disconnect: "Disconnect" button → confirms via dialog → OAuth revoked, indexed data preserved
 6. Delete indexed data: "Delete Data" link → permanently removes all email facts from memory
+
+Drives (more than one can be connected):
+1. Click "Add a drive" → authorise → the drive appears as a card; give it a name
+2. Choose what I index: the whole drive or only the folders you pick
+3. Choose the one folder I may write into (everything else stays read-only) and which drive is the primary
+4. Set "searched by default" (off: searched only when you name the drive), indexing and transcription per drive
+5. Disconnect: the drive's "Disconnect" button → confirm; if it was the primary you choose the next one; your notes on its files are kept as deleted-file notes
 
 Microsoft To Do:
 1. Click "Connect Microsoft To Do" → authorise via Microsoft account → return to Cabinet
