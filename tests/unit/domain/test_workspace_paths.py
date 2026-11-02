@@ -104,11 +104,11 @@ class TestKinds:
 
 
 class TestCommands:
-    def test_nine_commands_six_mutating(self):
+    def test_ten_commands_seven_mutating(self):
         assert COMMANDS == (
-            "view", "create", "str_replace", "delete", "rename", "copy", "history", "restore", "grep",
+            "view", "create", "str_replace", "insert", "delete", "rename", "copy", "history", "restore", "grep",
         )
-        assert MUTATING_COMMANDS == {"create", "str_replace", "delete", "rename", "copy", "restore"}
+        assert MUTATING_COMMANDS == {"create", "str_replace", "insert", "delete", "rename", "copy", "restore"}
 
 
 class TestGeneration:
