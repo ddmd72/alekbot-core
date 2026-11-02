@@ -42,7 +42,7 @@ async def test_a_note_only_match_is_about_with_the_line_inside_the_wrapper(w):
     c = card(result, noted)
     assert c.owner_note == LINE and "noted by the owner" not in c.summary
     assert c.sources == ('owner\'s note "invoice"', 'owner\'s note "bathroom"')
-    body = _wrapper_of(render_results(result), "scan001.pdf").split("\n")
+    body = _wrapper_of(render_results(result), "Drive/scan001.pdf").split("\n")
     assert body[0] == c.summary and body[1] == LINE
 
 
@@ -50,7 +50,7 @@ async def test_the_owner_type_finds_the_file_and_the_profile_type_is_not_shown_t
     item = w.file("bill.pdf", profile=DriveProfile("Bill", "A bill", "en", "invoice"), **NOTE)
     result = await w.search("contract")
     assert tier_of(result, item) == "about"
-    body = _wrapper_of(render_results(result), "bill.pdf").split("\n")
+    body = _wrapper_of(render_results(result), "Drive/bill.pdf").split("\n")
     assert body[0] == "bill.pdf | PDF document | A bill | Bill" and body[1] == LINE   # the type once, the owner's
 
 
@@ -63,7 +63,7 @@ async def test_a_tag_look_alike_in_a_note_is_neutralised(w):
 async def test_the_summary_cut_never_spends_on_the_note(w):
     long = DriveProfile("T" * 20, "w" * (CARD_RENDER_MAX + 200), "en", "invoice")
     w.file("long.pdf", profile=long, **NOTE)
-    body = _wrapper_of(render_results(await w.search("invoice")), "long.pdf").split("\n")
+    body = _wrapper_of(render_results(await w.search("invoice")), "Drive/long.pdf").split("\n")
     assert len(body[0]) == CARD_RENDER_MAX and body[0].endswith("…") and body[1] == LINE
 
 
@@ -71,7 +71,7 @@ async def test_the_filter_only_listing_renders_the_line(w):
     w.file("scan003.pdf", **NOTE)
     result = await w.search("", kind="pdf")
     assert result.cards and result.cards[0].owner_note == LINE
-    assert LINE in _wrapper_of(render_results(result), "scan003.pdf").split("\n")
+    assert LINE in _wrapper_of(render_results(result), "Drive/scan003.pdf").split("\n")
 
 
 async def test_ambiguous_folder_candidates_render_the_line(w):
@@ -90,7 +90,7 @@ async def test_a_related_card_shows_the_first_120_characters_of_the_line(w):
     w.file("b.pdf")
     result = await w.search("zebra")
     assert tier_of(result, item) == "related"
-    body = _wrapper_of(render_results(result), "a.pdf").split("\n")
+    body = _wrapper_of(render_results(result), "Drive/a.pdf").split("\n")
     assert body[1].startswith("noted by the owner: «bathroom repair invoice") and len(body[1]) == 120
 
 
@@ -101,7 +101,7 @@ async def test_the_accuracy_line_is_unchanged(w):
     result = await w.search("bill")
     assert card(result, noted).card_accuracy == card(result, plain).card_accuracy == 88
     text = render_results(result)
-    assert _wrapper_of(text, "noted.pdf").count("card accuracy: 88%") == 1
+    assert _wrapper_of(text, "Drive/noted.pdf").count("card accuracy: 88%") == 1
 
 
 async def test_the_noted_copy_is_the_collapse_representative(w):
@@ -112,7 +112,7 @@ async def test_the_noted_copy_is_the_collapse_representative(w):
     result = await w.search("bathroom invoice")
     shown = [c.item_id for c in result.cards if c.tier]
     assert noted in shown and first not in shown
-    assert card(result, noted).also_at == ("Bathroom invoice.pdf",)
+    assert card(result, noted).also_at == ("Drive/Bathroom invoice.pdf",)
     lean = (await w.repo.get_records_lean(U_SCOPE, [noted]))[noted]
     assert lean.owner_note_id == "n1"
 

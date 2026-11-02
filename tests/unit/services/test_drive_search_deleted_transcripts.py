@@ -119,11 +119,11 @@ async def test_nothing_matches(svc, mirror):
 async def test_entry_shape_and_wrapper(svc, mirror):
     await mirror.save_doc(_doc(1))
     out = (await svc.search_deleted("u1", "budget")).text
-    assert ("call1.m4a | Calls/call1.m4a | gone from the drive (deleted or moved out of the bot's folder), "
+    assert ("call1.m4a | Drive/Calls/call1.m4a | gone from the drive (deleted or moved out of the bot's folder), "
             "2026-10-05") in out
     assert "transcript: 47 min, 2 speakers, uk/en" in out
-    assert "archived transcript: drive:a1:m1 (_Transcripts/Archive/2026-10-05/call1.md)" in out
-    assert '<drive_document nonce="nonce0001" ref="drive:a1:m1" path="Calls/call1.m4a">' in out
+    assert "archived transcript: drive:a1:m1 (Drive/_Transcripts/Archive/2026-10-05/call1.md)" in out
+    assert '<drive_document nonce="nonce0001" ref="drive:a1:m1" path="Drive/Calls/call1.m4a">' in out
 
 
 async def test_empty_query_lists_the_newest(svc, mirror):
@@ -262,8 +262,8 @@ async def test_shown_mirror_files_are_returned_as_drive_items(svc, mirror):
     found = await svc.search_deleted("u1", "budget")
     out, items = found.text, found.items
     assert [(i.item_id, i.name, i.path, i.is_folder) for i in items] == [
-        ("m2", "call2.md", "_Transcripts/Archive/2026-10-05/call2.md", False),
-        ("m1", "call1.md", "_Transcripts/Archive/2026-10-05/call1.md", False)]
+        ("m2", "call2.md", "Drive/_Transcripts/Archive/2026-10-05/call2.md", False),
+        ("m1", "call1.md", "Drive/_Transcripts/Archive/2026-10-05/call1.md", False)]
 
 
 async def test_refill_checks_are_capped_and_the_rest_counted(svc, mirror, drive):

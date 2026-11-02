@@ -126,7 +126,7 @@ async def test_m1_minor_a_folder_named_by_digits_is_found_by_name():
     year = w.folder("2026", parent=contracts)
     w.file("lease.pdf", parent=year, chunks=["The lease of the flat."])
     result = await w.search("lease", folder="2026")
-    assert result.status == "ok" and result.folder_path == "Contracts/2026"
+    assert result.status == "ok" and result.folder_path == "Drive/Contracts/2026"
 
 
 async def test_m3_minor_a_labelled_card_with_a_grounded_keyword_shows_its_passage():
