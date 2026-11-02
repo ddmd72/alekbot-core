@@ -167,7 +167,7 @@ class TestMultiMatchAndSizes:
 
     def test_3mb_refusal_names_the_fix(self):
         with pytest.raises(WorkspaceRefused) as e:
-            check_file_size("projects/case-log.md", b"a" * (MAX_TEXT_FILE_BYTES + 1))
+            check_file_size("projects/garden-shed-log.md", b"a" * (MAX_TEXT_FILE_BYTES + 1))
         assert str(e.value) == (
-            "projects/case-log.md: text file over 3 MB — rename it to an archive name "
-            "(e.g. projects/case-log-archive-1.md) and start a new file")
+            "projects/garden-shed-log.md: text file over 3 MB — rename it to an archive name "
+            "(e.g. projects/garden-shed-log-archive-1.md) and start a new file")
