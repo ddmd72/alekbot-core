@@ -134,10 +134,11 @@ class TestMountLine:
         assert line.write_folder == "Acme/R&D"
         assert render_mount_line(line) == "- Acme: connected; writable only in Acme/R&D; searched by default"
 
-    def test_a_write_folder_whose_path_was_not_read_prints_writable(self):
+    def test_a_write_folder_whose_path_was_not_read_says_writes_go_to_a_chosen_folder(self):
+        # tool-shape review N2: plain "writable" read as "write anywhere"; the line names the chosen folder instead
         table = mount_table([conn("conn-2", "Acme", "b2", write="f-rd")], None, NOW)
         assert render_mount_line(mount_line(table.mounts[0], None)) == \
-            "- Acme: connected; writable; searched by default"
+            "- Acme: connected; writes go to a chosen folder (its path could not be read); searched by default"
 
     def test_the_root_write_folder_ignores_a_path(self):
         table = mount_table([conn("conn-1", "Drive", "a1")], "conn-1", NOW)
