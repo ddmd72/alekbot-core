@@ -271,13 +271,14 @@ class ServiceContainer:
                 db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
                 embeddings=self.embedding_service, connections=self.drive_connection_service,
                 security_port=shared_security_port,
-                nudge_queue=self.drive_task_queue,
+                nudge_queue=self.drive_task_queue, access=self.user_drive_service,
             )
             # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
             # DRIVE_NOTES_ENABLED says (§3.6). The search service is built under the same condition above.
             if self.drive_search_service is not None:
                 add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
-                                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
+                                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+                                              connections=self.drive_connection_service)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
@@ -440,6 +441,7 @@ class ServiceContainer:
                 drive=self.user_drive,
                 workspace=self.workspace_store,
                 connections=self.drive_connection_service,
+                access=self.user_drive_service,
             )
             if self.file_storage else None
         )

@@ -23,7 +23,7 @@ def _app(user_repo, drive: CabinetDrive):
     app = Quart("test_drive_dr_copy_disconnect")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None, connectors=ConnectorRegistry(),
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
         credential_revocation=drive.revocation,
     ))
@@ -45,33 +45,6 @@ async def _drive() -> CabinetDrive:
 
 async def _disconnected(drive: CabinetDrive) -> bool:
     return (await drive.stored()).state is ConnectionState.DISCONNECTED
-
-
-async def test_disconnect_turns_the_copy_off():
-    repo, profile = _repo(enabled=True)
-    drive = await _drive()
-    async with _app(repo, drive).test_client() as client:
-        resp = await client.delete("/api/drive/disconnect", headers=_AUTH)
-    assert resp.status_code == 200
-    assert await _disconnected(drive)
-    assert profile.config.drive_copy_deep_research is False
-    repo.update_user.assert_awaited_once_with(profile)
-
-
-async def test_disconnect_with_the_copy_off_writes_nothing():
-    repo, profile = _repo(enabled=False)
-    async with _app(repo, await _drive()).test_client() as client:
-        assert (await client.delete("/api/drive/disconnect", headers=_AUTH)).status_code == 200
-    repo.update_user.assert_not_called()
-
-
-async def test_a_failed_reset_does_not_fail_the_disconnect():
-    repo, _ = _repo(enabled=True)
-    repo.update_user.side_effect = RuntimeError("firestore down")
-    drive = await _drive()
-    async with _app(repo, drive).test_client() as client:
-        assert (await client.delete("/api/drive/disconnect", headers=_AUTH)).status_code == 200
-    assert await _disconnected(drive)
 
 
 def test_the_switch_is_offered_only_while_a_drive_is_linked():

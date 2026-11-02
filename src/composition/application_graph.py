@@ -120,6 +120,7 @@ from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.drive_disconnect_service import DriveDisconnectService
 from src.services.oauth_connect_service import OAuthConnectService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_notification_service import UserNotificationService
@@ -153,6 +154,7 @@ class ApplicationGraph:
     # the integration connect flow and the Cabinet's credential removal (MULTI_DRIVE_RFC §4.3, §5.2)
     connect_service: OAuthConnectService
     credential_revocation: CredentialRevocationService
+    drive_disconnect_service: Optional[DriveDisconnectService]    # the Cabinet's drive disconnect (REQ-ARCH-34)
     task_setup_service: Optional[TaskSetupService]
     reconnect_service: IntegrationReconnectService
     twilio_verify_client: Any
@@ -743,6 +745,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # rule, also the Cabinet's disconnects) and one connect service over the registry's specs and realm edges, with
     # one activation per integration. The drive one creates or reconnects the drive connection (§4.4, §5.2).
     _credential_revocation = CredentialRevocationService(oauth_credentials_port, container.connectors.edges())
+    _drive_disconnect = (
+        DriveDisconnectService(container.drive_connection_service, _credential_revocation, container.user_drive,
+                               container.drive_note_repo, container.drive_task_queue)
+        if container.drive_connection_service is not None and container.user_drive is not None else None)
     _drive_activation = (
         build_drive_activation(connections=container.drive_connection_service, drive=container.user_drive,
                                task_queue=container.drive_task_queue)
@@ -1091,6 +1097,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         auth_config=auth_config,
         connect_service=_connect_service,
         credential_revocation=_credential_revocation,
+        drive_disconnect_service=_drive_disconnect,
         task_setup_service=task_setup_service,
         reconnect_service=_reconnect_service,
         twilio_verify_client=twilio_verify_client,

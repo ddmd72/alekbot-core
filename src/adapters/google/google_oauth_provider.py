@@ -63,7 +63,7 @@ class GoogleOAuthProvider(OAuthProviderPort):
             "scope": " ".join(scopes),
             "state": state,
             "access_type": "offline",
-            "prompt": "consent select_account" if flow.intent is FlowIntent.ADD else "consent",
+            "prompt": "consent select_account",
             "code_challenge": _pkce_challenge(flow.pkce_verifier),
             "code_challenge_method": "S256",
         }

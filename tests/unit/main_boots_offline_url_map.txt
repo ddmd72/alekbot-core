@@ -1,5 +1,5 @@
 # main() serves /health twice: the Cabinet's route is registered first and shadows main()'s (design D7)
-DELETE /api/drive/disconnect
+DELETE /api/drive/connections/<connection_id>
 DELETE /api/gmail/data
 DELETE /api/gmail/disconnect
 DELETE /api/tasks/disconnect
@@ -8,9 +8,9 @@ DELETE /api/user/link-platform
 DELETE /api/user/reminders/<note_id>
 GET /
 GET /api/connectors
+GET /api/drive/connections
+GET /api/drive/connections/<connection_id>/folders
 GET /api/drive/deep-research-copy
-GET /api/drive/indexing
-GET /api/drive/status
 GET /api/gmail/auto-index
 GET /api/gmail/daily-review
 GET /api/gmail/jobs/<job_id>
@@ -91,8 +91,13 @@ POST /voice/submit-transcript
 POST /webhook/microsoft-tasks/<user_id>
 POST /webhooks/openai/deep-research
 POST /worker
+PUT /api/drive/connections/<connection_id>/indexing
+PUT /api/drive/connections/<connection_id>/name
+PUT /api/drive/connections/<connection_id>/scope
+PUT /api/drive/connections/<connection_id>/searched-by-default
+PUT /api/drive/connections/<connection_id>/write-folder
 PUT /api/drive/deep-research-copy
-PUT /api/drive/indexing
+PUT /api/drive/primary
 PUT /api/gmail/auto-index
 PUT /api/gmail/daily-review
 PUT /api/user/deep-research

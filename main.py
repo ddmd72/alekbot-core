@@ -116,7 +116,7 @@ async def main():
             agent_note_port=app.container.notes_adapter,
             recurrence_port=app.container.recurrence_adapter,
             twilio_verify_client=app.twilio_verify_client,
-            user_drive=app.container.user_drive,
+            user_drive_service=app.container.user_drive_service,
             drive_search_service=app.container.drive_search_service,
             drive_task_queue=app.container.drive_task_queue,
             drive_transcribe_switch_on=app.container.drive_transcribe_switch_on,
@@ -127,6 +127,8 @@ async def main():
             reconnect=app.reconnect_service,
             connectors=app.container.connectors,
             drive_connections=app.container.drive_connection_service,
+            drive_notes=app.container.drive_note_service,
+            drive_disconnect=app.drive_disconnect_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

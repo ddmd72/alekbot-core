@@ -91,7 +91,7 @@ def _cabinet(p: Probe):
         task_queue=w("task_queue"), task_setup=w("task_setup"), tasks_provider=w("tasks_provider"),
         language_service=w("language_service"), agent_note_port=w("agent_note_port"),
         recurrence_port=w("recurrence_port"), twilio_verify_client=w("twilio_verify_client"),
-        user_drive=w("user_drive"), drive_search_service=w("drive_search_service"),
+        user_drive_service=w("user_drive_service"), drive_search_service=w("drive_search_service"),
         drive_task_queue=w("drive_task_queue"), drive_transcribe_switch_on=True,
         cabinet_facts=w("cabinet_facts"),   # reviewer edit, facts S4 T2c: main.py passes it (the route delegates to it)
         # reviewer edit, facts S4 T11a/T11b: main.py passes all three (the review queue, the answers, the button labels)

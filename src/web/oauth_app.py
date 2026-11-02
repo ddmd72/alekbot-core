@@ -547,7 +547,8 @@ def create_oauth_blueprint(
             return jsonify({"error": f"{spec.label} integration not configured"}), 501
         credential_id = request.args.get("credential") or None
         try:
-            auth_url = await connect_service.start(user_id, spec.kind, credential_id=credential_id)
+            auth_url = await connect_service.start(user_id, spec.kind, credential_id=credential_id,
+                                                    add=request.args.get("intent") == "add")
         except ValueError:
             # a reconnect of a credential the user does not hold (gone meanwhile, or not theirs)
             logger.warning(f"⚠️ Reconnect of an unknown credential: user={user_id[:8]} kind={spec.kind}")

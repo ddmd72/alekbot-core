@@ -16,12 +16,12 @@ Public interface:
     build_drive_note_service(db_client, env_config, *, notes, drive, index, embeddings, connections, security_port,
                              nudge_queue) -> DriveNoteService
     build_drive_note_lifecycle(*, enabled, notes, index, drive) -> Optional[DriveNoteLifecycle]
-    add_drive_note_deleted_source(search, notes, embeddings, *, embedding_space) -> DriveNoteDeletedSearch
+    add_drive_note_deleted_source(search, notes, embeddings, *, embedding_space, connections) -> DriveNoteDeletedSearch
     command_drive_note_service(service, enabled) -> Optional[DriveNoteService]
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, FrozenSet, Optional
 
 from ..adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from ..adapters.firestore_ephemeral_store import FirestoreEphemeralStore
@@ -41,6 +41,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..services.drive_connection_service import DriveConnectionService
+    from ..services.user_drive_service import UserDriveService
 
 DRIVE_NOTES_ENABLED_ENV = "DRIVE_NOTES_ENABLED"
 _OFF = frozenset({"0", "off", "false", "no"})
@@ -59,14 +60,16 @@ def build_drive_note_repository(db_client: Any, env_config: EnvironmentConfig) -
 def build_drive_note_service(db_client: Any, env_config: EnvironmentConfig, *, notes: DriveNoteRepository,
                              drive: UserDrivePort, index: DriveIndexRepository, embeddings: EmbeddingService,
                              connections: "DriveConnectionService", security_port: SecurityPort,
-                             nudge_queue: Optional[TaskQueue]) -> DriveNoteService:
+                             nudge_queue: Optional[TaskQueue], access: "UserDriveService") -> DriveNoteService:
     """The note service over the process's note store (`notes`, from `build_drive_note_repository`) and the erase
     requests' ephemeral store (`{prefix}drive_note_erase_requests`, TTL policy on `expires_at`: an owner step).
     `drive` is the drive router; `connections` the process's DriveConnectionService (refs, each connection's indexing
-    switch for the receipt's status, read fresh). `security_port` is the container's one stateless port."""
+    switch for the receipt's status, read fresh). `security_port` is the container's one stateless port. `access` is
+    the access policy's service (MULTI_DRIVE_RFC §11.3): the live item path runs its READ check through it."""
     return DriveNoteService(
         notes, drive, index, embeddings,
         security_port, connections,
+        access=access,
         embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
         nudge_queue=nudge_queue,
         erase_requests=FirestoreEphemeralStore(db_client, env_config.drive_note_erase_requests_collection),
@@ -84,11 +87,16 @@ def build_drive_note_lifecycle(*, enabled: bool, notes: Optional[DriveNoteReposi
 
 
 def add_drive_note_deleted_source(search: DriveSearchService, notes: DriveNoteRepository,
-                                  embeddings: EmbeddingService, *, embedding_space: str) -> DriveNoteDeletedSearch:
+                                  embeddings: EmbeddingService, *, embedding_space: str,
+                                  connections: "DriveConnectionService") -> DriveNoteDeletedSearch:
     """The notes source of the drive specialist's deleted-files search (`search_deleted_recordings_and_notes`, §6.4): one
-    section with the archived transcripts. Added whatever the switch (a read, §3.6)."""
+    section with the archived transcripts. Added whatever the switch (a read, §3.6). `connections` gives the ref tags of
+    the user's live connections: a note on another live drive is not dormant (multi-drive 2b, E-9)."""
+    async def live_tags(user_id: str) -> FrozenSet[str]:
+        return frozenset(c.ref_tag for c in await connections.list_for_user(user_id))
+
     source = DriveNoteDeletedSearch(notes, embeddings, embedding_space=embedding_space,
-                                    mount_name_of=search.mount_name_of_tag)
+                                    mount_name_of=search.mount_name_of_tag, live_tags=live_tags)
     search.add_deleted_source(source)
     return source
 
