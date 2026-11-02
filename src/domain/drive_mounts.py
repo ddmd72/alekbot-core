@@ -28,7 +28,7 @@ Public interface:
     render_mount_line(line) -> str
     render_mount_listing(lines) -> str
     drive_note_line(text) -> str;  NOTE_LINE_MAX
-    Texts: RENAME_NOTICE, UNKNOWN_DRIVE_LINE, CROSS_DRIVE_LINE, READ_ONLY_LINE, FOLDER_DRIVE_MISMATCH,
+    Texts: RENAME_NOTICE, UNKNOWN_DRIVE_LINE, CROSS_DRIVE_LINE, FOLDER_DRIVE_MISMATCH,
     NAME_EMPTY, NAME_TOO_LONG, NAME_FORBIDDEN_CHARS, NAME_DOT, NAME_RESERVED, NAME_TAKEN, NAME_HELD, SHADOW_WARNING,
     MOUNT_LISTING_HEADING, PRIMARY_NEEDS_WRITE_FOLDER_LINE, NO_PRIMARY_LINE, HEIR_INVALID_LINE
 """
@@ -58,7 +58,7 @@ __all__ = [
     "mount_name_key", "held_former_names", "mount_table", "canonical_path", "is_tree_root", "resolve_path",
     "resolve_drives", "unknown_drive_line", "default_mount_name", "validate_mount_name", "renamed_history",
     "mount_line", "render_mount_line", "render_mount_listing", "drive_note_line", "NOTE_LINE_MAX",
-    "RENAME_NOTICE", "UNKNOWN_DRIVE_LINE", "CROSS_DRIVE_LINE", "READ_ONLY_LINE",
+    "RENAME_NOTICE", "UNKNOWN_DRIVE_LINE", "CROSS_DRIVE_LINE",
     "FOLDER_DRIVE_MISMATCH", "NAME_EMPTY", "NAME_TOO_LONG", "NAME_FORBIDDEN_CHARS", "NAME_DOT", "NAME_RESERVED",
     "NAME_TAKEN", "NAME_HELD", "SHADOW_WARNING", "MOUNT_LISTING_HEADING", "PRIMARY_NEEDS_WRITE_FOLDER_LINE",
     "NO_PRIMARY_LINE", "HEIR_INVALID_LINE",
@@ -76,7 +76,6 @@ RENAME_NOTICE = "{former} is now called {current}."
 UNKNOWN_DRIVE_LINE = 'There is no drive named "{name}". The drives are: {names}.'
 CROSS_DRIVE_LINE = "Moving or copying a file between drives is not available yet."
 NO_TOP_LEVEL_DESTINATION_LINE = "Name a folder on Drive: a drive's top level cannot be a destination."
-READ_ONLY_LINE = "Only the primary drive can be changed for now; this drive is read-only."
 PRIMARY_NEEDS_WRITE_FOLDER_LINE = "Only a connected drive with a write folder can be the primary."
 NO_PRIMARY_LINE = "No drive is the primary yet: the owner chooses one in the Cabinet."
 HEIR_INVALID_LINE = "The new primary must be another connected drive with a write folder."

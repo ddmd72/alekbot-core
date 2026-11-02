@@ -37,6 +37,7 @@ from ..domain.drive_open_cut import stand_in_cut
 from ..domain.drive_open_texts import ROUTE_SPECIALIST
 from ..domain.drive_file_content_item import FileContentItem
 from ..domain.drive_op import DriveOp
+from ..domain.user_drive import DriveAccessRefused
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_pass_through import PassThroughCollector, search_key
@@ -284,11 +285,17 @@ class DriveToolRun:
                       folder: Any = None) -> ToolResult:
         """`call` receives the destination folder resolved by `_folder`, which runs before the run counts as started."""
         resolved: list = []
+        refused: list = []
 
         async def prep() -> None:
-            resolved.append(await self._folder(folder))
+            try:
+                resolved.append(await self._folder(folder))
+            except DriveAccessRefused as e:   # the access policy's line is the answer (MULTI_DRIVE_RFC §11.3)
+                refused.append(e.line)
 
         async def started_call() -> DriveOutcome:
+            if refused:
+                return DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text=refused[0], success=False)
             return await call(resolved[0])
         return self._seen(tc, await self._run(op, op.value, started_call, change=True, prep=prep))
 

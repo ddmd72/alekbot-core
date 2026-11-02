@@ -53,7 +53,7 @@ import secrets
 import tempfile
 from dataclasses import dataclass, replace
 from typing import (
-    TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Set, Tuple,
+    TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Set, Tuple, Union,
 )
 
 import aiofiles
@@ -1179,12 +1179,12 @@ def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
                         ref_tag=tag)
 
 
-def _item_tags(result: Any) -> Tuple[str, ...]:
+def _item_tags(result: Union[DriveSearchResult, ExcerptResult]) -> Tuple[str, ...]:
     """One ref tag per card or passages file (those of several connections carry their own `ref_tag`; the result's is
     the fallback, empty for a merged result); none when one has no valid tag, so the outcome falls back to its single
     `ref_tag`."""
-    entries = result.cards if hasattr(result, "cards") else result.files
-    tags = tuple(getattr(e, "ref_tag", "") or result.ref_tag for e in entries)
+    entries = result.cards if isinstance(result, DriveSearchResult) else result.files
+    tags = tuple(e.ref_tag or result.ref_tag for e in entries)
     return tags if tags and all(drive_ref.is_valid_tag(t) for t in tags) else ()
 
 

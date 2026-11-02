@@ -172,7 +172,6 @@ class TestTexts:
         assert drive_mounts.RENAME_NOTICE.format(former="Acme", current="Acme Hamburg") == (
             "Acme is now called Acme Hamburg.")
         assert drive_mounts.CROSS_DRIVE_LINE == "Moving or copying a file between drives is not available yet."
-        assert drive_mounts.READ_ONLY_LINE == "Only the primary drive can be changed for now; this drive is read-only."
         assert drive_mounts.FOLDER_DRIVE_MISMATCH.format(folder="Acme/R&D", mount_a="Acme", mount_b="Drive") == (
             "The folder Acme/R&D is on Acme, not on Drive.")
         assert drive_mounts.TREE_ROOT == "/"
