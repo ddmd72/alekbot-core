@@ -3868,7 +3868,7 @@
       }
 
       let driveData = null;   // the last connection list: a local change redraws from it without a new read
-      const driveUi = {};     // connection_id -> {picker, nameError, nameWarning, scopeError, folderError, confirm}
+      const driveUi = {};     // connection_id -> {picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
       let driveAddError = "";
       const driveUiOf = (id) => (driveUi[id] = driveUi[id] || {});
       const redrawDrive = () => { if (driveData) renderDriveStatus(driveData); };
@@ -4126,8 +4126,14 @@
         return driveData.connections.find((c) => c.connection_id === id).scope;
       }
 
+      // The server keeps no folders under "whole drive", so the page remembers them (until it is reloaded) and
+      // unticking the box brings them back.
       async function toggleDriveScopeWhole(id, whole) {
-        await saveDriveScope(id, whole, whole ? [] : driveScopeOf(id).folders.map((f) => f.id));
+        const ui = driveUiOf(id);
+        const ids = driveScopeOf(id).folders.map((f) => f.id);
+        if (whole) ui.foldersBeforeWhole = ids;
+        const saved = await saveDriveScope(id, whole, whole ? [] : (ui.foldersBeforeWhole || ids));
+        if (saved && !whole) ui.foldersBeforeWhole = null;
       }
 
       async function removeDriveScopeFolder(id, index) {
@@ -4142,6 +4148,7 @@
         if (out.ok) { ui.picker = null; showToast(t("toast.drive_saved"), "success"); }
         _driveStatusSnapshot = null;
         if (out.ok) await loadDriveStatus(); else redrawDrive();
+        return out.ok;
       }
 
       async function loadDrivePickerFolders(id) {

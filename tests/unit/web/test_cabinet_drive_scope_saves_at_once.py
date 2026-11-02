@@ -1,7 +1,8 @@
 """The Cabinet's drive scope (MULTI_DRIVE_RFC §11.7) is saved by the action itself, like the write folder: picking a
 folder, removing one and the whole-drive box each send `PUT /api/drive/connections/<id>/scope` at once. There is no
-separate Save step, which let a picked folder look chosen while the drive kept its default scope. The static check
-reads the page; the behavioural ones run the scope functions under node when node is installed."""
+separate Save step, which let a picked folder look chosen while the drive kept its default scope. The server keeps no
+folders under "whole drive", so the page remembers them while it is open and unticking the box restores them. The
+static check reads the page; the behavioural ones run the scope functions under node when node is installed."""
 import json
 import re
 import shutil
@@ -24,6 +25,9 @@ def _function(name: str) -> str:
 
 
 def _run(body: str, *, refuse: bool = False):
+    # a saved scope comes back on the row the way the reload after a save shows it
+    stored = ('if (method === "PUT" && path.endsWith("/scope")) driveData.connections[0].scope = {'
+              ' whole_drive: body.whole_drive, folders: body.folder_ids.map((id) => ({ id, path: id })) };\n')
     script = (
         'const API = ""; const calls = []; const toasts = []; let reloads = 0; let _driveStatusSnapshot = {};\n'
         f'const driveData = {{ connections: [{json.dumps(_ROW)}] }};\n'
@@ -35,8 +39,10 @@ def _run(body: str, *, refuse: bool = False):
         'function redrawDrive() {}\n'
         'async function loadDriveStatus() { reloads += 1; }\n'
         'async function saveDriveWriteFolder(id, value) { calls.push(["write-folder", value]); }\n'
+        'let refuse = ' + json.dumps(refuse) + ';\n'
         'async function driveCall(method, path, body) { calls.push([method, path, body]);\n'
-        f'  return {"{ ok: false, data: { error: \"refused\" } }" if refuse else "{ ok: true, data: {} }"}; }}\n'
+        '  if (refuse) return { ok: false, data: { error: "refused" } };\n'
+        + stored + '  return { ok: true, data: {} }; }\n'
         + "".join(_function(name) for name in _FUNCTIONS)
         + "\n(async () => {\n" + body
         + "\nprocess.stdout.write(JSON.stringify({ calls, toasts, reloads, picker: ui.picker !== null,"
@@ -76,9 +82,23 @@ def test_removing_a_folder_saves_the_scope_without_it():
 
 
 @node
-def test_the_whole_drive_box_saves_at_once_both_ways():
+def test_unticking_whole_drive_restores_the_folders_chosen_before_it():
     out = _run('await toggleDriveScopeWhole("c1", true); await toggleDriveScopeWhole("c1", false);')
     assert out["calls"] == [_put(True, []), _put(False, ["fold-a", "fold-b"])]
+
+
+@node
+def test_after_a_page_reload_unticking_whole_drive_leaves_the_default_scope():
+    out = _run('await toggleDriveScopeWhole("c1", true); delete ui.foldersBeforeWhole;'
+               ' await toggleDriveScopeWhole("c1", false);')
+    assert out["calls"] == [_put(True, []), _put(False, [])]
+
+
+@node
+def test_a_refused_untick_keeps_the_remembered_folders_for_the_next_try():
+    out = _run('await toggleDriveScopeWhole("c1", true); refuse = true; await toggleDriveScopeWhole("c1", false);'
+               ' refuse = false; await toggleDriveScopeWhole("c1", false);')
+    assert out["calls"] == [_put(True, []), _put(False, ["fold-a", "fold-b"]), _put(False, ["fold-a", "fold-b"])]
 
 
 @node
