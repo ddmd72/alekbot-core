@@ -649,6 +649,11 @@
       .disclosure { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
       .disclosure summary { cursor: pointer; user-select: none; }
       .disclosure p { margin: 8px 0 0; }
+      .drive-row { align-self: stretch; }
+      .drive-row > summary { list-style: none; user-select: none; }
+      .drive-row > summary::-webkit-details-marker { display: none; }
+      .drive-row > summary::before { content: "▸"; color: var(--text-muted); }
+      .drive-row[open] > summary::before { content: "▾"; }
 
       .integration-status {
         display: flex;
@@ -3868,7 +3873,7 @@
       }
 
       let driveData = null;   // the last connection list: a local change redraws from it without a new read
-      const driveUi = {};     // connection_id -> {picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
+      const driveUi = {};     // connection_id -> {open, picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
       let driveAddError = "";
       const driveUiOf = (id) => (driveUi[id] = driveUi[id] || {});
       const redrawDrive = () => { if (driveData) renderDriveStatus(driveData); };
@@ -3930,8 +3935,13 @@
         const indexingHtml = ix && (ix.available || ix.enabled) ? renderDriveIndexing(ix, true) : "";
         const heirs = data.connections.filter((c) => c.connection_id !== id && c.state === "active" && c.write_folder);
         const primaryHtml = row.primary
-          ? `<span class="status-badge" style="font-size:12px; padding:2px 10px; border-radius:100px; background:var(--accent); color:white;">${t("drive.primary_badge")}</span>`
-          : `<button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button>`;
+          ? `<span class="status-badge" style="margin-left:auto; font-size:12px; padding:2px 10px; border-radius:100px; background:var(--accent); color:white;">${t("drive.primary_badge")}</span>`
+          : "";
+        const makePrimaryHtml = row.primary
+          ? ""
+          : `<div style="margin-top:10px;"><button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button></div>`;
+        // Collapsed to its one status line; it stays open across redraws, and opens by itself when it needs a reconnect
+        const open = ui.open === undefined ? needsReconnect : ui.open;
         const disconnectHtml = ui.confirm
           ? `<div style="${DRIVE_NOTE}">${escapeHtml(t("drive.disconnect_confirm").replace("{name}", row.mount_name))}
                ${row.primary && heirs.length
@@ -3943,14 +3953,15 @@
              </div>`
           : `<button class="btn btn-secondary" onclick="askDisconnectDrive('${q}')">${t("platform.disconnect")}</button>`;
         return `
-          <div style="${DRIVE_BOX}">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <details class="drive-row" style="${DRIVE_BOX}" ${open ? "open" : ""} ontoggle="driveUiOf('${q}').open = this.open">
+            <summary style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; cursor:pointer;">
               <div class="integration-status" style="margin:0;">
                 <div class="status-dot ${statusDotClass}"></div>
-                <span>${escapeHtml(row.provider_label)}${row.account_label ? " · " + escapeHtml(row.account_label) : ""} · ${statusText}</span>
+                <span><strong>${escapeHtml(row.mount_name)}</strong> · ${escapeHtml(row.provider_label)}${row.account_label ? " · " + escapeHtml(row.account_label) : ""} · ${statusText}</span>
               </div>
               ${primaryHtml}
-            </div>
+            </summary>
+            ${makePrimaryHtml}
             <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
               <label for="drive-name-${q}" style="font-size:14px; font-weight:500;">${t("drive.name")}</label>
               <input id="drive-name-${q}" type="text" value="${escapeHtml(row.mount_name)}" maxlength="64" style="flex:1; min-width:0;">
@@ -3973,7 +3984,7 @@
             ${ui.folderError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.folderError)}</div>` : ""}
             <div style="margin-top:12px;">${indexingHtml}</div>
             <div>${disconnectHtml}</div>
-          </div>`;
+          </details>`;
       }
 
       function renderDriveWriteFolder(row, ui, q) {
