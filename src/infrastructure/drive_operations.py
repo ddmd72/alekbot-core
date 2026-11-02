@@ -72,7 +72,7 @@ from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
 from ..domain.drive_search import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED,
-    STATUS_FOLDER_NOT_FOUND, DriveSearchResult, render_results, request_from_fields, require_search_terms,
+    STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, DriveSearchResult, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
 from ..domain.drive_capture import Capture, born_digital
@@ -80,7 +80,8 @@ from ..domain.drive_connection import DriveConnection
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_mount_line import MountLine
 from ..domain.drive_mounts import (
-    CROSS_DRIVE_LINE, READ_ONLY_LINE, canonical_path, is_tree_root, mount_line, render_mount_listing, resolve_path,
+    CROSS_DRIVE_LINE, NO_TOP_LEVEL_DESTINATION_LINE, READ_ONLY_LINE, canonical_path, is_tree_root, mount_line,
+    render_mount_listing, resolve_path,
 )
 from ..domain.drive_path_target import PathTarget
 from ..domain.drive_resolved_ref import ResolvedDriveRef
@@ -142,8 +143,6 @@ STILL_RUNNING = ("The drive operation is still running and may complete. Check w
 MAX_VIDEO_ATTACH_BYTES = 45 * 1024 * 1024
 VIDEO_NOT_SENT = "Could not send the video: the upload to the chat failed. Nothing was delivered."
 
-# `STATUS_DRIVE_REFUSED` (drive_search.py, slice 2a part P2): a `drives` / folder refusal, answered as a request error.
-_DRIVE_REFUSED = "drive_refused"
 _LATE_FAILURE_UI = {DriveOp.DELETE: UIMessage.DRIVE_DELETE_FAILED, DriveOp.REPLACE: UIMessage.DRIVE_REPLACE_FAILED}
 _SCAN_CAPTURES = frozenset({Capture.SCAN.value, Capture.DOCUMENT_PHOTO.value})
 
@@ -283,8 +282,8 @@ class DriveOperations:
             except ValueError as e:
                 return _fail(DriveOp.SEARCH, str(e), OutcomeClass.REQUEST_ERROR)
             result = await self._drive_search.search(user_id, request, **_drives_kwargs(drives))
-            if getattr(result, "status", "") == _DRIVE_REFUSED:
-                return _fail(DriveOp.SEARCH, str(getattr(result, "refusal", "")), OutcomeClass.REQUEST_ERROR)
+            if result.status == STATUS_DRIVE_REFUSED:
+                return _fail(DriveOp.SEARCH, str(result.refusal), OutcomeClass.REQUEST_ERROR)
             return DriveOutcome(op=DriveOp.SEARCH, cls=_search_class(result), text=render_results(result),
                                 success=True, items=tuple(card.drive_item() for card in result.cards),
                                 facts=_search_facts(result), request_text=request.query or "",
@@ -320,8 +319,8 @@ class DriveOperations:
             except ValueError as e:
                 return _fail(DriveOp.PASSAGES, str(e), OutcomeClass.REQUEST_ERROR)
             result = await self._drive_search.excerpts(user_id, request, shown=shown, **_drives_kwargs(drives))
-            if getattr(result, "status", "") == _DRIVE_REFUSED:
-                return _fail(DriveOp.PASSAGES, str(getattr(result, "refusal", "")), OutcomeClass.REQUEST_ERROR)
+            if result.status == STATUS_DRIVE_REFUSED:
+                return _fail(DriveOp.PASSAGES, str(result.refusal), OutcomeClass.REQUEST_ERROR)
             return _passages(result, shown_folders, described_files, request_text=request.question)
         return await self._call(DriveOp.PASSAGES, context, user_id, run, label="")
 
@@ -465,6 +464,8 @@ class DriveOperations:
             notice = ""
             if destination is not None:
                 placed = await self._place(user_id, destination)
+                if not placed.path:
+                    raise _Refusal(NO_TOP_LEVEL_DESTINATION_LINE, OutcomeClass.REQUEST_ERROR)
                 if placed.mount.connection_id != target.connection.connection_id:
                     raise _Refusal(CROSS_DRIVE_LINE, OutcomeClass.REFUSED)
                 destination, notice = placed.path or None, placed.notice
@@ -1237,6 +1238,6 @@ def _search_facts(result: DriveSearchResult) -> ReadFacts:
         image=any(c.kind == "image" for c in cards),
         coverage_incomplete=incomplete or bool(result.envelope.unread or result.envelope.not_read_yet
                                                or result.envelope.reading or result.envelope.refreshing
-                                               or getattr(result.envelope, "not_searched_drives", ())),
+                                               or result.envelope.not_searched_drives),
         building=result.envelope.building or result.awaiting_rebuild,
     )

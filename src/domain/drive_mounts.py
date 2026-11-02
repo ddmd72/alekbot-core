@@ -69,6 +69,7 @@ RENAME_NOTICE = "{former} is now called {current}."
 UNKNOWN_DRIVE_LINE = 'There is no drive named "{name}". The drives are: {names}.'
 ONE_DRIVE_LINE = "Name one drive per search for now. The drives are: {names}."
 CROSS_DRIVE_LINE = "Moving or copying a file between drives is not available yet."
+NO_TOP_LEVEL_DESTINATION_LINE = "Name a folder on Drive: a drive's top level cannot be a destination."
 READ_ONLY_LINE = "Only the primary drive can be changed for now; this drive is read-only."
 FOLDER_DRIVE_MISMATCH = "The folder {folder} is on {mount_a}, not on {mount_b}."
 NAME_EMPTY = "A drive name is required."
