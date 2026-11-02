@@ -1275,7 +1275,7 @@ def _search_facts(result: DriveSearchResult) -> ReadFacts:
                                and not born_digital(c.capture) for c in cards),
         inaccessible=any(c.inaccessible for c in cards),
         image=any(c.kind == "image" for c in cards),
-        coverage_incomplete=incomplete or bool(result.envelope.unread or result.envelope.not_read_yet
+        coverage_incomplete=incomplete or bool(result.envelope.not_read_yet
                                                or result.envelope.reading or result.envelope.refreshing
                                                or result.envelope.not_searched_drives),
         building=result.envelope.building or result.awaiting_rebuild,

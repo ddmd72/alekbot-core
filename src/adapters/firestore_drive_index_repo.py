@@ -142,6 +142,9 @@ _ALL_RECORD_FIELDS: Tuple[str, ...] = RECORD_FIELDS + RECORD_FANOUT_FIELDS
 ACCESS_MARK_FIELDS: Tuple[str, ...] = (
     "user_id", "item_id", "parent_id", "name", "is_folder", "kind", "scope", "state", "reason", "indexed_generation",
     "card_capped", "triage_verdict", "inaccessible_since", "inaccessible_notified_since")
+# What the Cabinet's unreadable list reads of a record (USER_DRIVE_INDEXING_RFC §6): the name, why and where to open it;
+# `user_id` for I3
+UNREADABLE_FIELDS: Tuple[str, ...] = ("user_id", "item_id", "name", "is_folder", "kind", "state", "reason", "web_url")
 CHUNK_FIELDS: Tuple[str, ...] = tuple(f.name for f in fields(DriveChunk))
 # search streams (port): no text (windows read it by id) and no content_terms (up to 256 per chunk; the term stream
 # knows its term from its own query, review D-M3)
@@ -873,6 +876,10 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         recs = [record_from_doc(snap.to_dict()) for snap in await query.select(list(RECORD_FIELDS)).get()]
         return _owned_all(scope, recs, "record")
 
+    async def _read_fields(self, scope: ConnectionScope, query: Any, names: Sequence[str]) -> List[DriveIndexRecord]:
+        recs = [record_from_doc(snap.to_dict()) for snap in await query.select(list(names)).get()]
+        return _owned_all(scope, recs, "record")
+
     async def get_records(self, scope: ConnectionScope, item_ids: Sequence[str]) -> Dict[str, DriveIndexRecord]:
         found: Dict[str, DriveIndexRecord] = {}
         unique = list(dict.fromkeys(item_ids))   # a feed page repeats items (S0a)
@@ -1079,6 +1086,21 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if not queries:
             return 0
         return sum(await asyncio.gather(*(self._count(q) for q in queries)))
+
+    async def unreadable_records(self, scope: ConnectionScope, kinds: AbstractSet[str],
+                                 triaged: AbstractSet[str] = frozenset(), *, transcribed: AbstractSet[str] = frozenset(),
+                                 limit: int) -> List[DriveIndexRecord]:
+        """The `count_unread(pending=False)` queries, each with `limit` and only the fields the list needs: the same filters as the
+        counts, so no new composite index (no `order_by`). Merged by item id and cut to `limit`; I3 per record."""
+        if limit <= 0:
+            return []
+        queries = self.unread_count_queries(scope, kinds, triaged, False, transcribed)
+        pages = await asyncio.gather(*(self._read_fields(scope, q.limit(limit), UNREADABLE_FIELDS) for q in queries))
+        merged: Dict[str, DriveIndexRecord] = {}
+        for page in pages:
+            for rec in page:
+                merged.setdefault(rec.item_id, rec)
+        return sorted(merged.values(), key=lambda r: r.item_id)[:limit]
 
     def inaccessible_query(self, scope: ConnectionScope, limit: int) -> Any:
         """`inaccessible_records`' query (composite index connection_id + inaccessible_since, §26.9 step 3). Not a port

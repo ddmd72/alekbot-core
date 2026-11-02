@@ -175,6 +175,14 @@ class DriveIndexRepository(ABC):
         unreadable, §27.11, G20); empty by default, so every other caller is unchanged."""
 
     @abstractmethod
+    async def unreadable_records(self, scope: ConnectionScope, kinds: AbstractSet[str],
+                                 triaged: AbstractSet[str] = frozenset(), *, transcribed: AbstractSet[str] = frozenset(),
+                                 limit: int) -> List[DriveIndexRecord]:
+        """At most `limit` records of the could-not-be-read classes (`count_unread(pending=False)`: `failed`, or
+        `metadata_only` for too_large, no_text, machine_text or user_chunk_cap), with the same kind sets as that count;
+        no order is promised. The Cabinet lists them (USER_DRIVE_INDEXING_RFC §6); search never does."""
+
+    @abstractmethod
     async def inaccessible_records(self, scope: ConnectionScope, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
         """Up to `limit` records the bot cannot open (`inaccessible_since` set, §26.2), oldest marking first, ties by
         item id, with `inaccessible_notified_since` (the tick's counters and the fan-out's notice, Δ56, Δ53). `lean`:

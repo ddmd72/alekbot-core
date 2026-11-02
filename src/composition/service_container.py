@@ -255,6 +255,7 @@ class ServiceContainer:
                 # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
+                transcribe_switch_on=self.drive_transcribe_switch_on,
             )
 
         # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with the connection service (refs,

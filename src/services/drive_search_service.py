@@ -20,7 +20,7 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, connections, *, embedding_space, clock, nonce, monotonic,
-                       transcribe_cap_usd, mirror)
+                       transcribe_cap_usd, mirror, transcribe_switch_on)
     await search(user_id, request, *, drives="") -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
     await search_state(user_id) -> SearchLine                  # the specialist's preflight line (§5.3)
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
@@ -88,10 +88,12 @@ from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
-    OPEN_MAX_CHARS, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
+    CABINET_UNREADABLE_MAX, OPEN_MAX_CHARS, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.drive_index_planner import month_key
+from ..domain import drive_index_policy as policy
 from ..domain.drive_indexing_status import DriveIndexingStatus
+from ..domain.drive_unreadable_file import UnreadableFile, unreadable_reason
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_line import SearchLine, search_line
@@ -107,8 +109,7 @@ from ..domain.drive_mounts import (
 )
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
-    UNREAD_COUNTER,
+    INACCESSIBLE_COUNTER, UNREAD_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
@@ -414,7 +415,7 @@ class DriveSearchService:
                  clock: Callable[[], datetime] = _utcnow,
                  nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
                  transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
-                 mirror: Optional[DriveMirrorRepository] = None) -> None:
+                 mirror: Optional[DriveMirrorRepository] = None, transcribe_switch_on: bool = False) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
         kNN streams run only while the index's cards are in it (§12.3). `transcribe_cap_usd` is the transcription cap
         the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet. `mirror` is
@@ -431,6 +432,7 @@ class DriveSearchService:
         self._space = embedding_space
         self._transcribe_cap = transcribe_cap_usd
         self._mirror = mirror
+        self._transcribe_switch_on = transcribe_switch_on   # the indexer's kill switch: with the connection's flag, recordings count (§27.11)
         self._deleted_sources: List[DeletedSource] = [self._deleted_transcripts]
 
     # ------------------------------------------------------------------------------------------
@@ -680,7 +682,7 @@ class DriveSearchService:
         if result.tiered is not None:
             coverage = replace(result.tiered.coverage, building=envelope.building, reading=envelope.reading,
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
-                               unread=envelope.unread, not_searched_drives=not_searched,
+                               not_searched_drives=not_searched,
                                names_only=result.tiered.coverage.names_only or not envelope.content_search)
             stats.coverage = "complete" if replace(coverage, inaccessible=0) == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
@@ -2109,12 +2111,11 @@ class DriveSearchService:
 
     async def _envelope(self, conn: DriveConnection, state: DriveSyncState, reconnect_needed: bool,
                         use_cards: bool) -> DriveSearchEnvelope:
-        unread = int(state.counters.get(UNREAD_COUNTER, 0))
         waiting = int(state.counters.get(NOT_READ_YET_COUNTER, 0))
         return DriveSearchEnvelope(
             building=await self._building(conn, state), reconnect_needed=reconnect_needed,
             refreshing=not use_cards, content_search=content_admitted(),
-            index_as_of=state.observed_as_of, unread=max(0, unread - waiting), not_read_yet=waiting,
+            index_as_of=state.observed_as_of, not_read_yet=waiting,
             # the flip's upgrade pass re-plans records it has not reached yet: reading whatever the counters say (F4-1)
             reading=int(state.applied_versions.get("policy", POLICY_VERSION)) != POLICY_VERSION,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,
@@ -2441,6 +2442,19 @@ class DriveSearchService:
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(conn.user_id, account.realm, account.subject)
 
+    async def _unreadable_files(self, conn: DriveConnection) -> Tuple[UnreadableFile, ...]:
+        """Up to CABINET_UNREADABLE_MAX files that could not be read, with the kind sets the indexer's counter uses
+        (`_unread_counters`: recordings only while the kill switch and the connection's flag are both on). A failed read
+        is logged and leaves the list empty: the rest of the status still returns."""
+        media = {"transcribed": policy.TRANSCRIBED_KINDS} if self._transcribe_switch_on and conn.transcribe_enabled else {}
+        try:
+            records = await self._repo.unreadable_records(conn.scope, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS,
+                                                          limit=CABINET_UNREADABLE_MAX, **media)
+        except Exception as exc:
+            logger.warning("[DriveSearch] the unreadable files could not be listed: %s", exc_brief(exc))
+            return ()
+        return tuple(UnreadableFile(name=r.name, reason=unreadable_reason(r), web_url=r.web_url) for r in records)
+
     async def indexing_status(self, user_id: str, *, connection_id: Optional[str] = None) -> DriveIndexingStatus:
         """The Cabinet card (§6): counters, last sync, error category, index full, building, of the searched connection
         (stage 1: the primary; its own indexing switch), or with `connection_id` of that live connection (MULTI_DRIVE_RFC
@@ -2454,7 +2468,11 @@ class DriveSearchService:
         now = self._clock()
         usage, build = await asyncio.gather(self._repo.get_model_usage(user_id, month_key(now)),
                                             self._initial_build(conn))
+        unreadable_total = max(0, int(state.counters.get(UNREAD_COUNTER, 0))
+                               - int(state.counters.get(NOT_READ_YET_COUNTER, 0)))
+        unreadable = await self._unreadable_files(conn) if unreadable_total else ()
         return DriveIndexingStatus(
+            unreadable=unreadable, unreadable_total=unreadable_total,
             awaiting_rebuild=MIGRATION_GATE_KEY not in state.applied_versions and not state.purging,
             enabled=enabled, counters=dict(state.counters), last_success_at=state.last_success_at,
             last_error=state.last_error.value if state.last_error else None, index_as_of=state.observed_as_of,

@@ -27,7 +27,7 @@ def _result(tiered: TieredResult, cards=()) -> DriveSearchResult:
 
 
 INCOMPLETE = [CoverageFacts(building=True), CoverageFacts(not_described=2), CoverageFacts(not_read_yet=1),
-              CoverageFacts(unread=1), CoverageFacts(rekeying=True), CoverageFacts(reading=True)]
+              CoverageFacts(rekeying=True), CoverageFacts(reading=True)]
 
 
 # -- F4 --------------------------------------------------------------------------------------------------------------

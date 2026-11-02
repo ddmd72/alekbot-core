@@ -47,11 +47,6 @@ class TestDomain:
         return render_results(DriveSearchResult(status=STATUS_OK, request=DriveSearchRequest(query="lease"),
                                                 envelope=DriveSearchEnvelope(**env)))
 
-    def test_the_two_counts_are_two_lines(self):
-        text = self._render(unread=2, not_read_yet=5)
-        assert "5 documents are not read yet, so their content was not searched." in text
-        assert "2 documents could not be read, so their content was not searched." in text
-
     def test_waiting_documents_are_never_called_unreadable(self):
         text = self._render(not_read_yet=5)
         assert "could not be read" not in text and "5 documents are not read yet" in text
@@ -90,15 +85,6 @@ class TestRepositories:
 
 
 class TestEnvelope:
-    async def test_could_not_be_read_excludes_the_waiting_ones(self):
-        w = World()
-        w.drive.add("doc.pdf")
-        await w.settle()
-        state = await w.repo.get_sync_state(U_SCOPE)
-        w.repo.states["u"] = replace(state, counters={**state.counters, UNREAD_COUNTER: 5, NOT_READ_YET_COUNTER: 3})
-        env = (await w.search("doc")).envelope
-        assert (env.unread, env.not_read_yet, env.reading) == (2, 3, False)
-
     async def test_an_applied_policy_behind_the_current_one_reads_as_still_reading(self):
         w = World()
         w.drive.add("doc.pdf")

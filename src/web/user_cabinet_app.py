@@ -1489,6 +1489,10 @@ def create_user_cabinet_blueprint(
             "initial_build": {"spent_usd": round(status.initial_build_spent_usd, 4),
                               "allowance_usd": status.initial_build_allowance_usd,
                               "closed": status.initial_build_closed},
+            # the files the index could not read: the owner's information, never the bot's (decisions/drive_unreadable_files_cabinet_only.md)
+            "unreadable": {"files": [{"name": f.name, "reason": f.reason, "web_url": f.web_url}
+                                     for f in status.unreadable],
+                           "total": status.unreadable_total},
         }
 
     async def _has_credential(connection: DriveConnection) -> bool:

@@ -244,7 +244,7 @@ class TestRender:
         assert "not connected" in render_results(DriveSearchResult(status=STATUS_DISCONNECTED))
 
     def test_envelope_guidance_in_plain_words(self):
-        env = DriveSearchEnvelope(building=True, reconnect_needed=True, index_as_of=NOW, unread=3,
+        env = DriveSearchEnvelope(building=True, reconnect_needed=True, index_as_of=NOW, not_read_yet=3,
                                   index_full=True)
         text = render_results(DriveSearchResult(status=STATUS_OK, envelope=env,
                                                 request=DriveSearchRequest(query="lease")))
@@ -254,7 +254,8 @@ class TestRender:
         assert "do not say a file does not exist" not in text
         assert "Only file and folder names and metadata" in text
         assert "as of 2026-10-11 12:00 UTC" in text
-        assert "reconnect the drive" in text and "3 documents could not be read" in text
+        assert "reconnect the drive" in text and "3 documents are not read yet" in text
+        assert "could not be read" not in text   # the unreadable files are the Cabinet's, never the bot's
         assert "index is full" in text and "No matching files or folders." in text
 
     def test_content_search_on_drops_the_names_only_line(self):

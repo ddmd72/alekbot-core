@@ -53,7 +53,7 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | What `card accuracy: N%` is, how a value is graded, why a value can be searchable but never exact, when Smart opens a file anyway; what changes when a weight changes | §4.20 (deployed 2026-10-19) |
 | What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (deployed 2026-10-19) |
 | How the owner reviews low-accuracy cards, measures vocabulary misses, rebuilds a user, and what the eval now checks | §4.22 (deployed 2026-10-19), §7.2 |
-| Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
+| "N documents could not be read": what counts, why the bot is no longer told, where the owner sees which files | §7.1 (could not be read), [decision](../../04_solution_strategy/decisions/drive_unreadable_files_cabinet_only.md) |
 | Why a recording is searchable by what was said; how it is transcribed, what it costs, why it waits; who can switch it on | §4.23 |
 | A recording shows "transcript: none" or sits in "waiting": which state it is in and why | §4.23 (states) |
 | What `_Transcripts` is, why a file appears, moves or vanishes there, what the archive is, how to find a deleted recording's transcript; why the bot refuses to write into the folder | §4.23 (the mirror folder) |
@@ -363,7 +363,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   phase, lease, `observed_as_of`, `access_lost_at`, `purging`, `systemic_failures`, applied versions and
   `applied_space` (the embedding space the cards are in), `upgrade_parked_month` (§4.12), counters. From Slice 2+4
   also `model_backoff_until` and `model_failures` (the reader's and triage's outage backoff) and the counters
-  `unread` and `not_read_yet` that search reads (§6.3). Search v2 adds `model_backoff_by_agent` (one backoff per agent
+  `unread` and `not_read_yet` (search reads `not_read_yet`; the Cabinet reads both, §6.3). Search v2 adds `model_backoff_by_agent` (one backoff per agent
   type for the profiler and passages), the coverage counters `coverage_waiting` / `coverage_held` /
   `coverage_no_passages` and the job-state counts the tick stores (so a search runs no count query), the rebuild's
   `described_count` / `described_grew_at`, and the alert flags `migration_alerted`, `stall_alerted`,
@@ -2033,7 +2033,8 @@ by meaning; the drive is too small to tell related from unrelated" (never under 
      incomplete (UAT 2026-10-14: counting them made every answer hedge). A separate neutral note — "N books, sheets
      and data files were searched by their own words only, with no translated or synonym keywords." — follows the
      result only when nothing exact or automatic matched;
-   - "N documents are not read yet" / "N documents could not be read" (the `not_read_yet` / `unread` counters, §7.1);
+   - "N documents are not read yet" (the `not_read_yet` counter, §7.1; documents that could not be read are not named,
+     see [the decision](../../04_solution_strategy/decisions/drive_unreadable_files_cabinet_only.md));
    - a candidate page was full, so more files may match; words held by many files that could not be checked in the
      whole scope; shown files whose keys were cut by a cap; words past the first eight that were not searched.
 
@@ -2498,7 +2499,10 @@ Images are triaged before any of this: `[DriveTriage]` lines are per run, with n
 `passages_state`, `profile_hold` / `passages_hold`, `*_attempts`, `*_defer_until`, `*_parked_month` (§4.17), and the
 `[DriveProfiler]` / `[DrivePassages]` lines (grep the item id).
 
-**"N documents could not be read."** The number is drive-wide for the user, not about the search's own results: the
+**"N documents could not be read."** The bot is not told this number (since 2026-11; [decision](../../04_solution_strategy/decisions/drive_unreadable_files_cabinet_only.md)).
+The Cabinet's drive card lists up to 5 such files by name with the reason, then "+ N more", under "Could not be read"; the
+`indexing.unreadable` block of `GET /api/drive/connections` carries `files` and `total`, filled from the counters and
+`unreadable_records`. The number is drive-wide for the user, not about the search's own results: the
 sync-state counters, refreshed by every tick that completes (§6.3). It counts documents of a content kind, and images
 triaged as `text`, in one of these states:
 - `failed` (any reason: `extract_error`, `extract_timeout`, `extract_memory`, `download_error`, `embed_timeout`);
@@ -2509,7 +2513,7 @@ It does **not** count a password-protected file (`encrypted`), a file the parser
 audio and video too, for a user whose transcription is off); Smart is not told about those. "N documents are not read yet" is the other counter: `pending` with
 no readable generation, not card-capped — they will be read.
 
-To find which: there is no listing script. In the Firestore console, filter `{prefix}drive_index_records` on
+To find which: the Cabinet's card lists the first few; for all of them there is no listing script. In the Firestore console, filter `{prefix}drive_index_records` on
 `user_id == <user id>` and `state == failed`, then on `state == metadata_only` with each of the four reasons above
 (the counter's own queries add `kind in [content kinds]`, and for images `triage_verdict == text`;
 `FirestoreDriveIndexRepository.unread_count_queries`). Each record has its `name`, `state`, `reason`, `attempts`,

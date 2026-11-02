@@ -31,7 +31,7 @@ def _tiered(coverage: CoverageFacts) -> DriveSearchResult:
 
 
 def test_the_part_is_last_and_makes_coverage_incomplete():
-    facts = CoverageFacts(unread=2, cut=("later",), not_searched_drives=("Drive 2", "Acme"))
+    facts = CoverageFacts(cut=("later",), not_searched_drives=("Drive 2", "Acme"))
     parts = coverage_parts(facts, passages_tiers_empty=False)
     assert parts[-1] == "drives not searched: Drive 2, Acme"
     assert parts[-2].startswith("words past the first ones")

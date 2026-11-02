@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 from .drive_index_params import ACCESS_LOSS_TTL
+from .drive_unreadable_file import UnreadableFile
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,8 @@ class DriveIndexingStatus:
     initial_build_spent_usd: float = 0.0      # the initial build (D27): spent of its allowance, open or closed
     initial_build_allowance_usd: float = 0.0
     initial_build_closed: bool = False
+    unreadable: Tuple[UnreadableFile, ...] = ()   # up to CABINET_UNREADABLE_MAX files the index could not read
+    unreadable_total: int = 0                 # how many there are in all (the counters: unread minus not read yet)
     awaiting_rebuild: bool = False            # a v1 index not rebuilt under v2 yet (D30): no tick work until then
 
     def index_kept(self, now: datetime) -> bool:
