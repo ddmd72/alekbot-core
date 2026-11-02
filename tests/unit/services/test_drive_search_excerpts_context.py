@@ -1,16 +1,23 @@
 """The "where it comes from" context a passages result carries (USER_DRIVE_INDEXING_RFC §28.3 A18; plan CTX.3): the
 noted ancestor folders and each file's description and own note, built from the records and ancestors the call
-already loaded. A counting repository shows that the notes cost no read."""
+already loaded. A counting repository shows that the notes cost no read. Slice 2b (E-4): the context keys a file or a
+folder by `context_key(ref tag, item id)`, so one item id on two connections is two items."""
 from __future__ import annotations
 
 from src.domain.drive_card import note_line
 from src.domain.drive_excerpt_folder_note import FolderNote
+from src.domain.drive_excerpt_render import context_key
 from src.domain.drive_index import DocumentBrief
 
 from .test_drive_search_excerpts import PassageWorld, ref
 
 RD_NOTE = "Acme specifications, the review process lives here"
 ACME_NOTE = "work files from Acme"
+TAG = "a1"          # the fixture connection's ref tag
+
+
+def _k(item_id: str) -> str:
+    return context_key(TAG, item_id)
 
 
 def _tree(*, noted: bool):
@@ -38,11 +45,11 @@ async def test_the_wide_path_reads_no_record_for_the_folder_notes():
     assert len(w.repo.record_reads) == len(bare.repo.record_reads)
     # folder-note and file-context paths: canonical <mount>/<path> (design §1.2 S-10)
     assert result.context.folders == {
-        acme: FolderNote(item_id=acme, path="Drive/Acme", depth=1, line=_line(ACME_NOTE)),
-        rd: FolderNote(item_id=rd, path="Drive/Acme/R&D", depth=2, line=_line(RD_NOTE)),
+        _k(acme): FolderNote(item_id=_k(acme), path="Drive/Acme", depth=1, line=_line(ACME_NOTE)),
+        _k(rd): FolderNote(item_id=_k(rd), path="Drive/Acme/R&D", depth=2, line=_line(RD_NOTE)),
     }
-    plan_ctx = next(f for f in result.context.files if f.item_id == plan)
-    assert plan_ctx.ancestors == (rd, acme) and plan_ctx.path == "Drive/Acme/R&D/Tom's plan.docx"
+    plan_ctx = next(f for f in result.context.files if f.item_id == _k(plan))
+    assert plan_ctx.ancestors == (_k(rd), _k(acme)) and plan_ctx.path == "Drive/Acme/R&D/Tom's plan.docx"
 
 
 async def test_the_file_refs_path_reads_no_record_for_the_folder_notes():
@@ -51,16 +58,16 @@ async def test_the_file_refs_path_reads_no_record_for_the_folder_notes():
     w, acme, rd, plan = _tree(noted=True)
     result = await w.find(file_refs=(ref(plan),))
     assert len(w.repo.record_reads) == len(bare.repo.record_reads)
-    assert set(result.context.folders) == {acme, rd}
-    assert [f.item_id for f in result.context.files] == [plan]
+    assert set(result.context.folders) == {_k(acme), _k(rd)}
+    assert [f.item_id for f in result.context.files] == [_k(plan)]
 
 
 async def test_a_folder_scope_shows_its_own_and_its_ancestors_notes():
     w, acme, rd, plan = _tree(noted=True)
     result = await w.find(folder="Acme/R&D")
     assert [f.item_id for f in result.files] == [plan]
-    assert set(result.context.folders) == {acme, rd}
-    assert result.context.folders[acme].depth == 1
+    assert set(result.context.folders) == {_k(acme), _k(rd)}
+    assert result.context.folders[_k(acme)].depth == 1
 
 
 async def test_folders_without_a_note_get_no_line():
@@ -75,9 +82,10 @@ async def test_a_chain_broken_by_an_unrecorded_ancestor_shows_its_known_part():
     w.note(rd, RD_NOTE)
     plan = w.doc("Tom's plan.docx", ["The first review is held by Lukas Weber."], [0.1], parent=rd)
     result = await w.find()
-    ctx = next(f for f in result.context.files if f.item_id == plan)
-    assert ctx.path == "Drive/R&D/Tom's plan.docx" and ctx.ancestors == (rd,)   # canonical (design §1.2 S-10)
-    assert result.context.folders == {rd: FolderNote(item_id=rd, path="Drive/R&D", depth=1, line=_line(RD_NOTE))}
+    ctx = next(f for f in result.context.files if f.item_id == _k(plan))
+    assert ctx.path == "Drive/R&D/Tom's plan.docx" and ctx.ancestors == (_k(rd),)   # canonical (design §1.2 S-10)
+    assert result.context.folders == {
+        _k(rd): FolderNote(item_id=_k(rd), path="Drive/R&D", depth=1, line=_line(RD_NOTE))}
 
 
 async def test_identical_copies_show_the_keepers_chain_only():
@@ -88,8 +96,8 @@ async def test_identical_copies_show_the_keepers_chain_only():
     w.doc("Tom's plan.docx", ["The review is held weekly."], [0.2], parent=rd, content_hash="same:500")
     keeper = w.doc("Tom's plan.docx", ["The review is held weekly."], [0.1], parent=old, content_hash="same:500")
     result = await w.find()
-    assert [f.item_id for f in result.context.files] == [keeper]
-    assert set(result.context.folders) == {old}
+    assert [f.item_id for f in result.context.files] == [_k(keeper)]
+    assert set(result.context.folders) == {_k(old)}
 
 
 async def test_the_files_own_note_and_description_come_from_its_record():
@@ -106,5 +114,5 @@ async def test_the_files_own_note_and_description_come_from_its_record():
 async def test_a_range_carries_the_context_of_its_file():
     w, acme, rd, plan = _tree(noted=True)
     result = await w.read(plan, 1, 1)
-    assert [f.item_id for f in result.context.files] == [plan]
-    assert set(result.context.folders) == {acme, rd}
+    assert [f.item_id for f in result.context.files] == [_k(plan)]
+    assert set(result.context.folders) == {_k(acme), _k(rd)}
