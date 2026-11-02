@@ -1,5 +1,6 @@
 """DriveOperations and the mount tree (MULTI_DRIVE_RFC §11.1, slice 2a part P1): a path is `<mount>/<path>`, canonical in
-everything printed and relative below; `/` lists the drives; only the primary can be changed; a move across drives is
+everything printed and relative below; `/` lists the drives (slice 2b: each drive's writable and searched parts come
+from its own settings, the access policy decides writes — `test_drive_operations_policy.py`); a move across drives is
 refused; a held former name answers with its notice. Technical ids and the invented cast only."""
 from tests.support.drive_access_stub import allow_access
 from dataclasses import replace
@@ -135,13 +136,13 @@ class TestTreeListing:
         assert out.text.splitlines() == [
             "Drives (a path without a drive name is on the primary drive):",
             "- Drive: primary; connected; writable; searched by default",
-            "- Acme: connected; read-only; searched only when named"]
+            "- Acme: connected; writable; searched by default"]       # 2b: default settings, root write folder
         assert world.drive.calls == []
 
     async def test_a_mount_that_needs_a_reconnect_is_still_listed(self, world):
         world.repo.connections[("usr-1", "conn-2")] = replace(world.two, state=ConnectionState.NEEDS_RECONNECT)
         out = await world.ops.list_folder(CTX, "usr-1", "/")
-        assert "- Acme: reconnect needed; read-only; searched only when named" in out.text
+        assert "- Acme: reconnect needed; writable; searched by default" in out.text      # 2b: its own settings
 
     async def test_no_connection_is_not_connected(self, world):
         out = await world.ops.list_folder(CTX, "usr-9", "/")
@@ -219,7 +220,7 @@ class TestPreflightMounts:
         pre = await world.ops.preflight("usr-1")
         assert pre.drive is DriveLine.CONNECTED
         assert [(m.name, m.primary, m.search, m.writable) for m in pre.mounts] == [
-            ("Drive", True, SearchLine.ON, True), ("Acme", False, SearchLine.BUILDING, False)]
+            ("Drive", True, SearchLine.ON, True), ("Acme", False, SearchLine.BUILDING, True)]   # 2b: root write folder
 
     async def test_one_connection_gives_one_line_and_a_failed_read_leaves_the_search_part_out(self, world):
         async def broken(user_id):
