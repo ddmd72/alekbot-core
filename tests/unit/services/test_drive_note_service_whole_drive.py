@@ -297,3 +297,16 @@ def _append(text: str):
 def _turn(turn_id: str):
     from src.domain.drive_note import NoteProvenance
     return NoteProvenance(origin="chat", session_id="s1", turn_id=turn_id)
+
+
+class TestRefusalTexts:
+    async def test_a_second_drive_note_says_the_drive_has_a_note(self, acme):
+        await acme.service.create(U, ACC, "", _content(ACME_TEXT), CHAT, whole_drive_name="Acme")
+        with pytest.raises(DriveNoteRefused) as info:
+            await acme.service.create(U, ACC, "", _content("another"), NEXT_TURN, whole_drive_name="Acme")
+        assert "The drive already has a note" in str(info.value)
+
+    async def test_a_bad_ref_names_item_ref(self, acme):
+        with pytest.raises(DriveNoteRefused) as info:
+            await acme.service.get(U, "gcs://x")
+        assert "item_ref" in str(info.value) and "file_ref" not in str(info.value)

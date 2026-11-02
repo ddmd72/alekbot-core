@@ -18,4 +18,5 @@ class MountLine:
     writable: bool                  # the connection has a write folder
     searched_by_default: bool       # the connection's flag (D4)
     write_folder: str = ""          # the canonical path of a write folder below the root; "" = the root or unknown
+    write_folder_unknown: bool = False  # a write folder below the root whose path could not be read
     note: str = ""                  # the owner's note on the drive, already bounded (`drive_note_line`)

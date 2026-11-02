@@ -40,7 +40,7 @@ QUERY = (
     "date_from / date_to, not in the words. Leave EMPTY only for filter-only requests. All words must match: use the "
     "user's few key words in one language."
 )
-SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLDER}. Empty searches the whole drive."
+SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLDER}. Empty searches every drive that is searched."
 KIND = (
     "Optional file type. A family covers every format of its kind: spreadsheet (xlsx, xls, ods, csv), document "
     "(docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), presentation (pptx, ppt, odp), photo (any image). "
@@ -48,7 +48,7 @@ KIND = (
     "extension such as 'jpg'. Other words are refused."
 )
 DRIVES = ("Optional: the names of drives to search, comma-separated, as drive_state lists them. Empty searches every "
-          "drive searched by default. A folder that starts with a drive's name is searched on that drive.")
+          "drive searched by default. For 'everywhere' / 'all drives', list every drive's name. A folder that starts with a drive's name is searched on that drive.")
 DATE_FROM = (
     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
     "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
@@ -89,8 +89,8 @@ PASSAGES_QUESTION = (
     "asked about which file or subject ('What does Tom's plan say happens after the first review?'), not key words. "
     "You may reword it for a second try (other words, the documents' language)."
 )
-PASSAGES_FOLDER = (f"Optional: only files in this folder and its subfolders: {_FOLDER}. Empty searches the whole "
-                   "drive.")
+PASSAGES_FOLDER = (f"Optional: only files in this folder and its subfolders: {_FOLDER}. Empty searches every drive "
+                   "that is searched.")
 PASSAGES_FILE_REFS = ("Optional: only these files: their drive: refs, comma-separated, at most 10, from a card, a "
                       "passages head line, the commission or the state block. When given, folder and drives are not used. Empty: "
                       "not limited to files.")
@@ -121,7 +121,7 @@ def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[s
     """The fourteen drive tools, then `extra` (the note tools, in their own fixed order), then the terminal tool: a fixed
     order, so each cacheable prefix stays stable (design Δ16). No `extra` is today's list byte for byte."""
     return [
-        _tool(SEARCH_DRIVE, "Find files and folders on the drive by what they are, their names, dates, places and what "
+        _tool(SEARCH_DRIVE, "Find files and folders on the user's drives by what they are, their names, dates, places and what "
               "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, drives=DRIVES, kind=KIND,
               date_from=DATE_FROM, date_to=DATE_TO),
         _tool(SEARCH_DELETED, "Search the transcripts of deleted recordings and the notes on deleted files; deleted "

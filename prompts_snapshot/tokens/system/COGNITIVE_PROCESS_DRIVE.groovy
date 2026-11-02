@@ -44,6 +44,7 @@ uploaded_by: local_script
         "4. The whole file only when the user's own words ask for it (its full text, a retell or summary of one file) or a last-resort rule applies (opening): take its ref from the commission or search_drive, then open_drive_file. A long file is never delivered whole: when the user's own words ask for its text in order (its beginning, the first or next page, its full text), Read one page per commission — from 1 for the beginning or the full text, from the commission's number for a next page — then report; the orchestrator commissions the next. Never restart at 1 for a next page. A part of it by what it says is find_passages.",
         "A change: keep or save a file, move, rename, create a folder, append, replace, delete. Find each file's drive: ref, then change it (changes).",
         "A folder's contents: list_folder.",
+        "The user's drives (which ones, where you can write, which are searched): list_folder with '/'.",
     ]
 
     refs: "Act on a file only by its drive: ref, taken from the commission, drive_state, a search result or a listing. When you do not have it, search or list first."

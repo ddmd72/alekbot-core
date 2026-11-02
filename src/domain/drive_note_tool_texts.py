@@ -180,17 +180,17 @@ def drive_note_tool_declarations(*, writes: bool) -> List[Dict[str, Any]]:
         return tools
     drive = _string(WHOLE_DRIVE_NAME)
     return tools + [
-        _tool(CREATE_NOTE, "Add the owner's note to a file or folder that has none.", [], item_ref=ref, whole_drive_name=drive,
+        _tool(CREATE_NOTE, "Add the owner's note to a file, folder or whole drive that has none.", [], item_ref=ref, whole_drive_name=drive,
               text=_string(CREATE_TEXT), doc_type=_string(DOC_TYPE), life_areas=_areas(LIFE_AREAS)),
-        _tool(ADD_TO_NOTE, "Add the owner's words at the end of the note's text; the rest of the note is kept. On a "
-              "file with no note, this creates one.", ["text"], item_ref=ref, whole_drive_name=drive, text=_string(ADD_TEXT)),
+        _tool(ADD_TO_NOTE, "Add the owner's words at the end of the note's text; the rest of the note is kept. On an "
+              "item with no note, this creates one.", ["text"], item_ref=ref, whole_drive_name=drive, text=_string(ADD_TEXT)),
         _tool(REPLACE_NOTE_TEXT, "Replace the whole text of the note. Refused unless get_note read this note earlier "
               "in this run, and refused if the note changed since that read.", ["text"], item_ref=ref, whole_drive_name=drive,
               text=_string(REPLACE_TEXT)),
-        _tool(SET_NOTE_TYPE, "Set the document type of the note. On a file with no note, this creates one holding "
+        _tool(SET_NOTE_TYPE, "Set the document type of the note. On an item with no note, this creates one holding "
               "only the type.", ["doc_type"], item_ref=ref, whole_drive_name=drive, doc_type=_string(SET_DOC_TYPE)),
         _tool(CLEAR_NOTE_TYPE, "Remove the document type from the note.", [], item_ref=ref, whole_drive_name=drive),
-        _tool(ADD_LIFE_AREAS, "Add life areas to the note; the others are kept. On a file with no note, this creates "
+        _tool(ADD_LIFE_AREAS, "Add life areas to the note; the others are kept. On an item with no note, this creates "
               "one holding only the areas.", ["life_areas"], item_ref=ref, whole_drive_name=drive, life_areas=_areas(ADD_AREAS)),
         _tool(REMOVE_LIFE_AREAS, "Remove the named life areas from the note.", ["life_areas"],
               item_ref=ref, whole_drive_name=drive, life_areas=_areas(REMOVE_AREAS)),
