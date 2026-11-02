@@ -82,6 +82,7 @@ def _ops(conversion, search, *, note=None):
     drive = AsyncMock(spec=UserDriveService)
     reads = _Reads()
     drive.primary.side_effect = reads.primary
+    drive.mounts.side_effect = reads.mounts
     drive.resolve_ref.side_effect = reads.resolve_ref
     items = {item.item_id: item for item in conversion.items.values()}
     drive.get_item.side_effect = lambda handle, item_id: items[item_id]
