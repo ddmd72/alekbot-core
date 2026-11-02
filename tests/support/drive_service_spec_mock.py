@@ -3,7 +3,7 @@ ids only.
 
 Tests of the drive service's callers (DriveOperations, FileManagementAgent) script the drive operations (`save`,
 `move`, `get_item`, ...) on an `AsyncMock(spec=UserDriveService)`; since stage 1 every caller first asks the service
-which connection a path or a ref is on. `spec_drive_service(*user_ids)` answers `status`, `primary` and `resolve_ref`
+which connection a path or a ref is on. `spec_drive_service(*user_ids)` answers `status`, `primary`, `mounts` and `resolve_ref`
 with the production `UserDriveService` methods over the production `DriveConnectionService`, each user with one ACTIVE
 primary connection `conn-1` tagged `a1` (`tests/support/drive_service_connections.py`); everything else stays a spec
 mock to script. `connection_of(user_id)` / `handle_of(user_id)` are that connection and its handle, for asserting
@@ -27,6 +27,7 @@ def spec_drive_service(*user_ids: str, tag: str = REF_TAG) -> AsyncMock:
     reads = UserDriveService(drive=None, connections=seeded_connections(*(user_ids or ("u1",)), tag=tag))  # type: ignore[arg-type]
     mock.status.side_effect = reads.status
     mock.primary.side_effect = reads.primary
+    mock.mounts.side_effect = reads.mounts
     mock.resolve_ref.side_effect = reads.resolve_ref
     return mock
 
