@@ -332,7 +332,8 @@ class UserDriveService:
         """The default destination: the Inbox inside the connection's write folder (D7). Its one caller, `save`, has
         already refused a drive with no write folder (`_refuse_if_read_only`)."""
         base = await self.write_folder_path(handle, policy)
-        assert base is not None, "save refuses a drive without a write folder before the inbox is named"
+        if base is None:
+            raise RuntimeError("save refuses a drive without a write folder before the inbox is named")
         return join_drive_path(base, DEFAULT_INBOX_FOLDER)
 
     async def list_folder(self, handle: DriveHandle, folder: Optional[str]) -> ListOutcome:

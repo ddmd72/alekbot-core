@@ -1481,7 +1481,8 @@ class DriveSearchService:
                              stats: _ExcerptStats) -> ExcerptResult:
         """One connection's passages: its folder, the ledger keys of its own tag, its tag on the result."""
         conn = part.conn
-        assert conn is not None, "a part without a connection is answered by `excerpts` before any part is read"
+        if conn is None:
+            raise RuntimeError("a part without a connection is answered by `excerpts` before any part is read")
         scoped = replace(request, folder=part.folder or "") if not request.file_refs else request
         own = frozenset(key for tag, key in shown if tag == conn.ref_tag)
         found = await self._excerpts(conn, scoped, own, stats)
