@@ -12,6 +12,8 @@ Fields (stage 1; stage 2 adds the scope, write folder and searched-by-default fi
   on it.
 - `ref_tag`: the tag of every `drive:<tag>:<item_id>` ref of this connection (§9); immutable, never reused.
 - `mount_name`: the user's name for the drive (D17); `DEFAULT_MOUNT_NAME` for the first one (E11).
+- `name_history`: every name the connection took, oldest first, each with the instant it was taken (§11.8); the last
+  entry is `mount_name` (compared by `mount_name_key`). Empty on a connection stored before the field (no former names).
 - `indexing_enabled`, `transcribe_enabled`: the per-connection switches that were per user before.
 - `provider_account`: the provider account (realm, subject; label empty) of the grant the connection was activated with,
   the key of its initial build, so a tick reads it here and never decrypts the credential; None on a connection stored
@@ -31,11 +33,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 from .connection_scope import ConnectionScope, check_connection_id
 from .drive_connection_state import ConnectionState, can_transition
 from .drive_handle import DriveHandle
+from .drive_mount_name_change import MountNameChange, mount_name_key
 from .drive_ref import is_valid_tag
 from .provider_account import ProviderAccount
 
@@ -58,6 +61,7 @@ class DriveConnection:
     created_at: datetime
     disconnected_at: Optional[datetime] = None
     provider_account: Optional[ProviderAccount] = None
+    name_history: Tuple[MountNameChange, ...] = ()
 
     def __post_init__(self) -> None:
         check_connection_id(self.connection_id)
@@ -68,6 +72,8 @@ class DriveConnection:
             raise ValueError(f"not a drive ref tag: {self.ref_tag!r}")
         if (self.state is ConnectionState.DISCONNECTED) != (self.disconnected_at is not None):
             raise ValueError("disconnected_at is set exactly when the state is DISCONNECTED")
+        if self.name_history and mount_name_key(self.name_history[-1].name) != mount_name_key(self.mount_name):
+            raise ValueError("the last name_history entry must be the current mount_name")
 
     @property
     def handle(self) -> DriveHandle:
