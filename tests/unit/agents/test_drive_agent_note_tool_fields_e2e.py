@@ -29,7 +29,7 @@ from tests.support.tool_fields import unused
 from tests.unit.services.test_drive_note_service import ACC, U, Env
 
 REPAIR = "the bathroom repair invoice from Reformas Exemplo"
-PATH = "Docs/a.pdf"
+PATH = "Drive/Docs/a.pdf"     # the history line names the canonical <mount>/<path> (MULTI_DRIVE_RFC §11.1)
 SEED = NoteProvenance(origin="chat", session_id="s0", turn_id="t0")      # an earlier turn: no same-turn guard applies
 OWNER = {"user_id": U, "account_id": ACC, "interactive_delivery": True, "session_id": "s1", TURN_ID_CONTEXT_KEY: "t1"}
 

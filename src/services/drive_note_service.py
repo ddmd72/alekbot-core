@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
@@ -166,7 +167,8 @@ class DriveNoteService:
         """The note `ref` names, from the store alone (no drive call): active, archived or cleared (a cleared note is
         returned as cleared), also while the drive is disconnected. None when there is no note or only an erase stub.
         A `drive:` ref of a note on a drive that is not connected, or of several notes, is refused as `_resolve_note`
-        refuses it (with each note's own `drive_note:` ref)."""
+        refuses it (with each note's own `drive_note:` ref). The view's path is the mounted `<mount>/<path>` the receipts
+        print (`_shown_path`); the stored snapshot stays relative."""
         target = self._target(ref)
         if target.note_id:
             note = await self._notes.get(user_id, target.note_id)
@@ -175,7 +177,7 @@ class DriveNoteService:
         if note is None or note.erase_pending:
             logger.info(f"[DriveNote] get user={user_id[:8]} note=- found=False")
             return None
-        view = NoteView.of(note)
+        view = replace(NoteView.of(note), path=await self._shown_path(user_id, note))
         logger.info(f"[DriveNote] get user={user_id[:8]} note={view.note_id} v={view.version} state={view.state}")
         return view
 

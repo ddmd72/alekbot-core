@@ -36,12 +36,13 @@ async def test_the_wide_path_reads_no_record_for_the_folder_notes():
     w, acme, rd, plan = _tree(noted=True)
     result = await w.find()
     assert len(w.repo.record_reads) == len(bare.repo.record_reads)
+    # folder-note and file-context paths: canonical <mount>/<path> (design §1.2 S-10)
     assert result.context.folders == {
-        acme: FolderNote(item_id=acme, path="Acme", depth=1, line=_line(ACME_NOTE)),
-        rd: FolderNote(item_id=rd, path="Acme/R&D", depth=2, line=_line(RD_NOTE)),
+        acme: FolderNote(item_id=acme, path="Drive/Acme", depth=1, line=_line(ACME_NOTE)),
+        rd: FolderNote(item_id=rd, path="Drive/Acme/R&D", depth=2, line=_line(RD_NOTE)),
     }
     plan_ctx = next(f for f in result.context.files if f.item_id == plan)
-    assert plan_ctx.ancestors == (rd, acme) and plan_ctx.path == "Acme/R&D/Tom's plan.docx"
+    assert plan_ctx.ancestors == (rd, acme) and plan_ctx.path == "Drive/Acme/R&D/Tom's plan.docx"
 
 
 async def test_the_file_refs_path_reads_no_record_for_the_folder_notes():
@@ -75,8 +76,8 @@ async def test_a_chain_broken_by_an_unrecorded_ancestor_shows_its_known_part():
     plan = w.doc("Tom's plan.docx", ["The first review is held by Lukas Weber."], [0.1], parent=rd)
     result = await w.find()
     ctx = next(f for f in result.context.files if f.item_id == plan)
-    assert ctx.path == "R&D/Tom's plan.docx" and ctx.ancestors == (rd,)
-    assert result.context.folders == {rd: FolderNote(item_id=rd, path="R&D", depth=1, line=_line(RD_NOTE))}
+    assert ctx.path == "Drive/R&D/Tom's plan.docx" and ctx.ancestors == (rd,)   # canonical (design §1.2 S-10)
+    assert result.context.folders == {rd: FolderNote(item_id=rd, path="Drive/R&D", depth=1, line=_line(RD_NOTE))}
 
 
 async def test_identical_copies_show_the_keepers_chain_only():

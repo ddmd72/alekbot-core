@@ -14,7 +14,7 @@ from src.domain.user_drive import DriveMirrorWriteRefused
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 
 CTX = {"user_id": "u1", "account_id": "a1"}
@@ -31,7 +31,7 @@ def search():
 
 @pytest.fixture
 def drive_service():
-    return AsyncMock(spec=UserDriveService)
+    return spec_drive_service("u1")   # the service's own connection reads: a write is placed on a real mount table
 
 
 def _agent(search, drive_service, **extra):
@@ -82,10 +82,10 @@ async def test_no_search_service_says_so(drive_service):
 
 @pytest.mark.parametrize("op,args,kwargs", [
     ("save_text", ("x",), {"file_name": "a.md", "folder": "_Transcripts"}),
-    ("delete", ("drive:f1",), {}),
-    ("move", ("drive:f1",), {"folder": "Docs"}),
+    ("delete", ("drive:a1:f1",), {}),
+    ("move", ("drive:a1:f1",), {"folder": "Docs"}),
     ("create_folder", ("_Transcripts/x",), {}),
-    ("append", ("drive:f1", "x"), {}),
+    ("append", ("drive:a1:f1", "x"), {}),
 ], ids=["save_text", "delete", "move", "create_folder", "append"])
 async def test_a_refused_write_answers_the_localized_line(search, drive_service, op, args, kwargs):
     for method in ("save", "ensure_folder", "move", "delete", "append_text", "replace_with"):
@@ -102,7 +102,7 @@ async def test_a_refused_write_answers_the_localized_line(search, drive_service,
 
 async def test_a_refused_write_without_localization_falls_back_to_english(search, drive_service):
     drive_service.delete.side_effect = DriveMirrorWriteRefused("mirror folder")
-    resp = await _agent(search, drive_service).delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+    resp = await _agent(search, drive_service).delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
     assert not resp.success
     assert resp.text == ("This folder is managed by the bot and its files are overwritten; "
                           "to keep your own version, copy the file to another folder.")

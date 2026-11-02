@@ -50,7 +50,8 @@ async def test_index_query_then_purge_leaves_nothing(folder):
                               throttle_pause_s=0, **fake_content())
     assert report.indexed.get("carded", 0) >= 2 and report.purged
     (answer,) = report.answers
-    assert answer["status"] == "ok" and "Scans/electricity bill.pdf" in answer["paths"]
+    # card paths are canonical (design §1.2 S-7)
+    assert answer["status"] == "ok" and "Drive/Scans/electricity bill.pdf" in answer["paths"]
     assert "<drive_document" in answer["text"]
     assert await repo.get_sync_state(ConnectionScope(USER, EVAL_CONNECTION_ID)) is None
     assert not [k for k in repo.records if k[0] == EVAL_CONNECTION_ID] and not [k for k in repo.chunks if k[0] == EVAL_CONNECTION_ID]
