@@ -1128,9 +1128,9 @@ class DriveOperations:
 
     async def _store(self, op: DriveOp, user_id: str, data: bytes, filename: str, mime: str,
                      folder: Any) -> DriveOutcome:
-        placed = await self._place(user_id, folder)   # empty: the Inbox in the primary's write folder (D7)
-        if not placed.named and not placed.path and not placed.mount.primary:
-            raise _Refusal(NO_PRIMARY_LINE, OutcomeClass.REFUSED)
+        if not str(folder or "").strip() and (await self._svc().mounts(user_id)).primary() is None:
+            raise _Refusal(NO_PRIMARY_LINE, OutcomeClass.REFUSED)   # the Inbox is the primary's (D7)
+        placed = await self._place(user_id, folder)   # empty: the Inbox in the primary's write folder
         conn = placed.mount.connection
         tag = conn.ref_tag
         out = await self._svc().save(conn.handle, data, filename, mime, placed.path or None)
