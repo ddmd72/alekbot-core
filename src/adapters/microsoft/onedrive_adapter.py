@@ -46,6 +46,7 @@ import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 from ...domain.connector_spec import ConnectorSpec
 from ...domain.drive_capabilities import DriveCapabilities
 from ...domain.drive_content_identity import ContentIdentity
+from ...domain.drive_feed_scope import FeedScope
 from ...domain.drive_handle import DriveHandle
 from ...domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
@@ -337,8 +338,8 @@ class OneDriveAdapter(UserDrivePort):
     # -- per connection -----------------------------------------------------
 
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
-        """The App Folder's path limit (§7.1)."""
-        return DriveCapabilities(max_path_chars=MAX_PATH_CHARS)
+        """The App Folder: its path limit, writable, one cursor over the area (§7.1, §11.3)."""
+        return DriveCapabilities(max_path_chars=MAX_PATH_CHARS, writable=True, feed_scope=FeedScope.AREA)
 
     async def forget(self, handle: DriveHandle) -> None:
         """Drop the connection's root cache and its credential's cached token (after a disconnect)."""

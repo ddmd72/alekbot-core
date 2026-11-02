@@ -8,6 +8,12 @@ id alone collides across connections and a test sees it. Provider behaviour: uni
 closed to id reads while the feed still lists it (404 is not deletion), typed media facts planted by the test, and a
 token cache keyed `(user_id, credential_id)` that `forget(handle)` drops (T-3: two handles share no cache).
 Reads and writes by a handle whose connection has no tree open one.
+
+Account-wide mode (MULTI_DRIVE_RFC §11.3, slice 2b): `FakeDriveAdapter("fake_b", feed_scope=FeedScope.ACCOUNT)` declares
+one cursor for the whole account; its root is the account root (`area_path` is `/`). `plant_parentless` plants a shared
+item with no reachable parent (`parent_id` ""): its path is its name, the feed and `get_change` list it with an empty
+parent, `list_children(root)` does not. `set_access` plants an item's `ItemAccess`. `writable=False` declares a drive
+that accepts no changes (`capabilities` only; the fake's writes keep working). The default mode is unchanged.
 """
 from __future__ import annotations
 
@@ -19,8 +25,10 @@ from typing import Dict, List, Literal, Optional, Set, Tuple
 
 from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_feed_scope import FeedScope
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
+from src.domain.drive_item_access import ItemAccess
 from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_media_source import MediaSource
 from src.domain.user_drive import (
@@ -57,6 +65,7 @@ class _Tree:
         self.closed: Set[str] = set()
         self.log: List[Tuple[int, str, bool]] = []
         self.epoch = 0                                   # bumped by `expire_cursors`
+        self.access: Dict[str, ItemAccess] = {}          # planted by `set_access`
 
     def new(self, parent: str, name: str, folder: bool, data: bytes = b"") -> _Node:
         node = _Node(f"item-{next(self._ids)}", name, parent, folder, data, order=next(self._order))
@@ -80,10 +89,13 @@ class _Tree:
 
 
 class FakeDriveAdapter(UserDrivePort):
-    def __init__(self, id_space: str = "fake_a", *, max_path_chars: int = 255, area_path: str = "/Fake") -> None:
+    def __init__(self, id_space: str = "fake_a", *, max_path_chars: int = 255, area_path: str = "/Fake",
+                 writable: bool = True, feed_scope: FeedScope = FeedScope.AREA) -> None:
         self.id_space = id_space
         self.max_path_chars = max_path_chars
-        self._area_path = area_path
+        self.writable = writable
+        self.feed_scope = feed_scope
+        self._area_path = "/" if feed_scope is FeedScope.ACCOUNT else area_path
         self._trees: Dict[str, _Tree] = {}
         self.token_cache: Dict[Tuple[str, str], str] = {}     # (user_id, credential_id) -> token
         self.forgotten: List[str] = []
@@ -103,6 +115,14 @@ class FakeDriveAdapter(UserDrivePort):
         node = self.tree(handle).new(parent_id, name, folder, data)
         node.media, node.hashed, node.thumbnail = media or DriveMediaFacts(), hashed, thumbnail
         return node.item_id
+
+    def plant_parentless(self, handle: DriveHandle, name: str, data: bytes = b"", *, folder: bool = False) -> str:
+        """A shared item with no reachable parent (account-wide mode): `parent_id` "", outside the root's children."""
+        return self.tree(handle).new("", name, folder, data).item_id
+
+    def set_access(self, handle: DriveHandle, item_id: str, access: ItemAccess) -> None:
+        """What the provider lets the bot do with the item, returned on its `DriveItem.access`."""
+        self.tree(handle).access[item_id] = access
 
     def close(self, handle: DriveHandle, item_id: str) -> None:
         """The item stays in the change feed and answers "not found" to every id read."""
@@ -138,7 +158,7 @@ class FakeDriveAdapter(UserDrivePort):
             size_bytes=len(node.data), modified_at=_T0, child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
             identity=self._item_identity(tree, node.item_id), drive_identity=f"{self.id_space}:{tree.drive_id}",
             content_version="" if node.is_folder else f"v{node.version}", content_identity=self._content_identity(node),
-            media=node.media)
+            media=node.media, access=tree.access.get(node.item_id, ItemAccess()))
 
     def _change(self, tree: _Tree, node: _Node) -> DriveChange:
         return DriveChange(
@@ -327,7 +347,8 @@ class FakeDriveAdapter(UserDrivePort):
 
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
         self._enter("capabilities", handle)
-        return DriveCapabilities(max_path_chars=self.max_path_chars)
+        return DriveCapabilities(max_path_chars=self.max_path_chars, writable=self.writable,
+                                 feed_scope=self.feed_scope)
 
     async def forget(self, handle: DriveHandle) -> None:
         self.calls.append(("forget", handle.connection_id))

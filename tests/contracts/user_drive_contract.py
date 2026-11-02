@@ -8,7 +8,7 @@ say whether the adapter still holds state for a connection).
 Cases: identities in the adapter's `id_space`; content version and content identity; the three conflict modes;
 404 is not deletion; resync; recoverable delete; typed media facts only (`alias_of` included); every name of the portable
 set accepted; a `MediaSource` the sandbox may receive (no headers) or bytes that stream; capabilities (T-7: one case per
-value the world declares); the path limit; two handles of one adapter share no cache, and `forget` drops one's own.
+value the world declares: the path limit, `drive_writable`, `feed_scope`); the path limit; two handles of one adapter share no cache, and `forget` drops one's own.
 A drive that is read-only by design (the eval fixture) declares `writable = False` and skips the cases that write beyond
 `upload`; a drive that cannot isolate connections declares `isolates_connections = False`.
 """
@@ -20,6 +20,7 @@ from typing import List, Tuple
 
 import pytest
 
+from src.domain.drive_feed_scope import FeedScope
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import DriveChange
 from src.domain.drive_media_facts import DriveMediaFacts
@@ -45,6 +46,8 @@ class DriveWorld(ABC):
     writable: bool = True
     isolates_connections: bool = True
     enforces_path_limit: bool = True
+    drive_writable: bool = True              # what `capabilities().writable` declares (not `writable` above)
+    feed_scope: FeedScope = FeedScope.AREA
 
     @abstractmethod
     async def plant_file_without_hash(self, handle: DriveHandle, parent_id: str, name: str) -> str: ...
@@ -330,6 +333,11 @@ class UserDriveContract:
     async def test_capabilities_state_the_path_limit(self, world: DriveWorld) -> None:
         caps = await world.port.capabilities(world.handle)
         assert caps.max_path_chars == world.max_path_chars
+
+    async def test_capabilities_state_writable_and_feed_scope(self, world: DriveWorld) -> None:
+        caps = await world.port.capabilities(world.handle)
+        assert caps.writable == world.drive_writable
+        assert caps.feed_scope == world.feed_scope
 
     async def test_area_path_is_absolute(self, world: DriveWorld) -> None:
         assert (await world.port.area_path(world.handle)).startswith("/")
