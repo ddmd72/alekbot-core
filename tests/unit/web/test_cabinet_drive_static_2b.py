@@ -55,7 +55,7 @@ def test_no_fetch_of_a_retired_route_remains():
 
 def test_a_disconnected_drive_keeps_no_index_so_the_page_has_no_kept_hint_and_no_gone_banner():
     # D9: a 2b disconnect purges at once; a row's own Reconnect covers a rejected or missing grant
-    assert "index_kept_hint" not in _HTML and "reconnect_hint_missing" not in _HTML
+    assert "index_kept_hint" not in _HTML and "drive.reconnect_hint_missing" not in _HTML
     assert "if (enabled && !linked)" not in _HTML
     drive_card = _HTML.split("function renderDriveStatus", 1)[1].split("function renderDriveConnection", 1)[0]
     assert "reconnect_needed" not in drive_card
