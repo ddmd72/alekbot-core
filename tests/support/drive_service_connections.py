@@ -5,7 +5,7 @@ MULTI_DRIVE_RFC §6, §9: technical ids only.
   each user with one ACTIVE primary connection `conn-1` tagged `tag`, seeded synchronously (for a sync fixture or a
   constructor argument of `UserDriveService(drive, connections)`).
 - `ConnectionReads`: a mixin for a hand fake of `UserDriveService` that gives it the service's connection reads
-  (`status`, `primary`, `resolve_ref`) by running the production `UserDriveService` methods over
+  (`status`, `primary`, `mounts`, `resolve_ref`) by running the production `UserDriveService` methods over
   `seeded_connections`. Any user that asks has its one connection (seeded on first read), so `drive:a1:<item>`
   resolves and an untagged `drive:<item>` answers the stale-ref line (D13).
 - `ref(item_id, tag=REF_TAG)`: the tagged ref the code prints for an item of that connection.
@@ -17,6 +17,7 @@ from typing import Any, Optional
 from src.domain import drive_ref
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_status import DriveConnectionStatus
+from src.domain.drive_mount_table import MountTable
 from src.domain.drive_resolved_ref import ResolvedDriveRef
 from src.domain.drive_user_settings import DriveUserSettings
 from src.services.drive_connection_service import DriveConnectionService
@@ -54,7 +55,7 @@ def seeded_connections(*user_ids: str, tag: str = REF_TAG,
 
 
 class ConnectionReads:
-    """Mixin for a hand fake of UserDriveService: `status`, `primary`, `resolve_ref` as the service answers them, over
+    """Mixin for a hand fake of UserDriveService: `status`, `primary`, `mounts`, `resolve_ref` as the service answers them, over
     one ACTIVE primary connection (tag `ref_tag`) per user, seeded on the user's first read."""
 
     ref_tag: str = REF_TAG
@@ -73,6 +74,9 @@ class ConnectionReads:
 
     async def primary(self, user_id: str) -> DriveConnection:
         return await self._reads(user_id).primary(user_id)
+
+    async def mounts(self, user_id: str) -> MountTable:
+        return await self._reads(user_id).mounts(user_id)
 
     async def resolve_ref(self, user_id: str, ref: str) -> ResolvedDriveRef:
         return await self._reads(user_id).resolve_ref(user_id, ref)

@@ -201,7 +201,8 @@ class DriveToolRun:
             return self._answer(tc, t.SAME_SEARCH.format(handle=earlier))
         result = await self._run(DriveOp.SEARCH, t.KIND_SEARCH, lambda: self._ops.search(
             self._context, self._user_id, query=args.get("query"), folder=args.get("folder"), kind=args.get("kind"),
-            date_from=args.get("date_from"), date_to=args.get("date_to")), change=False)
+            date_from=args.get("date_from"), date_to=args.get("date_to"), **_drives_arg(args)),
+            change=False)
         if result.outcome.cls not in (OutcomeClass.REQUEST_ERROR, OutcomeClass.NOT_FINISHED):
             self._collector.remember_search(key, result.handle)
         return self._seen(tc, result)
@@ -244,7 +245,8 @@ class DriveToolRun:
         result = await self._run(DriveOp.PASSAGES, t.KIND_PASSAGES, lambda: self._ops.find_passages(
             self._context, self._user_id, question=args.get("question"), folder=args.get("folder"),
             file_refs=args.get("file_refs"), shown=ledger.keys(), shown_folders=ledger.folders_shown(),
-            described_files=ledger.files_described()), change=False)
+            described_files=ledger.files_described(), **_drives_arg(args)),
+            change=False)
         return self._passages_seen(tc, result)
 
     async def _read_passages(self, tc: ToolCall) -> ToolResult:
@@ -387,6 +389,11 @@ class DriveToolRun:
         async def call(_folder: Any) -> DriveOutcome:
             return await self._ops.delete(self._context, self._user_id, ref, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.DELETE, call)
+
+
+def _drives_arg(args: Any) -> Dict[str, Any]:
+    """`drives` goes to the operation only when the model gave it, so a call without it is today's call."""
+    return {"drives": args["drives"]} if args.get("drives") else {}
 
 
 def _is_bare_path(ref: str) -> bool:

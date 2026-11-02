@@ -50,6 +50,7 @@ def drive():
     d = AsyncMock(spec=UserDriveService)
     reads = _Reads()
     d.primary.side_effect = reads.primary
+    d.mounts.side_effect = reads.mounts
     d.resolve_ref.side_effect = reads.resolve_ref
     d.get_item.return_value = FILE
     return d

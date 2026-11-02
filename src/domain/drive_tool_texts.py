@@ -47,6 +47,8 @@ KIND = (
     "Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, audio, archive, code, folder, or a file "
     "extension such as 'jpg'. Other words are refused."
 )
+DRIVES = ("Optional: the name of one drive to search, as drive_state lists it under drives. Empty searches the "
+         "primary drive. A folder that starts with a drive's name is searched on that drive.")
 DATE_FROM = (
     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
     "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
@@ -58,7 +60,7 @@ DATE_TO = (
     "for a time span the user gives. For what expires, it bounds the expiry date."
 )
 DELETED_QUERY = "Optional: words to find. Empty lists the newest."
-LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the top level."
+LIST_FOLDER_PARAM = f"Optional: {_FOLDER}. Empty lists the primary drive's top level; '/' lists the drives."
 FILE_REF = ("The drive: ref of the file or folder, from a card, a [Drive: …] label, the commission or the state "
             "block.")
 OPEN_REF = ("The file's drive: ref, from a card, a [Drive: …] label, the commission or the state block. A chat file "
@@ -90,7 +92,7 @@ PASSAGES_QUESTION = (
 PASSAGES_FOLDER = (f"Optional: only files in this folder and its subfolders: {_FOLDER}. Empty searches the whole "
                    "drive.")
 PASSAGES_FILE_REFS = ("Optional: only these files: their drive: refs, comma-separated, at most 10, from a card, a "
-                      "passages head line, the commission or the state block. When given, folder is not used. Empty: "
+                      "passages head line, the commission or the state block. When given, folder and drives are not used. Empty: "
                       "not limited to files.")
 PASSAGES_FILE_REF = "The file's drive: ref, from a card or a passages head line's id."
 PASSAGES_RANGE = ("The passage numbers to read: one number or a range such as 6-8, numbered as head lines number them "
@@ -120,8 +122,8 @@ def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[s
     order, so each cacheable prefix stays stable (design Δ16). No `extra` is today's list byte for byte."""
     return [
         _tool(SEARCH_DRIVE, "Find files and folders on the drive by what they are, their names, dates, places and what "
-              "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, kind=KIND, date_from=DATE_FROM,
-              date_to=DATE_TO),
+              "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, drives=DRIVES, kind=KIND,
+              date_from=DATE_FROM, date_to=DATE_TO),
         _tool(SEARCH_DELETED, "Search the transcripts of deleted recordings and the notes on deleted files; deleted "
               "files themselves are not searchable. Only when the user explicitly asks about deleted or removed "
               "files. Never for an ordinary search.", [], query=DELETED_QUERY),
@@ -135,7 +137,7 @@ def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[s
               "excerpts numbered per file, shown to you in full and delivered to the orchestrator. For what is "
               "written inside files; to find which files there are use search_drive, for a whole file "
               "open_drive_file.", ["question"], question=PASSAGES_QUESTION, folder=PASSAGES_FOLDER,
-              file_refs=PASSAGES_FILE_REFS),
+              drives=DRIVES, file_refs=PASSAGES_FILE_REFS),
         _tool(READ_PASSAGES, "Read one file's text by passage number. In order, a page at a time, only when the need "
               "is the file's text in order (its beginning, the next page, its full text): passages \"from 1\", then the "
               "number the page line gives. Or the passages around or after one you were shown, or where a cut result "

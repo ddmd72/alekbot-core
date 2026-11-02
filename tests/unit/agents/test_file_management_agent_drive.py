@@ -68,6 +68,7 @@ def drive():
     d = AsyncMock(spec=UserDriveService)
     reads = UserDriveService(drive=None, connections=seeded_connections("u1"))
     d.primary.side_effect = reads.primary
+    d.mounts.side_effect = reads.mounts
     d.resolve_ref.side_effect = reads.resolve_ref
     d.status.side_effect = reads.status
     return d
