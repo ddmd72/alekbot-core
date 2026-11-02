@@ -559,7 +559,8 @@ beside the other local tools (`smart_response_agent.py:489-522`), so provider ro
 - `generations: Dict[path, int]` — filled by `view` of the current version, `create`, `str_replace`, `insert`, `rename`,
   `copy`, `restore`;
 - `line_generations: Dict[path, int]` — filled by `grep` only (D18): the generation whose line numbers the run has seen. It
-  satisfies the `insert` staleness guard and nothing else; a write or delete of the path by this run drops it;
+  satisfies the `insert` staleness guard and nothing else; a delete by this run drops it (after a write the new
+  generation is in `generations`, which the guard also accepts);
 - one `asyncio.Lock`, taken as the **first await of every command**, reads included. `_dispatch_local` awaits the
   handler with nothing before it (`delegation_engine.py:613-619`), and `_execute_tool_calls` creates the batch's
   tasks in emission order under `asyncio.gather` (`:590-598`). `asyncio.Lock` wakes waiters FIFO, so the commands of
