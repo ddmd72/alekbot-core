@@ -54,6 +54,7 @@ from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import Nudge
 from ..domain.drive_index_params import TICK_DEADLINE_S
+from ..domain.drive_mount_table import MountTable
 from ..domain.drive_ref_refusal import DriveRefRefusal
 from ..domain.drive_resolved_ref import ResolvedDriveRef
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_task_key, scope_payload
@@ -102,6 +103,10 @@ class UserDriveService:
         if connection is None:
             raise DriveNotConnectedError("no primary drive connection")
         return connection
+
+    async def mounts(self, user_id: str) -> MountTable:
+        """The user's mount tree (MULTI_DRIVE_RFC §11.1), read fresh: `DriveConnectionService.mounts`."""
+        return await self._connections.mounts(user_id)
 
     async def resolve_ref(self, user_id: str, ref: str) -> ResolvedDriveRef:
         """The connection and item id of a `drive:<tag>:<item_id>` ref. DriveRefRefused with the code-built line for an
