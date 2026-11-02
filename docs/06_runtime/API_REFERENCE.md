@@ -22,7 +22,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/auth/logout` | cookie | Revoke the refresh token, clear cookies |
 | `GET` | `/auth/me` | JWT | Current user and account |
 | `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
-| `GET` | `/auth/connect/<kind>` | Cabinet session | Start an integration connect; `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`. `?credential=<id>` reconnects that stored credential. Unknown kind 404; a realm with no OAuth client on this deployment 501 |
+| `GET` | `/auth/connect/<kind>` | Cabinet session | Start an integration connect; `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`. `?credential=<id>` reconnects that stored credential; `?intent=add` connects another account of the kind as a new connection. Every intent shows the provider's account chooser. Unknown kind 404; a realm with no OAuth client on this deployment 501 |
 | `GET` | `/auth/connect/callback` | Cabinet session / server-side flow state | The one callback of every integration (Google and Microsoft). The flow is stored server-side and consumed once; the user returns to the Cabinet with `?connected=<kind>` or `?connect_error=<status>`. The To Do activation enqueues `setup_microsoft_todo`. Google Tasks is frozen: no connect button, stored grants keep working |
 
 ## Cabinet API (`src/web/user_cabinet_app.py`, JWT on every route)
@@ -61,10 +61,16 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/api/tasks/microsoft/reindex` | Re-index all task lists (Cloud Tasks) |
 | `GET` | `/api/tasks/microsoft/lists` | The user's To Do lists (proxied from Graph) |
 | `DELETE` | `/api/tasks/microsoft/disconnect` | Drop subscriptions, revoke tokens, clear the search index |
-| `GET` | `/api/drive/status` | Drive connection and index state |
-| `GET`, `PUT` | `/api/drive/indexing` | Drive indexing opt-in |
+| `GET` | `/api/drive/connections` | The drive card: one row per live connection (name, kind, account, primary, write folder, scope, searched by default, indexing and its status, note, reconnect), the default name for "Add a drive", the primary's id |
+| `PUT` | `/api/drive/connections/<connection_id>/name` | Rename a drive (`{name}`); a refused name 400, a valid one returns `{name, warning}` |
+| `PUT` | `/api/drive/connections/<connection_id>/scope` | Set the indexed folders or the whole drive (`{whole_drive, folder_ids}`) |
+| `PUT` | `/api/drive/connections/<connection_id>/write-folder` | Set the write folder (`{folder_id}`: an id, `""` the root, null read-only) |
+| `PUT` | `/api/drive/connections/<connection_id>/searched-by-default` | Whether an unnamed search reads the drive (`{enabled}`) |
+| `PUT` | `/api/drive/connections/<connection_id>/indexing` | Indexing (search over the drive) on or off for one connection (`{enabled}`) |
+| `PUT` | `/api/drive/primary` | Make a connection the primary (`{connection_id}`) |
+| `GET` | `/api/drive/connections/<connection_id>/folders` | Folder picker: the folder children of `?parent=<item id>` (the root without it) |
 | `GET`, `PUT` | `/api/drive/deep-research-copy` | Copy deep research reports to the drive (opt-in) |
-| `DELETE` | `/api/drive/disconnect` | Disconnect the drive |
+| `DELETE` | `/api/drive/connections/<connection_id>` | Disconnect one drive (optional `{heir_id}` names the next primary) |
 
 ## Web pages
 
