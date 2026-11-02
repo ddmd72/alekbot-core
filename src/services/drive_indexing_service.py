@@ -2477,13 +2477,11 @@ class DriveIndexingService:
         return True
 
     async def _remove_out_of_scope(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
-        """A record outside the connection's scope (RFC §11.3): a folder goes through the cascade, a file is deleted;
-        the mirror's notice is `unstored` (the item is still on the drive)."""
-        if rec.is_folder:
-            await self._commit(handle, [_dying(rec, ctx.now)], set())
-        else:
-            await self._commit(handle, [], {rec.item_id}, collects=_ever_read([rec]),
-                               gone=self._mirror_notices([rec], UNSTORED))
+        """A record outside the connection's scope (RFC §11.3): planned as a deletion, so a folder goes through the
+        DELETING cascade and a file is deleted; `_commit_plan` names the record, so the mirror's notice is `unstored`
+        (the item is still on the drive)."""
+        plan = plan_observation(replace(change_from_record(rec), deleted=True), rec, None, None, ctx, None)
+        await self._commit_plan(handle, plan, rec)
 
     async def _remove_orphan(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
         """A folder goes through the cascade, so children parked under it go with it (§3.4)."""

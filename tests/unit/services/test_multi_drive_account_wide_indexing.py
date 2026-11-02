@@ -156,3 +156,29 @@ async def test_the_app_folder_default_indexes_as_before_with_no_extra_change_rea
     assert "get_change" not in {m for m, _ in w.drive.calls}
     state = await w.repo.get_sync_state(ConnectionScope(user_id=USER, connection_id=CONN))
     assert state.applied_scope == ""
+
+
+async def test_a_held_record_whose_chain_leaves_the_scope_is_removed_as_out_of_scope(acct):
+    """`_resolve_step` on a filtered scope: an unresolved record whose parent chain reaches the root without a chosen
+    folder goes as `unstored`, not as an orphan (`gone`)."""
+    from src.domain.drive_index import DriveIndexRecord, RecordState
+    from src.services.drive_indexing_service import _Budget, _ScopeView, _TICK_SCOPE
+    from src.domain.drive_index_scope import IndexScope
+    await acct.scope(folders=[acct.rd])
+    await acct.settle()
+    stray = acct.plant(acct.springfield, "birth-certificate.pdf")
+    held = DriveIndexRecord(user_id=USER, connection_id=CONN, item_id=stray, parent_id=acct.springfield,
+                            name="birth-certificate.pdf", state=RecordState.UNRESOLVED)
+    await acct.repo.upsert_records([held])
+    conn = await acct.connections.get(USER, CONN)
+    token = _TICK_SCOPE.set(_ScopeView(IndexScope.of(conn, await acct.drive.capabilities(acct.handle))))
+    try:
+        state = await acct.repo.get_sync_state(ConnectionScope(user_id=USER, connection_id=CONN))
+        ctx = acct.svc._ctx(acct.handle, state, acct.clock())
+        acct.notices.clear()
+        assert await acct.svc._resolve_step(acct.handle, held, state, ctx,
+                                            _Budget(started=0.0, monotonic=acct.clock.monotonic))
+    finally:
+        _TICK_SCOPE.reset(token)
+    assert "birth-certificate.pdf" not in acct.names()
+    assert acct.notices == [(stray, svc_mod.UNSTORED)]
