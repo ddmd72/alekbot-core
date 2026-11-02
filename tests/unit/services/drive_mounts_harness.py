@@ -1,5 +1,6 @@
 """Two drives for the mount tests of the search service (multi-drive 2a): `Drive` (connection `u`, tag `a1`, the
-primary, the index of the Search v2 fixture) and, on request, `Acme` (connection `conn-2`, tag `b2`, no index yet).
+primary, the index of the Search v2 fixture) and, on request, `Acme` (connection `conn-2`, tag `b2`, no index yet;
+searched by default unless `acme_searched=False`, slice 2b D4).
 The real `DriveConnectionService` over the in-memory repository; the search service is the fixture's, rebuilt over it."""
 from __future__ import annotations
 
@@ -24,24 +25,25 @@ CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def drive_connection(connection_id: str, tag: str, name: str, *, drive_identity: str, created_at: datetime,
                      history: Tuple[MountNameChange, ...] = (), state: ConnectionState = ConnectionState.ACTIVE,
-                     indexing: bool = True) -> DriveConnection:
+                     indexing: bool = True, searched_by_default: bool = True) -> DriveConnection:
     return DriveConnection(
         connection_id=connection_id, user_id="u", account_id="acc-1", credential_id=f"cred-{connection_id}",
         kind="fake_a", drive_identity=drive_identity, ref_tag=tag, mount_name=name, indexing_enabled=indexing,
         state=state, created_at=created_at, disconnected_at=created_at if state is ConnectionState.DISCONNECTED else None,
-        name_history=history or (MountNameChange(name, created_at),))
+        name_history=history or (MountNameChange(name, created_at),), searched_by_default=searched_by_default)
 
 
 class MountedWorld(V2World):
     """The v2 fixture's index served through a connection service holding `Drive` and, when `acme`, `Acme`."""
 
     def __init__(self, *, acme: bool = True, acme_history: Optional[Tuple[MountNameChange, ...]] = None,
-                 acme_name: str = "Acme") -> None:
+                 acme_name: str = "Acme", acme_searched: bool = True) -> None:
         super().__init__()
         self.conns = FakeDriveConnectionRepository()
         self.primary = drive_connection("u", "a1", "Drive", drive_identity="fake:d1", created_at=CREATED)
         self.acme = drive_connection("conn-2", "b2", acme_name, drive_identity="fake:d2",
-                                     created_at=CREATED + timedelta(days=1), history=acme_history or ())
+                                     created_at=CREATED + timedelta(days=1), history=acme_history or (),
+                                     searched_by_default=acme_searched)
         self._acme_on = acme
         self.connections = connection_service(self.conns)
         counter = itertools.count(1)
