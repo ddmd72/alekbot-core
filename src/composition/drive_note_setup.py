@@ -87,7 +87,8 @@ def add_drive_note_deleted_source(search: DriveSearchService, notes: DriveNoteRe
                                   embeddings: EmbeddingService, *, embedding_space: str) -> DriveNoteDeletedSearch:
     """The notes source of the drive specialist's deleted-files search (`search_deleted_recordings_and_notes`, §6.4): one
     section with the archived transcripts. Added whatever the switch (a read, §3.6)."""
-    source = DriveNoteDeletedSearch(notes, embeddings, embedding_space=embedding_space)
+    source = DriveNoteDeletedSearch(notes, embeddings, embedding_space=embedding_space,
+                                    mount_name_of=search.mount_name_of_tag)
     search.add_deleted_source(source)
     return source
 

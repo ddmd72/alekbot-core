@@ -17,14 +17,15 @@ store only, never the index, so it needs neither the opt-in flag nor a connectio
   remove the note of a gone file); the note is data inside the wrapper (§6.3). Logs carry counts, never text.
 
 Public interface:
-    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, store_keys, nonce)
+    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, store_keys, nonce, mount_name_of)
     await (user_id, concepts, connection) -> (hits, coverage lines)       # the DeletedSource signature (connection: the
                                                                           # searched one, or None)
 """
 from __future__ import annotations
 
 import secrets
-from typing import Callable, List, Optional, Sequence, Tuple
+from dataclasses import replace
+from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
 
 from ..domain.drive_deleted_search import DeletedHit
 from ..domain.drive_index import DriveIndexStoreUnavailable
@@ -33,7 +34,10 @@ from ..domain.drive_keys import name_keys_v2
 from ..domain.drive_match import Concept
 from ..domain.drive_connection import DriveConnection
 from ..domain.drive_connection_status import DriveConnectionStatus
-from ..domain.drive_note import ARCHIVE_SCAN_MAX, NOTES_PER_USER_MAX, DriveNote, NoteState, on_connection
+from ..domain.drive_mounts import canonical_path
+from ..domain.drive_note import (
+    ARCHIVE_SCAN_MAX, NOTES_PER_USER_MAX, DriveNote, NoteState, note_ref_tag, on_connection,
+)
 from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_note_render import (
     ARCHIVE_SCAN_CUT_LINE, DORMANT_HIDDEN_LINE, MEANING_LINE, MORE_NOTES_LINE, StoreKeys, matched_line, note_hit,
@@ -42,6 +46,8 @@ from ..domain.drive_note_render import (
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
 from ..utils.logger import exc_brief, logger
+
+MountNameOf = Callable[[str, str], Awaitable[Optional[str]]]   # (user_id, ref tag) -> the connection's mount name
 
 MEANING_MAX = 2          # §6.4 step 3
 NEWEST_MAX = 10          # §6.4 step 4
@@ -54,15 +60,19 @@ def _nonce() -> str:
 
 class DriveNoteDeletedSearch:
     def __init__(self, notes: DriveNoteRepository, embeddings: EmbeddingService, *, embedding_space: str,
-                 store_keys: StoreKeys = note_store_keys, nonce: Callable[[], str] = _nonce) -> None:
+                 store_keys: StoreKeys = note_store_keys, nonce: Callable[[], str] = _nonce,
+                 mount_name_of: Optional[MountNameOf] = None) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE): the meaning
         fallback compares only note vectors in it. `store_keys` is part B's `drive_note_merge.note_store_keys`, used when
-        a note's stored keys are of another layout; injectable for tests only."""
+        a note's stored keys are of another layout; injectable for tests only. `mount_name_of(user_id, tag)` is the
+        current mount name of the connection a ref tag names (None: unknown): an entry's stored (connection-relative)
+        path is printed as `<mount>/<path>` (multi-drive 2a, E-11); without it, or for an unknown tag, the stored path."""
         self._notes = notes
         self._embeddings = embeddings
         self._space = embedding_space
         self._store_keys = store_keys
         self._nonce = nonce
+        self._mount_name_of = mount_name_of
 
     async def __call__(self, user_id: str, concepts: Sequence[Concept],
                        connection: Optional[DriveConnection]) -> Tuple[List[DeletedHit], List[str]]:
@@ -99,12 +109,21 @@ class DriveNoteDeletedSearch:
         shown = found[:DELETED_SHOW_MAX]
         if len(found) > len(shown):
             coverage.append(MORE_NOTES_LINE.format(count=len(found) - len(shown)))
-        hits = [note_hit(n, dormant=d, nonce=self._nonce(), matched=m, day=_gone_day(n) if not d else "")
+        hits = [await self._mounted(user_id, n, note_hit(n, dormant=d, nonce=self._nonce(), matched=m,
+                                                         day=_gone_day(n) if not d else ""))
                 for n, d, m in shown]
         logger.info(f"[DriveNote] deleted-files search user={user_id[:8]} archived={len(archived)} "
                     f"dormant={len(dormant)} matched={len(found)} meaning={meaning} shown={len(hits)} "
                     f"connected={bool(tag)}")
         return hits, coverage
+
+    async def _mounted(self, user_id: str, note: DriveNote, hit: DeletedHit) -> DeletedHit:
+        """The hit with its stored path canonical, by the mount of the connection the note is bound on."""
+        tag = note_ref_tag(note)
+        if self._mount_name_of is None or not tag or not hit.path:
+            return hit
+        name = await self._mount_name_of(user_id, tag)
+        return replace(hit, path=canonical_path(name, hit.path)) if name else hit
 
     @staticmethod
     def _elsewhere(note: DriveNote, tag: str) -> bool:

@@ -38,3 +38,6 @@ class ExcerptResult:
     context: ExcerptContext = ExcerptContext.EMPTY
     page: Optional[PageSpan] = None        # only on a page request (`from N`, RFC §29.5)
     ref_tag: str = ""                      # the searched connection's ref tag (MULTI_DRIVE_RFC §9): files' refs carry it
+    refusal: str = ""                      # STATUS_DRIVE_REFUSED: the code-built line, rendered verbatim
+    notice: str = ""                       # RENAME_NOTICE when a former drive name was used: the first line of the render
+    not_searched_drives: Tuple[str, ...] = ()   # current names of the live drives this call did not read (2a, §3)
