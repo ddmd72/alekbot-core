@@ -23,11 +23,11 @@ from .drive_history import history_entries
 from .drive_outcome import DriveOutcome
 
 SearchKey = Tuple[str, ...]
-_SEARCH_FIELDS = ("query", "folder", "kind", "date_from", "date_to")
+_SEARCH_FIELDS = ("query", "folder", "kind", "date_from", "date_to", "drives")
 
 
 def search_key(args: Mapping[str, Any]) -> SearchKey:
-    """Two searches are identical when their normalised query, folder, kind and dates are (§5.4)."""
+    """Two searches are identical when their normalised query, folder, kind, dates and drives are (§5.4)."""
     return tuple(" ".join(str(args.get(name) or "").casefold().split()) for name in _SEARCH_FIELDS)
 
 
