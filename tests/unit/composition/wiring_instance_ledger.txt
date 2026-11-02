@@ -117,6 +117,7 @@ src.services.credential_revocation_service.CredentialRevocationService 1  # by-d
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
+src.services.drive_disconnect_service.DriveDisconnectService 1  # by-design the Cabinet's one drive disconnect flow (MULTI_DRIVE_RFC 4.3, REQ-ARCH-34)
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
 src.services.drive_note_service.DriveNoteService 1  # by-design single instance
 src.services.drive_search_service.DriveSearchService 1  # by-design single instance
