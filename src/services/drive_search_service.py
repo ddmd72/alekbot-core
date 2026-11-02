@@ -108,7 +108,6 @@ from ..domain.drive_mounts import (
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
     INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
-    UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
