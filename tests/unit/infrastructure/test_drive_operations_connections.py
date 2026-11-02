@@ -1,6 +1,7 @@
-"""DriveOperations by connection (MULTI_DRIVE_RFC §6, §9; slice 1b part D): a ref acts on its tag's connection, a path
-and a save on the primary, every label and `drive_context` ref carries the connection's tag, and a ref of no live
-connection answers its code-built line once, as not found, with nothing done."""
+"""DriveOperations by connection (MULTI_DRIVE_RFC §6, §9, §11.1; slice 1b part D, slice 2a): a ref reads on its tag's
+connection, a path and a save on the primary, every label and `drive_context` ref carries the connection's tag and every
+printed path its mount (`<mount>/<path>`), a write on a drive that is not the primary is refused (slice 2a, D11), and a
+ref of no live connection answers its code-built line once, as not found, with nothing done."""
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -8,6 +9,7 @@ import pytest
 
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_line import DriveLine
+from src.domain.drive_mounts import READ_ONLY_LINE
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_ref_refusal import disconnected_ref_line, stale_ref_line
 from src.infrastructure.drive_operations import DriveOperations
@@ -32,6 +34,7 @@ async def world():
     connections = connection_service(w.repo)
     w.one = await seed(w.repo, connection_id="conn-1", tag="a1")
     w.two = await seed(w.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, created_at=T1)
+    await w.repo.update("usr-1", "conn-2", mount_name="Drive 2")   # the name activate gives a second drive (E11)
     assert w.drive.plant(w.one.handle, "root", "on-one.txt", b"one") == "item-1"
     assert w.drive.plant(w.two.handle, "root", "on-two.txt", b"two") == "item-1"     # the same item id on purpose (T-4)
     w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
@@ -55,26 +58,30 @@ class TestRefsActOnTheirConnection:
         out = await world.ops.open(CTX, "usr-1", "drive:b2:item-1")
         assert out.success and "two" in out.text
         assert "ref=drive:b2:item-1" in out.text
-        assert out.drive_context() == [{"path": "on-two.txt", "ref": "drive:b2:item-1"}]
+        assert out.drive_context() == [{"path": "Drive 2/on-two.txt", "ref": "drive:b2:item-1"}]
 
     async def test_list_by_folder_ref_lists_that_connection(self, world):
         out = await world.ops.list_folder(CTX, "usr-1", f"drive:b2:{world.folder}")
-        assert out.success and out.text.startswith(f"[Drive folder: Work/ ref=drive:b2:{world.folder}]")
+        assert out.success and out.text.startswith(f"[Drive folder: Drive 2/Work/ ref=drive:b2:{world.folder}]")
 
-    async def test_a_delete_by_ref_deletes_on_that_connection_only(self, world):
+    async def test_a_delete_by_ref_on_a_drive_that_is_not_the_primary_is_refused(self, world):
+        # Slice 2a (design §9, D11): only the primary can be changed; a write by ref obeys it, before any provider call.
         out = await world.ops.delete(CTX, "usr-1", "drive:b2:item-1", wait_s=5)
-        assert out.success
-        assert _recycled(world) == (set(), {"item-1"})
+        assert not out.success and out.cls is OutcomeClass.REFUSED and out.text == READ_ONLY_LINE
+        assert _recycled(world) == (set(), set())
+        assert ("delete", "conn-2") not in world.drive.calls
 
-    async def test_a_move_answers_with_the_tagged_label(self, world):
+    async def test_a_move_by_ref_on_a_drive_that_is_not_the_primary_is_refused(self, world):
         out = await world.ops.move(CTX, "usr-1", "drive:b2:item-1", folder="Work", wait_s=5)
-        assert out.success and "ref=drive:b2:item-1" in out.text and out.ref_tag == "b2"
+        assert not out.success and out.cls is OutcomeClass.REFUSED and out.text == READ_ONLY_LINE
+        assert world.drive.tree(world.two.handle).nodes["item-1"].parent_id == "root"
+        assert ("move", "conn-2") not in world.drive.calls
 
 
 class TestPathsAreThePrimarys:
     async def test_a_listing_by_path_tags_the_primary(self, world):
         out = await world.ops.list_folder(CTX, "usr-1", None)
-        assert "[Drive: on-one.txt (3B) ref=drive:a1:item-1]" in out.text
+        assert "[Drive: Drive/on-one.txt (3B) ref=drive:a1:item-1]" in out.text
         assert {e["ref"] for e in out.drive_context()} >= {"drive:a1:item-1"}
 
     async def test_a_saved_text_goes_to_the_primary(self, world):
@@ -118,5 +125,5 @@ class TestPreflight:
         assert (await world.ops.preflight("usr-2")).drive is DriveLine.NOT_CONNECTED
 
     async def test_a_folder_ref_becomes_its_path(self, world):
-        assert await world.ops.folder_path("usr-1", f"drive:b2:{world.folder}") == "Work"
+        assert await world.ops.folder_path("usr-1", f"drive:b2:{world.folder}") == "Drive 2/Work"
         assert await world.ops.folder_path("usr-1", "drive:item-1") == "drive:item-1"   # stale: as given
