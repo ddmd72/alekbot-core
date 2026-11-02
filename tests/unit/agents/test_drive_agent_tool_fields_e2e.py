@@ -194,10 +194,10 @@ async def test_save_text_writes_the_commissions_item_with_file_name_and_folder()
     assert world.content("Projects/Garden/shed-plan.md") == PLAN_TEXT.encode()     # the item's text, not retyped
     assert 't1 name "shed-plan-draft.md"' in drive.requests[0].system_instruction        # the state block lists the item
     (seen,) = specialist_was_told(drive)
-    assert "Saved [Drive: Projects/Garden/shed-plan.md" in seen
+    assert "Saved [Drive: Drive/Projects/Garden/shed-plan.md" in seen
     told = smart_was_told(smart)
     assert told.startswith("Drive result: ok\n")
-    assert "1. done: Saved [Drive: Projects/Garden/shed-plan.md" in told
+    assert "1. done: Saved [Drive: Drive/Projects/Garden/shed-plan.md" in told
     assert consumed(smart, drive)
 
 
@@ -222,7 +222,7 @@ async def test_copy_a_chat_file_with_file_name_and_folder():
 
     assert world.drive.files() == ["Contracts/lisbon-lease.txt"]
     assert world.content("Contracts/lisbon-lease.txt") == LEASE_TEXT
-    assert "1. done: Saved [Drive: Contracts/lisbon-lease.txt" in smart_was_told(smart)
+    assert "1. done: Saved [Drive: Drive/Contracts/lisbon-lease.txt" in smart_was_told(smart)
     assert consumed(smart, drive)
 
 
@@ -235,7 +235,7 @@ async def test_create_folder():
 
     assert world.folders() == ["Contracts", "Contracts/2026"]
     assert world.drive.files() == []
-    assert "Created: Contracts, Contracts/2026." in smart_was_told(smart)
+    assert "Created: Drive/Contracts, Drive/Contracts/2026." in smart_was_told(smart)
     assert consumed(smart, drive)
 
 
@@ -289,7 +289,7 @@ async def test_replace_with_a_chat_file_posts_a_literal_receipt():
 
     assert world.content("Contracts/lisbon-lease.txt") == LEASE_TEXT
     (receipt,) = world.literal_receipts()
-    assert receipt.startswith("✏️ Replaced: Contracts/lisbon-lease.txt")
+    assert receipt.startswith("✏️ Replaced: Drive/Contracts/lisbon-lease.txt")
     assert world.receipts() == [receipt]
     assert consumed(smart, drive)
 
@@ -317,9 +317,9 @@ async def test_delete_from_drive_posts_a_literal_receipt():
     await world.run(smart, drive)
 
     assert world.drive.files() == []
-    assert world.literal_receipts() == ["🗑️ Deleted from the drive: Home/Warranties/boiler-warranty.md"]
+    assert world.literal_receipts() == ["🗑️ Deleted from the drive: Drive/Home/Warranties/boiler-warranty.md"]
     assert world.receipts() == world.literal_receipts()
-    assert "1. done: Deleted Home/Warranties/boiler-warranty.md." in smart_was_told(smart)
+    assert "1. done: Deleted Drive/Home/Warranties/boiler-warranty.md." in smart_was_told(smart)
     assert consumed(smart, drive)
 
 
