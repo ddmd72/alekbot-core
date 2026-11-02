@@ -224,7 +224,7 @@ class TestShownCounts:
         assert sum(1 for c in result.cards if c.tier == "about") == ABOUT_SHOWN
         text = render_results(result)
         assert f'About "coimbra" (showing {ABOUT_SHOWN} of {ABOUT_SHOWN + 3}):' in text
-        assert "/: 3 more matching files (image, 2025-05)" in text
+        assert "Drive: 3 more matching files (image, 2025-05)" in text
 
 
 class TestRelated:

@@ -67,6 +67,7 @@ def _world(monkeypatch):
     reads = ConnectionReads()
     drive.status.return_value = DriveConnectionStatus(connected=True)
     drive.resolve_ref.side_effect = reads.resolve_ref
+    drive.mounts.side_effect = reads.mounts        # the real mount table: the write guard and canonical paths read it
     drive.get_item.return_value = SCAN
     drive.delete.return_value = SimpleNamespace(item=OLD)
     conversion = MagicMock(spec=FileConversionService)
@@ -145,7 +146,7 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
         world.specialist_seen[0].system_instruction
     # the delete really ran (no dry run here) and its receipt went to the chat the turn came from
     world.drive.delete.assert_awaited_once_with(connection_of(world.reads, USER).handle, "old")
-    world.notifier.notify_raw.assert_awaited_once_with(USER, ACCOUNT, "Deleted Inbox/old.txt",
+    world.notifier.notify_raw.assert_awaited_once_with(USER, ACCOUNT, "Deleted Drive/Inbox/old.txt",
                                                        channel_id_override="C1", platform_override="slack",
                                                        literal=True)
     # the opened PDF reached Smart's next request as a vision file, after the specialist's answer

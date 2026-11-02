@@ -456,7 +456,7 @@ async def test_finalized_transcript_is_searchable(world):
     search = DriveSearchService(w.repo, w.emb, w.drive, _SearchConnections(w.users, w.drive), clock=w.clock,
                                 nonce=lambda c=itertools.count(1): f"nonce{next(c):04d}", embedding_space=SPACE)
     found = await search.search("u", DriveSearchRequest(query="flamingo"))
-    assert [c.path for c in found.cards] == ["memo.m4a"]
+    assert [c.path for c in found.cards] == ["Drive/memo.m4a"]
 
 
 async def test_index_transcript_without_a_slot_leaves_the_record_untouched(world, monkeypatch):

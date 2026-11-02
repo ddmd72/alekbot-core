@@ -36,10 +36,10 @@ from .drive_excerpts import display_text, merge_runs
 from .drive_index_params import CARD_ACCURACY_TRUST, EXCERPT_FOLDER_NOTES_CHARS_MAX
 from .drive_op import DriveOp
 from .drive_search import (
-    REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_OK, DriveSearchRequest, DriveSearchResult, escape_text,
+    REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_DRIVE_REFUSED, STATUS_OK, DriveSearchRequest, DriveSearchResult, escape_text,
     render_results, wrap_untrusted,
 )
-from .drive_search_texts import REBUILDING_LINE
+from .drive_search_texts import NOT_SEARCHED_DRIVES_LINE, REBUILDING_LINE
 from .drive_tool_texts import READ_PASSAGES
 from . import drive_ref
 
@@ -90,7 +90,7 @@ SEARCHED_PAGE_NEXT = "{path} passages {first}–{last} (next: from {next})"
 SEARCHED_PAGE_END = "{path} passages {first}–{last} (the end)"
 SEARCHED_PAGE_PAST_END = "{path} from passage {first} (past the end)"
 SEARCHED_PARTS = ("{scope}", "passage questions: {questions}", "neighbours: {neighbours}", "pages: {pages}",
-                  "opened: {opened}", "searches: {searches}")
+                  "opened: {opened}", "searches: {searches}", "{not_searched}")
 
 
 def _low_accuracy(file: ExcerptFile) -> bool:
@@ -161,6 +161,8 @@ def _files(files: Sequence[ExcerptFile], nonce: Callable[[], str], plan: Context
 
 def _gate_text(result: ExcerptResult) -> Optional[str]:
     """The search's own text for a state that searched nothing (statuses reuse the search's)."""
+    if result.status == STATUS_DRIVE_REFUSED:
+        return result.refusal
     if result.status == STATUS_OK and (result.awaiting_rebuild or result.wrong_space):
         return REBUILDING_LINE
     if result.status in (STATUS_OK, STATUS_AMBIGUOUS_FOLDER):
@@ -178,6 +180,15 @@ def _ids(result: ExcerptResult) -> str:
 
 def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str] = frozenset(),
                     described_files: FrozenSet[str] = frozenset()) -> RenderedExcerpts:
+    """One call's tool result; a former drive name's RENAME_NOTICE is its first line."""
+    rendered = _render_excerpts(result, nonce=nonce, shown_folders=shown_folders, described_files=described_files)
+    if not result.notice or result.status == STATUS_DRIVE_REFUSED:
+        return rendered
+    return RenderedExcerpts(text=f"{result.notice}\n{rendered.text}", plan=rendered.plan)
+
+
+def _render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str],
+                     described_files: FrozenSet[str]) -> RenderedExcerpts:
     gate = _gate_text(result)
     if gate is not None:
         return RenderedExcerpts(text=gate, plan=ContextPlan.EMPTY)
@@ -310,6 +321,7 @@ def searched_line(results: Sequence[CollectedResult]) -> str:
     pages: List[str] = []
     opened: List[str] = []
     searches: List[str] = []
+    not_searched: List[str] = []
 
     def add(bucket: List[str], value: str) -> None:
         if value and value not in bucket:
@@ -327,6 +339,8 @@ def searched_line(results: Sequence[CollectedResult]) -> str:
                     add(neighbours, _neighbours(excerpts, excerpts.request, items_path))
             else:
                 add(scopes, _scope(excerpts))
+                if excerpts.not_searched_drives:
+                    add(not_searched, NOT_SEARCHED_DRIVES_LINE.format(names=", ".join(excerpts.not_searched_drives)))
                 add(questions, quoted(outcome.request_text or excerpts.request.question))
         elif outcome.op is DriveOp.OPEN:
             for item in outcome.items:
@@ -334,6 +348,7 @@ def searched_line(results: Sequence[CollectedResult]) -> str:
         elif outcome.op is DriveOp.SEARCH and outcome.request_text:
             add(searches, quoted(outcome.request_text))
     values = {"scope": ", ".join(scopes), "questions": " | ".join(questions), "neighbours": "; ".join(neighbours),
-              "pages": "; ".join(pages), "opened": ", ".join(opened), "searches": " | ".join(searches)}
+              "pages": "; ".join(pages), "opened": ", ".join(opened), "searches": " | ".join(searches),
+              "not_searched": " ".join(not_searched)}
     parts = [part.format(**values) for part, key in zip(SEARCHED_PARTS, values) if values[key]]
     return answer_texts.SEARCHED_PREFIX + "; ".join(parts) if parts else ""

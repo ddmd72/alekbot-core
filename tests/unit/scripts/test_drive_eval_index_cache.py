@@ -49,7 +49,7 @@ async def test_a_matching_key_loads_the_build_and_rebuild_builds_again(tmp_path)
     repo2, facts2 = await load_or_build(_builder(drive, clock2, builds), clock=clock2, **kwargs)
     assert builds == [1] and facts1["cache"] == "miss" and facts2["cache"] == "hit"
     found = await _found(drive, repo2, clock2)
-    assert found == await _found(drive, repo1, clock1) and "Scans/Scan_0012.pdf" in found[0]
+    assert found == await _found(drive, repo1, clock1) and "Drive/Scans/Scan_0012.pdf" in found[0]
     _, facts3 = await load_or_build(_builder(drive, clock3, builds), clock=clock3, rebuild=True, **kwargs)
     assert builds == [1, 1] and facts3["cache"] == "rebuilt"
 

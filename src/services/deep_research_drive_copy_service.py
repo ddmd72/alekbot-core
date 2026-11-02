@@ -25,6 +25,7 @@ from ..domain.deep_research_drive_copy import (
     deep_research_drive_filename,
     report_title_from_html,
 )
+from ..domain.drive_mounts import canonical_path
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveNotConnectedError
@@ -106,7 +107,7 @@ class DeepResearchDriveCopyService:
             logger.error("[DeepResearchDriveCopy] save failed for user=%s; not copied", user_id[:8],
                          exc_info=True)
             return UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED, ""
-        path = saved.item.path or f"{folder}/{saved.item.name}"
+        path = canonical_path(primary.mount_name, saved.item.path or f"{folder}/{saved.item.name}")
         logger.info("[DeepResearchDriveCopy] copied for user=%s (%d bytes, existed=%s)", user_id[:8],
                     len(html), saved.already_existed)
         return UIMessage.DEEP_RESEARCH_DRIVE_COPIED, path

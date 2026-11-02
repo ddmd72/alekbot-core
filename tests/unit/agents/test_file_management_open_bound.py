@@ -18,6 +18,7 @@ from tests.unit.infrastructure.test_drive_operations_open_bound import FakeExten
 from tests.unit.infrastructure.test_drive_operations_uncovered_paths import FakeConversion
 
 PATH = "Docs/Oak Street parking rules.md"
+SHOWN = f"Drive/{PATH}"    # what the model reads: canonical <mount>/<path> (design §1.2 S-4)
 RULES = DriveItem(item_id="r1", name="Oak Street parking rules.md", path=PATH, is_folder=False, size_bytes=300_000,
                   mime_type="text/markdown")
 EXTENT = TextExtent(ExtentState.PAGEABLE, text_chars=200_000, passages=130, version=1)
@@ -47,10 +48,10 @@ async def test_a_refused_drive_open_is_a_success_with_the_route_and_a_history_en
     agent = _agent(conv, FakeExtentSearch({"r1": EXTENT}))
     resp = await agent.execute(_msg("drive:a1:r1"))
     assert resp.status == AgentStatus.SUCCESS
-    assert resp.result == refusal_text(PATH, EXTENT) + "\n" + ROUTE_ORCHESTRATOR
+    assert resp.result == refusal_text(SHOWN, EXTENT) + "\n" + ROUTE_ORCHESTRATOR
     assert conv.text_reads == [] and conv.byte_reads == []
     lines = drive_history_lines([resp.history_context["drive_context"]])
-    assert lines == [f"[Drive: {PATH} ref=drive:a1:r1 — too long to open whole (200,000 characters, 130 passages)]"]
+    assert lines == [f"[Drive: {SHOWN} ref=drive:a1:r1 — too long to open whole (200,000 characters, 130 passages)]"]
 
 
 async def test_a_cut_open_is_still_a_success_with_its_body():

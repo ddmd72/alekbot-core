@@ -12,9 +12,10 @@ async def test_empty_files_with_the_same_hash_stay_separate_cards():
     w.drive.add("todo.md", size_bytes=0, content_identity=EMPTY)
     await w.settle()
     result = await w.search("todo")
-    todo = [c for c in result.cards if c.path == "todo.md"]
+    # card paths and also_at are canonical (design §1.2 S-7)
+    todo = [c for c in result.cards if c.path == "Drive/todo.md"]
     assert len(todo) == 1 and todo[0].also_at == ()
-    assert all("todo.md" not in c.also_at for c in result.cards)
+    assert all("Drive/todo.md" not in c.also_at for c in result.cards)
 
 
 async def test_non_empty_identical_files_still_collapse():

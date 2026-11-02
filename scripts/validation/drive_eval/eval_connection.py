@@ -2,7 +2,8 @@
 of the eval user, so the services (search, operations, notes) resolve refs and the primary exactly as production does.
 
 `EvalDriveConnections` is a DriveConnectionService over that one connection: the read methods the services call
-(`get`, `list_for_user`, `handle_for`, `primary`, `primary_handle`, `status`, `resolve_ref`) answer from it, with the
+(`get`, `list_for_user`, `handle_for`, `primary`, `primary_handle`, `status`, `resolve_ref`, `mounts`,
+`connection_of_tag`) answer from it, with the
 production rules (a tag of no connection and an untagged ref answer the stale line); every writer stays the base
 class's. `ref_item_id` reads the item id out of a tagged ref, or an untagged one of before the cut-over (the query
 vocabulary reads stored history).
@@ -18,13 +19,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional, Union
 
-from scripts.validation.drive_eval.fixture_drive import DRIVE_ID
+from scripts.validation.drive_eval.fixture_drive import DRIVE_ID, FixtureDrive, item_id_for
 from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity
 from src.domain import drive_ref
-from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection import DEFAULT_MOUNT_NAME, DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_connection_status import DriveConnectionStatus
 from src.domain.drive_handle import DriveHandle
+from src.domain.drive_mount_table import MountTable
+from src.domain.drive_mount_name_change import mount_name_key
+from src.domain.drive_mounts import mount_table
 from src.domain.drive_ref import DriveRef
 from src.domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, stale_ref_line
 from src.domain.drive_resolved_ref import ResolvedDriveRef
@@ -40,6 +44,17 @@ _EVAL_DRIVE_IDENTITY = onedrive_drive_identity(DRIVE_ID)   # the identity the fi
 # A technical value: the eval counts an initial build as production does, which needs a provider account.
 _EVAL_PROVIDER_ACCOUNT = ProviderAccount(realm="eval", subject="eval-subject", label="")
 _CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def drive_relative(path: str, drive: FixtureDrive) -> str:
+    """`path` as the gold files write it (relative to the drive): a leading segment naming the eval connection's mount
+    is dropped, since cards now print `<mount>/<path>`. A path that is itself in the tree (a real path whose first
+    folder happens to share the mount's name) stays as it is."""
+    text = str(path).strip("/")
+    if drive.path_of(item_id_for(text)) is not None:
+        return text
+    head, _, rest = text.partition("/")
+    return rest if mount_name_key(head) == mount_name_key(DEFAULT_MOUNT_NAME) else text
 
 
 def eval_connection(user_id: str, *, indexing_enabled: bool = True, transcribe_enabled: bool = False,
@@ -89,6 +104,16 @@ class EvalDriveConnections(DriveConnectionService):
 
     async def status(self, user_id: str) -> DriveConnectionStatus:
         return DriveConnectionStatus.of(self._mine(user_id))
+
+    async def mounts(self, user_id: str) -> MountTable:
+        """The mount tree of the one connection, which is the primary (multi-drive 2a)."""
+        one = self._mine(user_id)
+        return mount_table(await self.list_for_user(user_id), one.connection_id if one is not None else None,
+                           self._clock())
+
+    async def connection_of_tag(self, user_id: str, tag: str) -> Optional[DriveConnection]:
+        one = self._mine(user_id)
+        return one if one is not None and one.ref_tag == tag else None
 
     async def resolve_ref(self, user_id: str, text: str) -> Optional[Union[ResolvedDriveRef, DriveRefRefusal]]:
         parsed = drive_ref.parse(text)

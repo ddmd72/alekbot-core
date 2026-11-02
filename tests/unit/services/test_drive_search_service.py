@@ -134,7 +134,7 @@ class TestGate:
         w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         await w.indexer.tick(U_SCOPE)   # the gate stamps access_lost_at
         result = await w.search("lease")
-        assert result.status == STATUS_OK and result.envelope.reconnect_needed and paths(result) == ["lease.pdf"]
+        assert result.status == STATUS_OK and result.envelope.reconnect_needed and paths(result) == ["Drive/lease.pdf"]
         assert "reconnect the drive" in render_results(result)
         w.clock.advance(ACCESS_LOSS_TTL.total_seconds())
         assert (await w.search("lease")).status == STATUS_DISCONNECTED
@@ -226,10 +226,10 @@ class TestEnvelope:
 
 class TestRanking:
     @pytest.mark.parametrize("query,expected", [
-        ("IMG_4912", "Scans/IMG_4912.jpg"),
-        ("ред3", "Contracts/Договор_ред3.docx"),
-        ("dogovor red3", "Contracts/Договор_ред3.docx"),
-        ("Quarterly Planing Reveiw", "Inbox/Quarterly Planning Review.docx"),
+        ("IMG_4912", "Drive/Scans/IMG_4912.jpg"),
+        ("ред3", "Drive/Contracts/Договор_ред3.docx"),
+        ("dogovor red3", "Drive/Contracts/Договор_ред3.docx"),
+        ("Quarterly Planing Reveiw", "Drive/Inbox/Quarterly Planning Review.docx"),
     ])
     async def test_name_stream_finds_exact_partial_translit_and_typo(self, w, query, expected):
         """A record ranked in the top 61 of both streams outranks every single-stream record (2/(60+r) >
@@ -265,7 +265,7 @@ class TestRanking:
         result = await w.search("lease")
         lease = [c for c in result.cards if c.name == "Lease.pdf"]
         assert len(lease) == 1 and len(lease[0].also_at) == 1
-        assert {lease[0].path, *lease[0].also_at} == {"Contracts/Lease.pdf", "Inbox/Lease.pdf"}
+        assert {lease[0].path, *lease[0].also_at} == {"Drive/Contracts/Lease.pdf", "Drive/Inbox/Lease.pdf"}
 
 
 # --- read-time visibility (§5.2, §17.1 d) --------------------------------------------------------
@@ -278,14 +278,14 @@ class TestVisibility:
         w.drive.add("alek-site-main.py", parent=repo_root)
         await w.settle()
         result = await w.search("alek-site")
-        assert paths(result)[0] == "Projects/alek-site"
-        assert not any(p.startswith("Projects/alek-site/") for p in paths(result))
+        assert paths(result)[0] == "Drive/Projects/alek-site"
+        assert not any(p.startswith("Drive/Projects/alek-site/") for p in paths(result))
 
     async def test_child_of_a_deleting_folder_is_hidden_at_once(self, w):
         folder = w.drive.add("Old", folder=True)
         w.drive.add("lease.pdf", parent=folder)
         await w.settle()
-        assert "Old/lease.pdf" in paths(await w.search("lease"))
+        assert "Drive/Old/lease.pdf" in paths(await w.search("lease"))
         w.set_state(folder, state=RecordState.DELETING)
         assert (await w.search("lease")).cards == ()   # neither the folder nor anything under it
 
@@ -301,7 +301,7 @@ class TestVisibility:
         w.drive.add("lease.pdf", parent=folder)
         await w.settle()
         w.set_state(folder, name="Agreements")   # the record changed; no descendant was touched
-        assert "Agreements/lease.pdf" in paths(await w.search("lease"))
+        assert "Drive/Agreements/lease.pdf" in paths(await w.search("lease"))
 
 
 # --- filters and folder scope --------------------------------------------------------------------
@@ -314,7 +314,7 @@ class TestFilters:
         await w.settle()
         calls = len(w.emb.calls)
         result = await w.search("", kind="pdf", date_from=datetime(2026, 1, 1, tzinfo=timezone.utc))
-        assert paths(result) == ["scan1.pdf", "scan0.pdf"] and result.matched_total == 2
+        assert paths(result) == ["Drive/scan1.pdf", "Drive/scan0.pdf"] and result.matched_total == 2
         assert not result.matched_at_least and len(w.emb.calls) == calls and w.repo.card_limits == []
         assert "2 files and folders match the filters" in render_results(result)
 
@@ -338,18 +338,18 @@ class TestFolderScope:
     async def test_by_path_keeps_only_the_subtree(self, w):
         await self._tree(w)
         result = await w.search("lease", folder="contracts")
-        assert paths(result) == ["Contracts/Lease agreement.pdf"] and result.folder_path == "Contracts"
+        assert paths(result) == ["Drive/Contracts/Lease agreement.pdf"] and result.folder_path == "Drive/Contracts"
         assert "within the requested folder" in render_results(result)
 
     async def test_by_ref(self, w):
         contracts = await self._tree(w)
-        assert paths(await w.search("lease", folder=f"drive:a1:{contracts}")) == ["Contracts/Lease agreement.pdf"]
+        assert paths(await w.search("lease", folder=f"drive:a1:{contracts}")) == ["Drive/Contracts/Lease agreement.pdf"]
 
     async def test_several_matches_are_candidates_not_a_guess(self, w):
         await self._tree(w)
         result = await w.search("lease", folder="Agreements")
         assert result.status == STATUS_AMBIGUOUS_FOLDER
-        assert paths(result) == ["Old/Agreements", "Work/Agreements"]
+        assert paths(result) == ["Drive/Old/Agreements", "Drive/Work/Agreements"]
         assert w.repo.name_limits[0][1] == "folder"
 
     async def test_unknown_folder(self, w):
@@ -359,14 +359,14 @@ class TestFolderScope:
     async def test_weakly_named_file_deep_in_the_subtree_in_memory(self, w):
         await self._tree(w)
         result = await w.search("x17", folder="Work/Alpha")
-        assert paths(result)[0] == "Work/Alpha/b/a/x17.bin" and w.repo.card_limits == []
-        assert all(p.startswith("Work/Alpha/") for p in paths(result))
+        assert paths(result)[0] == "Drive/Work/Alpha/b/a/x17.bin" and w.repo.card_limits == []
+        assert all(p.startswith("Drive/Work/Alpha/") for p in paths(result))
 
 
     async def test_filter_only_inside_a_folder(self, w):
         await self._tree(w)
         result = await w.search("", folder="Inbox")
-        assert paths(result) == ["Inbox/Lease agreement.pdf"] and result.matched_total == 1
+        assert paths(result) == ["Drive/Inbox/Lease agreement.pdf"] and result.matched_total == 1
 
 
 # --- scale: the name stream and the cover rule (RFC Δ17) ---------------
@@ -429,8 +429,8 @@ class TestFolderResolution:
         w.drive.add("march.pdf", parent=target)
         await w.settle()
         result = await w.search("march", folder="Invoices/2025")
-        assert result.status == STATUS_OK and result.folder_path == "Invoices/2025"
-        assert paths(result) == ["Invoices/2025/march.pdf"]
+        assert result.status == STATUS_OK and result.folder_path == "Drive/Invoices/2025"
+        assert paths(result) == ["Drive/Invoices/2025/march.pdf"]
 
     async def test_many_matches_are_capped_candidates(self, w):
         for i in range(12):
@@ -438,13 +438,13 @@ class TestFolderResolution:
         await w.settle()
         result = await w.search("march", folder="2025")
         assert result.status == STATUS_AMBIGUOUS_FOLDER and len(result.cards) == 8
-        assert paths(result)[0] == "Project 00/2025"
+        assert paths(result)[0] == "Drive/Project 00/2025"
 
     async def test_nested_folder_by_its_own_name(self, w):
         deep = w.drive.add("Receipts", parent=w.drive.add("Finance", folder=True), folder=True)
         w.drive.add("taxi.pdf", parent=deep)
         await w.settle()
-        assert paths(await w.search("taxi", folder="receipts")) == ["Finance/Receipts/taxi.pdf"]
+        assert paths(await w.search("taxi", folder="receipts")) == ["Drive/Finance/Receipts/taxi.pdf"]
 
     async def test_could_not_resolve_when_a_lookup_page_was_full(self, w, monkeypatch):
         for i in range(6):
@@ -473,20 +473,20 @@ class TestKindFamilies:
     async def test_all_my_spreadsheets_filter_only_one_query_per_member(self, w):
         await self._sheets(w)
         result = await w.search("", kind="spreadsheet")
-        assert paths(result) == ["budget.xlsx", "plan.ods", "data.csv", "old.xls"] and result.matched_total == 4
+        assert paths(result) == ["Drive/budget.xlsx", "Drive/plan.ods", "Drive/data.csv", "Drive/old.xls"] and result.matched_total == 4
         assert sorted(w.repo.filter_kinds) == ["csv", "ods", "xls", "xlsx"]
 
     async def test_family_with_a_query_post_filters_both_streams(self, w):
         await self._sheets(w)
         result = await w.search("budget report", kind="spreadsheet")
-        assert set(paths(result)) <= {"budget.xlsx", "plan.ods", "data.csv", "old.xls"}
-        assert paths(result)[0] == "budget.xlsx" and w.repo.name_limits[-1][1] is None
+        assert set(paths(result)) <= {"Drive/budget.xlsx", "Drive/plan.ods", "Drive/data.csv", "Drive/old.xls"}
+        assert paths(result)[0] == "Drive/budget.xlsx" and w.repo.name_limits[-1][1] is None
 
     async def test_photos(self, w):
         w.drive.add("IMG_1.jpg", mime_type="image/jpeg")
         w.drive.add("notes.md")
         await w.settle()
-        assert paths(await w.search("", kind="photo")) == ["IMG_1.jpg"]
+        assert paths(await w.search("", kind="photo")) == ["Drive/IMG_1.jpg"]
 
 
 # --- Cabinet status -------------------------------------------------------------------------------

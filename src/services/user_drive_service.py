@@ -54,6 +54,8 @@ from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import Nudge
 from ..domain.drive_index_params import TICK_DEADLINE_S
+from ..domain.drive_mount_table import MountTable
+from ..domain.drive_mounts import canonical_path
 from ..domain.drive_ref_refusal import DriveRefRefusal
 from ..domain.drive_resolved_ref import ResolvedDriveRef
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_task_key, scope_payload
@@ -103,6 +105,10 @@ class UserDriveService:
             raise DriveNotConnectedError("no primary drive connection")
         return connection
 
+    async def mounts(self, user_id: str) -> MountTable:
+        """The user's mount tree (MULTI_DRIVE_RFC §11.1), read fresh: `DriveConnectionService.mounts`."""
+        return await self._connections.mounts(user_id)
+
     async def resolve_ref(self, user_id: str, ref: str) -> ResolvedDriveRef:
         """The connection and item id of a `drive:<tag>:<item_id>` ref. DriveRefRefused with the code-built line for an
         untagged ref, a tag the user never had or a disconnected connection's (§9, D13); DrivePathError when `ref` holds
@@ -113,6 +119,16 @@ class UserDriveService:
         if isinstance(found, DriveRefRefusal):
             raise DriveRefRefused(found.line)
         return found
+
+    async def _shown(self, handle: DriveHandle, path: str) -> str:
+        """`path` (connection-relative) as the refusal that names it prints it: `<mount>/<path>`. Read lazily, on the
+        raise path only (a success reads no connection); a lookup that fails leaves the path as it is."""
+        try:
+            connection = await self._connections.get(handle.user_id, handle.connection_id)
+        except Exception:
+            logger.warning("Drive refusal: mount name lookup failed", exc_info=True)
+            return path
+        return canonical_path(connection.mount_name, path) if connection is not None else path
 
     # -- operations on one connection --------------------------------------------------------------------------------
 
@@ -133,7 +149,8 @@ class UserDriveService:
             match = match_child_folder(await self._drive.list_children(handle, current.item_id), segment)
             if match is None:
                 if not create:
-                    raise DrivePathError(f"No folder '{join_drive_path(current.path, segment)}' on the drive")
+                    missing = await self._shown(handle, join_drive_path(current.path, segment))
+                    raise DrivePathError(f"No folder '{missing}' on the drive")
                 try:
                     match = await self._drive.create_folder(handle, current.item_id, segment)
                     created.append(match.path or join_drive_path(current.path, segment))
@@ -145,6 +162,7 @@ class UserDriveService:
                         # The name is taken, but not by a folder (a file of that name sits there).
                         taken = join_drive_path(current.path, segment)
                         logger.warning(f"Drive folder '{taken}' cannot be created: name taken by a non-folder")
+                        taken = await self._shown(handle, taken)
                         raise DrivePathError(f"'{taken}' already exists as a file, so it cannot be used as "
                                              f"a folder") from exc
             current = match
@@ -186,7 +204,7 @@ class UserDriveService:
         ref is refused; a folder the provider does not find raises DriveItemNotFoundError."""
         folder = await self._drive.get_item(handle, folder_id)
         if not folder.is_folder:
-            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it instead.")
+            raise DrivePathError(f"'{await self._shown(handle, folder.path)}' is a file, not a folder; open it instead.")
         children = await self._drive.list_children(handle, folder.item_id)
         ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
         return ListOutcome(folder=folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)
@@ -211,7 +229,7 @@ class UserDriveService:
         created_ids: List[str] = []
         if folder and folder.strip():
             await self._refuse_mirror(handle, path=folder)
-            self._refuse_move_into_self(before, folder)
+            await self._refuse_move_into_self(handle, before, folder)
             resolution, created_ids = await self._resolve(handle, folder, create=True)
             parent_id, created = resolution.folder.item_id, resolution.created
         after = await self._drive.move(handle, item_id, new_parent_id=parent_id,
@@ -223,16 +241,18 @@ class UserDriveService:
         item = await self._drive.get_item(handle, item_id)
         await self._refuse_mirror(handle, item=item)
         if item.is_folder or not is_text_file(item.name, item.mime_type):
-            raise DrivePathError(f"'{item.path}' is not a text file; text can only be appended to text files")
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' is not a text file; text can only be "
+                                 "appended to text files")
         if item.size_bytes > MAX_DRIVE_APPEND_FILE_BYTES:
-            raise DrivePathError(f"'{item.path}' is {format_size(item.size_bytes)}; appending is limited to "
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' is {format_size(item.size_bytes)}; "
+                                 f"appending is limited to "
                                  f"{format_size(MAX_DRIVE_APPEND_FILE_BYTES)} files")
         old = await self._drive.download(handle, item_id)
         try:
             old.decode("utf-8")
         except UnicodeDecodeError as exc:
             logger.warning(f"Drive append refused: '{item.path}' is not UTF-8 text")
-            raise DrivePathError(f"'{item.path}' is not UTF-8 text") from exc
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' is not UTF-8 text") from exc
         separator = b"" if not old or old.endswith(b"\n") else b"\n"
         addition = text if text.endswith("\n") else f"{text}\n"
         updated = await self._drive.replace_content(handle, item_id, old + separator + addition.encode("utf-8"),
@@ -244,7 +264,8 @@ class UserDriveService:
         item = await self._drive.get_item(handle, item_id)
         await self._refuse_mirror(handle, item=item)
         if item.is_folder:
-            raise DrivePathError(f"'{item.path}' is a folder; only a file's content can be replaced")
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' is a folder; only a file's content can "
+                                 "be replaced")
         updated = await self._drive.replace_content(handle, item_id, data, content_type)
         await self._nudge(handle, [updated.item_id])
         return UpdateOutcome(item=updated, before_size=item.size_bytes, mode="replace")
@@ -317,8 +338,7 @@ class UserDriveService:
                 if parts[:len(own)] == own or (contains and own[:len(parts)] == parts):
                     raise DriveMirrorWriteRefused("mirror folder")
 
-    @staticmethod
-    def _refuse_move_into_self(item: DriveItem, folder: str) -> None:
+    async def _refuse_move_into_self(self, handle: DriveHandle, item: DriveItem, folder: str) -> None:
         """A folder cannot be moved into itself or its own subtree. Decided on the item's path and
         the requested segments (same `name_key` match as resolution) before any provider call, so
         the missing segments of such a destination are never created."""
@@ -327,7 +347,7 @@ class UserDriveService:
         own = [name_key(s) for s in item.path.split("/")]
         wanted = [name_key(s) for s in split_folder_path(folder)]
         if wanted[:len(own)] == own:
-            raise DrivePathError(f"'{item.path}' cannot be moved into itself")
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' cannot be moved into itself")
 
     async def _count_files(self, handle: DriveHandle, folder_id: str) -> Tuple[int, bool]:
         """Files in the subtree; Graph's childCount covers direct children only (§4.10)."""

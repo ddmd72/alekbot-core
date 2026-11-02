@@ -45,7 +45,7 @@ def _users(enabled=True, tz="UTC", missing=False):
 
 def _drive(path="Deep research/2026-10-14 Heat pumps in Springfield.html"):
     drive = AsyncMock(spec=UserDriveService)
-    drive.primary.return_value = MagicMock(handle=HANDLE)      # the user's primary connection (MULTI_DRIVE_RFC D7)
+    drive.primary.return_value = MagicMock(handle=HANDLE, mount_name="Drive")   # the user's primary (MULTI_DRIVE_RFC D7)
     item = DriveItem(item_id="i1", name=path.rsplit("/", 1)[-1], path=path, is_folder=False)
     drive.save.return_value = SaveOutcome(item=item, created=[])
     return drive
@@ -89,7 +89,7 @@ class TestCopy:
         line = await _service(drive=drive).copy_report(USER, HTML, "heat pumps?")
         drive.save.assert_awaited_once_with(
             HANDLE, HTML, "2026-10-14 Heat pumps in Springfield.html", "text/html; charset=utf-8", "Deep research")
-        assert line == "📁 Copied to your drive: Deep research/2026-10-14 Heat pumps in Springfield.html"
+        assert line == "📁 Copied to your drive: Drive/Deep research/2026-10-14 Heat pumps in Springfield.html"
 
     async def test_the_line_shows_the_name_the_drive_actually_gave(self):
         drive = _drive(path="Deep research/2026-10-14 Heat pumps in Springfield 1.html")

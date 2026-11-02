@@ -43,6 +43,7 @@ NOT_A_DOCUMENT_KEY = {
     "passages_hold_key": "a record's hold digest, stored on the record itself",
     "transcript_content_key": "the content key of a stored transcript, user-scoped through transcript_doc_id",
     "record_content_key": "the content key of a record's stored transcript, user-scoped through transcript_doc_id",
+    "mount_name_key": "the comparison key of mount names (MULTI_DRIVE_RFC §11.8), never stored",
 }
 
 

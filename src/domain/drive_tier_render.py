@@ -22,8 +22,8 @@ from .drive_search import (
     scene_line, stale_line, wrap_untrusted,
 )
 from .drive_search_texts import (
-    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_INACCESSIBLE,
-    COVERAGE_INCOMPLETE,
+    ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_DRIVES_NOT_SEARCHED,
+    COVERAGE_INACCESSIBLE, COVERAGE_INCOMPLETE,
     COVERAGE_NOT_DESCRIBABLE, COVERAGE_NOT_DESCRIBED, DATE_EXPIRES, DATE_LINE, FOOTER_EXACT, FOOTER_EXACT_SEARCHED,
     FOOTER_NO_CONJUNCTION, FOOTER_NO_CONJUNCTION_SEARCHED, GROUP_LINE, KEYS_CUT, LABELLED_HEADING, MATCHED_LINE,
     MENTIONED_HEADING, NO_PASSAGES_NOTE, PASSAGE_LINE, RELATED_HEADING, RELATED_SMALL_NOTE, SEARCHED_ABSENT_IN_SCOPE_LINE,
@@ -132,6 +132,8 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append(f"{_plural(cov.keys_cut, 'shown file', 'shown files')} had words cut by a key cap")
     if cov.cut:
         parts.append(f"words past the first ones were not searched: {_quoted(cov.cut)}")
+    if cov.not_searched_drives:
+        parts.append(COVERAGE_DRIVES_NOT_SEARCHED.format(names=", ".join(cov.not_searched_drives)))
     return parts
 
 

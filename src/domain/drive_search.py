@@ -40,8 +40,8 @@ from .drive_profile import issued_of
 from .drive_capture import CAPTURE_LABELS
 from .drive_labels import scene_label_text
 from .drive_search_texts import (
-    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE, REBUILDING_LINE,
-    SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
+    ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE,
+    NOT_SEARCHED_DRIVES_LINE, REBUILDING_LINE, SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
 )
 from .drive_tier_result import TieredResult
 from . import drive_ref
@@ -54,6 +54,7 @@ STATUS_DISABLED = "disabled"
 STATUS_DISCONNECTED = "disconnected"
 STATUS_AMBIGUOUS_FOLDER = "ambiguous_folder"
 STATUS_FOLDER_NOT_FOUND = "folder_not_found"
+STATUS_DRIVE_REFUSED = "drive_refused"   # `drives` (or a folder against `drives`) was refused: `refusal` is the line
 
 
 # Where a card's date comes from (§3.1, D13), shown beside it so a file date is never cited as the document's own
@@ -230,6 +231,7 @@ class DriveSearchEnvelope:
                                          # still re-planning records, documents are still being read (F4-1)
     index_full: bool = False
     inaccessible: int = 0                # files the bot cannot open (§26.2, Δ56)
+    not_searched_drives: Tuple[str, ...] = ()   # current names of the live drives this search did not read (2a: §3)
 
 
 @dataclass(frozen=True)
@@ -247,6 +249,8 @@ class DriveSearchResult:
     tiered: Optional[TieredResult] = None   # Search v2: a query result's tiers, coverage and footers (§25.5.6)
     awaiting_rebuild: bool = False       # the index is not rebuilt under v2 yet (D30): nothing was searched (XC-1)
     ref_tag: str = ""                    # the searched connection's ref tag: every card's ref carries it (MULTI_DRIVE_RFC §9)
+    refusal: str = ""                    # STATUS_DRIVE_REFUSED: the code-built line, rendered verbatim
+    notice: str = ""                     # RENAME_NOTICE when a former drive name was used: the first line of the render
 
 
 @dataclass(frozen=True)
@@ -660,6 +664,8 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
     if env.reconnect_needed:
         lines.append("The drive connection expired: these results come from the stored index. Ask the user "
                      "to reconnect the drive in the Cabinet.")
+    if env.not_searched_drives:
+        lines.append(NOT_SEARCHED_DRIVES_LINE.format(names=", ".join(env.not_searched_drives)))
     return lines
 
 
@@ -679,7 +685,15 @@ def render_results(result: DriveSearchResult) -> str:
     """The text Smart reads: per-result facts only. Standing guidance on how to use them (open a stale or recent
     file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
     protocol token (§10.4, §24.10). A query result with tiers is rendered by `drive_tier_render` (Search v2,
-    §25.13.6); filter-only listings, folder outcomes and the gate keep this layout."""
+    §25.13.6); filter-only listings, folder outcomes and the gate keep this layout. A refused `drives` value is its
+    line alone; a former drive name's RENAME_NOTICE is the first line of anything else."""
+    if result.status == STATUS_DRIVE_REFUSED:
+        return result.refusal
+    text = _render_results(result)
+    return f"{result.notice}\n{text}" if result.notice else text
+
+
+def _render_results(result: DriveSearchResult) -> str:
     if result.awaiting_rebuild and result.status == STATUS_OK:
         # D30: nothing was searched, so nothing — no count, no "no matching files" — is stated (XC-1)
         return "\n".join([REFERENCE_REMINDER, *_envelope_lines(result), REBUILDING_LINE])

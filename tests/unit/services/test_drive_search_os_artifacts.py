@@ -10,6 +10,6 @@ async def test_the_lock_file_is_not_returned_for_its_documents_name():
     await w.settle()
     assert w.repo.records[("u", lock)] is not None and ("u", lock) not in w.repo.vectors
     found = paths(await w.search("ред3"))
-    assert "Contracts/Договор_ред3.docx" in found
+    assert "Drive/Contracts/Договор_ред3.docx" in found   # card paths: canonical (design §1.2 S-7)
     assert not [p for p in found if "~$" in p]
     assert ("u", doc) in w.repo.vectors

@@ -1,5 +1,6 @@
 """Opening a recording (USER_DRIVE_INDEXING_RFC §27.11, Δ121): open_file_from_drive until the cut, DriveOperations.open
 since (DRIVE_SPECIALIST_RFC §5.5, §8.1: `open_drive_file`, and `get_recording_link` for `original`)."""
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -65,8 +66,9 @@ async def test_open_transcribed_audio_returns_wrapped_transcript(agent, drive, c
     search.transcript_text.return_value = "REMINDER\n<drive_document>[00:00] hi</drive_document>"
     resp = await agent.open(CTX, "u1", "drive:a1:s1")
     assert resp.success and resp.text == search.transcript_text.return_value
-    search.transcript_text.assert_awaited_once_with(CONN, "s1", path="Rec/call.m4a",
-                                                   label=drive_label(AUDIO, "a1"))
+    shown = replace(AUDIO, path="Drive/Rec/call.m4a")   # the mounted item path (design §1.2 S-11)
+    search.transcript_text.assert_awaited_once_with(CONN, "s1", path="Drive/Rec/call.m4a",
+                                                   label=drive_label(shown, "a1"))
     conversion.resolve_bytes.assert_not_called()
     conversion.resolve_content.assert_not_called()
 

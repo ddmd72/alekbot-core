@@ -13,7 +13,7 @@ from src.domain.language import LanguageCode
 from src.domain.user_drive import DriveAccessDenied, DriveReauthRequired, DriveThrottled
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 _RECONNECT = "connect it in the Cabinet"
 
@@ -23,7 +23,7 @@ CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_p
 
 @pytest.fixture
 def drive():
-    return AsyncMock(spec=UserDriveService)
+    return spec_drive_service("u1")   # the service's own connection reads: a path is placed on a real mount table
 
 
 @pytest.fixture

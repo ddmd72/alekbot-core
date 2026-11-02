@@ -149,7 +149,7 @@ async def test_the_whole_drive_ranks_by_the_question_and_fills_the_file(w):
     assert result.status == STATUS_OK and w.repo.knn_limits == [CHUNK_FETCH]
     f = result.files[0]
     assert (f.item_id, f.ref, f.name, f.path, f.kind) == (plan, ref(plan), "Tom's plan.docx",
-                                                          "R&D/Tom's plan.docx", "docx")
+                                                          "Drive/R&D/Tom's plan.docx", "docx")
     assert [c.index for c in f.chunks] == [0, 1] and f.chunk_count == 2 and f.generation == 1
     assert f.capture == "digital" and f.truncated and not f.stale
     assert result.folder_path == ""
@@ -221,7 +221,7 @@ async def test_a_file_ref_with_no_indexed_text_is_counted(w):
     empty = w.file("budget.ods", parent=rd, kind="ods")
     result = await w.find(file_refs=(ref(plan), ref(empty), ref("missing-1")))
     assert [f.item_id for f in result.files] == [plan]
-    assert result.no_text == 2 and result.no_text_paths == ("R&D/budget.ods", ref("missing-1"))
+    assert result.no_text == 2 and result.no_text_paths == ("Drive/R&D/budget.ods", ref("missing-1"))
 
 
 # -- folder scope -----------------------------------------------------------------------------------------------------
@@ -232,7 +232,7 @@ async def test_a_folder_that_fits_ranks_in_memory(w):
     w.doc("menu.md", ["Lunch options near the office."], [0.0], kind="md")
     result = await w.find(folder="R&D")
     assert w.repo.knn_limits == [] and w.repo.calls["vectors"] == 1
-    assert [f.item_id for f in result.files] == [plan] and result.folder_path == "R&D"
+    assert [f.item_id for f in result.files] == [plan] and result.folder_path == "Drive/R&D"
 
 
 async def test_a_folder_past_the_chunk_bound_runs_the_knn_over_the_walked_files_only(w, monkeypatch):
@@ -262,7 +262,7 @@ async def test_an_incomplete_walk_keeps_the_wide_hits_by_ancestry(w):
     w.doc("menu.md", ["Lunch options near the office."], [0.0], kind="md")
     result = await w.find(folder="R&D")
     assert w.repo.knn_limits == [FETCH_MAX]
-    assert [f.item_id for f in result.files] == [plan] and result.files[0].path == "R&D/Drafts/Tom's plan.docx"
+    assert [f.item_id for f in result.files] == [plan] and result.files[0].path == "Drive/R&D/Drafts/Tom's plan.docx"
     assert result.no_text == 0   # confirmed choice: an incomplete walk counts nothing
 
 
@@ -272,7 +272,7 @@ async def test_files_in_the_folder_with_no_indexed_text_are_counted(w):
     w.file("budget.ods", parent=rd, kind="ods")
     w.folder("Drafts", parent=rd)
     result = await w.find(folder="R&D")
-    assert result.no_text == 1 and result.no_text_paths == ("R&D/budget.ods",)
+    assert result.no_text == 1 and result.no_text_paths == ("Drive/R&D/budget.ods",)
 
 
 async def test_the_no_text_line_names_at_most_ten_paths_and_counts_all(w):
@@ -291,7 +291,7 @@ async def test_an_ambiguous_folder_returns_its_candidates(w):
     w.folder("Specs", parent=old)
     result = await w.find(folder="Specs")
     assert result.status == STATUS_AMBIGUOUS_FOLDER and result.files == ()
-    assert result.folder_candidates == ("Acme/Specs", "Old/Specs")
+    assert result.folder_candidates == ("Drive/Acme/Specs", "Drive/Old/Specs")
     assert w.emb.calls == []
 
 
@@ -304,7 +304,7 @@ async def test_an_opaque_folder_scope_is_not_indexed(w):
     code = w.folder("Code")
     w.set(code, scope=Scope.OPAQUE_ROOT)
     result = await w.find(folder="Code")
-    assert result.status == STATUS_OK and result.folder_not_indexed and result.folder_path == "Code"
+    assert result.status == STATUS_OK and result.folder_not_indexed and result.folder_path == "Drive/Code"
 
 
 # -- the gate ---------------------------------------------------------------------------------------------------------
@@ -367,7 +367,7 @@ async def test_identical_copies_are_one_file_with_also_at(w):
     w.doc("Tom's plan.docx", ["The review is held weekly."], [0.2], parent=old, content_hash="same:500")
     result = await w.find()
     assert [f.item_id for f in result.files] == [first]
-    assert result.files[0].also_at == ("Old/Tom's plan.docx",) and len(texts(result)) == 1
+    assert result.files[0].also_at == ("Drive/Old/Tom's plan.docx",) and len(texts(result)) == 1
 
 
 async def test_the_noted_copy_is_the_keeper(w):
@@ -377,7 +377,7 @@ async def test_the_noted_copy_is_the_keeper(w):
     w.note(noted, "the signed one")
     result = await w.find()
     assert [f.item_id for f in result.files] == [noted]
-    assert result.files[0].also_at == ("R&D/Tom's plan.docx",)
+    assert result.files[0].also_at == ("Drive/R&D/Tom's plan.docx",)
 
 
 async def test_shown_chunks_are_left_out_and_listed_as_repeated(w):
@@ -431,7 +431,7 @@ async def test_a_range_of_a_file_with_no_text_is_counted(w):
     rd = w.folder("R&D")
     empty = w.file("budget.ods", parent=rd, kind="ods")
     result = await w.read(empty, 1, 2)
-    assert not result.files and result.no_text == 1 and result.no_text_paths == ("R&D/budget.ods",)
+    assert not result.files and result.no_text == 1 and result.no_text_paths == ("Drive/R&D/budget.ods",)
 
 
 async def test_a_range_passes_the_gate(w):

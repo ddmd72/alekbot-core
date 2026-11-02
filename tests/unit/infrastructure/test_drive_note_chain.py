@@ -145,7 +145,7 @@ async def test_a_chat_turn_writes_the_note_and_the_receipt_is_posted_literally_w
     history_text, full_text = await _handler()._prepare_history_texts(response, "Kept it on the file.",
                                                                        "Kept it on the file.", None, context)
     block = json.loads(full_text.split("\n\n")[-1])
-    assert block == {"drive_note_context": [["[Drive note: Docs/a.pdf ref=drive:a1:a v1]"]]}   # the engine's fold: one entry
+    assert block == {"drive_note_context": [["[Drive note: Drive/Docs/a.pdf ref=drive:a1:a v1]"]]}   # the engine's fold: one entry
     assert REPAIR not in full_text and REPAIR not in history_text
 
 

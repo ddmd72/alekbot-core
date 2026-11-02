@@ -92,4 +92,4 @@ async def test_the_fan_out_reads_the_marked_records_lean():
                                     notifier=notifier, alert_sink=None, clock=clock, localization=localization)
     await svc.fan_out()
     assert calls == [{"lean": True}]
-    assert notifier.files[0]["file_bytes"] == b"a.pdf\n"
+    assert notifier.files[0]["file_bytes"] == b"Drive/a.pdf\n"

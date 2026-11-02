@@ -36,7 +36,7 @@ async def test_first_page(w, doc):
     r = await page(w, doc, 1)
     p = r.page
     assert (p.first, p.last, p.total, p.next, p.end, p.past_end) == (1, 10, 25, 11, False, False)
-    assert p.version == 1 and p.path == "Oak Street parking rules.md" and p.ref == ref(doc)
+    assert p.version == 1 and p.path == "Drive/Oak Street parking rules.md" and p.ref == ref(doc)
     assert len(texts(r)) == 10 and r.continue_at is None
 
 

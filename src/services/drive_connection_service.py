@@ -8,8 +8,9 @@ Rules (RFC §4.4):
   of the same account keeps its credential id), else the same `drive_identity` (the drive a grant of that account
   reads; this also catches the account whose credential was deleted while the connection stayed ACTIVE). Otherwise a
   new connection: a random id, a new tag unique among every connection the user ever had (DISCONNECTED included, never
-  reused), the lowest free name of `Drive`, `Drive 2`, … (E11), indexing and transcription off (the `DriveConnection`
-  defaults). DISCONNECTED is terminal.
+  reused), the lowest free name of `Drive`, `Drive 2`, … (E11; `drive_mounts.default_mount_name`: no live
+  connection's current or held former name), recorded as the first `name_history` entry at the creation instant,
+  indexing and transcription off (the `DriveConnection` defaults). DISCONNECTED is terminal.
 - The primary pointer (`DriveUserSettings.primary_connection_id`) is read fresh on every use and written only here.
   The first live connection becomes the primary; a disconnect of the primary hands it to the oldest other ACTIVE
   connection, or clears it. I2: `set_primary` only names an ACTIVE connection.
@@ -35,6 +36,8 @@ Public interface:
     set_primary(user_id, connection_id) -> None
     status(user_id) -> DriveConnectionStatus
     resolve_ref(user_id, text) -> ResolvedDriveRef | DriveRefRefusal | None
+    mounts(user_id) -> MountTable
+    connection_of_tag(user_id, tag) -> Optional[DriveConnection]
     set_indexing(user_id, connection_id, enabled) -> DriveConnection
     set_transcribe(user_id, connection_id, enabled) -> DriveConnection
     flag_reconnect(handle) -> bool
@@ -48,10 +51,13 @@ from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Set, Union
 
 from ..domain import drive_ref
-from ..domain.drive_connection import DEFAULT_MOUNT_NAME, DriveConnection
+from ..domain.drive_connection import DriveConnection
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
+from ..domain.drive_mount_name_change import MountNameChange
+from ..domain.drive_mount_table import MountTable
+from ..domain.drive_mounts import default_mount_name, mount_table
 from ..domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, stale_ref_line
 from ..domain.drive_resolved_ref import ResolvedDriveRef
 from ..domain.drive_user_settings import DriveUserSettings
@@ -82,17 +88,6 @@ def _random_id() -> str:
 def _random_tag() -> str:
     """A 2-character tag: a letter, then a letter or digit (936 values; a user has a handful of connections)."""
     return secrets.choice(drive_ref.TAG_FIRST_ALPHABET) + secrets.choice(drive_ref.TAG_ALPHABET)
-
-
-def _free_mount_name(connections: List[DriveConnection]) -> str:
-    """The lowest of `Drive`, `Drive 2`, `Drive 3`, … that no live connection of the user is named (casefold)."""
-    taken = {c.mount_name.casefold() for c in connections if c.state in _LIVE}
-    if DEFAULT_MOUNT_NAME.casefold() not in taken:
-        return DEFAULT_MOUNT_NAME
-    n = 2
-    while f"{DEFAULT_MOUNT_NAME} {n}".casefold() in taken:
-        n += 1
-    return f"{DEFAULT_MOUNT_NAME} {n}"
 
 
 class DriveConnectionService:
@@ -157,7 +152,8 @@ class DriveConnectionService:
     async def _create(self, credential: OAuthCredential, drive_identity: str,
                       every: List[DriveConnection]) -> DriveConnection:
         taken_tags: Set[str] = {c.ref_tag for c in every}
-        name = _free_mount_name(every)
+        now = self._clock()
+        name = default_mount_name(every, now)
         for _ in range(_MAX_CREATE_ATTEMPTS):
             tag = self._new_tag()
             if not drive_ref.is_valid_tag(tag) or tag in taken_tags:
@@ -165,7 +161,7 @@ class DriveConnectionService:
             connection = DriveConnection(
                 connection_id=self._new_id(), user_id=credential.user_id, account_id=credential.account_id or "",
                 credential_id=credential.credential_id, kind=credential.kind, drive_identity=drive_identity,
-                ref_tag=tag, mount_name=name, created_at=self._clock(),
+                ref_tag=tag, mount_name=name, created_at=now, name_history=(MountNameChange(name=name, at=now),),
                 provider_account=_stored_account(credential))
             if await self._connections.create(connection):
                 return connection
@@ -260,6 +256,19 @@ class DriveConnectionService:
         if owner.state is ConnectionState.DISCONNECTED:
             return DriveRefRefusal(line=disconnected_ref_line(str(parsed)))
         return ResolvedDriveRef(connection=owner, item_id=parsed.item_id)
+
+    async def mounts(self, user_id: str) -> MountTable:
+        """The user's mount tree, read fresh (RFC §11.1): the live connections, oldest first, with their held former
+        names, and the primary the pointer names (ACTIVE or NEEDS_RECONNECT)."""
+        every = await self._connections.list_for_user(user_id)
+        settings = await self._connections.get_settings(user_id)
+        pointer = None if settings is None else settings.primary_connection_id
+        return mount_table(every, pointer, self._clock())
+
+    async def connection_of_tag(self, user_id: str, tag: str) -> Optional[DriveConnection]:
+        """The user's connection whose ref tag is `tag`, in any state (DISCONNECTED included); None when the user never
+        had it."""
+        return next((c for c in await self._connections.list_for_user(user_id) if c.ref_tag == tag), None)
 
     # ------------------------------------------------------------------ settings (Cabinet actions, D18)
 

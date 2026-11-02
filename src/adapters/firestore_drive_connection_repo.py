@@ -4,7 +4,8 @@
 Collections (env-prefixed): `{prefix}drive_connections`, doc id `{user_id}:{connection_id}` (`DriveConnection.doc_id`),
 and `{prefix}drive_user_settings`, doc id `{user_id}`. Every field is plaintext: a connection holds no secret (the grant
 is the credential's). Stored fields: `connection_id, user_id, account_id, credential_id, kind, drive_identity, ref_tag,
-mount_name, indexing_enabled, transcribe_enabled, state, created_at, disconnected_at, updated_at`; settings:
+mount_name, name_history, indexing_enabled, transcribe_enabled, state, created_at, disconnected_at, updated_at`
+(`name_history`: a list of `{name, at}`, oldest first; absent on a document stored before it, read as none); settings:
 `user_id, primary_connection_id, updated_at`.
 
 - Tenancy is structural: every read is addressed by the user, and a document whose stored `user_id` or
@@ -17,7 +18,7 @@ mount_name, indexing_enabled, transcribe_enabled, state, created_at, disconnecte
   `indexing_enabled` filter and both orders are applied in memory (a handful of connections per user).
 """
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
@@ -25,6 +26,7 @@ from google.cloud.firestore import FieldFilter
 from ..domain.connection_scope import ConnectionScope
 from ..domain.drive_connection import DriveConnection, connection_doc_id
 from ..domain.drive_connection_state import ConnectionState, can_transition
+from ..domain.drive_mount_name_change import MountNameChange
 from ..domain.drive_user_settings import DriveUserSettings
 from ..domain.provider_account import ProviderAccount
 from ..ports.drive_connection_repository import DriveConnectionRepository
@@ -53,6 +55,7 @@ def _to_doc(connection: DriveConnection, now: datetime) -> Dict[str, Any]:
         "drive_identity": connection.drive_identity,
         "ref_tag": connection.ref_tag,
         "mount_name": connection.mount_name,
+        "name_history": [{"name": c.name, "at": c.at} for c in connection.name_history],
         "indexing_enabled": connection.indexing_enabled,
         "transcribe_enabled": connection.transcribe_enabled,
         "state": connection.state.value,
@@ -66,6 +69,17 @@ def _to_doc(connection: DriveConnection, now: datetime) -> Dict[str, Any]:
 def _account_fields(account: Optional[ProviderAccount]) -> Dict[str, Any]:
     """The stored form of the provider account: realm and subject only (the label is ciphertext in the credential)."""
     return {"provider_realm": account.realm if account else "", "provider_subject": account.subject if account else ""}
+
+
+def _name_history(raw: Any) -> Tuple[MountNameChange, ...]:
+    """The stored `name_history` (absent or empty on a document stored before the field: no former names)."""
+    changes = []
+    for entry in raw or []:
+        at = _utc(entry.get("at"))
+        if at is None:
+            raise ValueError("a stored drive connection name change has no time")
+        changes.append(MountNameChange(name=entry["name"], at=at))
+    return tuple(changes)
 
 
 def _from_doc(data: Dict[str, Any]) -> DriveConnection:
@@ -88,6 +102,7 @@ def _from_doc(data: Dict[str, Any]) -> DriveConnection:
         disconnected_at=_utc(data.get("disconnected_at")),
         provider_account=ProviderAccount(realm=data["provider_realm"], subject=data["provider_subject"], label="")
         if data.get("provider_realm") and data.get("provider_subject") else None,
+        name_history=_name_history(data.get("name_history")),
     )
 
 

@@ -36,6 +36,7 @@ from src.services.drive_search_service import DriveSearchService
 
 from .fixture_drive import FixtureDrive
 from .index_cache import cache_key, load_or_build
+from .eval_connection import drive_relative
 from .metrics import case_hit, expected_substrings, substring_hit
 from .runner import (
     EVAL_USER, EXIT_OK, EXIT_REGRESSION, EXIT_SETUP, EvalClock, EvalError, gold_sha256, index_fixture,
@@ -79,7 +80,7 @@ def returned_texts(result: ExcerptResult, drive: FixtureDrive) -> Dict[str, str]
         text = "\n".join(display_text(run.text, file.kind) for run in runs)
         own = drive.path_of(file.item_id) or file.path
         for path in (own, file.path, *file.also_at):
-            out.setdefault(str(path).strip("/"), text)
+            out.setdefault(drive_relative(str(path), drive), text)
     return out
 
 

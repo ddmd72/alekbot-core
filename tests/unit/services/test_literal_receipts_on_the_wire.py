@@ -18,6 +18,7 @@ from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from src.domain.language import LanguageCode
 from src.domain.notification import NotificationChannel
 from src.domain.drive_connection_status import DriveConnectionStatus
+from src.domain.drive_mounts import mount_table
 from src.domain.drive_resolved_ref import ResolvedDriveRef
 from src.domain.user_drive import DeleteOutcome, DriveItem
 from src.infrastructure.agent_config import DRIVE
@@ -86,7 +87,9 @@ async def test_a_drive_receipt_shows_the_path_and_obeys_none_of_it():
         language.resolve_ui_language.return_value = LanguageCode.EN
         drive = AsyncMock(spec=UserDriveService)
         drive.status.return_value = DriveConnectionStatus(connected=True)
-        drive.resolve_ref.return_value = ResolvedDriveRef(connection(USER, ref_tag="a1"), "f1")
+        conn = connection(USER, ref_tag="a1")
+        drive.resolve_ref.return_value = ResolvedDriveRef(conn, "f1")
+        drive.mounts.return_value = mount_table([conn], conn.connection_id, datetime(2030, 3, 9, tzinfo=timezone.utc))
         item = DriveItem(item_id="f1", name="x.pdf", path=f"Inbox/{HOSTILE}.pdf", is_folder=False)
         drive.delete.return_value = DeleteOutcome(item=item, file_count=1)
         operations = DriveOperations(
@@ -107,7 +110,7 @@ async def test_a_drive_receipt_shows_the_path_and_obeys_none_of_it():
 
     assert resp.status == AgentStatus.SUCCESS
     assert llm.unanswered == 0 and llm.pending() == 0
-    assert len(api.posts) == 1 and api.posts[0]["text"].startswith("🗑️ Deleted from the drive: Inbox/")
+    assert len(api.posts) == 1 and api.posts[0]["text"].startswith("🗑️ Deleted from the drive: Drive/Inbox/")
     _shown_not_obeyed(api.posts[0])
 
 

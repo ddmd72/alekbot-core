@@ -25,6 +25,7 @@ from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 from tests.support.scripted_llm import calls, script
 
 from .drive_eval_samples import MANIFEST
@@ -35,10 +36,10 @@ MUTATION_CALLS = {
     "copy": (("report.docx",), {"folder": "Inbox"}, {"source_ref": "report.docx", "folder": "Inbox"}),
     "save_text": (("milk, eggs",), {"file_name": "list.md"}, {"text": "milk, eggs", "file_name": "list.md"}),
     "create_folder": (("Archive/2026",), {}, {"folder": "Archive/2026"}),
-    "move": (("drive:abc",), {"folder": "Archive"}, {"ref": "drive:abc", "folder": "Archive"}),
-    "append": (("drive:abc", "one more line"), {}, {"ref": "drive:abc", "text": "one more line"}),
-    "replace": (("drive:abc", "report.docx"), {}, {"ref": "drive:abc", "source_ref": "report.docx"}),
-    "delete": (("drive:abc",), {}, {"ref": "drive:abc"}),
+    "move": (("drive:a1:abc",), {"folder": "Archive"}, {"ref": "drive:a1:abc", "folder": "Archive"}),
+    "append": (("drive:a1:abc", "one more line"), {}, {"ref": "drive:a1:abc", "text": "one more line"}),
+    "replace": (("drive:a1:abc", "report.docx"), {}, {"ref": "drive:a1:abc", "source_ref": "report.docx"}),
+    "delete": (("drive:a1:abc",), {}, {"ref": "drive:a1:abc"}),
 }
 # UserDriveService methods that change the drive (resolve_folder creates folders when asked to)
 SERVICE_WRITES = frozenset({"ensure_folder", "save", "move", "append_text", "replace_with", "delete",
@@ -77,8 +78,11 @@ async def test_a_mutation_under_the_dry_run_never_reaches_the_drive_service(meth
 
 @pytest.mark.parametrize("method", sorted(MUTATION_CALLS))
 async def test_the_same_mutation_without_the_dry_run_reaches_the_service(method):
-    """Proves the test above can fail: the stub, not the arguments, is what keeps the service untouched."""
-    service = AsyncMock(spec=UserDriveService)
+    """Proves the test above can fail: the stub, not the arguments, is what keeps the service untouched. The service
+    answers its connection reads as the real one does (a ref of tag a1 resolves on the primary mount) and `get_item`
+    returns a real item, so each write reaches its service call."""
+    service = spec_drive_service("u1")
+    service.get_item.return_value = DriveItem(item_id="abc", name="a.txt", path="Docs/a.txt", is_folder=False)
     args, kwargs, _ = MUTATION_CALLS[method]
     await getattr(_ops(service), method)(CONTEXT, "u1", *args, **kwargs, wait_s=100.0)
     assert _writes(service) != []
@@ -162,7 +166,7 @@ async def test_the_fixtures_drive_reads_go_through_the_fixture_drive():
 
     fixture = build_drive_fixture("u1", FixtureDrive(MANIFEST), MagicMock())
     out = await fixture.operations.open(CONTEXT, "u1", drive_ref.format(EVAL_REF_TAG, item_id_for("Contracts")))
-    assert out.text == "'Contracts' is a folder; list it instead."
+    assert out.text == "'Drive/Contracts' is a folder; list it instead."   # canonical <mount>/<path> (design §1.2 S-4)
 
 
 async def test_the_fixtures_video_open_cannot_reach_a_chat():
@@ -245,5 +249,6 @@ async def test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run():
     assert {"op": "folder_path", "args": {"folder": fold1}, "outcome": "ok", "stubbed": False} in log.entries
     service.get_item.assert_awaited_once_with(connection.handle, "fold1")      # the real folder_path read ran
     moved = next(e for e in log.entries if e["op"] == "move")
-    assert moved["args"] == {"ref": abc, "folder": "Archive", "new_name": None}
+    # folder_path gives the ref's canonical path (design §1.1 P-9)
+    assert moved["args"] == {"ref": abc, "folder": "Drive/Archive", "new_name": None}
     assert resp.result.splitlines()[0] == "Drive result: ok"

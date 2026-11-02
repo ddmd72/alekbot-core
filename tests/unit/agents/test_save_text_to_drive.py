@@ -85,7 +85,7 @@ class TestTextMode:
     async def test_drive_context_present(self, setup):
         agent, _, _ = setup
         res = await _save(agent, "a", "a.txt")
-        assert res.drive_context()[0]["path"] == "Inbox/a.txt"
+        assert res.drive_context()[0]["path"] == "Drive/Inbox/a.txt"   # canonical <mount>/<path> (design §1.2 S-1)
 
     async def test_csv_and_svg_types(self, setup):
         agent, memory, _ = setup

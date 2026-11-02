@@ -62,6 +62,7 @@ class CoverageFacts:
                                     # not searched at all (`DriveSearchResult.awaiting_rebuild`)
     unchecked: Tuple[str, ...] = () # words whose full page under a filter no scoped read covered (P6 review M1)
     inaccessible: int = 0           # files the bot cannot open (§26.2, Δ56): never "not read yet" or "not described"
+    not_searched_drives: Tuple[str, ...] = ()   # live drives this search did not read (multi-drive 2a, E-14): incomplete
 
 
 @dataclass(frozen=True)
