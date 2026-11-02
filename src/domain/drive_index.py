@@ -108,6 +108,9 @@ class Reason(str, Enum):
     DOWNLOAD_ERROR = "download_error"
     EMBED_TIMEOUT = "embed_timeout"
     PHOTOGRAPH = "photograph"                 # an image triaged as a photograph (§24.5)
+    # MULTI_DRIVE_RFC §11.3, slice 2b: a folder on the path from the drive's root to a selected scope folder, stored only
+    # so the index's parent chains reach the root; never searchable, never relisted
+    SCOPE_ANCESTOR = "scope_ancestor"
 
 
 class TriageVerdict(str, Enum):
@@ -562,6 +565,10 @@ class DriveSyncState:
     # reads (the drive-change check compares it with the connection's).
     connection_id: str = ""
     drive_identity: str = ""
+    # MULTI_DRIVE_RFC §11.3 (slice 2b): the `DriveConnection.scope_key` the stored records were enumerated under. A
+    # connection whose key moved on re-enumerates (`drive_index_planner.scope_restart`); "" is the default scope, which
+    # every state stored before 2b was built under.
+    applied_scope: str = ""
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

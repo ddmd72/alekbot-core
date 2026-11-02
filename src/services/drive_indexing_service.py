@@ -112,7 +112,7 @@ from typing import (
 
 from ..domain import drive_enrich_plan as enrich
 from ..domain.connection_scope import ConnectionScope
-from ..domain.drive_connection import DriveConnection
+from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_handle import DriveHandle
 from ..domain.provider_account import ProviderAccount
@@ -155,6 +155,7 @@ from ..domain.drive_index_params import (
     TICK_START_BUDGET, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_SHARE, TRANSCRIBE_UPLOAD_S, TRANSCRIBE_USD_PER_MONTH,
     TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_EDGE_PX,
 )
+from ..domain.drive_index_scope import ANCESTOR, IndexScope, verdict as scope_verdict
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, access_observed, access_recheck_due,
     access_rechecked, access_regained, attempt_crashed, can_start_file, can_start_reembed, capped,
@@ -162,7 +163,7 @@ from ..domain.drive_index_planner import (
     drops_readable, extractor_stale, generation_started, indexed, marked_inaccessible, model_available, model_outage,
     model_recovered, month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
-    stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
+    scope_restart, stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
 from ..domain.drive_keys import about_keys_capped, word_form_keys, word_keys_capped
 from ..domain import drive_mirror_plan as mirror_versions
@@ -541,6 +542,27 @@ _TICK_CLOSED: ContextVar[Optional[_Marks]] = ContextVar("drive_tick_closed", def
 
 
 @dataclass
+class _ScopeView:
+    """The tick's view of the connection's scope when it does not cover everything (MULTI_DRIVE_RFC §11.3, E20).
+    `ancestors`: the folders on the path from the root to a selected folder (stored as skeletons), complete once
+    `loaded`; `parents`: item id -> parent id as read this tick (`get_change` or a stored record); `memo`: folder id ->
+    the verdict taken for it this tick, so a chain is walked once per folder."""
+    scope: IndexScope
+    ancestors: Set[str] = field(default_factory=set)
+    parents: Dict[str, str] = field(default_factory=dict)
+    memo: Dict[str, bool] = field(default_factory=dict)
+    loaded: bool = False
+
+    @property
+    def filtered(self) -> bool:
+        return not self.scope.covers_everything
+
+
+# Per tick: None when the scope covers everything (the App Folder default, or the whole drive): nothing is filtered.
+_TICK_SCOPE: ContextVar[Optional[_ScopeView]] = ContextVar("drive_tick_scope", default=None)
+
+
+@dataclass
 class _PurgeStore:
     """The purge run's pass over the transcript store (Δ214): the pinned content keys read at the purge's start, the
     scanning helper's cursor (held in the run: a purge resumed by a later tick starts again) and whether it ended."""
@@ -789,7 +811,8 @@ class DriveIndexingService:
             state = lease if lease.created_at is not None else replace(lease, created_at=now)
             if state.epoch == 0 and state.cursor is None and not state.applied_versions:
                 # nothing stored yet: onboarding builds every record under the current versions (§12.3)
-                state = replace(state, applied_versions=self._target_versions(), applied_space=self._space)
+                state = replace(state, applied_versions=self._target_versions(), applied_space=self._space,
+                                applied_scope=connection.scope_key)
             action = access_action(state, connection, now)   # facts may have moved before the lease
             if action in (AccessAction.PURGE_OPT_OUT, AccessAction.PURGE_EXPIRED, AccessAction.PURGE_DISCONNECTED,
                           AccessAction.PURGE_DRIVE_SWITCH, AccessAction.PURGE_THEN_RESTART):
@@ -819,6 +842,14 @@ class DriveIndexingService:
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {handle.user_id[:8]}; continuing from the cursor")
+            if state.applied_scope != connection.scope_key:
+                if state.cursor is not None:
+                    # the owner changed the scope (RFC §11.3): enumerate again; the filter deletes what left, the sweep
+                    # removes the rest
+                    logger.info(f"[DriveIndex] scope of connection {handle.connection_id[:8]} changed; re-enumerating")
+                    state = scope_restart(state, connection.scope_key)
+                else:
+                    state = replace(state, applied_scope=connection.scope_key)   # nothing enumerated yet
             return await self._run(handle, state, nudge, now, enabled, summary, cont, connection)
         except LeaseLost as exc:
             # another tick holds the lease, or this one's is ending: it carries on from the last saved state
@@ -848,9 +879,11 @@ class DriveIndexingService:
         spend_token = _TICK_SPEND.set(spend)
         closed_token = _TICK_CLOSED.set(None)   # read inside the tick's error handling (_run_spending)
         mirror_token = _TICK_MIRROR.set(None)   # read at the start of _run_spending, inside its error handling
+        scope_token = _TICK_SCOPE.set(None)   # set at the start of _run_spending, inside its error handling
         transcription = _Transcription(on=self._transcription_on(handle))   # as the gate read it: kept for the tick
         if transcription.on:
-            transcription.host = _TickHost(self, handle, budget, models, summary, transcription)
+            transcription.host = _TickHost(self, handle, budget, models, summary, transcription,
+                                           write_folder_id=connection.write_folder_id)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
         # The tick's note context: when the note store (part B) OR the lifecycle (part C) is wired — B's own code checks
         # `self._notes` itself (`_lookup_notes`, `_notes_step`), so a lifecycle without a store merges nothing
@@ -863,6 +896,7 @@ class DriveIndexingService:
                                             models, spend, connection)
         finally:
             _TICK_NOTES.reset(notes_token)
+            _TICK_SCOPE.reset(scope_token)
             _TICK_MIRROR.reset(mirror_token)
             _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
@@ -923,6 +957,8 @@ class DriveIndexingService:
         try:
             # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
             _TICK_MIRROR.set(await self._start_mirror(handle, connection))
+            index_scope = IndexScope.of(connection, await self._drive.capabilities(handle))
+            _TICK_SCOPE.set(None if index_scope.covers_everything else _ScopeView(index_scope))
             _TICK_CLOSED.set(await self._start_marks(handle, state))
             # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b), once per tick: after observe, before the
             # work-off; but first when the round was left incomplete (read before `_observe` resets it), because then
@@ -1113,9 +1149,14 @@ class DriveIndexingService:
 
     def _ctx(self, handle: DriveHandle, state: DriveSyncState, now: datetime) -> PlanContext:
         mirror = _TICK_MIRROR.get()
+        view = _TICK_SCOPE.get()
         return PlanContext(scope=handle.scope, root_item_id=state.root_item_id, epoch=state.epoch,
                            phase=state.epoch_phase, now=now, place_of=self._place_of,
-                           mirror_root_ids=mirror.root_ids if mirror is not None else frozenset())
+                           mirror_root_ids=mirror.root_ids if mirror is not None else frozenset(),
+                           scope_root_ids=view.scope.folder_ids if view is not None else frozenset(),
+                           scope_ancestor_ids=frozenset(view.ancestors) if view is not None else frozenset(),
+                           whole_drive=view.scope.whole_drive if view is not None else False,
+                           filtered=view is not None)
 
     async def _apply(self, handle: DriveHandle, ctx: PlanContext, changes: Sequence[DriveChange], budget: _Budget,
                      summary: Dict[str, int], *, relisting: bool = False, nudged: bool = False) -> None:
@@ -1124,6 +1165,10 @@ class DriveIndexingService:
         `relisting`: the changes are a re-listing of a never-stored subtree, so every new normal folder
         among them needs its own re-listing (§5.2). `nudged`: the items are named in a nudge, so a card
         they are due for is class 0 even when first seen (§7.8)."""
+        view = _TICK_SCOPE.get()
+        if view is not None:
+            await self._load_scope_ancestors(handle, view, ctx, budget)
+            ctx = replace(ctx, scope_ancestor_ids=frozenset(view.ancestors))
         ids = [c.item_id for c in changes]
         cache: Dict[str, Optional[DriveIndexRecord]] = dict(await self._repo.get_records(handle.scope, ids))
         parent_ids = {c.parent_id for c in changes if c.parent_id} | {
@@ -1134,8 +1179,17 @@ class DriveIndexingService:
         deletes: Set[str] = set()
         collects: Set[str] = set()
         gone: Dict[str, str] = {}   # §27.9.4: a tombstone is `gone`, any other planner delete `unstored`
+        page_parents = {c.item_id: c.parent_id for c in changes if not c.deleted}
         for change in changes:
+            out_of_scope = False
             try:
+                if view is not None and not change.deleted and self._scope_applies(change, cache, ctx):
+                    decided = await self._scope_verdict(handle, view, ctx, change, page_parents, cache, budget)
+                    if decided is False:
+                        # a deletion for the planner: a folder leaves through the DELETING cascade, a file is deleted;
+                        # the mirror's notice is `unstored`, never `gone` (the item is still on the drive)
+                        out_of_scope = True
+                        change = replace(change, deleted=True)
                 existing = cache.get(change.item_id)
                 parent = cache.get(change.parent_id) if not change.deleted else None
                 previous_parent = cache.get(existing.parent_id) if existing is not None else None
@@ -1150,6 +1204,13 @@ class DriveIndexingService:
                              exc_info=True)
                 summary["skipped"] = summary.get("skipped", 0) + 1
                 continue
+            if (view is not None and not relisting and existing is None and ctx.phase is not EpochPhase.ENUMERATING
+                    and plan.upsert is not None and plan.upsert.is_folder and plan.upsert.scope is Scope.NORMAL
+                    and plan.upsert.reason is not Reason.SCOPE_ANCESTOR):
+                # a folder new to a filtered index during a delta round (moved into the scope): its children were never
+                # stored, so it is listed once (the `relisting` rule below)
+                plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
+                                                     first_seen=True))
             if (relisting and existing is None and plan.upsert is not None and plan.upsert.is_folder
                     and plan.upsert.scope is Scope.NORMAL):
                 plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
@@ -1158,7 +1219,7 @@ class DriveIndexingService:
                     and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
             if plan.delete_item_id is not None and existing is not None:
-                gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
+                gone.update(self._mirror_notices([existing], GONE if change.deleted and not out_of_scope else UNSTORED))
             elif (existing is not None and existing.owner_note_id and plan.upsert is not None
                   and plan.upsert.item_id == existing.item_id and record_moved(existing, plan.upsert)):
                 note_snapshot_due(existing.owner_note_id, existing.item_id)   # notes RFC §7.5
@@ -1167,6 +1228,83 @@ class DriveIndexingService:
         # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
         await self._commit(handle, list(writes.values()), deletes, collects=collects, gone=gone)
         summary["observed"] = summary.get("observed", 0) + len(changes)
+
+    # -- the scope filter (MULTI_DRIVE_RFC §11.3, E20) -------------------------------------------------------
+
+    @staticmethod
+    def _scope_applies(change: DriveChange, cache: Mapping[str, Optional[DriveIndexRecord]], ctx: PlanContext) -> bool:
+        """The filter judges every item except the root, the bot's own mirror folders and what sits inside an opaque
+        subtree (those inherit their folder's fate)."""
+        if change.item_id == ctx.root_item_id or change.item_id in ctx.mirror_root_ids:
+            return False
+        if change.parent_id in ctx.mirror_root_ids:
+            return False
+        parent = cache.get(change.parent_id)
+        return parent is None or parent.scope not in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE)
+
+    async def _chain_parent(self, handle: DriveHandle, view: _ScopeView, item_id: str, budget: _Budget,
+                            ) -> Optional[str]:
+        """The parent id of `item_id`: this tick's reads, then its stored record, then one provider read within the item
+        budget. None: it could not be had now (out of budget, a transient error). An item the provider does not have
+        has no reachable parent ("")."""
+        if item_id in view.parents:
+            return view.parents[item_id]
+        rec = (await self._repo.get_records(handle.scope, [item_id])).get(item_id)
+        if rec is not None:
+            view.parents[item_id] = rec.parent_id
+            return rec.parent_id
+        if not budget.item_call_allowed():
+            return None
+        budget.item_calls -= 1
+        try:
+            read = await self._drive.get_change(handle, item_id)
+        except DriveItemNotFoundError:
+            view.parents[item_id] = ""
+            return ""
+        except _PER_ITEM_ERRORS as exc:
+            logger.warning(f"[DriveIndex] scope chain read failed for {handle.user_id[:8]}: {exc}")
+            return None
+        view.parents[item_id] = "" if read.deleted else read.parent_id
+        return view.parents[item_id]
+
+    async def _load_scope_ancestors(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext,
+                                    budget: _Budget) -> None:
+        """The folders from the root down to each selected folder, once per tick (stored records first; a provider read
+        only for a link no record has). Incomplete when the budget ran out: the next `_apply` continues."""
+        if view.loaded or not ctx.root_item_id:
+            return
+        folders = view.scope.folder_ids
+        for folder_id in sorted(folders):
+            current = folder_id
+            for _ in range(MAX_CHAIN_DEPTH):
+                parent = await self._chain_parent(handle, view, current, budget)
+                if parent is None:
+                    return
+                if parent == "" or parent == ctx.root_item_id or parent in folders:
+                    break
+                view.ancestors.add(parent)
+                current = parent
+        view.loaded = True
+
+    async def _scope_verdict(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext, change: DriveChange,
+                             page_parents: Mapping[str, str], cache: Mapping[str, Optional[DriveIndexRecord]],
+                             budget: _Budget) -> "bool | str | None":
+        """True / False / `ANCESTOR` for one change, reading the missing links of its chain; None when the budget ran
+        out first (the change is planned as it is, UNRESOLVED, and `_resolve_step` continues the walk later)."""
+        parents: Dict[str, str] = {**view.parents, **page_parents}
+        parents.update({i: r.parent_id for i, r in cache.items() if r is not None})
+        known: Dict[str, "bool | None"] = {**view.memo, **{a: None for a in view.ancestors}}
+        for _ in range(MAX_CHAIN_DEPTH):
+            decided = scope_verdict(change.item_id, change.parent_id, view.scope, ctx.root_item_id, known, parents)
+            if isinstance(decided, bool) or decided == ANCESTOR:
+                if change.is_folder and isinstance(decided, bool):
+                    view.memo[change.item_id] = decided
+                return decided
+            link = await self._chain_parent(handle, view, decided, budget)
+            if link is None:
+                return None
+            parents[decided] = link
+        return False
 
     async def _observe_closed_children(self, handle: DriveHandle, ctx: PlanContext, changes: Sequence[DriveChange],
                                        cache: Dict[str, Optional[DriveIndexRecord]],
@@ -1210,8 +1348,8 @@ class DriveIndexingService:
                            budget: _Budget) -> Optional[FolderProbe]:
         if change.item_id in ctx.mirror_root_ids:
             return None   # a mirror root is opaque whatever its density (§27.9.8): no probe call
-        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id, ctx.mirror_root_ids),
-                           existing):
+        if not needs_probe(change, parent_scope(change.parent_id, parent, ctx.root_item_id, ctx.mirror_root_ids,
+                                                ctx.scope_root_ids, ctx.whole_drive, not ctx.filtered), existing):
             return None
         if not budget.item_call_allowed():
             return None   # the folder waits as probe_pending; its children are held unresolved (§3.6)
@@ -1888,6 +2026,9 @@ class DriveIndexingService:
         mirror = _TICK_MIRROR.get()
         if self._mirror is None or self._mirror_repo is None or mirror is None or not mirror.drive_identity:
             return False
+        transcription = _TICK_TRANSCRIPTION.get()
+        if transcription is not None and transcription.host is not None and transcription.host.write_folder_id is None:
+            return False   # no write folder, no mirror (D7): no reserve for impossible work
         now = self._clock()
         held_step = self._mirror_step_holds.get(handle.connection_id)
         if held_step is not None and now < held_step[1]:
@@ -2282,7 +2423,15 @@ class DriveIndexingService:
 
     async def _resolve_step(self, handle: DriveHandle, rec: DriveIndexRecord, state: DriveSyncState, ctx: PlanContext,
                             budget: _Budget) -> bool:
-        """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4)."""
+        """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4). On a filtered scope
+        a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan."""
+        view = _TICK_SCOPE.get()
+        if (view is not None and rec.item_id not in view.scope.folder_ids and rec.item_id not in ctx.mirror_root_ids
+                and rec.parent_id not in ctx.mirror_root_ids):
+            decided = await self._scope_verdict(handle, view, ctx, change_from_record(rec), {}, {}, budget)
+            if decided is False:
+                await self._remove_out_of_scope(handle, rec, ctx)
+                return True
         parent = await self._parent_of(handle, rec, ctx)
         if parent is not None or rec.parent_id == state.root_item_id:
             rec = replace(rec, attempts=0)   # resolved: the next step (a probe) counts its own attempts (§8.2)
@@ -2322,6 +2471,15 @@ class DriveIndexingService:
         grandparent = (await self._repo.get_records(handle.scope, [parent_change.parent_id])).get(parent_change.parent_id)
         await self._commit_plan(handle, plan_observation(parent_change, None, grandparent, None, ctx), None)
         return True
+
+    async def _remove_out_of_scope(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
+        """A record outside the connection's scope (RFC §11.3): a folder goes through the cascade, a file is deleted;
+        the mirror's notice is `unstored` (the item is still on the drive)."""
+        if rec.is_folder:
+            await self._commit(handle, [_dying(rec, ctx.now)], set())
+        else:
+            await self._commit(handle, [], {rec.item_id}, collects=_ever_read([rec]),
+                               gone=self._mirror_notices([rec], UNSTORED))
 
     async def _remove_orphan(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
         """A folder goes through the cascade, so children parked under it go with it (§3.4)."""
@@ -4753,9 +4911,12 @@ class _TickHost:
     change no card text and no transcript state)."""
 
     def __init__(self, svc: "DriveIndexingService", handle: DriveHandle, budget: _Budget, models: _Models,
-                 summary: Dict[str, int], transcription: _Transcription) -> None:
+                 summary: Dict[str, int], transcription: _Transcription, *,
+                 write_folder_id: Optional[str] = ROOT_FOLDER) -> None:
         self._svc = svc
         self.handle = handle   # TranscriptHost / MirrorHost: the connection the tick is for
+        # MirrorHost: the connection's write folder (None: read-only, no mirror; ROOT_FOLDER: the area root; else a folder)
+        self.write_folder_id = write_folder_id
         self._budget = budget
         self._models = models
         self.summary = summary
@@ -4913,7 +5074,8 @@ def _connected_root(mirror: _Mirror) -> Optional[MirrorRoot]:
 # The mirror step's counters the tick line carries (§27.9.5, plan Task 21C); the step logs the rest on its own line.
 _MIRROR_TICK_COUNTERS = ("mirror_created", "mirror_replaced", "mirror_moved", "mirror_archived", "mirror_restored",
                          "mirror_detached", "mirror_pruned", "mirror_foreign", "mirror_failed", "mirror_errors",
-                         "mirror_quota_full", "mirror_no_drive_id", "mirror_ops", "mirror_systemic")
+                         "mirror_quota_full", "mirror_no_drive_id", "mirror_ops", "mirror_systemic",
+                         "mirror_no_write_folder")
 
 
 _mirror_seed_version = mirror_versions.seed_version   # one formula, in the domain (the mirror step uses it too)
