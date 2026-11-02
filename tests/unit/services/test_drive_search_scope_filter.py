@@ -48,3 +48,29 @@ async def test_the_whole_drive_scope_filters_nothing():
     w = await _world(scope=(), whole=True)
     result = await w.find("plan")
     assert {c.item_id for c in result.cards} == {w.kept, w.dropped}
+
+
+async def test_a_failed_capabilities_lookup_keeps_the_filter_off_and_warns_after_the_summary_line():
+    import logging
+
+    from src.utils.logger import logger as app_logger
+    w = await _world()
+
+    async def broken(handle):
+        raise RuntimeError("provider down")
+    w.drive.capabilities = broken
+    records = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append((record.levelno, record.getMessage()))
+    app_logger.addHandler(handler)
+    try:
+        result = await w.find("plan")
+        found = await w.service.excerpts("u", ExcerptRequest(question=QUESTION))
+    finally:
+        app_logger.removeHandler(handler)
+    assert {c.item_id for c in result.cards} == {w.kept, w.dropped} and {f.item_id for f in found.files} >= {w.kept}
+    messages = [m for _, m in records]
+    assert messages[0].startswith("[DriveSearch] user=") and "mode=query" in messages[0]
+    warnings = [i for i, (level, m) in enumerate(records) if level == logging.WARNING and "capabilities" in m]
+    assert warnings and "RuntimeError" in records[warnings[0]][1] and warnings[0] > 0
+    assert any("mode=excerpts" in m for m in messages[:warnings[-1]])

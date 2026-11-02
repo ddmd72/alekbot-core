@@ -200,11 +200,9 @@ def test_all_parts_unreadable_returns_the_first_result():
     assert emerge([(ACME, ExcerptResult(status="disconnected", request=REQUEST), {}), (DRIVE, first, {})]) is first
 
 
-def test_repeated_ids_are_kept_only_under_one_tag():
-    repeated = ((("d9", 1, 0)),)
-    one = emerge([(DRIVE, eresult(efile("a1", "d1", "Drive/a"), repeated=repeated), {"d1": 0.1}),
-                  (ACME, eresult(), {})])
-    assert one.repeated == repeated and one.ref_tag == "a1"
-    two = emerge([(DRIVE, eresult(efile("a1", "d1", "Drive/a"), repeated=repeated), {"d1": 0.1}),
-                  (ACME, eresult(efile("b2", "x1", "Acme/c")), {"x1": 0.2})])
-    assert two.repeated == () and two.ref_tag == ""
+def test_repeated_ids_keep_the_tag_of_their_connection():
+    on_drive = eresult(efile("a1", "d1", "Drive/a"), repeated=(("item-1", 1, 0),), repeated_tags=("a1",))
+    on_acme = eresult(efile("b2", "x1", "Acme/c"), repeated=(("item-1", 1, 0),), repeated_tags=("b2",))
+    result = emerge([(DRIVE, on_drive, {"d1": 0.1}), (ACME, on_acme, {"x1": 0.2})])
+    assert result.repeated == (("item-1", 1, 0), ("item-1", 1, 0)) and result.repeated_tags == ("a1", "b2")
+    assert result.ref_tag == ""

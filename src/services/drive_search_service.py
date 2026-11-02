@@ -64,6 +64,7 @@ from ..domain.drive_usage import closed_initial, new_initial_build
 from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
 from ..domain.drive_excerpt_context import ExcerptContext, file_description
 from ..domain.drive_excerpt_file import ExcerptFile
+from ..domain.drive_excerpt_render import context_key
 from ..domain.drive_excerpt_file_context import FileContext
 from ..domain.drive_excerpt_page import PageSpan
 from ..domain.drive_excerpt_folder_note import FolderNote
@@ -200,6 +201,7 @@ def _fenced(rec: Optional[Rec], generation: int) -> bool:
 @dataclass
 class _Stats:
     """Counts after each stage, for the one summary line per search (§10.1, §25.5.7)."""
+    warnings: List[str] = field(default_factory=list)   # logged after the summary line
     mode: str = "query"
     scope: str = "all"
     content: str = "off"             # off | wide (user-wide streams) | memory (a folder's chunks in memory) |
@@ -348,6 +350,7 @@ _NO_TEXT_LISTED = 10      # passages: paths named on the no-text line (the count
 @dataclass
 class _ExcerptStats:
     """Counts for the one `[DriveSearch] mode=excerpts` line (no text)."""
+    warnings: List[str] = field(default_factory=list)   # logged after the summary line
     mode: str = "excerpts"
     scope: str = "all"            # gate | all | files | folder-memory | folder-scoped (kNN over the walked files,
                                   # RFC Δ246) | folder-wide (incomplete walk) | range
@@ -444,11 +447,21 @@ class DriveSearchService:
         live = await self._connections.list_for_user(user_id)
         return live[0] if live else None
 
-    async def _ancestry(self, conn: DriveConnection, root_item_id: str) -> _Ancestry:
-        """The ancestry cache of one call over `conn`'s index, with the connection's scope as its visibility."""
-        return _Ancestry(self._repo, conn.scope, root_item_id, admit=await self._scope_admit(conn, root_item_id))
+    async def _ancestry(self, conn: DriveConnection, root_item_id: str,
+                        stats: Optional[Union[_Stats, _ExcerptStats]] = None) -> _Ancestry:
+        """The ancestry cache of one call over `conn`'s index, with the connection's scope as its visibility. A
+        failed capabilities lookup keeps the filter off and is logged as a warning: after the call's summary line when
+        `stats` is given, else at once."""
+        warnings: List[str] = []
+        admit = await self._scope_admit(conn, root_item_id, warnings)
+        for line in warnings:
+            if stats is not None:
+                stats.warnings.append(line)
+            else:
+                logger.warning(line)
+        return _Ancestry(self._repo, conn.scope, root_item_id, admit=admit)
 
-    async def _scope_admit(self, conn: DriveConnection, root_item_id: str
+    async def _scope_admit(self, conn: DriveConnection, root_item_id: str, warnings: List[str]
                            ) -> Optional[Callable[[DriveIndexRecord, Tuple[str, Tuple[str, ...]]], bool]]:
         """The scope test over the index's own chain (`in_scope`, no provider call for the chain), or None when the
         connection's scope covers everything (the whole drive, or no folders chosen on an area feed)."""
@@ -456,7 +469,8 @@ class DriveSearchService:
             return None
         try:
             capabilities = await self._drive.capabilities(conn.handle)
-        except Exception:   # a second line of defence (the indexer applies the scope): never fails a search
+        except Exception as exc:   # a second line of defence (the indexer applies the scope): never fails a search
+            warnings.append(f"[DriveSearch] capabilities of a connection failed, scope filter off: {exc_brief(exc)}")
             return None
         if not conn.scope_folder_ids and capabilities.feed_scope is FeedScope.AREA:
             return None
@@ -598,6 +612,9 @@ class DriveSearchService:
             f"pool_hint={stats.pool_hint} band={stats.band} coverage={stats.coverage} chars={stats.chars} "
             f"visible={stats.visible} filtered={stats.filtered} collapsed={stats.collapsed} "
             f"returned={stats.returned} building={result.envelope.building} ms={ms}")
+        for st in all_stats:
+            for line in st.warnings:
+                logger.warning(line)
         return result
 
     async def _search_part(self, user_id: str, part: _Placed, request: DriveSearchRequest,
@@ -672,7 +689,7 @@ class DriveSearchService:
     async def _body(self, conn: DriveConnection, request: DriveSearchRequest, state: DriveSyncState, use_cards: bool,
                     stats: _Stats) -> DriveSearchResult:
         kinds = kinds_for(request.kind)
-        ancestry = await self._ancestry(conn, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         folder: Optional[_Folder] = None
         if request.folder:
             found = await self._resolve_folder(conn, request.folder, ancestry)
@@ -1455,6 +1472,9 @@ class DriveSearchService:
                                     no_text_listed=_NO_TEXT_LISTED)
             result = replace(merged, notice=notice)
         self._log_excerpts(user_id, result, all_stats[0], started)
+        for st in all_stats:
+            for line in st.warnings:
+                logger.warning(line)
         return result
 
     async def _excerpts_part(self, part: _Placed, request: ExcerptRequest, shown: FrozenSet[Tuple[str, ChunkId]],
@@ -1467,6 +1487,7 @@ class DriveSearchService:
         own = frozenset(key for tag, key in shown if tag == conn.ref_tag)
         found = await self._excerpts(conn, scoped, own, stats)
         return replace(found, request=request, ref_tag=conn.ref_tag,
+                       repeated_tags=(conn.ref_tag,) * len(found.repeated),
                        folder_path=self._shown_folder(conn, found.folder_path) or "")
 
     async def excerpt_range(self, user_id: str, request: ExcerptRangeRequest) -> ExcerptResult:
@@ -1479,6 +1500,8 @@ class DriveSearchService:
         conn = await self._named_connection(user_id, [request.file_ref])
         result = replace(await self._excerpt_range(conn, request, stats), ref_tag=conn.ref_tag)
         self._log_excerpts(user_id, result, stats, started)
+        for line in stats.warnings:
+            logger.warning(line)
         return result
 
     async def _named_connection(self, user_id: str, refs: Sequence[str]) -> DriveConnection:
@@ -1564,7 +1587,7 @@ class DriveSearchService:
         if not state.cards_in_space(self._space):
             stats.scope = "gate"
             return ExcerptResult(status=STATUS_OK, request=request, wrong_space=True)
-        ancestry = await self._ancestry(conn, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         scoped, building = await asyncio.gather(self._excerpt_scope(conn, request, ancestry, stats),
                                                 self._building(conn, state))
         if isinstance(scoped, ExcerptResult):
@@ -1783,22 +1806,24 @@ class DriveSearchService:
         broken by an unrecorded ancestor shows its known part."""
         contexts: List[FileContext] = []
         folders: Dict[str, FolderNote] = {}
+        tag = conn.ref_tag
         for file in files:
             rec = records[file.item_id]
             path, ancestors = chains[file.item_id]
-            contexts.append(FileContext(item_id=file.item_id, path=canonical_path(conn.mount_name, path),
-                                        ancestors=ancestors,
+            contexts.append(FileContext(item_id=context_key(tag, file.item_id),
+                                        path=canonical_path(conn.mount_name, path),
+                                        ancestors=tuple(context_key(tag, a) for a in ancestors),
                                         description=file_description(rec), own_note=note_line(rec)))
             for folder_id in ancestors:
+                key = context_key(tag, folder_id)
                 folder = ancestry.cache.get(folder_id)
-                if folder_id in folders or folder is None:
+                if key in folders or folder is None:
                     continue
                 line = note_line(folder)
                 chain = ancestry.chain(folder, require_card=False) if line else None
                 if chain is not None:
-                    folders[folder_id] = FolderNote(item_id=folder_id, path=canonical_path(conn.mount_name, chain[0]),
-                                                    depth=len(chain[1]) + 1,
-                                                    line=line)
+                    folders[key] = FolderNote(item_id=key, path=canonical_path(conn.mount_name, chain[0]),
+                                              depth=len(chain[1]) + 1, line=line)
         return ExcerptContext(files=tuple(contexts), folders=folders)
 
     async def _excerpt_range(self, conn: DriveConnection, request: ExcerptRangeRequest, stats: _ExcerptStats) -> ExcerptResult:
@@ -1807,7 +1832,7 @@ class DriveSearchService:
             stats.scope = "gate"
             return gated
         state = gated
-        ancestry = await self._ancestry(conn, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         parsed = drive_ref.parse(request.file_ref)
         item_id = parsed.item_id if isinstance(parsed, drive_ref.DriveRef) else ""
         found, building = await asyncio.gather(self._repo.get_records(conn.scope, [item_id]),

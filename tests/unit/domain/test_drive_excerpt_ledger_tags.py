@@ -38,3 +38,9 @@ def test_a_repeated_chunk_is_matched_under_the_tag_of_the_file_that_showed_it():
     assert ledger._matched == {("b2", ("item-1", 1, 0))}
     ledger.add(result(repeated=(("item-1", 1, 5),), ref_tag="a1"), ContextPlan.EMPTY)
     assert ("a1", ("item-1", 1, 5)) in ledger._matched
+
+
+def test_a_repeated_chunk_uses_its_per_chunk_tag():
+    ledger = ExcerptLedger()
+    ledger.add(result(repeated=(("item-1", 1, 0), ("item-1", 1, 0)), repeated_tags=("a1", "b2")), ContextPlan.EMPTY)
+    assert ledger._matched == {("a1", ("item-1", 1, 0)), ("b2", ("item-1", 1, 0))}

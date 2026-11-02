@@ -219,14 +219,16 @@ def merge_excerpts(parts: Sequence[ExcerptPart], *, request: ExcerptRequest, not
         return ordered[0][1]
     missing = _union(not_searched, (p[0].name for p in ordered if not readable(p)))
     files = _merge_files(ok)
-    repeated, tag = _merge_repeated(ok, files)
+    repeated, repeated_tags = _merge_repeated(ok)
+    tags = {f.ref_tag for f in files}
+    tag = next(iter(tags)) if len(tags) == 1 else ""
     results = [r for _, r, _ in ok]
     context = results[0].context
     for result in results[1:]:
         context = context.merge(result.context)
     paths = tuple(p for r in results for p in r.no_text_paths)[:no_text_listed]
     return ExcerptResult(
-        status=STATUS_OK, request=request, files=files, repeated=repeated, no_text=sum(r.no_text for r in results),
+        status=STATUS_OK, request=request, files=files, repeated=repeated, repeated_tags=repeated_tags, no_text=sum(r.no_text for r in results),
         no_text_paths=paths, building=any(r.building for r in results),
         folder_path=next((r.folder_path for r in results if r.folder_path), ""),
         folder_candidates=tuple(c for r in results for c in r.folder_candidates),
@@ -290,12 +292,11 @@ def _capped(files: Sequence[ExcerptFile]) -> Tuple[ExcerptFile, ...]:
     return tuple(out)
 
 
-def _merge_repeated(ok: Sequence[ExcerptPart], files: Sequence[ExcerptFile]) -> Tuple[Tuple[ChunkId, ...], str]:
-    """(repeated chunk ids, the one ref tag of the result). A repeated chunk id carries no tag, so it is kept only
-    while every connection that contributed files or repeated chunks has the same tag (then the result's `ref_tag`
-    is that tag); with several tags the repeated list is dropped rather than printed under a wrong connection."""
-    tags = {f.ref_tag for f in files} | {m.ref_tag for m, r, _ in ok if r.repeated}
-    tag = next(iter(tags)) if len(tags) == 1 else ""
-    if len(tags) > 1:
-        return (), ""
-    return tuple(dict.fromkeys(c for _, r, _ in ok for c in r.repeated)), tag
+def _merge_repeated(ok: Sequence[ExcerptPart]) -> Tuple[Tuple[ChunkId, ...], Tuple[str, ...]]:
+    """The repeated chunk ids of every part with the tag of the connection each was shown from."""
+    pairs: List[Tuple[str, ChunkId]] = []
+    for mount, result, _ in ok:
+        tags = result.repeated_tags or (result.ref_tag or mount.ref_tag,) * len(result.repeated)
+        pairs.extend(zip(tags, result.repeated))
+    unique = list(dict.fromkeys(pairs))
+    return tuple(c for _, c in unique), tuple(t for t, _ in unique)

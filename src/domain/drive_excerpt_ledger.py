@@ -56,7 +56,7 @@ class ExcerptLedger:
                 by_index.setdefault(chunk.index, chunk)
         if isinstance(result.request, ExcerptRequest):
             self._matched.update((file.ref_tag, chunk.key) for file in result.files for chunk in file.chunks)
-            self._matched.update(self._tagged(result, chunk) for chunk in result.repeated)
+            self._matched.update(self._tagged(result, i, chunk) for i, chunk in enumerate(result.repeated))
         if result.page is not None and not result.page.past_end and result.files:
             first = result.files[0]
             self._pages.setdefault((first.ref_tag, first.item_id, first.generation), []).append(result.page)
@@ -64,25 +64,22 @@ class ExcerptLedger:
         self._folders |= plan.shown_after
         self._described |= plan.described
 
-    def _tagged(self, result: ExcerptResult, chunk: ChunkId) -> Tuple[str, ChunkId]:
-        """A repeated chunk was shown earlier, so the ledger knows its file; the result's own tag names it when the
-        call read one connection (`merge_excerpts` drops the repeated ids of a call that read several)."""
+    def _tagged(self, result: ExcerptResult, position: int, chunk: ChunkId) -> Tuple[str, ChunkId]:
+        """A repeated chunk with the tag of the connection it was shown from: the result's own per-chunk tag, else
+        its `ref_tag`, else the tag of the ledger file that showed it."""
+        if position < len(result.repeated_tags):
+            return result.repeated_tags[position], chunk
         if result.ref_tag:
             return result.ref_tag, chunk
-        tag = next((t for (t, item, gen) in self._files if item == chunk[0] and gen == chunk[1]), "")
-        return tag, chunk
+        return next((t for (t, item, gen) in self._files if item == chunk[0] and gen == chunk[1]), ""), chunk
 
     def files(self) -> Tuple[ExcerptFile, ...]:
         return tuple(replace(file, chunks=tuple(self._chunks[key][i] for i in sorted(self._chunks[key])))
                      for key, file in self._files.items())
 
     def block(self, *, nonce: Callable[[], str]) -> str:
-        # The renderer keys a file by (item, generation): the same item on two connections shares its page lines.
-        pages: Dict[Tuple[str, int], List[PageSpan]] = {}
-        for (_, item_id, generation), spans in self._pages.items():
-            pages.setdefault((item_id, generation), []).extend(spans)
-        return render_block(self.files(), self._context, nonce=nonce, pages=pages,
-                            matched=frozenset(chunk for _, chunk in self._matched))
+        return render_block(self.files(), self._context, nonce=nonce, pages=self._pages,
+                            matched=frozenset(self._matched))
 
     def __bool__(self) -> bool:
         return any(self._chunks.values())
