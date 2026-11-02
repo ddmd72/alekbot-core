@@ -425,9 +425,9 @@ class WorkspaceService:
             text = _decode(blob.data)
             if text is None:
                 raise WorkspaceRefused(f"{path} is not UTF-8 text; insert cannot edit it", reason="kind")
-            inserted = apply_insert(path, text, insert_line, insert_text)
             if middle and blob.entry.generation not in (call.known.get(path), call.line_known.get(path)):
                 raise stale
+            inserted = apply_insert(path, text, insert_line, insert_text)
             data = inserted.text.encode("utf-8")
             check_file_size(path, data)
             try:
