@@ -216,3 +216,22 @@ class TestScope:
         w.settings(scope_folder_ids=(w.coimbra,), write_folder_id=w.rd)
         await refused(w.service.save(w.handle, b"x", "a.txt", "text/plain", "R&D"), OUT_SCOPE)
         assert w.made() == []
+
+
+class TestOneConnectionReadPerOperation:
+    """E-13: the policy reads the connection once per operation; a save into the Inbox adds none."""
+
+    @pytest.mark.parametrize("write_folder", ["", "rd"])
+    async def test_a_save_into_the_inbox_reads_the_connection_once(self, write_folder):
+        w = World()
+        w.settings(write_folder_id=w.rd if write_folder else write_folder)
+        reads = []
+        original = w.repo.get
+
+        async def counting(user_id, connection_id):
+            reads.append(connection_id)
+            return await original(user_id, connection_id)
+        w.repo.get = counting
+        out = await w.service.save(w.handle, b"x", "a.txt", "text/plain", None)
+        assert out.item.path.endswith(f"{DEFAULT_INBOX_FOLDER}/a.txt")
+        assert len(reads) == 1
