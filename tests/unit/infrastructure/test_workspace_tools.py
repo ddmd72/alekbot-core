@@ -48,7 +48,7 @@ class TestDeclaration:
         assert params["properties"]["command"]["enum"] == list(COMMANDS)
         assert set(params["properties"]) == {
             "command", "path", "offset", "limit", "depth", "pattern", "context", "ignore_case", "files_only", "regex",
-            "generation", "content", "old_str", "new_str", "new_path", "source",
+            "generation", "content", "old_str", "new_str", "insert_line", "insert_text", "new_path", "source",
         }
         assert params["properties"]["depth"]["type"] == params["properties"]["context"]["type"] == "integer"
         for flag in ("ignore_case", "files_only", "regex"):
@@ -164,8 +164,8 @@ class TestRefusalsAndLogs:
             r = await handle(ToolCall(name="workspace",
                                       args={"_parse_error": "truncated_json", "_raw_prefix": '{"command": "create'}))
         assert r.failed and r.result_str == (
-            "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, "
-            "then fill sections with str_replace.")
+            "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create the file with the "
+            "first part, then add the rest with insert at insert_line -1.")
         assert store.calls == [] and "result=refused:truncated" in caplog.text
         assert not (await handle(_call(command="view", path=P))).failed  # lock released
 

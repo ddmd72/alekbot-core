@@ -32,7 +32,7 @@ class TestCreate:
             r = await svc.run(_call(origin="background:execute_reminder", fire=F), "create",
                               {"path": P, "content": "# A\nB"})
         [e] = store.versions_of(USER, P)
-        assert not r.failed and r.text == f"created workspace:{P} · generation {e.generation} · 2 lines"
+        assert not r.failed and r.text == f"created workspace:{P} · generation {e.generation} · 2 lines · 5 B"
         assert dict(r.generations) == {P: e.generation}
         assert (e.origin, e.fire) == ("background:execute_reminder", F)
         assert store.calls == [("list", ""), ("list", P), ("put", P)]
@@ -62,7 +62,7 @@ class TestCreate:
         e = store.seed(USER, P, "old")
         store.calls.clear()
         r = await svc.run(_call(known={P: e.generation}), "create", {"path": P, "content": "new"})
-        assert r.text.startswith(f"overwritten workspace:{P} · generation ") and r.text.endswith(" · 1 line")
+        assert r.text.startswith(f"overwritten workspace:{P} · generation ") and r.text.endswith(" · 1 line · 3 B")
         assert store.live_text(USER, P) == "new"
         assert store.calls == [("put", P)]  # no cap check for an overwrite
 
@@ -89,7 +89,8 @@ class TestCreate:
     async def test_text_size(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": P, "content": "x" * (MAX_TEXT_FILE_BYTES + 1)})
-        assert r.text == f"SYSTEM: {P}: text file over 3 MB."
+        assert r.text == (f"SYSTEM: {P}: text file over 3 MB — rename it to an archive name "
+                          "(e.g. projects/a-archive-1.md) and start a new file.")
 
     async def test_file_cap(self):
         svc, store = _svc()
@@ -108,7 +109,7 @@ class TestCreate:
     async def test_empty_content_is_an_empty_file(self):
         svc, store = _svc()
         r = await svc.run(_call(), "create", {"path": P})
-        assert not r.failed and r.text.endswith(" · 0 lines") and store.live_text(USER, P) == ""
+        assert not r.failed and r.text.endswith(" · 0 lines · 0 B") and store.live_text(USER, P) == ""
 
 
 class TestStrReplace:
@@ -117,7 +118,7 @@ class TestStrReplace:
         store.seed(USER, P, "A: 1\nB: 2")
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "B: 2", "new_str": "B: 3"})
         e = store.versions_of(USER, P)[-1]
-        assert r.text == f"replaced in workspace:{P} · generation {e.generation}\n     2\tB: 3"
+        assert r.text == f"replaced in workspace:{P} · generation {e.generation} · file now 2 lines · 9 B\n     2\tB: 3"
         assert dict(r.generations) == {P: e.generation}
         assert store.live_text(USER, P) == "A: 1\nB: 3"
 
@@ -143,7 +144,7 @@ class TestStrReplace:
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "y", "new_str": "z"})
         assert r.text == f"SYSTEM: old_str not found in {P}."
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "x", "new_str": "z"})
-        assert r.text == f"SYSTEM: found 2 matches of old_str in {P}; include more surrounding text."
+        assert r.text == f"SYSTEM: found 2 matches of old_str in {P} at lines 1, 2; include more surrounding text."
 
     async def test_missing_file(self, caplog):
         svc, _ = _svc()

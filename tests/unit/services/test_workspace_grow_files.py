@@ -118,8 +118,20 @@ class TestInsertRefusals:
     async def test_out_of_range(self):
         svc, store = _svc()
         store.seed(USER, P, "a\nb\n")
-        r = await svc.run(_call(), "insert", {"path": P, "insert_line": 5, "insert_text": "x"})
-        assert r.text == "SYSTEM: insert_line 5 is out of range: the file has 2 lines; use 0..2, or -1 for the end."
+        seen = await svc.run(_call(), "view", {"path": P})   # the current generation is known: the range check is reached
+        r = await svc.run(_call(seen.generations), "insert", {"path": P, "insert_line": 5, "insert_text": "x"})
+        assert r.failed and r.text == (
+            "SYSTEM: insert_line 5 is out of range: the file has 2 lines; use 0..2, or -1 for the end.")
+        assert store.live_text(USER, P) == "a\nb\n"
+
+    async def test_an_unread_out_of_range_middle_line_is_reported_stale_first(self, caplog):
+        svc, store = _svc()
+        store.seed(USER, P, "a\nb\n")
+        with caplog.at_level(logging.INFO):
+            r = await svc.run(_call(), "insert", {"path": P, "insert_line": 5, "insert_text": "x"})
+        assert r.failed and r.text == STALE.format(n=5)
+        assert store.live_text(USER, P) == "a\nb\n"
+        assert "result=refused:stale" in caplog.text
 
     async def test_missing_file(self):
         svc, _ = _svc()
