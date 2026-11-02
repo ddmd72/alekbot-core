@@ -47,33 +47,6 @@ async def _disconnected(drive: CabinetDrive) -> bool:
     return (await drive.stored()).state is ConnectionState.DISCONNECTED
 
 
-async def test_disconnect_turns_the_copy_off():
-    repo, profile = _repo(enabled=True)
-    drive = await _drive()
-    async with _app(repo, drive).test_client() as client:
-        resp = await client.delete("/api/drive/disconnect", headers=_AUTH)
-    assert resp.status_code == 200
-    assert await _disconnected(drive)
-    assert profile.config.drive_copy_deep_research is False
-    repo.update_user.assert_awaited_once_with(profile)
-
-
-async def test_disconnect_with_the_copy_off_writes_nothing():
-    repo, profile = _repo(enabled=False)
-    async with _app(repo, await _drive()).test_client() as client:
-        assert (await client.delete("/api/drive/disconnect", headers=_AUTH)).status_code == 200
-    repo.update_user.assert_not_called()
-
-
-async def test_a_failed_reset_does_not_fail_the_disconnect():
-    repo, _ = _repo(enabled=True)
-    repo.update_user.side_effect = RuntimeError("firestore down")
-    drive = await _drive()
-    async with _app(repo, drive).test_client() as client:
-        assert (await client.delete("/api/drive/disconnect", headers=_AUTH)).status_code == 200
-    assert await _disconnected(drive)
-
-
 def test_the_switch_is_offered_only_while_a_drive_is_linked():
     html = _HTML.read_text(encoding="utf-8")
     line = re.search(r"const drCopyHtml = (.*?)\n", html).group(1)

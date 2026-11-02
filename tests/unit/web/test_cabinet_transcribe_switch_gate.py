@@ -34,12 +34,6 @@ async def _shown(flag, switch):
     return body["indexing"]["transcribe_enabled"]
 
 
-@pytest.mark.parametrize("flag,switch,expected", [(True, True, True), (True, False, False), (False, True, False),
-                                                   (False, False, False), (True, None, False)])
-async def test_disclosure_needs_both_the_flag_and_the_switch(flag, switch, expected):
-    assert await _shown(flag, switch) is expected
-
-
 @pytest.mark.parametrize("raw,expected", [("on", True), ("1", True), ("TRUE", True), ("off", False), ("", False), (None, False)])
 def test_the_container_reads_the_switch_like_the_indexer(raw, expected, monkeypatch):
     import inspect

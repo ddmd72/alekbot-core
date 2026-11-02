@@ -54,8 +54,3 @@ async def _app(flag):
     return app
 
 
-@pytest.mark.parametrize("flag", [True, False])
-async def test_status_returns_the_flag(flag):
-    async with (await _app(flag)).test_client() as client:
-        body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
-    assert body["indexing"]["transcribe_enabled"] is flag

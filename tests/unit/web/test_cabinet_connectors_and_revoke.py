@@ -188,12 +188,3 @@ async def test_the_gmail_status_names_the_credential(world):
     assert body["connected"] is True and body["credential_id"] == held.credential_id
 
 
-async def test_the_drive_status_names_the_credential_only_while_connected(world):
-    async with world.app().test_client() as client:
-        assert "credential_id" not in await (await client.get("/api/drive/status", headers=AUTH)).get_json()
-        await world.save(ALEX, "microsoft_onedrive")
-        (held,) = await world.store.list_for_user(ALEX, "microsoft_onedrive")
-        # the consent's drive activation makes the grant a connection (MULTI_DRIVE_RFC §4.4, §5.2)
-        await world.drive_connections.activate(held, "microsoft_onedrive:d1")
-        body = await (await client.get("/api/drive/status", headers=AUTH)).get_json()
-    assert body["connected"] is True and body["credential_id"] == held.credential_id

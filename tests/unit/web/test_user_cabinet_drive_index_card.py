@@ -19,7 +19,7 @@ _AUTH = {"Authorization": "Bearer token"}
 
 
 async def _app(status, queue):
-    drive = await cabinet_drive(state=None)      # no drive connected (MULTI_DRIVE_RFC §4.4: the card reads connections)
+    drive = await cabinet_drive()      # one connected drive: the card reads connections (MULTI_DRIVE_RFC §4.4)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = status
     session_service = MagicMock()
@@ -36,7 +36,8 @@ async def _app(status, queue):
 
 async def _indexing(status, queue=None):
     async with (await _app(status, queue)).test_client() as client:
-        return (await (await client.get("/api/drive/status", headers=_AUTH)).get_json())["indexing"]
+        body = await (await client.get("/api/drive/connections", headers=_AUTH)).get_json()
+        return body["connections"][0]["indexing"]
 
 
 @pytest.mark.parametrize("wired", [True, False])
