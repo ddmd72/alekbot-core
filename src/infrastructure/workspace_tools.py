@@ -38,8 +38,10 @@ _DESCRIPTION = (
     "scratch/ (drafts; deleted 7 days after the last write), binary_files/ (the only place for binary files — PDF, "
     "images, scans: copy puts them there byte for byte; you cannot create or edit them and grep does not search "
     "them; look at one with open_file and the ref workspace:binary_files/<name>); text files go to the other folders "
-    "(copy accepts a text file for any of them). Keep files short and "
-    "current: replace what changed with str_replace, do not append a log. Facts about the user never go here: what "
+    "(copy accepts a text file for any of them). Files may grow: add new "
+    "entries with insert at insert_line -1 (the end; no view needed), newest last, and read the latest with a negative "
+    "offset (-50 = the last 50 lines); change existing text with str_replace. Write a long document by creating it "
+    "with the first part and adding the rest with insert -1. Facts about the user never go here: what "
     "the user says reaches memory by itself; facts you read in a file or other source go through "
     "propose_memory_facts, only when the user asks. Something to do at a given time is a reminder. Every change "
     "keeps the previous version: history shows who wrote each one, restore brings one back. If a view header says an "
@@ -49,7 +51,7 @@ _DESCRIPTION = (
     "existed may be created. To see the structure, view with path \"\" shows the tree of the whole workspace and view "
     "projects/ just that folder (depth opens collapsed levels). To find text, grep (literal by default; regex: true "
     "for a regular expression), narrowed by path; the result says where it searched; start with files_only on a big workspace, then view the file with "
-    "offset near the hit. Large files are read in parts with offset and limit."
+    "offset near the hit."
 )
 
 
@@ -66,7 +68,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     "type": "string",
                     "enum": list(COMMANDS),
                     "description": (
-                        "view, create, str_replace, delete, rename, copy, history, restore or grep. Parameters a command "
+                        "view, create, str_replace, insert, delete, rename, copy, history, restore or grep. Parameters a command "
                         "does not use are ignored."
                     ),
                 },
@@ -81,7 +83,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "view: first line to show, 1-based. Empty, 0 or negative means 1.",
+                    "description": "view: first line to show, 1-based; negative counts from the end (-50 = the last 50 lines). Empty or 0 means 1.",
                 },
                 "limit": {
                     "type": "integer",
@@ -134,6 +136,14 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                     ),
                 },
                 "new_str": {"type": "string", "description": "str_replace: the replacement text (may be empty)."},
+                "insert_line": {
+                    "type": "integer",
+                    "description": (
+                        "insert: insert after this line; 0 = at the top, -1 = at the end. A line number from a view "
+                        "or grep in this run."
+                    ),
+                },
+                "insert_text": {"type": "string", "description": "insert: the lines to insert."},
                 "new_path": {
                     "type": "string",
                     "description": (
@@ -157,8 +167,8 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
 
 
 _TRUNCATED = (
-    "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, then fill "
-    "sections with str_replace."
+    "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create the file with the first part, "
+    "then add the rest with insert at insert_line -1."
 )
 
 
@@ -177,13 +187,19 @@ class WorkspaceSession:
 
     def __init__(self) -> None:
         self.generations: Dict[str, int] = {}
+        self.line_generations: Dict[str, int] = {}   # line numbers seen by grep; not "viewed" (D18)
         self.lock = asyncio.Lock()
         self.pending: Set["asyncio.Task[WorkspaceResult]"] = set()
+
+    def apply_result(self, result: WorkspaceResult) -> None:
+        self.apply(result.generations)
+        self.line_generations.update(result.line_generations)
 
     def apply(self, updates: Mapping[str, Optional[int]]) -> None:
         for path, generation in updates.items():
             if generation is None:
                 self.generations.pop(path, None)
+                self.line_generations.pop(path, None)
             else:
                 self.generations[path] = generation
 
@@ -202,7 +218,7 @@ def make_workspace_handler(
     async def mutate(call: WorkspaceCall, command: str, args: Mapping[str, Any]) -> WorkspaceResult:
         try:
             result = await service.run(call, command, args)  # logs its own [Workspace] line
-            state.apply(result.generations)
+            state.apply_result(result)
             return result
         finally:
             state.lock.release()
@@ -226,6 +242,7 @@ def make_workspace_handler(
                 )
             call = WorkspaceCall(
                 user_id=user_id, origin=origin, fire_key=fire_key, known=dict(state.generations),
+                line_known=dict(state.line_generations),
                 references=references,
             )
             if command in MUTATING_COMMANDS:
@@ -236,7 +253,7 @@ def make_workspace_handler(
                 result = await asyncio.shield(task)
             else:
                 result = await service.run(call, command, args)
-                state.apply(result.generations)
+                state.apply_result(result)
             return ToolResult(name=tool_call.name, result_str=result.text, failed=result.failed)
         finally:
             if not handed_over:

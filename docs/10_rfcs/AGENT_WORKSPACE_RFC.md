@@ -18,7 +18,7 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 | # | Date | Decision |
 |---|------|----------|
 | D1 | 10-19 | **Pull-only.** Smart reads or writes the workspace only when (a) the user explicitly asks, (b) an instruction it follows — a loaded skill's text, a reminder's instruction — names a workspace file or asks it to keep state, or (c) a firing reminder carries a workspace file (D15). No index or contract in the prompt, no `workspace` system skill, no skill-load write gate. |
-| D2 | 10-19 | **One local tool `workspace`** with commands `view`, `create`, `str_replace`, `delete`, `rename`, `copy`, `history`, `restore`. No grep, glob or diff. Served by `DelegationEngine(local_tools=)` like `use_skill` and `propose_memory_facts`, declared on every Smart path where the service is configured, outside `if skills:`. |
+| D2 | 10-19 | **One local tool `workspace`** with commands `view`, `create`, `str_replace`, `insert` (D18), `delete`, `rename`, `copy`, `history`, `restore`, `grep` (added after this row was written). No glob or diff. Served by `DelegationEngine(local_tools=)` like `use_skill` and `propose_memory_facts`, declared on every Smart path where the service is configured, outside `if skills:`. |
 | D3 | 10-14, 10-19 | **Storage = a dedicated versioned GCS bucket**, key `{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ binary_files/`, generation preconditions on every mutation, lifecycle as rev 1 §5.4. Not Firestore, not the drive, not the media bucket. |
 | D4 | 10-20 | **Caps:** 100 files per user, 100 MB live bytes per user, 10 MB per file, 3 MB per text file; history 90 days / 50 versions; scratch 7 days after the last write. |
 | D5 | 10-19 | **Writes allowed on all Smart paths** (chat, reminders, daily review, `ask_alek`/`tell_alek`, `/worker`). Every object carries its `origin` — `chat`, `background:<task_type>`, `voice:ask_alek`, `voice:tell_alek` — plus a fire key for reminder runs, shown in the `view` header. |
@@ -32,8 +32,9 @@ Recorded, not reopened. D1–D13 are 2026-10-19 (discussion) and 2026-10-20 (nig
 | D13 | 10-20 | Agreed defaults: no consolidation-token line (rev 1 R9 dropped; revisit trigger §11.5); no dry runs; voice origins `voice:ask_alek` / `voice:tell_alek`; `str_replace` needs no prior view; live acceptance is an owner step. |
 | D14 | 10-14 | Kept from rev 1: the name `workspace`; no `$ws` chat commands (a Cabinet page is a later extension); `skill-creator` gains a section on skills that keep state. |
 | D15 | 10-20 | **Reminders get one optional code-bound field, `workspace_file`** (a workspace path), kept purely for reliability: NotesAgent's LLM rewrites reminder text and loses paths. Rendered at fire time as one line, `Workspace file: workspace:<path>`; what to do with it is the reminder instruction's business. No skill per scheduled task: the skills catalog is in every prompt and skills are applied by meaning, which a once-a-day task does not need. |
-| D16 | 10-20 | **A workspace file is a resource** (a knowledge base), optional, with no required structure. Whether and how to keep state there is said by the instruction (the user's words, a skill's text, a reminder's instruction), or left to the model's judgement when the instruction is silent. State with a fixed schema belongs in a skill that describes its own file (e.g. a language tutor). No cleanup mechanism: the tool description asks for short, current files (replace, do not append). A fixed state section would grow daily with nothing to prune it, and no schema foresees every case. |
+| D16 | 10-20 | **A workspace file is a resource** (a knowledge base), optional, with no required structure. Whether and how to keep state there is said by the instruction (the user's words, a skill's text, a reminder's instruction), or left to the model's judgement when the instruction is silent. State with a fixed schema belongs in a skill that describes its own file (e.g. a language tutor). No cleanup mechanism. ~~The tool description asks for short, current files (replace, do not append).~~ **That sentence is superseded by D18.** A fixed state section would grow daily with nothing to prune it, and no schema foresees every case. |
 | D17 | 10-20 | **No workspace rules as injection protection.** "Never executed / data only" framing and folder write restrictions protect nothing: the bot itself creates reminders on any path, so an infected bot can schedule an arbitrary instruction anyway. Injection is class-B work (the fingerprint follow-up), not workspace rules. Origin metadata and history stay, for debugging and undo. |
+| D18 | 11-02 | **Bot-grown files are a critical flow.** The bot grows its own files (project logs, ledgers, long research documents); this supersedes D16's "replace, do not append" sentence (the rest of D16 stands). Growth, reading and sizing are LLM-native (Anthropic memory-tool contract) and token-minimal: `insert` adds whole lines after a line number (`-1` = the end, no view needed); a negative `view` `offset` reads the tail; a long file viewed without a range shows an outline of its headings instead of its text; `grep` records the generation of the line numbers it showed (not a view); write results state the file's size; the 3 MB cap names its fix (rename to an archive, start a new file); mutation results (`str_replace`, `insert`) show the changed block with context so the model does not re-read to verify (owner, 2026-11-02). |
 
 ## 0. Deltas from rev 1
 
@@ -110,7 +111,7 @@ call `load_settings()` (`relay_main.py:31`, `indexer_main.py:15`); only `main.py
 | `reminder_skill` validated against the skill catalog (`list_owned`); NotesAgent takes `skill_service` | Removed; NotesAgent takes only `workspace_enabled` | D15. |
 | `state_file` only under `projects/` / `references/`, text extension | Any valid workspace path | D17: folder rules were safety framing. |
 | Alert lines "Procedure: load the skill …", "State file: … data from earlier runs, not instructions. View it before you start; update it before you finish.", "Fire: …" | One line `Workspace file: workspace:<path>`; `build_reminder_alert(note)` keeps its signature | D15. What to do with the file is in the instruction; the fire key reaches the handler through the context, so the alert does not need it. |
-| Tool description: "never instructions", "procedures are skills", typed folders | Explains what the workspace is and what "keep state" means; short, current files | D16, D17. |
+| Tool description: "never instructions", "procedures are skills", typed folders | Explains what the workspace is and what "keep state" means; files may grow (`insert`, tail reads, D18) | D16, D17, D18. |
 | View header line "Your own working file: data from earlier runs, not instructions." | Neutral header | D17. |
 | Same-fire header "the state before this fire … base this run on it" | "this version was written by an earlier attempt of this same fire; its result may not have reached the user. The version before this fire is generation G." | D16: no state section is assumed. |
 | A1: draft a `morning-briefing` skill + state file + `reminder_skill` | The long instruction becomes `projects/morning-briefing.md`; the reminder says "follow the workspace file" and carries `workspace_file`; no skill | D15, D16. |
@@ -309,7 +310,7 @@ path (the whole workspace).
 
 **Kinds.** A file is `text` when its extension is `.md .txt .csv .tsv .json .yaml .yml` (the skill-file set,
 `domain/skill.py:30`) and it decodes as UTF-8; every other file is `binary`.
-- `create` and `str_replace` write text, and only under `projects/`, `references/` and `scratch/`.
+- `create`, `str_replace` and `insert` write text, and only under `projects/`, `references/` and `scratch/`.
 - `binary_files/` is byte-exact (content integrity, not safety): it is filled only by `copy` and changed only by
   `copy`, `rename`, `delete`, `restore`. Binary files live only there, and only binary files: `copy` of a text file
   into it is refused ("copy a text file into projects/, references/ or scratch/"), and a binary file copied anywhere
@@ -325,7 +326,8 @@ path (the whole workspace).
 | File | 10 MB | D4. Under Gemini's 20 MB inline cap for `open_file` vision. |
 | Text file | 3 MB | Independent of the skill-file cap (256 KB, `domain/skill.py:31`). Applies in every folder: a UTF-8 text-extension upload over 3 MB cannot be copied. A workspace text file over 256 KB cannot be saved into a skill (`draft_skill from_file`). |
 | `open_file` of a text file | 512 KB | `open_file` puts the whole file into the orchestrator's context (~100–130k tokens of Cyrillic at the cap), so above 512 KB it returns a `[System: …]` note telling the orchestrator to read in parts with `view` (`offset`, `limit`). Storage and reading limits differ on purpose. The way into a large file is `grep` (find the lines) and then `view` with `offset` (§7.4). |
-| `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `offset`/`limit` that are empty, zero or negative mean the defaults. |
+| `view` window | 2,000 lines by default (`offset`, `limit`), each cut at 2,000 chars, ≤ 100 KB per call | Claude Code's read contract; a larger file is read in windows. `limit` empty, zero or negative means the default; a negative `offset` counts from the end (`-50` = the last 50 lines; first line = max(1, T + offset + 1)), an empty or zero `offset` means 1 (D18). |
+| `view` without a range | Full text up to 16,000 characters (`VIEW_FULL_MAX_CHARS`, the memory tool's threshold) | D18. Longer and no `offset`/`limit` given: header, an outline of the markdown headings (at most 100) and a hint, no text (§7.4). Any explicit `offset` or `limit` shows text as above. |
 | History | 100 entries (newest first), then "…N more" | Equal to the file cap. |
 | Folder tree (`view`) | 100 file lines, folders first then files, alphabetical; folders deeper than `depth` (default 3) collapse | The cap equals the file cap, so it is only a safety net. |
 | `grep` pattern | 200 characters | `GREP_MAX_PATTERN_CHARS`. |
@@ -356,7 +358,10 @@ right after the `propose_memory_facts` block (`smart_response_agent.py:503-512`)
 > scratch/ (drafts; deleted 7 days after the last write), binary_files/ (the only place for binary files — PDF,
 > images, scans: copy puts them there byte for byte; you cannot create or edit them and grep does not search them;
 > look at one with open_file and the ref workspace:binary_files/<name>); text files go to the other folders (copy
-> accepts a text file for any of them). Keep files short and current: replace what changed with str_replace, do not append a log. Facts about the user never go here: what the
+> accepts a text file for any of them). Files may grow: add new entries with insert at insert_line -1 (the end; no
+> view needed), newest last, and read the latest with a negative offset (-50 = the last 50 lines); change existing
+> text with str_replace. Write a long document by creating it with the first part and adding the rest with insert -1.
+> Facts about the user never go here: what the
 > user says reaches memory by itself; facts you read in a file or other source go through propose_memory_facts, only
 > when the user asks. Something to do at a given time is a reminder. Every change keeps the previous version:
 > history shows who wrote each one, restore brings one back. If a view header says an earlier attempt of this same
@@ -366,7 +371,7 @@ right after the `propose_memory_facts` block (`smart_response_agent.py:503-512`)
 > structure, view with path "" shows the tree of the whole workspace and view projects/ just that folder (depth
 > opens collapsed levels). To find text, grep (literal by default; regex: true for a regular expression), narrowed
 > by path; the result says where it searched; start with files_only on a big workspace, then view the file with
-> offset near the hit. Large files are read in parts with offset and limit.
+> offset near the hit.
 
 ### 7.2 Parameters
 
@@ -376,9 +381,9 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 
 | Parameter | Type | Used by | Description (abridged) |
 |-----------|------|---------|------------------------|
-| `command` | enum | all | `view` `create` `str_replace` `delete` `rename` `copy` `history` `restore` `grep` |
+| `command` | enum | all | `view` `create` `str_replace` `insert` `delete` `rename` `copy` `history` `restore` `grep` |
 | `path` | string | all | Workspace path, e.g. `projects/garden-shed.md`; for `view`/`history`/`grep` also a folder (`projects/`) or `""` for everything; for `copy` the destination. |
-| `offset` | integer | view | First line to show (1-based); empty, 0 or negative → 1. |
+| `offset` | integer | view | First line to show (1-based); negative counts from the end (-50 = the last 50 lines); empty or 0 → 1. |
 | `limit` | integer | view | Number of lines; empty, 0 or negative → 2,000. |
 | `depth` | integer | view (folder) | Folder levels to open; empty, 0 or negative → 3. |
 | `pattern` | string | grep | What to search for; literal unless `regex` is true. With `regex`, `^` and `$` match the start and end of a LINE; list markers, indentation and markup before the text count as part of the line, so `^T1` will not match `- T1`. |
@@ -390,6 +395,8 @@ Flat object; only `command` is required. Unused parameters are ignored (models f
 | `content` | string | create | The full text of the file. |
 | `old_str` | string | str_replace | Exact text to replace; must occur exactly once. |
 | `new_str` | string | str_replace | Replacement text (may be empty). |
+| `insert_line` | integer | insert | Insert after this line; 0 = at the top, -1 = at the end. A line number from a view or grep in this run. |
+| `insert_text` | string | insert | The lines to insert. |
 | `new_path` | string | rename | The new path. |
 | `source` | string | copy | A chat file name from a `[File: …]` label, a delivered-document key, a drive file ref exactly as the drive tool returned it, or a workspace path. |
 
@@ -403,10 +410,11 @@ in the `propose_memory_facts` style (`memory_fact_tools.py`).
 | `view` file | Two GETs (metadata, then media at that generation). Records `{path: generation}` in the session. Text: header (§7.4) + line-numbered window (`cat -n` form). Binary: refused with the `open_file` pointer. When the live version's `fire` equals this run's fire key, one more `list(include_versions=True)` on the path finds the generation from before this fire (§7.4). | header + lines; "…lines N–M of T; view with offset to read on" when cut |
 | `view` file + `generation` | Reads that version, live or noncurrent. Read-only: not recorded in the session, so a later `create` cannot overwrite on its strength. | header ("version G, not current") + lines |
 | `view` folder / `""` | One `list(prefix, include_versions=True)`: live files drawn as a tree (folders first, alphabetical, `depth` levels), deleted files counted. | tree (§7.4) |
-| `grep` | One `list(path)`; the live text files in scope are summed by size (over 20 MB: refused) and then read through `WorkspaceStorePort.read` (at most 8 at a time); matching and rendering run in a worker thread. Read-only: takes no write lock slot, records no generation. | matches, `searched …` line (§7.4) |
+| `grep` | One `list(path)`; the live text files in scope are summed by size (over 20 MB: refused) and then read through `WorkspaceStorePort.read` (at most 8 at a time); matching and rendering run in a worker thread. Read-only: takes no write lock slot. Records no viewed generation: a grep is not a view (it neither lets `create` overwrite nor silences the same-fire note, B1). It records only the *line-number generation* of every file it read, in a separate per-execution map, so an `insert` at a line number taken from a grep passes the staleness guard (D18). | matches, `searched …` line (§7.4) |
 | `view` missing path | One `list(include_versions=True)` on the path. | "deleted … by …" or "renamed to …" + versions (§7.4), or "never existed" |
-| `create` | Under `projects/`, `references/`, `scratch/` only, text kinds only. New path → caps list, one versions list of the path (logged as `had_history`), put with `if_generation_match=0`. Existing path → allowed only when this execution viewed its current version; put with `if_generation_match` = that generation (overwrite). | "created" / "overwritten", path, generation, lines |
-| `str_replace` | Same folders. Self-guarding (D13): read the current generation; `old_str` must match exactly once ("not found" / "found N matches; include more context"); put with `if_generation_match` = that generation. On 412: re-read, re-apply once; a second 412 → conflict. Updates the session generation. | "replaced", generation, the changed lines with numbers |
+| `create` | Under `projects/`, `references/`, `scratch/` only, text kinds only. New path → caps list, one versions list of the path (logged as `had_history`), put with `if_generation_match=0`. Existing path → allowed only when this execution viewed its current version; put with `if_generation_match` = that generation (overwrite). | "created" / "overwritten", path, generation, lines, size |
+| `str_replace` | Same folders. Self-guarding (D13): read the current generation; `old_str` must match exactly once ("not found" / "found N matches … at lines 12, 48, 97", first 20 line numbers then `, …`); put with `if_generation_match` = that generation. On 412: re-read, re-apply once; a second 412 → conflict. Updates the session generation. | "replaced", generation, `file now T lines · S`, then the echo: the changed block with numbers and one context line each side; a block over 10 lines shows its first and last 2 lines with `   … K more lines …` between; an empty `new_str` shows only the lines around the cut |
+| `insert` | Same folders and kinds, missing file refused like `str_replace` (D18). Inserts `insert_text` as whole lines after line `insert_line` (`0` top, `-1` end, valid `-1..T`; empty text refused); never glues onto a line, never adds a blank line, keeps the file's own trailing newline. Self-guarding: read, apply, put with `if_generation_match`. **Staleness guard:** for a line other than 0 and -1 the file's current generation must equal the one this run holds as viewed or written (`view`, `create`, `str_replace`, `insert`) or as line-number generation (`grep`), else `stale`. On 412: 0 / -1 re-read and re-apply once; a middle line → `stale`; a second 412 → conflict. | `inserted K lines at lines A–B of workspace:<path> · generation G · file now T lines · S` then the echo: the inserted block with numbers and one context line each side (over 10 lines: its edges, `   … K more lines …` between) |
 | `delete` | Generation from the session, else from one `list` call; `delete(…, if_generation_match, meta={deleted_by, deleted_fire})` (§5.3). Warns on references (§8.4). | "deleted; restorable from history" + warnings |
 | `rename` | §5.3. `new_path` must not exist. A file in `binary_files/` stays in `binary_files/`; nothing else may move into `binary_files/`. Warns on references to the old path. No cap check. | "renamed", new generation + warnings |
 | `copy` | Source = workspace path → port `read` + `put`. Source = chat upload or delivered key → `FileConversionService.resolve_bytes` (ownership check, `file_conversion_service.py:140-162`). Source = `drive:` ref (tagged or not) → the same `resolve_bytes` (the drive handle of the user's own connection; `MAX_DRIVE_DOWNLOAD_BYTES`); a stale or foreign ref, a folder, a not-connected drive, a missing file and a file over the workspace cap are refused with a `SYSTEM:` line naming the fix. Binary → destination under `binary_files/`; text → `projects/`, `references/` or `scratch/` (text into `binary_files/` and binary elsewhere are refused). `skill:` sources are refused with `open_file` named. The destination must not exist, or this execution must have viewed its current version. | "copied", path, size |
@@ -426,6 +434,20 @@ a protection device (D17). Example generation numbers are shortened.
  last written 2026-10-20 06:01 UTC by background:execute_reminder (fire reminder:1729401234567@2026-10-20T06:00:00+00:00)]
      1	# Morning briefing
      …
+```
+
+**Long file, no range (D18).** A text longer than 16,000 characters viewed with no `offset` and no `limit` (also an old
+`generation`) shows the header, then every markdown heading with its line number (at most 100, then `…N more headings`),
+then a hint; no text. The generation is still recorded, so an `insert` after a heading line passes the guard. A file with
+no headings shows only the hint.
+
+```
+[workspace:projects/garden-shed.md · generation 1760943600123 · 640 lines · 41.0 KB
+ last written 2026-10-28 09:12 UTC by chat]
+     1	# Garden shed
+     4	## Planning permission
+   212	## Neighbours (Kim, Jordan)
+(long file: 640 lines, 41.0 KB — text not shown. Read a part with offset and limit; a negative offset reads from the end, -50 = the last 50 lines. Find lines with grep.)
 ```
 
 **Same fire (B1).** When the live version's `fire` equals the current run's fire key, the run is a re-run of a fire
@@ -518,21 +540,27 @@ back.` A path with no versions at all reads `… does not exist and never did.` 
 | Invalid path / wrong folder for the command or kind | `SYSTEM: invalid workspace path …: <rule>.` (e.g. "binary_files/ holds binary files only; use copy") |
 | `create` on an existing path whose current version was not viewed in this execution | `SYSTEM: <path> exists. View it first and use str_replace, or view it and create again to overwrite.` |
 | Precondition conflict (another run wrote it) | `SYSTEM: <path> changed since you read it (another conversation or run wrote it). View it again and redo your change.` |
-| `str_replace` no match / several | `SYSTEM: old_str not found in <path>` / `found N matches; include more surrounding text.` |
-| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 3 MB` |
+| `str_replace` no match / several | `SYSTEM: old_str not found in <path>` / `found N matches of old_str in <path> at lines 12, 48, 97; include more surrounding text.` (first 20 line numbers, then `, …`) |
+| `insert` line out of range | `SYSTEM: insert_line N is out of range: the file has T lines; use 0..T, or -1 for the end.` |
+| `insert` at a middle line the run has not read, or the file changed since | `SYSTEM: <path> changed since you last read it in this run (or you have not read it): view the lines around N again, then insert.` |
+| `insert` with empty `insert_text` / missing `insert_line` | `SYSTEM: insert_text is empty; pass the lines to insert.` / `SYSTEM: insert needs insert_line: a line number, 0 for the top or -1 for the end.` |
+| Caps | `SYSTEM: workspace full (100 files / 100 MB) …` / `file over 10 MB` / `text file over 3 MB — rename it to an archive name (e.g. <stem>-archive-1<ext>) and start a new file` |
 | Binary `view` | `SYSTEM: <path> is binary; open it with open_file and file_ref workspace:<path>.` |
 | Unknown `generation` | `SYSTEM: <path> has no version <G>; history lists them.` |
 | Store failure | `SYSTEM: the workspace is unavailable right now; nothing was changed.` (ERROR logged) |
 | Missing file for `delete`/`rename`/`str_replace` | `SYSTEM: <path> does not exist; view it to see its history.` |
-| Arguments cut off at the output limit | SYSTEM: your arguments were cut off at the output limit; nothing was written. Create a short file, then fill sections with str_replace. |
+| Arguments cut off at the output limit | SYSTEM: your arguments were cut off at the output limit; nothing was written. Create the file with the first part, then add the rest with insert at insert_line -1. |
 
 ### 7.6 The per-execution handler session
 
 `make_workspace_handler(service, user_id, origin, fire_key, references)` builds one handler per execution attempt,
 beside the other local tools (`smart_response_agent.py:489-522`), so provider rotation starts it fresh. It holds:
 
-- `generations: Dict[path, int]` — filled by `view` of the current version, `create`, `str_replace`, `rename`,
+- `generations: Dict[path, int]` — filled by `view` of the current version, `create`, `str_replace`, `insert`, `rename`,
   `copy`, `restore`;
+- `line_generations: Dict[path, int]` — filled by `grep` only (D18): the generation whose line numbers the run has seen. It
+  satisfies the `insert` staleness guard and nothing else; a delete by this run drops it (after a write the new
+  generation is in `generations`, which the guard also accepts);
 - one `asyncio.Lock`, taken as the **first await of every command**, reads included. `_dispatch_local` awaits the
   handler with nothing before it (`delegation_engine.py:613-619`), and `_execute_tool_calls` creates the batch's
   tasks in emission order under `asyncio.gather` (`:590-598`). `asyncio.Lock` wakes waiters FIFO, so the commands of
@@ -676,7 +704,7 @@ Ranked by likelihood × damage.
 | 1 | **A reminder fire runs twice and builds on its own unsent result** | `execute_reminder` returns 500 when delivery fails after Smart already wrote (`worker_handler.py:850-859`); Cloud Tasks re-runs the whole fire. The `last_delivered_due` guard (`:799`) only stops re-runs after success. A record the earlier attempt wrote ("covered: X") may be false, because its issue never reached the user. | Same `due_at` → same fire key. The `view` header detects a live version written by this same fire and names the version before it (§7.4, B1); the tool description says to work from that version. Short, replace-not-append files make a re-run cheap to redo. |
 | 2 | **Two runs edit one file** (chat + reminder, two channels) | Separate executions, separate sessions. | Generation preconditions. `str_replace` re-reads and re-applies once; `create` refuses; the model gets the conflict text and re-views. Nothing is overwritten silently. |
 | 3 | **A cancelled run lands a write but reports nothing or "not finished"** | Two cancellers: the long-turn clock cuts a tool batch with `asyncio.wait_for` (`delegation_engine.py:414-426`); and `BaseAgent` wraps `execute` in `asyncio.wait_for` on the message timeout (`base_agent.py:682-695`), which is the only limit on reminder runs (no turn clock). A cancelled multi-step mutation (rename: put, then delete) could stop between steps. | Every mutation runs under `asyncio.shield` inside the lock, and the shielded inner coroutine updates the session map and logs itself, so the mutation completes and is recorded. After a cut batch only the wrap-up call follows, which dispatches nothing (`:303-306`, `:488-528`; dropped calls already logged at WARNING, `:502-516`). After a message timeout the run fails; for a reminder that means a 500 and a re-run of the same fire, which row 1 covers. The answer may misreport; the next `view` shows the truth. |
-| 4 | **Files grow without bound** | No cleanup mechanism, by decision (D16). A run told to "keep track" may append. | The tool description asks for short, current files (replace, do not append). Caps bound the worst case. The review reports per-file growth (§16); a file that only grows is fixed in its instruction, not by a mechanism. |
+| 4 | **Files grow without bound** | No cleanup mechanism, by decision (D16). Files grow by design (D18): project logs, ledgers, long documents. | Growth is native (`insert -1`) and cheap to read (tail `offset`, outline view). The 3 MB text cap is the bound: the refusal says to rename the file to an archive name (`<stem>-archive-1<ext>`) and start a new one. The review reports per-file growth (§16). |
 | 5 | **A reminder's file is deleted or renamed** | User request, a careless rename, a background run. | §8.4: warnings at the moment of the change; at the next fire `view` says who deleted it or where it went, with restore; 90 days of history. |
 | 6 | **A retried request reports a false conflict** | The storage client retries after a lost response; the retry meets its own landed write and gets 412. | `write_id` / `delete_id` read back on 412 (§5.3). |
 | 7 | **A co-emitted write fails unseen** (Grok `deliver_response` siblings are dispatched, results unread, `delegation_engine.py:337-367`) | The answer is already written. | The handler logs every failed mutation at WARNING (`[Workspace] … result=conflict|refused|error`). |
@@ -926,7 +954,7 @@ or an instruction. `prompt_content` keeps 30 days, so the script runs by day 28.
 | Reminder fires with a `workspace_file` whose run views it | reminder runs (traces) whose first request has a [SELF-REMINDER] with a Workspace file: line vs those with a workspace view call | ≥ 90 % | Sharpen the reminder's instruction or the field's wording. |
 | Files recreated after a deletion without a restore or a user request | `op=create had_history=1` with a non-`chat` origin and no `op=restore` for the path | 0 | Code guard: `create` on a path with a deletion in history refuses outside chat. |
 | Same-fire re-runs that ignored the earlier version | traces whose later turn shows the same-fire header and whose first write is not preceded by a view with generation | reported | Make the overwrite automatic when the fire key matches. |
-| File growth | `bytes` of successive writes per path | reported per file | A file that only grows gets a pruning line in its instruction (D16: no mechanism). |
+| File growth | `bytes` of successive writes per path | reported per file | A file nearing 3 MB is archived by rename (D18); no pruning mechanism (D16). |
 | Conflicts | `result=conflict` | each one read | Explain or fix. |
 | Origin mix | `origin=` | reported | — |
 | Junk memory facts about workspace operations | stored facts mentioning workspace paths | 0 | Apply the R9 line (§11.5). |

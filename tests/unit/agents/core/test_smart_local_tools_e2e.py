@@ -80,8 +80,12 @@ WS_GREP = {"command": "grep", "path": "projects/", "pattern": "PLANNING +permiss
            "ignore_case": True, "context": 0}
 WS_GREP_FILES = {"command": "grep", "path": "", "pattern": "planning permission", "ignore_case": True,
                  "files_only": True}
+# insert after line 1 (a middle line: valid because this run's create recorded the generation), then at the end (-1)
+WS_INSERT = {"command": "insert", "path": SHED, "insert_line": 1, "insert_text": "Status: waiting for the council."}
+WS_INSERT_END = {"command": "insert", "path": SHED, "insert_line": -1,
+                 "insert_text": "2026-10-28: planning permission received.\n"}
 WORKSPACE_CALLS = [WS_CREATE, WS_VIEW, WS_STR_REPLACE, WS_COPY, WS_RENAME, WS_HISTORY, WS_RESTORE, WS_VIEW_VERSION,
-                   WS_DELETE, WS_TREE, WS_GREP, WS_GREP_FILES]
+                   WS_DELETE, WS_TREE, WS_GREP, WS_GREP_FILES, WS_INSERT, WS_INSERT_END]
 
 
 class World:
@@ -234,6 +238,40 @@ async def test_workspace_commands_land_in_the_bucket():
     assert world.gcs.names(WORKSPACE_BUCKET) == [key(SHED)]
     written = [v for path in (SHED, SHED_COPY, SHED_NOTES) for v in world.gcs.versions(WORKSPACE_BUCKET, key(path))]
     assert len(written) == 5 and {v.metadata["origin"] for v in written} == {"chat"}
+    assert _script_consumed(llm)
+
+
+async def test_workspace_insert_lands_lines_where_insert_line_says():
+    world = World()
+    key = f"u1/{SHED}"
+    llm = ScriptedLLM([tools(("workspace", WS_CREATE)), tools(("workspace", WS_INSERT)),
+                       tools(("workspace", WS_INSERT_END)), text("The shed log has the new entries.")])
+
+    response = await world.agent(llm).execute(smart_message("Log the garden shed news in the workspace."))
+
+    assert response.status == AgentStatus.SUCCESS
+    results = tool_results(llm)
+    assert [name for name, _ in results] == ["workspace"] * 3
+    created, inserted, appended = [result for _, result in results]
+    assert created.startswith(f"created workspace:{SHED}")
+    versions = world.gcs.versions(WORKSPACE_BUCKET, key)
+    assert len(versions) == 3
+    assert inserted == (f"inserted 1 line at line 2 of workspace:{SHED} · generation {versions[1].generation} · "
+                        "file now 3 lines · 101 B\n"
+                        "     1\t# Garden shed\n"
+                        "     2\tStatus: waiting for the council.\n"
+                        "     3\tPlanning permission: decision expected by 2026-10-30.")
+    assert appended == (f"inserted 1 line at line 4 of workspace:{SHED} · generation {versions[2].generation} · "
+                        "file now 4 lines · 143 B\n"
+                        "     3\tPlanning permission: decision expected by 2026-10-30.\n"
+                        "     4\t2026-10-28: planning permission received.")
+    # What the bucket holds: insert_text after line 1, then after the last line; nothing glued, no blank line.
+    assert versions[1].data.decode() == (
+        "# Garden shed\nStatus: waiting for the council.\nPlanning permission: decision expected by 2026-10-30.\n")
+    assert world.gcs.live(WORKSPACE_BUCKET, key).data.decode() == (
+        "# Garden shed\nStatus: waiting for the council.\nPlanning permission: decision expected by 2026-10-30.\n"
+        "2026-10-28: planning permission received.\n")
+    assert {v.metadata["origin"] for v in versions} == {"chat"}
     assert _script_consumed(llm)
 
 

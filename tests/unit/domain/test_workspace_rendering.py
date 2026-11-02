@@ -17,7 +17,6 @@ from src.domain.workspace import (
     WorkspaceResult,
     apply_str_replace,
     binary_message,
-    changed_lines,
     check_caps,
     check_file_size,
     find_references,
@@ -27,6 +26,7 @@ from src.domain.workspace import (
     render_history,
     render_listing,
     render_missing,
+    render_mutation_echo,
     render_same_fire_line,
     render_view_header,
     view_window,
@@ -70,7 +70,8 @@ class TestCaps:
         assert str(e.value) == "binary_files/a.pdf: file over 10 MB"
         with pytest.raises(WorkspaceRefused) as e:
             check_file_size("projects/a.md", b"x" * (MAX_TEXT_FILE_BYTES + 1))
-        assert str(e.value) == "projects/a.md: text file over 3 MB"
+        assert str(e.value) == ("projects/a.md: text file over 3 MB — rename it to an archive name "
+                                "(e.g. projects/a-archive-1.md) and start a new file")
         check_file_size("binary_files/a.txt", b"\xff" * (MAX_TEXT_FILE_BYTES + 1))  # not UTF-8: binary, 10 MB cap
 
 
@@ -113,7 +114,7 @@ class TestStrReplace:
         r = apply_str_replace(P, "A: 1\nB: 2\nC: 3", "B: 2", "B: 3\nB2: 4")
         assert r.text == "A: 1\nB: 3\nB2: 4\nC: 3"
         assert (r.first_line, r.line_count) == (2, 2)
-        assert changed_lines(r) == "     2\tB: 3\n     3\tB2: 4"
+        assert render_mutation_echo(r) == "     1\tA: 1\n     2\tB: 3\n     3\tB2: 4\n     4\tC: 3"
 
     def test_none(self):
         with pytest.raises(WorkspaceRefused) as e:
@@ -123,7 +124,7 @@ class TestStrReplace:
     def test_several(self):
         with pytest.raises(WorkspaceRefused) as e:
             apply_str_replace(P, "x\nx", "x", "y")
-        assert str(e.value) == f"found 2 matches of old_str in {P}; include more surrounding text"
+        assert str(e.value) == f"found 2 matches of old_str in {P} at lines 1, 2; include more surrounding text"
         assert e.value.reason == "multi_match"
 
     def test_empty_old_str(self):
