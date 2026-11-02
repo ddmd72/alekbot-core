@@ -117,7 +117,7 @@ async def test_one_notice_for_the_batch_text_without_names_and_the_list_as_a_fil
     assert text == "2 closed; copy each file in the same folder"
     assert "scan" not in text and "citizen" not in text and "Shared" not in text
     listing = env.notifier.files[0]["bytes"].decode("utf-8").splitlines()
-    assert sorted(listing) == ["Shared docs/id-scan.pdf", "citizen card.pdf"]   # files only, never the folder
+    assert sorted(listing) == ["Drive/Shared docs/id-scan.pdf", "Drive/citizen card.pdf"]   # files only, never the folder
     assert env.notifier.files[0]["title"] == "Closed files" and env.notifier.files[0]["filename"].endswith(".txt")
     recs = env.repo.records
     assert recs[("u", "f1")].inaccessible_notified_since == MARKED == recs[("u", "f2")].inaccessible_notified_since
