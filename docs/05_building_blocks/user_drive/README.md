@@ -174,7 +174,21 @@ holds no drive id; the connection's `drive_identity` names the drive.
   item exists; the conversion and note services take the access check as a required dependency (fail closed).
   Code: `src/domain/drive_access_policy.py`, `drive_access_op.py`, `drive_access_decision.py`, `drive_ancestry.py`,
   `drive_connection_access.py`, `drive_item_access.py`, `drive_setting_refused.py`.
-<!-- 2b Cabinet: filled after P-E -->
+- **The Cabinet's drive card (slice 2b; `src/web/user_cabinet_app.py`).** `GET /api/drive/connections` returns one row per
+  live connection: `connection_id`, `mount_name`, `kind`, `provider_label`, `account_label`, `state`, `primary`,
+  `write_folder`, `scope` (`whole_drive`, `folders` with paths), `searched_by_default`, `indexing_enabled`,
+  `transcribe_enabled`, the drive `note`, the `indexing` status block, and `reconnect` (the credential id) when the grant
+  is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
+  gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
+  (a missing connection is 404): `/api/drive/connections/<id>/name`, `/scope`, `/write-folder`, `/searched-by-default`,
+  `/indexing`; `PUT /api/drive/primary`; `GET /api/drive/connections/<id>/folders?parent=` (the folder picker for scope
+  and write folder); `DELETE /api/drive/connections/<id>` (disconnect, optional `heir_id`). The scope and write-folder
+  routes read the chains of the chosen folders first (the service makes no provider call). **"Add a drive":** the
+  kind picker comes from `GET /api/connectors`; the button goes to `/auth/connect/<kind>?intent=add` (a reconnect uses
+  `?credential=<id>`). The OAuth flow carries no name, so the name typed in the card is applied after the consent
+  returns, through the rename route. Every connect, add and reconnect shows the provider's account chooser (Google
+  `consent select_account`, Microsoft `select_account`). `/api/drive/status`, `PUT /api/drive/indexing` and
+  `DELETE /api/drive/disconnect` are retired.
 - **Disconnect** (`DriveDisconnectService.disconnect`, per connection; other connections are never touched): the
   connection ends first (DISCONNECTED, primary handed to the heir), then its drive notes are archived (cleared notes
   too, §4.24), then its grant is removed under the revoke rule (only when no other live connection uses the
@@ -205,8 +219,8 @@ HTML, with no indexer change.
 ## 2. Architecture
 
 ```
-Cabinet  PUT /api/drive/indexing {"enabled": true|false}
-           → DriveConnection.indexing_enabled (the card's connection) + drive_sync task (toggle key)
+Cabinet  PUT /api/drive/connections/<connection_id>/indexing {"enabled": true|false}
+           → DriveConnection.indexing_enabled + drive_sync task (toggle key)
 Cloud Scheduler every 10 min (minutes 3, 13, …) → main /worker start_drive_sync
            → DriveSyncSchedulerService: one drive_sync task {user_id, connection_id} per ACTIVE connection with indexing on
              (tick key `{connection_id}:tick:…`), staleness alert, cap alert, reconnect notice
@@ -2326,7 +2340,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   incident alerts again. Counted on each fan-out pass for a user with indexing on by `count_capped`: two count
   aggregations with equality filters only, served by the single-field indexes (no composite index). The tick keeps no
   running count of held files (its `capped` is a per-tick event count on the log line). No user-facing message.
-- **Cabinet.** `/api/drive/status` reads the indexing block in its own try: on failure it logs ERROR and leaves the
+- **Cabinet.** `GET /api/drive/connections` reads each row's indexing block in its own try: on failure it logs ERROR and leaves the
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
   days" hint shows only while an index is kept), and the card lists every non-zero counter (RFC Δ44). From Slice 2+4
