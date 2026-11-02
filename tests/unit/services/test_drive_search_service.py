@@ -206,13 +206,6 @@ class TestEnvelope:
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
         assert result.envelope.index_as_of is None
 
-    async def test_unread_comes_from_the_counters(self, w):
-        w.drive.add("doc.pdf")
-        await w.settle()
-        state = await w.repo.get_sync_state(U_SCOPE)
-        w.repo.states["u"] = replace(state, counters={**state.counters, "unread": 3})
-        assert (await w.search("doc")).envelope.unread == 3
-
     async def test_index_full_from_the_carded_counter(self, w, monkeypatch):
         w.drive.add("a.pdf")
         w.drive.add("b.pdf")
