@@ -66,6 +66,7 @@ from ..domain.drive_index_params import (
     MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, TICK_DEADLINE_S,
 )
 from ..domain.drive_index_planner import is_stale, month_key
+from ..domain.drive_mounts import canonical_path
 from ..domain.drive_profile import PROFILE_POLICY
 from ..domain.drive_search import INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEPTH
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, tick_task_key
@@ -406,7 +407,8 @@ class DriveSyncSchedulerService:
         due = notice_batch(marked, state.observed_as_of, INACCESSIBLE_NOTICE_BATCH)
         if not due:
             return 0
-        paths = notice_paths(due, await self._ancestors(scope, due, state.root_item_id), state.root_item_id)
+        paths = [canonical_path(connection.mount_name, p)
+                 for p in notice_paths(due, await self._ancestors(scope, due, state.root_item_id), state.root_item_id)]
         lang = await self._ui_language(user_id)
         account_id = connection.account_id
         previous = {r.item_id: r.inaccessible_notified_since for r in due}

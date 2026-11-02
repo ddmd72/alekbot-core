@@ -71,6 +71,10 @@ PASSAGE_LINE = "passage: … {text} …"
 GROUP_LINE = "{folder}: {count} more {tier} files ({kinds}, {dates})"
 RELATED_SMALL_NOTE = "closest by meaning; the drive is too small to tell related from unrelated"
 
+# -- drives not searched (multi-drive 2a, design §3): the coverage part and the sentence of a non-tiered result
+COVERAGE_DRIVES_NOT_SEARCHED = "drives not searched: {names}"
+NOT_SEARCHED_DRIVES_LINE = "Not searched: the drives {names}; name one in drives to search it."
+
 # -- D29: an absent concept ----------------------------------------------------------------------------------------
 ABSENT_LINE = 'No file holds "{word}".'
 ABSENT_IN_SCOPE_LINE = 'No file in this scope holds "{word}".'               # the word exists outside the filter/folder
