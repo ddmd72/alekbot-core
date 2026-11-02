@@ -180,12 +180,12 @@ class TestOpenCaps:
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:i2"))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
-        assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:a1:i2", "op": "opened"}]}
+        assert resp.history_context == {"drive_context": [{"path": "Drive/a.png", "ref": "drive:a1:i2", "op": "opened"}]}
 
     async def test_folder_is_pointed_to_listing(self, ops, conversion, drive):
         drive.get_item.return_value = FOLDER
         out = await ops.open(CTX, "u1", "drive:a1:d1")
-        assert not out.success and out.text == "'Meetings/2025' is a folder; list it instead."
+        assert not out.success and out.text == "'Drive/Meetings/2025' is a folder; list it instead."
 
 
 class TestSaveAndList:
@@ -195,8 +195,8 @@ class TestSaveAndList:
         ref = "docs/u1/3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6b-lease.pdf"
         out = await ops.copy(CTX, "u1", ref, wait_s=WAIT)
         drive.save.assert_awaited_once_with(HANDLE, b"%PDF", "lease.pdf", "application/pdf", None)
-        assert "[Drive: Inbox/lease.pdf" in out.text
-        assert out.drive_context() == [{"path": "Inbox/lease.pdf", "ref": "drive:a1:f1"}]
+        assert "[Drive: Drive/Inbox/lease.pdf" in out.text
+        assert out.drive_context() == [{"path": "Drive/Inbox/lease.pdf", "ref": "drive:a1:f1"}]
 
     async def test_save_already_existed_and_renamed_messages(self, ops, conversion, drive):
         conversion.resolve_bytes.return_value = b"x"
@@ -218,7 +218,7 @@ class TestSaveAndList:
         root = DriveItem(item_id="r", name="Alek-bot", path="", is_folder=True)
         drive.list_folder.return_value = ListOutcome(folder=root, items=[FOLDER, FILE], truncated=False)
         out = await ops.list_folder(CTX, "u1")
-        assert "[Drive folder: Meetings/2025/" in out.text and "[Drive: Inbox/lease.pdf" in out.text
+        assert "[Drive folder: Drive/Meetings/2025/" in out.text and "[Drive: Drive/Inbox/lease.pdf" in out.text
 
 
 class TestReceipts:
@@ -227,12 +227,12 @@ class TestReceipts:
         out = await ops.delete(CTX, "u1", "drive:a1:d1", wait_s=WAIT)
         assert out.success
         notifier.notify_raw.assert_awaited_once_with(
-            "u1", "a1", "DELDIR Meetings/2025 14", channel_id_override="C1", platform_override="slack", literal=True)
+            "u1", "a1", "DELDIR Drive/Meetings/2025 14", channel_id_override="C1", platform_override="slack", literal=True)
 
     async def test_delete_file_receipt(self, ops, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)
         await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
-        assert notifier.notify_raw.call_args.args[2] == "DEL Inbox/lease.pdf"
+        assert notifier.notify_raw.call_args.args[2] == "DEL Drive/Inbox/lease.pdf"
 
     async def test_replace_receipt_with_sizes(self, ops, conversion, drive, notifier):
         conversion.resolve_bytes.return_value = b"x" * 3000
@@ -242,7 +242,7 @@ class TestReceipts:
         drive.replace_with.return_value = UpdateOutcome(item=after, before_size=2048, mode="replace")
         out = await ops.replace(CTX, "u1", "drive:a1:f1", "new.pdf", wait_s=WAIT)
         assert out.success
-        assert notifier.notify_raw.call_args.args[2] == "REP Inbox/lease.pdf 2KB 3KB"
+        assert notifier.notify_raw.call_args.args[2] == "REP Drive/Inbox/lease.pdf 2KB 3KB"
 
     async def test_append_has_no_receipt(self, ops, drive, notifier):
         drive.append_text.return_value = UpdateOutcome(item=NOTE, before_size=10, mode="append")
@@ -255,14 +255,14 @@ class TestReceipts:
         moved = DriveItem(item_id="f1", name="lease.pdf", path="Contracts/lease.pdf", is_folder=False)
         drive.move.return_value = MoveOutcome(before=FILE, after=moved, created=[])
         out = await ops.move(CTX, "u1", "drive:a1:f1", folder="Contracts", wait_s=WAIT)
-        assert "Inbox/lease.pdf → [Drive: Contracts/lease.pdf" in out.text
+        assert "Drive/Inbox/lease.pdf → [Drive: Drive/Contracts/lease.pdf" in out.text
         notifier.notify_raw.assert_not_called()
 
     async def test_create_folder_has_no_receipt(self, ops, drive, notifier):
         from src.domain.user_drive import FolderResolution
         drive.ensure_folder.return_value = FolderResolution(folder=FOLDER, created=["Meetings/2025"])
         out = await ops.create_folder(CTX, "u1", "Meetings/2025", wait_s=WAIT)
-        assert out.success and "[Drive folder: Meetings/2025/" in out.text
+        assert out.success and "[Drive folder: Drive/Meetings/2025/" in out.text
         notifier.notify_raw.assert_not_called()
 
     async def test_save_has_no_receipt(self, ops, conversion, drive, notifier):
