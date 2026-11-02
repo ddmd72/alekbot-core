@@ -205,14 +205,32 @@ async def test_a_request_body_is_refused(upstream):
         await relay.close()
 
 
-async def test_more_than_32_request_headers_is_431(upstream):
+async def _raw_status(url: str, header_lines: List[str]) -> bytes:
+    """Sends one GET over a raw socket and reads to EOF, which only returns once the relay closes the connection.
+    Returns the status code token (a parser refusal answers with an HTTP/1.0 status line, so only the code is compared)."""
+    port, path = int(url.split(":")[2].split("/")[0]), "/" + url.split("/", 3)[3]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        head = "".join(f"{line}\r\n" for line in ["Host: 127.0.0.1", *header_lines])
+        writer.write(f"GET {path} HTTP/1.1\r\n{head}\r\n".encode())
+        await writer.drain()
+        answer = await asyncio.wait_for(reader.read(), timeout=5)
+    finally:
+        writer.close()
+    return answer.split(b" ", 2)[1]
+
+
+async def test_more_than_32_request_headers_is_refused_and_the_connection_closed(upstream):
+    """GE-27: a 33rd header is refused, the connection closed, nothing reaches Google. Which layer refuses depends on the
+    aiohttp version: a parser that enforces `max_headers` (3.14.5, both the C and the pure-Python parser) answers 400
+    before the handler runs; one that does not (3.13.3) lets the handler answer 431. Both force the close."""
     relay = _relay(upstream)
     url = await relay.start()
     try:
         ok, _, _ = await _get(url, headers={f"X-H{i}": "v" for i in range(20)})
         assert ok == 200
-        status, _, _ = await _get(url, headers={f"X-H{i}": "v" for i in range(33)})
-        assert status == 431
+        status = await _raw_status(url, [f"X-H{i}: v" for i in range(33)])
+        assert status in (b"400", b"431")
         assert len(upstream.seen) == 1
     finally:
         await relay.close()
@@ -224,15 +242,7 @@ async def test_nine_kib_of_request_headers_is_refused_and_the_connection_closed(
     relay = _relay(upstream)
     url = await relay.start()
     try:
-        port, path = int(url.split(":")[2].split("/")[0]), "/" + url.split("/", 3)[3]
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        try:
-            writer.write(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Big: {'a' * 9 * 1024}\r\n\r\n".encode())
-            await writer.drain()
-            answer = await asyncio.wait_for(reader.read(), timeout=5)   # read() to EOF: the relay closes the connection
-        finally:
-            writer.close()
-        assert answer.split(b" ", 2)[1] == b"400"   # the parser answers before it knows the version (HTTP/1.0 line)
+        assert await _raw_status(url, [f"X-Big: {'a' * 9 * 1024}"]) == b"400"
         assert upstream.seen == []
         status, _, _ = await _get(url, headers={f"X-H{i}": "a" * 1000 for i in range(10)})
         assert status == 431
