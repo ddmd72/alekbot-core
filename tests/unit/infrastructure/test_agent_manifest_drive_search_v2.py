@@ -27,7 +27,9 @@ def test_time_spans_go_to_the_date_fields_and_types_to_the_query():
 def test_no_new_field_and_no_mode():
     # D19 held for Search v2: no v2 field, no mode. The deleted-files search is its own tool now
     # (search_deleted_recordings_and_notes, DRIVE_SPECIALIST_RFC §8.1), not a field.
-    assert set(_SCHEMA) == {"query", "folder", "kind", "date_from", "date_to"}
+    # Reviewer edit (multi-drive 2a, MULTI_DRIVE_RFC §11.2, design §3): `drives` names the drive to search; it is a
+    # drive selector, not a Search v2 field or mode.
+    assert set(_SCHEMA) == {"query", "folder", "kind", "date_from", "date_to", "drives"}
 
 
 def test_the_capability_names_document_types_and_the_tiers():
