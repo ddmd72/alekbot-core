@@ -102,7 +102,8 @@ async def test_the_model_reads_the_passages_in_full_not_a_stand_in():
 async def test_a_found_passage_enters_the_ledger_and_drive_context():
     run, collector = _run(_ops(FIRST))
     await _call(run, tt.FIND_PASSAGES, question=QUESTION)
-    assert collector.ledger.keys() == frozenset({("item-1", 1, 2)})
+    # E61: the ledger is keyed by (ref tag, chunk id); the files here are built without a connection, so their tag is ""
+    assert collector.ledger.keys() == frozenset({("", ("item-1", 1, 2))})
     assert collector.ledger.folders_shown() == frozenset({"f-rd"})
     assert collector.ledger.files_described() == frozenset({"item-1"})
     assert collector.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:a1:item-1", "op": "passages", "passages": [3]}]
@@ -118,7 +119,7 @@ async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_mor
     run.step = 2
     second_seen = await _call(run, tt.FIND_PASSAGES, question="When does the second review happen?")
     kw = ops.find_passages.await_args_list[1].kwargs
-    assert kw["shown"] == frozenset({("item-1", 1, 2)})
+    assert kw["shown"] == frozenset({("", ("item-1", 1, 2))})   # E61: (ref tag, chunk id); an untagged file's tag is ""
     assert kw["shown_folders"] == frozenset({"f-rd"}) and kw["described_files"] == frozenset({"item-1"})
     assert folder_line(RD) in first_seen.result_str and OWN in first_seen.result_str
     assert folder_line(RD) not in second_seen.result_str and OWN not in second_seen.result_str
@@ -149,7 +150,7 @@ async def test_read_passages_makes_one_call_with_the_context_sets_only():
                                                described_files=frozenset({"item-1"}))
     assert "shown" not in ops.read_passages.await_args.kwargs   # a named range is delivered whole
     assert "Then Lukas Weber approves the budget." in seen.result_str and seen.result_str.startswith("[r2]\n")
-    assert collector.ledger.keys() == frozenset({("item-1", 1, 2), ("item-1", 1, 3)})
+    assert collector.ledger.keys() == frozenset({("", ("item-1", 1, 2)), ("", ("item-1", 1, 3))})   # E61 key shape
     assert collector.results[1].kind == t.KIND_PASSAGES
 
 
