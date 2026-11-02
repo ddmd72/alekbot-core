@@ -4,6 +4,7 @@ fake records downloads; the search fake answers `text_extent` per item."""
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -28,6 +29,8 @@ from .test_drive_operations_uncovered_paths import CTX, FakeConversion
 PATH = "Docs/Oak Street parking rules.md"
 RULES = DriveItem(item_id="r1", name="Oak Street parking rules.md", path=PATH, is_folder=False, size_bytes=300_000,
                   mime_type="text/markdown", identity="fake_a:drive-1:r1")
+SHOWN = f"Drive/{PATH}"                         # what the model reads: `<mount>/<path>` (MULTI_DRIVE_RFC §11.1)
+SHOWN_RULES = replace(RULES, path=SHOWN)
 SCAN = DriveItem(item_id="p1", name="Garage plan.pdf", path="Docs/Garage plan.pdf", is_folder=False, size_bytes=5000,
                  mime_type="application/pdf")
 PHOTO = DriveItem(item_id="i1", name="Space 14.jpg", path="Docs/Space 14.jpg", is_folder=False, size_bytes=5000,
@@ -107,8 +110,8 @@ async def test_a_pageable_text_over_the_cap_is_refused_and_nothing_is_downloaded
     extent = pageable(200_000)
     out = await _open(_ops(conv, FakeExtentSearch({"r1": extent})), RULES)
     assert (out.op, out.cls, out.success, out.body) == (DriveOp.OPEN, OutcomeClass.REFUSED, False, False)
-    assert out.text == refusal_text(PATH, extent)
-    assert out.facts.too_long and out.items == (RULES,) and out.open_bound.extent == extent
+    assert out.text == refusal_text(SHOWN, extent)
+    assert out.facts.too_long and out.items == (SHOWN_RULES,) and out.open_bound.extent == extent
     assert conv.text_reads == [] and conv.byte_reads == []
 
 
@@ -116,7 +119,7 @@ async def test_a_truncated_file_is_refused_whatever_its_indexed_length():
     conv = _conv(RULES, "short")
     extent = pageable(1_000, truncated=True)
     out = await _open(_ops(conv, FakeExtentSearch({"r1": extent})), RULES)
-    assert out.cls is OutcomeClass.REFUSED and out.text == refusal_text(PATH, extent)
+    assert out.cls is OutcomeClass.REFUSED and out.text == refusal_text(SHOWN, extent)
     assert conv.text_reads == []
 
 
@@ -134,7 +137,7 @@ async def test_a_pageable_text_that_is_longer_live_is_cut_with_the_indexed_line(
     assert out.cls is OutcomeClass.OK and out.body and out.facts.cut
     kept = out.open_bound.kept
     assert kept <= OPEN_MAX_CHARS and out.open_bound.chars == len(live)
-    assert cut_line(f'"{PATH}"', BoundText("", len(live), kept, ExtentState.PAGEABLE), extent) in out.text
+    assert cut_line(f'"{SHOWN}"', BoundText("", len(live), kept, ExtentState.PAGEABLE), extent) in out.text
 
 
 async def test_a_stale_text_over_the_cap_is_cut_with_the_stale_line():

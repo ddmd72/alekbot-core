@@ -149,14 +149,15 @@ async def test_empty_or_omitted_refs_never_reach_the_drive():
 
 async def test_folder_path_resolves_only_a_readable_folder_ref():
     drive = AsyncMock(spec=UserDriveService)
+    drive.resolve_ref.side_effect = ConnectionReads().resolve_ref     # the real resolution: tag a1 -> mount Drive
     ops = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive)
     drive.get_item.return_value = FOLDER
-    assert await ops.folder_path("u1", "drive:d9") == "Archive"
+    assert await ops.folder_path("u1", "drive:a1:d9") == "Drive/Archive"   # canonical (design §1 P-9)
     assert await ops.folder_path("u1", "Contracts/2026") == "Contracts/2026"
     drive.get_item.return_value = FILE
-    assert await ops.folder_path("u1", "drive:f1") == "drive:f1"   # a file ref stays: the service refuses it
+    assert await ops.folder_path("u1", "drive:a1:f1") == "drive:a1:f1"   # a file ref stays: the service refuses it
     drive.get_item.side_effect = RuntimeError("down")
-    assert await ops.folder_path("u1", "drive:d9") == "drive:d9"
+    assert await ops.folder_path("u1", "drive:a1:d9") == "drive:a1:d9"
 
 
 async def test_only_file_content_is_marked_as_a_body():
@@ -410,6 +411,9 @@ async def test_a_mutation_cancelled_once_started_is_recorded_as_still_running(op
 async def test_a_cancel_after_the_shield_arms_the_late_failure_notice():
     """DriveOperations: the caller is cancelled while the shielded delete runs on; if it then fails the user is told."""
     drive = AsyncMock(spec=UserDriveService)
+    reads = ConnectionReads()                       # the real ref resolution and mount table (the primary, tag a1)
+    drive.resolve_ref.side_effect = reads.resolve_ref
+    drive.mounts.side_effect = reads.mounts
     release = asyncio.Event()
 
     async def slow_delete(*a, **k):
@@ -420,7 +424,7 @@ async def test_a_cancel_after_the_shield_arms_the_late_failure_notice():
     notification = AsyncMock()
     ops = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive,
                           notification=notification)
-    task = asyncio.ensure_future(ops.delete(CTX, "u1", "drive:f1", wait_s=30))
+    task = asyncio.ensure_future(ops.delete(CTX, "u1", "drive:a1:f1", wait_s=30))
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

@@ -32,4 +32,4 @@ async def test_the_label_keeps_the_real_path(item):
                             drive_service=drive, drive_search=search)
     resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", drive_ref.format("a1", item.item_id))
     assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
-    assert f"[Drive: {item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text
+    assert f"[Drive: Drive/{item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text

@@ -178,7 +178,7 @@ def test_the_two_declarations_follow_open_drive_file_with_their_required_fields(
     at = names.index(tt.OPEN_DRIVE_FILE)
     assert names[at + 1:at + 3] == [tt.FIND_PASSAGES, tt.READ_PASSAGES]
     find, read = decls[at + 1], decls[at + 2]
-    assert set(find["parameters"]["properties"]) == {"question", "folder", "file_refs"}
+    assert set(find["parameters"]["properties"]) == {"question", "folder", "drives", "file_refs"}   # drives: design §3
     assert find["parameters"]["required"] == ["question"]
     assert set(read["parameters"]["properties"]) == {"file_ref", "passages"}
     assert read["parameters"]["required"] == ["file_ref", "passages"]

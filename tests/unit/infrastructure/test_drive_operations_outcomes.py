@@ -135,8 +135,8 @@ async def test_a_listing_is_ok_with_its_items(ops, drive):
     drive.list_folder.return_value = ListOutcome(folder=FOLDER, items=[FILE], truncated=False)
     out = await ops.list_folder(CTX, "u1", "Inbox")
     assert out.cls is OutcomeClass.OK and out.success
-    assert out.drive_context() == [{"path": "Inbox", "ref": "drive:a1:d1"},
-                                   {"path": "Inbox/lease.pdf", "ref": "drive:a1:f1"}]
+    assert out.drive_context() == [{"path": "Drive/Inbox", "ref": "drive:a1:d1"},
+                                   {"path": "Drive/Inbox/lease.pdf", "ref": "drive:a1:f1"}]
 
 
 def _card(**kw):
@@ -222,7 +222,7 @@ async def test_a_late_failing_delete_posts_its_notice_keyed_on_the_op(ops, drive
     assert out.cls is OutcomeClass.STILL_RUNNING
     await _settle(ops)
     notifier.notify_raw.assert_awaited_once()
-    assert notifier.notify_raw.await_args.args[:3] == ("u1", "a1", "DELFAIL Inbox/lease.pdf")
+    assert notifier.notify_raw.await_args.args[:3] == ("u1", "a1", "DELFAIL Drive/Inbox/lease.pdf")
 
 
 async def test_a_late_failing_append_posts_no_notice(ops, drive, notifier):
