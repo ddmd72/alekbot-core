@@ -11,13 +11,16 @@ Writes:
   settings write cannot lose a concurrent state transition.
 - `transition` moves the state atomically under `can_transition` (domain), stamping `disconnected_at` on
   DISCONNECTED; True only when the state changed (the False->True edge the reconnect notice needs).
+- `update_settings` writes the four Cabinet settings whole (MULTI_DRIVE_RFC §11.3, D4, D11), never the state.
+- `rename` validates and writes a new mount name in one transaction over the user's connections (§11.8).
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
+from src.domain.drive_mount_name_check import MountNameCheck
 from src.domain.drive_user_settings import DriveUserSettings
 from src.domain.provider_account import ProviderAccount
 
@@ -55,6 +58,22 @@ class DriveConnectionRepository(ABC):
     async def transition(self, user_id: str, connection_id: str, to: ConnectionState, now: datetime) -> bool:
         """Atomically move the connection to `to` when `can_transition(current, to)` holds; True only when the state
         changed. False for an absent connection, a move to the state already held, or any move out of DISCONNECTED."""
+
+    @abstractmethod
+    async def update_settings(self, user_id: str, connection_id: str, *, searched_by_default: bool,
+                              write_folder_id: Optional[str], scope_folder_ids: Sequence[str],
+                              scope_whole_drive: bool) -> Optional[DriveConnection]:
+        """Write the four settings whole (one transaction on the one document; never `state` / `disconnected_at`) and
+        return the stored connection; None when absent (nothing written)."""
+
+    @abstractmethod
+    async def rename(self, user_id: str, connection_id: str, at: datetime,
+                     check: Callable[[Sequence[DriveConnection]], MountNameCheck]) -> Optional[MountNameCheck]:
+        """RFC §11.8: one transaction over every connection document of the user (a query read inside the transaction,
+        so uniqueness cannot race). `check(every connection)` is the pure validation; when it is ok and the normalised
+        name differs from the current one (exact string), `mount_name = check.name` and the history of
+        `drive_mounts.renamed_history(connection, check.name, at)` are written. None when the connection is absent or
+        DISCONNECTED (nothing written); else the check (an error: nothing written)."""
 
     @abstractmethod
     async def get_settings(self, user_id: str) -> Optional[DriveUserSettings]:
