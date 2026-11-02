@@ -11,7 +11,7 @@ from src.domain.ui_messages import UIMessage
 from src.domain.user_drive import DeleteOutcome, DriveItem, DriveItemNotFoundError
 from src.infrastructure.drive_operations import GONE, STILL_RUNNING, DriveOperations
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False,
                  size_bytes=2048, mime_type="application/pdf")
@@ -30,16 +30,16 @@ WAIT = 0.05
 
 
 def _delete(ops):
-    return ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+    return ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
 
 
 def _replace(ops):
-    return ops.replace(CTX, "u1", "drive:f1", "new.pdf", wait_s=WAIT)
+    return ops.replace(CTX, "u1", "drive:a1:f1", "new.pdf", wait_s=WAIT)
 
 
 @pytest.fixture
 def drive():
-    d = AsyncMock(spec=UserDriveService)
+    d = spec_drive_service("u1")   # the service's own ref resolution and mount table (tag a1, mount Drive)
     d.get_item.return_value = FILE
     return d
 
@@ -96,7 +96,7 @@ async def test_late_failing_delete_posts_one_notice(agent, drive, notifier):
     await _settle(agent)
     notifier.notify_raw.assert_awaited_once()
     args, kw = notifier.notify_raw.await_args
-    assert args[:3] == ("u1", "a1", "DELFAIL Inbox/lease.pdf")
+    assert args[:3] == ("u1", "a1", "DELFAIL Drive/Inbox/lease.pdf")
     assert kw["channel_id_override"] == "C1" and kw["platform_override"] == "slack"
 
 
@@ -107,7 +107,7 @@ async def test_late_failing_replace_posts_notice(agent, drive, notifier):
     assert STILL_RUNNING in resp.text
     await _settle(agent)
     notifier.notify_raw.assert_awaited_once()
-    assert notifier.notify_raw.await_args.args[2] == "REPFAIL Inbox/lease.pdf"
+    assert notifier.notify_raw.await_args.args[2] == "REPFAIL Drive/Inbox/lease.pdf"
 
 
 async def test_late_success_posts_receipt_only(agent, drive, notifier):
@@ -115,7 +115,7 @@ async def test_late_success_posts_receipt_only(agent, drive, notifier):
     await _delete(agent)
     await _settle(agent)
     notifier.notify_raw.assert_awaited_once()
-    assert notifier.notify_raw.await_args.args[2] == "DEL Inbox/lease.pdf"
+    assert notifier.notify_raw.await_args.args[2] == "DEL Drive/Inbox/lease.pdf"
 
 
 async def test_failure_while_still_waited_posts_no_notice(agent, drive, notifier):
@@ -131,7 +131,7 @@ async def test_other_intents_get_no_notice(agent, drive, notifier):
         await asyncio.sleep(0.15)
         raise RuntimeError("boom")
     drive.append_text.side_effect = slow
-    resp = await agent.append(CTX, "u1", "drive:f1", "t", wait_s=WAIT)
+    resp = await agent.append(CTX, "u1", "drive:a1:f1", "t", wait_s=WAIT)
     assert STILL_RUNNING in resp.text
     await _settle(agent)
     notifier.notify_raw.assert_not_called()
@@ -162,7 +162,7 @@ async def test_replace_notice_names_the_path_captured_before_the_mutation(agent,
     await _replace(agent)
     drive.get_item.reset_mock()
     await _settle(agent)
-    assert notifier.notify_raw.await_args.args[2] == "REPFAIL Inbox/lease.pdf"
+    assert notifier.notify_raw.await_args.args[2] == "REPFAIL Drive/Inbox/lease.pdf"
     drive.get_item.assert_not_called()
 
 
@@ -172,7 +172,7 @@ async def test_delete_notice_falls_back_to_the_ref_when_the_lookup_fails(agent, 
     await _delete(agent)
     await _settle(agent)
     notifier.notify_raw.assert_awaited_once()
-    assert notifier.notify_raw.await_args.args[2] == "DELFAIL drive:f1"
+    assert notifier.notify_raw.await_args.args[2] == "DELFAIL drive:a1:f1"
 
 
 @pytest.mark.parametrize("exc", [None, RuntimeError("boom")])
@@ -211,7 +211,7 @@ async def test_queued_replace_with_a_missing_source_posts_a_notice(agent, drive,
     gate.set()
     await _settle(agent)
     texts = [c.args[2] for c in notifier.notify_raw.await_args_list]
-    assert texts == ["DEL Inbox/lease.pdf", "REPFAIL Inbox/lease.pdf"]
+    assert texts == ["DEL Drive/Inbox/lease.pdf", "REPFAIL Drive/Inbox/lease.pdf"]
 
 
 async def test_queued_delete_that_succeeds_posts_receipts_only(agent, drive, notifier):
@@ -222,7 +222,7 @@ async def test_queued_delete_that_succeeds_posts_receipts_only(agent, drive, not
     gate.set()
     await _settle(agent)
     texts = [c.args[2] for c in notifier.notify_raw.await_args_list]
-    assert texts == ["DEL Inbox/lease.pdf", "DEL Inbox/lease.pdf"]
+    assert texts == ["DEL Drive/Inbox/lease.pdf", "DEL Drive/Inbox/lease.pdf"]
     assert not agent._armed
 
 
@@ -239,10 +239,10 @@ async def test_mutation_done_at_the_timeout_answers_its_own_success(agent, drive
     drive.delete.return_value = DeleteOutcome(item=FILE, file_count=0)
     with patch.object(asyncio, "wait_for", _wait_then_time_out()):
         resp = await _delete(agent)
-    assert resp.success and resp.text == "Deleted Inbox/lease.pdf."
+    assert resp.success and resp.text == "Deleted Drive/Inbox/lease.pdf."
     await _settle(agent)
     notifier.notify_raw.assert_awaited_once()
-    assert notifier.notify_raw.await_args.args[2] == "DEL Inbox/lease.pdf"
+    assert notifier.notify_raw.await_args.args[2] == "DEL Drive/Inbox/lease.pdf"
 
 
 async def test_mutation_done_at_the_timeout_reports_its_own_exception(agent, drive, notifier):
