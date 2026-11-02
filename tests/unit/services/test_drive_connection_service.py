@@ -1,6 +1,7 @@
 """DriveConnectionService behaviour (MULTI_DRIVE_RFC §4.4, §9; slice 1b P1b-1): connect and reconnect by account, tags
 and names, the primary pointer, the stale-ref lines, the per-connection switches, the reconnect flag kept in step with
-the credential, disconnect with primary handover, and R1 reading connections. Over the in-memory connection repository
+the credential, disconnect with primary handover to the named heir (slice 2b: a new connection is read-only and
+becomes the primary with its first write folder, D11, I2), and R1 reading connections. Over the in-memory connection repository
 and the real credential store on the evaluating Firestore fake; assertions on what is stored and what readers return."""
 import asyncio
 from dataclasses import replace
@@ -9,6 +10,8 @@ from itertools import count
 
 import pytest
 
+from src.domain.drive_capabilities import DriveCapabilities
+from src.domain.drive_connection import ROOT_FOLDER
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_connection_status import DriveConnectionStatus
 from src.domain.drive_handle import DriveHandle
@@ -23,6 +26,7 @@ from tests.support.oauth_credentials_store import CredentialsStore, creds
 
 KIND = "microsoft_onedrive"
 T0 = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+AREA = DriveCapabilities(max_path_chars=400)
 ACTIVE, NEEDS, GONE = ConnectionState.ACTIVE, ConnectionState.NEEDS_RECONNECT, ConnectionState.DISCONNECTED
 
 
@@ -48,6 +52,12 @@ class World:
     async def connect(self, user_id="usr-1", subject="subject-a", identity="microsoft_onedrive:drive-a"):
         return await self.service.activate(await self.consent(user_id, subject), identity)
 
+    async def writable(self, connection):
+        """Give `connection` the root as its write folder (slice 2b, D11: a new connection is read-only; I2: the first
+        write folder makes it the primary when the user has none)."""
+        return await self.service.set_write_folder(connection.user_id, connection.connection_id, ROOT_FOLDER,
+                                                   capabilities=AREA, ancestry=None)
+
     def stored(self, user_id, connection_id):
         return self.repo.connections[(user_id, connection_id)]
 
@@ -59,7 +69,7 @@ class World:
 # ---------------------------------------------------------------------------------------------- activate
 
 class TestActivateCreates:
-    async def test_a_first_consent_creates_an_active_primary_connection(self):
+    async def test_a_first_consent_creates_an_active_read_only_connection_its_write_folder_makes_primary(self):
         w = World()
         credential = await w.consent()
         conn = await w.service.activate(credential, "microsoft_onedrive:drive-a")
@@ -70,13 +80,17 @@ class TestActivateCreates:
         assert (stored.drive_identity, stored.ref_tag, stored.mount_name) == ("microsoft_onedrive:drive-a", "t1", "Drive")
         assert (stored.state, stored.indexing_enabled, stored.transcribe_enabled) == (ACTIVE, False, False)
         assert stored.created_at == T0
+        # slice 2b (D11, I2): a new connection is read-only and not the primary; its first write folder makes it one
+        assert (stored.write_folder_id, w.primary_id()) == (None, None)
+        await w.writable(conn)
         assert w.primary_id() == "conn-1"
 
     async def test_a_second_account_is_a_second_connection_named_drive_2_and_the_primary_stays(self):
         w = World()
-        await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
+        await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
         second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
         assert (second.connection_id, second.ref_tag, second.mount_name) == ("conn-2", "t2", "Drive 2")
+        await w.writable(second)
         assert w.primary_id() == "conn-1"
 
     async def test_a_tag_already_held_or_invalid_is_skipped(self):
@@ -101,11 +115,13 @@ class TestActivateCreates:
 
     async def test_a_connect_after_a_disconnect_is_a_new_connection_and_the_old_tag_stays_reserved(self):
         w = World(tags=["a1", "a1", "b2"])
-        first = await w.connect()
+        first = await w.writable(await w.connect())
         assert await w.service.disconnect("usr-1", first.connection_id) is True
         again = await w.connect()
         assert (again.connection_id, again.ref_tag, again.mount_name) == ("conn-2", "b2", "Drive")
         assert w.stored("usr-1", "conn-1").state is GONE
+        assert w.primary_id() is None          # slice 2b (RFC §11.7): no heir named, the pointer is cleared
+        await w.writable(again)
         assert w.primary_id() == "conn-2"
 
     async def test_the_lowest_free_name_is_reused(self):
@@ -118,10 +134,12 @@ class TestActivateCreates:
 
     async def test_users_are_separate(self):
         w = World()
-        await w.connect(user_id="usr-1")
+        first = await w.writable(await w.connect(user_id="usr-1"))
         other = await w.connect(user_id="usr-2")
         assert other.user_id == "usr-2" and other.mount_name == "Drive"
+        await w.writable(other)
         assert w.primary_id("usr-2") == other.connection_id
+        assert w.primary_id("usr-1") == first.connection_id
 
     @pytest.mark.parametrize("over", [{"credential_id": ""}, {"account_id": ""}, {"account_id": None}])
     async def test_a_credential_without_its_ids_is_refused(self, over):
@@ -182,15 +200,15 @@ class TestActivateReconnects:
 
     async def test_a_reconnect_of_a_non_primary_does_not_move_the_primary(self):
         w = World()
-        await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
-        second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
+        await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
+        second = await w.writable(await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b"))
         await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
         assert w.primary_id() == "conn-1"
         assert second.connection_id == "conn-2"
 
     async def test_a_lost_pointer_is_set_by_the_next_consent(self):
         w = World()
-        conn = await w.connect()
+        conn = await w.writable(await w.connect())
         w.repo.settings["usr-1"] = DriveUserSettings(user_id="usr-1", primary_connection_id="conn-missing")
         await w.connect()
         assert w.primary_id() == conn.connection_id
@@ -227,12 +245,14 @@ class TestHandlesAndPrimary:
         with pytest.raises(DriveNotConnectedError):
             await w.service.primary_handle("usr-1")
         conn = await w.connect()
+        assert await w.service.primary("usr-1") is None       # slice 2b (D11, I2): read-only, not the primary
+        conn = await w.writable(conn)
         assert await w.service.primary("usr-1") == conn
         assert await w.service.primary_handle("usr-1") == conn.handle
 
     async def test_a_primary_that_needs_a_reconnect_is_no_primary(self):
         w = World()
-        conn = await w.connect()
+        conn = await w.writable(await w.connect())
         await w.service.flag_reconnect(conn.handle)
         assert await w.service.primary("usr-1") is None
         with pytest.raises(DriveNotConnectedError):
@@ -241,17 +261,18 @@ class TestHandlesAndPrimary:
 
     async def test_set_primary_names_an_active_connection(self):
         w = World()
-        await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
-        second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
+        await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
+        second = await w.writable(await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b"))
+        assert w.primary_id() == "conn-1"
         await w.service.set_primary("usr-1", second.connection_id)
         assert w.primary_id() == second.connection_id
         assert (await w.service.primary("usr-1")).connection_id == second.connection_id
 
     async def test_set_primary_refuses_a_flagged_disconnected_absent_or_foreign_connection(self):
         w = World()
-        first = await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
-        flagged = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
-        gone = await w.connect(subject="subject-c", identity="microsoft_onedrive:drive-c")
+        first = await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
+        flagged = await w.writable(await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b"))
+        gone = await w.writable(await w.connect(subject="subject-c", identity="microsoft_onedrive:drive-c"))
         await w.service.flag_reconnect(flagged.handle)
         await w.service.disconnect("usr-1", gone.connection_id)
         for user_id, connection_id in (("usr-1", flagged.connection_id), ("usr-1", gone.connection_id),
@@ -424,28 +445,31 @@ class TestFlagReconnect:
 
 
 class TestDisconnect:
-    async def test_a_disconnect_of_the_primary_hands_it_to_the_oldest_other_active(self):
+    async def test_a_disconnect_of_the_primary_hands_it_to_the_named_heir(self):
+        # slice 2b (RFC §11.7, design §1.6): no automatic oldest-ACTIVE heir; the Cabinet names it
         w = World()
-        first = await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
-        second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
-        third = await w.connect(subject="subject-c", identity="microsoft_onedrive:drive-c")
+        first = await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
+        second = await w.writable(await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b"))
+        third = await w.writable(await w.connect(subject="subject-c", identity="microsoft_onedrive:drive-c"))
         await w.service.flag_reconnect(second.handle)
-        assert await w.service.disconnect("usr-1", first.connection_id) is True
+        assert w.primary_id() == first.connection_id
+        assert await w.service.disconnect("usr-1", first.connection_id, heir_id=third.connection_id) is True
         stored = w.stored("usr-1", first.connection_id)
         assert stored.state is GONE and stored.disconnected_at is not None
         assert w.primary_id() == third.connection_id
 
     async def test_a_disconnect_of_the_last_drive_clears_the_primary(self):
         w = World()
-        conn = await w.connect()
+        conn = await w.writable(await w.connect())
+        assert w.primary_id() == conn.connection_id
         assert await w.service.disconnect("usr-1", conn.connection_id) is True
         assert w.primary_id() is None
         assert await w.service.disconnect("usr-1", conn.connection_id) is False
 
     async def test_a_disconnect_of_another_drive_keeps_the_primary(self):
         w = World()
-        first = await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a")
-        second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
+        first = await w.writable(await w.connect(subject="subject-a", identity="microsoft_onedrive:drive-a"))
+        second = await w.writable(await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b"))
         assert await w.service.disconnect("usr-1", second.connection_id) is True
         assert w.primary_id() == first.connection_id
 
