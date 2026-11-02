@@ -305,12 +305,14 @@ def mount_line(mount: Mount, search: Optional[SearchLine], *, write_folder_path:
     connection = mount.connection
     folder = connection.write_folder_id
     write_folder = ""
-    if folder is not None and folder != ROOT_FOLDER and write_folder_path:
+    below_root = folder is not None and folder != ROOT_FOLDER
+    if below_root and write_folder_path:
         write_folder = canonical_path(mount.name, write_folder_path)
     return MountLine(name=mount.name, primary=mount.primary,
                      drive=DriveLine.of(DriveConnectionStatus.of(connection)), search=search,
                      writable=folder is not None, searched_by_default=connection.searched_by_default,
-                     write_folder=write_folder, note=drive_note_line(note) if note else "")
+                     write_folder=write_folder, write_folder_unknown=below_root and not write_folder_path,
+                     note=drive_note_line(note) if note else "")
 
 
 def render_mount_line(line: MountLine) -> str:
@@ -326,7 +328,12 @@ def render_mount_line(line: MountLine) -> str:
     if not line.writable:
         parts.append("read-only")
     else:
-        parts.append(f"writable only in {line.write_folder}" if line.write_folder else "writable")
+        if line.write_folder:
+            parts.append(f"writable only in {line.write_folder}")
+        elif line.write_folder_unknown:
+            parts.append("writes go to a chosen folder (its path could not be read)")
+        else:
+            parts.append("writable")
     parts.append("searched by default" if line.searched_by_default else "searched only when named")
     if line.note:
         parts.append(f'owner\'s note: "{line.note}"')

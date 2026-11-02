@@ -398,7 +398,7 @@ class DriveOperations:
     async def _mount_lines(self, user_id: str, table: MountTable,
                            states: Mapping[str, SearchLine]) -> Tuple[MountLine, ...]:
         """One line per mount: its write folder's path (read in parallel; a failed read leaves the path out, the line
-        then says `writable`) and the owner's drive note (one query; a failure leaves the notes out)."""
+        then says the path could not be read) and the owner's drive note (one query; a failure leaves the notes out)."""
         drive_service = self._svc()
 
         async def folder_path_of(mount: Mount) -> Optional[str]:

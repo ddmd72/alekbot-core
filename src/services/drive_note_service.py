@@ -222,8 +222,9 @@ class DriveNoteService:
         def compose(current: Optional[DriveNote]) -> NoteContent:
             if current is None or current.state == NoteState.CLEARED.value or current.content == content:
                 return content
+            owner = "The drive" if target.connection_id else "This item"
             raise DriveNoteRefused(NoteRefusal.NOTE_EXISTS,
-                                   "The file already has a note: use add_to_note, replace_note_text or the type and "
+                                   f"{owner} already has a note: use add_to_note, replace_note_text or the type and "
                                    "area tools to change it.", note_ref=current.ref)
 
         return await self._write(user_id, account_id, target, compose, provenance, allow_new=True, op="create")
@@ -688,7 +689,7 @@ class DriveNoteService:
         target = parse_note_target(ref)
         if target is None:
             raise DriveNoteRefused(NoteRefusal.INVALID_REF,
-                                   "file_ref must be a drive: ref from a search result, a listing or a [Drive: …] "
+                                   "item_ref must be a drive: ref from a search result, a listing or a [Drive: …] "
                                    "label, or a drive_note:<id> ref from a deleted-files result.")
         return target
 

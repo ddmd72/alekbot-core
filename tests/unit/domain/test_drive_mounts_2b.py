@@ -170,3 +170,14 @@ class TestRenamedHistory:
     def test_a_connection_stored_without_history_holds_its_old_name(self):
         renamed = renamed_history(conn("conn-2", "Acme", "b2"), "Acme Hamburg", NOW)
         assert renamed == (MountNameChange("Acme", T0), MountNameChange("Acme Hamburg", NOW))
+
+
+class TestWriteFolderPathUnreadable:
+    def test_a_sub_folder_write_folder_with_no_path_does_not_print_plain_writable(self):
+        table = mount_table([conn("conn-2", "Acme", "b2", write="f-rd")], None, NOW)
+        text = render_mount_line(mount_line(table.mounts[0], None))
+        assert "; writable;" not in text and "chosen folder" in text and "could not be read" in text
+
+    def test_the_root_write_folder_still_prints_writable(self):
+        table = mount_table([conn("conn-1", "Drive", "a1")], "conn-1", NOW)
+        assert "; writable;" in render_mount_line(mount_line(table.mounts[0], None))
