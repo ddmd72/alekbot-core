@@ -122,7 +122,9 @@ async def test_the_next_turn_sees_the_line_and_its_ref_resolves_through_drive_op
     ref = next(w for w in LAB_LINE.split() if w.startswith("ref="))[len("ref="):]   # what Smart copies
 
     drive = AsyncMock(spec=UserDriveService)
-    drive.resolve_ref.side_effect = ConnectionReads().resolve_ref
+    reads = ConnectionReads()                       # the service's own ref resolution and mount table
+    drive.resolve_ref.side_effect = reads.resolve_ref
+    drive.mounts.side_effect = reads.mounts
     moved = DriveItem(item_id="abc123", name="lab-report.pdf", path="Archive/lab-report.pdf", is_folder=False)
 
     async def move(handle, item_id, folder, new_name):
@@ -137,4 +139,4 @@ async def test_the_next_turn_sees_the_line_and_its_ref_resolves_through_drive_op
                           drive_search=search)
     for given in (ref, LAB_LINE):   # the ref alone, or the whole line pasted (lenient parse)
         out = await ops.move({"user_id": "u1"}, "u1", given, folder="Archive", wait_s=5)
-        assert out.success and "Archive/lab-report.pdf" in out.text
+        assert out.success and "Drive/Archive/lab-report.pdf" in out.text   # canonical (MULTI_DRIVE_RFC §11.1)
