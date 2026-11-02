@@ -93,7 +93,7 @@ def test_the_credential_port_is_rekeyed_by_credential():
 
 def test_the_provider_port_shape():
     assert set(OAuthProviderPort.__abstractmethods__) == {
-        "realm", "revocation_scope", "authorization_url", "exchange", "revoke"}
+        "realm", "revocation_scope", "identity_scopes", "authorization_url", "exchange", "revoke"}
     url = inspect.signature(OAuthProviderPort.authorization_url).parameters
     assert list(url)[1:] == ["flow", "spec", "redirect_uri", "state"]
     assert url["state"].kind is inspect.Parameter.KEYWORD_ONLY

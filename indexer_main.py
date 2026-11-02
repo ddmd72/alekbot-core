@@ -57,7 +57,7 @@ Routing and the OIDC gate live in `src/web/indexer_worker_app.py` and are tested
 import asyncio
 import os
 import signal
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Dict
 
 from google.cloud import firestore
 from hypercorn.asyncio import serve
@@ -68,11 +68,12 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
+from src.adapters.google.google_drive_adapter import GoogleDriveAdapter
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.cipher_setup import build_cipher
-from src.composition.connector_registry import MICROSOFT_ONEDRIVE, ConnectorRegistry
+from src.composition.connector_registry import GOOGLE_DRIVE, MICROSOFT_ONEDRIVE, ConnectorRegistry
 from src.composition.drive_connection_setup import build_drive_connection_service
 from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.drive_indexing_setup import (
@@ -149,7 +150,19 @@ def build_app() -> Quart:
     )
     # Every drive call goes through the router by the handle's kind (MULTI_DRIVE_RFC §6); each tick loads its
     # connection through the connection service (§8), and reads its grant's provider account for the initial build.
-    drive = DriveProviderRouter(ConnectorRegistry(drive_adapters={MICROSOFT_ONEDRIVE: onedrive}).drive_adapters())
+    # The Google kind is built only when its OAuth client is mounted (GOOGLE_DRIVE_RFC GE-31): `.get`, never `[...]`,
+    # so an indexer without the pair starts with OneDrive only.
+    drive_adapters: Dict[str, Any] = {MICROSOFT_ONEDRIVE: onedrive}
+    google_id = (os.environ.get("GOOGLE_OAUTH_CLIENT_ID") or "").strip()
+    google_secret = (os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET") or "").strip()
+    if google_id and google_secret:
+        drive_adapters[GOOGLE_DRIVE] = GoogleDriveAdapter(
+            oauth_credentials=oauth_credentials,
+            client_id=google_id,
+            client_secret=google_secret,
+            connector=ConnectorRegistry().get(GOOGLE_DRIVE),
+        )
+    drive = DriveProviderRouter(ConnectorRegistry(drive_adapters=drive_adapters).drive_adapters())
     connections = build_drive_connection_service(db, env_config, credentials=oauth_credentials)
     index_repo = build_drive_index_repository(db, env_config)
     # The transcript mirror's roots and ledger (§27.9.2-§27.9.4): ALWAYS built, whatever the kill switch — the bot's

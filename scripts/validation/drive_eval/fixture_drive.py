@@ -406,6 +406,10 @@ class FixtureDrive(UserDrivePort):
     async def forget(self, handle: DriveHandle) -> None:
         """The fixture holds no per-connection cache."""
 
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        """The fixture drive has one area: everything hangs under its root."""
+        return []
+
     async def get_thumbnail(self, handle: DriveHandle, item_id: str, max_edge_px: int) -> Optional[bytes]:
         """The same rendition for every size: the fixture's pictures are already small (S0f, S0g)."""
         if max_edge_px <= 0:

@@ -24,7 +24,7 @@ Public interface:
     validate_mount_name(raw, *, connection_id, connections, primary_connection_id, primary_top_folders, now)
         -> MountNameCheck
     renamed_history(connection, name, at) -> Tuple[MountNameChange, ...]
-    mount_line(mount, search, *, write_folder_path=None, note="") -> MountLine
+    mount_line(mount, search, *, write_folder_path=None, note="", scope_paths=(), scope_more=0) -> MountLine
     render_mount_line(line) -> str
     render_mount_listing(lines) -> str
     drive_note_line(text) -> str;  NOTE_LINE_MAX
@@ -298,10 +298,11 @@ def drive_note_line(text: str) -> str:
 
 
 def mount_line(mount: Mount, search: Optional[SearchLine], *, write_folder_path: Optional[str] = None,
-               note: str = "") -> MountLine:
+               note: str = "", scope_paths: Sequence[str] = (), scope_more: int = 0) -> MountLine:
     """The line of one mount: writable when the connection has a write folder; `write_folder_path` (the write folder's
     connection-relative path, read by the caller) prints a write folder below the root; `note` is the owner's drive
-    note, bounded here."""
+    note, bounded here; `scope_paths` (the chosen folders' connection-relative paths, G11) and `scope_more` (how many
+    more there are) print `indexes only ...`."""
     connection = mount.connection
     folder = connection.write_folder_id
     write_folder = ""
@@ -312,13 +313,14 @@ def mount_line(mount: Mount, search: Optional[SearchLine], *, write_folder_path:
                      drive=DriveLine.of(DriveConnectionStatus.of(connection)), search=search,
                      writable=folder is not None, searched_by_default=connection.searched_by_default,
                      write_folder=write_folder, write_folder_unknown=below_root and not write_folder_path,
-                     note=drive_note_line(note) if note else "")
+                     note=drive_note_line(note) if note else "",
+                     scope_folders=tuple(canonical_path(mount.name, p) for p in scope_paths), scope_more=scope_more)
 
 
 def render_mount_line(line: MountLine) -> str:
     """`- Drive: primary; connected; search on; writable; searched by default` (no search part when `search` is None);
     a write folder below the root prints `writable only in <path>`; the owner's note ends the line as
-    `owner's note: "<note>"`."""
+    `owner's note: "<note>"`; chosen folders print `indexes only <p1>, <p2>, ... +N more` after the writable part."""
     parts: List[str] = []
     if line.primary:
         parts.append("primary")
@@ -334,6 +336,9 @@ def render_mount_line(line: MountLine) -> str:
             parts.append("writes go to a chosen folder (its path could not be read)")
         else:
             parts.append("writable")
+    if line.scope_folders:
+        more = f" +{line.scope_more} more" if line.scope_more > 0 else ""
+        parts.append(f"indexes only {', '.join(line.scope_folders)}{more}")
     parts.append("searched by default" if line.searched_by_default else "searched only when named")
     if line.note:
         parts.append(f'owner\'s note: "{line.note}"')

@@ -4,7 +4,9 @@ SubprocessMediaExtractor — audio-only Opus windows of a drive recording, cut b
 
 The indexer process never decodes a byte of media: every ffprobe/ffmpeg run is a grandchild of a fresh parser child
 under RLIMIT_CPU / RLIMIT_FSIZE / RLIMIT_AS, as the unprivileged `DRIVE_PARSER_USER` where one is configured, with a
-wall-clock kill of the whole process group. The download URL goes to the child on stdin and is never logged. One child
+wall-clock kill of the whole process group. The child's URL comes from the `ChildUrlOpener` (the default passes a
+header-free source as is and refuses one that needs headers; the composition injects the relay, GOOGLE_DRIVE_RFC G2),
+goes to the child on stdin and is never logged. One child
 at a time: it shares the instance with the document parser, and the tick runs one stage at a time. RLIMIT_CPU is per process: each ffmpeg of a step
 gets its own 150 s, so a step's total is bounded by the wall clock, not by that limit.
 """
@@ -20,10 +22,11 @@ import shutil
 import ssl
 import tempfile
 import time
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, AsyncContextManager, AsyncIterator, Callable, Dict, Optional, Sequence, Tuple
 
 import src.adapters.drive_parser.media_launch as launch
 from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_CHILD_CPU_S, TRANSCRIBE_MAX_SECONDS
+from src.domain.drive_media_source import MediaSource
 from src.domain.drive_transcript import (
     MediaProbe, MediaProbeOutcome, MediaStatus, MediaUnreadable, MediaWindowsOutcome, WindowSpec,
 )
@@ -43,16 +46,33 @@ _MAX_WINDOW_INDEX = 1_000
 _CONTAINER = re.compile(r"^[a-z0-9_]+(,[a-z0-9_]+)*$")
 
 
+ChildUrlOpener = Callable[[MediaSource, float], AsyncContextManager[str]]   # (source, run wall_s) -> the child's URL
+
+
 def system_ca_file() -> str:
     return ssl.get_default_verify_paths().cafile or _FALLBACK_CA_FILE
+
+
+@contextlib.asynccontextmanager
+async def header_free_url(source: MediaSource, wall_s: float) -> AsyncIterator[str]:
+    """The default opener (E37, moved from the transcript stage): a header-free source is given to the child as is; a
+    source that needs request headers is refused (MediaUnreadable, logged at ERROR without url or headers), because
+    no provider credential may enter the network-capable sandbox (E24). The composition injects the relay (G2)."""
+    if not source.header_free:
+        logger.error("[DriveMedia] the media source needs request headers; no provider credential enters the media "
+                     "sandbox (E24): refused")
+        raise MediaUnreadable("media source needs headers")
+    yield source.url
 
 
 class SubprocessMediaExtractor(MediaAudioPort):
     def __init__(self, *, memory_limit_bytes: int = MEDIA_MEMORY_LIMIT_BYTES, cpu_limit_s: int = TRANSCRIBE_CHILD_CPU_S,
                  file_limit_bytes: int = MEDIA_FILE_LIMIT_BYTES, probe_wall_s: float = PROBE_WALL_S,
                  ca_file: Optional[str] = None, python: Optional[str] = None, child_module: str = launch.CHILD_MODULE,
-                 temp_root: Optional[str] = None, sandbox_user: Optional[str] = None) -> None:
+                 temp_root: Optional[str] = None, sandbox_user: Optional[str] = None,
+                 child_url: ChildUrlOpener = header_free_url) -> None:
         self._sandbox = launch.resolve_sandbox(sandbox_user)
+        self._child_url = child_url
         self._memory = memory_limit_bytes
         self._cpu = cpu_limit_s
         self._file_bytes = file_limit_bytes
@@ -65,9 +85,9 @@ class SubprocessMediaExtractor(MediaAudioPort):
 
     # -- port -------------------------------------------------------------------------------------------------------
 
-    async def probe(self, url: str) -> MediaProbeOutcome:
-        result, status, detail = await self._run({"op": "media_probe", "url": url, "ca_file": self._ca_file},
-                                                 self._probe_wall)
+    async def probe(self, source: MediaSource) -> MediaProbeOutcome:
+        result, status, detail = await self._run({"op": "media_probe", "ca_file": self._ca_file}, self._probe_wall,
+                                                 source=source)
         if status is not MediaStatus.OK or result is None:
             return MediaProbeOutcome(status=status, detail=detail)
         try:
@@ -84,7 +104,7 @@ class SubprocessMediaExtractor(MediaAudioPort):
         return MediaProbeOutcome(status=MediaStatus.OK, detail="", probe=MediaProbe(
             duration_s=duration if known else 0.0, has_audio=audio, container=container[:80], duration_known=known))
 
-    async def extract_windows(self, url: str, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
+    async def extract_windows(self, source: MediaSource, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
                               container: str, duration_known: bool = True) -> MediaWindowsOutcome:
         if not container or not _CONTAINER.match(container):
             raise MediaUnreadable("container missing or invalid")
@@ -95,12 +115,12 @@ class SubprocessMediaExtractor(MediaAudioPort):
                                    or indexes != list(range(indexes[0], indexes[0] + len(windows)))):
             raise ValueError("a pass takes a contiguous slice of at most MEDIA_PASS_MAX_WINDOWS windows")
         payload: Dict[str, Any] = {
-            "op": "media_windows", "url": url, "ca_file": self._ca_file, "container": container,
+            "op": "media_windows", "ca_file": self._ca_file, "container": container,
             "duration_known": duration_known,
             "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s} for w in windows]}
         allowed = set(indexes)
         os.makedirs(out_dir, exist_ok=True)
-        result, status, detail = await self._run(payload, wall_s, out_dir=out_dir)
+        result, status, detail = await self._run(payload, wall_s, source=source, out_dir=out_dir)
         if result is None:
             return MediaWindowsOutcome(status=status, detail=detail)
         specs = []
@@ -121,10 +141,11 @@ class SubprocessMediaExtractor(MediaAudioPort):
 
     # -- child ------------------------------------------------------------------------------------------------------
 
-    async def _run(self, payload: Dict[str, Any], wall_s: float, *, out_dir: Optional[str] = None
+    async def _run(self, payload: Dict[str, Any], wall_s: float, *, source: MediaSource, out_dir: Optional[str] = None
                    ) -> Tuple[Optional[Dict[str, Any]], MediaStatus, str]:
         """(result, OK, "") on a result; (None, TIMEOUT|MEMORY, detail) on a kill; raises MediaUnreadable otherwise. A
-        `windows` result carries `_collected`: (index, start_s, duration_s, final path) per window copied to out_dir."""
+        `windows` result carries `_collected`: (index, start_s, duration_s, final path) per window copied to out_dir.
+        The opener is entered after the slot is taken and left once the child has exited, been killed or cancelled."""
         async with self._slots:
             workdir = tempfile.mkdtemp(prefix="drive-media-", dir=self._temp_root)
             started = time.monotonic()
@@ -134,17 +155,18 @@ class SubprocessMediaExtractor(MediaAudioPort):
                     os.chown(workdir, *self._sandbox)       # mode 0700 from mkdtemp: the child's alone
                 out = os.path.join(workdir, "result.json")
                 child_wall = max(wall_s - CHILD_WALL_MARGIN_S, wall_s * 0.5)
-                request = {**payload, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
-                           "file_bytes": self._file_bytes, "wall_s": child_wall, "out_dir": workdir}
-                if self._sandbox is not None:
-                    request["nproc"] = MEDIA_NPROC_LIMIT
-                if len(json.dumps(request)) > launch.MAX_REQUEST_BYTES:
-                    raise MediaUnreadable("request too large")
-                with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
-                    code, timed_out = await launch.spawn(request, workdir, errors, python=self._python,
-                                                         module=self._module, wall_s=wall_s, sandbox=self._sandbox)
-                    kind, detail = launch.exit_status(code, timed_out, wall_s, self._cpu)
-                    digest = launch.stderr_digest(errors) if kind == "error" else ""
+                async with self._child_url(source, wall_s) as url:
+                    request = {**payload, "url": url, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
+                               "file_bytes": self._file_bytes, "wall_s": child_wall, "out_dir": workdir}
+                    if self._sandbox is not None:
+                        request["nproc"] = MEDIA_NPROC_LIMIT
+                    if len(json.dumps(request)) > launch.MAX_REQUEST_BYTES:
+                        raise MediaUnreadable("request too large")
+                    with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
+                        code, timed_out = await launch.spawn(request, workdir, errors, python=self._python,
+                                                             module=self._module, wall_s=wall_s, sandbox=self._sandbox)
+                        kind, detail = launch.exit_status(code, timed_out, wall_s, self._cpu)
+                        digest = launch.stderr_digest(errors) if kind == "error" else ""
                 elapsed = time.monotonic() - started
                 if kind in ("timeout", "memory"):
                     logger.warning(f"[DriveMedia] {op}: {kind} ({detail}) after {elapsed:.1f}s")

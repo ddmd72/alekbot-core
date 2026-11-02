@@ -40,7 +40,10 @@ async def test_the_todo_activation_clears_the_state_then_enqueues_the_setup(worl
 
 
 async def test_a_google_tasks_consent_runs_nothing(world):
-    assert (await world.connect("google_tasks")).headers["Location"] == "/cabinet?connected=google_tasks"
+    # Google Tasks is not offered, so the start route refuses it (test_connect_start_offered); a flow already in
+    # flight still completes through the callback, stores its credential, and activates nothing.
+    state = await world.in_flight("google_tasks")
+    assert (await world.callback(state)).headers["Location"] == "/cabinet?connected=google_tasks"
     assert world.events == [] and world.worker_tasks() == []
     assert len(await world.held("google_tasks")) == 1
 

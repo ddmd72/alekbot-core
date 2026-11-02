@@ -45,6 +45,7 @@ class MemoryStore(EphemeralStore):
 class FakeEdge(OAuthProviderPort):
     realm = "google"
     revocation_scope = RevocationScope.GRANT_WIDE
+    identity_scopes = ()
 
     def __init__(self):
         self.subject, self.scopes, self.raises, self.revoked = "sub-1", ("gmail.read", "drive.read"), False, []

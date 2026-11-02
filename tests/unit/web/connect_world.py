@@ -19,13 +19,17 @@ from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvid
 from src.composition.connector_registry import ConnectorRegistry
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.domain.billing import BillingAccount
+from src.domain.user_drive import DriveItem
+from src.services.drive_connection_service import DriveConnectionService
 from src.domain.user import UserProfile
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.session_service import SessionService
 from src.web.oauth_app import create_oauth_blueprint
+from src.composition.drive_connection_setup import build_drive_activation
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import make_task_queue
 
@@ -47,11 +51,25 @@ GRANTED = {
     "google_tasks": "https://www.googleapis.com/auth/tasks openid email",
     "microsoft_todo": "Tasks.ReadWrite offline_access User.Read",
     "microsoft_onedrive": "Files.ReadWrite.AppFolder offline_access User.Read",
+    # the Google edge asks for the drive scope plus the identity scopes and nothing else (GOOGLE_DRIVE_RFC §4.1)
+    "google_drive": "https://www.googleapis.com/auth/drive openid email",
 }
 
 
+class _DriveStandIn:
+    """The drive port of the activation when a world opts into drive connections: the drive identity of a grant is
+    `{kind}:drive-of-{credential_id}`, so a second consent that saves a new credential reads another drive."""
+
+    async def get_root(self, handle: Any) -> DriveItem:
+        return DriveItem(item_id="root", name="", path="", is_folder=True,
+                         drive_identity=f"{handle.kind}:drive-of-{handle.credential_id}")
+
+    async def forget(self, handle: Any) -> None:
+        return None
+
+
 class ConnectWorld:
-    def __init__(self, monkeypatch: Any, *, microsoft: bool = True, wired: bool = True) -> None:
+    def __init__(self, monkeypatch: Any, *, microsoft: bool = True, wired: bool = True, drives: bool = False) -> None:
         self.http = http_boundary_fake.install(monkeypatch)
         self.db = EvalDb()
         self.store = FirestoreCredentialStore(self.db, SimpleNamespace(credentials_collection=CREDS),
@@ -69,6 +87,11 @@ class ConnectWorld:
 
         self.reconnect.consented.side_effect = consented
         self.queue, self.tasks_client = make_task_queue()
+        # drives=True: the real drive activation over the in-memory connection store (MULTI_DRIVE_RFC §4.4, §5.2)
+        self.drive_connections = DriveConnectionService(FakeDriveConnectionRepository(), self.store)
+        drive_activation = build_drive_activation(
+            connections=self.drive_connections, drive=_DriveStandIn(),  # type: ignore[arg-type]
+            task_queue=None) if drives else None
         self.revocation = CredentialRevocationService(self.store, self.registry.edges())
         self.connect_service = build_oauth_connect_service(
             self.db, SimpleNamespace(oauth_flows_collection=FLOWS), connectors=self.registry, credentials=self.store,
@@ -76,7 +99,7 @@ class ConnectWorld:
             activations=build_connect_activations(
                 reconnect=self.reconnect,
                 todo_connector=self.registry.get("microsoft_todo"), task_queue=self.queue,
-                drive_activation=None),
+                drive_activation=drive_activation),
             redirect_uri=REDIRECT)
         self.app = Quart("connect_world")
         self.app.register_blueprint(create_oauth_blueprint(
@@ -125,6 +148,13 @@ class ConnectWorld:
         location = resp.headers.get("Location", "")
         state = parse_qs(urlparse(location).query).get("state", [""])[0]
         return resp, state
+
+    async def in_flight(self, kind: str, user_id: str = ALEX) -> str:
+        """A flow stored by the connect service itself, not through the start route: one already in flight when its
+        kind stopped being offered (the route now refuses to start it). Returns its state."""
+        self._flow_kind = kind
+        url = await self.connect_service.start(user_id, kind)
+        return parse_qs(urlparse(url).query)["state"][0]
 
     async def callback(self, state: str, *, code: str = "code-1", token: Optional[str] = "default") -> Any:
         return await self.get(f"/auth/connect/callback?state={state}&code={code}", token=token)

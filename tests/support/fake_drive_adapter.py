@@ -14,6 +14,9 @@ one cursor for the whole account; its root is the account root (`area_path` is `
 item with no reachable parent (`parent_id` ""): its path is its name, the feed and `get_change` list it with an empty
 parent, `list_children(root)` does not. `set_access` plants an item's `ItemAccess`. `writable=False` declares a drive
 that accepts no changes (`capabilities` only; the fake's writes keep working). The default mode is unchanged.
+`outer_folders` (GOOGLE_DRIVE_RFC G8) answers the parentless folders in account-wide mode, by name, and [] otherwise.
+`plant(..., mime=…)` / `plant_parentless(..., mime=…)` plant the provider's mime, returned on items and changes (G1).
+Paths join names with `join_drive_path`, so a "/" inside a name prints escaped as a real adapter prints it (G4).
 """
 from __future__ import annotations
 
@@ -52,6 +55,7 @@ class _Node:
     media: DriveMediaFacts = field(default_factory=DriveMediaFacts)
     hashed: bool = True
     thumbnail: Optional[bytes] = None
+    mime: str = ""
 
 
 class _Tree:
@@ -85,7 +89,10 @@ class _Tree:
         while cur is not None and cur.parent_id is not None:
             parts.append(cur.name)
             cur = self.nodes.get(cur.parent_id)
-        return "/".join(reversed(parts))
+        path = ""
+        for name in reversed(parts):
+            path = join_drive_path(path, name)
+        return path
 
 
 class FakeDriveAdapter(UserDrivePort):
@@ -111,14 +118,17 @@ class FakeDriveAdapter(UserDrivePort):
 
     def plant(self, handle: DriveHandle, parent_id: str, name: str, data: bytes = b"", *, folder: bool = False,
               media: Optional[DriveMediaFacts] = None, hashed: bool = True,
-              thumbnail: Optional[bytes] = None) -> str:
+              thumbnail: Optional[bytes] = None, mime: str = "") -> str:
         node = self.tree(handle).new(parent_id, name, folder, data)
-        node.media, node.hashed, node.thumbnail = media or DriveMediaFacts(), hashed, thumbnail
+        node.media, node.hashed, node.thumbnail, node.mime = media or DriveMediaFacts(), hashed, thumbnail, mime
         return node.item_id
 
-    def plant_parentless(self, handle: DriveHandle, name: str, data: bytes = b"", *, folder: bool = False) -> str:
+    def plant_parentless(self, handle: DriveHandle, name: str, data: bytes = b"", *, folder: bool = False,
+                         mime: str = "") -> str:
         """A shared item with no reachable parent (account-wide mode): `parent_id` "", outside the root's children."""
-        return self.tree(handle).new("", name, folder, data).item_id
+        node = self.tree(handle).new("", name, folder, data)
+        node.mime = mime
+        return node.item_id
 
     def set_access(self, handle: DriveHandle, item_id: str, access: ItemAccess) -> None:
         """What the provider lets the bot do with the item, returned on its `DriveItem.access`."""
@@ -155,7 +165,7 @@ class FakeDriveAdapter(UserDrivePort):
     def _item(self, tree: _Tree, node: _Node) -> DriveItem:
         return DriveItem(
             item_id=node.item_id, name=node.name, path=tree.path(node), is_folder=node.is_folder,
-            size_bytes=len(node.data), modified_at=_T0, child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
+            size_bytes=len(node.data), mime_type=node.mime, modified_at=_T0, child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
             identity=self._item_identity(tree, node.item_id), drive_identity=f"{self.id_space}:{tree.drive_id}",
             content_version="" if node.is_folder else f"v{node.version}", content_identity=self._content_identity(node),
             media=node.media, access=tree.access.get(node.item_id, ItemAccess()))
@@ -163,7 +173,7 @@ class FakeDriveAdapter(UserDrivePort):
     def _change(self, tree: _Tree, node: _Node) -> DriveChange:
         return DriveChange(
             item_id=node.item_id, parent_id=node.parent_id or "", name=node.name, is_folder=node.is_folder,
-            size_bytes=len(node.data), content_version="" if node.is_folder else f"v{node.version}",
+            size_bytes=len(node.data), mime_type=node.mime, content_version="" if node.is_folder else f"v{node.version}",
             modified_at=_T0, fs_modified_at=_T0, created_at=_T0,
             child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
             identity=self._item_identity(tree, node.item_id), content_identity=self._content_identity(node),
@@ -344,6 +354,13 @@ class FakeDriveAdapter(UserDrivePort):
         return MediaSource(url=f"https://media.example.invalid/{tree.drive_id}/{item_id}")
 
     # -- per connection -------------------------------------------------------------------------------------
+
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        tree = self._enter("outer_folders", handle)
+        if self.feed_scope is not FeedScope.ACCOUNT:
+            return []
+        tops = [n for n in tree.nodes.values() if n.parent_id == "" and n.is_folder and n.item_id not in tree.closed]
+        return [self._item(tree, n) for n in sorted(tops, key=lambda n: n.name.casefold())]
 
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
         self._enter("capabilities", handle)

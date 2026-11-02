@@ -68,11 +68,13 @@ async def test_index_settles_with_the_real_tick():
 
 
 async def test_the_runner_keeps_ticking_until_no_continuation_is_pending():
-    """A slow clock spends each tick's start budget after a few steps, so onboarding spans many ticks."""
+    """A slow clock spends each tick's start budget after a few steps, so onboarding spans many ticks. Its step keeps a
+    tick's first content start (the fifth read, 300 s) inside the routed start window, TICK_DEADLINE_S minus a routed
+    file's worst case (420 s, GOOGLE_DRIVE_RFC G9); at 100 s per read that start falls at 500 s, past it in every tick."""
     elapsed = [0.0]
 
     def slow() -> float:
-        elapsed[0] += 100.0
+        elapsed[0] += 60.0
         return elapsed[0]
 
     repo = InMemoryDriveIndexRepository()

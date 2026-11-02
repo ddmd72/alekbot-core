@@ -57,6 +57,8 @@ src.adapters.gemini_adapter.GeminiAdapter 1  # by-design single instance
 src.adapters.gemini_embedding_adapter.GeminiEmbeddingAdapter 1  # by-design single instance
 src.adapters.gmail_provider_adapter.GmailProviderAdapter 1  # by-design single instance
 src.adapters.google.google_oauth_provider.GoogleOAuthProvider 1  # by-design the Google realm's one OAuth edge, held by the ConnectorRegistry (oauth_connect_setup.py build_oauth_edges, MULTI_DRIVE_RFC 5.1)
+src.adapters.google.google_drive_adapter.GoogleDriveAdapter 1  # by-design the Google Drive kind, built by the ServiceContainer when the Google OAuth client is configured (GOOGLE_DRIVE_RFC GE-31)
+src.adapters.google.google_drive_tokens.GoogleDriveTokenProvider 1  # by-design the Google Drive adapter's own token provider, with its credentials record and token cache (google_drive_adapter.py)
 src.adapters.grok_adapter.GrokAdapter 1  # by-design single instance
 src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
 src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance

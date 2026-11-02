@@ -56,6 +56,11 @@ def resolve_sandbox(user: Optional[str]) -> Optional[Tuple[int, int]]:
     that this process cannot switch to fails the start: never a silent fallback (R3 F3-1)."""
     user = (user or "").strip()
     if not user:
+        if os.environ.get("K_SERVICE"):
+            logger.error(f"[DriveMedia] no parser user ({PARSER_USER_ENV} unset) on Cloud Run: refusing to start "
+                         f"without the sandbox user (G13)")
+            raise RuntimeError(f"{PARSER_USER_ENV} is unset on Cloud Run: media children would run with the "
+                               f"service's own privileges")
         logger.warning(f"[DriveMedia] no parser user ({PARSER_USER_ENV} unset): media children run as this process's "
                        f"own user, with its privileges — local development only; the indexer image sets it")
         return None

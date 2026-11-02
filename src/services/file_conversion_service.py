@@ -27,12 +27,14 @@ import aiofiles
 from ..domain import drive_ref
 from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
+from ..domain.drive_index_policy import mime_decides_kind, mime_kind
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
 from ..domain.user_drive import (
     MAX_DRIVE_DOWNLOAD_BYTES,
+    DriveFileTooLarge,
     DriveFileTooLargeError,
     DriveItem,
     DrivePathError,
@@ -45,6 +47,7 @@ from ..domain.workspace import (
     parse_workspace_path,
     workspace_kind,
 )
+from ..domain.text_data_uris import MAX_TEXT_EXPORT_BYTES
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
     MAX_FILE_BYTES,
@@ -61,6 +64,17 @@ if TYPE_CHECKING:
     from .drive_connection_service import DriveConnectionService
     from .skill_file_resolver import SkillFileResolver
     from .user_drive_service import UserDriveService
+
+
+_KIND_SUFFIX = {"docx": ".docx", "xlsx": ".xlsx", "pptx": ".pptx", "pdf": ".pdf", "markdown": ".md",
+                "text": ".txt", "csv": ".csv"}
+
+
+def _too_large_line(path: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES) -> str:
+    """The size line, naming the limit that applied (the export cap for a text file, MAX_FILE_BYTES otherwise)."""
+    return (f"[System: '{path}' is {format_size(size_bytes)}; files above "
+            f"{format_size(limit_bytes)} cannot be read as text yet. Long audio and video "
+            f"processing is not available yet.]")
 
 
 def _is_delivered_key(ref: str) -> bool:
@@ -167,17 +181,27 @@ class FileConversionService:
         if item.is_folder:
             return (f"[System: '{item.path or '/'}' is a folder, not a file. "
                     f"List the folder to see what is inside.]")
-        if item.size_bytes > MAX_FILE_BYTES:
-            return (f"[System: '{item.path}' is {format_size(item.size_bytes)}; files above "
-                    f"{format_size(MAX_FILE_BYTES)} cannot be read as text yet. Long audio and video "
-                    f"processing is not available yet.]")
-        data = await self._require_drive().download(handle, item.item_id)
         mime_type = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
+        is_text = mime_type.startswith("text/")
+        if not is_text and item.size_bytes > MAX_FILE_BYTES:
+            return _too_large_line(item.path, item.size_bytes)
+        ext = os.path.splitext(item.name)[1]
+        if item.mime_type and (not ext or mime_decides_kind(item.name, item.mime_type)):
+            ext = _KIND_SUFFIX.get(mime_kind(item.mime_type) or "") or ext
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin")
         try:
             os.close(tmp_fd)
-            async with aiofiles.open(tmp_path, "wb") as f:
-                await f.write(data)
+            if is_text:
+                # a text file's size is not the text it holds once inline images are dropped (G1b): stream it up to
+                # the export cap and let the conversion apply the 5 MB cap to what is left
+                try:
+                    await self._require_drive().download_to_file(handle, item.item_id, tmp_path, MAX_TEXT_EXPORT_BYTES)
+                except DriveFileTooLarge:
+                    return _too_large_line(item.path, max(item.size_bytes, MAX_TEXT_EXPORT_BYTES), MAX_TEXT_EXPORT_BYTES)
+            else:
+                data = await self._require_drive().download(handle, item.item_id)
+                async with aiofiles.open(tmp_path, "wb") as f:
+                    await f.write(data)
             return await convert_file_to_text(tmp_path, item.path, mime_type, audio_service=self._audio_service)
         finally:
             try:

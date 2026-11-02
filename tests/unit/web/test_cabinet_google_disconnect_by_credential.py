@@ -36,6 +36,7 @@ class GoogleEdge(OAuthProviderPort):
 
     realm = property(lambda self: "google")
     revocation_scope = property(lambda self: RevocationScope.GRANT_WIDE)
+    identity_scopes = property(lambda self: ())
 
     def authorization_url(self, flow, spec, redirect_uri, *, state):
         raise NotImplementedError

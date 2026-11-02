@@ -87,7 +87,7 @@ class World:
         return sorted(c.kind for c in await self.store.list_for_user(user_id))
 
     def revoked(self):
-        return [r.params["token"] for r in self.http.requests_to("POST", REVOKE)]
+        return [r.data["token"] for r in self.http.requests_to("POST", REVOKE)]
 
 
 @pytest.fixture
@@ -105,6 +105,7 @@ async def test_the_connectors_are_the_offered_kinds_with_integration_and_label(w
         {"kind": "gmail", "integration": "mail", "label": "Gmail"},
         {"kind": "microsoft_todo", "integration": "tasks", "label": "Microsoft To Do"},
         {"kind": "microsoft_onedrive", "integration": "drive", "label": "OneDrive"},
+        {"kind": "google_drive", "integration": "drive", "label": "Google Drive"},
     ]
 
 
@@ -112,7 +113,7 @@ async def test_a_realm_without_an_edge_offers_no_connector(monkeypatch):
     world = World(monkeypatch, microsoft=False)
     async with world.app().test_client() as client:
         body = await (await client.get("/api/connectors", headers=AUTH)).get_json()
-    assert [c["kind"] for c in body["connectors"]] == ["gmail"]
+    assert [c["kind"] for c in body["connectors"]] == ["gmail", "google_drive"]   # no Microsoft kind
 
 
 async def test_without_the_registry_there_are_no_connectors(world):
@@ -141,14 +142,14 @@ async def test_a_gmail_disconnect_marks_first_then_removes_and_keeps_the_grant_a
 
 
 async def test_the_last_credential_of_an_account_is_revoked_at_google(world):
-    await world.save(ALEX, "gmail", access_token="at-gmail")
-    await world.save(ALEX, "google_tasks", access_token="at-tasks")
+    await world.save(ALEX, "gmail", access_token="at-gmail", refresh_token="rt-gmail")
+    await world.save(ALEX, "google_tasks", access_token="at-tasks", refresh_token="rt-tasks")
     async with world.app().test_client() as client:
         await client.delete("/api/gmail/disconnect", headers=AUTH)
         resp = await client.delete("/api/tasks/disconnect", headers=AUTH)
     assert resp.status_code == 200
     assert await world.kinds(ALEX) == []
-    assert world.revoked() == ["at-tasks"]
+    assert world.revoked() == ["rt-tasks"]   # GOOGLE_DRIVE_RFC GE-28: the last credential's refresh token
 
 
 async def test_another_users_credential_of_the_same_account_keeps_the_grant(world):
@@ -161,10 +162,10 @@ async def test_another_users_credential_of_the_same_account_keeps_the_grant(worl
 
 
 async def test_a_lone_gmail_credential_is_revoked_on_disconnect(world):
-    await world.save(ALEX, "gmail", access_token="at-gmail")
+    await world.save(ALEX, "gmail", access_token="at-gmail", refresh_token="rt-gmail")
     async with world.app().test_client() as client:
         await client.delete("/api/gmail/disconnect", headers=AUTH)
-    assert world.revoked() == ["at-gmail"]
+    assert world.revoked() == ["rt-gmail"]   # GOOGLE_DRIVE_RFC GE-28: the refresh token ends the grant
 
 
 async def test_without_the_revocation_service_a_disconnect_is_501_and_removes_nothing(monkeypatch):

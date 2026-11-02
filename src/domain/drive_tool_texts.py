@@ -30,7 +30,7 @@ REPORT_TOOL = "report_to_orchestrator"
 FIND_PASSAGES = "find_passages"
 READ_PASSAGES = "read_passages"
 
-_FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref"
+_FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref; copy a path as printed (a '/' inside a name prints as '∕')"
 
 QUERY = (
     "REQUIRED unless the request is filter-only. The subject in the user's words (any language): the words of a file "

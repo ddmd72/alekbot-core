@@ -22,6 +22,11 @@ def test_agent_accepts_drive_kwargs():
     assert {"drive_service", "localization", "language_service"} <= set(params)
 
 
+# The fixture carries the Google pair and no Microsoft pair; with no drive kind's client configured no drive kind is
+# built (GOOGLE_DRIVE_RFC GE-25, GE-31: the Google pair alone builds the drive stack).
+NO_DRIVE_CLIENT = {"GOOGLE_OAUTH_CLIENT_ID": "", "GOOGLE_OAUTH_CLIENT_SECRET": ""}
+
+
 def _container(monkeypatch, **extra):
     monkeypatch.setenv("APP_ENV", "test")
     config = {
@@ -38,8 +43,8 @@ def _container(monkeypatch, **extra):
 
 
 class TestContainerDriveWiring:
-    def test_absent_without_microsoft_app_registration(self, monkeypatch):
-        c = _container(monkeypatch)
+    def test_absent_without_any_drive_client(self, monkeypatch):
+        c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.user_drive is None and c.user_drive_service is None
         assert c.agent_services()["user_drive_service"] is None
 
@@ -53,7 +58,7 @@ class TestContainerDriveWiring:
         assert c.agent_services()["user_drive_service"] is c.user_drive_service
 
     def test_both_or_neither(self, monkeypatch):
-        absent = _container(monkeypatch, GCS_MEDIA_BUCKET="bucket")
+        absent = _container(monkeypatch, GCS_MEDIA_BUCKET="bucket", **NO_DRIVE_CLIENT)
         assert absent.file_conversion_service._drive is None and absent.user_drive_service is None
 
 

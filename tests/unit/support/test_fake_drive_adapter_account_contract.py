@@ -2,9 +2,12 @@
 `FeedScope.ACCOUNT`) and a fake that declares `writable=False` pass the whole contract suite (each declaring its values
 for the capabilities case), and the account-wide mode's own behaviour: a parentless shared item and a planted
 `ItemAccess`."""
+from typing import Optional
+
 import pytest
 
 from src.domain.drive_feed_scope import FeedScope
+from src.domain.drive_handle import DriveHandle
 from src.domain.drive_item_access import ItemAccess
 from tests.contracts.user_drive_contract import UserDriveContract
 from tests.support.drive_handles import drive_handle
@@ -22,6 +25,11 @@ class _AccountWorld(_FakeWorld):
         self.other = drive_handle("usr-1", "conn-2", "cred-2", "fake_b")
         self.drive_writable = writable
         self.feed_scope = feed_scope
+
+    async def plant_outer_folder(self, handle: DriveHandle, name: str) -> Optional[str]:
+        if self.feed_scope is not FeedScope.ACCOUNT:
+            return None
+        return self.fake.plant_parentless(handle, name, folder=True)
 
 
 @pytest.fixture(params=["account", "not-writable"])

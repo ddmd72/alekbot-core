@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+from src.domain.drive_media_source import MediaSource
 from src.adapters.drive_parser import media
 from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG
@@ -131,7 +132,7 @@ async def test_url_not_in_parent_logs(tmp_path, monkeypatch, caplog):
     extractor = SubprocessMediaExtractor(temp_root=str(tmp_path), ca_file=CA)
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(Exception):                        # nothing listens there: MediaUnreadable
-            await extractor.probe("https://localhost:1/path?tempauth=SECRET-TOKEN-123")
+            await extractor.probe(MediaSource(url="https://localhost:1/path?tempauth=SECRET-TOKEN-123"))
     assert spawned and all("SECRET-TOKEN-123" not in " ".join(args) for args in spawned)
     assert "[DriveMedia]" in caplog.text                      # the capture works: the run did log
     assert "SECRET-TOKEN-123" not in caplog.text and "tempauth" not in caplog.text

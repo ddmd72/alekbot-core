@@ -5,10 +5,11 @@ inherits every case. The cases use the port for everything the port can do; the 
 side must do by itself (plant a typed facet, close an item to id reads, expire a cursor, look into the recycle bin,
 say whether the adapter still holds state for a connection).
 
-Cases: identities in the adapter's `id_space`; content version and content identity; the three conflict modes;
-404 is not deletion; resync; recoverable delete; typed media facts only (`alias_of` included); every name of the portable
-set accepted; a `MediaSource` the sandbox may receive (no headers) or bytes that stream; capabilities (T-7: one case per
-value the world declares: the path limit, `drive_writable`, `feed_scope`); the path limit; two handles of one adapter share no cache, and `forget` drops one's own.
+Cases: identities in the adapter's `id_space` (an item's nested in its drive's, or one per item across accounts);
+content version and content identity; the three conflict modes; 404 is not deletion; resync; recoverable delete; typed
+media facts only (`alias_of` included); every name of the portable set accepted; a `MediaSource` the sandbox may receive (no headers) or bytes that stream; capabilities (T-7: one case per
+value the world declares: the path limit, `drive_writable`, `feed_scope`); the path limit; two handles of one adapter share no cache, and `forget` drops one's own;
+`outer_folders` answers the parentless tops a world plants, or [] for a drive with one area (GOOGLE_DRIVE_RFC G8).
 A drive that is read-only by design (the eval fixture) declares `writable = False` and skips the cases that write beyond
 `upload`; a drive that cannot isolate connections declares `isolates_connections = False`.
 """
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import pytest
 
@@ -48,6 +49,10 @@ class DriveWorld(ABC):
     enforces_path_limit: bool = True
     drive_writable: bool = True              # what `capabilities().writable` declares (not `writable` above)
     feed_scope: FeedScope = FeedScope.AREA
+    # True: an item identity nests in its drive identity (OneDrive `{id_space}:{driveId}:{itemId}`, MULTI_DRIVE_RFC §7.2).
+    # False: one identity per item whatever account sees it (Google `{id_space}:{fileId}`, GOOGLE_DRIVE_RFC GE-2); such a
+    # world implements `share_with`.
+    item_identity_in_drive: bool = True
 
     @abstractmethod
     async def plant_file_without_hash(self, handle: DriveHandle, parent_id: str, name: str) -> str: ...
@@ -73,6 +78,14 @@ class DriveWorld(ABC):
     @abstractmethod
     def holds_state_for(self, handle: DriveHandle) -> bool:
         """True while the adapter holds any cache, lock or token for the connection."""
+
+    async def plant_outer_folder(self, handle: DriveHandle, name: str) -> Optional[str]:
+        """A folder no chain from the root reaches; None: this drive has none."""
+        return None
+
+    async def share_with(self, handle: DriveHandle, item_id: str, other: DriveHandle) -> None:
+        """Make `handle`'s item readable by id through `other` (the provider shares it to the other account)."""
+        raise NotImplementedError("a world with item_identity_in_drive=False shares an item to its other account")
 
 
 async def drain(port: UserDrivePort, handle: DriveHandle, cursor: "str | None" = None) -> Tuple[List[DriveChange], str]:
@@ -104,12 +117,23 @@ class UserDriveContract:
         item = await port.upload(h, root.item_id, "a.txt", b"hello", "text/plain")
         prefix = world.id_space + ":"
         assert root.is_folder and root.path == ""
-        assert item.drive_identity.startswith(prefix) and item.identity.startswith(item.drive_identity + ":")
+        assert item.drive_identity.startswith(prefix) and item.identity.startswith(prefix)
         assert item.item_id in item.identity
+        # a drive identity never equals an item identity, the root's included (GOOGLE_DRIVE_RFC GE-1)
+        assert root.drive_identity == item.drive_identity and root.identity != root.drive_identity
+        if world.item_identity_in_drive:
+            assert item.identity.startswith(item.drive_identity + ":")
+        else:
+            # one identity for an item whatever connection reads it: one note across two accounts (GE-2, parent §7.2)
+            await world.share_with(h, item.item_id, world.other)
+            other_drive = (await port.get_root(world.other)).drive_identity
+            seen = await port.get_item(world.other, item.item_id)
+            assert other_drive.startswith(prefix) and other_drive != item.drive_identity
+            assert seen.identity == item.identity and seen.drive_identity == other_drive
         changes, _ = await drain(port, h)
         listed = [c for c in changes if c.item_id == item.item_id]
         assert listed and listed[0].identity == item.identity
-        assert all(c.identity.startswith(prefix) for c in changes)
+        assert all(c.identity.startswith(prefix) and c.identity != item.drive_identity for c in changes)
         assert len({c.identity for c in changes}) == len(changes)
         round_ = await port.get_changes(h, None)
         assert round_.drive_identity == item.drive_identity
@@ -367,3 +391,16 @@ class UserDriveContract:
         await port.forget(a)                             # twice is harmless
         assert (await port.get_root(a)).is_folder        # the drive is still there; the next call reads afresh
         assert world.holds_state_for(a)
+
+    async def test_outer_folders_are_parentless_tops_or_empty(self, world: DriveWorld) -> None:
+        port, h = world.port, world.handle
+        planted = await world.plant_outer_folder(h, "Acme Hamburg")
+        if planted is None:
+            assert await port.outer_folders(h) == []
+            return
+        tops = [f for f in await port.outer_folders(h) if f.item_id == planted]
+        assert len(tops) == 1
+        assert tops[0].is_folder and tops[0].name == tops[0].path == "Acme Hamburg"
+        assert planted not in {c.item_id for c in await port.list_children(h, await _root(world))}
+        if world.isolates_connections:
+            assert planted not in {f.item_id for f in await port.outer_folders(world.other)}

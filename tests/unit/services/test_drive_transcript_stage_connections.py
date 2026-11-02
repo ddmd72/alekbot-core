@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
+from src.adapters.drive_parser import media_launch as launch
+from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from src.domain.drive_index_params import TRANSCRIPT_ORPHAN_TTL
 from src.domain.drive_transcript import RETAINED_DISCONNECT, Segment, StitchedTranscript, StoredTranscript
 from src.services.drive_transcript_stage import DriveTranscriptStage
@@ -17,11 +19,11 @@ T = StitchedTranscript((Segment(0.0, None, "x"),), ("uk",), 1, 60.0)
 LONG_AGO = NOW - TRANSCRIPT_ORPHAN_TTL - timedelta(days=1)
 
 
-def _env(tmp_path):
+def _env(tmp_path, media=None):
     clock = Clock()
     from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
     repo = InMemoryDriveIndexRepository()
-    media, batch, runner, drive = FakeMedia(clock), FakeBatch(clock), FakeRunner(), FakeDrive()
+    media, batch, runner, drive = media or FakeMedia(clock), FakeBatch(clock), FakeRunner(), FakeDrive()
     host = FakeHost(repo, clock)
     stage = DriveTranscriptStage(repo, drive, media, batch, runner, clock=clock, monotonic=clock.monotonic,
                                  monthly_cap_usd=20.0, temp_root=str(tmp_path))
@@ -53,17 +55,29 @@ async def test_a_head_another_connections_record_carries_is_kept(tmp_path):
     assert summary["transcript_orphans_kept"] == 1 and (USER, "shared") in env.repo.transcripts
 
 
-async def test_the_sandbox_never_receives_a_source_that_needs_headers(tmp_path):
-    """E24: a media source with request headers would carry a provider credential into the network-capable sandbox:
-    the file is charged an attempt and nothing reaches the media extractor."""
-    env = _env(tmp_path)
-    env.media.recordings["a"] = Recording(600)
+async def test_the_sandbox_never_receives_a_source_that_needs_headers(tmp_path, monkeypatch):
+    """E24: a media source with request headers would carry a provider credential into the network-capable sandbox.
+    The stage hands the source to the media port, whose default child-URL opener refuses it before any child runs (E37
+    moved from the stage to the extractor, GOOGLE_DRIVE_RFC G2, design §1.6): the file is charged an attempt and no
+    sandbox child is spawned."""
+    spawned = []
+
+    async def spawn(request, *args, **kwargs):
+        spawned.append(request)
+        raise AssertionError("a media child was spawned for a source that needs headers")
+
+    monkeypatch.setattr(launch, "spawn", spawn)
+    work = tmp_path / "media-work"
+    work.mkdir()
+    extractor = SubprocessMediaExtractor(child_module="tests.unit.adapters.drive_media_child_stub",
+                                         temp_root=str(work), ca_file="/x/ca.pem")
+    env = _env(tmp_path, media=extractor)
     env.drive.headers = {"Authorization": "Bearer secret"}
     rec = record("a", transcript_state="ready")
     await env.repo.upsert_records([rec])
     summary = await env.stage.extract_step(HANDLE, env.host, stop_at=env.clock.mono + 600.0)
     assert summary.get("transcript_attempts_charged") == 1
-    assert env.media.probes == [] and env.media.runs == []
+    assert spawned == [] and list(work.iterdir()) == []
     assert env.repo.transcript_jobs.get((USER, "a")) is None or not env.repo.transcript_jobs[(USER, "a")].windows
 
 

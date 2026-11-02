@@ -19,8 +19,11 @@ ROUTED_WORST = PARSED_WORST + MODEL_FILE_BUDGET_S
 
 
 def test_the_configured_budgets_fit_the_deadline():
-    """§24.3: a routed file started at the very end of the start budget still ends before the deadline."""
-    assert TICK_START_BUDGET.total_seconds() + ROUTED_WORST < TICK_DEADLINE_S
+    """§24.3 with GOOGLE_DRIVE_RFC G9: a parsed file started at the very end of the start budget still ends before the
+    deadline; a routed file's start window (TICK_DEADLINE_S - ROUTED_WORST, 420 s) is not empty and ends inside the
+    start budget (480 s)."""
+    assert TICK_START_BUDGET.total_seconds() + PARSED_WORST < TICK_DEADLINE_S
+    assert 0 < TICK_DEADLINE_S - ROUTED_WORST < TICK_START_BUDGET.total_seconds()
 
 
 async def slow_first_file(w, seconds):

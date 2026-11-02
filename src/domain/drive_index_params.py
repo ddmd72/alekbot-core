@@ -48,7 +48,7 @@ WRAPPER_TAG_GAP_MAX = 16                    # spaces / invisible characters a wr
 # -- content (Slice 2+4, §15, §24.13) ------------------------------------------------------------------------------
 QUIET = timedelta(minutes=10)               # S0b: Word for the web saves every 1.2-3.3 min while typing (§7.3)
 MAX_DEFER = timedelta(minutes=60)
-DOWNLOAD_TIMEOUT_S = 120
+DOWNLOAD_TIMEOUT_S = 300                    # G9: one content transfer of any provider (a large Docs export can take minutes)
 EXTRACT_WALL_TIMEOUT_S = 120                # S1 may revise
 EMBED_FILE_BUDGET_S = 300                   # 1 000 chunks, 4 in flight: 250 rounds, so 1.2 s per call fits
 MODEL_FILE_BUDGET_S = 600                   # §24.3: windows done by then are indexed, the rest `truncated`

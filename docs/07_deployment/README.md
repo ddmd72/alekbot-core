@@ -25,7 +25,7 @@ The sandbox render service has its own image (`Dockerfile.sandbox`) and is built
 | `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
-| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY` | `logs-indexer`, `fetch-logs-indexer` |
+| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 
 `cloudbuild-dev.yaml` deploys the main service first (pull, build, push, deploy, public-invoker binding; it depends on
@@ -146,6 +146,22 @@ relay; only the main service needs credentials, to mint SFU sessions.
 1. Azure registration `Alek-bot`: add the delegated permission `Files.ReadWrite.AppFolder`.
 2. The redirect is the shared `OAUTH_CONNECT_REDIRECT_URI` (below); there is no OneDrive-specific key.
 3. After the deploy, connect the drive from the Cabinet (Integrations, "Connect drive").
+
+**Google Drive (user drive, stage 3)** (`docs/10_rfcs/GOOGLE_DRIVE_RFC.md` §8). The Google OAuth client is the one the
+main service already mounts (`GOOGLE_OAUTH_CLIENT_ID` / `_SECRET`); the indexer mounts the same two secrets to refresh
+Google Drive tokens. Both services build the Google adapter only when both values are present; without them the kind is
+simply not registered and every other kind runs. The consent screen carries the Drive scope and the client the shared
+redirect (below).
+1. The indexer runs as its own service account, so it needs a per-secret read grant (the deploy fails until it can read
+   both secrets):
+   ```bash
+   for s in GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET; do
+     gcloud secrets add-iam-policy-binding "$s" --project=<PROJECT_ID> \
+       --member="serviceAccount:<INDEXER_SA_EMAIL>" --role=roles/secretmanager.secretAccessor
+   done
+   ```
+2. `DRIVE_PARSER_USER` must be set on the indexer: it now holds full-drive tokens in memory, so a missing parser user
+   fails the start on Cloud Run (G13) instead of running the parser children as the indexer's own user.
 
 **Integration connect redirect (`OAUTH_CONNECT_REDIRECT_URI`).** One callback serves every integration connect, Google and
 Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2, E4). Deployed, the key

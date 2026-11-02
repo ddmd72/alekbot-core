@@ -49,6 +49,7 @@ class Flows(EphemeralStore):
 class Edge(OAuthProviderPort):
     realm = "fake"
     revocation_scope = RevocationScope.GRANT_WIDE
+    identity_scopes = ()
 
     def __init__(self):
         self.revoked = []

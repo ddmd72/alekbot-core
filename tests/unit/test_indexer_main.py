@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import indexer_main
+from src.adapters import subprocess_content_extractor
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.composition import drive_indexing_setup
 from src.web import indexer_worker_app
@@ -83,6 +84,11 @@ async def test_gate_pins_the_audience_to_this_service(wired, monkeypatch):
 async def test_missing_service_account_on_cloud_run_fails_closed(wired, monkeypatch):
     monkeypatch.delenv("SERVICE_ACCOUNT_EMAIL")
     monkeypatch.setenv("K_SERVICE", "indexer")
+    # On Cloud Run the start needs the parser user (GOOGLE_DRIVE_RFC G13, its own resolver tests); as the image sets it,
+    # this revision has one, so the start reaches the /worker gate under test. No uid switch happens in the test.
+    monkeypatch.setenv(subprocess_content_extractor.PARSER_USER_ENV, "drive-parser")
+    monkeypatch.setattr(subprocess_content_extractor, "_resolve_sandbox",
+                        lambda user: (10001, 10001) if user == "drive-parser" else pytest.fail(f"parser user {user!r}"))
     app = indexer_main.build_app()
     resp = await app.test_client().post("/worker", json={"task_type": "drive_sync", "user_id": "u"})
     assert resp.status_code == 401

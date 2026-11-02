@@ -47,7 +47,7 @@ from .drive_tier_result import TieredResult
 from . import drive_ref
 from .drive_connection import DriveConnection
 from .drive_connection_status import DriveConnectionStatus
-from .user_drive import DriveItem
+from .user_drive import DriveItem, path_segment
 
 STATUS_OK = "ok"
 STATUS_DISABLED = "disabled"
@@ -420,7 +420,7 @@ def resolve_chain(rec: DriveIndexRecord, lookup: Callable[[str], Optional[DriveI
             return None
         seen.add(parent_id)
         ancestors.append(parent_id)
-        names.append(parent.name)
+        names.append(path_segment(parent.name))
         parent_id = parent.parent_id
     return "/".join(reversed(names)), tuple(ancestors)
 

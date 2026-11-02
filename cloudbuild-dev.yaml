@@ -122,9 +122,10 @@ steps:
   # Runs as its own service account (--service-account below). The tasks' OIDC identity is DRIVE_INVOKER_SA_EMAIL when that secret
   #   exists, else SERVICE_ACCOUNT_EMAIL (GcpTaskQueue, drive_indexing_setup); /worker accepts the same
   #   identity plus the optional OIDC_TRANSITION_SA_EMAILS list (src/web/indexer_worker_app.py).
-  # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
+  # Twelve secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
   #   Flash fallback, §24.2 D7 rev 3.17),
   #   MICROSOFT_TODO_CLIENT_ID/SECRET (drive token refresh; same app registration as Step 1),
+  #   GOOGLE_OAUTH_CLIENT_ID/SECRET (Google Drive token refresh; optional at start, the kind is skipped without them),
   #   SERVICE_ACCOUNT_EMAIL (the /worker gate + the identity of the tasks it enqueues; superseded per role by
   #   DRIVE_INVOKER_SA_EMAIL once that secret is mounted),
   #   ANTHROPIC_API_KEY / OPENAI_API_KEY (the drive reader and triage agents, Slice 2+4 §24.2: secrets, never
@@ -166,7 +167,7 @@ steps:
       - "--max-instances=1"
       - "--timeout=1800"
       - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_UPGRADE_PASS=$_DRIVE_UPGRADE_PASS,DRIVE_TRANSCRIBE_ENABLED=$_DRIVE_TRANSCRIBE_ENABLED,DRIVE_TRANSCRIBE_USD_CAP=$_DRIVE_TRANSCRIBE_USD_CAP,DRIVE_NOTES_ENABLED=$_DRIVE_NOTES_ENABLED"
-      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest,KMS_CRYPTO_KEY=KMS_CRYPTO_KEY:latest"
+      - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest,KMS_CRYPTO_KEY=KMS_CRYPTO_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest"
       # RFC Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
       # internal (same project, default run.app URL). No internet request can reach the service or
       # take its single request slot (concurrency 1, max 1 instance) from a dispatch.

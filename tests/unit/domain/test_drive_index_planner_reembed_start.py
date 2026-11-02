@@ -14,12 +14,13 @@ def test_a_reembed_counts_both_embedding_waits():
     assert not can_start_reembed(TICK_DEADLINE_S - REEMBED_WORST)
 
 
-def test_a_start_where_a_parsed_file_fits_but_a_reembed_does_not():
-    """A parsed file's worst case here is shorter than the re-embed's two waits."""
+def test_a_start_where_a_reembed_fits_but_a_parsed_file_does_not():
+    """A parsed file's worst case (a 300 s transfer, GOOGLE_DRIVE_RFC G9) is longer than the re-embed's two waits,
+    which download nothing: each gate keeps its own bound."""
     parsed_worst = DOWNLOAD_TIMEOUT_S + EXTRACT_WALL_TIMEOUT_S + EMBED_FILE_BUDGET_S + FILE_START_MARGIN_S
-    at = TICK_DEADLINE_S - parsed_worst - 0.5
-    assert REEMBED_WORST > parsed_worst
-    assert can_start_file(at, routed=False) and not can_start_reembed(at)
+    at = TICK_DEADLINE_S - REEMBED_WORST - 0.5
+    assert parsed_worst > REEMBED_WORST
+    assert can_start_reembed(at) and not can_start_file(at, routed=False)
 
 
 def test_the_budget_gate_uses_the_reembed_bound():

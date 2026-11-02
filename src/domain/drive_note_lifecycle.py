@@ -34,6 +34,7 @@ from .drive_index import DriveChange, DriveIndexRecord, DriveSyncState
 from .drive_note import DriveNote, NoteSnapshot, NoteState, is_drive_note, on_connection
 from .drive_note_check import NoteCheck
 from .drive_note_merge import NOTE_AUDIT_EVERY, NOTE_AUDIT_SKIP_DAYS
+from .user_drive import path_segment
 
 # The sync state is one Firestore document (1 MiB): past this many stored checks the newest are dropped, logged; the
 # daily audit (§7.4) is the backstop, as for a check lost with a failed save (§3.4)
@@ -134,7 +135,7 @@ def audit_candidates(notes: Iterable[DriveNote], *, ref_tag: str, now: datetime,
 
 def chain_path(name: str, names_up: Sequence[str]) -> str:
     """The path relative to the area root from the item's name and its ancestors' names, nearest first."""
-    return "/".join([*reversed(names_up), name])
+    return "/".join(path_segment(n) for n in [*reversed(names_up), name])
 
 
 def refreshed_snapshot(old: Optional[NoteSnapshot], change: DriveChange, *, path: Optional[str],

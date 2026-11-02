@@ -16,29 +16,46 @@ routes and `GoogleOAuthService` are gone:
   slice 1b (E15, E27): another account's consent adds a second credential and keeps the first; for every kind the
   same account's consent keeps its credential_id.
 Examples from the invented cast only."""
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 
 from src.domain.integration import Integration
 from tests.support.firestore_eval import eval_transactions
 from tests.unit.web.connect_world import ALEX, CLARA, GOOGLE_TOKEN, GRANTED, GRAPH_ME, MS_TOKEN, USERINFO, ConnectWorld
 
-KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
-GOOGLE_KINDS = ("gmail", "google_tasks")
+KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive", "google_drive")
+GOOGLE_KINDS = ("gmail", "google_tasks", "google_drive")
 MICROSOFT_KINDS = ("microsoft_todo", "microsoft_onedrive")
 SINGLE_KINDS = ("gmail", "google_tasks", "microsoft_todo")    # `multiple` False; the drive is `multiple` since 1b (E27)
-REALM = {"gmail": "google", "google_tasks": "google", "microsoft_todo": "microsoft", "microsoft_onedrive": "microsoft"}
+REALM = {"gmail": "google", "google_tasks": "google", "microsoft_todo": "microsoft", "microsoft_onedrive": "microsoft",
+         "google_drive": "google"}
 INTEGRATION = {"gmail": Integration.MAIL, "google_tasks": Integration.TASKS, "microsoft_todo": Integration.TASKS,
-               "microsoft_onedrive": Integration.DRIVE}
+               "microsoft_onedrive": Integration.DRIVE,
+               "google_drive": Integration.DRIVE}
 TOKEN = {"google": GOOGLE_TOKEN, "microsoft": MS_TOKEN}
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 REVOKE = "https://oauth2.googleapis.com/revoke"
+
+
+class _CallbackWorld(ConnectWorld):
+    """This file's subject is the callback, kind by kind. A kind that is not offered (frozen Google Tasks) is refused
+    at the start route (`test_connect_start_offered.py`), but a flow of it already in flight still completes through
+    the callback, so here its flow is stored by the connect service itself for the session's user."""
+
+    async def start(self, kind, *, query="", token="default"):
+        if self.registry.get(kind).offered:
+            return await super().start(kind, query=query, token=token)
+        user_id = ALEX if token == "default" else self.sessions.verify_access_token(token)["sub"]
+        return None, await self.in_flight(kind, user_id)
 
 
 @pytest.fixture
 def world(monkeypatch):
     with eval_transactions():
-        w = ConnectWorld(monkeypatch)
+        w = _CallbackWorld(monkeypatch)
         w.http.route("POST", REVOKE, body={})
         yield w
 
@@ -133,6 +150,10 @@ async def test_the_granted_scopes_are_stored(world, kind):
     ("gmail", f"openid email {TASKS_SCOPE}"),
     ("microsoft_todo", "offline_access User.Read"),
     ("microsoft_onedrive", "Tasks.ReadWrite offline_access User.Read"),
+    ("google_drive", "openid email"),                          # the Drive box unticked: identity scopes only
+    ("google_drive", f"openid email {GMAIL_SCOPE}"),          # another service's scope does not count
+    ("google_drive", f"openid email {TASKS_SCOPE}"),
+    ("gmail", f"openid email {DRIVE_SCOPE}"),
 ])
 async def test_a_grant_without_the_kinds_own_scope_stores_nothing(world, kind, granted):
     world.granted = granted
@@ -225,3 +246,92 @@ async def test_the_same_accounts_consent_keeps_the_credential_id(world, kind):
     await world.connect(kind)
     (again,) = await world.store.list_for_user(ALEX)
     assert again.credential_id == first.credential_id
+
+
+async def test_n6_a_reconnect_without_a_refresh_token_keeps_the_stored_one(world):
+    await world.connect("gmail")
+    [first] = await world.held("gmail")
+    assert first.refresh_token == "rt-gmail"
+    world.http.route("POST", GOOGLE_TOKEN, body={"access_token": "at-2", "expires_in": 3600, "scope": GRANTED["gmail"]})
+    await world.connect("gmail")
+    [second] = await world.held("gmail")
+    assert second.credential_id == first.credential_id
+    assert second.access_token == "at-2" and second.refresh_token == "rt-gmail"
+
+
+# ------------------------------------------------------------------------------------------- google_drive and drive activation
+
+DRIVE_KINDS = ("microsoft_onedrive", "google_drive")
+
+
+@pytest.fixture
+def drive_world(monkeypatch):
+    """The callback world with the real drive activation (GOOGLE_DRIVE_RFC §4, MULTI_DRIVE_RFC §4.4, §5.2)."""
+    with eval_transactions():
+        w = _CallbackWorld(monkeypatch, drives=True)
+        w.http.route("POST", REVOKE, body={})
+        yield w
+
+
+async def _connections(w, kind, user_id=ALEX):
+    return [c for c in await w.drive_connections.list_for_user(user_id) if c.kind == kind]
+
+
+def test_google_drive_is_an_offered_google_drive_kind_asking_for_the_drive_scope(world):
+    spec = world.registry.get("google_drive")
+    assert (spec.realm, spec.integration, spec.multiple, spec.offered) == ("google", Integration.DRIVE, True, True)
+    assert spec.required_scopes == (DRIVE_SCOPE,)
+
+
+async def test_the_google_drive_consent_url_asks_for_drive_and_identity_scopes_only(world):
+    resp, _ = await world.start("google_drive")
+    scope = parse_qs(urlparse(resp.headers["Location"]).query)["scope"][0].split()
+    assert sorted(scope) == sorted(["openid", "email", DRIVE_SCOPE])
+
+
+@pytest.mark.parametrize("kind", DRIVE_KINDS)
+async def test_a_drive_consent_creates_a_read_only_connection_of_its_kind(drive_world, kind):
+    resp = await drive_world.connect(kind)
+    assert resp.headers["Location"] == _connected(kind)
+    (cred,) = await drive_world.held(kind)
+    (conn,) = await _connections(drive_world, kind)
+    assert (conn.credential_id, conn.account_id, conn.user_id) == (cred.credential_id, "acct-1", ALEX)
+    assert conn.write_folder_id is None                  # a new connection is read-only until a write folder
+    assert conn.drive_identity == f"{kind}:drive-of-{cred.credential_id}"
+    assert await _connections(drive_world, kind, CLARA) == []
+
+
+@pytest.mark.parametrize("kind", DRIVE_KINDS)
+async def test_the_same_accounts_drive_consent_reconnects_its_connection(drive_world, kind):
+    await drive_world.connect(kind)
+    (first,) = await _connections(drive_world, kind)
+    await drive_world.connect(kind)
+    (again,) = await _connections(drive_world, kind)
+    assert again.connection_id == first.connection_id
+
+
+async def test_another_google_accounts_drive_consent_adds_a_credential_and_a_connection(drive_world):
+    kind = "google_drive"
+    await drive_world.connect("gmail")                                           # another kind of the user
+    await drive_world.connect(kind, token=drive_world.session(CLARA, "acct-2"))  # another user, same kind
+    await drive_world.connect(kind)
+    (first,) = await drive_world.held(kind)
+    drive_world.signs_in_as("sub-2")
+    resp = await drive_world.connect(kind)
+    assert resp.headers["Location"] == _connected(kind)
+    held = {c.credential_id: c.account.subject for c in await drive_world.held(kind)}
+    assert len(held) == 2 and held[first.credential_id] == "sub-1"
+    assert sorted(held.values()) == ["sub-1", "sub-2"]
+    assert sorted(c.credential_id for c in await _connections(drive_world, kind)) == sorted(held)
+    assert len(await drive_world.held("gmail")) == 1
+    assert len(await drive_world.held(kind, CLARA)) == 1
+
+
+@pytest.mark.parametrize("granted", ["openid email", f"openid email {GMAIL_SCOPE}"])
+async def test_a_google_drive_consent_without_the_drive_scope_creates_no_connection(drive_world, granted):
+    drive_world.granted = granted
+    resp = await drive_world.connect("google_drive")
+    assert resp.headers["Location"] == "/cabinet?connect_error=scope&kind=google_drive"
+    assert drive_world.db.collection("eval_credentials").docs == {}
+    assert await _connections(drive_world, "google_drive") == []
+    assert await drive_world.held("google_drive") == []

@@ -385,6 +385,9 @@ class ScriptedDrive(UserDrivePort):
     async def media_source(self, handle: DriveHandle, item_id: str) -> MediaSource:
         raise NotImplementedError
 
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        return []
+
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
         return DriveCapabilities(max_path_chars=400)
 

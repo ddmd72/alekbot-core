@@ -50,6 +50,7 @@ from src.adapters.drive_parser.html_text import html_page_text, text_is_html
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
+from src.domain.text_data_uris import drop_data_uri_images
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container
 
 # kind -> markitdown converter class (all registered by build_markitdown; a test keeps the two in step). Called
@@ -351,6 +352,8 @@ def _read_text(path: str, kind: str) -> Union[_Read, _PageRead]:
     failure still ends the child with its memory code."""
     data, cut = _read_prefix(path)
     text = decode_text(data, cut)
+    if kind in ("markdown", "text"):
+        text = drop_data_uri_images(text)
     if kind in _HTML_CAPABLE_TEXT_KINDS and text_is_html(text):
         try:
             page, script_rendered = html_page_text(text)
