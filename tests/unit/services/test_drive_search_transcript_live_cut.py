@@ -99,7 +99,8 @@ async def test_a_file_under_an_opaque_folder_names_that_reason():
 async def test_the_pointer_names_the_mirror_path():
     w, item = await _world()
     w.service._active_mirror_path = _async("_Transcripts/Oak Street call.md")
-    assert "The full text is in _Transcripts/Oak Street call.md." in await _text(w, item)
+    # the mirror path is stored connection-relative and printed canonical (design §1.2 S-11)
+    assert "The full text is in Drive/_Transcripts/Oak Street call.md." in await _text(w, item)
 
 
 async def test_a_failed_lookup_says_the_index_could_not_be_asked(monkeypatch):

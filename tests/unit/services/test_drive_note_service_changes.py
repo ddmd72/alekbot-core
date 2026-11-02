@@ -94,7 +94,7 @@ async def test_an_additive_change_on_a_file_with_no_note_creates_one_holding_onl
     receipt = await env.service.update(U, ACC, "drive:a1:a", change, CHAT)
     note = await env.note()
     assert note.content == expected and (note.state, note.current_version, receipt.version) == ("active", 1, 1)
-    assert (note.binding.identity, note.binding.item_id) == (identity("a"), "a") and receipt.path == "Docs/a.pdf"
+    assert (note.binding.identity, note.binding.item_id) == (identity("a"), "a") and receipt.path == "Drive/Docs/a.pdf"
     assert receipt.previous_text == "" and not receipt.noop
 
 
@@ -367,7 +367,8 @@ async def test_an_archived_note_edited_by_its_note_ref_stays_archived(env):
     receipt = await env.service.update(U, ACC, first.note_ref, NoteChange.append_text("final"), NEXT_TURN)
     note = await env.notes.get(U, first.note_id)
     assert (note.state, note.archived_at, note.text, note.current_version) == ("archived", T, f"{TEXT} final", 2)
-    assert (receipt.status, receipt.ref, receipt.path) == (STATUS_ARCHIVED, "drive:a1:a", "Docs/a.pdf")
+    # the receipt names the canonical path with the disconnected drive's last name (design §1.2 S-15)
+    assert (receipt.status, receipt.ref, receipt.path) == (STATUS_ARCHIVED, "drive:a1:a", "Drive/Docs/a.pdf")
     assert env.graph_calls() == calls and env.nudged() == [["a"]]   # no drive call, no nudge for a gone file
 
 
