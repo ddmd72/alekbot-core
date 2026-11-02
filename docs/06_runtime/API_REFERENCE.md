@@ -61,7 +61,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/api/tasks/microsoft/reindex` | Re-index all task lists (Cloud Tasks) |
 | `GET` | `/api/tasks/microsoft/lists` | The user's To Do lists (proxied from Graph) |
 | `DELETE` | `/api/tasks/microsoft/disconnect` | Drop subscriptions, revoke tokens, clear the search index |
-| `GET` | `/api/drive/connections` | The drive card: one row per live connection (name, kind, account, primary, write folder, scope, searched by default, indexing and its status, note, reconnect), the default name for "Add a drive", the primary's id |
+| `GET` | `/api/drive/connections` | The drive card: one row per live connection (name, kind, account, primary, write folder, scope with `empty_means`, searched by default, indexing and its status, note, reconnect), the default name for "Add a drive", the primary's id |
 | `PUT` | `/api/drive/connections/<connection_id>/name` | Rename a drive (`{name}`); a refused name 400, a valid one returns `{name, warning}` |
 | `PUT` | `/api/drive/connections/<connection_id>/scope` | Set the indexed folders or the whole drive (`{whole_drive, folder_ids}`) |
 | `PUT` | `/api/drive/connections/<connection_id>/write-folder` | Set the write folder (`{folder_id}`: an id, `""` the root, null read-only) |
