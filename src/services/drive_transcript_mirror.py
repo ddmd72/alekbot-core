@@ -88,6 +88,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Type
 
 from src.domain import drive_mirror_plan as plan
+from src.domain.drive_connection import ROOT_FOLDER
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import (
     DriveChange, DriveIndexRecord, DriveIndexStoreUnavailable, LeaseLost, RecordState, Scope,
@@ -150,6 +151,7 @@ class MirrorHost(Protocol):
     """What the tick lends the step, for one user. Every write the step makes goes through the tick's rules."""
 
     drive_identity: str    # the mirror's drive: the connection's drive identity (MULTI_DRIVE_RFC §10); "" → skips
+    write_folder_id: Optional[str]   # the connection's write folder (RFC §11.3): None → no mirror; ROOT_FOLDER → the area root
     tz_name: str           # `UserBotConfig.timezone` ("" → UTC): the archive day of `gone_at`
     language: str          # the UI language the strings are in, stored as `render_language`
     round_complete: bool   # the change feed's round is complete (marks wait for it)
@@ -217,6 +219,10 @@ class DriveTranscriptMirror:
         if not host.drive_identity:
             counters["mirror_no_drive_id"] += 1
             return dict(counters)
+        if host.write_folder_id is None:
+            # D7: a read-only connection has no mirror (transcripts are still made); nothing is written to its drive
+            counters["mirror_no_write_folder"] += 1
+            return dict(counters)
         ctx = _Run(user_id, handle, host, counters)
         try:
             await self._steps(ctx)
@@ -242,6 +248,8 @@ class DriveTranscriptMirror:
             logger.error(f"[DriveMirror] user={ctx.user_id[:8]} root document of another drive returned: skipped")
             return
         if not await self._root_step(ctx, root):
+            return
+        if ctx.root is not None and not await self._root_under_write_folder(ctx):
             return
         root = ctx.root
         if root is not None and root.quota_hold_until is not None and ctx.now < root.quota_hold_until:
@@ -298,6 +306,26 @@ class DriveTranscriptMirror:
         ctx.counters["mirror_root_lost"] += 1
         logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} the root is gone after the grace and a not-found read: "
                        f"archived documents dropped, active ones reset, a new root follows")
+        await self._save_root(ctx, replace(root, previous_root_ids=(*root.previous_root_ids, root.root_item_id)))
+        ctx.host.root_mark_changed(root.root_item_id, False)
+        return await self._finish_loss(ctx)
+
+    async def _root_under_write_folder(self, ctx: "_Run") -> bool:
+        """The root follows the write folder (RFC §11.3): a stored root whose record sits outside the connection's
+        current write folder is a root move. It takes the confirmed-loss path (the old id joins `previous_root_ids`, so
+        it is opaque and never written; the ledger is reset; a new root is created under the write folder). The root's
+        parent is read from its index record (no provider call); a root with no record yet is left to step 0's
+        checks. The drive's root as write folder keeps today's area root."""
+        root = ctx.root
+        wanted = ctx.host.write_folder_id
+        if root is None or wanted in (None, ROOT_FOLDER) or root.root_item_id in root.previous_root_ids:
+            return True
+        rec = await self._record(ctx, root.root_item_id)
+        if rec is None or rec.parent_id == wanted:
+            return True
+        ctx.counters["mirror_root_moved"] += 1
+        logger.warning(f"[DriveMirror] user={ctx.user_id[:8]} the root is not under the write folder: "
+                       f"treated as a root move, a new root follows")
         await self._save_root(ctx, replace(root, previous_root_ids=(*root.previous_root_ids, root.root_item_id)))
         ctx.host.root_mark_changed(root.root_item_id, False)
         return await self._finish_loss(ctx)
@@ -459,6 +487,11 @@ class DriveTranscriptMirror:
                 ctx.area_root_id = (await self._drive.get_root(ctx.handle)).item_id
         return ctx.area_root_id
 
+    async def _root_parent_id(self, ctx: "_Run") -> str:
+        """Where the root is created: the connection's write folder, or the area root for ROOT_FOLDER (RFC §11.3)."""
+        wanted = ctx.host.write_folder_id
+        return wanted if wanted else await self._area_root_id(ctx)
+
     async def _area_path(self, ctx: "_Run") -> str:
         if ctx.area_path is None:
             self._take_read(ctx)
@@ -545,7 +578,7 @@ class DriveTranscriptMirror:
         With all six taken, one WARNING per tick and no write: nothing can hold a back-off, since no root document
         exists yet. `base`: the document of a confirmed loss, whose `previous_root_ids` and seed state carry over."""
         try:
-            area_root = await self._area_root_id(ctx)
+            area_root = await self._root_parent_id(ctx)
             for name in root_name_candidates():
                 self._take_read(ctx)
                 if await self._drive.child_by_name(ctx.handle, area_root, name) is not None:
@@ -2021,14 +2054,14 @@ class DriveTranscriptMirror:
         ctx.counters["mirror_readme_written"] += 1
 
     async def _audit_area(self, ctx: "_Run") -> bool:
-        """The App Folder root, one page per read, only until something was reported (`orphans_reported`): a folder
+        """The folder roots are created in (the connection's write folder, else the App Folder root), one page per read, only until something was reported (`orphans_reported`): a folder
         named like the root (`is_root_name`) that is no root of any of the user's drives (the crash orphan of §27.9.2),
         and a previous root that is present again, are reported once (one WARNING, counters); never adopted, never
         written. True when the stage is done."""
         root = ctx.need_root
         if root.orphans_reported:
             return True
-        area = await self._area_root_id(ctx)
+        area = await self._root_parent_id(ctx)   # where roots are created: the write folder (RFC §11.3), else the area
         box: List[Any] = []
 
         async def listing() -> None:
