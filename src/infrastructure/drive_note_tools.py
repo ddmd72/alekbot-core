@@ -12,7 +12,8 @@ Each handler makes exactly one `DriveNoteService` call: `get_note` → `get`; `c
 
 Gates, before any service call: the truncated-JSON refusal; a writer re-checks `is_owner_turn(context)` (the run's
 `message.context`, never the model's payload; the writers are declared only on an owner turn, §9.1); an empty
-`item_ref` or an empty change is refused (an empty field never writes); then, under the ordering lock,
+target (exactly one of `item_ref` and `whole_drive_name`, §11.10) or an empty change is refused (an empty field never
+writes); then, under the ordering lock,
 NOTE_WRITES_PER_TURN successful writes per execution (refusals do not count) and, for `replace_note_text`, a
 `get_note` read of that note earlier in this execution (its version is the write's precondition).
 
@@ -36,7 +37,8 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_answer_texts as t
 from ..domain import drive_note_tool_texts as nt
@@ -49,6 +51,7 @@ from ..domain.drive_note import (
     drive_note_context_entry, is_owner_turn, note_content,
 )
 from ..domain.drive_note_change import NoteChange
+from ..domain.drive_mount_name_change import mount_name_key
 from ..domain.drive_note_view import NoteView
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
@@ -139,6 +142,21 @@ def _text(args: Mapping[str, Any], name: str) -> str:
     return str(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else ""
 
 
+def _targets(args: Mapping[str, Any]) -> Tuple[str, str]:
+    """(item_ref, whole_drive_name), each trimmed; exactly one is non-empty on a call that passed `_precheck`."""
+    return _text(args, "item_ref").strip(), _text(args, "whole_drive_name").strip()
+
+
+def _target_key(ref: str, drive: str) -> str:
+    """The key a read is remembered under: the ref, or the drive's name key (§11.10)."""
+    return ref or f"drive-name:{mount_name_key(drive)}"
+
+
+def _drive_kw(drive: str) -> Dict[str, str]:
+    """`whole_drive_name=` for the service, only on a whole-drive call (a file call is the service's old signature)."""
+    return {"whole_drive_name": drive} if drive else {}
+
+
 def _failed(op: DriveOp, text: str, cls: OutcomeClass) -> DriveOutcome:
     return DriveOutcome(op=op, cls=cls, text=text, success=False)
 
@@ -183,16 +201,16 @@ class DriveNoteToolRun:
         early = self._precheck(tc, DriveOp.NOTE_READ, args, writer=False)
         if early is not None:
             return early
-        ref = _text(args, "item_ref").strip()
+        ref, drive = _targets(args)
 
         async def call() -> DriveOutcome:
             try:
-                view = await self._service.get(self._user_id, ref)
+                view = await self._service.get(self._user_id, ref, **_drive_kw(drive))
             except Exception as exc:
                 return self._error(DriveOp.NOTE_READ, tc.name, exc)
-            self._session.remember(ref, view)
+            self._session.remember(_target_key(ref, drive), view)
             if view is None:
-                return _failed(DriveOp.NOTE_READ, nt.NO_NOTE_READ.format(ref=ref), OutcomeClass.NOT_FOUND)
+                return _failed(DriveOp.NOTE_READ, nt.NO_NOTE_READ.format(ref=ref or drive), OutcomeClass.NOT_FOUND)
             return DriveOutcome(op=DriveOp.NOTE_READ, cls=OutcomeClass.OK, success=True,
                                 text=nt.note_view_text(view, self._new_nonce()),
                                 facts=ReadFacts(owner_note=not view.cleared))
@@ -211,8 +229,8 @@ class DriveNoteToolRun:
             return self._early_refusal(tc, DriveOp.NOTE_WRITE, exc)
         if content.is_empty:
             return self._early(tc, DriveOp.NOTE_WRITE, nt.EMPTY_CREATE, OutcomeClass.REQUEST_ERROR, reason="empty")
-        return await self._write(tc, DriveOp.NOTE_WRITE, args, lambda ref: self._service.create(
-            self._user_id, self._account_id, ref, content, self._provenance), checked=True)
+        return await self._write(tc, DriveOp.NOTE_WRITE, args, lambda ref, drive: self._service.create(
+            self._user_id, self._account_id, ref, content, self._provenance, **_drive_kw(drive)), checked=True)
 
     async def _add(self, tc: ToolCall) -> ToolResult:
         return await self._change(tc, lambda args: NoteChange.append_text(_text(args, "text")))
@@ -233,16 +251,16 @@ class DriveNoteToolRun:
         return await self._change(tc, lambda args: NoteChange.remove_areas(_areas(args.get("life_areas"))))
 
     async def _delete(self, tc: ToolCall) -> ToolResult:
-        return await self._write(tc, DriveOp.NOTE_WRITE, tc.args or {}, lambda ref: self._service.clear(
-            self._user_id, self._account_id, ref, self._provenance))
+        return await self._write(tc, DriveOp.NOTE_WRITE, tc.args or {}, lambda ref, drive: self._service.clear(
+            self._user_id, self._account_id, ref, self._provenance, **_drive_kw(drive)))
 
     async def _undo(self, tc: ToolCall) -> ToolResult:
-        return await self._write(tc, DriveOp.NOTE_WRITE, tc.args or {}, lambda ref: self._service.undo(
-            self._user_id, self._account_id, ref, self._provenance))
+        return await self._write(tc, DriveOp.NOTE_WRITE, tc.args or {}, lambda ref, drive: self._service.undo(
+            self._user_id, self._account_id, ref, self._provenance, **_drive_kw(drive)))
 
     async def _erase(self, tc: ToolCall) -> ToolResult:
-        return await self._write(tc, DriveOp.NOTE_ERASE, tc.args or {}, lambda ref: self._service.request_erase(
-            self._user_id, ref))
+        return await self._write(tc, DriveOp.NOTE_ERASE, tc.args or {}, lambda ref, drive: self._service.request_erase(
+            self._user_id, ref, **_drive_kw(drive)))
 
     async def _change(self, tc: ToolCall, build: Callable[[Mapping[str, Any]], NoteChange], *,
                       read_first: bool = False) -> ToolResult:
@@ -257,35 +275,39 @@ class DriveNoteToolRun:
         except DriveNoteRefused as exc:
             return self._early_refusal(tc, DriveOp.NOTE_WRITE, exc)
 
-        def guard(ref: str) -> Optional[str]:
-            return nt.READ_FIRST if read_first and self._session.read_version(ref) is None else None
+        def guard(ref: str, drive: str) -> Optional[str]:
+            return nt.READ_FIRST if read_first and self._session.read_version(_target_key(ref, drive)) is None else None
 
-        def update(ref: str) -> Awaitable[Any]:
-            expected = self._session.read_version(ref) if read_first else None
+        def update(ref: str, drive: str) -> Awaitable[Any]:
+            expected = self._session.read_version(_target_key(ref, drive)) if read_first else None
             return self._service.update(self._user_id, self._account_id, ref, change, self._provenance,
-                                        expected_version=expected)
+                                        expected_version=expected, **_drive_kw(drive))
         return await self._write(tc, DriveOp.NOTE_WRITE, args, update, guard=guard, checked=True)
 
     async def _write(self, tc: ToolCall, op: DriveOp, args: Mapping[str, Any],
-                     service_call: Callable[[str], Awaitable[Any]], *,
-                     guard: Optional[Callable[[str], Optional[str]]] = None, checked: bool = False) -> ToolResult:
+                     service_call: Callable[[str, str], Awaitable[Any]], *,
+                     guard: Optional[Callable[[str, str], Optional[str]]] = None, checked: bool = False) -> ToolResult:
         """Run one write under the ordering lock: the cap and the guard are decided there (after the batch's earlier
         calls, a `get_note` among them), then the service call, shielded and held by DriveOperations."""
         if not checked:
             early = self._precheck(tc, op, args, writer=True)
             if early is not None:
                 return early
-        ref = _text(args, "item_ref").strip()
+        ref, drive = _targets(args)
 
         async def call() -> DriveOutcome:
             if self._session.writes >= NOTE_WRITES_PER_TURN:
                 logger.info(f"[DriveNote] tool user={self._user_id[:8]} {tc.name} refused:cap")
                 return _failed(op, nt.WRITE_CAP.format(cap=NOTE_WRITES_PER_TURN), OutcomeClass.REFUSED)
-            refused = guard(ref) if guard is not None else None
+            refused = guard(ref, drive) if guard is not None else None
             if refused is not None:
                 logger.info(f"[DriveNote] tool user={self._user_id[:8]} {tc.name} refused:read_first")
                 return _failed(op, refused, OutcomeClass.REQUEST_ERROR)
-            return await self._shielded(op, tc.name, lambda: service_call(ref))
+            notice = await self._service.drive_rename_notice(self._user_id, drive) if drive else ""
+            outcome = await self._shielded(op, tc.name, lambda: service_call(ref, drive))
+            if notice and outcome.success:                  # the drive was named by a held former name (§11.8)
+                outcome = replace(outcome, text=f"{notice}\n{outcome.text}")
+            return outcome
         result = await self._run.run(op, tc.name, call, change=True, ordered=True,
                                      running_text=nt.NOTE_STILL_RUNNING)
         return self._seen(tc, result)
@@ -340,9 +362,10 @@ class DriveNoteToolRun:
             return self._early(tc, op, nt.TRUNCATED, OutcomeClass.REQUEST_ERROR, reason="truncated")
         if writer and not is_owner_turn(self._context):
             return self._early(tc, op, nt.NOT_OWNER_TURN, OutcomeClass.REFUSED, reason="not_owner_turn")
-        if not _text(args, "item_ref").strip():
-            return self._early(tc, op, t.REF_REQUIRED.format(field="item_ref", what=nt.ITEM_REF_REQUIRED),
-                               OutcomeClass.REQUEST_ERROR, reason="no_ref")
+        ref, drive = _targets(args)
+        if bool(ref) == bool(drive):                            # §11.10: exactly one target, never both, never none
+            return self._early(tc, op, nt.ONE_TARGET, OutcomeClass.REQUEST_ERROR,
+                               reason="both_targets" if ref else "no_ref")
         return None
 
     def _early(self, tc: ToolCall, op: DriveOp, text: str, cls: OutcomeClass, *, reason: str) -> ToolResult:

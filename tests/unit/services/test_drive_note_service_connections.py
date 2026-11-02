@@ -66,7 +66,7 @@ async def world():
     security.validate.return_value = ValidationResult(sanitized_text="", risk_level=RiskLevel.SAFE, risk_score=0.0,
                                                       patterns_detected=[], action_taken="passed", metadata={})
     w.service = DriveNoteService(w.notes, w.drive, w.index, embeddings, security,
-                                 connection_service(w.repo), embedding_space="space-a",
+                                 connection_service(w.repo), access=AsyncMock(), embedding_space="space-a",
                                  nudge_queue=w.queue, clock=lambda: T1)
     return w
 

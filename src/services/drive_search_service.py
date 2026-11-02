@@ -21,10 +21,10 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, connections, *, embedding_space, clock, nonce, monotonic,
                        transcribe_cap_usd, mirror)
-    await search(user_id, request, *, drives="") -> DriveSearchResult   # one drive (multi-drive 2a); canonical paths
+    await search(user_id, request, *, drives="") -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
     await search_state(user_id) -> SearchLine                  # the specialist's preflight line (§5.3)
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
-    await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # find_passages (§28.3 A4-A8, A18)
+    await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # shown: (ref tag, chunk id); find_passages (§28.3 A4-A8, A18)
     await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
     await indexing_status(user_id, *, connection_id=None) -> DriveIndexingStatus     # Cabinet (§6)
     await has_mirror_root(user_id) -> bool
@@ -37,9 +37,8 @@ Public interface:
     await transcript_text(connection, item_id, *, path, label) -> Optional[str]
     await archived_text(connection, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
-Connections (MULTI_DRIVE_RFC §6, §8, §9): a search reads one connection's index (`ConnectionScope`; stage 1: the
-primary, resolved per call through the injected DriveConnectionService; stage 2 runs one per searched connection and
-merges, E9). Its indexing switch, sync state and status feed the gate; every ref it prints carries the connection's
+Connections (MULTI_DRIVE_RFC §6, §8, §9): a search reads one connection's index (`ConnectionScope`; a search runs one
+per searched connection, resolved per call through the injected DriveConnectionService, and merges (E9)). Its indexing switch, sync state and status feed the gate; every ref it prints carries the connection's
 tag; a read named by a ref resolves the ref's connection, and a ref that resolves to none answers its code-built line
 (D13). The item-level reads take the connection the caller already resolved. Monthly usage, the transcript store and
 the mirror stay user-scoped (§8).
@@ -65,6 +64,7 @@ from ..domain.drive_usage import closed_initial, new_initial_build
 from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
 from ..domain.drive_excerpt_context import ExcerptContext, file_description
 from ..domain.drive_excerpt_file import ExcerptFile
+from ..domain.drive_excerpt_render import context_key
 from ..domain.drive_excerpt_file_context import FileContext
 from ..domain.drive_excerpt_page import PageSpan
 from ..domain.drive_excerpt_folder_note import FolderNote
@@ -95,6 +95,11 @@ from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_line import SearchLine, search_line
+from ..domain.drive_search_merge import merge_excerpts, merge_results
+from ..domain.drive_access_policy import in_scope
+from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_connection_access import ConnectionAccess
+from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_mount import Mount
 from ..domain.drive_mount_table import MountTable
 from ..domain.drive_mounts import (
@@ -196,6 +201,7 @@ def _fenced(rec: Optional[Rec], generation: int) -> bool:
 @dataclass
 class _Stats:
     """Counts after each stage, for the one summary line per search (§10.1, §25.5.7)."""
+    warnings: List[str] = field(default_factory=list)   # logged after the summary line
     mode: str = "query"
     scope: str = "all"
     content: str = "off"             # off | wide (user-wide streams) | memory (a folder's chunks in memory) |
@@ -290,6 +296,7 @@ class _Ancestry:
     scope: ConnectionScope
     root_item_id: str
     cache: Dict[str, Optional[Rec]] = field(default_factory=dict)
+    admit: Optional[Callable[[DriveIndexRecord, Tuple[str, Tuple[str, ...]]], bool]] = None   # the connection's scope
 
     def seed(self, recs: Iterable[Rec]) -> None:
         for rec in recs:
@@ -322,7 +329,12 @@ class _Ancestry:
         return False
 
     def chain(self, rec: Rec, *, require_card: bool = True) -> Chain:
-        return resolve_chain(rec, self.cache.get, self.root_item_id, require_card=require_card)
+        """The record's (path, ancestor ids), None when hidden or, with a narrowed scope, outside it (design section 2
+        P-C, review R1 N2: the index may still hold what a scope change took out until the tick re-indexes)."""
+        found = resolve_chain(rec, self.cache.get, self.root_item_id, require_card=require_card)
+        if found is not None and self.admit is not None and not self.admit(rec, found):
+            return None
+        return found
 
 
 @dataclass(frozen=True)
@@ -338,6 +350,7 @@ _NO_TEXT_LISTED = 10      # passages: paths named on the no-text line (the count
 @dataclass
 class _ExcerptStats:
     """Counts for the one `[DriveSearch] mode=excerpts` line (no text)."""
+    warnings: List[str] = field(default_factory=list)   # logged after the summary line
     mode: str = "excerpts"
     scope: str = "all"            # gate | all | files | folder-memory | folder-scoped (kNN over the walked files,
                                   # RFC Δ246) | folder-wide (incomplete walk) | range
@@ -345,6 +358,7 @@ class _ExcerptStats:
     candidates: int = 0           # fenced and visible
     keyed: int = 0                # the nearest chunks whose keys were read for the lexical vote
     reads: int = 0                # get_chunks calls for texts
+    distances: Dict[str, float] = field(default_factory=dict)   # the nearest chunk distance of each pooled file
 
 
 @dataclass
@@ -381,12 +395,17 @@ def _copy_hash(rec: DriveIndexRecord) -> Optional[str]:
 
 @dataclass(frozen=True)
 class _Placed:
-    """Where a search or passages call reads (multi-drive 2a, design §3): the connection, the folder as that
-    connection knows it (None: the whole drive), the rename notice, and the live drives it does not read."""
-    conn: Optional[DriveConnection]
+    """Where one part of a search or passages call reads (multi-drive 2b, design section 2 P-C): the mount (None when
+    the user has no connection), the folder as that connection knows it (None: the whole drive), the rename notice
+    (on the first part only) and the live drives the whole call does not read."""
+    mount: Optional[Mount]
     folder: Optional[str]
     notice: str = ""
     not_searched: Tuple[str, ...] = ()
+
+    @property
+    def conn(self) -> Optional[DriveConnection]:
+        return self.mount.connection if self.mount is not None else None
 
 
 class DriveSearchService:
@@ -428,6 +447,39 @@ class DriveSearchService:
         live = await self._connections.list_for_user(user_id)
         return live[0] if live else None
 
+    async def _ancestry(self, conn: DriveConnection, root_item_id: str,
+                        stats: Optional[Union[_Stats, _ExcerptStats]] = None) -> _Ancestry:
+        """The ancestry cache of one call over `conn`'s index, with the connection's scope as its visibility. A
+        failed capabilities lookup keeps the filter off and is logged as a warning: after the call's summary line when
+        `stats` is given, else at once."""
+        warnings: List[str] = []
+        admit = await self._scope_admit(conn, root_item_id, warnings)
+        for line in warnings:
+            if stats is not None:
+                stats.warnings.append(line)
+            else:
+                logger.warning(line)
+        return _Ancestry(self._repo, conn.scope, root_item_id, admit=admit)
+
+    async def _scope_admit(self, conn: DriveConnection, root_item_id: str, warnings: List[str]
+                           ) -> Optional[Callable[[DriveIndexRecord, Tuple[str, Tuple[str, ...]]], bool]]:
+        """The scope test over the index's own chain (`in_scope`, no provider call for the chain), or None when the
+        connection's scope covers everything (the whole drive, or no folders chosen on an area feed)."""
+        if conn.scope_whole_drive:
+            return None
+        try:
+            capabilities = await self._drive.capabilities(conn.handle)
+        except Exception as exc:   # a second line of defence (the indexer applies the scope): never fails a search
+            warnings.append(f"[DriveSearch] capabilities of a connection failed, scope filter off: {exc_brief(exc)}")
+            return None
+        if not conn.scope_folder_ids and capabilities.feed_scope is FeedScope.AREA:
+            return None
+        access = ConnectionAccess.of(conn, root_item_id)
+
+        def admit(rec: DriveIndexRecord, chain: Tuple[str, Tuple[str, ...]]) -> bool:
+            return in_scope(access, capabilities, Ancestry(ids=(rec.item_id, *chain[1]), reached_root=False))
+        return admit
+
     async def _live_connection(self, user_id: str, connection_id: str) -> Optional[DriveConnection]:
         """One connection of the user when it is live (ACTIVE or NEEDS_RECONNECT), read fresh; else None."""
         conn = await self._connections.get(user_id, connection_id)
@@ -441,35 +493,56 @@ class DriveSearchService:
     def _shown_folder(self, conn: Optional[DriveConnection], path: Optional[str]) -> Optional[str]:
         return self._shown(conn, path) if conn is not None and path else path
 
-    async def _place(self, user_id: str, folder: str, drives: str) -> Union[_Placed, str]:
-        """The connection a call reads and its folder (design §3, E-8). A `drive:` folder ref names its own
-        connection (DriveRefRefused when it resolves to none). Otherwise: `drives` selects one mount (`resolve_drives`);
-        a folder whose first segment names a mount is read on that mount, and against another `drives` it is refused
-        (FOLDER_DRIVE_MISMATCH); any other folder is read on the selected mount, else on the searched connection.
-        Returns the refusal line instead of a `_Placed` when `drives` or the folder is refused."""
+    async def _place(self, user_id: str, folder: str, drives: str) -> Union[List[_Placed], str]:
+        """The parts a call reads, one per selected mount (design section 2 P-C, E9, E46). A `drive:` folder ref names
+        its own connection (DriveRefRefused when it resolves to none). Otherwise `drives` selects mounts
+        (`resolve_drives`: empty = every mount searched by default). A folder whose first segment names a mount is
+        read on that mount only, and against a `drives` value that does not name it is refused
+        (FOLDER_DRIVE_MISMATCH); an unprefixed folder is read on the primary (the searched connection) when `drives`
+        is empty, else on each named drive. Returns the refusal line instead of the parts when `drives` or the folder
+        is refused."""
         table = await self._connections.mounts(user_id)
         if folder and drive_ref.is_drive_ref(folder):
             conn = await self._named_connection(user_id, [folder])
-            return _Placed(conn=conn, folder=folder, not_searched=self._others(table, conn))
+            mount = self._mount_of(table, conn)
+            return [_Placed(mount=mount, folder=folder, not_searched=self._others(table, [mount]))]
         selection = resolve_drives(table, drives)
         if isinstance(selection, str):
             return selection
-        picked = selection.mounts[0] if (drives or "").strip() and selection.mounts else None
-        conn = picked.connection if picked is not None else self._searched_in(table)
+        named = bool((drives or "").strip())
         notices = [selection.notice] if selection.notice else []
-        rel: Optional[str] = folder or None
-        if folder and conn is not None:
-            default = picked or table.by_connection(conn.connection_id)
-            if default is not None:
-                target = resolve_path(table, folder, default=default)
-                if target.named and picked is not None and target.mount.connection_id != picked.connection_id:
-                    return FOLDER_DRIVE_MISMATCH.format(folder=folder, mount_a=target.mount.name,
-                                                        mount_b=picked.name)
-                conn = target.mount.connection if target.named else conn
-                rel = target.path or None
+        mounts: List[Mount] = list(selection.mounts)
+        folders: Dict[str, Optional[str]] = {m.connection_id: None for m in mounts}
+        if folder:
+            default_conn = self._searched_in(table)
+            default = table.by_connection(default_conn.connection_id) if default_conn is not None else None
+            if named and mounts:
+                target = resolve_path(table, folder, default=mounts[0])
+                if target.named:
+                    if target.mount.connection_id not in folders:
+                        return FOLDER_DRIVE_MISMATCH.format(folder=folder, mount_a=target.mount.name,
+                                                            mount_b=", ".join(m.name for m in mounts))
+                    mounts = [target.mount]
+                    folders = {target.mount.connection_id: target.path or None}
+                else:
+                    folders = {m.connection_id: target.path or None for m in mounts}
                 if target.notice and target.notice not in notices:
                     notices.append(target.notice)
-        return _Placed(conn=conn, folder=rel, notice="\n".join(notices), not_searched=self._others(table, conn))
+            elif default is not None:
+                target = resolve_path(table, folder, default=default)
+                mounts = [target.mount]
+                folders = {target.mount.connection_id: target.path or None}
+                if target.notice and target.notice not in notices:
+                    notices.append(target.notice)
+        if not mounts:
+            return [_Placed(mount=None, folder=folder or None, notice="\n".join(notices))]
+        others = self._others(table, mounts)
+        return [_Placed(mount=m, folder=folders.get(m.connection_id), notice="\n".join(notices) if i == 0 else "",
+                        not_searched=others) for i, m in enumerate(mounts)]
+
+    @staticmethod
+    def _mount_of(table: MountTable, conn: DriveConnection) -> Mount:
+        return table.by_connection(conn.connection_id) or Mount(connection=conn, primary=False)
 
     @staticmethod
     def _searched_in(table: MountTable) -> Optional[DriveConnection]:
@@ -480,10 +553,10 @@ class DriveSearchService:
         return table.mounts[0].connection if table.mounts else None
 
     @staticmethod
-    def _others(table: MountTable, conn: Optional[DriveConnection]) -> Tuple[str, ...]:
-        """The current names of the live mounts other than `conn`'s."""
-        keep = conn.connection_id if conn is not None else None
-        return tuple(m.name for m in table.mounts if m.connection_id != keep)
+    def _others(table: MountTable, mounts: Sequence[Mount]) -> Tuple[str, ...]:
+        """The current names of the live mounts other than `mounts`."""
+        keep = {m.connection_id for m in mounts}
+        return tuple(m.name for m in table.mounts if m.connection_id not in keep)
 
     async def _ref_connection(self, user_id: str, ref: str) -> Union[Tuple[DriveConnection, str], str]:
         """The connection and item id a `drive:<tag>:<item_id>` ref names, or the code-built line for a ref that
@@ -501,22 +574,28 @@ class DriveSearchService:
     # ------------------------------------------------------------------------------------------
 
     async def search(self, user_id: str, request: DriveSearchRequest, *, drives: str = "") -> DriveSearchResult:
-        """One connection's index (2a, design §3): the drive `drives` names, else the one a folder's first segment
-        names, else the searched one (`_searched`: the primary). A `drive:` folder ref searches the folder's own
-        connection, and one that resolves to none raises DriveRefRefused with its line (§9, D13). The folder is
+        """One query per searched connection, merged (2b, E9): the drives `drives` names, else (empty) every drive
+        searched by default; a folder whose first segment names a drive is read on that drive only, an unprefixed
+        folder on the primary (or on each drive `drives` names). A `drive:` folder ref searches the folder's own
+        connection, and one that resolves to none raises DriveRefRefused with its line (section 9, D13). The folder is
         matched as the connection knows it (mount prefix removed); the result keeps the request as the model wrote it,
-        prints canonical paths, and names the live drives it did not read. A refused `drives` value (unknown name,
-        two names, a folder on another drive) answers STATUS_DRIVE_REFUSED with its line."""
+        prints canonical paths, and names the live drives it did not read. A part that cannot be searched (indexing
+        off, disconnected, no such folder) is named as not searched while the others answer. A refused `drives` value
+        (unknown name, a folder on another drive) answers STATUS_DRIVE_REFUSED with its line."""
         started = self._monotonic()
-        stats = _Stats(mode="filter" if request.filter_only else "query")
         placed = await self._place(user_id, request.folder or "", drives)
         if isinstance(placed, str):
             return DriveSearchResult(status=STATUS_DRIVE_REFUSED, request=request, refusal=placed)
-        conn = placed.conn
-        scoped = replace(request, folder=placed.folder)
-        result = await self._search(user_id, conn, scoped, stats, placed.not_searched)
-        result = replace(result, request=request, notice=placed.notice,
-                         folder_path=self._shown_folder(conn, result.folder_path))
+        all_stats = [_Stats(mode="filter" if request.filter_only else "query") for _ in placed]
+        results = await asyncio.gather(*(self._search_part(user_id, p, request, st)
+                                         for p, st in zip(placed, all_stats)))
+        if len(placed) == 1 and placed[0].mount is None:
+            result = results[0]
+        else:
+            result = merge_results([(p.mount, r) for p, r in zip(placed, results) if p.mount is not None],
+                                   not_searched=placed[0].not_searched)
+        result = replace(result, request=request, notice=placed[0].notice)
+        stats = all_stats[0]
         stats.returned = len(result.cards)
         if result.tiered is not None:
             stats.chars = len(render_results(result))
@@ -524,7 +603,7 @@ class DriveSearchService:
         tiers = " ".join(f"{t.value}={stats.tiers.get(t.value, 0)}" for t in _TIERS)
         logger.info(
             f"[DriveSearch] user={user_id[:8]} status={result.status} mode={stats.mode} scope={stats.scope} "
-            f"content={stats.content} concepts={stats.concepts} "
+            f"drives={len(placed)} content={stats.content} concepts={stats.concepts} "
             f"ignored={stats.ignored} common={stats.common} absent={stats.absent} {tiers} related={stats.related} "
             f"card={stats.card} chunk={stats.chunk} hint={stats.hint} name={stats.name} "
             f"name_queries={stats.name_queries} about_queries={stats.about_queries} "
@@ -533,7 +612,17 @@ class DriveSearchService:
             f"pool_hint={stats.pool_hint} band={stats.band} coverage={stats.coverage} chars={stats.chars} "
             f"visible={stats.visible} filtered={stats.filtered} collapsed={stats.collapsed} "
             f"returned={stats.returned} building={result.envelope.building} ms={ms}")
+        for st in all_stats:
+            for line in st.warnings:
+                logger.warning(line)
         return result
+
+    async def _search_part(self, user_id: str, part: _Placed, request: DriveSearchRequest,
+                           stats: _Stats) -> DriveSearchResult:
+        """One connection's search: its own gate (E9), its folder, its folder path printed canonical."""
+        conn = part.conn
+        found = await self._search(user_id, conn, replace(request, folder=part.folder), stats)
+        return replace(found, folder_path=self._shown_folder(conn, found.folder_path))
 
     async def search_states(self, user_id: str) -> Dict[str, SearchLine]:
         """The `search` line of every live connection, by connection id (the preflight's `drives` lines, design §4):
@@ -600,7 +689,7 @@ class DriveSearchService:
     async def _body(self, conn: DriveConnection, request: DriveSearchRequest, state: DriveSyncState, use_cards: bool,
                     stats: _Stats) -> DriveSearchResult:
         kinds = kinds_for(request.kind)
-        ancestry = _Ancestry(self._repo, conn.scope, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         folder: Optional[_Folder] = None
         if request.folder:
             found = await self._resolve_folder(conn, request.folder, ancestry)
@@ -1347,35 +1436,59 @@ class DriveSearchService:
     # ------------------------------------------------------------------------------------------
 
     async def excerpts(self, user_id: str, request: ExcerptRequest, *,
-                       shown: FrozenSet[ChunkId] = frozenset(), drives: str = "") -> ExcerptResult:
+                       shown: FrozenSet[Tuple[str, ChunkId]] = frozenset(), drives: str = "") -> ExcerptResult:
         """The indexed passages nearest the question (A4), in scope (A5: `file_refs`, else `folder`, else the whole
-        drive), selected new-only against `shown` (A6), with the "where it comes from" context (A18). The search's
-        gate first; vectors in another embedding space answer `wrong_space` (plan D-P4: nothing to rank). The
-        connection is the one the named refs (files, or a folder ref) resolve to, else the searched one; a ref that
-        resolves to none raises DriveRefRefused with its line (MULTI_DRIVE_RFC §9, D13). `drives` and the folder's mount
-        prefix select the drive as for `search` (design §3); with `file_refs` the refs name it and `drives` is not used.
-        A refused `drives` value answers STATUS_DRIVE_REFUSED with its line."""
+        drive), selected new-only against `shown` (A6: the run's ledger keys, (ref tag, chunk id); each connection
+        reads the ones of its own tag), with the "where it comes from" context (A18). The search's gate first; vectors
+        in another embedding space answer `wrong_space` (plan D-P4: nothing to rank). One read per selected connection,
+        merged by best chunk distance with the per-call caps applied after the merge (2b, E9; `merge_excerpts`).
+        `file_refs` name their connection (a ref that resolves to none raises DriveRefRefused with its line, section 9,
+        D13); `drives` and the folder's mount prefix select the drives as for `search` (design section 2 P-C). A
+        refused `drives` value answers STATUS_DRIVE_REFUSED with its line."""
         started = self._monotonic()
-        stats = _ExcerptStats()
         notice = ""
-        not_searched: Tuple[str, ...] = ()
-        scoped = request
         if request.file_refs:
-            conn: Optional[DriveConnection] = await self._named_connection(user_id, list(request.file_refs))
+            conn = await self._named_connection(user_id, list(request.file_refs))
+            table = await self._connections.mounts(user_id)
+            placed = [_Placed(mount=self._mount_of(table, conn), folder=request.folder or None,
+                              not_searched=())]
         else:
-            placed = await self._place(user_id, request.folder, drives)
-            if isinstance(placed, str):
-                return ExcerptResult(status=STATUS_DRIVE_REFUSED, request=request, refusal=placed)
-            conn, notice, not_searched = placed.conn, placed.notice, placed.not_searched
-            scoped = replace(request, folder=placed.folder or "")
-        if conn is None:
-            result = ExcerptResult(status=STATUS_DISCONNECTED, request=request)
+            found_parts = await self._place(user_id, request.folder, drives)
+            if isinstance(found_parts, str):
+                return ExcerptResult(status=STATUS_DRIVE_REFUSED, request=request, refusal=found_parts)
+            placed = found_parts
+            notice = placed[0].notice
+        if len(placed) == 1 and placed[0].mount is None:
+            result = ExcerptResult(status=STATUS_DISCONNECTED, request=request, notice=notice)
+            self._log_excerpts(user_id, result, _ExcerptStats(), started)
+            return result
+        all_stats = [_ExcerptStats() for _ in placed]
+        parts = await asyncio.gather(*(self._excerpts_part(p, request, shown, st) for p, st in zip(placed, all_stats)))
+        if len(parts) == 1:
+            result = replace(parts[0], request=request, notice=notice, not_searched_drives=placed[0].not_searched)
         else:
-            found = await self._excerpts(conn, scoped, shown, stats)
-            result = replace(found, request=request, ref_tag=conn.ref_tag, notice=notice,
-                             not_searched_drives=not_searched, folder_path=self._shown_folder(conn, found.folder_path) or "")
-        self._log_excerpts(user_id, result, stats, started)
+            merged = merge_excerpts([(p.mount, r, st.distances) for p, r, st in zip(placed, parts, all_stats)],
+                                    request=request, not_searched=placed[0].not_searched,
+                                    no_text_listed=_NO_TEXT_LISTED)
+            result = replace(merged, notice=notice)
+        self._log_excerpts(user_id, result, all_stats[0], started)
+        for st in all_stats:
+            for line in st.warnings:
+                logger.warning(line)
         return result
+
+    async def _excerpts_part(self, part: _Placed, request: ExcerptRequest, shown: FrozenSet[Tuple[str, ChunkId]],
+                             stats: _ExcerptStats) -> ExcerptResult:
+        """One connection's passages: its folder, the ledger keys of its own tag, its tag on the result."""
+        conn = part.conn
+        if conn is None:
+            return ExcerptResult(status=STATUS_DISCONNECTED, request=request)
+        scoped = replace(request, folder=part.folder or "") if not request.file_refs else request
+        own = frozenset(key for tag, key in shown if tag == conn.ref_tag)
+        found = await self._excerpts(conn, scoped, own, stats)
+        return replace(found, request=request, ref_tag=conn.ref_tag,
+                       repeated_tags=(conn.ref_tag,) * len(found.repeated),
+                       folder_path=self._shown_folder(conn, found.folder_path) or "")
 
     async def excerpt_range(self, user_id: str, request: ExcerptRangeRequest) -> ExcerptResult:
         """One file's passages by display number (A7): its readable generation only, at most EXCERPT_RANGE_MAX chunks
@@ -1387,6 +1500,8 @@ class DriveSearchService:
         conn = await self._named_connection(user_id, [request.file_ref])
         result = replace(await self._excerpt_range(conn, request, stats), ref_tag=conn.ref_tag)
         self._log_excerpts(user_id, result, stats, started)
+        for line in stats.warnings:
+            logger.warning(line)
         return result
 
     async def _named_connection(self, user_id: str, refs: Sequence[str]) -> DriveConnection:
@@ -1423,7 +1538,7 @@ class DriveSearchService:
             if gated.status != STATUS_OK:
                 return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_CONNECTED)
             return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.REBUILDING)
-        ancestry = _Ancestry(self._repo, conn.scope, gated.root_item_id)
+        ancestry = await self._ancestry(conn, gated.root_item_id)
         rec = (await self._repo.get_records(conn.scope, [item_id])).get(item_id)
         if rec is None:
             return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_READ)
@@ -1472,13 +1587,15 @@ class DriveSearchService:
         if not state.cards_in_space(self._space):
             stats.scope = "gate"
             return ExcerptResult(status=STATUS_OK, request=request, wrong_space=True)
-        ancestry = _Ancestry(self._repo, conn.scope, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         scoped, building = await asyncio.gather(self._excerpt_scope(conn, request, ancestry, stats),
                                                 self._building(conn, state))
         if isinstance(scoped, ExcerptResult):
             return replace(scoped, building=building)
         pool = scoped
         stats.candidates = len(pool.knn)
+        for (item_id, _, _), distance in pool.knn:
+            stats.distances[item_id] = min(distance, stats.distances.get(item_id, distance))
         files, selection = await self._excerpt_files(conn, request.question, pool, shown, stats)
         return ExcerptResult(
             status=STATUS_OK, request=request, files=files, repeated=selection.repeated,
@@ -1676,7 +1793,7 @@ class DriveSearchService:
             generation=int(rec.indexed_generation or 0), chunk_count=rec.chunk_count, size_bytes=rec.size_bytes,
             modified_at=rec.modified_at, web_url=rec.web_url, stale=rec.stale, truncated=rec.truncated,
             capture=rec.capture, card_accuracy=rec.card_accuracy if scorable(rec) else None,
-            content_hash=content_key_of(rec.content_identity),
+            content_hash=content_key_of(rec.content_identity), ref_tag=conn.ref_tag,
             also_at=tuple(canonical_path(conn.mount_name, p) for p in also_at),
             chunks=tuple(ExcerptChunk(c.item_id, c.generation, c.index, c.text, c.char_start, c.char_end)
                          for c in sorted(chunks, key=lambda c: c.index)))
@@ -1689,22 +1806,24 @@ class DriveSearchService:
         broken by an unrecorded ancestor shows its known part."""
         contexts: List[FileContext] = []
         folders: Dict[str, FolderNote] = {}
+        tag = conn.ref_tag
         for file in files:
             rec = records[file.item_id]
             path, ancestors = chains[file.item_id]
-            contexts.append(FileContext(item_id=file.item_id, path=canonical_path(conn.mount_name, path),
-                                        ancestors=ancestors,
+            contexts.append(FileContext(item_id=context_key(tag, file.item_id),
+                                        path=canonical_path(conn.mount_name, path),
+                                        ancestors=tuple(context_key(tag, a) for a in ancestors),
                                         description=file_description(rec), own_note=note_line(rec)))
             for folder_id in ancestors:
+                key = context_key(tag, folder_id)
                 folder = ancestry.cache.get(folder_id)
-                if folder_id in folders or folder is None:
+                if key in folders or folder is None:
                     continue
                 line = note_line(folder)
                 chain = ancestry.chain(folder, require_card=False) if line else None
                 if chain is not None:
-                    folders[folder_id] = FolderNote(item_id=folder_id, path=canonical_path(conn.mount_name, chain[0]),
-                                                    depth=len(chain[1]) + 1,
-                                                    line=line)
+                    folders[key] = FolderNote(item_id=key, path=canonical_path(conn.mount_name, chain[0]),
+                                              depth=len(chain[1]) + 1, line=line)
         return ExcerptContext(files=tuple(contexts), folders=folders)
 
     async def _excerpt_range(self, conn: DriveConnection, request: ExcerptRangeRequest, stats: _ExcerptStats) -> ExcerptResult:
@@ -1713,7 +1832,7 @@ class DriveSearchService:
             stats.scope = "gate"
             return gated
         state = gated
-        ancestry = _Ancestry(self._repo, conn.scope, state.root_item_id)
+        ancestry = await self._ancestry(conn, state.root_item_id, stats)
         parsed = drive_ref.parse(request.file_ref)
         item_id = parsed.item_id if isinstance(parsed, drive_ref.DriveRef) else ""
         found, building = await asyncio.gather(self._repo.get_records(conn.scope, [item_id]),
@@ -2040,7 +2159,7 @@ class DriveSearchService:
             state = await self._repo.get_sync_state(conn.scope)
             if state is None or not state.root_item_id:
                 return None
-            found = await self._resolve_folder(conn, path, _Ancestry(self._repo, conn.scope, state.root_item_id))
+            found = await self._resolve_folder(conn, path, await self._ancestry(conn, state.root_item_id))
             rec = found.record if isinstance(found, _Folder) else None
         if rec is None or not inaccessible(rec):
             return None

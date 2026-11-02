@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
@@ -48,6 +49,9 @@ class FakeDrive:
         self.flagged = 0
         self.children_calls: List[str] = []
         self._seq = 0
+
+    async def capabilities(self, handle: Any) -> DriveCapabilities:
+        return DriveCapabilities(max_path_chars=400)   # the area default: `feed_scope` AREA, nothing filtered
 
     # -- mutations -------------------------------------------------------------------------------
     def _id(self) -> str:

@@ -42,7 +42,7 @@ async def test_drive_note_texts():
     ):
         notes.notes[(n.user_id, n.note_id)] = n
     service = DriveNoteService(notes, object(), object(), object(), object(), object(),  # type: ignore[arg-type]
-                               embedding_space="space-a")
+                               access=object(), embedding_space="space-a")
     assert await service.drive_note_texts("usr-1") == {
         "conn-2": "Acme work files: R&D, Tom's plan", "conn-1": "Family documents: Jamie's birth certificate"}
 

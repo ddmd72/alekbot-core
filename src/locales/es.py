@@ -219,6 +219,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_STATUS_NO_CARD.value: "🔎 Este archivo no tiene ficha de búsqueda por ahora, así que la búsqueda aún no muestra la nota.",
     UIMessage.DRIVE_NOTE_STATUS_ARCHIVED.value: "🔎 El archivo ya no está en el disco: solo una búsqueda en los archivos eliminados encuentra esta nota.",
     UIMessage.DRIVE_NOTE_STATUS_OTHER_DRIVE.value: "🔎 Su disco no está conectado, así que la búsqueda no mostrará esta nota hasta que ese disco se vuelva a conectar.",
+    UIMessage.DRIVE_NOTE_ON_DRIVE.value: "el disco {name}",
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ Para borrar para siempre la nota de {path} y todo su historial (versiones: {versions}), pega el comando de abajo en los próximos {minutes} minutos. No se borra nada hasta que lo hagas.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ Para borrar para siempre todas tus notas de archivos (notas: {count}) y su historial, pega el comando de abajo en los próximos {minutes} minutos. No se borra nada hasta que lo hagas.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notas borradas para siempre, con su historial: {count}.",

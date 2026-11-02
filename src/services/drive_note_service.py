@@ -15,6 +15,15 @@ code-built line, D13), reads the item through the connection's handle and binds 
 (`i:{identity}`) and the connection's tag (`r:{tag}:{id}`). A note belongs to the connection whose tag it carries: the
 indexing switch, the index record and the nudge are that connection's.
 
+Whole-drive notes (MULTI_DRIVE_RFC §11.10, slice 2b): every public method that takes a `ref` also takes the keyword
+`whole_drive_name` (with `ref=""`): the drive's name as `drive_state` lists it, a current name or a held former one. The
+note is bound by `c:{connection_id}` alone (no item, no index record, no nudge, never searchable), resolved through the
+mount table; it is written, undone, cleared and erased like a file note, and counts toward the per-user lineage cap.
+
+Access (§11.3): the live item path asks `access.check_access(handle, READ, item_id=…)` right after the connection is
+resolved and before the item is read; a refusal is `DriveNoteRefused(CANNOT_OPEN)` carrying the policy's line and nothing
+about the item.
+
 Guards (§4.5) that live here: the security check before any drive I/O (layer 4) and the per-user lineage cap. The owner-
 turn gate (layer 1), the per-turn write cap and the per-execution lock are the tool handlers'.
 Every receipt carries the stored triple byte for byte (layer 5); every version its provenance (layer 6).
@@ -36,6 +45,7 @@ Public interface:
     erase(user_id, code) -> int
     note_for_item(user_id, identity) -> Optional[DriveNote]
     drive_note_texts(user_id) -> Dict[str, str]        connection id -> text of its active drive note (§11.10)
+    drive_rename_notice(user_id, whole_drive_name) -> str   RENAME_NOTICE when the name given is a held former name
 Refusals raise DriveNoteRefused (a NoteRefusal reason and its detail); nothing is stored when one is raised.
 DriveIndexStoreUnavailable from the note store passes through every method unchanged (the caller reports "try again";
 an index-store failure on the record read is absorbed, see `_record`).
@@ -60,17 +70,21 @@ from ..domain.drive_note import (
     NoteRefusal, NoteSnapshot, NoteState, NoteTarget, content_of, deterministic_note_id, item_binding_key, item_ref,
     drive_note_connection_id, is_drive_note,
     next_version, note_after_write, note_content, note_embedding_text, note_ref_tag, note_word_count,
-    parse_note_target, searchability, snapshot_of, state_after, tagged_ref_key, undo_source,
+    connection_binding_key, parse_note_target, searchability, snapshot_of, state_after, tagged_ref_key, undo_source,
 )
-from ..domain.drive_mounts import canonical_path
+from ..domain.drive_access_op import AccessOp
+from ..domain.drive_connection_state import ConnectionState
+from ..domain.drive_mount import Mount
+from ..domain.drive_mounts import RENAME_NOTICE, canonical_path, unknown_drive_line
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.drive_note_change import NoteChange, apply_change
 from ..domain.drive_note_change_kind import NoteChangeKind
+from ..domain.drive_note_tool_texts import ONE_TARGET
 from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_note_view import NoteView
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_task_key, scope_payload
 from ..domain.prompt_v3.security import TrustZone
-from ..domain.user_drive import DriveItem, DriveItemNotFoundError, DriveNotConnectedError
+from ..domain.user_drive import DriveAccessRefused, DriveItem, DriveItemNotFoundError, DriveNotConnectedError
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
@@ -82,6 +96,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from .drive_connection_service import DriveConnectionService
+    from .user_drive_service import UserDriveService
 
 _ERASE_CODE_ATTEMPTS = 5
 
@@ -100,7 +115,8 @@ def _new_code() -> str:
 
 class _LiveItem(NamedTuple):
     """A `drive:<tag>:<id>` ref resolved on its connection (§4.4 step 2): what the live write path binds the note to.
-    `key` is the binding key `i:{identity}`."""
+    `key` is the binding key `i:{identity}`. A whole-drive note (§11.10) is a `_LiveItem` with no item: `item_id` and
+    `identity` empty, `record` None, the snapshot the drive's name, `key` = `c:{connection_id}` (`is_drive`)."""
     connection: DriveConnection
     item_id: str
     identity: str
@@ -109,14 +125,18 @@ class _LiveItem(NamedTuple):
     key: str
 
     @property
+    def is_drive(self) -> bool:
+        return not self.item_id
+
+    @property
     def ref(self) -> str:
-        return drive_ref.format(self.connection.ref_tag, self.item_id)
+        return "" if self.is_drive else drive_ref.format(self.connection.ref_tag, self.item_id)
 
 
 class DriveNoteService:
     def __init__(self, notes: DriveNoteRepository, drive: UserDrivePort, index: DriveIndexRepository,
                  embeddings: EmbeddingService, security: SecurityPort, connections: "DriveConnectionService", *,
-                 embedding_space: str,
+                 embedding_space: str, access: "UserDriveService",
                  nudge_queue: Optional[TaskQueue] = None, erase_requests: Optional[EphemeralStore] = None,
                  clock: Callable[[], datetime] = _utcnow,
                  new_note_id: Callable[[], str] = _new_note_id, new_code: Callable[[], str] = _new_code) -> None:
@@ -125,8 +145,10 @@ class DriveNoteService:
         `embeddings` writes (the adapter's EMBEDDING_SPACE). `index` is read only, per connection: the inaccessible
         check (D20) and the searchability status. `nudge_queue` is the drive queue (optional, as in UserDriveService);
         `erase_requests` the ephemeral store of `{prefix}drive_note_erase_requests` (without it the erase methods
-        refuse)."""
+        refuse). `access` is the access policy (§11.3): the live item path runs its READ check before the item is read;
+        required, so an unwired service cannot skip it."""
         self._notes = notes
+        self._access = access
         self._drive = drive
         self._index = index
         self._embeddings = embeddings
@@ -144,7 +166,8 @@ class DriveNoteService:
     # ------------------------------------------------------------------------------------------------------------------
 
     async def set(self, user_id: str, account_id: str, ref: str, note: str, doc_type: str = "",
-                  life_areas: Sequence[str] = (), provenance: NoteProvenance = NoteProvenance()) -> NoteReceipt:
+                  life_areas: Sequence[str] = (), provenance: NoteProvenance = NoteProvenance(), *,
+                  whole_drive_name: str = "") -> NoteReceipt:
         """Replace the note `ref` names with the triple (an empty triple is `clear`).
 
         A `drive:<tag>:<id>` ref resolves the live item on its connection (refused when the ref names no live
@@ -155,8 +178,8 @@ class DriveNoteService:
         never doubles versions)."""
         content = note_content(note, doc_type, life_areas)
         if content.is_empty:
-            return await self.clear(user_id, account_id, ref, provenance)
-        target = self._target(ref)
+            return await self.clear(user_id, account_id, ref, provenance, whole_drive_name=whole_drive_name)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         if content.text:
             await self._check(user_id, content.text)                       # step 1: before any drive I/O
         return await self._write(user_id, account_id, target, lambda _current: content, provenance, allow_new=True)
@@ -165,13 +188,13 @@ class DriveNoteService:
     # get, create, update (specialist RFC §9.2: one tool per edit kind)
     # ------------------------------------------------------------------------------------------------------------------
 
-    async def get(self, user_id: str, ref: str) -> Optional[NoteView]:
+    async def get(self, user_id: str, ref: str, *, whole_drive_name: str = "") -> Optional[NoteView]:
         """The note `ref` names, from the store alone (no drive call): active, archived or cleared (a cleared note is
         returned as cleared), also while the drive is disconnected. None when there is no note or only an erase stub.
         A `drive:` ref of a note on a drive that is not connected, or of several notes, is refused as `_resolve_note`
         refuses it (with each note's own `drive_note:` ref). The view's path is the mounted `<mount>/<path>` the receipts
         print (`_shown_path`); the stored snapshot stays relative."""
-        target = self._target(ref)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         if target.note_id:
             note = await self._notes.get(user_id, target.note_id)
         else:
@@ -184,7 +207,7 @@ class DriveNoteService:
         return view
 
     async def create(self, user_id: str, account_id: str, ref: str, content: NoteContent,
-                     provenance: NoteProvenance = NoteProvenance()) -> NoteReceipt:
+                     provenance: NoteProvenance = NoteProvenance(), *, whole_drive_name: str = "") -> NoteReceipt:
         """Add a note where there is none. `content` is already validated (`note_content`). A cleared note reuses its
         lineage; content identical to the note's is a no-op receipt; a note holding something else is refused
         (NOTE_EXISTS: change it with the edit tools). `ref` follows `set`: a `drive:` ref needs the live file on the
@@ -192,7 +215,7 @@ class DriveNoteService:
         if content.is_empty:
             raise DriveNoteRefused(NoteRefusal.EMPTY_CHANGE,
                                    "There is nothing to write: give the note's text, its type or its life areas.")
-        target = self._target(ref)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         if content.text:
             await self._check(user_id, content.text)                       # before any drive I/O
 
@@ -207,7 +230,7 @@ class DriveNoteService:
 
     async def update(self, user_id: str, account_id: str, ref: str, change: NoteChange,
                      provenance: NoteProvenance = NoteProvenance(), *,
-                     expected_version: Optional[int] = None) -> NoteReceipt:
+                     expected_version: Optional[int] = None, whole_drive_name: str = "") -> NoteReceipt:
         """Apply one change to the note `ref` names (`apply_change`). With no note, or a cleared one, an additive
         change (append text, set type, add areas) creates the note holding only that change, under `create`'s rules;
         any other change is refused (NO_NOTE: use create_note). `expected_version` (the version `get` returned) refuses
@@ -217,7 +240,7 @@ class DriveNoteService:
         re-run guard mirrors undo's (I3) — when the current version was written by this same session and non-empty
         turn id and the text already ends with the appended words, a provider-rotation re-run of the turn writes
         nothing and gets a no-op receipt."""
-        target = self._target(ref)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         if change.text:
             await self._check(user_id, change.text)                        # the change's new words, before drive I/O
 
@@ -255,7 +278,7 @@ class DriveNoteService:
         triple equal to the current one, in the same state, is a no-op receipt; content differing from the content
         last embedded is embedded again. `rerun(note, its current version)` true is a re-run of a write already made:
         a no-op receipt, checked on each attempt before the composition."""
-        place = await self._live_item(user_id, target) if not target.note_id else None
+        place = await self._live_place(user_id, target) if not target.note_id else None
         embedded: Optional[Tuple[NoteContent, str]] = None
         vector: Optional[List[float]] = None
         pending = False
@@ -293,7 +316,10 @@ class DriveNoteService:
                 receipt = await self._noop_receipt(user_id, current, place)
                 self._log(op, user_id, receipt, words=note_word_count(content.text))
                 return receipt
-            if embedded != (content, name):                                 # step 4: only when the content changed
+            if (place.is_drive if place is not None else existing is not None and is_drive_note(existing)):
+                # a drive note is never searched: no vector
+                vector, pending = None, False
+            elif embedded != (content, name):                               # step 4: only when the content changed
                 vector, pending = await self._embed(user_id, content, name)
                 embedded = (content, name)
             base = await self._base(user_id, account_id, existing, place.key if place is not None else "")
@@ -303,11 +329,13 @@ class DriveNoteService:
             if place is not None:
                 same = (current is not None and current.binding is not None
                         and current.binding.identity == place.identity and current.binding.item_id == place.item_id
-                        and current.binding.ref_tag == place.connection.ref_tag)
+                        and current.binding.ref_tag == place.connection.ref_tag
+                        and current.binding.connection_id == ("" if not place.is_drive else place.connection.connection_id))
                 binding = (current.binding if same and current is not None and current.binding is not None
                            else NoteBinding(identity=place.identity, item_id=place.item_id,
-                                            ref_tag=place.connection.ref_tag, bound_at=now,
-                                            bound_by=provenance.origin))
+                                            ref_tag=place.connection.ref_tag,
+                                            connection_id=place.connection.connection_id if place.is_drive else "",
+                                            bound_at=now, bound_by=provenance.origin))
             version = next_version(expected, content, NoteAction.SET, provenance, now,
                                    not_before=await self._valid_from_of(user_id, existing))
             keys, keys_version = note_store_keys(content, name)            # §3.1: the deleted-files search's keys
@@ -333,6 +361,7 @@ class DriveNoteService:
         (D20), then the item on the drive, its identity and its snapshot."""
         connection = await self._connection_of_ref(user_id, target)
         item_id = target.item_id
+        await self._check_read(connection, item_id)                         # §11.3: before the item is read
         record = await self._record(connection, item_id)
         if record is not None and inaccessible(record):                     # step 2.1: the index first (D20)
             raise DriveNoteRefused(NoteRefusal.CANNOT_OPEN,
@@ -348,6 +377,41 @@ class DriveNoteService:
                                effective_date=record.effective_date if record else None, now=self._clock())
         return _LiveItem(connection=connection, item_id=item_id, identity=identity, record=record, snapshot=snapshot,
                          key=item_binding_key(identity))
+
+    async def _live_place(self, user_id: str, target: NoteTarget) -> _LiveItem:
+        """The place a live write binds to: a whole drive (`connection_id`) or an item (`_live_item`)."""
+        return await self._live_drive(user_id, target) if target.connection_id else await self._live_item(user_id, target)
+
+    async def _live_drive(self, user_id: str, target: NoteTarget) -> _LiveItem:
+        """§11.10: the drive a whole-drive note is about. No index read, no drive call, no nudge: the snapshot is the
+        drive's current name (a folder), the binding `c:{connection_id}` alone. Refused when the connection is not
+        live."""
+        try:
+            connection = await self._connections.get(user_id, target.connection_id)
+        except Exception as exc:
+            logger.error(f"[DriveNote] connection read failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
+            raise DriveNoteRefused(NoteRefusal.DRIVE_UNAVAILABLE, "The drive could not be reached: try again later.")
+        if connection is None or connection.state is ConnectionState.DISCONNECTED:
+            raise DriveNoteRefused(NoteRefusal.NOT_CONNECTED, "The drive is not connected.")
+        snapshot = NoteSnapshot(name=connection.mount_name, is_folder=True, snapshot_at=self._clock())
+        return _LiveItem(connection=connection, item_id="", identity="", record=None, snapshot=snapshot,
+                         key=connection_binding_key(connection.connection_id))
+
+    async def _check_read(self, connection: DriveConnection, item_id: str) -> None:
+        """The access policy's READ check on the item (§11.3). The refusal is the policy's line; the item's path never
+        appears in it."""
+        try:
+            await self._access.check_access(connection.handle, AccessOp.READ, item_id=item_id)
+        except DriveAccessRefused as exc:
+            raise DriveNoteRefused(NoteRefusal.CANNOT_OPEN, exc.line, item_id=item_id)
+        except DriveNotConnectedError:
+            raise DriveNoteRefused(NoteRefusal.NOT_CONNECTED,
+                                   "The drive is not connected: connect it first (a note needs the file verified).")
+        except DriveItemNotFoundError:
+            raise DriveNoteRefused(NoteRefusal.NOT_ON_DRIVE, "The file is not on the drive.", item_id=item_id)
+        except Exception as exc:
+            logger.error(f"[DriveNote] access check failed item={item_id}: {type(exc).__name__}: {exc}")
+            raise DriveNoteRefused(NoteRefusal.DRIVE_UNAVAILABLE, "The drive could not be reached: try again later.")
 
     @staticmethod
     def _state_after_write(note: Optional[DriveNote], content: NoteContent, *, live: bool) -> NoteState:
@@ -373,7 +437,7 @@ class DriveNoteService:
     async def _noop_receipt(self, user_id: str, note: DriveNote, place: Optional[_LiveItem]) -> NoteReceipt:
         if place is not None:
             return self._receipt("set", note, path=self._live_path(place), ref=place.ref, previous=note,
-                                 status=searchability(place.connection.indexing_enabled, place.record), noop=True)
+                                 status=self._place_status(place), noop=True)
         return self._receipt("set", note, path=await self._shown_path(user_id, note), ref=item_ref(note), previous=note,
                              status=await self._status_of(user_id, note), noop=True)
 
@@ -382,12 +446,11 @@ class DriveNoteService:
         """Nudge the indexer (step 6: a live item always; a note-ref edit only when the note is active on the connected
         drive) and build the receipt of the stored note (step 7)."""
         if place is not None:
-            await self._nudge(place.connection, [place.item_id])
+            await self._nudge(place.connection, [place.item_id])           # no item for a drive note: nothing sent
             return self._receipt("set", written, path=self._live_path(place), ref=place.ref,
-                                 previous=previous, status=searchability(place.connection.indexing_enabled,
-                                                                         place.record))
+                                 previous=previous, status=self._place_status(place))
         connection = await self._note_connection(user_id, written)
-        if connection is not None and written.state == NoteState.ACTIVE.value:
+        if connection is not None and written.state == NoteState.ACTIVE.value and not is_drive_note(written):
             await self._nudge(connection, [written.binding.item_id] if written.binding is not None else [])
         return self._receipt("set", written, path=await self._shown_path(user_id, written), ref=item_ref(written), previous=previous,
                              status=await self._status_of(user_id, written))
@@ -397,10 +460,10 @@ class DriveNoteService:
     # ------------------------------------------------------------------------------------------------------------------
 
     async def clear(self, user_id: str, account_id: str, ref: str,
-                    provenance: NoteProvenance = NoteProvenance()) -> NoteReceipt:
+                    provenance: NoteProvenance = NoteProvenance(), *, whole_drive_name: str = "") -> NoteReceipt:
         """Delete the note: a `clear` version, `state = cleared`, every derived field emptied; history kept (undo
         restores, an erase removes). No note, a cleared note or an erase stub: a no-op success ("there was no note")."""
-        target = self._target(ref)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         note = await self._resolve_note(user_id, target)
         for attempt in range(2):
             if note is None or note.erase_pending or note.state == NoteState.CLEARED.value:
@@ -428,14 +491,14 @@ class DriveNoteService:
         raise AssertionError("unreachable")   # pragma: no cover
 
     async def undo(self, user_id: str, account_id: str, ref: str,
-                   provenance: NoteProvenance = NoteProvenance()) -> NoteReceipt:
+                   provenance: NoteProvenance = NoteProvenance(), *, whole_drive_name: str = "") -> NoteReceipt:
         """Put back the note as it was before its last change: a `restore` version copying v(n-1) (undo of a first
         note clears it; undo of an undo restores the undone version, `redo`). An archived note keeps `archived`; a
         cleared note comes back `active` (or `archived` when it had been archived). Re-run guard (I3): when the current
         version is a restore written by this same turn (`provenance.session_id` and a non-empty `provenance.turn_id`
         equal), nothing is written and a no-op receipt returns — a failover re-run of the turn never flips it back.
         The caller must pass a non-empty `turn_id`; without one the guard is off (logged)."""
-        target = self._target(ref)
+        target = await self._target_of(user_id, ref, whole_drive_name)
         if not provenance.turn_id:
             logger.warning(f"[DriveNote] undo user={user_id[:8]} without a turn id: the re-run guard is off")
         note = await self._resolve_note(user_id, target)
@@ -458,7 +521,8 @@ class DriveNoteService:
             content = content_of(source)
             state = state_after(note, content, NoteAction.RESTORE)
             name = note.snapshot.name if note.snapshot is not None else ""
-            vector, pending = (None, False) if content.is_empty else await self._embed(user_id, content, name)
+            vector, pending = (None, False) if content.is_empty or is_drive_note(note) else await self._embed(
+                user_id, content, name)
             now = self._clock()
             version = next_version(note.current_version, content, NoteAction.RESTORE, provenance, now,
                                    restored_from=source_v,
@@ -486,17 +550,18 @@ class DriveNoteService:
     # erase (§4.8, D13): a code first, the erase on its paste
     # ------------------------------------------------------------------------------------------------------------------
 
-    async def request_erase(self, user_id: str, ref: str) -> EraseRequestReceipt:
-        """Store an erase request for the one note `ref` names and return its code; nothing is erased here."""
+    async def request_erase(self, user_id: str, ref: str, *, whole_drive_name: str = "") -> EraseRequestReceipt:
+        """Store an erase request for the one note `ref` (or the whole drive `whole_drive_name`) names and return its
+        code; nothing is erased here."""
         store = self._erase_store()
-        note = await self._resolve_note(user_id, self._target(ref))
+        note = await self._resolve_note(user_id, await self._target_of(user_id, ref, whole_drive_name))
         if note is None or note.erase_pending:
             raise DriveNoteRefused(NoteRefusal.NO_NOTE, "There is no note on this file to erase.")
         code = await self._store_request(store, user_id, ERASE_SCOPE_ONE, [note.note_id])
         logger.info(f"[DriveNote] erase requested user={user_id[:8]} scope=one note={note.note_id} "
                     f"versions={note.current_version}")
         return EraseRequestReceipt(scope=ERASE_SCOPE_ONE, code=code, note_count=1, path=await self._shown_path(user_id, note),
-                                   version_count=note.current_version)
+                                   version_count=note.current_version, drive=is_drive_note(note))
 
     async def request_erase_all(self, user_id: str) -> EraseRequestReceipt:
         """Store an erase request for every note of the user (stubs excepted) and return its code and the count."""
@@ -537,7 +602,7 @@ class DriveNoteService:
             # record copy: a stub is deleted now only when no record holds that note's copy (a copy left from before
             # indexing went off waits for the indexer, which clears it first)
             idle = {i: n for i, n in erased.items()
-                    if (c := by_tag.get(note_ref_tag(n))) is None or not c.indexing_enabled}
+                    if is_drive_note(n) or (c := by_tag.get(note_ref_tag(n))) is None or not c.indexing_enabled}
             held = await self._copies_held(user_id, idle, by_tag)
             for note_id in idle:
                 if note_id not in held:
@@ -585,6 +650,38 @@ class DriveNoteService:
     # ------------------------------------------------------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------------------------------------------------------
+
+    async def _target_of(self, user_id: str, ref: str, whole_drive_name: str = "") -> NoteTarget:
+        """The note a call names: `ref` (a file, a folder or a note) or `whole_drive_name` (a drive, §11.10), never
+        both. A drive name is resolved through the mount table (a current or a held former name); an unknown one is
+        refused with the code-built line listing the drives."""
+        name = (whole_drive_name or "").strip()
+        if not name:
+            return self._target(ref)
+        if (ref or "").strip():
+            raise DriveNoteRefused(NoteRefusal.INVALID_REF, ONE_TARGET)
+        mount, _former = await self._mount_named(user_id, name)
+        return NoteTarget(connection_id=mount.connection_id, tag=mount.ref_tag)
+
+    async def _mount_named(self, user_id: str, name: str) -> Tuple[Mount, bool]:
+        try:
+            table = await self._connections.mounts(user_id)
+        except Exception as exc:
+            logger.error(f"[DriveNote] mounts read failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
+            raise DriveNoteRefused(NoteRefusal.DRIVE_UNAVAILABLE, "The drive could not be reached: try again later.")
+        found = table.by_name(name)
+        if found is None:
+            raise DriveNoteRefused(NoteRefusal.INVALID_REF, unknown_drive_line(name, table))
+        return found
+
+    async def drive_rename_notice(self, user_id: str, whole_drive_name: str) -> str:
+        """RENAME_NOTICE when `whole_drive_name` is a held former name of its drive (§11.8), else "". Never raises for
+        an unknown name (the call itself refuses it)."""
+        try:
+            mount, former = await self._mount_named(user_id, whole_drive_name.strip())
+        except DriveNoteRefused:
+            return ""
+        return RENAME_NOTICE.format(former=whole_drive_name.strip(), current=mount.name) if former else ""
 
     @staticmethod
     def _target(ref: str) -> NoteTarget:
@@ -667,7 +764,7 @@ class DriveNoteService:
 
     async def _resolve_note(self, user_id: str, target: NoteTarget) -> Optional[DriveNote]:
         """The note a ref names, from the store alone (no connection read: it works while the drive is disconnected,
-        D3, D17). `drive_note:<id>` → that note (refused when it does not exist). `drive:<tag>:<id>` → the note whose
+        D3, D17). A whole drive (`connection_id`) → the note bound by `c:{connection_id}`. `drive_note:<id>` → that note (refused when it does not exist). `drive:<tag>:<id>` → the note whose
         ref key is `r:{tag}:{id}` (None when there is none; several live ones are refused with each one's `drive_note:`
         ref). An untagged `drive:<id>` is refused with the "search again" line (MULTI_DRIVE_RFC §9, D13)."""
         if target.note_id:
@@ -675,6 +772,8 @@ class DriveNoteService:
             if note is None:
                 raise DriveNoteRefused(NoteRefusal.NO_NOTE, f"There is no note {target.note_id}.")
             return note
+        if target.connection_id:                          # a whole-drive note: its `c:` key
+            return await self._notes.find_bound(user_id, connection_binding_key(target.connection_id))
         if not target.tag:
             ref = f"{drive_ref.REF_PREFIX}{target.item_id}"
             raise DriveNoteRefused(NoteRefusal.INVALID_REF, stale_ref_line(ref), ref=ref)
@@ -710,7 +809,7 @@ class DriveNoteService:
         groups: Dict[str, Dict[str, str]] = {}
         for note_id, note in notes.items():
             tag = note_ref_tag(note)
-            if note.binding is not None and tag in by_tag:
+            if note.binding is not None and tag in by_tag and not is_drive_note(note):
                 groups.setdefault(tag, {})[note.binding.item_id] = note_id
         held: Set[str] = set()
         for tag, items in groups.items():
@@ -738,7 +837,7 @@ class DriveNoteService:
 
     async def _nudge_note(self, user_id: str, note: DriveNote) -> None:
         """Nudge the item of a note edited from the store, on its connection; nothing when it has none live."""
-        if note.binding is None:
+        if note.binding is None or is_drive_note(note):
             return
         connection = await self._note_connection(user_id, note)
         if connection is not None:
@@ -780,6 +879,8 @@ class DriveNoteService:
         deleted-files search; bound on a connection that is not live → not searchable now; else as for `set`, by its
         connection's switch and index. Connections that cannot be read are not "another drive": status as for `set`
         with the switch on and no record."""
+        if is_drive_note(note):
+            return ""
         if note.state == NoteState.ARCHIVED.value:
             return STATUS_ARCHIVED
         if note.binding is None:
@@ -815,8 +916,16 @@ class DriveNoteService:
                 and current.turn_id == provenance.turn_id and current.session_id == provenance.session_id)
 
     @staticmethod
+    def _place_status(place: _LiveItem) -> str:
+        """The searchability of a live write; a drive note is not searched ("")."""
+        return "" if place.is_drive else searchability(place.connection.indexing_enabled, place.record)
+
+    @staticmethod
     def _live_path(place: _LiveItem) -> str:
-        """The live item's path as the model reads it: `<mount>/<path>` with the connection's current name."""
+        """The live item's path as the model reads it: `<mount>/<path>` with the connection's current name; a drive
+        note's place is the drive's name."""
+        if place.is_drive:
+            return place.connection.mount_name
         return canonical_path(place.connection.mount_name, place.snapshot.path) if place.snapshot.path else ""
 
     async def _shown_path(self, user_id: str, note: Optional[DriveNote]) -> str:
@@ -824,6 +933,8 @@ class DriveNoteService:
         being the current name of the connection the note's tag names (DISCONNECTED included: its last name). The stored
         snapshot stays relative. A note with no tag, or whose connection cannot be found or read, shows the stored
         path as it is."""
+        if note is not None and is_drive_note(note):
+            return await self._drive_name(user_id, note)
         path = note.snapshot.path if note is not None and note.snapshot is not None else ""
         tag = note_ref_tag(note) if note is not None and path else ""
         if not tag:
@@ -835,6 +946,24 @@ class DriveNoteService:
             return path
         return canonical_path(connection.mount_name, path) if connection is not None else path
 
+    async def _name_of_connection(self, user_id: str, connection_id: str) -> str:
+        try:
+            connection = await self._connections.get(user_id, connection_id)
+        except Exception:
+            return ""
+        return connection.mount_name if connection is not None else ""
+
+    async def _drive_name(self, user_id: str, note: DriveNote) -> str:
+        """A drive note's place: its drive's current name (DISCONNECTED included: its last name); the name stored in the
+        snapshot when the connection cannot be found or read."""
+        stored = note.snapshot.name if note.snapshot is not None else ""
+        try:
+            connection = await self._connections.get(user_id, drive_note_connection_id(note))
+        except Exception as exc:
+            logger.warning(f"[DriveNote] connection read failed user={user_id[:8]}: {type(exc).__name__}")
+            return stored
+        return connection.mount_name if connection is not None else stored
+
     @staticmethod
     def _receipt(action: str, note: DriveNote, *, path: str, ref: str, previous: Optional[DriveNote],
                  status: str = "", noop: bool = False, redo: bool = False) -> NoteReceipt:
@@ -844,15 +973,18 @@ class DriveNoteService:
                            text=note.text, doc_type=note.doc_type, life_areas=tuple(note.life_areas),
                            previous_text=before.text, previous_doc_type=before.doc_type,
                            previous_life_areas=before.life_areas, status=status, state=str(note.state), noop=noop,
-                           redo=redo)
+                           redo=redo, drive=is_drive_note(note))
 
     async def _noop_clear(self, user_id: str, note: Optional[DriveNote], target: NoteTarget) -> NoteReceipt:
         if note is None:
             ref = drive_ref.format(target.tag, target.item_id) if target.item_id and target.tag else ""
-            return NoteReceipt(action="clear", note_id="", ref=ref, path="", version=0, state="", noop=True)
+            path = await self._name_of_connection(user_id, target.connection_id) if target.connection_id else ""
+            return NoteReceipt(action="clear", note_id="", ref=ref, path=path, version=0, state="", noop=True,
+                               drive=bool(target.connection_id))
         stub = note.erase_pending
         return NoteReceipt(action="clear", note_id=note.note_id, ref=item_ref(note), path=await self._shown_path(user_id, note),
-                           version=0 if stub else note.current_version, state=str(note.state), noop=True)
+                           version=0 if stub else note.current_version, state=str(note.state), noop=True,
+                           drive=is_drive_note(note))
 
     @staticmethod
     def _log(op: str, user_id: str, receipt: NoteReceipt, *, words: int = 0) -> None:

@@ -54,6 +54,7 @@ STATUS_DISABLED = "disabled"
 STATUS_DISCONNECTED = "disconnected"
 STATUS_AMBIGUOUS_FOLDER = "ambiguous_folder"
 STATUS_FOLDER_NOT_FOUND = "folder_not_found"
+ALSO_ON_LINE = "also on: "   # the same content on another drive (MULTI_DRIVE_RFC §11.4): canonical paths, `; ` apart
 STATUS_DRIVE_REFUSED = "drive_refused"   # `drives` (or a folder against `drives`) was refused: `refusal` is the line
 
 
@@ -619,6 +620,8 @@ def _card_body(card: DriveSearchCard) -> str:
         lines.append("truncated: only the beginning of the file was indexed")
     if card.also_at:
         lines.append("identical copies also at: " + "; ".join(card.also_at))
+    if card.also_on:
+        lines.append(ALSO_ON_LINE + "; ".join(card.also_on))
     return "\n".join(lines)
 
 

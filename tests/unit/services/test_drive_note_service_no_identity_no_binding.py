@@ -52,7 +52,7 @@ async def _world(drive_cls=FakeDriveAdapter):
     security.validate.return_value = ValidationResult(sanitized_text="", risk_level=RiskLevel.SAFE, risk_score=0.0,
                                                       patterns_detected=[], action_taken="passed", metadata={})
     w.service = DriveNoteService(w.notes, w.drive, _EmptyIndex(), embeddings, security, connection_service(w.repo),
-                                 embedding_space="space-a", nudge_queue=w.queue, clock=lambda: T0)
+                                 access=AsyncMock(), embedding_space="space-a", nudge_queue=w.queue, clock=lambda: T0)
     return w
 
 

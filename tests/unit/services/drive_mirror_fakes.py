@@ -19,6 +19,7 @@ from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity, one
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
 from src.domain.drive_capabilities import DriveCapabilities
+from src.domain.drive_connection import ROOT_FOLDER
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_media_source import MediaSource
 from src.domain.drive_index import (
@@ -396,6 +397,7 @@ class FakeMirrorHost:
     repo: InMemoryDriveIndexRepository
     clock: datetime = START
     drive_identity: str = DRIVE_IDENTITY
+    write_folder_id: Optional[str] = ROOT_FOLDER   # MirrorHost: the connection's write folder
     tz_name: str = "UTC"
     language: str = "en"
     round_complete: bool = True

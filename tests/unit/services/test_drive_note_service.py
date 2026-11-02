@@ -139,7 +139,7 @@ class Env:
         codes = iter(f"c{i:04d}" for i in range(100))
         self.service = DriveNoteService(
             self.notes, self.drive, self.index, self.embeddings, self.security, self.connections,
-            embedding_space="space-a", nudge_queue=self.queue, erase_requests=self.store, clock=_Clock(),
+            access=AsyncMock(), embedding_space="space-a", nudge_queue=self.queue, erase_requests=self.store, clock=_Clock(),
             new_note_id=lambda: next(ids), new_code=lambda: next(codes))
 
     # -- the connections ----------------------------------------------------------------------------------------------
@@ -614,7 +614,7 @@ async def test_erase_needs_a_note_and_a_store(env):
         await env.service.request_erase_all(U)
     assert refusal(info) == NoteRefusal.NO_NOTE
     bare = DriveNoteService(env.notes, env.drive, env.index, env.embeddings, env.security, env.connections,
-                            embedding_space="space-a")
+                            access=AsyncMock(), embedding_space="space-a")
     with pytest.raises(DriveNoteRefused) as info:
         await bare.erase(U, "c0000")
     assert refusal(info) == NoteRefusal.ERASE_UNAVAILABLE

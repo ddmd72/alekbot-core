@@ -5,7 +5,9 @@ these functions and writes what they return.
 
 Public interface:
     PlanContext, Classification, ObservationPlan, AccessAction
-    parent_scope(parent_id, parent, root_item_id, mirror_root_ids=frozenset()) -> Optional[Scope]
+    parent_scope(parent_id, parent, root_item_id, mirror_root_ids=frozenset(), scope_root_ids=frozenset(),
+                 whole_drive=False, root_covered=True) -> Optional[Scope]
+    scope_ancestor_classification(change) -> Classification / scope_restart(state, scope_key) -> DriveSyncState  (RFC §11.3)
     mirror_root_classification(change) -> Classification                                   (§27.9.8)
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
@@ -106,6 +108,14 @@ class PlanContext:
     now: datetime
     place_of: PlaceOf
     mirror_root_ids: FrozenSet[str] = frozenset()
+    # MULTI_DRIVE_RFC §11.3 (slice 2b), a filtered scope only: `scope_root_ids` the selected folders (a child of one is
+    # normal; the folder itself classifies as normal whatever its own, out-of-scope, parent); `scope_ancestor_ids` the
+    # folders on the path from the root to one (stored as skeletons); `whole_drive` admits a parentless item;
+    # `filtered`: the scope does not cover the root, so the root is no implicit normal parent
+    scope_root_ids: FrozenSet[str] = frozenset()
+    scope_ancestor_ids: FrozenSet[str] = frozenset()
+    whole_drive: bool = False
+    filtered: bool = False
 
 
 @dataclass(frozen=True)
@@ -154,11 +164,18 @@ class AccessAction(str, Enum):
 
 
 def parent_scope(parent_id: str, parent: Optional[DriveIndexRecord], root_item_id: str,
-                 mirror_root_ids: FrozenSet[str] = frozenset()) -> Optional[Scope]:
-    """Scope a child inherits; None when the parent is not known yet. The root is an implicit normal parent; a mirror
-    root (§27.9.2) an implicit opaque one, so its direct children are never held unresolved while its own record is
-    not stored yet (the first enumeration after a purge, §27.9.8)."""
-    if parent_id and parent_id == root_item_id:
+                 mirror_root_ids: FrozenSet[str] = frozenset(), scope_root_ids: FrozenSet[str] = frozenset(),
+                 whole_drive: bool = False, root_covered: bool = True) -> Optional[Scope]:
+    """Scope a child inherits; None when the parent is not known yet. The root is an implicit normal parent (when the
+    scope covers it, `root_covered`); a mirror root (§27.9.2) an implicit opaque one, so its direct children are never
+    held unresolved while its own record is not stored yet (the first enumeration after a purge, §27.9.8). A selected
+    scope folder is an implicit normal parent too (its own parent is out of scope and has no record), and "" is one
+    with the whole drive (a shared item with no reachable parent, RFC §11.3)."""
+    if parent_id and parent_id == root_item_id and root_covered:
+        return Scope.NORMAL
+    if parent_id and parent_id in scope_root_ids:
+        return Scope.NORMAL
+    if not parent_id and whole_drive:
         return Scope.NORMAL
     if parent_id and parent_id in mirror_root_ids:
         return Scope.INSIDE_OPAQUE
@@ -171,6 +188,22 @@ def mirror_root_classification(change: DriveChange) -> Classification:
     kind = kind_of(change.name, change.mime_type, change.is_folder)
     return Classification(True, Scope.INSIDE_OPAQUE, RecordState.METADATA_ONLY, Reason.FOLDER, kind,
                           content_class_of(kind))
+
+
+def scope_ancestor_classification(change: DriveChange) -> Classification:
+    """A folder on the path from the root to a selected scope folder (RFC §11.3): `normal / metadata_only /
+    scope_ancestor`. Stored, never searchable (no card), never relisted or probed; it lets the parent chains of the
+    records under the scope folder reach the root."""
+    kind = kind_of(change.name, change.mime_type, change.is_folder)
+    return Classification(True, Scope.NORMAL, RecordState.METADATA_ONLY, Reason.SCOPE_ANCESTOR, kind,
+                          content_class_of(kind))
+
+
+def scope_restart(state: DriveSyncState, scope_key: str) -> DriveSyncState:
+    """The connection's scope changed since the stored records were enumerated (RFC §11.3): enumerate again. The
+    re-enumeration re-observes everything, the scope filter deletes what left, the epoch sweep removes the rest."""
+    return replace(state, cursor=None, epoch=state.epoch + 1, epoch_phase=EpochPhase.ENUMERATING,
+                   round_complete=False, round_started_at=None, applied_scope=scope_key)
 
 
 def _density_decision_reusable(change: DriveChange, previous: Optional[DriveIndexRecord]) -> bool:
@@ -541,8 +574,13 @@ def _plan(change: DriveChange, existing: Optional[DriveIndexRecord], parent: Opt
 
     if change.item_id in ctx.mirror_root_ids:
         cls = mirror_root_classification(change)   # the bot's own folder: opaque whatever its parent (§27.9.8)
+    elif change.is_folder and change.item_id in ctx.scope_ancestor_ids and change.item_id not in ctx.scope_root_ids:
+        cls = scope_ancestor_classification(change)
     else:
-        pscope = parent_scope(change.parent_id, effective_parent, ctx.root_item_id, ctx.mirror_root_ids)
+        pscope = parent_scope(change.parent_id, effective_parent, ctx.root_item_id, ctx.mirror_root_ids,
+                              ctx.scope_root_ids, ctx.whole_drive, not ctx.filtered)
+        if change.item_id in ctx.scope_root_ids and pscope in (None, Scope.UNRESOLVED):
+            pscope = Scope.NORMAL   # a selected folder: its parent is out of scope and has no record
         cls = classify(change, pscope, probe, existing)
     if not cls.stored:
         parent_updates += _readme_touched(change, effective_parent, ctx.now)

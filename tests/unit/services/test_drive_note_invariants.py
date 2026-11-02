@@ -152,7 +152,7 @@ class World:
             notes=self.notes, note_lifecycle=self.lifecycle, connections=self.connections, clock=self.clock, monotonic=self.clock.monotonic)
         codes = iter(f"c{i:04d}" for i in range(100))
         self.note_svc = DriveNoteService(
-            self.notes, self.drive, self.repo, self.emb, _security(), self.connections, embedding_space=SPACE,
+            self.notes, self.drive, self.repo, self.emb, _security(), self.connections, access=AsyncMock(), embedding_space=SPACE,
             nudge_queue=self.queue, erase_requests=MemoryStore(), clock=self.clock, new_code=lambda: next(codes))
         self.search_svc = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=SPACE,
                                              clock=self.clock, mirror=mirror)
