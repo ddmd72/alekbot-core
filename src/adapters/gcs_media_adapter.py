@@ -94,8 +94,8 @@ class GcsMediaAdapter(MediaStoragePort):
             "expiration": timedelta(seconds=ttl_seconds),
             "method": "GET",
         }
-        # Signer = the runtime's own identity. A credential that can sign locally (service-account key file,
-        # local dev) signs as today. Otherwise (Cloud Run metadata credentials) signing goes through the IAM
+        # Signer = the runtime's own identity. A credential that can sign locally (service-account key file)
+        # signs as today; local dev runs under a user ADC, which has no SA email and is refused below. Otherwise (Cloud Run metadata credentials) signing goes through the IAM
         # signBlob API with the refreshed credential's own SA email + access token; that SA needs
         # signBlob on itself. The constructor email stays as an explicit override.
         import google.auth
