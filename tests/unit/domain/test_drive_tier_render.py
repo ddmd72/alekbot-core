@@ -46,7 +46,7 @@ def example():
     )
     rest = tuple(GroupMember("Travel/Rome", "pdf", "2026-05") for _ in range(3))
     tiered = TieredResult(
-        concepts=("rome", "tickets"), ignored=("all", "my"), coverage=CoverageFacts(not_described=4),
+        concepts=("rome", "tickets"), ignored=("all", "my"), coverage=CoverageFacts(not_described=4, not_read_yet=1),
         blocks=(TierBlock(MatchTier.ABOUT, 1), TierBlock(MatchTier.MENTIONED, 1), TierBlock(MatchTier.TRANSLATED, 1),
                 TierBlock(MatchTier.LABELLED, 5, rest=rest, nonce="ngroup0000"), TierBlock(MatchTier.RELATED, 1)))
     return DriveSearchResult(status=STATUS_OK, cards=cards, envelope=DriveSearchEnvelope(index_as_of=AS_OF),
@@ -58,7 +58,7 @@ EXPECTED = "\n".join([
     "The index reflects the drive as of 2026-10-20 08:00 UTC.",
     'Searched names (several spellings and word forms), file descriptions, document text and passage keywords for: '
     '"rome", "tickets"; ignored: "all", "my".',
-    "Coverage: incomplete — 4 text files are not described yet; 1 document could not be read.",
+    "Coverage: incomplete — 4 text files are not described yet; 1 document is not read yet.",
     'About "rome tickets" (1):',
     '<drive_document nonce="nA100000" ref="drive:A1" path="Travel/Rome/Colosseum entry.pdf">',
     "Colosseum entry.pdf | PDF document | ticket | Two entry tickets to the Colosseum, Rome, 12 May 2026",

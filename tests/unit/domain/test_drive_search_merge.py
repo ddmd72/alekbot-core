@@ -60,10 +60,10 @@ def test_tier_totals_are_summed_and_rest_concatenated():
 
 
 def test_coverage_sums_ints_ors_bools_and_unions_tuples():
-    a = part([], coverage=CoverageFacts(unread=1, full_page=True, cut=("x",)))
-    b = part([], coverage=CoverageFacts(unread=2, building=True, cut=("x", "y")))
+    a = part([], coverage=CoverageFacts(not_read_yet=1, full_page=True, cut=("x",)))
+    b = part([], coverage=CoverageFacts(not_read_yet=2, building=True, cut=("x", "y")))
     cov = merged([(DRIVE, a), (ACME, b)]).tiered.coverage
-    assert (cov.unread, cov.full_page, cov.building, cov.cut) == (3, True, True, ("x", "y"))
+    assert (cov.not_read_yet, cov.full_page, cov.building, cov.cut) == (3, True, True, ("x", "y"))
 
 
 def test_absent_is_absent_on_every_part_and_the_rest_is_in_scope():

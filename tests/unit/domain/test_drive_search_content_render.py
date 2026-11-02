@@ -45,10 +45,11 @@ class TestFactsStayGuidanceMoves:
         assert missing.startswith("The index is still being built")
 
     def test_per_result_facts_stay(self):
-        text = render(card(truncated=True, also_at=("Old/Scan_0012.pdf",)), unread=3, reconnect_needed=True)
+        text = render(card(truncated=True, also_at=("Old/Scan_0012.pdf",)), not_read_yet=3, reconnect_needed=True)
         assert "truncated: only the beginning of the file was indexed" in text
         assert "identical copies also at: Old/Scan_0012.pdf" in text
-        assert "3 documents could not be read" in text and "reconnect the drive" in text
+        assert "3 documents are not read yet" in text and "reconnect the drive" in text
+        assert "could not be read" not in text   # the unreadable files are the Cabinet's, never the bot's
 
     def test_content_search_drops_the_names_only_line(self):
         assert "names and metadata" in render(card())
