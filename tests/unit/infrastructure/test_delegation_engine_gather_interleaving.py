@@ -182,14 +182,11 @@ class TestFileRefResolution:
         assert specialist.messages[0].payload["file_content"] == "BIG TEXT"
         assert specialist.messages[0].payload["file_ref"] == "f1"
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-        "P15-S6: the coordinator writes the resolved file text into the model's own ToolCall context dict, which "
-        "build_tool_turn echoes into history; owner decision"))
     async def test_the_resolved_file_text_does_not_enter_the_models_tool_call(self):
-        """`normalize_delegate_context` returns the model's own dict (delegation_engine.py:130-134), the engine passes it
-        on as `params`, and `AgentCoordinator._resolve_file_refs` writes `params["file_content"]` into it
-        (agent_coordinator.py:590-606). That dict is `tool_call.args["context"]`, the call `build_tool_turn` puts into
-        history: the whole file text rides along in every later turn."""
+        """`AgentCoordinator._resolve_file_refs` writes `params["file_content"]` into the context dict the engine passes
+        on. That dict must be a copy: `normalize_delegate_context` returns a new dict, because the model's own
+        `tool_call.args["context"]` is the call `build_tool_turn` puts into history, and the whole file text would ride
+        along in every later turn."""
         tool_call, specialist, result = await self._dispatch_with_a_file_ref()
 
         assert not result.failed
