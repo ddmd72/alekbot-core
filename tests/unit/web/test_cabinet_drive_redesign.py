@@ -517,3 +517,31 @@ def test_the_add_drive_hint_names_no_provider():
     for lang in LANGS:
         for key in ("drive.add_hint", "drive.pk_root", "drive.picker_outer"):
             assert not re.search(r"onedrive|google", dicts[lang][key], re.I), (lang, key)
+
+
+_OVERLAY_CLICK = re.search(r'<div class="dv-overlay" onclick="(.*?)">', PICKER).group(1).replace("${q}", "c1")
+
+
+def _click(target: str) -> str:
+    """Runs the overlay's own onclick text as the browser would: `this` is the overlay, `event.target` what was hit."""
+    return ('const overlay = {}; const inside = {}; new Function("event", ' + json.dumps(_OVERLAY_CLICK)
+            + f').call(overlay, {{ target: {target} }});')
+
+
+@node
+def test_a_click_outside_the_dialog_with_pending_changes_asks_before_closing():
+    out = _picker('toggleDrivePickerFolder("c1", 1);' + _click("overlay"))
+    assert out["open"] and "T:drive.pk_confirm_one" in out["foot"] and "resumeDrivePicker('c1')" in out["foot"]
+    assert out["calls"] == []
+
+
+@node
+def test_a_click_outside_the_dialog_without_changes_just_closes():
+    assert not _picker(_click("overlay"))["open"]
+
+
+@node
+def test_a_click_inside_the_dialog_does_not_close_it():
+    out = _picker('toggleDrivePickerFolder("c1", 1);' + _click("inside"))
+    assert out["open"] and "T:drive.pk_confirm_one" not in out["foot"] and "T:drive.save (1)" in out["foot"]
+    assert _picker(_click("inside"))["open"]
