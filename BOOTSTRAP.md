@@ -16,7 +16,11 @@ How to stand up Alek-Core locally and on GCP. Solo-developer setup; one live env
   `gcloud auth application-default login`)
 - A GCP project with: Firestore (named database `us-production`), Cloud Run, Cloud Tasks,
   Cloud Scheduler, Cloud Build enabled
-- Firebase Admin service-account key → `config/secrets/firebase-admin-key.json`
+
+Local runs use your own identity through Application Default Credentials, never a service-account key file: secrets come
+from Secret Manager and stored secrets are encrypted with the real KMS key, both granted to the developer
+(`decisions/secrets_at_rest_cipher_and_digest.md`). A user credential cannot sign, so a locally running app mints no
+`/f/<token>` file links (`GcsMediaAdapter` refuses with "runtime service account email is unknown").
 
 ---
 
@@ -46,7 +50,7 @@ in `.git/hooks/` too; to keep your own hooks path instead, call `.githooks/pre-c
 
 Copy [`.env.example`](.env.example) and fill it in. Minimum to boot locally:
 
-- `GOOGLE_CLOUD_PROJECT`, `GOOGLE_APPLICATION_CREDENTIALS`, `FIRESTORE_DATABASE=us-production`
+- `GOOGLE_CLOUD_PROJECT`, `FIRESTORE_DATABASE=us-production` (leave `GOOGLE_APPLICATION_CREDENTIALS` unset, §1)
 - `GEMINI_API_KEY` (default provider; others optional)
 - One channel: `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` (Socket Mode) **or** `TELEGRAM_BOT_TOKEN`
 
