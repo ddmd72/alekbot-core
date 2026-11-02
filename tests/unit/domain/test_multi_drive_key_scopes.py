@@ -20,6 +20,7 @@ USER_SCOPED = {
     "binding_key": "the single-drive note binding key (part D removes it)",
     "ref_key": "the untagged note ref key (part D removes it)",
     "record_binding_key": "the single-drive record binding key (part D removes it)",
+    "connection_binding_key": "a drive note's binding, c:{connection_id}, a match key in the user's note store (§11.10)",
 }
 
 TRANSITIONAL: set = set()   # none left
@@ -44,6 +45,8 @@ NOT_A_DOCUMENT_KEY = {
     "transcript_content_key": "the content key of a stored transcript, user-scoped through transcript_doc_id",
     "record_content_key": "the content key of a record's stored transcript, user-scoped through transcript_doc_id",
     "mount_name_key": "the comparison key of mount names (MULTI_DRIVE_RFC §11.8), never stored",
+    "scope_key": "a digest of a connection's scope, stamped as a value on its sync state (applied_scope, §11.3)",
+    "context_key": "a file's key in one render's context plan (tag|item), in process, never stored",
 }
 
 

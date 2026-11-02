@@ -156,7 +156,8 @@ class World:
             nudge_queue=self.queue, erase_requests=MemoryStore(), clock=self.clock, new_code=lambda: next(codes))
         self.search_svc = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=SPACE,
                                              clock=self.clock, mirror=mirror)
-        add_drive_note_deleted_source(self.search_svc, self.notes, self.emb, embedding_space=SPACE)
+        add_drive_note_deleted_source(self.search_svc, self.notes, self.emb, embedding_space=SPACE,
+                                      connections=self.connections)
 
     # -- the connections ---------------------------------------------------------------------------------------
 

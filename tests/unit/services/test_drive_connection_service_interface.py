@@ -26,10 +26,17 @@ SIGNATURES = {
     "set_indexing": ["user_id", "connection_id", "enabled"],
     "set_transcribe": ["user_id", "connection_id", "enabled"],
     "flag_reconnect": ["handle"],
-    "disconnect": ["user_id", "connection_id"],
+    "disconnect": ["user_id", "connection_id", "heir_id"],   # 2b: the primary passes to the heir (I2, E73)
     "reconnect_needed": ["user_id"],
     "mounts": ["user_id"],
     "connection_of_tag": ["user_id", "tag"],
+    # slice 2b, the Cabinet's settings (RFC §11.3, §11.4, §11.8, §11.9; design §1.6; E85 adds the folder ancestries)
+    "default_name": ["user_id"],
+    "rename": ["user_id", "connection_id", "name", "primary_top_folders"],
+    "set_searched_by_default": ["user_id", "connection_id", "enabled"],
+    "set_scope": ["user_id", "connection_id", "folder_ids", "whole_drive", "capabilities", "write_folder_ancestry",
+                  "folder_ancestries"],
+    "set_write_folder": ["user_id", "connection_id", "folder_id", "capabilities", "ancestry"],
 }
 
 
