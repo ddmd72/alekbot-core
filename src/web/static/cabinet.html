@@ -3868,7 +3868,7 @@
       }
 
       let driveData = null;   // the last connection list: a local change redraws from it without a new read
-      const driveUi = {};     // connection_id -> {picker, draft, nameError, nameWarning, scopeError, folderError, confirm}
+      const driveUi = {};     // connection_id -> {picker, nameError, nameWarning, scopeError, folderError, confirm}
       let driveAddError = "";
       const driveUiOf = (id) => (driveUi[id] = driveUi[id] || {});
       const redrawDrive = () => { if (driveData) renderDriveStatus(driveData); };
@@ -3991,19 +3991,20 @@
           </div>`;
       }
 
+      // Every scope action is saved at once, like the write folder: an unsaved pick looked chosen while the drive
+      // kept its default scope.
       function renderDriveScope(row, ui, q) {
-        const draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders };
-        const folders = draft.folders.map((f, i) =>
+        const scope = row.scope;
+        const folders = scope.folders.map((f, i) =>
           `<li>${escapeHtml(f.path || f.id)} <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="removeDriveScopeFolder('${q}', ${i})">×</button></li>`).join("");
         return `
           <div style="margin-top:12px;">
             <div style="font-size:14px; font-weight:500;">${t("drive.scope")}</div>
-            <label style="font-size:13px; cursor:pointer;"><input type="checkbox" ${draft.whole_drive ? "checked" : ""}
+            <label style="font-size:13px; cursor:pointer;"><input type="checkbox" ${scope.whole_drive ? "checked" : ""}
               onchange="toggleDriveScopeWhole('${q}', this.checked)"> ${t("drive.scope_whole")}</label>
-            ${draft.whole_drive ? "" : `<ul style="margin:4px 0 4px 18px; font-size:13px;">${folders || `<li>${t("drive.scope_default")}</li>`}</ul>`}
+            ${scope.whole_drive ? "" : `<ul style="margin:4px 0 4px 18px; font-size:13px;">${folders || `<li>${t("drive.scope_default")}</li>`}</ul>`}
             <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" ${draft.whole_drive ? "disabled" : ""} onclick="openDrivePicker('${q}', 'scope')">${t("drive.add_folder")}</button>
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="saveDriveScope('${q}')">${t("drive.save")}</button>
+              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" ${scope.whole_drive ? "disabled" : ""} onclick="openDrivePicker('${q}', 'scope')">${t("drive.add_folder")}</button>
             </div>
             ${ui.scopeError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.scopeError)}</div>` : ""}
           </div>`;
@@ -4121,31 +4122,24 @@
         if (out.ok) await loadDriveStatus(); else redrawDrive();
       }
 
-      function toggleDriveScopeWhole(id, whole) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
-        const ui = driveUiOf(id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        ui.draft.whole_drive = whole;
-        if (whole) ui.draft.folders = [];
-        redrawDrive();
+      function driveScopeOf(id) {
+        return driveData.connections.find((c) => c.connection_id === id).scope;
       }
 
-      function removeDriveScopeFolder(id, index) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
-        const ui = driveUiOf(id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        ui.draft.folders.splice(index, 1);
-        redrawDrive();
+      async function toggleDriveScopeWhole(id, whole) {
+        await saveDriveScope(id, whole, whole ? [] : driveScopeOf(id).folders.map((f) => f.id));
       }
 
-      async function saveDriveScope(id) {
-        const row = driveData.connections.find((c) => c.connection_id === id);
+      async function removeDriveScopeFolder(id, index) {
+        await saveDriveScope(id, false, driveScopeOf(id).folders.filter((_, i) => i !== index).map((f) => f.id));
+      }
+
+      async function saveDriveScope(id, wholeDrive, folderIds) {
         const ui = driveUiOf(id);
-        const draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders };
         const out = await driveCall("PUT", `/api/drive/connections/${encodeURIComponent(id)}/scope`,
-          { whole_drive: draft.whole_drive, folder_ids: draft.folders.map((f) => f.id) });
+          { whole_drive: wholeDrive, folder_ids: folderIds });
         ui.scopeError = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
-        if (out.ok) { ui.draft = null; showToast(t("toast.drive_saved"), "success"); }
+        if (out.ok) { ui.picker = null; showToast(t("toast.drive_saved"), "success"); }
         _driveStatusSnapshot = null;
         if (out.ok) await loadDriveStatus(); else redrawDrive();
       }
@@ -4189,11 +4183,8 @@
           await saveDriveWriteFolder(id, f.id);
           return;
         }
-        const row = driveData.connections.find((c) => c.connection_id === id);
-        ui.draft = ui.draft || { whole_drive: row.scope.whole_drive, folders: row.scope.folders.slice() };
-        if (!ui.draft.folders.some((x) => x.id === f.id)) ui.draft.folders.push({ id: f.id, path: f.path });
-        ui.picker = null;
-        redrawDrive();
+        const ids = driveScopeOf(id).folders.map((x) => x.id);
+        await saveDriveScope(id, false, ids.includes(f.id) ? ids : ids.concat(f.id));
       }
 
       function askDisconnectDrive(id) {
