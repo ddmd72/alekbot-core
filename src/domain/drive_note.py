@@ -329,17 +329,21 @@ class NoteReceipt:
     state: str = ""
     noop: bool = False
     redo: bool = False
+    drive: bool = False       # a whole-drive note (§11.10): `path` is the drive's name, not a file's path
 
     @property
     def note_ref(self) -> str:
         return note_ref(self.note_id) if self.note_id else ""
+
+    def _drive_data(self) -> Dict[str, Any]:
+        return {"drive": True} if self.drive else {}
 
     def delivery_data(self) -> Dict[str, Any]:
         """The `drive_note_receipt` DeliveryItem's data (§4.6) — the renderer's only input besides its strings."""
         return {"action": self.action, "path": self.path, "text": self.text, "doc_type": self.doc_type,
                 "life_areas": list(self.life_areas), "version": self.version, "previous_text": self.previous_text,
                 "status": self.status, "ref": self.ref, "note_ref": self.note_ref, "noop": self.noop,
-                "redo": self.redo}
+                "redo": self.redo, **self._drive_data()}
 
 
 @dataclass(frozen=True)
@@ -359,6 +363,7 @@ class EraseRequestReceipt:
     note_count: int
     path: str = ""
     version_count: int = 0
+    drive: bool = False       # the note is about a whole drive (§11.10): `path` is the drive's name
 
     @property
     def command(self) -> str:
@@ -367,7 +372,10 @@ class EraseRequestReceipt:
     def delivery_data(self) -> Dict[str, Any]:
         """The `drive_note_erase` DeliveryItem's data: the path, the version count and the command alone."""
         return {"scope": self.scope, "path": self.path, "version_count": self.version_count,
-                "note_count": self.note_count, "command": self.command}
+                "note_count": self.note_count, "command": self.command, **self._drive_data()}
+
+    def _drive_data(self) -> Dict[str, Any]:
+        return {"drive": True} if self.drive else {}
 
 
 # -- validation and normalization (§4.3) -------------------------------------------------------------------------------

@@ -242,6 +242,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_STATUS_NO_CARD.value: "🔎 This file has no search card right now, so search does not show the note yet.",
     UIMessage.DRIVE_NOTE_STATUS_ARCHIVED.value: "🔎 The file is gone from the drive: only a search of deleted files finds this note.",
     UIMessage.DRIVE_NOTE_STATUS_OTHER_DRIVE.value: "🔎 Its drive isn't connected, so search does not show this note until that drive is connected again.",
+    UIMessage.DRIVE_NOTE_ON_DRIVE.value: "drive {name}",
     UIMessage.DRIVE_NOTE_ERASE_REQUEST.value: "🗑️ To erase the note on {path} and its whole history (versions: {versions}) for good, paste the command below within {minutes} minutes. Nothing is erased until you do.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_REQUEST.value: "🗑️ To erase all your drive notes (notes: {count}) and their history for good, paste the command below within {minutes} minutes. Nothing is erased until you do.",
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notes erased for good, with their history: {count}.",
