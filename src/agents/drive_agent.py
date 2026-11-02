@@ -33,6 +33,7 @@ from ..domain.drive_answer import DriveAnswer, compose_answer
 from ..domain.drive_file_content_item import FileContentItem
 from ..domain.drive_file_contents import parse_file_contents
 from ..domain.drive_line import DriveLine
+from ..domain.drive_mounts import render_mount_line
 from ..domain.drive_note import is_owner_turn
 from ..domain.drive_note_tool_texts import drive_note_tool_declarations
 from ..domain.drive_pass_through import PassThroughCollector
@@ -108,6 +109,7 @@ def render_state(context: Mapping[str, Any], items: Sequence[FileContentItem], p
         "drive_state {",
         f"  drive: {preflight.drive.value}",
         f"  search: {preflight.search.value}",
+        *_drives_block(preflight),
         f"  now: {local:%Y-%m-%d %H:%M} {timezone_name or 'UTC'}",
         f'  user_message ({origin_label(context)}): "{words}"',
         f"  attached_now: {attached or '(none)'}",
@@ -115,6 +117,14 @@ def render_state(context: Mapping[str, Any], items: Sequence[FileContentItem], p
         "}",
     ]
     return "\n".join(lines)
+
+
+def _drives_block(preflight: DrivePreflight) -> List[str]:
+    """The `drives` lines of the state block (MULTI_DRIVE_RFC §11.2): one per live connection; none without mounts."""
+    if not preflight.mounts:
+        return []
+    return ["  drives (a path without a drive name is on the primary drive):",
+            *(f"    {render_mount_line(line)}" for line in preflight.mounts)]
 
 
 def _text(part: Any) -> str:

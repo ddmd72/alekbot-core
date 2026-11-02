@@ -124,8 +124,9 @@ R_VERSIONS = ("Versions: when several results look like versions of one document
 R_BUILDING = ("While the index is still being built or rebuilt, never say a document does not exist: say the index is "
               "not complete yet and offer to list the folder.")
 R_NOT_SEARCHED = ("When the coverage line names what the search could not see (documents not read yet or not described "
-                  "yet, a truncated card, only names and metadata searched), a not-found says what was not searched "
-                  "(e.g. '3 documents are not read yet') and offers to list or open the folder.")
+                  "yet, a truncated card, only names and metadata searched, a drive not searched), a not-found says what was "
+                  "not searched (e.g. '3 documents are not read yet', 'the drive Acme was not searched') and offers to "
+                  "list or open the folder, or to search that drive.")
 R_FOLDER_CARD = ("When a folder card is shown under About (its name holds the words), search within it or list it "
                  "before answering that nothing was found.")
 R_NUMBERS = ("Numbers: passages are windows, not whole tables. For a total or a count over a table, open the file, "
