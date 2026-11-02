@@ -151,7 +151,7 @@ def _merge_envelope(envelopes: Sequence[DriveSearchEnvelope], not_searched: Tupl
         enabled=any(e.enabled for e in envelopes), content_search=any(e.content_search for e in envelopes),
         building=any(e.building for e in envelopes), refreshing=any(e.refreshing for e in envelopes),
         reconnect_needed=any(e.reconnect_needed for e in envelopes), index_as_of=min(as_of) if as_of else None,
-        unread=sum(e.unread for e in envelopes), not_read_yet=sum(e.not_read_yet for e in envelopes),
+        not_read_yet=sum(e.not_read_yet for e in envelopes),
         reading=any(e.reading for e in envelopes), index_full=any(e.index_full for e in envelopes),
         inaccessible=sum(e.inaccessible for e in envelopes), not_searched_drives=not_searched)
 
@@ -161,7 +161,7 @@ def _merge_coverage(coverages: Sequence[CoverageFacts], envelope: DriveSearchEnv
     return CoverageFacts(
         not_described=sum(c.not_described for c in coverages), not_describable=sum(c.not_describable for c in coverages),
         no_passages=sum(c.no_passages for c in coverages), not_read_yet=sum(c.not_read_yet for c in coverages),
-        unread=sum(c.unread for c in coverages), building=envelope.building or any(c.building for c in coverages),
+        building=envelope.building or any(c.building for c in coverages),
         reading=any(c.reading for c in coverages), refreshing=any(c.refreshing for c in coverages),
         rekeying=any(c.rekeying for c in coverages), full_page=any(c.full_page for c in coverages),
         keys_cut=sum(c.keys_cut for c in coverages), cut=_union(*(c.cut for c in coverages)),

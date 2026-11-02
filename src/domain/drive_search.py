@@ -230,7 +230,6 @@ class DriveSearchEnvelope:
     refreshing: bool = False             # cards are in another embedding space: names and filters only (§12.3)
     reconnect_needed: bool = False
     index_as_of: Optional[datetime] = None
-    unread: int = 0                      # documents that could not be read (the terminal demotes)
     not_read_yet: int = 0                # documents still waiting to be read: queued, held, scheduled (F5-2)
     reading: bool = False                # the index's applied policy is not POLICY_VERSION: the upgrade pass is
                                          # still re-planning records, documents are still being read (F4-1)
@@ -454,7 +453,7 @@ def cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
 def content_admitted() -> bool:
     """Whether the policy reads any kind's content (ADMITTED_KINDS or TRIAGED_KINDS, read at call time): then
     search runs the content streams and the envelope says `content_search`. Per policy, not per user: a user whose
-    documents are not read yet is told so by `unread` and `building`, never by "only names were searched"."""
+    documents are not read yet is told so by `not_read_yet` and `building`, never by "only names were searched"."""
     # a transcribed kind (§27) adds no content stream until its transcript is indexed (a later task)
     return any(admission(kind) in (Admission.CONTENT, Admission.TRIAGE) for kind in KIND_NAMES)
 
@@ -661,8 +660,6 @@ def _envelope_lines(result: DriveSearchResult) -> List[str]:
         lines.append(f"Documents are still being read: {waiting} not read yet, so their content was not searched.")
     elif env.not_read_yet:
         lines.append(f"{env.not_read_yet} documents are not read yet, so their content was not searched.")
-    if env.unread:
-        lines.append(f"{env.unread} documents could not be read, so their content was not searched.")
     if env.inaccessible and not result.cards:   # Δ93: only where nothing was found
         files = "1 file" if env.inaccessible == 1 else f"{env.inaccessible} files"
         lines.append(ENVELOPE_INACCESSIBLE.format(count=files))

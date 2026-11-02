@@ -122,8 +122,6 @@ def coverage_parts(cov: CoverageFacts, *, passages_tiers_empty: bool) -> List[st
         parts.append("documents are still being read")
     if cov.not_read_yet:
         parts.append(f"{_plural(cov.not_read_yet, 'document is', 'documents are')} not read yet")
-    if cov.unread:
-        parts.append(f"{_plural(cov.unread, 'document', 'documents')} could not be read")
     if cov.full_page:
         parts.append("a candidate page was full, so more files may match")
     if cov.unchecked:

@@ -680,7 +680,7 @@ class DriveSearchService:
         if result.tiered is not None:
             coverage = replace(result.tiered.coverage, building=envelope.building, reading=envelope.reading,
                                refreshing=envelope.refreshing, not_read_yet=envelope.not_read_yet,
-                               unread=envelope.unread, not_searched_drives=not_searched,
+                               not_searched_drives=not_searched,
                                names_only=result.tiered.coverage.names_only or not envelope.content_search)
             stats.coverage = "complete" if replace(coverage, inaccessible=0) == CoverageFacts() else "incomplete"
             result = replace(result, tiered=replace(result.tiered, coverage=coverage))
@@ -2109,12 +2109,11 @@ class DriveSearchService:
 
     async def _envelope(self, conn: DriveConnection, state: DriveSyncState, reconnect_needed: bool,
                         use_cards: bool) -> DriveSearchEnvelope:
-        unread = int(state.counters.get(UNREAD_COUNTER, 0))
         waiting = int(state.counters.get(NOT_READ_YET_COUNTER, 0))
         return DriveSearchEnvelope(
             building=await self._building(conn, state), reconnect_needed=reconnect_needed,
             refreshing=not use_cards, content_search=content_admitted(),
-            index_as_of=state.observed_as_of, unread=max(0, unread - waiting), not_read_yet=waiting,
+            index_as_of=state.observed_as_of, not_read_yet=waiting,
             # the flip's upgrade pass re-plans records it has not reached yet: reading whatever the counters say (F4-1)
             reading=int(state.applied_versions.get("policy", POLICY_VERSION)) != POLICY_VERSION,
             index_full=int(state.counters.get("carded", 0)) >= MAX_CARD_RECORDS_PER_USER,

@@ -48,7 +48,6 @@ class CoverageFacts:
     no_passages: int = 0            # text files without doc2query by policy (books, sheets, data); shown only when
                                     # the Mentioned and By-translation tiers are empty
     not_read_yet: int = 0
-    unread: int = 0
     building: bool = False
     reading: bool = False
     refreshing: bool = False        # vectors in another embedding space: meaning was not searched
