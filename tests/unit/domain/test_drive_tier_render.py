@@ -46,7 +46,7 @@ def example():
     )
     rest = tuple(GroupMember("Travel/Rome", "pdf", "2026-05") for _ in range(3))
     tiered = TieredResult(
-        concepts=("rome", "tickets"), ignored=("all", "my"), coverage=CoverageFacts(not_described=4, unread=1),
+        concepts=("rome", "tickets"), ignored=("all", "my"), coverage=CoverageFacts(not_described=4),
         blocks=(TierBlock(MatchTier.ABOUT, 1), TierBlock(MatchTier.MENTIONED, 1), TierBlock(MatchTier.TRANSLATED, 1),
                 TierBlock(MatchTier.LABELLED, 5, rest=rest, nonce="ngroup0000"), TierBlock(MatchTier.RELATED, 1)))
     return DriveSearchResult(status=STATUS_OK, cards=cards, envelope=DriveSearchEnvelope(index_as_of=AS_OF),
