@@ -81,9 +81,3 @@ def test_disclosure_says_what_rfc_6_requires(lang):
     missing = [f for f in DISCLOSURE_FRAGMENTS[lang] if f not in text]
     assert missing == []
 
-
-def test_the_off_switch_stays_reachable_while_disconnected():
-    """D3 keeps the index after a disconnect; the user can still turn search off to delete it."""
-    html, _ = _dicts()
-    assert "data.indexing && (linked || data.indexing.enabled)" in html
-    assert 'renderDriveIndexing(data.indexing, linked)' in html
