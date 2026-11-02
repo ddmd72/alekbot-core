@@ -125,7 +125,7 @@ async def test_a_short_archived_transcript_opens_whole(agent, conversion):
 async def test_cut_note_points_at_the_mirror_path(agent, index):
     index.get_transcript.return_value = _stored(*_long())
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
-    assert "The full text is in _Transcripts/Archive/2026-10-05/call1.md." in resp.text
+    assert "The full text is in Drive/_Transcripts/Archive/2026-10-05/call1.md." in resp.text
 
 
 async def test_archived_ref_without_store_downloads_and_caps(agent, conversion, index):
@@ -134,7 +134,7 @@ async def test_archived_ref_without_store_downloads_and_caps(agent, conversion, 
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
     assert resp.success
     conversion.resolve_content.assert_awaited_once()
-    assert "[Transcript cut at" in resp.text and "The full text is in _Transcripts/Archive/2026-10-05/call1.md." in resp.text
+    assert "[Transcript cut at" in resp.text and "The full text is in Drive/_Transcripts/Archive/2026-10-05/call1.md." in resp.text
     assert len(resp.text) < TRANSCRIPT_OPEN_MAX_CHARS + 600
     assert resp.text.startswith(REFERENCE_REMINDER)
 
@@ -180,7 +180,7 @@ async def test_the_open_of_a_transcribed_recording_names_its_active_mirror_file(
                                                              transcript_key="k9")}
     index.get_transcript.return_value = _stored(*_long())
     text = await search.transcript_text(CONN, "s9", path="Calls/call9.m4a")
-    assert "The full text is in _Transcripts/Calls - call9.md." in text
+    assert "The full text is in Drive/_Transcripts/Calls - call9.md." in text
 
 
 async def test_a_recording_without_a_mirror_file_cuts_without_a_path(mirror, index):
@@ -213,4 +213,4 @@ async def test_a_broken_ledger_chain_falls_back_to_the_items_own_path(agent, ind
     await mirror.save_doc(replace(doc, mirror_parent_id="gone-folder"))
     index.get_transcript.return_value = _stored(*_long())
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
-    assert "The full text is in _Transcripts/Archive/2026-10-05/call1.md." in resp.text   # MIRROR_FILE.path
+    assert "The full text is in Drive/_Transcripts/Archive/2026-10-05/call1.md." in resp.text   # MIRROR_FILE.path, mounted
