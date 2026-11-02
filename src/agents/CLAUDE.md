@@ -87,7 +87,15 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
   `agent_providers["drive"]="claude"`. `DriveAgent` is `NO_RETRY_POLICY` (a retry would repeat a write).
 - **Drive refs are tagged:** the model and the history see `drive:<tag>:<item_id>` (the tag names the connection); a ref
   written before the connections has no tag and answers "search for the file again". Prompt examples use the tagged form.
-  Settings (indexing, transcription, primary, disconnect) are Cabinet-only; no chat path sets them.
+  Settings (indexing, transcription, primary, searched by default, scope, write folder, rename, disconnect) are
+  Cabinet-only (REQ-ARCH-34); no chat tool sets them.
+- **Drive policy refusals:** every provider call passes `drive_access_policy.decide` first (outside the scope, no write
+  folder, outside the write folder, read-only drive, protected folder, cross-drive move or copy). The refusal is one
+  code-built English line returned by the tool layer; relay it, never retry or work around it. A refusal prints no
+  path and never says whether the item exists.
+- **Drive search reads every searched-by-default drive:** an empty `drives` searches all of them (none flagged: the
+  primary); a comma list names some. A note on a whole drive uses `whole_drive_name` (never a file ref; exactly one of
+  the two targets).
 - **Drive paths are canonical:** every path the specialist prints or receives is `<mount>/<path>` (`Drive/R&D/Tom's plan.docx`);
   an unprefixed path is on the primary; `list_folder("/")` lists the drives. Below the producers (`DriveOperations`, the
   search service, `DriveNoteService`) paths stay connection-relative: never put a mount into stored data. `drive_state`
