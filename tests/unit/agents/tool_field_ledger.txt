@@ -88,6 +88,7 @@ drive:copy_file_to_drive.folder  # stored tests/unit/agents/test_drive_agent_too
 drive:copy_file_to_drive.source_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_copy_a_chat_file_with_file_name_and_folder
 drive:create_folder.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_create_folder
 drive:delete_drive_item.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_delete_from_drive_posts_a_literal_receipt
+drive:find_passages.drives  # read-only reading tool, writes nothing
 drive:find_passages.file_refs  # read-only reading tool, writes nothing
 drive:find_passages.folder  # read-only reading tool, writes nothing
 drive:find_passages.question  # read-only reading tool, writes nothing
@@ -110,6 +111,7 @@ drive:save_text_file.text_item  # stored tests/unit/agents/test_drive_agent_tool
 drive:search_deleted_recordings_and_notes.query  # read-only reading tool, writes nothing
 drive:search_drive.date_from  # read-only reading tool, writes nothing
 drive:search_drive.date_to  # read-only reading tool, writes nothing
+drive:search_drive.drives  # read-only reading tool, writes nothing
 drive:search_drive.folder  # read-only reading tool, writes nothing
 drive:search_drive.kind  # read-only reading tool, writes nothing
 drive:search_drive.query  # read-only reading tool, writes nothing
