@@ -223,6 +223,16 @@ class LegacyConnections:
         found = await self.get(user_id, user_id)
         return found if found is not None and found.state is ConnectionState.ACTIVE else None
 
+    async def mounts(self, user_id: str) -> Any:
+        """`DriveConnectionService.mounts`: the live connections (here the one) with the primary pointer on it (the
+        harness's one connection is the user's primary in any live state; it has no name history, so no former names)."""
+        from src.domain.drive_mounts import mount_table
+        return mount_table(await self.list_for_user(user_id), user_id, T0)
+
+    async def connection_of_tag(self, user_id: str, tag: str) -> Optional[Any]:
+        """`DriveConnectionService.connection_of_tag`: the user's connection with that ref tag, None otherwise."""
+        return next((c for c in await self.list_for_user(user_id) if c.ref_tag == tag), None)
+
     async def flag_reconnect(self, handle: Any) -> bool:
         flag = getattr(self.drive, "flag_reconnect", None)
         return bool(await flag(handle.user_id)) if flag is not None else False
