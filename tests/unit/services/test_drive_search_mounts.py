@@ -1,6 +1,8 @@
 """Search through the mount tree (multi-drive 2a, design §1 S-7, S-8, S-14 and §3): canonical card paths, a folder
-written with or without its mount, `drives` selection, the refusals and the coverage part."""
-from src.domain.drive_mounts import FOLDER_DRIVE_MISMATCH, ONE_DRIVE_LINE, UNKNOWN_DRIVE_LINE
+written with or without its mount, `drives` selection, the refusals and the coverage part. Slice 2b (E9, D4): an empty
+`drives` reads every drive searched by default and several names are searched; the cross-drive merge itself is
+`test_drive_search_across_drives.py`."""
+from src.domain.drive_mounts import FOLDER_DRIVE_MISMATCH, UNKNOWN_DRIVE_LINE
 from src.domain.drive_search import STATUS_DRIVE_REFUSED, STATUS_OK, render_results
 
 from .drive_mounts_harness import MountedWorld, renamed_acme
@@ -57,13 +59,24 @@ async def test_drives_names_the_acme_connection_and_reports_the_primary_as_not_s
     assert result.envelope.not_searched_drives == ("Drive",)
 
 
-async def test_empty_drives_with_two_mounts_searches_the_primary_and_names_the_other():
-    w = await _world()
+async def test_empty_drives_searches_the_drives_searched_by_default_and_names_the_other():
+    # slice 2b (E9, D4): `Acme` is not searched by default, so an empty `drives` reads only the primary
+    w = await _world(acme_searched=False)
     result = await w.find("plan")
     assert result.ref_tag == "a1" and result.envelope.not_searched_drives == ("Acme",)
     assert result.tiered is not None and result.tiered.coverage.not_searched_drives == ("Acme",)
     text = render_results(result)
     assert "Coverage: incomplete — drives not searched: Acme." in text
+
+
+async def test_empty_drives_searches_every_drive_searched_by_default():
+    # slice 2b (E9, D4): both drives are searched by default, so nothing is reported as not searched
+    w = await _world()
+    result = await w.find("plan")
+    assert result.status == STATUS_OK and result.ref_tag == ""        # two parts: the cards carry their tags
+    assert result.envelope.not_searched_drives == () and result.tiered.coverage.not_searched_drives == ()
+    assert [(c.path, c.ref_tag) for c in result.cards] == [("Drive/R&D/Tom's plan.docx", "a1")]
+    assert "Coverage: complete." in render_results(result)
 
 
 async def test_one_mount_adds_no_coverage_part():
@@ -74,12 +87,13 @@ async def test_one_mount_adds_no_coverage_part():
     assert "not searched" not in text and "Coverage: complete." in text
 
 
-async def test_two_names_are_refused_with_the_list():
-    w = await _world()
+async def test_two_names_search_both_drives():
+    # slice 2b (design §1.7, E43 dropped): several names are searched; ONE_DRIVE_LINE is deleted
+    w = await _world(acme_searched=False)
     result = await w.find("plan", drives="Acme, Drive")
-    assert result.status == STATUS_DRIVE_REFUSED and result.cards == ()
-    assert result.refusal == ONE_DRIVE_LINE.format(names="Drive, Acme")
-    assert render_results(result) == result.refusal
+    assert result.status == STATUS_OK and result.refusal == "" and result.ref_tag == ""
+    assert result.envelope.not_searched_drives == ()
+    assert [(c.path, c.ref_tag) for c in result.cards] == [("Drive/R&D/Tom's plan.docx", "a1")]
 
 
 async def test_an_unknown_name_is_refused_without_guessing():
@@ -124,7 +138,7 @@ async def test_a_former_name_in_a_folder_prefix_adds_the_notice():
 
 
 async def test_a_filter_only_result_prints_the_envelope_sentence():
-    w = await _world()
+    w = await _world(acme_searched=False)          # slice 2b (D4): a drive not searched by default
     result = await w.find("", kind="docx")
     text = render_results(result)
     assert "Not searched: the drives Acme; name one in drives to search it." in text

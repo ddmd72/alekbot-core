@@ -224,13 +224,15 @@ async def test_an_empty_or_invalid_field_is_refused_before_any_service_call(tool
 
 
 @pytest.mark.parametrize("tool", list(nt.NOTE_TOOLS))
-async def test_a_missing_item_ref_is_refused_before_any_service_call(tool):
+async def test_a_missing_target_is_refused_before_any_service_call(tool):
+    # slice 2b (design P-D, RFC §11.10): neither item_ref nor whole_drive_name gets the exactly-one-target refusal
     service = _service()
     notes, _, collector = _tools(service)
     await _call(notes, tool, text=REPAIR, doc_type="contract", life_areas=["home"])
     assert service.mock_calls == []
     assert collector.results[0].outcome.cls is OutcomeClass.REQUEST_ERROR
-    assert collector.results[0].outcome.text.startswith("item_ref is required")
+    assert collector.results[0].outcome.text.startswith(
+        "Give exactly one target: item_ref for a file or folder, or whole_drive_name for the whole drive.")
 
 
 async def test_truncated_arguments_are_refused_without_a_service_call():

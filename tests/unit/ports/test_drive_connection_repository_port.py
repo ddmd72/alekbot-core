@@ -16,6 +16,10 @@ _SIGNATURES = {
     "transition": ["user_id", "connection_id", "to", "now"],
     "get_settings": ["user_id"],
     "save_settings": ["settings"],
+    # slice 2b (design §1.5): the Cabinet settings and the transactional rename
+    "update_settings": ["user_id", "connection_id", "searched_by_default", "write_folder_id", "scope_folder_ids",
+                        "scope_whole_drive"],
+    "rename": ["user_id", "connection_id", "at", "check"],
 }
 
 

@@ -24,7 +24,8 @@ def test_chunks_dedup_across_adds():
     ledger.add(result(_plan_file(0, 1)), ContextPlan.EMPTY)
     ledger.add(result(_plan_file(1, 2)), ContextPlan.EMPTY)
     assert ledger
-    assert ledger.keys() == {("item-1", 1, 0), ("item-1", 1, 1), ("item-1", 1, 2)}
+    # slice 2b (E-4): keys are (ref tag, chunk); files built without a tag carry ""
+    assert ledger.keys() == {("", ("item-1", 1, 0)), ("", ("item-1", 1, 1)), ("", ("item-1", 1, 2))}
     assert [c.index for c in ledger.files()[0].chunks] == [0, 1, 2]
 
 
@@ -71,7 +72,7 @@ class TestCollector:
     def test_a_passages_outcome_with_files_fills_the_ledger(self):
         collector = PassThroughCollector()
         collector.add(1, "passages", self._outcome(result(_plan_file(0, 1))))
-        assert collector.ledger.keys() == {("item-1", 1, 0), ("item-1", 1, 1)}
+        assert collector.ledger.keys() == {("", ("item-1", 1, 0)), ("", ("item-1", 1, 1))}   # 2b (E-4): (tag, chunk)
         assert collector.ledger.folders_shown() == {"folder-1"}
 
     def test_an_outcome_without_files_leaves_it_empty(self):

@@ -383,7 +383,8 @@ async def test_the_noted_copy_is_the_keeper(w):
 async def test_shown_chunks_are_left_out_and_listed_as_repeated(w):
     plan = w.doc("Tom's plan.docx", ["The first review.", "The second review.", "The sign-off."], [0.1, 0.2, 0.3])
     first = await w.find()
-    shown = frozenset(c.key for c in first.files[0].chunks if c.index == 0)
+    # slice 2b (E-4): `shown` holds (ref tag, chunk) pairs; a chunk shown from this connection is left out
+    shown = frozenset((first.files[0].ref_tag, c.key) for c in first.files[0].chunks if c.index == 0)
     again = await w.find(shown=shown)
     assert [c.index for c in again.files[0].chunks] == [1, 2]
     assert again.repeated == ((plan, 1, 0),)

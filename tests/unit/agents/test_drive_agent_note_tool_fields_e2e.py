@@ -284,17 +284,19 @@ async def test_a_writer_off_an_owner_turn_is_not_served_and_stores_nothing():
 # ------------------------------------------------------------------------------------------------ declared fields
 
 def test_the_scripted_calls_use_every_declared_field():
-    assert unused("drive_notes", nt.CREATE_NOTE, [CREATE]) == []
-    assert unused("drive_notes", nt.ADD_TO_NOTE, [ADD]) == []
-    assert unused("drive_notes", nt.GET_NOTE, [GET]) == []
-    assert unused("drive_notes", nt.REPLACE_NOTE_TEXT, [REPLACE]) == []
-    assert unused("drive_notes", nt.SET_NOTE_TYPE, [SET_TYPE]) == []
-    assert unused("drive_notes", nt.CLEAR_NOTE_TYPE, [CLEAR_TYPE]) == []
-    assert unused("drive_notes", nt.ADD_LIFE_AREAS, [ADD_AREAS]) == []
-    assert unused("drive_notes", nt.REMOVE_LIFE_AREAS, [REMOVE_AREAS]) == []
-    assert unused("drive_notes", nt.DELETE_NOTE, [DELETE]) == []
-    assert unused("drive_notes", nt.UNDO_NOTE, [UNDO]) == []
-    assert unused("drive_notes", nt.ERASE_NOTE, [ERASE]) == []
+    # slice 2b (design P-D, RFC §11.10): item_ref and whole_drive_name are exclusive targets, so the item call and
+    # the whole-drive call of each tool together use every declared field
+    assert unused("drive_notes", nt.CREATE_NOTE, [CREATE, DRIVE_CALLS[nt.CREATE_NOTE]]) == []
+    assert unused("drive_notes", nt.ADD_TO_NOTE, [ADD, DRIVE_CALLS[nt.ADD_TO_NOTE]]) == []
+    assert unused("drive_notes", nt.GET_NOTE, [GET, DRIVE_CALLS[nt.GET_NOTE]]) == []
+    assert unused("drive_notes", nt.REPLACE_NOTE_TEXT, [REPLACE, DRIVE_CALLS[nt.REPLACE_NOTE_TEXT]]) == []
+    assert unused("drive_notes", nt.SET_NOTE_TYPE, [SET_TYPE, DRIVE_CALLS[nt.SET_NOTE_TYPE]]) == []
+    assert unused("drive_notes", nt.CLEAR_NOTE_TYPE, [CLEAR_TYPE, DRIVE_CALLS[nt.CLEAR_NOTE_TYPE]]) == []
+    assert unused("drive_notes", nt.ADD_LIFE_AREAS, [ADD_AREAS, DRIVE_CALLS[nt.ADD_LIFE_AREAS]]) == []
+    assert unused("drive_notes", nt.REMOVE_LIFE_AREAS, [REMOVE_AREAS, DRIVE_CALLS[nt.REMOVE_LIFE_AREAS]]) == []
+    assert unused("drive_notes", nt.DELETE_NOTE, [DELETE, DRIVE_CALLS[nt.DELETE_NOTE]]) == []
+    assert unused("drive_notes", nt.UNDO_NOTE, [UNDO, DRIVE_CALLS[nt.UNDO_NOTE]]) == []
+    assert unused("drive_notes", nt.ERASE_NOTE, [ERASE, DRIVE_CALLS[nt.ERASE_NOTE]]) == []
 
 
 # ------------------------------------------------------------------------- whole-drive notes (MULTI_DRIVE_RFC §11.10)

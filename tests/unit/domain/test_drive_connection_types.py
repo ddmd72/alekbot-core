@@ -161,7 +161,8 @@ class TestStatusAndSettings:
 class TestCapabilitiesAndIdentities:
     def test_capabilities(self):
         assert DriveCapabilities(max_path_chars=400).max_path_chars == 400
-        assert set(DriveCapabilities.__dataclass_fields__) == {"max_path_chars"}
+        # slice 2b (design §1.3) adds `writable` and `feed_scope`
+        assert set(DriveCapabilities.__dataclass_fields__) == {"max_path_chars", "writable", "feed_scope"}
         for bad in (0, -1):
             with pytest.raises(ValueError):
                 DriveCapabilities(max_path_chars=bad)
