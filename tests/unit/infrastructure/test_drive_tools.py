@@ -122,6 +122,7 @@ async def test_a_folder_ref_and_its_path_give_the_same_call():
     drive = AsyncMock(spec=UserDriveService)
     reads = ConnectionReads()
     drive.resolve_ref.side_effect = reads.resolve_ref
+    drive.mounts.side_effect = reads.mounts
     drive.get_item.return_value = FOLDER
     drive.move.return_value = MoveOutcome(before=FILE, after=FILE, created=[])
     ops = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive)
