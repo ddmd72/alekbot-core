@@ -28,6 +28,8 @@ SIGNATURES = {
     "flag_reconnect": ["handle"],
     "disconnect": ["user_id", "connection_id"],
     "reconnect_needed": ["user_id"],
+    "mounts": ["user_id"],
+    "connection_of_tag": ["user_id", "tag"],
 }
 
 
