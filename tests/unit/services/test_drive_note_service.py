@@ -217,7 +217,7 @@ async def test_set_writes_v1_binds_the_item_and_returns_the_stored_note(env):
         "Docs/a.pdf", "quickxor:qx:10", [0.1, 0.2, 0.3], "space-a")
     assert (receipt.action, receipt.version, receipt.text, receipt.doc_type, receipt.life_areas, receipt.ref,
             receipt.path, receipt.previous_text, receipt.noop) == (
-        "set", 1, TEXT, "contract", ("home",), "drive:a1:a", "Docs/a.pdf", "", False)
+        "set", 1, TEXT, "contract", ("home",), "drive:a1:a", "Drive/Docs/a.pdf", "", False)
     [v1] = await env.notes.list_versions(U, note.note_id)
     assert (v1.origin, v1.session_id, v1.turn_id, v1.action) == ("chat", "s1", "t1", "set")
     assert env.nudged() == [["a"]]
@@ -563,7 +563,7 @@ async def test_a_per_note_erase_code_works_once(env):
     other = await env.service.set(U, ACC, "drive:a1:b", "keep me", provenance=CHAT)
     request = await env.service.request_erase(U, "drive:a1:a")
     assert (request.scope, request.path, request.version_count, request.command) == (
-        "one", "Docs/a.pdf", 2, f"$drive-notes erase {request.code}")
+        "one", "Drive/Docs/a.pdf", 2, f"$drive-notes erase {request.code}")
     assert env.store.data[f"{U}:{request.code}"] == {"scope": "one", "note_ids": [first.note_id]}
     assert env.store.ttls[f"{U}:{request.code}"] == 600
     assert (await env.notes.get(U, first.note_id)).text == "v2"          # nothing erased by the request

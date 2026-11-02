@@ -304,7 +304,7 @@ async def test_an_additive_tool_on_a_file_with_no_note_creates_it(tool, args, ex
     note = await env.note()
     assert note.content == expected and note.current_version == 1
     outcome = collector.results[0].outcome
-    assert outcome.cls is OutcomeClass.OK and outcome.note_context == ("[Drive note: Docs/a.pdf ref=drive:a1:a v1]",)
+    assert outcome.cls is OutcomeClass.OK and outcome.note_context == ("[Drive note: Drive/Docs/a.pdf ref=drive:a1:a v1]",)
 
 
 @pytest.mark.parametrize("tool,args", [
