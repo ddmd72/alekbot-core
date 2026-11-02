@@ -306,7 +306,7 @@ async def test_get_returns_the_stored_note_with_both_refs(env):
     for ref in ("drive:a1:a", first.note_ref):
         view = await env.service.get(U, ref)
         assert (view.note_id, view.ref, view.note_ref, view.path, view.version, view.state) == (
-            first.note_id, "drive:a1:a", first.note_ref, "Docs/a.pdf", 1, "active")
+            first.note_id, "drive:a1:a", first.note_ref, "Drive/Docs/a.pdf", 1, "active")   # the view: canonical (S-15)
         assert (view.text, view.doc_type, view.life_areas, view.cleared, view.archived) == (
             TEXT, "contract", ("home",), False, False)
     assert env.graph_calls() == calls
