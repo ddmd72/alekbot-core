@@ -141,7 +141,8 @@ class UserDriveService:
 
     async def _shown(self, handle: DriveHandle, path: str) -> str:
         """`path` (connection-relative) as the refusal that names it prints it: `<mount>/<path>`. Read lazily, on the
-        raise path only (a success reads no connection); a lookup that fails leaves the path as it is."""
+        raise path only: the success path adds no read to the access policy's one connection read per operation
+        (E-13); a lookup that fails leaves the path as it is."""
         try:
             connection = await self._connections.get(handle.user_id, handle.connection_id)
         except Exception:
@@ -193,12 +194,14 @@ class UserDriveService:
     async def check_access(self, handle: DriveHandle, op: AccessOp, *, item: Optional[DriveItem] = None,
                            item_id: str = "", chain: Optional[Ancestry] = None,
                            destination: Optional[Ancestry] = None,
-                           destination_item: Optional[DriveItem] = None) -> None:
+                           destination_item: Optional[DriveItem] = None,
+                           policy: Optional[Tuple[ConnectionAccess, DriveCapabilities]] = None) -> None:
         """Run the access policy on one operation before its provider call: `item` (or `item_id`) is what the operation
         acts on (a create or save: the destination folder); `chain` its ancestry when the caller has it; `destination`
         / `destination_item` a move's destination folder. Walks a chain only when `requires_ancestry` says so. Raises
-        DriveAccessRefused with the policy's line; DriveNotConnectedError for a connection that is gone."""
-        access, capabilities = await self.access(handle)
+        DriveAccessRefused with the policy's line; DriveNotConnectedError for a connection that is gone. `policy` is the
+        `access` pair an operation already read: one connection read per operation (E-13)."""
+        access, capabilities = policy if policy is not None else await self.access(handle)
         target = item.item_id if item is not None else item_id
         needed = requires_ancestry(op, access, capabilities)
         memo: Dict[str, str] = {}
@@ -238,7 +241,9 @@ class UserDriveService:
         return resolution
 
     async def _resolve(self, handle: DriveHandle, path: Optional[str], *, create: bool,
-                       op: Optional[AccessOp] = None) -> Tuple[FolderResolution, List[str]]:
+                       op: Optional[AccessOp] = None,
+                       policy: Optional[Tuple[ConnectionAccess, DriveCapabilities]] = None
+                       ) -> Tuple[FolderResolution, List[str]]:
         """The resolution plus the item ids of the folders this call created (for the nudge). The access policy runs
         with `op` (default LIST without `create`, CREATE with it) on the walked chain, which costs no extra call: once
         before the first folder is created (nothing is created outside the write folder), else on the final folder
@@ -257,11 +262,11 @@ class UserDriveService:
             match = match_child_folder(await self._drive.list_children(handle, current.item_id), segment)
             if match is None:
                 if not create:
-                    await self.check_access(handle, op, item=current, chain=_chain_of(walked))
+                    await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
                     missing = await self._shown(handle, join_drive_path(current.path, segment))
                     raise DrivePathError(f"No folder '{missing}' on the drive")
                 if not checked:
-                    await self.check_access(handle, op, item=current, chain=_chain_of(walked))
+                    await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
                     checked = True
                 try:
                     match = await self._drive.create_folder(handle, current.item_id, segment)
@@ -280,31 +285,34 @@ class UserDriveService:
             current = match
             walked.append(current.item_id)
         if not checked:
-            await self.check_access(handle, op, item=current, chain=_chain_of(walked))
+            await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
         return FolderResolution(folder=current, created=created), created_ids
 
-    async def _refuse_if_read_only(self, handle: DriveHandle, op: AccessOp) -> None:
+    async def _refuse_if_read_only(self, handle: DriveHandle, op: AccessOp,
+                                   policy: Tuple[ConnectionAccess, DriveCapabilities]) -> None:
         """Before any walk: a drive that accepts no change, or has no write folder, refuses with its line and the
-        provider is not called (the decision needs no chain then)."""
-        access, capabilities = await self.access(handle)
+        provider is not called (the decision needs no chain then). `policy`: the operation's one `access` read."""
+        access, capabilities = policy
         if not capabilities.writable or access.write_folder_id is None:
-            await self.check_access(handle, op)
+            await self.check_access(handle, op, policy=policy)
 
     async def ensure_folder(self, handle: DriveHandle, folder: str) -> FolderResolution:
         if not split_folder_path(folder):
             raise DrivePathError("A folder name is required")
         await self._refuse_mirror(handle, path=folder)
-        await self._refuse_if_read_only(handle, AccessOp.CREATE)
-        resolution, created_ids = await self._resolve(handle, folder, create=True, op=AccessOp.CREATE)
+        policy = await self.access(handle)
+        await self._refuse_if_read_only(handle, AccessOp.CREATE, policy)
+        resolution, created_ids = await self._resolve(handle, folder, create=True, op=AccessOp.CREATE, policy=policy)
         await self._nudge(handle, created_ids)
         return resolution
 
     async def save(self, handle: DriveHandle, data: bytes, filename: str, content_type: str,
                    folder: Optional[str]) -> SaveOutcome:
-        await self._refuse_if_read_only(handle, AccessOp.SAVE)
+        policy = await self.access(handle)
+        await self._refuse_if_read_only(handle, AccessOp.SAVE, policy)
         target = folder if folder and folder.strip() else await self._inbox_path(handle)
         await self._refuse_mirror(handle, path=target)   # before _resolve(create=True) creates anything
-        resolution, created_ids = await self._resolve(handle, target, create=True, op=AccessOp.SAVE)
+        resolution, created_ids = await self._resolve(handle, target, create=True, op=AccessOp.SAVE, policy=policy)
         children = await self._drive.list_children(handle, resolution.folder.item_id)
         wanted = name_key(filename)
         same_name = next((c for c in children if not c.is_folder and name_key(c.name) == wanted), None)
@@ -372,10 +380,11 @@ class UserDriveService:
             _require_valid_name(new_name)
         moving = bool(folder and folder.strip())
         await self._refuse_root(handle, item_id)
-        await self._refuse_if_read_only(handle, AccessOp.MOVE if moving else AccessOp.RENAME)
+        policy = await self.access(handle)   # the operation's one connection read (E-13), shared by every check below
+        await self._refuse_if_read_only(handle, AccessOp.MOVE if moving else AccessOp.RENAME, policy)
         before = await self._drive.get_item(handle, item_id)
         # the source first, before any text that prints its path; the destination is checked by `_resolve`
-        await self.check_access(handle, AccessOp.MOVE if moving else AccessOp.RENAME, item=before)
+        await self.check_access(handle, AccessOp.MOVE if moving else AccessOp.RENAME, item=before, policy=policy)
         await self._refuse_mirror(handle, item=before)
         created: List[str] = []
         parent_id: Optional[str] = None
@@ -383,7 +392,8 @@ class UserDriveService:
         if moving:
             await self._refuse_mirror(handle, path=folder)
             await self._refuse_move_into_self(handle, before, str(folder))
-            resolution, created_ids = await self._resolve(handle, folder, create=True, op=AccessOp.CREATE)
+            resolution, created_ids = await self._resolve(handle, folder, create=True, op=AccessOp.CREATE,
+                                                          policy=policy)
             parent_id, created = resolution.folder.item_id, resolution.created
         after = await self._drive.move(handle, item_id, new_parent_id=parent_id,
                                        new_name=new_name)
