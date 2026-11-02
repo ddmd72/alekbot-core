@@ -245,6 +245,12 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
 
 - **Usage legs never overlap:** `prompt_tokens` is always uncached input; `calculate_cost` bills it, `cache_read_tokens` and
   `cache_creation_tokens` as disjoint legs. OpenAI/Gemini report cached inside the input total, so the adapter subtracts both cache legs.
+- **Claude counts a non-ASCII string nested in a tool call's `input` at ~7× its plain size.** Measured with `count_tokens`
+  (20 000 Ukrainian characters): 8 750 tokens as a top-level parameter, 61 054 inside an object or a list (~3 tokens per
+  character, as if `\uXXXX`-escaped); ASCII text is unaffected. The call sits in history, so it is re-sent on every later turn
+  (a 132 000-character report in `context.file_content` was a 348K-token cache write). A tool that carries a large text takes it as a
+  top-level string parameter, never inside `context`-style objects or arrays; the coordinator's `file_content` stays out of the
+  model's own call (`normalize_delegate_context` returns a copy).
 - **xAI realtime `billable_audio_seconds`** on `response.done` is the session's running total: `XaiRealtimeAdapter` emits the
   increment (`decisions/billing_cache_write_and_voice_seconds.md`).
 - **Workspace bucket (versioned):** `GcsWorkspaceAdapter` deletes by metadata patch + delete of the live object under
