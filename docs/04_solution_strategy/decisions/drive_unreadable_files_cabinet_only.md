@@ -1,8 +1,7 @@
 # Files the index could not read are shown in the Cabinet, not told to the bot
 
 **Date:** 2026-11-02
-**Status:** Bot side and Cabinet rendering built; filling the list in `DriveSearchService.indexing_status` waits for a wiring
-decision (the counters' transcription condition is not reachable there)
+**Status:** Built; pending deploy
 **Scope:** drive search envelope and coverage line; the Cabinet's drive card (`USER_DRIVE_INDEXING_RFC` §6, §10.2).
 
 ## Decision
@@ -29,4 +28,6 @@ and the Cabinet is where the owner looks.
 ## Consequence
 
 A question about one specific unreadable file still sees what its card says (its name and index state); the bot just
-does not volunteer the drive-wide number. The list uses the filters of the counts, so no composite index is added.
+does not volunteer the drive-wide number. The list uses the filters of the counts, so no composite index is added, and the kind sets of the indexer's counter:
+recordings join only when the transcription kill switch (`transcribe_switch_on` of `DriveSearchService`) and the
+connection's own flag are both on.
