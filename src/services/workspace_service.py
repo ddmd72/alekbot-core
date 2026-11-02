@@ -296,7 +296,7 @@ class WorkspaceService:
             )
         gate = asyncio.Semaphore(_GREP_READ_CONCURRENCY)
 
-        seen: Dict[str, Optional[int]] = {}
+        seen: Dict[str, int] = {}
 
         async def fetch(entry: WorkspaceEntry) -> Optional[Tuple[str, str]]:
             async with gate:
@@ -318,8 +318,9 @@ class WorkspaceService:
         )
         log.files = len(files)
         log.matches = matches
-        # Recorded, so an insert at a line number taken from this grep passes the staleness guard (D18).
-        return WorkspaceResult(text=text, generations=seen)
+        # Line numbers only: an insert at a line taken from this grep passes the staleness guard, but a grep is not a
+        # view (it neither lets `create` overwrite nor silences the same-fire note) (D18).
+        return WorkspaceResult(text=text, line_generations=seen)
 
     # -- text writes ---------------------------------------------------------------------------------------------
 
@@ -356,7 +357,7 @@ class WorkspaceService:
             entry = await self._store.put(call.user_id, path, data, self._meta(call), known)
             log.gen = str(entry.generation)
             return WorkspaceResult(
-                text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)}{_now(text, data)}",
+                text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)} · {format_size(len(data))}",
                 generations={path: entry.generation},
             )
         live = await self._store.list(call.user_id, "")
@@ -371,7 +372,7 @@ class WorkspaceService:
         entry = await self._store.put(call.user_id, path, data, self._meta(call), 0)
         log.gen = str(entry.generation)
         return WorkspaceResult(
-            text=f"created workspace:{path} · generation {entry.generation} · {_lines(text)}{_now(text, data)}",
+            text=f"created workspace:{path} · generation {entry.generation} · {_lines(text)} · {format_size(len(data))}",
             generations={path: entry.generation},
         )
 
@@ -425,7 +426,7 @@ class WorkspaceService:
             if text is None:
                 raise WorkspaceRefused(f"{path} is not UTF-8 text; insert cannot edit it", reason="kind")
             inserted = apply_insert(path, text, insert_line, insert_text)
-            if middle and call.known.get(path) != blob.entry.generation:
+            if middle and blob.entry.generation not in (call.known.get(path), call.line_known.get(path)):
                 raise stale
             data = inserted.text.encode("utf-8")
             check_file_size(path, data)

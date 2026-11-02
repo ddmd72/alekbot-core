@@ -5,7 +5,11 @@ import json
 from src.domain.llm import ToolCall
 from src.domain.workspace import COMMANDS, MUTATING_COMMANDS, WorkspaceReferences
 from src.infrastructure import workspace_tools
-from src.infrastructure.workspace_tools import build_workspace_tool_declaration, make_workspace_handler
+from src.infrastructure.workspace_tools import (
+    WorkspaceSession,
+    build_workspace_tool_declaration,
+    make_workspace_handler,
+)
 from src.services.workspace_service import WorkspaceService
 from tests.unit.services.workspace_fakes import InMemoryWorkspaceStore
 
@@ -53,3 +57,21 @@ async def test_insert_runs_through_the_handler_and_is_recorded():
         "command": "insert", "path": P, "insert_line": 1, "insert_text": "note"}))
     assert not r2.failed
     assert store.live_text("u1", P) == "decision expected 2026-10-30\nnote\nreceived 2026-10-28\n"
+
+
+async def test_grep_line_numbers_reach_a_middle_insert_but_do_not_count_as_a_view():
+    store = InMemoryWorkspaceStore()
+    store.seed("u1", P, "a\nneedle\nb\n")
+    session = WorkspaceSession()
+    handle = make_workspace_handler(WorkspaceService(store), "u1", "chat", None, WorkspaceReferences(), session=session)
+    await handle(ToolCall(name="workspace", args={"command": "grep", "path": P, "pattern": "needle"}))
+    assert session.generations == {} and set(session.line_generations) == {P}
+    refused = await handle(ToolCall(name="workspace", args={"command": "create", "path": P, "content": "lost"}))
+    assert refused.failed and store.live_text("u1", P) == "a\nneedle\nb\n"
+    ok = await handle(ToolCall(name="workspace", args={
+        "command": "insert", "path": P, "insert_line": 2, "insert_text": "x"}))
+    assert not ok.failed and store.live_text("u1", P) == "a\nneedle\nx\nb\n"
+    # a write by this execution makes its own line numbers valid, and a delete forgets them
+    assert P in session.generations
+    await handle(ToolCall(name="workspace", args={"command": "delete", "path": P}))
+    assert P not in session.line_generations

@@ -91,8 +91,9 @@ class TestInsertInTheMiddle:
         svc, store = _svc()
         store.seed(USER, P, "a\nneedle\nb\n")
         found = await svc.run(_call(), "grep", {"pattern": "needle", "path": P})
-        assert dict(found.generations) == {P: store.versions_of(USER, P)[-1].generation}
-        r = await svc.run(_call(found.generations), "insert", {"path": P, "insert_line": 2, "insert_text": "x"})
+        gen = store.versions_of(USER, P)[-1].generation
+        assert dict(found.line_generations) == {P: gen} and not found.generations
+        r = await svc.run(WorkspaceCall(user_id=USER, origin="chat", line_known=found.line_generations), "insert", {"path": P, "insert_line": 2, "insert_text": "x"})
         assert not r.failed and store.live_text(USER, P) == "a\nneedle\nx\nb\n"
 
     async def test_another_writer_between_view_and_insert_is_stale(self):
@@ -200,16 +201,47 @@ class TestLongFileView:
         assert r.text.splitlines()[-2:] == ["    99\trow 99", "   100\trow 100"] and "row 98" not in r.text
 
 
+class TestGrepIsNotAView:
+    async def test_grep_then_create_overwrite_is_still_refused(self):
+        svc, store = _svc()
+        store.seed(USER, P, "needle\n")
+        found = await svc.run(_call(), "grep", {"pattern": "needle", "path": P})
+        r = await svc.run(
+            WorkspaceCall(user_id=USER, origin="chat", known=found.generations, line_known=found.line_generations),
+            "create", {"path": P, "content": "lost"})
+        assert r.failed and "exists" in r.text and store.live_text(USER, P) == "needle\n"
+
+    async def test_line_numbers_of_a_changed_file_are_stale(self):
+        svc, store = _svc()
+        store.seed(USER, P, "a\nneedle\n")
+        found = await svc.run(_call(), "grep", {"pattern": "needle", "path": P})
+        store.seed(USER, P, "z\na\nneedle\n")
+        r = await svc.run(WorkspaceCall(user_id=USER, origin="chat", line_known=found.line_generations), "insert",
+                          {"path": P, "insert_line": 2, "insert_text": "x"})
+        assert r.failed and r.text == STALE.format(n=2)
+
+    async def test_grep_then_view_of_a_same_fire_file_still_shows_the_b1_note(self):
+        svc, store = _svc()
+        fire = "reminder:1729401234567@2026-10-20T06:00:00+00:00"
+        store.seed(USER, P, "old\n")
+        store.seed(USER, P, "needle\n", fire=fire)
+        found = await svc.run(_call(), "grep", {"pattern": "needle", "path": P})
+        call = WorkspaceCall(user_id=USER, origin="chat", fire_key=fire, known=found.generations,
+                             line_known=found.line_generations)
+        r = await svc.run(call, "view", {"path": P})
+        assert "written by an earlier attempt of this same fire" in r.text
+
+
 class TestResultTails:
     async def test_create_and_str_replace_say_how_big_the_file_is(self):
         svc, store = _svc()
         r = await svc.run(_call(), "create", {"path": P, "content": "a\nb\n"})
-        assert r.text.endswith(" · 2 lines · file now 2 lines · 4 B")
+        assert r.text.endswith(" · 2 lines · 4 B")
         seen = await svc.run(_call(), "view", {"path": P})
         r = await svc.run(_call(seen.generations), "str_replace", {"path": P, "old_str": "b", "new_str": "bb\ncc"})
         assert " · file now 3 lines · 8 B\n" in r.text and r.text.startswith(f"replaced in workspace:{P} · generation ")
         again = await svc.run(_call(r.generations), "create", {"path": P, "content": "z"})
-        assert again.text.endswith(" · 1 line · file now 1 line · 1 B")
+        assert again.text.endswith(" · 1 line · 1 B")
 
     async def test_multi_match_lists_the_lines(self):
         svc, store = _svc()

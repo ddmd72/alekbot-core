@@ -850,6 +850,9 @@ class WorkspaceCall:
     origin: str
     fire_key: Optional[str] = None
     known: Mapping[str, int] = field(default_factory=dict)
+    # Generations whose LINE NUMBERS this execution has seen without viewing the file (a grep): they make an `insert`
+    # at a middle line valid, and nothing else (D18).
+    line_known: Mapping[str, int] = field(default_factory=dict)
     references: WorkspaceReferences = field(default_factory=WorkspaceReferences)
 
 
@@ -860,3 +863,4 @@ class WorkspaceResult:
     text: str
     failed: bool = False
     generations: Mapping[str, Optional[int]] = field(default_factory=dict)
+    line_generations: Mapping[str, int] = field(default_factory=dict)

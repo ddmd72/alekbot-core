@@ -187,13 +187,19 @@ class WorkspaceSession:
 
     def __init__(self) -> None:
         self.generations: Dict[str, int] = {}
+        self.line_generations: Dict[str, int] = {}   # line numbers seen by grep; not "viewed" (D18)
         self.lock = asyncio.Lock()
         self.pending: Set["asyncio.Task[WorkspaceResult]"] = set()
+
+    def apply_result(self, result: WorkspaceResult) -> None:
+        self.apply(result.generations)
+        self.line_generations.update(result.line_generations)
 
     def apply(self, updates: Mapping[str, Optional[int]]) -> None:
         for path, generation in updates.items():
             if generation is None:
                 self.generations.pop(path, None)
+                self.line_generations.pop(path, None)
             else:
                 self.generations[path] = generation
 
@@ -212,7 +218,7 @@ def make_workspace_handler(
     async def mutate(call: WorkspaceCall, command: str, args: Mapping[str, Any]) -> WorkspaceResult:
         try:
             result = await service.run(call, command, args)  # logs its own [Workspace] line
-            state.apply(result.generations)
+            state.apply_result(result)
             return result
         finally:
             state.lock.release()
@@ -236,6 +242,7 @@ def make_workspace_handler(
                 )
             call = WorkspaceCall(
                 user_id=user_id, origin=origin, fire_key=fire_key, known=dict(state.generations),
+                line_known=dict(state.line_generations),
                 references=references,
             )
             if command in MUTATING_COMMANDS:
@@ -246,7 +253,7 @@ def make_workspace_handler(
                 result = await asyncio.shield(task)
             else:
                 result = await service.run(call, command, args)
-                state.apply(result.generations)
+                state.apply_result(result)
             return ToolResult(name=tool_call.name, result_str=result.text, failed=result.failed)
         finally:
             if not handed_over:
