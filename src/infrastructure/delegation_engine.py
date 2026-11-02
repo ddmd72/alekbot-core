@@ -130,10 +130,14 @@ def _append_user_note(history: List[Message], text: str) -> None:
 
 
 def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
-    """The model may send `context` as free text; it becomes {"reasoning": text}."""
+    """The model may send `context` as free text; it becomes {"reasoning": text}.
+
+    Always a new dict: the coordinator writes the resolved `file_content` into it, and the model's own
+    `tool_call.args["context"]` (which `build_tool_turn` puts into history) must not carry the file text.
+    """
     if isinstance(raw, str) and raw:
         return {"reasoning": raw}
-    return raw if isinstance(raw, dict) else {}
+    return dict(raw) if isinstance(raw, dict) else {}
 
 
 def _format_email_search_compact(result: Any) -> str:
