@@ -255,6 +255,11 @@ class FirestoreDriveNoteRepository(DriveNoteRepository):
                  .order_by("updated_at", direction=firestore.Query.DESCENDING).select(list(LEAN_FIELDS)).limit(limit))
         return await self._read(query)
 
+    async def cleared(self, user_id: str, limit: int) -> List[DriveNote]:
+        query = (self._user(user_id).where(filter=FieldFilter("state", "==", NoteState.CLEARED.value))
+                 .order_by("updated_at", direction=firestore.Query.DESCENDING).select(list(LEAN_FIELDS)).limit(limit))
+        return await self._read(query)
+
     async def find_nearest(self, user_id: str, vector: Sequence[float], *, state: str, embedding_space: str,
                            limit: int) -> List[Tuple[DriveNote, float]]:
         query = (self._user(user_id).where(filter=FieldFilter("state", "==", state))

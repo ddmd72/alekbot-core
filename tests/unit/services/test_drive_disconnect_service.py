@@ -206,3 +206,47 @@ async def test_without_a_queue_or_notes_the_flow_still_ends_the_connection():
     w.service = DriveDisconnectService(w.connections, w.revocation, w.drive, None, None)
     _, second = await w.two()
     assert await w.service.disconnect(U, second.connection_id) is True
+
+
+def _cleared(note: DriveNote) -> DriveNote:
+    return note.model_copy(update={"state": NoteState.CLEARED.value})
+
+
+async def test_a_cleared_note_of_the_gone_drive_is_archived_and_a_cleared_note_of_the_first_stays():
+    w = World()
+    _, second = await w.two()
+    w.put(_cleared(_item_note("b2", "Tom's plan.docx", "n-second")))
+    w.put(_cleared(_item_note("a1", "Tom's plan.docx", "n-first")))
+    await w.service.disconnect(U, second.connection_id)
+    gone, kept = w.notes.notes[(U, "n-second")], w.notes.notes[(U, "n-first")]
+    assert (gone.state, gone.archived_at, gone.last_seen_at) == (NoteState.CLEARED.value, T0, SEEN)
+    assert kept.archived_at is None
+
+
+async def test_after_the_disconnect_the_deleted_files_search_finds_both_notes_under_the_drive_name():
+    """RFC §11.6: the whole-drive note and a note on a file of that drive are found, the drive by its last name."""
+    from src.domain.drive_match import Concept
+    from src.services.drive_note_deleted_search import DriveNoteDeletedSearch
+    w = World()
+    first, second = await w.two()
+    await w.connections.rename(U, second.connection_id, "Acme")
+    w.put(_drive_note("b2", second.connection_id, "n-drive"))
+    w.put(_item_note("b2", "Tom's plan.docx", "n-file"))
+    w.put(_item_note("a1", "Tom's plan.docx", "n-live"))
+    await w.service.disconnect(U, second.connection_id)
+
+    async def mount_name_of(user_id, tag):
+        found = await w.connections.connection_of_tag(user_id, tag)
+        return None if found is None else found.mount_name
+
+    async def live_tags(user_id):
+        return {c.ref_tag for c in await w.connections.list_for_user(user_id)}
+
+    search = DriveNoteDeletedSearch(w.notes, AsyncMock(), embedding_space="s", mount_name_of=mount_name_of,
+                                    live_tags=live_tags)
+    hits, _ = await search(U, [], await w.connections.get(U, first.connection_id))
+    names = sorted(h.name for h in hits)
+    assert names == ["Tom's plan.docx", "drive Acme"]
+    file_hit = next(h for h in hits if h.name == "Tom's plan.docx")
+    assert file_hit.path.startswith("Acme/")
+    assert all("n-live" not in r for h in hits for r in h.refs)

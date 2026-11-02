@@ -60,7 +60,8 @@ class DriveDisconnectService:
         now = self._clock()
         archived = failed = 0
         try:
-            active = await self._notes.active(user_id, NOTES_PER_USER_MAX)
+            active = (await self._notes.active(user_id, NOTES_PER_USER_MAX)
+                      + await self._notes.cleared(user_id, NOTES_PER_USER_MAX))
         except Exception as exc:
             logger.error(f"Disconnect: reading the notes of user={user_id[:8]} failed: {type(exc).__name__}",
                          exc_info=True)

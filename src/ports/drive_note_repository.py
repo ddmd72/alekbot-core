@@ -109,6 +109,11 @@ class DriveNoteRepository(ABC):
         search filters them for dormant ones and the audit for record-less ones, both in memory."""
 
     @abstractmethod
+    async def cleared(self, user_id: str, limit: int) -> List[DriveNote]:
+        """`cleared` notes (the owner removed the note; undo brings it back), latest `updated_at` first, at most `limit`,
+        vectors left out (the same index as `active`). The disconnect flow archives a gone drive's cleared notes too."""
+
+    @abstractmethod
     async def find_nearest(self, user_id: str, vector: Sequence[float], *, state: str, embedding_space: str,
                            limit: int) -> List[Tuple[DriveNote, float]]:
         """The nearest notes by cosine distance on `note_vector`, prefiltered on `user_id`, `state` and
