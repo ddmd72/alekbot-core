@@ -41,7 +41,8 @@ class TestDeclaration:
     def test_description_teaches_tree_search_and_parts(self):
         d = build_workspace_tool_declaration()["description"]
         for needle in ('path "" shows the tree', "depth", "grep", "regex: true", "files_only", "offset", "says where it searched",
-                       "Large files are read in parts"):
+                       "read the latest with a negative offset (-50 = the last 50 lines)",
+                       "Write a long document by creating it with the first part and adding the rest with insert -1"):
             assert needle in d
 
 

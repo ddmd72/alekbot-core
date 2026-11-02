@@ -70,7 +70,8 @@ class TestCaps:
         assert str(e.value) == "binary_files/a.pdf: file over 10 MB"
         with pytest.raises(WorkspaceRefused) as e:
             check_file_size("projects/a.md", b"x" * (MAX_TEXT_FILE_BYTES + 1))
-        assert str(e.value) == "projects/a.md: text file over 3 MB"
+        assert str(e.value) == ("projects/a.md: text file over 3 MB — rename it to an archive name "
+                                "(e.g. projects/a-archive-1.md) and start a new file")
         check_file_size("binary_files/a.txt", b"\xff" * (MAX_TEXT_FILE_BYTES + 1))  # not UTF-8: binary, 10 MB cap
 
 
@@ -123,7 +124,7 @@ class TestStrReplace:
     def test_several(self):
         with pytest.raises(WorkspaceRefused) as e:
             apply_str_replace(P, "x\nx", "x", "y")
-        assert str(e.value) == f"found 2 matches of old_str in {P}; include more surrounding text"
+        assert str(e.value) == f"found 2 matches of old_str in {P} at lines 1, 2; include more surrounding text"
         assert e.value.reason == "multi_match"
 
     def test_empty_old_str(self):

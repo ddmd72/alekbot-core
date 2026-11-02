@@ -163,6 +163,8 @@ smart_local:workspace.depth  # read-only view depth, never stored
 smart_local:workspace.files_only  # read-only grep output switch, never stored
 smart_local:workspace.generation  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.ignore_case  # read-only grep matcher flag, never stored
+smart_local:workspace.insert_line  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_insert_lands_lines_where_insert_line_says
+smart_local:workspace.insert_text  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_insert_lands_lines_where_insert_line_says
 smart_local:workspace.limit  # read-only view window, never stored
 smart_local:workspace.new_path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
 smart_local:workspace.new_str  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket

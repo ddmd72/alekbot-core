@@ -7,8 +7,8 @@ owner decisions D1–D17).
 ## Decision
 
 Smart keeps files for its own work — a knowledge base it builds and follows — in a dedicated versioned GCS bucket, key
-`{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ binary_files/`, one local tool `workspace` with eight
-commands. The workspace is **pulled**: used only when the user asks, an instruction it follows (a skill, a reminder)
+`{user_id}/<folder>/<path>`, folders `projects/ references/ scratch/ binary_files/`, one local tool `workspace` with ten
+commands (`insert` and `grep` included; files may grow, D18). The workspace is **pulled**: used only when the user asks, an instruction it follows (a skill, a reminder)
 names a file or asks it to keep state, or a firing reminder carries a workspace file; nothing is injected into the
 prompt. A file has no required structure; how to use it is the instruction's business (D16). Writes are allowed on
 every Smart path, and every object carries its `origin` and, on reminder runs, the fire key. Reminders gain one optional
@@ -36,7 +36,7 @@ field, `workspace_file`, bound by code in NotesAgent and rendered at fire time a
 - **A skill per scheduled task (`reminder_skill`):** the catalog is in every prompt and skills are applied by meaning;
   a once-a-day task needs neither (D15).
 - **A `state_file` with folder rules and "data, not instructions" framing:** no real protection (D17).
-- **A fixed state section in workspace files:** grows without pruning (D16); fixed schemas live in the skill that owns
+- **A fixed state section in workspace files:** grows without pruning (D16; since D18 growth is by design, through `insert`); fixed schemas live in the skill that owns
   them.
 - **Firestore documents:** 1 MiB cap, no free history, poor for binaries.
 - **A folder on the user's drive:** absent for unconnected users, mixes bot and user files, failed in practice.
