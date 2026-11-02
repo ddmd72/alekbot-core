@@ -21,10 +21,10 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, connections, *, embedding_space, clock, nonce, monotonic,
                        transcribe_cap_usd, mirror)
-    await search(user_id, request, *, drives="") -> DriveSearchResult   # one drive (multi-drive 2a); canonical paths
+    await search(user_id, request, *, drives="") -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
     await search_state(user_id) -> SearchLine                  # the specialist's preflight line (§5.3)
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
-    await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # find_passages (§28.3 A4-A8, A18)
+    await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # shown: (ref tag, chunk id); find_passages (§28.3 A4-A8, A18)
     await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
     await indexing_status(user_id, *, connection_id=None) -> DriveIndexingStatus     # Cabinet (§6)
     await has_mirror_root(user_id) -> bool
@@ -37,9 +37,8 @@ Public interface:
     await transcript_text(connection, item_id, *, path, label) -> Optional[str]
     await archived_text(connection, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
-Connections (MULTI_DRIVE_RFC §6, §8, §9): a search reads one connection's index (`ConnectionScope`; stage 1: the
-primary, resolved per call through the injected DriveConnectionService; stage 2 runs one per searched connection and
-merges, E9). Its indexing switch, sync state and status feed the gate; every ref it prints carries the connection's
+Connections (MULTI_DRIVE_RFC §6, §8, §9): a search reads one connection's index (`ConnectionScope`; a search runs one
+per searched connection, resolved per call through the injected DriveConnectionService, and merges (E9)). Its indexing switch, sync state and status feed the gate; every ref it prints carries the connection's
 tag; a read named by a ref resolves the ref's connection, and a ref that resolves to none answers its code-built line
 (D13). The item-level reads take the connection the caller already resolved. Monthly usage, the transcript store and
 the mirror stay user-scoped (§8).
