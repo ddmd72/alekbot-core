@@ -6,6 +6,7 @@ Pure: the path rule, kinds, caps, reminder-field values, line windows, exact-str
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,8 +20,10 @@ from .skill import SKILL_FILE_EXTENSIONS
 
 WORKSPACE_TOOL = "workspace"
 WORKSPACE_REF_PREFIX = "workspace:"
-COMMANDS: Tuple[str, ...] = ("view", "create", "str_replace", "delete", "rename", "copy", "history", "restore", "grep")
-MUTATING_COMMANDS = frozenset({"create", "str_replace", "delete", "rename", "copy", "restore"})
+COMMANDS: Tuple[str, ...] = (
+    "view", "create", "str_replace", "insert", "delete", "rename", "copy", "history", "restore", "grep",
+)
+MUTATING_COMMANDS = frozenset({"create", "str_replace", "insert", "delete", "rename", "copy", "restore"})
 
 FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/", "binary_files/")
 TEXT_FOLDERS: Tuple[str, ...] = ("projects/", "references/", "scratch/")
@@ -41,6 +44,12 @@ MAX_PATH_SEGMENTS = 8
 VIEW_DEFAULT_LINES = 2000
 VIEW_MAX_LINE_CHARS = 2000
 VIEW_MAX_BYTES = 100 * 1024
+# A view with no offset and no limit of a text longer than this shows an outline, not the text (D18; the memory
+# tool's own threshold).
+VIEW_FULL_MAX_CHARS = 16_000
+OUTLINE_MAX_HEADINGS = 100
+INSERT_END = -1
+MULTI_MATCH_LINES = 20
 LISTING_MAX_ENTRIES = 100
 LISTING_DEFAULT_DEPTH = 3
 GREP_DEFAULT_CONTEXT = 1
@@ -288,7 +297,12 @@ def check_file_size(path: str, data: bytes) -> None:
     if len(data) > MAX_FILE_BYTES:
         raise WorkspaceRefused(f"{path}: file over {MAX_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
     if len(data) > MAX_TEXT_FILE_BYTES and is_text(path, data):
-        raise WorkspaceRefused(f"{path}: text file over {MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB", reason="caps")
+        stem, ext = os.path.splitext(path)
+        raise WorkspaceRefused(
+            f"{path}: text file over {MAX_TEXT_FILE_BYTES // (1024 * 1024)} MB — rename it to an archive name "
+            f"(e.g. {stem}-archive-1{ext}) and start a new file",
+            reason="caps",
+        )
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -308,9 +322,55 @@ def _positive_int(raw: object) -> Optional[int]:
     return None
 
 
-def view_window(offset: object, limit: object) -> Tuple[int, int]:
-    """(first line, line count). Empty, zero, negative or unreadable values mean the defaults (§6)."""
-    return _positive_int(offset) or 1, _positive_int(limit) or VIEW_DEFAULT_LINES
+_HEADING = re.compile(r"^#{1,6}\s")
+_INT = re.compile(r"-?\d+")
+
+
+def _signed_int(raw: object) -> Optional[int]:
+    """An integer a model may send as a number or a string; None for empty, zero, a bool or anything unreadable."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw or None
+    text = str(raw).strip()
+    return (int(text) or None) if _INT.fullmatch(text) else None
+
+
+def view_window(offset: object, limit: object, total: int = 0) -> Tuple[int, int]:
+    """(first line, line count). A negative offset counts from the end (-50 = the last 50 lines of `total`); an empty,
+    zero or unreadable offset means 1; limit: empty, zero, negative or unreadable means the default (§6, D18)."""
+    n = _signed_int(offset)
+    if n is None:
+        first = 1
+    elif n > 0:
+        first = n
+    else:
+        first = max(1, total + n + 1)
+    return first, _positive_int(limit) or VIEW_DEFAULT_LINES
+
+
+def is_whole_file_request(offset: object, limit: object) -> bool:
+    """True when the view names no range at all: offset and limit both empty / 0 / unreadable (D18)."""
+    return _signed_int(offset) is None and _positive_int(limit) is None
+
+
+def is_long_text(text: str) -> bool:
+    return len(text) > VIEW_FULL_MAX_CHARS
+
+
+def render_outline(text: str, size: int) -> str:
+    """What a long file shows instead of its text (D18): every markdown heading with its line number (at most
+    OUTLINE_MAX_HEADINGS), then the hint on how to read a part."""
+    lines = text.splitlines()
+    headings = [(n, line) for n, line in enumerate(lines, 1) if _HEADING.match(line)]
+    out = [f"{n:6d}\t{_cut_line(line)}" for n, line in headings[:OUTLINE_MAX_HEADINGS]]
+    if len(headings) > OUTLINE_MAX_HEADINGS:
+        out.append(f"…{len(headings) - OUTLINE_MAX_HEADINGS} more headings")
+    out.append(
+        f"(long file: {len(lines)} lines, {format_size(size)} — text not shown. Read a part with offset and limit; "
+        "a negative offset reads from the end, -50 = the last 50 lines. Find lines with grep.)"
+    )
+    return "\n".join(out)
 
 
 @dataclass(frozen=True)
@@ -328,7 +388,7 @@ class TextWindow:
 def number_lines(text: str, offset: object = None, limit: object = None) -> TextWindow:
     """`cat -n` lines (6-wide number, tab), each cut at 2,000 chars, the whole window at most 100 KB (§6)."""
     lines = text.splitlines()
-    first, count = view_window(offset, limit)
+    first, count = view_window(offset, limit, len(lines))
     out: List[str] = []
     used = 0
     for n in range(first, min(len(lines), first + count - 1) + 1):
@@ -367,14 +427,62 @@ def apply_str_replace(path: str, text: str, old: str, new: str) -> Replacement:
     if count == 0:
         raise WorkspaceRefused(f"old_str not found in {path}", reason="no_match")
     if count > 1:
+        starts: List[int] = []
+        at = text.find(old)
+        while at != -1:
+            starts.append(text.count("\n", 0, at) + 1)
+            at = text.find(old, at + len(old))
+        shown = ", ".join(str(n) for n in starts[:MULTI_MATCH_LINES])
+        more = ", …" if count > MULTI_MATCH_LINES else ""
         raise WorkspaceRefused(
-            f"found {count} matches of old_str in {path}; include more surrounding text", reason="multi_match",
+            f"found {count} matches of old_str in {path} at lines {shown}{more}; include more surrounding text",
+            reason="multi_match",
         )
     index = text.index(old)
     return Replacement(
         text=text[:index] + new + text[index + len(old):],
         first_line=text.count("\n", 0, index) + 1,
         line_count=max(1, new.count("\n") + 1),
+    )
+
+
+def parse_insert_line(raw: object) -> int:
+    """`insert_line`: 0 = top, -1 = end, else a line number. Absent or unreadable is refused (0 is a valid value)."""
+    if isinstance(raw, bool) or raw is None or not _INT.fullmatch(str(raw).strip()):
+        raise WorkspaceRefused(
+            "insert needs insert_line: a line number, 0 for the top or -1 for the end", reason="insert_line",
+        )
+    return int(str(raw).strip())
+
+
+def _ends_with_newline(text: str) -> bool:
+    kept = text.splitlines(keepends=True)
+    return bool(kept) and kept[-1] != kept[-1].splitlines()[0]
+
+
+def apply_insert(path: str, text: str, insert_line: int, insert_text: str) -> Replacement:
+    """Insert `insert_text` as whole lines after line `insert_line` (0 = top, -1 = end; D18). Never glues onto an
+    existing line, never adds a blank line; the file's own trailing newline is kept; a trailing newline on
+    `insert_text` changes nothing. Existing line endings are not rewritten."""
+    if not insert_text:
+        raise WorkspaceRefused("insert_text is empty; pass the lines to insert", reason="empty")
+    parts = text.splitlines(keepends=True)
+    total = len(parts)
+    if not (-1 <= insert_line <= total):
+        raise WorkspaceRefused(
+            f"insert_line {insert_line} is out of range: the file has {total} lines; use 0..{total}, or -1 for the end",
+            reason="insert_line",
+        )
+    at = total if insert_line == INSERT_END else insert_line
+    before, after = "".join(parts[:at]), "".join(parts[at:])
+    if before and not _ends_with_newline(before):
+        before += "\n"
+    body = insert_text.removesuffix("\n").removesuffix("\r")
+    tail = "\n" if (after or _ends_with_newline(text)) else ""
+    return Replacement(
+        text=before + body + tail + after,
+        first_line=at + 1,
+        line_count=len((body + "\n").splitlines()),
     )
 
 

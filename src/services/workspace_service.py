@@ -10,7 +10,7 @@ store error at ERROR, everything else at INFO. Content is never logged.
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
 from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
@@ -21,6 +21,7 @@ from ..domain.workspace import (
     FOLDERS,
     GREP_MAX_PATTERN_CHARS,
     GREP_MAX_SCAN_BYTES,
+    INSERT_END,
     MAX_FILE_BYTES,
     MUTATING_COMMANDS,
     TEXT_EXTENSIONS,
@@ -32,6 +33,7 @@ from ..domain.workspace import (
     WorkspaceEntry,
     WorkspaceResult,
     WorkspaceWriteMeta,
+    apply_insert,
     apply_str_replace,
     binary_message,
     changed_lines,
@@ -41,16 +43,20 @@ from ..domain.workspace import (
     find_references,
     folder_of,
     format_size,
+    is_long_text,
     is_text,
+    is_whole_file_request,
     number_lines,
     parse_context,
     parse_flag,
     parse_generation,
+    parse_insert_line,
     parse_workspace_path,
     prior_generation_before_fire,
     render_grep,
     render_history,
     render_listing,
+    render_outline,
     render_missing,
     render_same_fire_line,
     render_view_header,
@@ -93,6 +99,11 @@ def _decode(data: bytes) -> Optional[str]:
 def _lines(text: str) -> str:
     n = len(text.splitlines())
     return f"{n} line{'' if n == 1 else 's'}"
+
+
+def _now(text: str, data: bytes) -> str:
+    """The tail of a write result: how big the file is now, so the model never views it just to find out (D18)."""
+    return f" · file now {_lines(text)} · {format_size(len(data))}"
 
 
 class WorkspaceService:
@@ -139,6 +150,8 @@ class WorkspaceService:
             return await self._create(call, args, log)
         if command == "str_replace":
             return await self._str_replace(call, args, log)
+        if command == "insert":
+            return await self._insert(call, args, log)
         if command == "delete":
             return await self._delete(call, args, log)
         if command == "rename":
@@ -192,14 +205,21 @@ class WorkspaceService:
         text = _decode(blob.data)
         if text is None:
             return self._binary(path, entry.generation, log)
-        window = number_lines(text, args.get("offset"), args.get("limit"))
-        parts = [render_view_header(entry, window.total)]
+        parts = [render_view_header(entry, len(text.splitlines()))]
         if call.fire_key and entry.fire == call.fire_key and call.known.get(path) != entry.generation:
             # B1: an earlier attempt of this same fire wrote it; name the version from before the fire.
             versions = await self._store.list(call.user_id, path, include_versions=True)
             parts.append(render_same_fire_line(prior_generation_before_fire(versions, call.fire_key)))
-        parts += [p for p in (window.text, window_note(window)) if p]
+        parts += self._body(text, entry.size, args)
         return WorkspaceResult(text="\n".join(parts), generations={path: entry.generation})
+
+    @staticmethod
+    def _body(text: str, size: int, args: Mapping[str, Any]) -> List[str]:
+        """The text window, or for a long file viewed without a range its outline (D18)."""
+        if is_long_text(text) and is_whole_file_request(args.get("offset"), args.get("limit")):
+            return [render_outline(text, size)]
+        window = number_lines(text, args.get("offset"), args.get("limit"))
+        return [p for p in (window.text, window_note(window)) if p]
 
     @staticmethod
     def _binary(path: str, generation: int, log: _LogFields) -> WorkspaceResult:
@@ -215,9 +235,8 @@ class WorkspaceService:
         text = _decode(blob.data) if workspace_kind(path) == "text" else None
         if text is None:
             raise WorkspaceRefused(binary_message(path), reason="binary")
-        window = number_lines(text, args.get("offset"), args.get("limit"))
-        parts = [render_view_header(blob.entry, window.total, version_view=True)]
-        parts += [p for p in (window.text, window_note(window)) if p]
+        parts = [render_view_header(blob.entry, len(text.splitlines()), version_view=True)]
+        parts += self._body(text, blob.entry.size, args)
         # Read-only: not recorded, so no later create can overwrite on the strength of an old version (§7.3).
         return WorkspaceResult(text="\n".join(parts))
 
@@ -277,6 +296,8 @@ class WorkspaceService:
             )
         gate = asyncio.Semaphore(_GREP_READ_CONCURRENCY)
 
+        seen: Dict[str, Optional[int]] = {}
+
         async def fetch(entry: WorkspaceEntry) -> Optional[Tuple[str, str]]:
             async with gate:
                 try:
@@ -284,7 +305,10 @@ class WorkspaceService:
                 except FileNotFoundError:   # deleted since the list
                     return None
             text = _decode(blob.data)
-            return None if text is None else (entry.path, text)
+            if text is None:
+                return None
+            seen[entry.path] = blob.entry.generation
+            return entry.path, text
 
         fetched = await asyncio.gather(*(fetch(e) for e in sorted(scope, key=lambda e: e.path)))
         files = [f for f in fetched if f is not None]
@@ -294,7 +318,8 @@ class WorkspaceService:
         )
         log.files = len(files)
         log.matches = matches
-        return WorkspaceResult(text=text)
+        # Recorded, so an insert at a line number taken from this grep passes the staleness guard (D18).
+        return WorkspaceResult(text=text, generations=seen)
 
     # -- text writes ---------------------------------------------------------------------------------------------
 
@@ -331,7 +356,7 @@ class WorkspaceService:
             entry = await self._store.put(call.user_id, path, data, self._meta(call), known)
             log.gen = str(entry.generation)
             return WorkspaceResult(
-                text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)}",
+                text=f"overwritten workspace:{path} · generation {entry.generation} · {_lines(text)}{_now(text, data)}",
                 generations={path: entry.generation},
             )
         live = await self._store.list(call.user_id, "")
@@ -346,7 +371,7 @@ class WorkspaceService:
         entry = await self._store.put(call.user_id, path, data, self._meta(call), 0)
         log.gen = str(entry.generation)
         return WorkspaceResult(
-            text=f"created workspace:{path} · generation {entry.generation} · {_lines(text)}",
+            text=f"created workspace:{path} · generation {entry.generation} · {_lines(text)}{_now(text, data)}",
             generations={path: entry.generation},
         )
 
@@ -373,10 +398,56 @@ class WorkspaceService:
                 continue
             log.gen, log.nbytes = str(entry.generation), len(data)
             return WorkspaceResult(
-                text=f"replaced in workspace:{path} · generation {entry.generation}\n{changed_lines(replaced)}",
+                text=(
+                    f"replaced in workspace:{path} · generation {entry.generation}{_now(replaced.text, data)}\n"
+                    f"{changed_lines(replaced)}"
+                ),
                 generations={path: entry.generation},
             )
         raise WorkspaceConflict(path)  # unreachable: the second attempt returns or raises
+
+    async def _insert(self, call: WorkspaceCall, args: Mapping[str, Any], log: _LogFields) -> WorkspaceResult:
+        path = self._text_path(args.get("path"), "insert")
+        log.path = path
+        insert_line = parse_insert_line(args.get("insert_line"))
+        raw_text = args.get("insert_text")
+        insert_text = "" if raw_text is None else str(raw_text)
+        middle = insert_line not in (0, INSERT_END)
+        stale = WorkspaceRefused(
+            f"{path} changed since you last read it in this run (or you have not read it): "
+            f"view the lines around {insert_line} again, then insert",
+            reason="stale",
+        )
+        for attempt in (1, 2):
+            # Self-guarding like str_replace; a middle line number is only valid for the generation the model saw.
+            blob = await self._store.read(call.user_id, path)
+            text = _decode(blob.data)
+            if text is None:
+                raise WorkspaceRefused(f"{path} is not UTF-8 text; insert cannot edit it", reason="kind")
+            inserted = apply_insert(path, text, insert_line, insert_text)
+            if middle and call.known.get(path) != blob.entry.generation:
+                raise stale
+            data = inserted.text.encode("utf-8")
+            check_file_size(path, data)
+            try:
+                entry = await self._store.put(call.user_id, path, data, self._meta(call), blob.entry.generation)
+            except WorkspaceConflict:
+                if middle:
+                    raise stale from None
+                if attempt == 2:
+                    raise
+                continue
+            log.gen, log.nbytes = str(entry.generation), len(data)
+            last = inserted.first_line + inserted.line_count - 1
+            where = f"line {last}" if inserted.line_count == 1 else f"lines {inserted.first_line}–{last}"
+            return WorkspaceResult(
+                text=(
+                    f"inserted {inserted.line_count} line{'' if inserted.line_count == 1 else 's'} at {where} of workspace:{path} · "
+                    f"generation {entry.generation}{_now(inserted.text, data)}"
+                ),
+                generations={path: entry.generation},
+            )
+        raise WorkspaceConflict(path)  # unreachable
 
     # -- delete / rename / restore -------------------------------------------------------------------------------
 
