@@ -216,9 +216,11 @@ class UserDriveService:
             logger.info(f"Drive access refused: op={op.value} connection={handle.connection_id[:8]}")
             raise DriveAccessRefused(decision.line)
 
-    async def write_folder_path(self, handle: DriveHandle) -> Optional[str]:
-        """The write folder's connection-relative path: None (read-only), "" (the root), else the folder's path."""
-        folder = (await self._connection(handle)).write_folder_id
+    async def write_folder_path(self, handle: DriveHandle,
+                                policy: Optional[Tuple[ConnectionAccess, DriveCapabilities]] = None) -> Optional[str]:
+        """The write folder's connection-relative path: None (read-only), "" (the root), else the folder's path.
+        `policy`: the `access` pair the operation already read (no second connection read, E-13)."""
+        folder = policy[0].write_folder_id if policy is not None else (await self._connection(handle)).write_folder_id
         if folder is None or folder == ROOT_FOLDER:
             return folder
         return (await self._drive.get_item(handle, folder)).path
@@ -310,7 +312,7 @@ class UserDriveService:
                    folder: Optional[str]) -> SaveOutcome:
         policy = await self.access(handle)
         await self._refuse_if_read_only(handle, AccessOp.SAVE, policy)
-        target = folder if folder and folder.strip() else await self._inbox_path(handle)
+        target = folder if folder and folder.strip() else await self._inbox_path(handle, policy)
         await self._refuse_mirror(handle, path=target)   # before _resolve(create=True) creates anything
         resolution, created_ids = await self._resolve(handle, target, create=True, op=AccessOp.SAVE, policy=policy)
         children = await self._drive.list_children(handle, resolution.folder.item_id)
@@ -325,10 +327,11 @@ class UserDriveService:
         await self._nudge(handle, created_ids + [item.item_id])
         return SaveOutcome(item=item, created=resolution.created, renamed=name_key(item.name) != wanted)
 
-    async def _inbox_path(self, handle: DriveHandle) -> str:
+    async def _inbox_path(self, handle: DriveHandle,
+                          policy: Tuple[ConnectionAccess, DriveCapabilities]) -> str:
         """The default destination: the Inbox inside the connection's write folder (D7). DriveAccessRefused with the
         no-write-folder line when the drive has none."""
-        base = await self.write_folder_path(handle)
+        base = await self.write_folder_path(handle, policy)
         if base is None:
             raise DriveAccessRefused(NO_WRITE_FOLDER_LINE)
         return join_drive_path(base, DEFAULT_INBOX_FOLDER)
