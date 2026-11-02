@@ -24,6 +24,7 @@ class ExcerptResult:
     request: Union[ExcerptRequest, ExcerptRangeRequest]
     files: Tuple[ExcerptFile, ...] = ()
     repeated: Tuple[ChunkId, ...] = ()
+    repeated_tags: Tuple[str, ...] = ()    # the ref tag of each `repeated` chunk's connection, parallel; empty: `ref_tag`
     no_text: int = 0
     no_text_paths: Tuple[str, ...] = ()
     building: bool = False

@@ -97,6 +97,12 @@ def _low_accuracy(file: ExcerptFile) -> bool:
     return file.card_accuracy is not None and file.card_accuracy < CARD_ACCURACY_TRUST
 
 
+def context_key(ref_tag: str, item_id: str) -> str:
+    """The key of a file or folder in the context plan: the same item id on two connections is two items. Without a
+    tag (a result built outside a connection) it is the item id."""
+    return f"{ref_tag}|{item_id}" if ref_tag else item_id
+
+
 def _marks(file: ExcerptFile) -> str:
     marks = ""
     if file.capture in IMAGE_TEXT_CAPTURES:
@@ -117,7 +123,8 @@ def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optio
                 pages_line: str = "") -> List[str]:
     """Folder lines, head lines and the file's own note outside the wrapper (code and the owner's words); the
     description, the text and the file's state lines inside it."""
-    described = context is not None and file.item_id in plan.described
+    key = context_key(file.ref_tag, file.item_id)
+    described = context is not None and key in plan.described
     runs = merge_runs(file.chunks)
     body: List[str] = []
     # a card scored below the trust bar was graded on this very reading: its description may carry a wrong value
@@ -133,7 +140,7 @@ def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optio
     if file.also_at:
         body.append(ALSO_AT.format(paths="; ".join(file.also_at)))
     own_note = [escape_text(context.own_note)] if described and context is not None and context.own_note else []
-    return [*(folder_line(note) for note in plan.before.get(file.item_id, ())),
+    return [*(folder_line(note) for note in plan.before.get(key, ())),
             *([pages_line] if pages_line else []),
             *(head_line(file, run) for run in runs), *own_note,
             wrap_untrusted("\n".join(body), nonce=nonce, ref=file.ref, path=file.path)]
@@ -143,7 +150,7 @@ def _planned(files: Sequence[ExcerptFile], context: ExcerptContext, *, shown_fol
              described_files: FrozenSet[str]) -> Tuple[List[str], ContextPlan, Dict[str, FileContext]]:
     """The context plan over the files that print, and the dropped-folders line when the cap dropped any."""
     by_id = {f.item_id: f for f in context.files}
-    printed = [by_id[f.item_id] for f in files if f.chunks and f.item_id in by_id]
+    printed = [by_id[k] for k in (context_key(f.ref_tag, f.item_id) for f in files if f.chunks) if k in by_id]
     plan = plan_context(printed, context.folders, shown_folders=shown_folders, described_files=described_files,
                         chars_max=EXCERPT_FOLDER_NOTES_CHARS_MAX)
     dropped = [DROPPED.format(paths=", ".join(quoted(p) for p in plan.dropped))] if plan.dropped else []
@@ -155,7 +162,7 @@ def _files(files: Sequence[ExcerptFile], nonce: Callable[[], str], plan: Context
     out: List[str] = []
     for file in files:
         if file.chunks:
-            out.extend(_file_block(file, nonce(), plan, by_id.get(file.item_id), pages_line(file)))
+            out.extend(_file_block(file, nonce(), plan, by_id.get(context_key(file.ref_tag, file.item_id)), pages_line(file)))
     return out
 
 
@@ -174,8 +181,9 @@ def _gate_text(result: ExcerptResult) -> Optional[str]:
 
 
 def _ids(result: ExcerptResult) -> str:
-    return ", ".join(f"{drive_ref.format(result.ref_tag, item_id)}:{display_number(index)}"
-                     for item_id, _, index in result.repeated)
+    tags = result.repeated_tags or (result.ref_tag,) * len(result.repeated)
+    return ", ".join(f"{drive_ref.format(tag, item_id)}:{display_number(index)}"
+                     for tag, (item_id, _, index) in zip(tags, result.repeated))
 
 
 def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str] = frozenset(),
@@ -266,8 +274,8 @@ def _pages_read(spans: Sequence[PageSpan], matched_numbers: Sequence[int]) -> st
 
 
 def render_block(files: Sequence[ExcerptFile], context: ExcerptContext, *, nonce: Callable[[], str],
-                 pages: Optional[Mapping[Tuple[str, int], Sequence[PageSpan]]] = None,
-                 matched: FrozenSet[ChunkId] = frozenset()) -> str:
+                 pages: Optional[Mapping[Tuple[str, str, int], Sequence[PageSpan]]] = None,
+                 matched: FrozenSet[Tuple[str, ChunkId]] = frozenset()) -> str:
     """Every file once, in the order given, each in its own wrapper (A11); the context re-planned over the whole
     run, so each noted folder prints once, right before the first file under it. With page spans (§29.6 L11-L12) the
     opening follows the mix and a paged file gets its `pages read` line; without, the output is the find-only block."""
@@ -275,10 +283,11 @@ def render_block(files: Sequence[ExcerptFile], context: ExcerptContext, *, nonce
     spans = {key: value for key, value in (pages or {}).items() if value}
 
     def pages_line(file: ExcerptFile) -> str:
-        own = spans.get((file.item_id, file.generation))
+        own = spans.get((file.ref_tag, file.item_id, file.generation))
         if not own:
             return ""
-        numbers = [display_number(i) for (item, gen, i) in matched if item == file.item_id and gen == file.generation]
+        numbers = [display_number(i) for (tag, (item, gen, i)) in matched
+                   if tag == file.ref_tag and item == file.item_id and gen == file.generation]
         return _pages_read(own, numbers)
 
     opening = OPENING_BLOCK if not spans else OPENING_BLOCK_MIXED if matched else OPENING_BLOCK_PAGES

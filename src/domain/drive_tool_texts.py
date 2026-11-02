@@ -47,8 +47,8 @@ KIND = (
     "Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, audio, archive, code, folder, or a file "
     "extension such as 'jpg'. Other words are refused."
 )
-DRIVES = ("Optional: the name of one drive to search, as drive_state lists it under drives. Empty searches the "
-         "primary drive. A folder that starts with a drive's name is searched on that drive.")
+DRIVES = ("Optional: the names of drives to search, comma-separated, as drive_state lists them. Empty searches every "
+          "drive searched by default. A folder that starts with a drive's name is searched on that drive.")
 DATE_FROM = (
     "Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date "
     "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
