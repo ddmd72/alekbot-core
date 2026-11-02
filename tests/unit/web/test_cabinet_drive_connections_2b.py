@@ -679,3 +679,16 @@ async def test_the_last_drive_with_the_copy_off_writes_no_profile():
     conn = await w.connect()
     assert (await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}"))[0] == 200
     assert w.users.updates == 0 and w.users.profile.config.drive_copy_deep_research is False
+
+
+async def test_a_connection_that_vanishes_before_the_indexing_write_is_404_and_queues_nothing():
+    w = World()
+    conn = await w.connect()
+
+    async def vanished(*args, **kwargs):
+        return None
+    w.repo.update = vanished
+    status, body = await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                              {"enabled": True})
+    assert (status, body) == (404, {"error": "Drive not connected"})
+    assert w.drive_tasks() == []
