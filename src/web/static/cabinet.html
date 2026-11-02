@@ -1583,6 +1583,13 @@
           "drive.index_metadata_only": "Name and details only",
           "drive.index_unresolved": "Being located",
           "drive.index_unread": "Not read yet",
+          "drive.index_unreadable_title": "Could not be read",
+          "drive.unreadable_reason.no_text": "no text (empty or images only)",
+          "drive.unreadable_reason.machine_text": "text not recognised (damaged fonts)",
+          "drive.unreadable_reason.too_large": "too large",
+          "drive.unreadable_reason.user_chunk_cap": "index is full",
+          "drive.unreadable_reason.failed": "read error",
+          "drive.index_unreadable_more": "+ {n} more",
           "drive.index_inaccessible": "Bot cannot open (sharing settings)",
           "drive.index_deleting": "Being removed",
           "drive.index_building": "Indexing in progress…",
@@ -1759,6 +1766,13 @@
           "drive.index_metadata_only": "Лише назва й відомості",
           "drive.index_unresolved": "Визначається розташування",
           "drive.index_unread": "Ще не прочитано",
+          "drive.index_unreadable_title": "Не вдалося прочитати",
+          "drive.unreadable_reason.no_text": "немає тексту (порожній або лише зображення)",
+          "drive.unreadable_reason.machine_text": "текст не розпізнано (пошкоджені шрифти)",
+          "drive.unreadable_reason.too_large": "завеликий",
+          "drive.unreadable_reason.user_chunk_cap": "індекс заповнений",
+          "drive.unreadable_reason.failed": "помилка читання",
+          "drive.index_unreadable_more": "+ ще {n}",
           "drive.index_inaccessible": "Бот не може відкрити (налаштування доступу)",
           "drive.index_deleting": "Видаляються",
           "drive.index_building": "Триває індексація…",
@@ -1935,6 +1949,13 @@
           "drive.index_metadata_only": "Nom et détails seulement",
           "drive.index_unresolved": "Localisation en cours",
           "drive.index_unread": "Pas encore lus",
+          "drive.index_unreadable_title": "Lecture impossible",
+          "drive.unreadable_reason.no_text": "aucun texte (vide ou images seules)",
+          "drive.unreadable_reason.machine_text": "texte non reconnu (polices endommagées)",
+          "drive.unreadable_reason.too_large": "trop volumineux",
+          "drive.unreadable_reason.user_chunk_cap": "index plein",
+          "drive.unreadable_reason.failed": "erreur de lecture",
+          "drive.index_unreadable_more": "+ {n} de plus",
           "drive.index_inaccessible": "Inaccessibles au bot (partage)",
           "drive.index_deleting": "Suppression en cours",
           "drive.index_building": "Indexation en cours…",
@@ -2111,6 +2132,13 @@
           "drive.index_metadata_only": "Solo nombre y detalles",
           "drive.index_unresolved": "Ubicándose",
           "drive.index_unread": "Aún sin leer",
+          "drive.index_unreadable_title": "No se pudieron leer",
+          "drive.unreadable_reason.no_text": "sin texto (vacío o solo imágenes)",
+          "drive.unreadable_reason.machine_text": "texto no reconocido (fuentes dañadas)",
+          "drive.unreadable_reason.too_large": "demasiado grande",
+          "drive.unreadable_reason.user_chunk_cap": "índice lleno",
+          "drive.unreadable_reason.failed": "error de lectura",
+          "drive.index_unreadable_more": "+ {n} más",
           "drive.index_inaccessible": "El bot no puede abrir (uso compartido)",
           "drive.index_deleting": "Eliminándose",
           "drive.index_building": "Indexación en curso…",
@@ -4227,7 +4255,7 @@
         metadata_only: "drive.index_metadata_only",
         pending: "drive.index_pending",
         unresolved: "drive.index_unresolved",
-        unread: "drive.index_unread",
+        not_read_yet: "drive.index_unread",   // waiting only; the unreadable files are listed by name below
         inaccessible: "drive.index_inaccessible",   // files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)
         failed: "drive.index_failed",
         deleting: "drive.index_deleting",
@@ -4261,9 +4289,9 @@
           const known = Object.keys(DRIVE_COUNTER_LABELS);
           const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
           for (const key of keys) {
-            // not_read_yet is the waiting part of `unread`, for search's envelope (F5-2): not a counter of its own;
-            // inaccessible_unnotified is the drive notice's gate (§26.2), not the user's
-            if (key === "carded" || key === "not_read_yet" || key === "inaccessible_unnotified" || !num(c[key])) continue;
+            // `unread` is waiting plus unreadable: the waiting part is shown as `not_read_yet`, the unreadable files
+            // are listed by name (ix.unreadable); inaccessible_unnotified is the drive notice's gate (§26.2), not the user's
+            if (key === "carded" || key === "unread" || key === "inaccessible_unnotified" || !num(c[key])) continue;
             counts.push(`${DRIVE_COUNTER_LABELS[key] ? t(DRIVE_COUNTER_LABELS[key]) : escapeHtml(key)}: ${num(c[key])}`);
           }
           const last = ix.last_success_at
@@ -4272,11 +4300,29 @@
           const category = ix.last_error
             ? (DRIVE_ERROR_CATEGORIES.includes(ix.last_error) ? ix.last_error : "internal")
             : null;
+          const unreadable = ix.unreadable || {};
+          const unreadableFiles = Array.isArray(unreadable.files) ? unreadable.files : [];
+          const unreadableMore = num(unreadable.total) - unreadableFiles.length;
+          const unreadableBlock = num(unreadable.total) > 0 ? `
+              <div style="margin-top:6px;">
+                <div>${t("drive.index_unreadable_title")}</div>
+                ${unreadableFiles.map((f) => {
+                  const known = ["no_text", "machine_text", "too_large", "user_chunk_cap", "failed"].includes(f.reason);
+                  const why = t("drive.unreadable_reason." + (known ? f.reason : "failed"));
+                  const link = typeof f.web_url === "string" && f.web_url.startsWith("https://");
+                  const name = link
+                    ? `<a href="${escapeHtml(f.web_url)}" target="_blank" rel="noopener">${escapeHtml(f.name)}</a>`
+                    : escapeHtml(f.name);
+                  return `<div style="padding-left:12px;">${name} \u2014 ${why}</div>`;
+                }).join("")}
+                ${unreadableMore > 0 ? `<div style="padding-left:12px;">${t("drive.index_unreadable_more").replace("{n}", unreadableMore)}</div>` : ""}
+              </div>` : "";
           details = `
             <div style="font-size:13px; color:var(--text-muted); margin-top:10px; line-height:1.6;">
               ${ix.awaiting_rebuild ? `<div>${t("drive.index_awaiting_rebuild")}</div>`
                 : ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
               <div>${counts.join(" \u00b7 ")}</div>
+              ${unreadableBlock}
               ${usage ? `<div>${usage}</div>` : ""}
               <div>${t("drive.index_last_sync")}: ${last}</div>
               ${ix.index_full ? `<div style="color:var(--accent-danger);">${t("drive.index_full")}</div>` : ""}
