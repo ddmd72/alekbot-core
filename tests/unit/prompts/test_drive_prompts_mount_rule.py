@@ -27,7 +27,7 @@ def test_the_search_token_states_the_drives_rule():
     text = _token("PROTOCOL_DRIVE_SEARCH")
     assert "drives" in text and "never guess" in text
     assert "not searched" in text
-    assert "Inbox on the primary drive" in text
+    assert "Inbox in the primary drive's write folder" in text   # 2b: saves land in the write folder (D7, design 3.3)
 
 
 @pytest.mark.parametrize("name", NAMES)

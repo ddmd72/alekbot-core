@@ -48,7 +48,9 @@ def test_no_card_names_a_connect_path_of_its_own():
     for loader, integration in (("loadGmailStatus", "mail"), ("loadDriveStatus", "drive"), ("loadTasksStatus", "tasks")):
         body = re.search(rf"async function {loader}\(\) \{{.*?\n      }}\n", _HTML, re.S).group(0)
         assert f'connectHref("{integration}")' in body, loader
-    assert 'connectHref("mail", data.credential_id)' in _HTML and 'connectHref("drive", data.credential_id)' in _HTML
+    # MULTI_DRIVE_RFC §11.7: the drive card is a connection list; each row's reconnect link names its own credential
+    assert 'connectHref("mail", data.credential_id)' in _HTML
+    assert 'connectHref("drive", row.reconnect.credential_id)' in _HTML
 
 
 def test_the_old_callback_params_are_gone_and_the_new_ones_are_read():

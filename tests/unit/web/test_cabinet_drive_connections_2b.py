@@ -3,6 +3,7 @@
 The real `DriveConnectionService`, `UserDriveService` (over the fake drive adapter), `DriveDisconnectService` and
 credential store; assertions on what is stored, enqueued and answered. Every route acts only on the caller's own
 connections: another user's connection id answers 404 and changes nothing."""
+import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -518,3 +519,176 @@ async def test_the_retired_routes_are_gone(method, path):
     await w.connect()
     status, _ = await call(w.app(), method, path, {"enabled": True} if method == "put" else None)
     assert status in (404, 405)
+
+
+# ------------------------------------------------------------------------------------------------------ carried over
+# Behaviour the retired routes' tests pinned that the 2b routes keep unchanged (reviewer, slice 2b wave 2): the same
+# cases, now through the connection list and the per-connection routes.
+
+async def test_the_mirror_root_flag_is_false_without_a_root_and_a_failing_lookup_never_breaks_the_list(caplog):
+    w = World()
+    await w.connect()
+
+    async def no_root(user_id):
+        return False
+    w.search.has_mirror_root = no_root
+    status, body = await call(w.app(), "get", "/api/drive/connections")
+    assert status == 200 and body["mirror_root"] is False
+
+    async def broken(user_id):
+        raise RuntimeError("boom")
+    w.search.has_mirror_root = broken
+    status, body = await call(w.app(), "get", "/api/drive/connections")
+    assert status == 200 and body["mirror_root"] is False and len(body["connections"]) == 1
+
+
+async def test_without_the_index_service_a_row_has_no_index_block():
+    w = World()
+    await w.connect()
+    status, body = await call(w.app(drive_search_service=None), "get", "/api/drive/connections")
+    assert status == 200 and body["connections"][0]["indexing"] is None and body["mirror_root"] is False
+
+
+async def test_a_failing_index_read_is_logged_as_an_error(caplog):
+    w = World()
+    await w.connect()
+    w.search.fail = True
+    with caplog.at_level(logging.ERROR):
+        assert (await call(w.app(), "get", "/api/drive/connections"))[0] == 200
+    assert any(r.levelno == logging.ERROR and "indexing status" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_store_failure_of_the_list_is_500_and_leaks_nothing():
+    w = World()
+    await w.connect()
+
+    async def broken(user_id):
+        raise RuntimeError("token=secret")
+    w.repo.list_for_user = broken
+    async with w.app().test_client() as client:
+        resp = await client.get("/api/drive/connections", headers=AUTH)
+        text = await resp.get_data(as_text=True)
+    assert resp.status_code == 500 and "secret" not in text
+    assert await resp.get_json() == {"error": "Internal server error"}
+
+
+async def test_after_the_last_drive_is_disconnected_the_list_asks_no_reconnect():
+    w = World()
+    conn = await w.connect()
+    assert (await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}"))[0] == 200
+    _, body = await call(w.app(), "get", "/api/drive/connections")
+    assert (body["connections"], body["reconnect_needed"]) == ([], False)
+
+
+async def test_a_failed_enqueue_keeps_the_indexing_switch(caplog):
+    w = World()
+    conn = await w.connect()
+
+    async def refused(*args, **kwargs):
+        raise RuntimeError("queue down")
+    w.queue.enqueue_worker_task = refused
+    status, body = await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                              {"enabled": True})
+    assert (status, body) == (200, {"enabled": True, "queued": False})
+    assert (await w.connections.get(USER, conn.connection_id)).indexing_enabled is True
+    assert "sync task was not queued" in caplog.text
+
+
+async def test_a_store_failure_of_the_indexing_switch_is_500_and_queues_nothing():
+    w = World()
+    conn = await w.connect()
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("store down")
+    w.repo.update = broken
+    status, _ = await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                           {"enabled": True})
+    assert status == 500
+    assert w.drive_tasks() == []
+
+
+async def test_the_indexing_switch_is_stored_before_its_task_is_enqueued():
+    w = World()
+    conn = await w.connect()
+    seen: List[bool] = []
+    enqueue = w.queue.enqueue_worker_task
+
+    async def recording(*args, **kwargs):
+        seen.append((await w.connections.get(USER, conn.connection_id)).indexing_enabled)
+        return await enqueue(*args, **kwargs)
+    w.queue.enqueue_worker_task = recording
+    assert (await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                       {"enabled": True}))[0] == 200
+    assert seen == [True] and len(w.drive_tasks()) == 1
+
+
+async def test_the_no_queue_warning_does_not_promise_a_scheduler(caplog):
+    w = World(queue=False)
+    conn = await w.connect()
+    with caplog.at_level(logging.WARNING):
+        await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing", {"enabled": True})
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("no drive queue" in m for m in warnings)
+    assert not any("scheduler will pick it up" in m for m in warnings)
+    assert any("no sync task will run" in m for m in warnings)
+
+
+async def test_without_the_connection_service_the_indexing_switch_says_501():
+    w = World()
+    conn = await w.connect()
+    assert (await call(w.app(drive_connections=None), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                       {"enabled": True}))[0] == 501
+
+
+async def test_a_flagged_drive_can_be_disconnected():
+    w = World()
+    conn = await w.connect()
+    await w.connections.flag_reconnect(conn.handle)
+    assert (await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}"))[0] == 200
+    assert (await w.connections.get(USER, conn.connection_id)).state is ConnectionState.DISCONNECTED
+    assert await w.store.repo.list_keys(USER, KIND) == []
+
+
+async def test_a_failed_grant_removal_is_500_after_the_connection_ended():
+    w = World()
+    conn = await w.connect()
+
+    async def broken(user_id, credential_id):
+        raise RuntimeError("store down")
+    w.revocation.remove = broken
+    status, _ = await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}")
+    assert status == 500
+    assert (await w.connections.get(USER, conn.connection_id)).state is ConnectionState.DISCONNECTED
+
+
+async def test_a_failed_forget_does_not_fail_the_disconnect(caplog):
+    w = World()
+    conn = await w.connect()
+
+    async def broken(handle):
+        raise RuntimeError("cache trouble")
+    w.adapter.forget = broken
+    status, _ = await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}")
+    assert status == 200
+    assert len(w.drive_tasks()) == 1
+    assert "caches failed" in caplog.text
+
+
+async def test_the_last_drive_with_the_copy_off_writes_no_profile():
+    w = World(copy_on=False)
+    conn = await w.connect()
+    assert (await call(w.app(), "delete", f"/api/drive/connections/{conn.connection_id}"))[0] == 200
+    assert w.users.updates == 0 and w.users.profile.config.drive_copy_deep_research is False
+
+
+async def test_a_connection_that_vanishes_before_the_indexing_write_is_404_and_queues_nothing():
+    w = World()
+    conn = await w.connect()
+
+    async def vanished(*args, **kwargs):
+        return None
+    w.repo.update = vanished
+    status, body = await call(w.app(), "put", f"/api/drive/connections/{conn.connection_id}/indexing",
+                              {"enabled": True})
+    assert (status, body) == (404, {"error": "Drive not connected"})
+    assert w.drive_tasks() == []

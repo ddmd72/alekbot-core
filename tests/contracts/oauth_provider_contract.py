@@ -163,13 +163,12 @@ def test_authorization_url_prompt_per_intent(case: _Case) -> None:
     connect = _query(case.edge.authorization_url(_flow(FlowIntent.CONNECT), case.spec, REDIRECT, state="s"))
     reconnect = _query(case.edge.authorization_url(_flow(FlowIntent.RECONNECT), case.spec, REDIRECT, state="s"))
     add = _query(case.edge.authorization_url(_flow(FlowIntent.ADD), case.spec, REDIRECT, state="s"))
+    # RFC E86 (owner, 2026-11-02): every connect, add and reconnect shows the account chooser.
     if case.realm == "google":
-        assert connect["prompt"] == reconnect["prompt"] == "consent"
-        assert add["prompt"] == "consent select_account"
+        assert connect["prompt"] == reconnect["prompt"] == add["prompt"] == "consent select_account"
         assert connect["access_type"] == "offline"
     else:
-        assert "prompt" not in connect and "prompt" not in reconnect
-        assert add["prompt"] == "select_account"
+        assert connect["prompt"] == reconnect["prompt"] == add["prompt"] == "select_account"
         assert connect["response_mode"] == "query"
 
 
