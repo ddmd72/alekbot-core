@@ -118,7 +118,7 @@ class TestStrReplace:
         store.seed(USER, P, "A: 1\nB: 2")
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "B: 2", "new_str": "B: 3"})
         e = store.versions_of(USER, P)[-1]
-        assert r.text == f"replaced in workspace:{P} · generation {e.generation} · file now 2 lines · 9 B\n     2\tB: 3"
+        assert r.text == f"replaced in workspace:{P} · generation {e.generation} · file now 2 lines · 9 B\n     1\tA: 1\n     2\tB: 3"
         assert dict(r.generations) == {P: e.generation}
         assert store.live_text(USER, P) == "A: 1\nB: 3"
 

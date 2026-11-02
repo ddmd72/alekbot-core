@@ -17,7 +17,6 @@ from src.domain.workspace import (
     WorkspaceResult,
     apply_str_replace,
     binary_message,
-    changed_lines,
     check_caps,
     check_file_size,
     find_references,
@@ -27,6 +26,7 @@ from src.domain.workspace import (
     render_history,
     render_listing,
     render_missing,
+    render_mutation_echo,
     render_same_fire_line,
     render_view_header,
     view_window,
@@ -114,7 +114,7 @@ class TestStrReplace:
         r = apply_str_replace(P, "A: 1\nB: 2\nC: 3", "B: 2", "B: 3\nB2: 4")
         assert r.text == "A: 1\nB: 3\nB2: 4\nC: 3"
         assert (r.first_line, r.line_count) == (2, 2)
-        assert changed_lines(r) == "     2\tB: 3\n     3\tB2: 4"
+        assert render_mutation_echo(r) == "     1\tA: 1\n     2\tB: 3\n     3\tB2: 4\n     4\tC: 3"
 
     def test_none(self):
         with pytest.raises(WorkspaceRefused) as e:

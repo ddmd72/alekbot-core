@@ -33,21 +33,27 @@ class TestInsertAtTheEnd:
         assert now.generation > e.generation
         assert store.live_text(USER, P) == "decision expected 2026-10-30\nreceived 2026-10-28\n"
         assert r.text == (f"inserted 1 line at line 2 of workspace:{P} · generation {now.generation} · "
-                          "file now 2 lines · 49 B")
+                          "file now 2 lines · 49 B\n"
+                          "     1\tdecision expected 2026-10-30\n"
+                          "     2\treceived 2026-10-28")
         assert dict(r.generations) == {P: now.generation}
         assert "op=insert" in caplog.text and "result=ok" in caplog.text
 
-    async def test_the_text_is_not_echoed(self):
+    async def test_the_text_is_echoed_with_the_line_before_it(self):
         svc, store = _svc()
         store.seed(USER, P, "a\n")
         r = await svc.run(_call(), "insert", {"path": P, "insert_line": -1, "insert_text": "secret-entry-text"})
-        assert "secret-entry-text" not in r.text
+        now = store.versions_of(USER, P)[-1]
+        assert r.text == (f"inserted 1 line at line 2 of workspace:{P} · generation {now.generation} · "
+                          "file now 2 lines · 20 B\n     1\ta\n     2\tsecret-entry-text")
 
     async def test_several_lines_say_where_they_landed(self):
         svc, store = _svc()
         store.seed(USER, P, "a\n")
         r = await svc.run(_call(), "insert", {"path": P, "insert_line": "-1", "insert_text": "b\nc\n"})
-        assert "inserted 2 lines at lines 2–3 of" in r.text and r.text.endswith("file now 3 lines · 6 B")
+        now = store.versions_of(USER, P)[-1]
+        assert r.text == (f"inserted 2 lines at lines 2–3 of workspace:{P} · generation {now.generation} · "
+                          "file now 3 lines · 6 B\n     1\ta\n     2\tb\n     3\tc")
 
     async def test_zero_needs_no_prior_read(self):
         svc, store = _svc()
