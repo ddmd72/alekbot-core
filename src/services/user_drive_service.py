@@ -57,7 +57,7 @@ from ..domain.user_drive import (
     split_folder_path,
 )
 from ..domain.drive_access_op import AccessOp
-from ..domain.drive_access_policy import NO_WRITE_FOLDER_LINE, decide, in_scope, requires_ancestry
+from ..domain.drive_access_policy import decide, in_scope, requires_ancestry
 from ..domain.drive_ancestry import Ancestry
 from ..domain.drive_capabilities import DriveCapabilities
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
@@ -329,11 +329,10 @@ class UserDriveService:
 
     async def _inbox_path(self, handle: DriveHandle,
                           policy: Tuple[ConnectionAccess, DriveCapabilities]) -> str:
-        """The default destination: the Inbox inside the connection's write folder (D7). DriveAccessRefused with the
-        no-write-folder line when the drive has none."""
+        """The default destination: the Inbox inside the connection's write folder (D7). Its one caller, `save`, has
+        already refused a drive with no write folder (`_refuse_if_read_only`)."""
         base = await self.write_folder_path(handle, policy)
-        if base is None:
-            raise DriveAccessRefused(NO_WRITE_FOLDER_LINE)
+        assert base is not None, "save refuses a drive without a write folder before the inbox is named"
         return join_drive_path(base, DEFAULT_INBOX_FOLDER)
 
     async def list_folder(self, handle: DriveHandle, folder: Optional[str]) -> ListOutcome:
