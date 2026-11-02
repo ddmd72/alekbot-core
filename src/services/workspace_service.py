@@ -36,7 +36,7 @@ from ..domain.workspace import (
     apply_insert,
     apply_str_replace,
     binary_message,
-    changed_lines,
+    render_mutation_echo,
     check_caps,
     check_replace_caps,
     check_file_size,
@@ -401,7 +401,7 @@ class WorkspaceService:
             return WorkspaceResult(
                 text=(
                     f"replaced in workspace:{path} · generation {entry.generation}{_now(replaced.text, data)}\n"
-                    f"{changed_lines(replaced)}"
+                    f"{render_mutation_echo(replaced)}"
                 ),
                 generations={path: entry.generation},
             )
@@ -444,7 +444,8 @@ class WorkspaceService:
             return WorkspaceResult(
                 text=(
                     f"inserted {inserted.line_count} line{'' if inserted.line_count == 1 else 's'} at {where} of workspace:{path} · "
-                    f"generation {entry.generation}{_now(inserted.text, data)}"
+                    f"generation {entry.generation}{_now(inserted.text, data)}\n"
+                    f"{render_mutation_echo(inserted)}"
                 ),
                 generations={path: entry.generation},
             )

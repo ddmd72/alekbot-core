@@ -256,9 +256,14 @@ async def test_workspace_insert_lands_lines_where_insert_line_says():
     versions = world.gcs.versions(WORKSPACE_BUCKET, key)
     assert len(versions) == 3
     assert inserted == (f"inserted 1 line at line 2 of workspace:{SHED} · generation {versions[1].generation} · "
-                        "file now 3 lines · 101 B")
+                        "file now 3 lines · 101 B\n"
+                        "     1\t# Garden shed\n"
+                        "     2\tStatus: waiting for the council.\n"
+                        "     3\tPlanning permission: decision expected by 2026-10-30.")
     assert appended == (f"inserted 1 line at line 4 of workspace:{SHED} · generation {versions[2].generation} · "
-                        "file now 4 lines · 143 B")
+                        "file now 4 lines · 143 B\n"
+                        "     3\tPlanning permission: decision expected by 2026-10-30.\n"
+                        "     4\t2026-10-28: planning permission received.")
     # What the bucket holds: insert_text after line 1, then after the last line; nothing glued, no blank line.
     assert versions[1].data.decode() == (
         "# Garden shed\nStatus: waiting for the council.\nPlanning permission: decision expected by 2026-10-30.\n")
