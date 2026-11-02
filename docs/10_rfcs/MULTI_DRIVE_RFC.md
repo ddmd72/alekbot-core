@@ -1,6 +1,6 @@
 # RFC: Multi-drive, stages 1 and 2: connections, handles, tagged refs, mounts
 
-**Status:** ACCEPTED (rev 1.3, 2026-10-30). Slices 1a and 1b built (1b: code final, deploy by wipe and rebuild, D20).
+**Status:** ACCEPTED (rev 1.3, 2026-10-30). Slices 1a and 1b built (1b: code final, deploy by wipe and rebuild, D20). Slice 2a built (mount tree and canonical paths; E39–E57).
 **Owner:** AI Engineering
 **Milestone:** Multi-drive programme. Stage 0 (secrets at rest) is done: [SECRETS_AT_REST_RFC.md](SECRETS_AT_REST_RFC.md),
 S1–S5. This RFC is stage 1 (connections: preparatory, the user sees nothing change) and stage 2 (the product core for
@@ -755,6 +755,25 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E36 | Caps (carded records, readable chunks) are per connection in stage 1; the monthly dollars and the initial build stay per user and per account. Revisit in 2b, where several connections share one user. | Stage 1 has one connection, so the two readings agree; the choice matters only with a second drive. | Deciding the per-user split before a second connection exists. |
 | E37 | E24's streaming path is not built: the transcript stage refuses a `MediaSource` that needs request headers (charges the file, logs an ERROR, never logs the URL or headers). | OneDrive gives a pre-signed URL; building a byte stream for a header-carrying source belongs with the first adapter that needs it (stage 3). | Passing headers to the parser sandbox (the bearer token would enter it). |
 | E38 | Money keeps its existing server-side increments (`firestore.Increment` on the usage document and the initial-build spend under one in-process lock plus a transaction); no new money store for connections. | Two connections' ticks add to the same user documents; increments lose nothing under concurrency (T-9). | A per-connection money document summed at read time. |
+| E39 | A path is connection-relative below the chat-facing producers; the canonical `<mount>/<path>` is applied once, where a value the model or the user reads is built. Renderers are unchanged. | Index matching, mirror roots and move-into-self checks compare relative paths; the producers are few and enumerable. | A mount argument on every renderer; rewriting `DriveItem.path` inside `UserDriveService`. |
+| E40 | `read_passages` has no `drives` (the ref names the drive, §11.2). | The ref already carries the connection. | The plan's list that named it. |
+| E41 | `drives` is a comma-separated string, not an array. | Flat tool schemas; `file_refs` is the precedent. | A list parameter. |
+| E42 | An empty `list_folder` keeps listing the primary's top level; `/` lists the mounts. | An empty listing turning into a mount listing would add a turn to every "what is on my drive". | Empty = the mount listing. |
+| E43 | 2a searches one connection: empty `drives` = the folder's mount or the primary; two or more names are refused. The coverage line names the mounts not searched. | The merge across connections (E9) is 2b; a not-found is never silently partial. | Searching every default mount in 2a. |
+| E44 | `UserDriveService` refusals with a path are made canonical by a lazy connection read on the raise path. | No read on success; no `mount` keyword on eight signatures. | Leaving them relative. |
+| E45 | The preflight keeps the `drive:` and `search:` lines (the primary's) and adds a `drives` block, one line per live connection. | `compose_answer` reads the summary lines. | Replacing them. |
+| E46 | `drives` with an unprefixed folder: the folder is in the named drive; a prefixed folder naming another drive is refused. | One consistent reading; a mismatch is never guessed. | Ignoring the prefix. |
+| E47 | Text written onto a drive (transcript `source_path`, archive placement) stays drive-relative. | A later rename would make a mount prefix inside stored file content wrong. | Printing the mount into files. |
+| E48 | A move's unprefixed destination is on the primary (§11.1's one rule); a destination on another mount is refused. | One rule; 1b resolved it on the source's connection. | Keeping the 1b reading. |
+| E49 | Notes: snapshots stay relative; receipts print the canonical path with the note tag's connection, DISCONNECTED included (its last name). | A rename prints the new name (§11.10); stored data never changes. | Storing the mount in the snapshot. |
+| E50 | Deleted-files hits are canonical with the mount of the connection their ref names; a hit of a drive with no connection keeps its stored path. | It cannot be opened anyway (D13). | Dropping such hits. |
+| E51 | `default_mount_name` also skips held former names (§11.8 uniqueness). | A held name must not be handed out again. | Looking only at live names. |
+| E52 | `CoverageFacts` gains `not_searched_drives`; a drive not searched makes coverage incomplete. | "Coverage: complete" stays a reliable not-found. | A separate line outside coverage. |
+| E53 | A pre-2a relative path whose first segment equals a mount name resolves to the mount (§11.1 accepts it); the canonical `Drive/Drive/…` reaches the folder. | The one case where an old primary-relative path does not resolve; pinned by a test. | A legacy resolver. |
+| E54 | The label reads `[Drive: Drive/…]` until the drive is renamed. | Cosmetic; the label word and the default name coincide (E11). | Changing the label word. |
+| E55 | Mount names are printed bare in the state block and the listing. | The portable set (§11.1) forbids quotes and brackets. | Quoting. |
+| E56 | `DriveConnectionService.rename` is 2b; the repository's `update(mount_name=…)` must not be used for renames (it skips `name_history`). | The history is the hold of E18. | Renaming through `update`. |
+| E57 | The search key includes `drives`. | An identical-search skip never swallows a search on another drive. | Keying on the query and folder only. |
 
 ## 17. Owner-only questions
 

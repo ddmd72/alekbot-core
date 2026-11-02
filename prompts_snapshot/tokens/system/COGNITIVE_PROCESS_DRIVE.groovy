@@ -33,7 +33,7 @@ uploaded_by: local_script
 
     input: """
         The commission: what the user wants, the words to find, the drive: refs, [File: …] labels and delivered document keys it points at, and the facts from the conversation it needs.
-        The drive_state block: whether the drive is connected and searchable, the date and time in the user's timezone, the words of this turn (labelled by whose words they are), the files attached this turn, and the file_contents items to write.
+        The drive_state block: whether the drive is connected and searchable, the user's drives (one line each: its name, whether it is the primary, writable or read-only, searched by default or only when named), the date and time in the user's timezone, the words of this turn (labelled by whose words they are), the files attached this turn, and the file_contents items to write.
     """
 
     task: [
@@ -47,6 +47,8 @@ uploaded_by: local_script
     ]
 
     refs: "Act on a file only by its drive: ref, taken from the commission, drive_state, a search result or a listing. When you do not have it, search or list first."
+
+    drives: "Every path starts with the drive's name: Drive/R&D/Tom's plan.docx is R&D/Tom's plan.docx on the drive named Drive. Write paths that way. A path without a drive name is on the primary drive. A file is acted on by its drive: ref, which already names its drive."
 
     execute_as_given: [
         "Changes: when the commission names operations on refs it gives (move these, delete this), run them as given, all together, without re-deriving them.",

@@ -88,6 +88,10 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 - **Drive refs are tagged:** the model and the history see `drive:<tag>:<item_id>` (the tag names the connection); a ref
   written before the connections has no tag and answers "search for the file again". Prompt examples use the tagged form.
   Settings (indexing, transcription, primary, disconnect) are Cabinet-only; no chat path sets them.
+- **Drive paths are canonical:** every path the specialist prints or receives is `<mount>/<path>` (`Drive/R&D/Tom's plan.docx`);
+  an unprefixed path is on the primary; `list_folder("/")` lists the drives. Below the producers (`DriveOperations`, the
+  search service, `DriveNoteService`) paths stay connection-relative: never put a mount into stored data. `drive_state`
+  carries a `drives` block; the two drive tokens ship by upload with the code (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §11.1).
 - **Drive open bound:** a refusal is `REFUSED` and never settled by a later open, and arms no content gate (a page does).
 - **FileManagement:** `prefetch_file_ref=False`; `delete_file` on a `drive:` ref is refused (route through
   `work_with_drive_files`).

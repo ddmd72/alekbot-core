@@ -59,6 +59,7 @@ from ..domain.drive_note import (
     next_version, note_after_write, note_content, note_embedding_text, note_ref_tag, note_word_count,
     parse_note_target, searchability, snapshot_of, state_after, tagged_ref_key, undo_source,
 )
+from ..domain.drive_mounts import canonical_path
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.drive_note_change import NoteChange, apply_change
 from ..domain.drive_note_change_kind import NoteChangeKind
@@ -367,9 +368,9 @@ class DriveNoteService:
 
     async def _noop_receipt(self, user_id: str, note: DriveNote, place: Optional[_LiveItem]) -> NoteReceipt:
         if place is not None:
-            return self._receipt("set", note, path=place.snapshot.path, ref=place.ref, previous=note,
+            return self._receipt("set", note, path=self._live_path(place), ref=place.ref, previous=note,
                                  status=searchability(place.connection.indexing_enabled, place.record), noop=True)
-        return self._receipt("set", note, path=self._path(note), ref=item_ref(note), previous=note,
+        return self._receipt("set", note, path=await self._shown_path(user_id, note), ref=item_ref(note), previous=note,
                              status=await self._status_of(user_id, note), noop=True)
 
     async def _written_receipt(self, user_id: str, written: DriveNote, previous: Optional[DriveNote],
@@ -378,13 +379,13 @@ class DriveNoteService:
         drive) and build the receipt of the stored note (step 7)."""
         if place is not None:
             await self._nudge(place.connection, [place.item_id])
-            return self._receipt("set", written, path=place.snapshot.path, ref=place.ref,
+            return self._receipt("set", written, path=self._live_path(place), ref=place.ref,
                                  previous=previous, status=searchability(place.connection.indexing_enabled,
                                                                          place.record))
         connection = await self._note_connection(user_id, written)
         if connection is not None and written.state == NoteState.ACTIVE.value:
             await self._nudge(connection, [written.binding.item_id] if written.binding is not None else [])
-        return self._receipt("set", written, path=self._path(written), ref=item_ref(written), previous=previous,
+        return self._receipt("set", written, path=await self._shown_path(user_id, written), ref=item_ref(written), previous=previous,
                              status=await self._status_of(user_id, written))
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -399,7 +400,7 @@ class DriveNoteService:
         note = await self._resolve_note(user_id, target)
         for attempt in range(2):
             if note is None or note.erase_pending or note.state == NoteState.CLEARED.value:
-                receipt = self._noop_clear(note, target)
+                receipt = await self._noop_clear(user_id, note, target)
                 self._log("clear", user_id, receipt)
                 return receipt
             now = self._clock()
@@ -417,7 +418,7 @@ class DriveNoteService:
                 note = await self._notes.get(user_id, note.note_id)
                 continue
             await self._nudge_note(user_id, note)
-            receipt = self._receipt("clear", written, path=self._path(note), ref=item_ref(note), previous=note)
+            receipt = self._receipt("clear", written, path=await self._shown_path(user_id, note), ref=item_ref(note), previous=note)
             self._log("clear", user_id, receipt)
             return receipt
         raise AssertionError("unreachable")   # pragma: no cover
@@ -445,7 +446,7 @@ class DriveNoteService:
             current = await self._notes.get_version(user_id, note.note_id, note.current_version)
             if self._same_turn_restore(current, provenance):
                 # I3: a failover re-run of this turn repeats its undo; the first one already did what the owner asked
-                receipt = self._receipt("restore", note, path=self._path(note), ref=item_ref(note), previous=note,
+                receipt = self._receipt("restore", note, path=await self._shown_path(user_id, note), ref=item_ref(note), previous=note,
                                         noop=True)
                 self._log("undo", user_id, receipt)
                 return receipt
@@ -471,7 +472,7 @@ class DriveNoteService:
                 note = await self._notes.get(user_id, note.note_id)
                 continue
             await self._nudge_note(user_id, note)
-            receipt = self._receipt("restore", written, path=self._path(note), ref=item_ref(note), previous=note,
+            receipt = self._receipt("restore", written, path=await self._shown_path(user_id, note), ref=item_ref(note), previous=note,
                                     redo=redo)
             self._log("undo", user_id, receipt)
             return receipt
@@ -490,7 +491,7 @@ class DriveNoteService:
         code = await self._store_request(store, user_id, ERASE_SCOPE_ONE, [note.note_id])
         logger.info(f"[DriveNote] erase requested user={user_id[:8]} scope=one note={note.note_id} "
                     f"versions={note.current_version}")
-        return EraseRequestReceipt(scope=ERASE_SCOPE_ONE, code=code, note_count=1, path=self._path(note),
+        return EraseRequestReceipt(scope=ERASE_SCOPE_ONE, code=code, note_count=1, path=await self._shown_path(user_id, note),
                                    version_count=note.current_version)
 
     async def request_erase_all(self, user_id: str) -> EraseRequestReceipt:
@@ -801,8 +802,25 @@ class DriveNoteService:
                 and current.turn_id == provenance.turn_id and current.session_id == provenance.session_id)
 
     @staticmethod
-    def _path(note: Optional[DriveNote]) -> str:
-        return note.snapshot.path if note is not None and note.snapshot is not None else ""
+    def _live_path(place: _LiveItem) -> str:
+        """The live item's path as the model reads it: `<mount>/<path>` with the connection's current name."""
+        return canonical_path(place.connection.mount_name, place.snapshot.path) if place.snapshot.path else ""
+
+    async def _shown_path(self, user_id: str, note: Optional[DriveNote]) -> str:
+        """The note's snapshot path as the model reads it (MULTI_DRIVE_RFC §11.1, 2a E-11): `<mount>/<path>`, the mount
+        being the current name of the connection the note's tag names (DISCONNECTED included: its last name). The stored
+        snapshot stays relative. A note with no tag, or whose connection cannot be found or read, shows the stored
+        path as it is."""
+        path = note.snapshot.path if note is not None and note.snapshot is not None else ""
+        tag = note_ref_tag(note) if note is not None and path else ""
+        if not tag:
+            return path
+        try:
+            connection = await self._connections.connection_of_tag(user_id, tag)
+        except Exception as exc:
+            logger.warning(f"[DriveNote] connection read failed user={user_id[:8]}: {type(exc).__name__}")
+            return path
+        return canonical_path(connection.mount_name, path) if connection is not None else path
 
     @staticmethod
     def _receipt(action: str, note: DriveNote, *, path: str, ref: str, previous: Optional[DriveNote],
@@ -815,12 +833,12 @@ class DriveNoteService:
                            previous_life_areas=before.life_areas, status=status, state=str(note.state), noop=noop,
                            redo=redo)
 
-    def _noop_clear(self, note: Optional[DriveNote], target: NoteTarget) -> NoteReceipt:
+    async def _noop_clear(self, user_id: str, note: Optional[DriveNote], target: NoteTarget) -> NoteReceipt:
         if note is None:
             ref = drive_ref.format(target.tag, target.item_id) if target.item_id and target.tag else ""
             return NoteReceipt(action="clear", note_id="", ref=ref, path="", version=0, state="", noop=True)
         stub = note.erase_pending
-        return NoteReceipt(action="clear", note_id=note.note_id, ref=item_ref(note), path=self._path(note),
+        return NoteReceipt(action="clear", note_id=note.note_id, ref=item_ref(note), path=await self._shown_path(user_id, note),
                            version=0 if stub else note.current_version, state=str(note.state), noop=True)
 
     @staticmethod
