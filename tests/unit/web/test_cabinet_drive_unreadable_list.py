@@ -2,6 +2,7 @@
 decisions/drive_unreadable_files_cabinet_only.md): the API block, the strings in every language, the card's rendering
 (links only for https, the reason with a fallback, "+N more") and the counters: "not read yet" shown, `unread` not."""
 import re
+import shutil
 
 import pytest
 
@@ -9,6 +10,7 @@ from src.domain.drive_index_params import CABINET_UNREADABLE_MAX
 from src.domain.drive_indexing_status import DriveIndexingStatus
 from src.domain.drive_unreadable_file import UnreadableFile
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
+from tests.unit.web.test_cabinet_drive_redesign import _card, _render as _render_card, _row
 from tests.unit.web.test_user_cabinet_drive_index_card import _indexing
 
 REASONS = ("no_text", "machine_text", "too_large", "user_chunk_cap", "failed")
@@ -66,12 +68,17 @@ def test_an_unknown_reason_reads_as_failed():
     assert all(f'"{r}"' in render for r in REASONS)
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_not_read_yet_is_shown_and_the_combined_unread_counter_is_not():
     html, dicts = _dicts()
     labels = dict(re.findall(r'(\w+): "([\w.]+)"', re.search(r"const DRIVE_COUNTER_LABELS = \{(.*?)\};", html, re.S).group(1)))
     assert labels["not_read_yet"] == "drive.index_unread" and "unread" not in labels
-    render = _render()
-    assert 'key === "unread"' in render and 'key === "not_read_yet"' not in render
+    # only labelled counters are rendered: `not_read_yet` has its line, `unread` (waiting plus unreadable) has none
+    card = _card(_render_card([_row(means="area", counters={"carded": 5, "not_read_yet": 7, "unread": 4321})],
+                              'driveUiOf("c1").tab = "index";'), "c1")
+    more = card.split("T:drive.all_counters")[1].split("</details>")[0]
+    assert dict(re.findall(r"<dt[^>]*>T:(drive\.\w+)</dt><dd[^>]*>([\d,]+)</dd>", more))["drive.index_unread"] == "7"
+    assert "4321" not in card and "4,321" not in card
 
 
 def test_the_list_is_short():

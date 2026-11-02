@@ -1,8 +1,10 @@
-"""The Cabinet's drive scope (MULTI_DRIVE_RFC §11.7) is saved by the action itself, like the write folder: picking a
-folder, removing one and the whole-drive box each send `PUT /api/drive/connections/<id>/scope` at once. There is no
-separate Save step, which let a picked folder look chosen while the drive kept its default scope. The server keeps no
-folders under "whole drive", so the page remembers them while it is open and unticking the box restores them. The
-static check reads the page; the behavioural ones run the scope functions under node when node is installed."""
+"""The Cabinet's drive scope (MULTI_DRIVE_RFC §11.7) outside the folder picker is saved by the action itself, like the
+write folder: removing a folder from the Access tab and the whole-drive toggle each send
+`PUT /api/drive/connections/<id>/scope` at once, with no separate Save step. The server keeps no folders under "whole
+drive", so the page remembers them while it is open and unticking the box restores them. Inside the picker dialog the
+choice is a draft saved by its Save (n) button (owner decision 2026-11-02, pinned in test_cabinet_drive_redesign.py); the
+one picker case not pinned there, a folder picked twice, is pinned here over that file's harness. The static check reads
+the page; the behavioural ones run the scope functions under node when node is installed."""
 import json
 import re
 import shutil
@@ -11,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.web.test_cabinet_drive_redesign import _picker
+
 _HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html").read_text(encoding="utf-8")
-_FUNCTIONS = ("driveScopeOf", "toggleDriveScopeWhole", "removeDriveScopeFolder", "saveDriveScope", "pickDriveFolder")
+_FUNCTIONS = ("driveScopeOf", "toggleDriveScopeWhole", "removeDriveScopeFolder", "saveDriveScope")
 _ROW = {"connection_id": "c1", "scope": {"whole_drive": False,
                                          "folders": [{"id": "fold-a", "path": "Projects"},
                                                      {"id": "fold-b", "path": "Archive"}]}}
@@ -56,24 +60,22 @@ def _put(whole: bool, ids: list) -> list:
 
 
 def test_the_scope_block_has_no_separate_save_step():
-    block = _function("renderDriveScope")
-    assert "saveDriveScope" not in block and "drive.save" not in block
-    assert "draft" not in "".join(_function(name) for name in _FUNCTIONS + ("renderDriveScope",))
+    # the scope block is the Access tab: its folder rows and whole-drive row act at once, the picker is opened from it
+    block = _function("renderDriveAccess")
+    assert "saveDriveScope(" not in block and '"drive.save"' not in block
+    assert "removeDriveScopeFolder(" in block and "toggleDriveScopeWhole(" in block
+    assert "draft" not in "".join(_function(name) for name in _FUNCTIONS + ("renderDriveAccess",))
 
 
 node = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 
 
 @node
-def test_picking_a_folder_saves_the_scope_with_it_and_closes_the_picker():
-    out = _run('await pickDriveFolder("c1", 0);')
-    assert out["calls"] == [_put(False, ["fold-a", "fold-b", "fold-c"])]
-    assert out["toasts"] == [["T:toast.drive_saved", "success"]] and out["reloads"] == 1 and not out["picker"]
-
-
-@node
 def test_picking_a_folder_already_in_the_scope_does_not_list_it_twice():
-    assert _run('await pickDriveFolder("c1", 1);')["calls"] == [_put(False, ["fold-a", "fold-b"])]
+    # in the picker a stored folder starts ticked: picking it again unticks it, and the saved list names it once
+    out = _picker('toggleDrivePickerFolder("c1", 0); toggleDrivePickerFolder("c1", 0); toggleDrivePickerFolder("c1", 1);'
+                  ' await saveDrivePicker("c1");')
+    assert out["calls"] == [_put(False, ["f-proj", "f-inv"])]
 
 
 @node
@@ -102,13 +104,7 @@ def test_a_refused_untick_keeps_the_remembered_folders_for_the_next_try():
 
 
 @node
-def test_a_refused_scope_shows_the_reason_and_keeps_the_picker_open():
-    out = _run('await pickDriveFolder("c1", 0);', refuse=True)
-    assert out["calls"] == [_put(False, ["fold-a", "fold-b", "fold-c"])]
-    assert out["error"] == "refused" and out["picker"] and out["reloads"] == 0 and out["toasts"] == []
-
-
-@node
-def test_the_write_folder_picker_still_saves_the_write_folder():
-    out = _run('ui.picker.purpose = "write"; await pickDriveFolder("c1", 0);')
-    assert out["calls"] == [["write-folder", "fold-c"]]
+def test_a_refused_scope_shows_the_reason_on_the_card():
+    out = _run('await removeDriveScopeFolder("c1", 0);', refuse=True)
+    assert out["calls"] == [_put(False, ["fold-b"])]
+    assert out["error"] == "refused" and out["reloads"] == 0 and out["toasts"] == []

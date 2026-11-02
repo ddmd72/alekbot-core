@@ -176,7 +176,8 @@ holds no drive id; the connection's `drive_identity` names the drive.
   `drive_connection_access.py`, `drive_item_access.py`, `drive_setting_refused.py`.
 - **The Cabinet's drive card (slice 2b; `src/web/user_cabinet_app.py`).** `GET /api/drive/connections` returns one row per
   live connection: `connection_id`, `mount_name`, `kind`, `provider_label`, `account_label`, `state`, `primary`,
-  `write_folder`, `scope` (`whole_drive`, `folders` with paths), `searched_by_default`, `indexing_enabled`,
+  `write_folder`, `scope` (`whole_drive`, `folders` with paths, `empty_means`: `"area"` for a drive whose empty scope is the
+  bot's own area, `"nothing"` for an account-wide drive, `null` when the drive's capabilities could not be read), `searched_by_default`, `indexing_enabled`,
   `transcribe_enabled`, the drive `note`, the `indexing` status block, and `reconnect` (the credential id) when the grant
   is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
   gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
@@ -223,9 +224,23 @@ is built, not only behind the Microsoft keys.
   Markdown are dropped before the size cap.
 - **Outer folders (G8).** Folders shared with the account, and each member shared drive's root, hang under no chain from
   My Drive's root. `UserDriveService.picker_folders` returns them as `outer` next to the root's children and the Cabinet
-  shows them under "Outside this drive's root", so one of them, or a folder inside one, can be a scope folder. With only
+  shows them as the "Shared with me & other places" source of the folder picker, so one of them, or a folder inside one, can be a scope folder. With only
   such folders chosen, the mount line says `indexes only <paths>` and `list_folder("<mount>")` lists the chosen folders
   under `Folders indexed on <drive>:`; any other path outside the scope is refused.
+- **Cabinet drive card.** One card per connection: a summary (name, provider and account, one state chip, and a line
+  "what it sees · where it saves · search state"), problem banners at the top of the opened card (lost access, nothing
+  selected, index full, last problem), and four tabs: Overview, Access, Search index, Settings (Disconnect sits at the
+  bottom of Settings). The open tab is kept per connection. What an empty scope means comes from the row's
+  `scope.empty_means`: on an `"area"` drive the empty scope is the bot's own folder (no "Whole drive" choice; a stored
+  `whole_drive` reads as empty); on a `"nothing"` drive the card warns that the bot sees no files and offers "Choose
+  folders" or "Use the whole drive", which there means everything the account can see, shared items included. Search
+  index counters: three tiles (Searchable, Waiting = `pending` only, Can't read); `unresolved` is its own progress line
+  ("Checking which files are in your folders"), never part of Waiting; "All counters" lists only labelled keys
+  (`profile_current` as Described, `passages_current` as Readable by content, `coverage_no_passages` as a problem
+  signal when non-zero); `chunks` and the other enrichment keys are not shown. The folder picker is a dialog with a
+  Save (n) button: closing with unsaved changes asks "Save N changes before closing?", and a refusal of the server
+  (for instance a scope that would leave the write folder outside) is shown in the dialog, which stays open. Toggles,
+  rename and the other settings still save on change.
 - **`∕` in names (G4).** A `/` inside a Google name prints as `∕` (U+2215) at every path join and is matched the same way,
   so `Garden plan 2026/27` prints as `Springfield/Garden plan 2026∕27` and resolves back. Reading by path accepts every
   Google name (`Clients: 2026`); the portable-name check applies only to a folder the bot creates.

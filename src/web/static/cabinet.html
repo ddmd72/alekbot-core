@@ -39,6 +39,23 @@
         --accent-danger: #ff3b30;
         --accent-danger-hover: #ff453a;
         --accent-success: #34c759;
+        --accent-warning: #ff9500;
+
+        /* Drive card tokens */
+        --text-secondary: #6e6e73;
+        --bg-inset: rgba(118, 118, 128, 0.07);
+        --separator: rgba(60, 60, 67, 0.12);
+        --danger-text: #d70015;
+        --success-text: #248a3d;
+        --warning-text: #b25000;
+        --tint-accent: rgba(0, 113, 227, 0.1);
+        --tint-danger: rgba(255, 59, 48, 0.1);
+        --tint-warning: rgba(255, 149, 0, 0.14);
+        --tint-success: rgba(52, 199, 89, 0.14);
+        --on-accent: #ffffff;
+        --switch-off: rgba(120, 120, 128, 0.16);
+        --knob: #ffffff;
+        --scrim: rgba(0, 0, 0, 0.32);
 
         --black-btn: #1d1d1f;
 
@@ -79,6 +96,20 @@
           --accent-danger: #ff453a;
           --accent-danger-hover: #ff6961;
           --accent-success: #32d74b;
+          --accent-warning: #ff9f0a;
+
+          --text-secondary: #a1a1a6;
+          --bg-inset: rgba(118, 118, 128, 0.16);
+          --separator: rgba(84, 84, 88, 0.5);
+          --danger-text: #ff6961;
+          --success-text: #30d158;
+          --warning-text: #ffb340;
+          --tint-accent: rgba(10, 132, 255, 0.18);
+          --tint-danger: rgba(255, 69, 58, 0.18);
+          --tint-warning: rgba(255, 159, 10, 0.18);
+          --tint-success: rgba(50, 215, 75, 0.16);
+          --switch-off: rgba(120, 120, 128, 0.32);
+          --scrim: rgba(0, 0, 0, 0.6);
 
           --black-btn: #f5f5f7; /* Becomes white in dark mode */
 
@@ -594,66 +625,71 @@
         }
       }
 
-      /* ─── Integrations Section (Bento Grid) ──────────── */
+      /* ─── Integrations Section: compact tiles in a grid, the drive card full width below ─── */
       .integration-bento {
         display: grid;
         grid-template-columns: 1fr;
-        gap: 24px;
-        margin-bottom: 48px;
+        gap: 16px;
+        margin-bottom: 24px;
+        align-items: start; /* a tile never stretches to its neighbour's height */
       }
       @media (min-width: 768px) {
         .integration-bento {
-          grid-template-columns: repeat(2, 1fr);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+      }
+      .integration-contents {
+        display: contents; /* the platform tiles are grid items of .integration-bento */
+      }
+      #drive-container {
+        margin-bottom: 48px;
       }
 
       .integration-card {
-        padding: 40px;
-        text-align: center;
+        padding: 20px;
+        text-align: left;
         display: flex;
         flex-direction: column;
-        align-items: center;
+        align-items: flex-start;
         position: relative;
         overflow: hidden;
       }
 
       .integration-icon {
-        width: 80px;
-        height: 80px;
-        border-radius: 22px;
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
         background-color: var(--bg-panel-solid);
         box-shadow: var(--shadow-sm);
         border: 1px solid var(--border-light);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 40px;
-        margin-bottom: 24px;
+        font-size: 24px;
+        margin-bottom: 14px;
         transition: transform var(--transition-smooth);
       }
+      .integration-icon svg {
+        width: 26px;
+        height: 26px;
+      }
       .integration-card:hover .integration-icon {
-        transform: scale(1.05) translateY(-4px);
+        transform: scale(1.05);
       }
 
       .integration-title {
-        font-size: 24px;
-        margin-bottom: 12px;
+        font-size: 19px;
+        margin-bottom: 6px;
       }
       .integration-description {
-        font-size: 16px;
-        margin-bottom: 32px;
-        max-width: 280px;
+        font-size: 14px;
+        margin-bottom: 16px;
       }
 
       /* Long privacy text: collapsed by default, readable on demand. */
       .disclosure { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
       .disclosure summary { cursor: pointer; user-select: none; }
       .disclosure p { margin: 8px 0 0; }
-      .drive-row { align-self: stretch; }
-      .drive-row > summary { list-style: none; user-select: none; }
-      .drive-row > summary::-webkit-details-marker { display: none; }
-      .drive-row > summary::before { content: "▸"; color: var(--text-muted); }
-      .drive-row[open] > summary::before { content: "▾"; }
 
       .integration-status {
         display: flex;
@@ -662,10 +698,11 @@
         font-size: 14px;
         font-weight: 600;
         color: var(--text-main);
-        padding: 8px 16px;
+        padding: 6px 12px;
         background: var(--bg-active);
         border-radius: 100px;
-        margin-bottom: 24px;
+        margin-bottom: 16px;
+        font-size: 13px;
       }
       .status-dot {
         width: 10px;
@@ -723,6 +760,229 @@
             rgba(240, 250, 255, 0.5)
           );
         }
+      }
+
+      /* ─── Drive card (dv-*): summary, tabs, picker dialog ─────────────── */
+      .dv-head { margin: 0 4px 16px; }
+      .dv-head h3 { font-size: 24px; margin-bottom: 6px; }
+      .dv-head p { font-size: 15px; }
+      .dv-list { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+      .dv-box { margin-bottom: 14px; padding: 14px 18px; background: var(--bg-inset); border-radius: var(--radius-md); }
+      .dv-card, .dv-card:hover { transform: none; }
+      .dv-card { border-radius: var(--radius-lg); }
+      .dv-ic { width: 20px; height: 20px; flex: none; }
+      .dv-ic.sm { width: 16px; height: 16px; }
+      .dv-ic.fi { color: var(--accent); }
+      .dv-ic.fi.lock { color: var(--text-secondary); }
+      .dv-btn-sm { font-size: 14px; padding: 8px 16px; }
+      .dv-link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 15px; font-weight: 500; padding: 6px 4px; cursor: pointer; border-radius: 8px; }
+      .dv-link:hover { text-decoration: underline; }
+      .dv-link.danger { color: var(--danger-text); }
+      .dv-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+      .dv-msg { font-size: 13px; line-height: 1.4; }
+      .dv-msg.err { color: var(--danger-text); }
+      .dv-msg.warn { color: var(--warning-text); }
+      .dv-warn-text { color: var(--warning-text); }
+
+      .dv-sum { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 20px 22px 20px 24px; cursor: pointer; }
+      .dv-prov { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--tint-accent); color: var(--accent); }
+      .dv-sum-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      .dv-sum-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+      .dv-sum-name { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+      .dv-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 100px; background: var(--bg-active); }
+      .dv-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 100px; margin-left: auto; white-space: nowrap; }
+      .dv-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .dv-chip.ok { background: var(--tint-success); color: var(--success-text); }
+      .dv-chip.warn { background: var(--tint-warning); color: var(--warning-text); }
+      .dv-chip.danger { background: var(--tint-danger); color: var(--danger-text); }
+      .dv-chip.info { background: var(--tint-accent); color: var(--accent); }
+      .dv-sum-sub { font-size: 14px; color: var(--text-secondary); overflow-wrap: anywhere; }
+      .dv-sum-line { font-size: 15px; margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 0; }
+      .dv-sum-line > span:not(:last-child)::after { content: "·"; color: var(--text-muted); margin: 0 8px; }
+      .dv-sum-line .w { color: var(--warning-text); font-weight: 500; }
+      .dv-sum-line .d { color: var(--danger-text); font-weight: 500; }
+      .dv-chev { color: var(--text-muted); margin-top: 10px; transition: transform var(--transition-fast); }
+      .dv-card.open .dv-chev { transform: rotate(180deg); }
+      .dv-body { border-top: 1px solid var(--separator); padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 20px; }
+
+      .dv-alerts { display: flex; flex-direction: column; gap: 8px; }
+      .dv-alert { display: flex; gap: 12px; padding: 14px 16px; border-radius: var(--radius-md); align-items: flex-start; }
+      .dv-alert.danger { background: var(--tint-danger); }
+      .dv-alert.danger > .dv-ic { color: var(--danger-text); }
+      .dv-alert.warn { background: var(--tint-warning); }
+      .dv-alert.warn > .dv-ic { color: var(--warning-text); }
+      .dv-alert.note { background: var(--bg-inset); padding: 10px 16px; font-size: 14px; color: var(--text-secondary); align-items: center; }
+      .dv-alert-main { flex: 1; min-width: 0; font-size: 14px; }
+      .dv-alert-title { font-weight: 600; font-size: 16px; }
+      .dv-alert-text { font-size: 14px; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
+      .dv-alert-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+      .dv-tabs { display: flex; gap: 2px; padding: 3px; background: var(--bg-active); border-radius: 12px; overflow-x: auto; }
+      .dv-tabs button { flex: 1 0 auto; font: inherit; font-size: 14px; font-weight: 600; border: 0; background: transparent; color: var(--text-secondary); padding: 7px 10px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+      .dv-tabs button[aria-selected="true"] { background: var(--bg-panel-solid); color: var(--text-main); box-shadow: var(--shadow-sm); }
+      .dv-panel { display: flex; flex-direction: column; gap: 16px; }
+
+      .dv-group { background: var(--bg-inset); border-radius: var(--radius-md); overflow: hidden; }
+      .dv-group > * + * { border-top: 1px solid var(--separator); }
+      .dv-row { display: flex; align-items: center; gap: 10px 12px; padding: 14px 16px; flex-wrap: wrap; }
+      .dv-row.dv-stack { display: block; }
+      .dv-row-main { flex: 1 1 200px; min-width: 0; }
+      .dv-row-title { font-size: 16px; font-weight: 500; display: block; overflow-wrap: anywhere; }
+      .dv-row-title.warn { color: var(--warning-text); }
+      .dv-row-sub { font-size: 14px; color: var(--text-secondary); margin-top: 2px; line-height: 1.4; }
+      .dv-row-sub.dv-label { margin: 0 0 2px; }
+      .dv-row-value { font-size: 15px; color: var(--text-secondary); }
+      .dv-row-disc { padding: 4px 16px 12px; }
+      .dv-frow { display: flex; align-items: center; gap: 12px; padding: 10px 8px 10px 16px; min-height: 52px; }
+      .dv-frow .dv-row-title { font-size: 15px; }
+      .dv-tag { font-size: 12px; font-weight: 500; color: var(--text-secondary); background: var(--bg-active); padding: 1px 8px; border-radius: 100px; white-space: nowrap; margin-left: 6px; }
+      .dv-empty-scope { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; color: var(--warning-text); font-size: 15px; }
+      .dv-empty-scope span { color: var(--text-main); }
+      .dv-icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 0; background: transparent; color: var(--text-muted); display: grid; place-items: center; cursor: pointer; flex: none; }
+      .dv-icon-btn:hover { background: var(--bg-active); color: var(--text-main); }
+      .dv-quote { font-size: 15px; padding: 14px 16px; }
+      .dv-quote .dv-row-sub { margin: 0 0 4px; }
+
+      .dv-card input[type="text"], .dv-card select, .dv-add input[type="text"], .dv-sheet input[type="text"] {
+        font: inherit; font-size: 16px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--border-light);
+        background: var(--bg-panel-solid); color: var(--text-main); width: 100%; max-width: 420px;
+      }
+      .dv-card input[type="text"]:focus, .dv-card select:focus, .dv-add input[type="text"]:focus, .dv-sheet input[type="text"]:focus {
+        border-color: var(--border-focus); outline: none; box-shadow: 0 0 0 3px var(--tint-accent);
+      }
+      .dv-field { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; }
+      .dv-field label { font-size: 14px; color: var(--text-secondary); }
+      .dv-inline { display: flex; gap: 8px; align-items: center; }
+      .dv-inline input { flex: 1; min-width: 0; }
+
+      .dv-switch { appearance: none; -webkit-appearance: none; flex: none; width: 51px; height: 31px; border-radius: 31px; background: var(--switch-off); position: relative; cursor: pointer; margin: 0; transition: background var(--transition-fast); }
+      .dv-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: var(--knob); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16); transition: transform var(--transition-fast); }
+      .dv-switch:checked { background: var(--accent-success); }
+      .dv-switch:checked::after { transform: translateX(20px); }
+
+      .dv-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .dv-stat { background: var(--bg-inset); border-radius: 14px; padding: 12px 14px; min-width: 0; }
+      .dv-stat-v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+      .dv-stat-l { font-size: 13px; color: var(--text-secondary); }
+      .dv-stat.warn .dv-stat-v { color: var(--warning-text); }
+      .dv-bar { height: 6px; border-radius: 3px; background: var(--bg-active); overflow: hidden; margin-top: 10px; }
+      .dv-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+      .dv-bar.ok > span { background: var(--accent-success); }
+      .dv-bar.warn > span { background: var(--accent-warning); }
+      .dv-status { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+      .dv-status.ok .dv-ic { color: var(--success-text); }
+      .dv-status.paused .dv-ic { color: var(--text-secondary); }
+      .dv-status.warn { color: var(--warning-text); }
+      .dv-more > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 13px 16px; cursor: pointer; font-size: 15px; font-weight: 500; user-select: none; }
+      .dv-more > summary::-webkit-details-marker { display: none; }
+      .dv-more > summary .cnt { margin-left: auto; color: var(--text-secondary); font-weight: 400; font-variant-numeric: tabular-nums; }
+      .dv-more > summary .dv-ic { color: var(--text-muted); transition: transform var(--transition-fast); }
+      .dv-more[open] > summary .dv-ic { transform: rotate(90deg); }
+      .dv-more-body { padding: 0 16px 14px; }
+      .dv-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; font-size: 14px; }
+      .dv-kv dt { color: var(--text-secondary); }
+      .dv-kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+      .dv-kv .zero { color: var(--text-muted); }
+      .dv-kv dt.attn, .dv-kv dd.attn { color: var(--warning-text); font-weight: 600; }
+      .dv-unread { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 14px; }
+      .dv-unread a { color: var(--accent); font-weight: 500; overflow-wrap: anywhere; }
+      .dv-unread span { display: block; color: var(--text-secondary); }
+      .dv-meters { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+      .dv-meters-title { font-size: 14px; font-weight: 600; }
+      .dv-meter { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; font-size: 14px; }
+      .dv-meter .dv-bar { grid-column: 1 / -1; height: 4px; margin-top: 0; }
+      .dv-meter .v { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+      .dv-disc { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding-top: 4px; }
+      .dv-confirm { width: 100%; background: var(--tint-danger); border-radius: var(--radius-md); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      .dv-confirm p { font-size: 15px; color: var(--text-main); }
+      .dv-confirm .dv-field { padding: 0; }
+
+      .dv-add { padding: 24px; display: flex; flex-direction: column; gap: 14px; border-radius: var(--radius-lg); }
+      .dv-add h3 { margin: 0; font-size: 19px; }
+      .dv-add .dv-field { padding: 0; }
+      .dv-hint { margin: 0; font-size: 14px; color: var(--text-secondary); max-width: 60ch; }
+
+      /* Folder picker dialog (outside the card: a card's blur would capture position:fixed) */
+      body.dv-modal-open { overflow: hidden; }
+      .dv-overlay { position: fixed; inset: 0; z-index: 10000; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 24px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); animation: dv-fade 0.18s ease; }
+      .dv-sheet { width: min(800px, 100%); height: min(640px, 100%); background: var(--bg-panel-solid); color: var(--text-main); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); display: grid; grid-template-columns: 230px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; animation: dv-pop 0.22s cubic-bezier(0.25, 1, 0.5, 1); }
+      .dv-pk-head { grid-column: 1 / -1; display: flex; gap: 12px; align-items: flex-start; padding: 20px 16px 14px 24px; border-bottom: 1px solid var(--separator); }
+      .dv-pk-head > div { flex: 1; min-width: 0; }
+      .dv-pk-head h2 { font-size: 20px; margin: 0; letter-spacing: -0.02em; }
+      .dv-pk-sub { margin: 4px 0 0; font-size: 14px; color: var(--text-secondary); }
+      .dv-pk-side { padding: 14px 10px; border-right: 1px solid var(--separator); display: flex; flex-direction: column; gap: 4px; overflow-y: auto; background: var(--bg-inset); }
+      .dv-pk-src { text-align: left; font: inherit; font-size: 15px; font-weight: 500; border: 0; background: transparent; color: var(--text-main); padding: 9px 12px; border-radius: 10px; cursor: pointer; display: flex; gap: 10px; align-items: center; }
+      .dv-pk-src:hover { background: var(--bg-hover); }
+      .dv-pk-src[aria-pressed="true"] { background: var(--tint-accent); color: var(--accent); }
+      .dv-pk-src small { display: block; font-size: 12px; color: var(--text-secondary); font-weight: 400; }
+      .dv-pk-divider { height: 1px; background: var(--separator); margin: 10px 4px; }
+      .dv-pk-special { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: 500; }
+      .dv-pk-special:hover { background: var(--bg-hover); }
+      .dv-pk-special input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+      .dv-pk-special small { display: block; font-size: 13px; color: var(--text-secondary); font-weight: 400; }
+      .dv-pk-special.off { opacity: 0.45; cursor: not-allowed; }
+      .dv-pk-info { font-size: 13px; color: var(--text-secondary); padding: 6px 12px; }
+      .dv-pk-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+      .dv-pk-crumbs { display: flex; align-items: center; padding: 12px 16px 4px; overflow-x: auto; white-space: nowrap; font-size: 15px; }
+      .dv-pk-crumbs .dv-ic { color: var(--text-muted); }
+      .dv-crumb { font: inherit; font-size: 15px; border: 0; background: none; color: var(--accent); padding: 4px 6px; border-radius: 8px; cursor: pointer; }
+      .dv-crumb:hover { background: var(--bg-hover); }
+      .dv-crumb[aria-current="page"] { color: var(--text-main); font-weight: 600; cursor: default; }
+      .dv-pk-filter { margin: 6px 16px 8px; position: relative; }
+      .dv-pk-filter .dv-ic { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+      .dv-pk-filter input { max-width: none !important; padding: 8px 12px 8px 36px !important; font-size: 15px !important; background: var(--bg-inset) !important; border-color: transparent !important; }
+      .dv-pk-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+      .dv-prow { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 12px; border-radius: 12px; }
+      .dv-prow:hover { background: var(--bg-hover); }
+      .dv-prow > input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; margin: 0; cursor: pointer; }
+      .dv-prow > input:disabled { cursor: not-allowed; }
+      .dv-prow-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left; font: inherit; background: none; border: 0; color: inherit; padding: 10px 8px; border-radius: 10px; cursor: pointer; }
+      .dv-prow-btn:disabled { cursor: default; }
+      .dv-prow-text { flex: 1; min-width: 0; }
+      .dv-prow-name { display: block; font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dv-prow-sub { display: block; font-size: 13px; color: var(--text-secondary); }
+      .dv-prow.dim { opacity: 0.45; }
+      .dv-chevr { color: var(--text-muted); }
+      .dv-pill { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 100px; background: var(--tint-accent); color: var(--accent); white-space: nowrap; }
+      .dv-pill.save { background: var(--tint-success); color: var(--success-text); }
+      .dv-pk-empty { padding: 24px 12px; color: var(--text-secondary); font-size: 14px; text-align: center; }
+      .dv-skel { height: 44px; margin: 6px 4px; border-radius: 10px; background: linear-gradient(90deg, var(--bg-inset), var(--bg-active), var(--bg-inset)); background-size: 200% 100%; animation: dv-shimmer 1.1s linear infinite; }
+      .dv-pk-loading { font-size: 13px; color: var(--text-secondary); padding: 8px 12px 0; }
+      .dv-pk-foot { grid-column: 1 / -1; border-top: 1px solid var(--separator); padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; }
+      .dv-tray { display: flex; flex-wrap: wrap; gap: 6px; max-height: 72px; overflow-y: auto; align-items: center; font-size: 14px; color: var(--text-secondary); }
+      .dv-tray strong { color: var(--text-main); }
+      .dv-tchip { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 500; padding: 3px 3px 3px 10px; border-radius: 100px; background: var(--tint-accent); color: var(--accent); }
+      .dv-tchip button { border: 0; background: none; color: inherit; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
+      .dv-foot-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+      .dv-pk-actions { display: flex; gap: 8px; }
+      .dv-pk-confirm { display: flex; align-items: center; justify-content: space-between; gap: 10px 12px; flex-wrap: wrap; background: var(--tint-warning); border-radius: 14px; padding: 10px 10px 10px 16px; font-weight: 600; }
+
+      @keyframes dv-fade { from { opacity: 0; } }
+      @keyframes dv-pop { from { opacity: 0; transform: scale(0.97); } }
+      @keyframes dv-up { from { transform: translateY(40px); opacity: 0.4; } }
+      @keyframes dv-shimmer { to { background-position: -200% 0; } }
+
+      @media (max-width: 640px) {
+        .dv-overlay { align-items: flex-end; padding: 0; }
+        .dv-sheet { width: 100%; height: 92%; border-radius: 22px 22px 0 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; animation: dv-up 0.25s cubic-bezier(0.25, 1, 0.5, 1); }
+        .dv-pk-head { padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+        .dv-pk-side { border-right: 0; border-bottom: 1px solid var(--separator); flex-direction: row; flex-wrap: wrap; padding: 10px 12px; gap: 6px; overflow: visible; }
+        .dv-pk-divider { flex-basis: 100%; margin: 2px 0; height: 0; }
+        .dv-pk-src { padding: 6px 12px; font-size: 14px; background: var(--bg-active); border-radius: 100px; }
+        .dv-pk-src small { display: none; }
+        .dv-pk-special { padding: 4px 8px; font-size: 14px; }
+        .dv-pk-special small { display: none; }
+        .dv-pk-info { padding: 2px 4px; }
+        .dv-pk-foot { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+      }
+      @media (max-width: 520px) {
+        .dv-sum { padding: 16px 14px 16px 16px; gap: 12px; }
+        .dv-prov { width: 34px; height: 34px; border-radius: 10px; }
+        .dv-body { padding: 16px 14px 20px; }
+        .dv-stat { padding: 10px; }
+        .dv-stat-v { font-size: 19px; }
+        .dv-add { padding: 20px 16px; }
       }
 
       /* ─── Team Section ──────────────────────────────────── */
@@ -1141,36 +1401,34 @@
             </p>
           </div>
 
-          <div id="platforms-container" class="integration-bento">
-            <!-- Rendered via JS -->
-          </div>
-
-          <!-- Specific containers for Data Services to fix race condition -->
           <div class="integration-bento">
+            <div id="platforms-container" class="integration-contents">
+              <!-- Rendered via JS -->
+            </div>
+
+            <!-- Specific containers for Data Services to fix race condition -->
             <div id="gmail-container">
               <!-- Gmail Skeleton -->
               <div class="card integration-card gmail-card">
                 <div
                   class="skeleton"
                   style="
-                    width: 80px;
-                    height: 80px;
-                    border-radius: 22px;
-                    margin-bottom: 24px;
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 14px;
+                    margin-bottom: 14px;
                   "
                 ></div>
                 <div
                   class="skeleton"
-                  style="height: 32px; width: 120px; margin-bottom: 16px"
+                  style="height: 24px; width: 120px; margin-bottom: 12px"
                 ></div>
                 <div
                   class="skeleton"
-                  style="height: 40px; width: 200px; border-radius: 100px"
+                  style="height: 36px; width: 160px; border-radius: 100px"
                 ></div>
               </div>
             </div>
-
-            <div id="drive-container"></div>
 
             <div id="tasks-container">
               <!-- Tasks Skeleton -->
@@ -1178,23 +1436,26 @@
                 <div
                   class="skeleton"
                   style="
-                    width: 80px;
-                    height: 80px;
-                    border-radius: 22px;
-                    margin-bottom: 24px;
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 14px;
+                    margin-bottom: 14px;
                   "
                 ></div>
                 <div
                   class="skeleton"
-                  style="height: 32px; width: 160px; margin-bottom: 16px"
+                  style="height: 24px; width: 140px; margin-bottom: 12px"
                 ></div>
                 <div
                   class="skeleton"
-                  style="height: 40px; width: 200px; border-radius: 100px"
+                  style="height: 36px; width: 160px; border-radius: 100px"
                 ></div>
               </div>
             </div>
           </div>
+
+          <!-- The drive card: full width below the tiles -->
+          <div id="drive-container"></div>
         </section>
 
         <!-- Team Section -->
@@ -1569,14 +1830,11 @@
           "drive.reconnect": "Reconnect drive",
           "drive.index_searchable": "Searchable items",
           "drive.index_chunks": "Readable passages",
-          "drive.index_model_usage": "AI model use this month (spent of the monthly limit): {classes}",
           "drive.index_usd_reader": "reading scans",
           "drive.index_usd_triage": "looking at pictures",
           "drive.index_usd_profile": "describing documents",
           "drive.index_usd_passage": "passage keywords",
           "drive.index_usd_transcribe": "transcribing recordings",
-          "drive.index_initial_build": "First full description of the drive: {spent} of {allowance} spent",
-          "drive.index_initial_build_done": "First full description of the drive: finished ({spent} spent)",
           "drive.index_pending": "Waiting",
           "drive.index_failed": "Could not be read",
           "drive.index_indexed": "Indexed",
@@ -1615,27 +1873,138 @@
           "toast.drive_dr_copy_off": "Deep research reports will no longer be copied",
           "toast.drive_dr_copy_failed": "Failed to change the deep research copy",
           "drive.add_title": "Add a drive",
+          "drive.tab_overview": "Overview",
+          "drive.tab_access": "Access",
+          "drive.tab_index": "Search index",
+          "drive.tab_settings": "Settings",
+          "drive.chip_nothing": "Nothing selected",
+          "drive.chip_full": "Index full",
+          "drive.chip_indexing": "Indexing {pct}%",
+          "drive.chip_indexing_plain": "Indexing…",
+          "drive.sees_whole": "Sees the whole drive",
+          "drive.sees_area": "Sees its own folder",
+          "drive.sees_default": "Sees its default area",
+          "drive.sees_nothing": "Sees nothing yet",
+          "drive.sees_one": "Sees 1 folder",
+          "drive.sees_n": "Sees {n} folders",
+          "drive.saves_none": "Read-only",
+          "drive.saves_area": "Saves to its own folder",
+          "drive.saves_top": "Saves at the top level",
+          "drive.saves_to": "Saves to {name}",
+          "drive.saves_folder": "Saves to a folder",
+          "drive.search_off": "Search off",
+          "drive.search_paused": "Search paused",
+          "drive.search_empty": "Nothing to index",
+          "drive.search_pct": "Search {pct}% built",
+          "drive.search_building": "Search is being built",
+          "drive.search_count": "{n} searchable",
+          "drive.banner_reconnect_title": "The bot lost access to this drive",
+          "drive.banner_empty_title": "The bot can't see anything on this drive yet",
+          "drive.banner_empty_text": "This drive shows the bot only the folders you choose.",
+          "drive.banner_empty_search": "Search is on, but it has nothing to index until you do.",
+          "drive.choose_folders": "Choose folders…",
+          "drive.use_whole": "Use the whole drive",
+          "drive.banner_full_text": "Narrow what the bot sees to the folders that matter.",
+          "drive.review_folders": "Review folders…",
+          "drive.ov_nothing": "Nothing yet",
+          "drive.own_folder": "Its own folder",
+          "drive.own_folder_sub": "Everything the bot can see on this drive",
+          "drive.write_top": "Top level of the drive",
+          "drive.write_none_title": "Nowhere (read-only)",
+          "drive.write_none_sub": "The bot can read this drive but does not save files to it.",
+          "drive.edit": "Edit",
+          "drive.ov_search": "Search",
+          "drive.ov_search_off": "Off",
+          "drive.ov_search_empty": "On, but nothing to index",
+          "drive.ov_search_building": "Indexing… {pct}%",
+          "drive.ov_search_ok": "{n} items searchable, up to date",
+          "drive.yes": "Yes",
+          "drive.no": "No",
+          "drive.on": "On",
+          "drive.note_title": "Bot's note about this drive",
+          "drive.sees_title": "What the bot sees",
+          "drive.sees_explain_area": "The bot has its own folder on this drive. Search covers the same files.",
+          "drive.sees_explain_account": "Only these folders, and everything inside them. Search covers the same files.",
+          "drive.whole_title": "Whole drive",
+          "drive.whole_sub_account": "Everything this account can see, including files shared with you",
+          "drive.whole_sub_generic": "Everything the bot can reach on this drive",
+          "drive.nothing_selected": "Nothing selected.",
+          "drive.nothing_text": "The bot sees no files on this drive. Choose folders, or the whole drive.",
+          "drive.change": "Change…",
+          "drive.stop_showing": "Stop showing {name} to the bot",
+          "drive.stop_whole": "Stop showing the whole drive",
+          "drive.saves_title": "Where the bot saves",
+          "drive.saves_explain": "A folder inside what the bot sees, or nowhere.",
+          "drive.saves_here_tag": "Bot saves here",
+          "drive.reconnect_to_browse": "Reconnect the drive to browse folders",
+          "drive.primary_title": "Primary drive",
+          "drive.primary_yes": "This is your primary drive.",
+          "drive.primary_no": "Another drive is primary.",
+          "drive.searched_by_default_sub": "Include this drive when you ask without naming one.",
+          "drive.transcribe_title": "Transcription of recordings",
+          "drive.disconnect_named": "Disconnect {name}…",
+          "drive.add_hint": "Some drives give the bot its own folder only; others give it access to the whole account, and you then choose which folders it sees.",
+          "drive.index_sub": "The bot searches inside the files it can see on this drive.",
+          "drive.index_search_off": "Search is off.",
+          "drive.status_paused": "Paused until you reconnect",
+          "drive.status_empty_sub": "Search covers only what the bot sees, and it sees nothing on this drive yet.",
+          "drive.status_ok": "Up to date",
+          "drive.index_cant_read": "Can't read",
+          "drive.index_checking": "Checking which files are in your folders… {n}",
+          "drive.all_counters": "All counters",
+          "drive.index_described": "Described",
+          "drive.index_readable_content": "Readable by content",
+          "drive.index_coverage_gap": "Should be readable but isn't",
+          "drive.spend_title": "AI model use this month",
+          "drive.spent_of": "{spent} of {cap}",
+          "drive.finished_spent": "Finished, {spent}",
+          "drive.initial_build_label": "First full description of the drive",
+          "drive.pk_title_scope": "Choose what the bot sees",
+          "drive.pk_title_write": "Choose where the bot saves",
+          "drive.pk_sub_write": "Only folders the bot can see are available.",
+          "drive.pk_sub_area": "The bot has its own folder on this drive. Tick subfolders to narrow it, or leave everything unticked.",
+          "drive.pk_sub_account": "Tick folders, or the whole drive. Search covers the same files.",
+          "drive.close": "Close",
+          "drive.pk_path": "Folder path",
+          "drive.pk_filter": "Filter this folder",
+          "drive.pk_root": "Your files",
+          "drive.pk_root_sub": "Folders in the drive's root",
+          "drive.pk_root_area": "Bot's folder",
+          "drive.pk_root_area_sub": "Everything the bot can see",
+          "drive.pk_outer_sub": "Shared folders and other places",
+          "drive.pk_area_info": "Nothing ticked means the bot sees its whole folder.",
+          "drive.pk_write_none": "Nowhere",
+          "drive.pk_write_none_sub": "Read-only drive",
+          "drive.pk_write_root_sub": "Not inside a folder",
+          "drive.pk_write_root_needs": "Needs the whole drive visible",
+          "drive.pk_loading": "Loading folders…",
+          "drive.pk_no_match": "No folders here match “{q}”.",
+          "drive.pk_included_whole": "Included: whole drive",
+          "drive.pk_included_through": "Included through {name}",
+          "drive.pk_inside": "{n} selected inside",
+          "drive.pk_show": "Show {name} to the bot",
+          "drive.pk_save_to": "Save to {name}",
+          "drive.pk_saves_inside": "Saves inside",
+          "drive.pk_contains": "Contains folders the bot sees",
+          "drive.pk_not_visible": "Not visible to the bot",
+          "drive.pk_remove": "Remove {name}",
+          "drive.pk_selected": "Selected",
+          "drive.pk_tray_empty_area": "Nothing ticked: the bot sees its whole folder.",
+          "drive.pk_tray_empty": "Nothing selected: the bot will see no files.",
+          "drive.pk_saves_to": "Saves to: {v}",
+          "drive.pk_confirm_one": "Save 1 change before closing?",
+          "drive.pk_confirm_many": "Save {n} changes before closing?",
+          "drive.pk_keep": "Keep editing",
+          "drive.pk_discard": "Discard",
           "drive.name": "Name",
           "drive.save": "Save",
           "drive.primary_badge": "Primary",
           "drive.make_primary": "Make primary",
-          "drive.write_folder": "Write folder (where the bot saves files)",
-          "drive.write_folder_none": "None (read-only)",
-          "drive.write_folder_root": "Whole drive",
-          "drive.choose_folder": "Choose folder…",
-          "drive.picker_outer": "Outside this drive's root",
-          "drive.scope": "Folders to search",
-          "drive.scope_whole": "Whole drive",
+          "drive.picker_outer": "Shared with me & other places",
           "drive.scope_default": "The bot's default area",
-          "drive.add_folder": "Add folder",
-          "drive.open": "Open",
-          "drive.select": "Select",
-          "drive.up": "Up",
           "drive.cancel": "Cancel",
           "drive.no_folders": "No folders here",
           "drive.searched_by_default": "Searched when no drive is named",
-          "drive.transcribe_on": "Transcription of recordings is on.",
-          "drive.note": "Note:",
           "drive.disconnect_confirm": "Disconnect {name}? Its index is kept for about 30 days and the bot's notes about it are archived.",
           "drive.heir_pick": "New primary drive",
           "toast.drive_saved": "Saved",
@@ -1753,14 +2122,11 @@
           "drive.reconnect": "Перепідключити диск",
           "drive.index_searchable": "Елементів для пошуку",
           "drive.index_chunks": "Фрагментів для пошуку за змістом",
-          "drive.index_model_usage": "Робота ШІ-моделі цього місяця (витрачено з місячного ліміту): {classes}",
           "drive.index_usd_reader": "читання сканів",
           "drive.index_usd_triage": "перегляд зображень",
           "drive.index_usd_profile": "опис документів",
           "drive.index_usd_passage": "ключові слова фрагментів",
           "drive.index_usd_transcribe": "розшифровка записів",
-          "drive.index_initial_build": "Перший повний опис диска: витрачено {spent} з {allowance}",
-          "drive.index_initial_build_done": "Перший повний опис диска: завершено (витрачено {spent})",
           "drive.index_pending": "В очікуванні",
           "drive.index_failed": "Не вдалося прочитати",
           "drive.index_indexed": "Проіндексовано",
@@ -1799,27 +2165,138 @@
           "toast.drive_dr_copy_off": "Звіти глибоких досліджень більше не копіюватимуться",
           "toast.drive_dr_copy_failed": "Не вдалося змінити копіювання глибоких досліджень",
           "drive.add_title": "Додати диск",
+          "drive.tab_overview": "Огляд",
+          "drive.tab_access": "Доступ",
+          "drive.tab_index": "Індекс пошуку",
+          "drive.tab_settings": "Налаштування",
+          "drive.chip_nothing": "Нічого не вибрано",
+          "drive.chip_full": "Індекс заповнений",
+          "drive.chip_indexing": "Індексація {pct}%",
+          "drive.chip_indexing_plain": "Індексація…",
+          "drive.sees_whole": "Бачить увесь диск",
+          "drive.sees_area": "Бачить власну папку",
+          "drive.sees_default": "Бачить типову область",
+          "drive.sees_nothing": "Поки нічого не бачить",
+          "drive.sees_one": "Бачить 1 папку",
+          "drive.sees_n": "Бачить папок: {n}",
+          "drive.saves_none": "Лише читання",
+          "drive.saves_area": "Зберігає у власну папку",
+          "drive.saves_top": "Зберігає у корінь диска",
+          "drive.saves_to": "Зберігає в {name}",
+          "drive.saves_folder": "Зберігає в папку",
+          "drive.search_off": "Пошук вимкнено",
+          "drive.search_paused": "Пошук призупинено",
+          "drive.search_empty": "Нічого індексувати",
+          "drive.search_pct": "Пошук побудовано на {pct}%",
+          "drive.search_building": "Пошук будується",
+          "drive.search_count": "Доступно для пошуку: {n}",
+          "drive.banner_reconnect_title": "Бот втратив доступ до цього диска",
+          "drive.banner_empty_title": "Бот поки нічого не бачить на цьому диску",
+          "drive.banner_empty_text": "Цей диск показує боту лише ті папки, які ви оберете.",
+          "drive.banner_empty_search": "Пошук увімкнено, але йому нічого індексувати, доки ви не оберете.",
+          "drive.choose_folders": "Обрати папки…",
+          "drive.use_whole": "Використати весь диск",
+          "drive.banner_full_text": "Звузьте те, що бачить бот, до потрібних папок.",
+          "drive.review_folders": "Переглянути папки…",
+          "drive.ov_nothing": "Поки нічого",
+          "drive.own_folder": "Власна папка",
+          "drive.own_folder_sub": "Усе, що бот бачить на цьому диску",
+          "drive.write_top": "Корінь диска",
+          "drive.write_none_title": "Ніде (лише читання)",
+          "drive.write_none_sub": "Бот може читати цей диск, але не зберігає на нього файли.",
+          "drive.edit": "Змінити",
+          "drive.ov_search": "Пошук",
+          "drive.ov_search_off": "Вимкнено",
+          "drive.ov_search_empty": "Увімкнено, але нічого індексувати",
+          "drive.ov_search_building": "Індексація… {pct}%",
+          "drive.ov_search_ok": "Доступно для пошуку: {n}, дані актуальні",
+          "drive.yes": "Так",
+          "drive.no": "Ні",
+          "drive.on": "Увімкнено",
+          "drive.note_title": "Нотатка бота про цей диск",
+          "drive.sees_title": "Що бачить бот",
+          "drive.sees_explain_area": "У бота є власна папка на цьому диску. Пошук охоплює ті самі файли.",
+          "drive.sees_explain_account": "Лише ці папки та все всередині них. Пошук охоплює ті самі файли.",
+          "drive.whole_title": "Увесь диск",
+          "drive.whole_sub_account": "Усе, що бачить цей акаунт, зокрема файли, до яких вам надали доступ",
+          "drive.whole_sub_generic": "Усе, до чого бот має доступ на цьому диску",
+          "drive.nothing_selected": "Нічого не вибрано.",
+          "drive.nothing_text": "Бот не бачить жодних файлів на цьому диску. Оберіть папки або весь диск.",
+          "drive.change": "Змінити…",
+          "drive.stop_showing": "Більше не показувати {name} боту",
+          "drive.stop_whole": "Більше не показувати весь диск",
+          "drive.saves_title": "Куди бот зберігає",
+          "drive.saves_explain": "Папка серед тих, що бачить бот, або ніде.",
+          "drive.saves_here_tag": "Бот зберігає сюди",
+          "drive.reconnect_to_browse": "Перепідключіть диск, щоб переглядати папки",
+          "drive.primary_title": "Основний диск",
+          "drive.primary_yes": "Це ваш основний диск.",
+          "drive.primary_no": "Основним є інший диск.",
+          "drive.searched_by_default_sub": "Шукати на цьому диску, коли ви питаєте, не називаючи диск.",
+          "drive.transcribe_title": "Транскрибація записів",
+          "drive.disconnect_named": "Відключити {name}…",
+          "drive.add_hint": "Одні диски дають боту лише власну папку, інші — доступ до всього акаунта, і тоді ви самі обираєте, які папки він бачить.",
+          "drive.index_sub": "Бот шукає всередині файлів, які бачить на цьому диску.",
+          "drive.index_search_off": "Пошук вимкнено.",
+          "drive.status_paused": "Призупинено до перепідключення",
+          "drive.status_empty_sub": "Пошук охоплює лише те, що бачить бот, а на цьому диску він поки нічого не бачить.",
+          "drive.status_ok": "Актуально",
+          "drive.index_cant_read": "Не вдається прочитати",
+          "drive.index_checking": "Перевіряємо, які файли лежать у ваших папках… {n}",
+          "drive.all_counters": "Усі лічильники",
+          "drive.index_described": "Описані",
+          "drive.index_readable_content": "Читаються за змістом",
+          "drive.index_coverage_gap": "Мали б читатися, але не читаються",
+          "drive.spend_title": "Використання ШІ-моделей цього місяця",
+          "drive.spent_of": "{spent} із {cap}",
+          "drive.finished_spent": "Завершено, {spent}",
+          "drive.initial_build_label": "Перший повний опис диска",
+          "drive.pk_title_scope": "Оберіть, що бачить бот",
+          "drive.pk_title_write": "Оберіть, куди бот зберігає",
+          "drive.pk_sub_write": "Доступні лише папки, які бачить бот.",
+          "drive.pk_sub_area": "У бота є власна папка на цьому диску. Позначте підпапки, щоб звузити, або не позначайте нічого.",
+          "drive.pk_sub_account": "Позначте папки або весь диск. Пошук охоплює ті самі файли.",
+          "drive.close": "Закрити",
+          "drive.pk_path": "Шлях до папки",
+          "drive.pk_filter": "Фільтр у цій папці",
+          "drive.pk_root": "Ваші файли",
+          "drive.pk_root_sub": "Папки в корені диска",
+          "drive.pk_root_area": "Папка бота",
+          "drive.pk_root_area_sub": "Усе, що бачить бот",
+          "drive.pk_outer_sub": "Спільні папки та інші місця",
+          "drive.pk_area_info": "Якщо нічого не позначено, бот бачить усю свою папку.",
+          "drive.pk_write_none": "Ніде",
+          "drive.pk_write_none_sub": "Диск лише для читання",
+          "drive.pk_write_root_sub": "Не в папці",
+          "drive.pk_write_root_needs": "Потрібен видимий весь диск",
+          "drive.pk_loading": "Завантаження папок…",
+          "drive.pk_no_match": "Тут немає папок, що відповідають «{q}».",
+          "drive.pk_included_whole": "Включено: весь диск",
+          "drive.pk_included_through": "Включено через {name}",
+          "drive.pk_inside": "Вибрано всередині: {n}",
+          "drive.pk_show": "Показати {name} боту",
+          "drive.pk_save_to": "Зберігати в {name}",
+          "drive.pk_saves_inside": "Зберігає всередині",
+          "drive.pk_contains": "Містить папки, які бачить бот",
+          "drive.pk_not_visible": "Не видно боту",
+          "drive.pk_remove": "Прибрати {name}",
+          "drive.pk_selected": "Вибране",
+          "drive.pk_tray_empty_area": "Нічого не позначено: бот бачить усю свою папку.",
+          "drive.pk_tray_empty": "Нічого не вибрано: бот не бачитиме жодних файлів.",
+          "drive.pk_saves_to": "Зберігає в: {v}",
+          "drive.pk_confirm_one": "Зберегти 1 зміну перед закриттям?",
+          "drive.pk_confirm_many": "Зберегти зміни ({n}) перед закриттям?",
+          "drive.pk_keep": "Продовжити редагування",
+          "drive.pk_discard": "Відкинути",
           "drive.name": "Назва",
           "drive.save": "Зберегти",
           "drive.primary_badge": "Основний",
           "drive.make_primary": "Зробити основним",
-          "drive.write_folder": "Папка для запису (куди бот зберігає файли)",
-          "drive.write_folder_none": "Немає (лише читання)",
-          "drive.write_folder_root": "Увесь диск",
-          "drive.choose_folder": "Обрати папку…",
-          "drive.picker_outer": "Поза коренем цього диска",
-          "drive.scope": "Папки для пошуку",
-          "drive.scope_whole": "Увесь диск",
+          "drive.picker_outer": "Надані мені та інші місця",
           "drive.scope_default": "Типова зона бота",
-          "drive.add_folder": "Додати папку",
-          "drive.open": "Відкрити",
-          "drive.select": "Обрати",
-          "drive.up": "Вгору",
           "drive.cancel": "Скасувати",
           "drive.no_folders": "Тут немає папок",
           "drive.searched_by_default": "Шукати, коли диск не названо",
-          "drive.transcribe_on": "Розшифровка записів увімкнена.",
-          "drive.note": "Нотатка:",
           "drive.disconnect_confirm": "Відключити {name}? Його індекс зберігається близько 30 днів, а нотатки бота про нього архівуються.",
           "drive.heir_pick": "Новий основний диск",
           "toast.drive_saved": "Збережено",
@@ -1937,14 +2414,11 @@
           "drive.reconnect": "Reconnecter le disque",
           "drive.index_searchable": "Éléments consultables",
           "drive.index_chunks": "Passages lisibles",
-          "drive.index_model_usage": "Utilisation du modèle d'IA ce mois-ci (dépensé sur la limite mensuelle) : {classes}",
           "drive.index_usd_reader": "lecture des scans",
           "drive.index_usd_triage": "examen des images",
           "drive.index_usd_profile": "description des documents",
           "drive.index_usd_passage": "mots-clés des passages",
           "drive.index_usd_transcribe": "transcription des enregistrements",
-          "drive.index_initial_build": "Première description complète du drive : {spent} dépensés sur {allowance}",
-          "drive.index_initial_build_done": "Première description complète du drive : terminée ({spent} dépensés)",
           "drive.index_pending": "En attente",
           "drive.index_failed": "Illisibles",
           "drive.index_indexed": "Indexés",
@@ -1983,27 +2457,138 @@
           "toast.drive_dr_copy_off": "Les rapports de recherche approfondie ne seront plus copiés",
           "toast.drive_dr_copy_failed": "Impossible de modifier la copie des recherches approfondies",
           "drive.add_title": "Ajouter un disque",
+          "drive.tab_overview": "Aperçu",
+          "drive.tab_access": "Accès",
+          "drive.tab_index": "Index de recherche",
+          "drive.tab_settings": "Réglages",
+          "drive.chip_nothing": "Rien de sélectionné",
+          "drive.chip_full": "Index plein",
+          "drive.chip_indexing": "Indexation {pct} %",
+          "drive.chip_indexing_plain": "Indexation…",
+          "drive.sees_whole": "Voit tout le lecteur",
+          "drive.sees_area": "Voit son propre dossier",
+          "drive.sees_default": "Voit sa zone par défaut",
+          "drive.sees_nothing": "Ne voit encore rien",
+          "drive.sees_one": "Voit 1 dossier",
+          "drive.sees_n": "Voit {n} dossiers",
+          "drive.saves_none": "Lecture seule",
+          "drive.saves_area": "Enregistre dans son dossier",
+          "drive.saves_top": "Enregistre à la racine",
+          "drive.saves_to": "Enregistre dans {name}",
+          "drive.saves_folder": "Enregistre dans un dossier",
+          "drive.search_off": "Recherche désactivée",
+          "drive.search_paused": "Recherche en pause",
+          "drive.search_empty": "Rien à indexer",
+          "drive.search_pct": "Recherche prête à {pct} %",
+          "drive.search_building": "Recherche en construction",
+          "drive.search_count": "{n} consultables",
+          "drive.banner_reconnect_title": "Le bot n'a plus accès à ce lecteur",
+          "drive.banner_empty_title": "Le bot ne voit encore rien sur ce lecteur",
+          "drive.banner_empty_text": "Ce lecteur ne montre au bot que les dossiers que vous choisissez.",
+          "drive.banner_empty_search": "La recherche est activée, mais elle n'a rien à indexer tant que vous n'avez pas choisi.",
+          "drive.choose_folders": "Choisir des dossiers…",
+          "drive.use_whole": "Utiliser tout le lecteur",
+          "drive.banner_full_text": "Limitez ce que voit le bot aux dossiers qui comptent.",
+          "drive.review_folders": "Revoir les dossiers…",
+          "drive.ov_nothing": "Rien pour l'instant",
+          "drive.own_folder": "Son propre dossier",
+          "drive.own_folder_sub": "Tout ce que le bot voit sur ce lecteur",
+          "drive.write_top": "Racine du lecteur",
+          "drive.write_none_title": "Nulle part (lecture seule)",
+          "drive.write_none_sub": "Le bot peut lire ce lecteur mais n'y enregistre aucun fichier.",
+          "drive.edit": "Modifier",
+          "drive.ov_search": "Recherche",
+          "drive.ov_search_off": "Désactivée",
+          "drive.ov_search_empty": "Activée, mais rien à indexer",
+          "drive.ov_search_building": "Indexation… {pct} %",
+          "drive.ov_search_ok": "{n} éléments consultables, à jour",
+          "drive.yes": "Oui",
+          "drive.no": "Non",
+          "drive.on": "Activée",
+          "drive.note_title": "Note du bot sur ce lecteur",
+          "drive.sees_title": "Ce que voit le bot",
+          "drive.sees_explain_area": "Le bot a son propre dossier sur ce lecteur. La recherche couvre les mêmes fichiers.",
+          "drive.sees_explain_account": "Seulement ces dossiers et tout leur contenu. La recherche couvre les mêmes fichiers.",
+          "drive.whole_title": "Tout le lecteur",
+          "drive.whole_sub_account": "Tout ce que ce compte peut voir, y compris les fichiers partagés avec vous",
+          "drive.whole_sub_generic": "Tout ce que le bot peut atteindre sur ce lecteur",
+          "drive.nothing_selected": "Rien de sélectionné.",
+          "drive.nothing_text": "Le bot ne voit aucun fichier sur ce lecteur. Choisissez des dossiers ou tout le lecteur.",
+          "drive.change": "Modifier…",
+          "drive.stop_showing": "Ne plus montrer {name} au bot",
+          "drive.stop_whole": "Ne plus montrer tout le lecteur",
+          "drive.saves_title": "Où le bot enregistre",
+          "drive.saves_explain": "Un dossier parmi ceux que voit le bot, ou nulle part.",
+          "drive.saves_here_tag": "Le bot enregistre ici",
+          "drive.reconnect_to_browse": "Reconnectez le lecteur pour parcourir les dossiers",
+          "drive.primary_title": "Lecteur principal",
+          "drive.primary_yes": "C'est votre lecteur principal.",
+          "drive.primary_no": "Un autre lecteur est le principal.",
+          "drive.searched_by_default_sub": "Inclure ce lecteur quand vous demandez sans en nommer un.",
+          "drive.transcribe_title": "Transcription des enregistrements",
+          "drive.disconnect_named": "Déconnecter {name}…",
+          "drive.add_hint": "Certains lecteurs ne donnent au bot que son propre dossier ; d'autres lui donnent accès à tout le compte, et vous choisissez alors les dossiers qu'il voit.",
+          "drive.index_sub": "Le bot cherche dans les fichiers qu'il voit sur ce lecteur.",
+          "drive.index_search_off": "La recherche est désactivée.",
+          "drive.status_paused": "En pause jusqu'à la reconnexion",
+          "drive.status_empty_sub": "La recherche ne couvre que ce que voit le bot, et il ne voit encore rien sur ce lecteur.",
+          "drive.status_ok": "À jour",
+          "drive.index_cant_read": "Illisibles",
+          "drive.index_checking": "Vérification des fichiers qui sont dans vos dossiers… {n}",
+          "drive.all_counters": "Tous les compteurs",
+          "drive.index_described": "Décrits",
+          "drive.index_readable_content": "Lisibles par le contenu",
+          "drive.index_coverage_gap": "Devraient être lisibles mais ne le sont pas",
+          "drive.spend_title": "Usage des modèles d'IA ce mois-ci",
+          "drive.spent_of": "{spent} sur {cap}",
+          "drive.finished_spent": "Terminé, {spent}",
+          "drive.initial_build_label": "Première description complète du lecteur",
+          "drive.pk_title_scope": "Choisir ce que voit le bot",
+          "drive.pk_title_write": "Choisir où le bot enregistre",
+          "drive.pk_sub_write": "Seuls les dossiers que voit le bot sont disponibles.",
+          "drive.pk_sub_area": "Le bot a son propre dossier sur ce lecteur. Cochez des sous-dossiers pour le restreindre, ou ne cochez rien.",
+          "drive.pk_sub_account": "Cochez des dossiers ou tout le lecteur. La recherche couvre les mêmes fichiers.",
+          "drive.close": "Fermer",
+          "drive.pk_path": "Chemin du dossier",
+          "drive.pk_filter": "Filtrer ce dossier",
+          "drive.pk_root": "Vos fichiers",
+          "drive.pk_root_sub": "Dossiers à la racine du lecteur",
+          "drive.pk_root_area": "Dossier du bot",
+          "drive.pk_root_area_sub": "Tout ce que voit le bot",
+          "drive.pk_outer_sub": "Dossiers partagés et autres emplacements",
+          "drive.pk_area_info": "Si rien n'est coché, le bot voit tout son dossier.",
+          "drive.pk_write_none": "Nulle part",
+          "drive.pk_write_none_sub": "Lecteur en lecture seule",
+          "drive.pk_write_root_sub": "Pas dans un dossier",
+          "drive.pk_write_root_needs": "Nécessite que tout le lecteur soit visible",
+          "drive.pk_loading": "Chargement des dossiers…",
+          "drive.pk_no_match": "Aucun dossier ici ne correspond à « {q} ».",
+          "drive.pk_included_whole": "Inclus : tout le lecteur",
+          "drive.pk_included_through": "Inclus via {name}",
+          "drive.pk_inside": "{n} sélectionné(s) à l'intérieur",
+          "drive.pk_show": "Montrer {name} au bot",
+          "drive.pk_save_to": "Enregistrer dans {name}",
+          "drive.pk_saves_inside": "Enregistre à l'intérieur",
+          "drive.pk_contains": "Contient des dossiers que voit le bot",
+          "drive.pk_not_visible": "Invisible pour le bot",
+          "drive.pk_remove": "Retirer {name}",
+          "drive.pk_selected": "Sélection",
+          "drive.pk_tray_empty_area": "Rien de coché : le bot voit tout son dossier.",
+          "drive.pk_tray_empty": "Rien de sélectionné : le bot ne verra aucun fichier.",
+          "drive.pk_saves_to": "Enregistre dans : {v}",
+          "drive.pk_confirm_one": "Enregistrer 1 modification avant de fermer ?",
+          "drive.pk_confirm_many": "Enregistrer {n} modifications avant de fermer ?",
+          "drive.pk_keep": "Continuer à modifier",
+          "drive.pk_discard": "Abandonner",
           "drive.name": "Nom",
           "drive.save": "Enregistrer",
           "drive.primary_badge": "Principal",
           "drive.make_primary": "Rendre principal",
-          "drive.write_folder": "Dossier d'écriture (où le bot enregistre les fichiers)",
-          "drive.write_folder_none": "Aucun (lecture seule)",
-          "drive.write_folder_root": "Tout le disque",
-          "drive.choose_folder": "Choisir un dossier…",
-          "drive.picker_outer": "En dehors de la racine de ce disque",
-          "drive.scope": "Dossiers à rechercher",
-          "drive.scope_whole": "Tout le disque",
+          "drive.picker_outer": "Partagés avec moi et autres emplacements",
           "drive.scope_default": "La zone par défaut du bot",
-          "drive.add_folder": "Ajouter un dossier",
-          "drive.open": "Ouvrir",
-          "drive.select": "Choisir",
-          "drive.up": "Remonter",
           "drive.cancel": "Annuler",
           "drive.no_folders": "Aucun dossier ici",
           "drive.searched_by_default": "Recherché quand aucun disque n'est nommé",
-          "drive.transcribe_on": "La transcription des enregistrements est activée.",
-          "drive.note": "Note :",
           "drive.disconnect_confirm": "Déconnecter {name} ? Son index est conservé environ 30 jours et les notes du bot à son sujet sont archivées.",
           "drive.heir_pick": "Nouveau disque principal",
           "toast.drive_saved": "Enregistré",
@@ -2121,14 +2706,11 @@
           "drive.reconnect": "Reconectar disco",
           "drive.index_searchable": "Elementos buscables",
           "drive.index_chunks": "Fragmentos legibles",
-          "drive.index_model_usage": "Uso del modelo de IA este mes (gastado del límite mensual): {classes}",
           "drive.index_usd_reader": "lectura de escaneos",
           "drive.index_usd_triage": "revisión de imágenes",
           "drive.index_usd_profile": "descripción de documentos",
           "drive.index_usd_passage": "palabras clave de fragmentos",
           "drive.index_usd_transcribe": "transcripción de grabaciones",
-          "drive.index_initial_build": "Primera descripción completa del disco: {spent} gastados de {allowance}",
-          "drive.index_initial_build_done": "Primera descripción completa del disco: terminada ({spent} gastados)",
           "drive.index_pending": "En espera",
           "drive.index_failed": "No se pudieron leer",
           "drive.index_indexed": "Indexados",
@@ -2167,27 +2749,138 @@
           "toast.drive_dr_copy_off": "Los informes de investigación a fondo ya no se copiarán",
           "toast.drive_dr_copy_failed": "No se pudo cambiar la copia de las investigaciones a fondo",
           "drive.add_title": "Añadir un disco",
+          "drive.tab_overview": "Resumen",
+          "drive.tab_access": "Acceso",
+          "drive.tab_index": "Índice de búsqueda",
+          "drive.tab_settings": "Ajustes",
+          "drive.chip_nothing": "Nada seleccionado",
+          "drive.chip_full": "Índice lleno",
+          "drive.chip_indexing": "Indexando {pct} %",
+          "drive.chip_indexing_plain": "Indexando…",
+          "drive.sees_whole": "Ve todo el disco",
+          "drive.sees_area": "Ve su propia carpeta",
+          "drive.sees_default": "Ve su zona predeterminada",
+          "drive.sees_nothing": "Aún no ve nada",
+          "drive.sees_one": "Ve 1 carpeta",
+          "drive.sees_n": "Ve {n} carpetas",
+          "drive.saves_none": "Solo lectura",
+          "drive.saves_area": "Guarda en su propia carpeta",
+          "drive.saves_top": "Guarda en el nivel superior",
+          "drive.saves_to": "Guarda en {name}",
+          "drive.saves_folder": "Guarda en una carpeta",
+          "drive.search_off": "Búsqueda desactivada",
+          "drive.search_paused": "Búsqueda en pausa",
+          "drive.search_empty": "Nada que indexar",
+          "drive.search_pct": "Búsqueda lista al {pct} %",
+          "drive.search_building": "Búsqueda en construcción",
+          "drive.search_count": "{n} consultables",
+          "drive.banner_reconnect_title": "El bot perdió el acceso a este disco",
+          "drive.banner_empty_title": "El bot aún no ve nada en este disco",
+          "drive.banner_empty_text": "Este disco solo muestra al bot las carpetas que elijas.",
+          "drive.banner_empty_search": "La búsqueda está activada, pero no tiene nada que indexar hasta que elijas.",
+          "drive.choose_folders": "Elegir carpetas…",
+          "drive.use_whole": "Usar todo el disco",
+          "drive.banner_full_text": "Reduce lo que ve el bot a las carpetas que importan.",
+          "drive.review_folders": "Revisar carpetas…",
+          "drive.ov_nothing": "Nada por ahora",
+          "drive.own_folder": "Su propia carpeta",
+          "drive.own_folder_sub": "Todo lo que el bot ve en este disco",
+          "drive.write_top": "Nivel superior del disco",
+          "drive.write_none_title": "En ningún sitio (solo lectura)",
+          "drive.write_none_sub": "El bot puede leer este disco pero no guarda archivos en él.",
+          "drive.edit": "Editar",
+          "drive.ov_search": "Búsqueda",
+          "drive.ov_search_off": "Desactivada",
+          "drive.ov_search_empty": "Activada, pero nada que indexar",
+          "drive.ov_search_building": "Indexando… {pct} %",
+          "drive.ov_search_ok": "{n} elementos consultables, al día",
+          "drive.yes": "Sí",
+          "drive.no": "No",
+          "drive.on": "Activada",
+          "drive.note_title": "Nota del bot sobre este disco",
+          "drive.sees_title": "Qué ve el bot",
+          "drive.sees_explain_area": "El bot tiene su propia carpeta en este disco. La búsqueda cubre los mismos archivos.",
+          "drive.sees_explain_account": "Solo estas carpetas y todo lo que contienen. La búsqueda cubre los mismos archivos.",
+          "drive.whole_title": "Todo el disco",
+          "drive.whole_sub_account": "Todo lo que ve esta cuenta, incluidos los archivos compartidos contigo",
+          "drive.whole_sub_generic": "Todo lo que el bot puede alcanzar en este disco",
+          "drive.nothing_selected": "Nada seleccionado.",
+          "drive.nothing_text": "El bot no ve ningún archivo en este disco. Elige carpetas o todo el disco.",
+          "drive.change": "Cambiar…",
+          "drive.stop_showing": "Dejar de mostrar {name} al bot",
+          "drive.stop_whole": "Dejar de mostrar todo el disco",
+          "drive.saves_title": "Dónde guarda el bot",
+          "drive.saves_explain": "Una carpeta de las que ve el bot, o ningún sitio.",
+          "drive.saves_here_tag": "El bot guarda aquí",
+          "drive.reconnect_to_browse": "Reconecta el disco para explorar carpetas",
+          "drive.primary_title": "Disco principal",
+          "drive.primary_yes": "Este es tu disco principal.",
+          "drive.primary_no": "Otro disco es el principal.",
+          "drive.searched_by_default_sub": "Incluir este disco cuando preguntas sin nombrar ninguno.",
+          "drive.transcribe_title": "Transcripción de grabaciones",
+          "drive.disconnect_named": "Desconectar {name}…",
+          "drive.add_hint": "Algunos discos dan al bot solo su propia carpeta; otros le dan acceso a toda la cuenta y tú eliges qué carpetas ve.",
+          "drive.index_sub": "El bot busca dentro de los archivos que ve en este disco.",
+          "drive.index_search_off": "La búsqueda está desactivada.",
+          "drive.status_paused": "En pausa hasta que reconectes",
+          "drive.status_empty_sub": "La búsqueda cubre solo lo que ve el bot, y aún no ve nada en este disco.",
+          "drive.status_ok": "Al día",
+          "drive.index_cant_read": "No se pueden leer",
+          "drive.index_checking": "Comprobando qué archivos están en tus carpetas… {n}",
+          "drive.all_counters": "Todos los contadores",
+          "drive.index_described": "Descritos",
+          "drive.index_readable_content": "Legibles por contenido",
+          "drive.index_coverage_gap": "Deberían ser legibles pero no lo son",
+          "drive.spend_title": "Uso de modelos de IA este mes",
+          "drive.spent_of": "{spent} de {cap}",
+          "drive.finished_spent": "Terminado, {spent}",
+          "drive.initial_build_label": "Primera descripción completa del disco",
+          "drive.pk_title_scope": "Elige qué ve el bot",
+          "drive.pk_title_write": "Elige dónde guarda el bot",
+          "drive.pk_sub_write": "Solo están disponibles las carpetas que ve el bot.",
+          "drive.pk_sub_area": "El bot tiene su propia carpeta en este disco. Marca subcarpetas para acotarla, o no marques nada.",
+          "drive.pk_sub_account": "Marca carpetas o todo el disco. La búsqueda cubre los mismos archivos.",
+          "drive.close": "Cerrar",
+          "drive.pk_path": "Ruta de la carpeta",
+          "drive.pk_filter": "Filtrar esta carpeta",
+          "drive.pk_root": "Tus archivos",
+          "drive.pk_root_sub": "Carpetas en la raíz del disco",
+          "drive.pk_root_area": "Carpeta del bot",
+          "drive.pk_root_area_sub": "Todo lo que ve el bot",
+          "drive.pk_outer_sub": "Carpetas compartidas y otros lugares",
+          "drive.pk_area_info": "Si no marcas nada, el bot ve toda su carpeta.",
+          "drive.pk_write_none": "En ningún sitio",
+          "drive.pk_write_none_sub": "Disco de solo lectura",
+          "drive.pk_write_root_sub": "No dentro de una carpeta",
+          "drive.pk_write_root_needs": "Requiere ver todo el disco",
+          "drive.pk_loading": "Cargando carpetas…",
+          "drive.pk_no_match": "Ninguna carpeta coincide con «{q}».",
+          "drive.pk_included_whole": "Incluido: todo el disco",
+          "drive.pk_included_through": "Incluido a través de {name}",
+          "drive.pk_inside": "{n} seleccionada(s) dentro",
+          "drive.pk_show": "Mostrar {name} al bot",
+          "drive.pk_save_to": "Guardar en {name}",
+          "drive.pk_saves_inside": "Guarda dentro",
+          "drive.pk_contains": "Contiene carpetas que ve el bot",
+          "drive.pk_not_visible": "No visible para el bot",
+          "drive.pk_remove": "Quitar {name}",
+          "drive.pk_selected": "Selección",
+          "drive.pk_tray_empty_area": "Nada marcado: el bot ve toda su carpeta.",
+          "drive.pk_tray_empty": "Nada seleccionado: el bot no verá ningún archivo.",
+          "drive.pk_saves_to": "Guarda en: {v}",
+          "drive.pk_confirm_one": "¿Guardar 1 cambio antes de cerrar?",
+          "drive.pk_confirm_many": "¿Guardar {n} cambios antes de cerrar?",
+          "drive.pk_keep": "Seguir editando",
+          "drive.pk_discard": "Descartar",
           "drive.name": "Nombre",
           "drive.save": "Guardar",
           "drive.primary_badge": "Principal",
           "drive.make_primary": "Hacer principal",
-          "drive.write_folder": "Carpeta de escritura (donde el bot guarda archivos)",
-          "drive.write_folder_none": "Ninguna (solo lectura)",
-          "drive.write_folder_root": "Todo el disco",
-          "drive.choose_folder": "Elegir carpeta…",
-          "drive.picker_outer": "Fuera de la raíz de este disco",
-          "drive.scope": "Carpetas donde buscar",
-          "drive.scope_whole": "Todo el disco",
+          "drive.picker_outer": "Compartido conmigo y otros lugares",
           "drive.scope_default": "El área predeterminada del bot",
-          "drive.add_folder": "Añadir carpeta",
-          "drive.open": "Abrir",
-          "drive.select": "Elegir",
-          "drive.up": "Subir",
           "drive.cancel": "Cancelar",
           "drive.no_folders": "No hay carpetas aquí",
           "drive.searched_by_default": "Se busca cuando no se nombra ningún disco",
-          "drive.transcribe_on": "La transcripción de grabaciones está activada.",
-          "drive.note": "Nota:",
           "drive.disconnect_confirm": "¿Desconectar {name}? Su índice se conserva unos 30 días y las notas del bot sobre él se archivan.",
           "drive.heir_pick": "Nuevo disco principal",
           "toast.drive_saved": "Guardado",
@@ -3373,7 +4066,7 @@
             ${
               linked
                 ? `<button onclick="unlinkPlatform('${id}')" class="btn btn-secondary">${t("platform.disconnect")}</button>`
-                : `<input id="input-${id}" type="text" placeholder="${placeholder}" class="inp" style="text-align:center;" />
+                : `<input id="input-${id}" type="text" placeholder="${placeholder}" class="inp" />
                    <button onclick="linkPlatform('${id}', '${label}')" class="btn btn-black">${t("platform.link_account")}</button>`
             }
           </div>
@@ -3906,10 +4599,115 @@
       }
 
       let driveData = null;   // the last connection list: a local change redraws from it without a new read
-      const driveUi = {};     // connection_id -> {open, picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
+      const driveUi = {};     // connection_id -> {open, tab, picker, foldersBeforeWhole, nameError, nameWarning, scopeError, folderError, confirm}
       let driveAddError = "";
       const driveUiOf = (id) => (driveUi[id] = driveUi[id] || {});
       const redrawDrive = () => { if (driveData) renderDriveStatus(driveData); };
+      const driveRowOf = (id) => (driveData ? driveData.connections.find((c) => c.connection_id === id) : null);
+
+      const DRIVE_TABS = ["overview", "access", "index", "settings"];
+      const DRIVE_ICONS = {
+        folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/>',
+        chevR: '<path d="M9 6l6 6-6 6"/>',
+        chevD: '<path d="M6 9l6 6 6-6"/>',
+        lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+        x: '<path d="M6 6l12 12M18 6L6 18"/>',
+        alert: '<path d="M12 4l9.5 16h-19z"/><path d="M12 10v4.5M12 17.5v.01"/>',
+        check: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/>',
+        pause: '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
+        drive: '<path d="M4.5 14.5L7.5 5h9l3 9.5"/><rect x="3" y="14.5" width="18" height="5" rx="1.5"/><path d="M16.5 17h.01"/>',
+        search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+        eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+        shared: '<circle cx="9" cy="9" r="3"/><path d="M3.5 19c0-3 2.6-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="8.5" r="2.3"/><path d="M16.5 13.5c2.4.2 4 2 4 4.5"/>',
+        home: '<path d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/>',
+        info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/>',
+      };
+      function driveIcon(name, cls) {
+        return `<svg class="dv-ic ${cls || ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${DRIVE_ICONS[name]}</svg>`;
+      }
+
+      const driveNum = (v) => Number(v) || 0;
+      const driveFmt = (n) => driveNum(n).toLocaleString();
+      // A dictionary text with {placeholders}; the values are escaped (the result goes into innerHTML).
+      function driveText(key, vars) {
+        return t(key).replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? escapeHtml(vars[k]) : m));
+      }
+      // The last segment of a connection-relative folder path ("" when the path is unknown).
+      function driveLast(path) {
+        const parts = String(path || "").split("/").filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : "";
+      }
+      const driveFolderName = (f) => driveLast(f.path) || f.id;
+
+      // What the drive's scope means to the page. `empty_means` comes from the server and is the only thing that tells an
+      // empty scope apart: "area" (the bot's own folder is seen), "nothing" (an account-wide drive: no files are seen),
+      // null (the server could not tell). A stored whole_drive on an "area" drive reads as empty.
+      function driveScopeView(row) {
+        const scope = row.scope || {};
+        const means = scope.empty_means || null;
+        const folders = scope.folders || [];
+        const whole = !!scope.whole_drive && means !== "area";
+        const empty = !whole && folders.length === 0;
+        return { whole, folders, empty, means, nothing: empty && means === "nothing", area: empty && means === "area" };
+      }
+
+      // Everything the summary, the banners and the tabs derive from a row.
+      function driveModel(row) {
+        const ix = row.indexing || null;
+        const sv = driveScopeView(row);
+        const c = (ix && ix.counters) || {};
+        const searchOn = !!(ix && ix.enabled);
+        const searchable = driveNum(c.carded);
+        // Waiting is `pending` only: `unresolved` (files whose parent chain is not yet checked against the scope; most
+        // leave the index) has its own line, and `not_read_yet` is listed under "All counters".
+        const waiting = driveNum(c.pending);
+        const checking = driveNum(c.unresolved);
+        const cantRead = driveNum(c.inaccessible) + driveNum(c.failed);
+        const building = searchOn && !!(ix.building || ix.awaiting_rebuild);
+        const pct = building && searchable + waiting > 0
+          ? Math.min(99, Math.round((100 * searchable) / (searchable + waiting))) : null;
+        return {
+          ix, sv, searchOn, searchable, waiting, checking, cantRead, building, pct,
+          hasIndex: !!(ix && (ix.available || ix.enabled)),
+          needsReconnect: !!row.reconnect,
+          full: searchOn && !!ix.index_full,
+          emptyIndex: searchOn && sv.nothing,
+        };
+      }
+
+      // The state chip, by priority: reconnect, nothing selected, index full, indexing, connected.
+      function driveChip(m) {
+        if (m.needsReconnect) return { cls: "danger", text: t("drive.needs_reconnect") };
+        if (m.sv.nothing) return { cls: "warn", text: t("drive.chip_nothing") };
+        if (m.full) return { cls: "warn", text: t("drive.chip_full") };
+        if (m.building) {
+          return { cls: "info", text: m.pct !== null ? driveText("drive.chip_indexing", { pct: m.pct }) : t("drive.chip_indexing_plain") };
+        }
+        return { cls: "ok", text: t("platform.connected") };
+      }
+
+      // The collapsed card's third line: what the bot sees, where it saves, whether search is ready.
+      function driveSummaryParts(row, m) {
+        const sv = m.sv;
+        const wf = row.write_folder;
+        const parts = [];
+        if (sv.whole) parts.push({ text: t("drive.sees_whole") });
+        else if (sv.area) parts.push({ text: t("drive.sees_area") });
+        else if (sv.nothing) parts.push({ text: t("drive.sees_nothing"), cls: "w" });
+        else if (sv.empty) parts.push({ text: t("drive.sees_default") });
+        else parts.push({ text: driveText(sv.folders.length === 1 ? "drive.sees_one" : "drive.sees_n", { n: sv.folders.length }) });
+        if (!wf) parts.push({ text: t("drive.saves_none") });
+        else if (wf.id === "") parts.push({ text: t(sv.means === "area" ? "drive.saves_area" : "drive.saves_top") });
+        else parts.push({ text: driveLast(wf.path) ? driveText("drive.saves_to", { name: driveLast(wf.path) }) : t("drive.saves_folder") });
+        if (m.hasIndex) {
+          if (!m.searchOn) parts.push({ text: t("drive.search_off") });
+          else if (m.needsReconnect) parts.push({ text: t("drive.search_paused"), cls: "d" });
+          else if (m.emptyIndex) parts.push({ text: t("drive.search_empty"), cls: "w" });
+          else if (m.building) parts.push({ text: m.pct !== null ? driveText("drive.search_pct", { pct: m.pct }) : t("drive.search_building") });
+          else parts.push({ text: driveText("drive.search_count", { n: driveFmt(m.searchable) }) });
+        }
+        return parts;
+      }
 
       function renderDriveStatus(data) {
         const container = document.getElementById("drive-container");
@@ -3920,179 +4718,265 @@
         }
         const linked = data.connections.length > 0;
         // The copy switch: offered only while a drive is linked; disconnecting the last drive turns it off server-side.
-        // Reports are copied to the primary drive, so the switch sits in its row; here only while no drive is primary.
+        // Reports are copied to the primary drive, so the switch sits in its settings; here only while no drive is primary.
         const drCopyHtml = linked && typeof data.dr_copy === "boolean" && !data.connections.some((c) => c.primary)
-          ? `<div style="${DRIVE_BOX}">${renderDeepResearchCopy(data.dr_copy)}</div>`
+          ? `<div class="dv-box">${renderDeepResearchCopy(data.dr_copy)}</div>`
           : "";
         const rowsHtml = data.connections.map((row) => renderDriveConnection(row, data)).join("");
-        const actionButtons = renderAddDrive(data);
         container.innerHTML = `
-          <div class="card integration-card tasks-card reveal">
-            <div class="integration-icon">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0078D4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
-            </div>
-            <h3 class="integration-title">${t("platform.drive_title")}</h3>
-            <p class="integration-description">${t("platform.drive_desc")}</p>
-            ${linked ? "" : `<div class="integration-status"><div class="status-dot disconnected"></div><span>${t("platform.not_connected")}</span></div>`}
-            ${rowsHtml}
-            ${drCopyHtml}
-
-            <div class="integration-actions" style="flex-direction:column; align-items:stretch; gap:12px;">
-              ${actionButtons}
-            </div>
+          <div class="dv-head">
+            <h3>${t("platform.drive_title")}</h3>
+            <p>${t("platform.drive_desc")}</p>
           </div>
+          ${linked ? "" : `<div class="integration-status"><div class="status-dot disconnected"></div><span>${t("platform.not_connected")}</span></div>`}
+          <div class="dv-list">${rowsHtml}</div>
+          ${drCopyHtml}
+          ${renderAddDrive(data)}
         `;
         observeElements();
       }
 
-      const DRIVE_BOX = "margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;";
-      const DRIVE_ERR = "color:var(--accent-danger); font-size:13px; margin-top:6px;";
-      const DRIVE_NOTE = "font-size:13px; color:var(--text-muted); margin-top:6px; line-height:1.5;";
-
-      // One drive of the list (MULTI_DRIVE_RFC §11.7): its name, account, state and every setting of its own.
+      // One drive of the list (MULTI_DRIVE_RFC §11.7): a summary that opens into the problem banners and four tabs.
       function renderDriveConnection(row, data) {
         const id = row.connection_id;
         const ui = driveUiOf(id);
         const q = escapeHtml(id);
-        const needsReconnect = !!row.reconnect;
-        const statusText = needsReconnect ? t("drive.needs_reconnect") : t("platform.connected");
-        const statusDotClass = needsReconnect ? "needs-reconnect" : "connected";
-        const ix = row.indexing;
-        const searchKeepsIndex = !!(ix && ix.enabled && ix.index_kept);
-        const reconnectHtml = needsReconnect
-          ? `<div style="margin:10px 0; padding:12px 16px; border-radius:12px; border:1px solid var(--accent-danger); color:var(--accent-danger); font-size:14px;">${searchKeepsIndex ? t("drive.reconnect_hint") : t("drive.reconnect_hint_neutral")}</div>
-             ${connectButton(row.reconnect_href, t("drive.reconnect"))}`
-          : "";
-        const indexingHtml = ix && (ix.available || ix.enabled) ? renderDriveIndexing(ix, true) : "";
-        const heirs = data.connections.filter((c) => c.connection_id !== id && c.state === "active" && c.write_folder);
-        const primaryHtml = row.primary
-          ? `<span class="status-badge" style="margin-left:auto; font-size:12px; padding:2px 10px; border-radius:100px; background:var(--accent); color:white;">${t("drive.primary_badge")}</span>`
-          : "";
-        const makePrimaryHtml = row.primary
-          ? ""
-          : `<div style="margin-top:10px;"><button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button></div>`;
-        // Collapsed to its one status line; it stays open across redraws, and opens by itself when it needs a reconnect
-        const open = ui.open === undefined ? needsReconnect : ui.open;
-        const disconnectHtml = ui.confirm
-          ? `<div style="${DRIVE_NOTE}">${escapeHtml(t("drive.disconnect_confirm").replace("{name}", row.mount_name))}
-               ${row.primary && heirs.length
-                 ? `<div><label for="drive-heir-${q}">${t("drive.heir_pick")}</label>
-                    <select id="drive-heir-${q}">${heirs.map((h) => `<option value="${escapeHtml(h.connection_id)}">${escapeHtml(h.mount_name)}</option>`).join("")}</select></div>`
-                 : ""}
-               <button class="btn btn-secondary" onclick="disconnectDrive('${q}')">${t("platform.disconnect")}</button>
-               <button class="btn btn-secondary" onclick="cancelDisconnectDrive('${q}')">${t("drive.cancel")}</button>
-             </div>`
-          : `<button class="btn btn-secondary" onclick="askDisconnectDrive('${q}')">${t("platform.disconnect")}</button>`;
+        const m = driveModel(row);
+        // Collapsed to its summary; it stays open across redraws, and opens by itself when it needs a reconnect
+        const open = ui.open === undefined ? m.needsReconnect : ui.open;
+        const chip = driveChip(m);
+        const parts = driveSummaryParts(row, m);
+        const provider = [row.provider_label, row.account_label].filter(Boolean).map(escapeHtml).join(" · ");
         return `
-          <details class="drive-row" style="${DRIVE_BOX}" ${open ? "open" : ""} ontoggle="driveUiOf('${q}').open = this.open">
-            <summary style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; cursor:pointer;">
-              <div class="integration-status" style="margin:0;">
-                <div class="status-dot ${statusDotClass}"></div>
-                <span><strong>${escapeHtml(row.mount_name)}</strong> · ${escapeHtml(row.provider_label)}${row.account_label ? " · " + escapeHtml(row.account_label) : ""} · ${statusText}</span>
-              </div>
-              ${primaryHtml}
-            </summary>
-            ${makePrimaryHtml}
-            <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
-              <label for="drive-name-${q}" style="font-size:14px; font-weight:500;">${t("drive.name")}</label>
-              <input id="drive-name-${q}" type="text" value="${escapeHtml(row.mount_name)}" maxlength="64" style="flex:1; min-width:0;">
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="renameDrive('${q}')">${t("drive.save")}</button>
-            </div>
-            ${ui.nameError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.nameError)}</div>` : ""}
-            ${ui.nameWarning ? `<div style="${DRIVE_NOTE}">${escapeHtml(ui.nameWarning)}</div>` : ""}
-            ${reconnectHtml}
-            ${renderDriveWriteFolder(row, ui, q)}
-            ${renderDriveScope(row, ui, q)}
-            ${ui.picker ? renderDrivePicker(ui, q) : ""}
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px;">
-              <label style="font-size:14px; font-weight:500; cursor:pointer;" for="drive-sbd-${q}">${t("drive.searched_by_default")}</label>
-              <input type="checkbox" id="drive-sbd-${q}" ${row.searched_by_default ? "checked" : ""}
-                onchange="saveDriveSearchedByDefault(this, '${q}')" style="width:18px;height:18px;cursor:pointer;">
-            </div>
-            ${row.primary && typeof data.dr_copy === "boolean" ? `<div style="margin-top:12px;">${renderDeepResearchCopy(data.dr_copy)}</div>` : ""}
-            ${row.transcribe_enabled ? `<div style="${DRIVE_NOTE}">${t("drive.transcribe_on")}</div>` : ""}
-            ${row.note ? `<div style="${DRIVE_NOTE}"><strong>${t("drive.note")}</strong> ${escapeHtml(row.note)}</div>` : ""}
-            ${ui.folderError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.folderError)}</div>` : ""}
-            <div style="margin-top:12px;">${indexingHtml}</div>
-            <div>${disconnectHtml}</div>
-          </details>`;
+          <article class="card dv-card${open ? " open" : ""}" id="drive-card-${q}">
+            <button type="button" class="dv-sum" onclick="toggleDriveCard('${q}')" aria-expanded="${open}" aria-controls="drive-body-${q}">
+              <span class="dv-prov">${driveIcon("drive")}</span>
+              <span class="dv-sum-main">
+                <span class="dv-sum-top">
+                  <span class="dv-sum-name">${escapeHtml(row.mount_name)}</span>
+                  ${row.primary ? `<span class="dv-badge">${t("drive.primary_badge")}</span>` : ""}
+                  <span class="dv-chip ${chip.cls}">${chip.text}</span>
+                </span>
+                <span class="dv-sum-sub">${provider}</span>
+                <span class="dv-sum-line">${parts.map((p) => `<span class="${p.cls || ""}">${p.text}</span>`).join("")}</span>
+              </span>
+              ${driveIcon("chevD", "dv-chev")}
+            </button>
+            ${open ? `<div class="dv-body" id="drive-body-${q}">${renderDriveBody(row, data, m, ui, q)}</div>` : ""}
+          </article>`;
       }
 
-      function renderDriveWriteFolder(row, ui, q) {
+      function renderDriveBody(row, data, m, ui, q) {
+        const tabs = DRIVE_TABS.filter((k) => k !== "index" || m.hasIndex);
+        const tab = tabs.includes(ui.tab) ? ui.tab : "overview";
+        let panel = "";
+        if (tab === "overview") panel = renderDriveOverview(row, m, q);
+        else if (tab === "access") panel = renderDriveAccess(row, m, q);
+        else if (tab === "index") panel = renderDriveIndexing(m.ix, true);
+        else panel = renderDriveSettings(row, data, ui, q) + renderDriveDisconnect(row, data, ui, q);
+        return `
+          ${renderDriveBanners(row, m, ui, q)}
+          <div class="dv-tabs" role="tablist" aria-label="${escapeHtml(row.mount_name)}">
+            ${tabs.map((k) => `<button type="button" role="tab" id="drive-tab-${q}-${k}" aria-selected="${k === tab}" aria-controls="drive-panel-${q}"
+              tabindex="${k === tab ? 0 : -1}" onclick="selectDriveTab('${q}', '${k}')" onkeydown="driveTabKey(event, '${q}')">${t("drive.tab_" + k)}</button>`).join("")}
+          </div>
+          <div class="dv-panel" role="tabpanel" id="drive-panel-${q}" aria-labelledby="drive-tab-${q}-${tab}">${panel}</div>`;
+      }
+
+      // The problems of the drive, at the top of the opened card, each with its action.
+      function renderDriveBanners(row, m, ui, q) {
+        const banners = [];
+        if (m.needsReconnect) {
+          const keeps = !!(m.ix && m.ix.enabled && m.ix.index_kept);
+          banners.push(`<div class="dv-alert danger">${driveIcon("alert")}<div class="dv-alert-main">
+            <div class="dv-alert-title">${t("drive.banner_reconnect_title")}</div>
+            <div class="dv-alert-text">${keeps ? t("drive.reconnect_hint") : t("drive.reconnect_hint_neutral")}</div>
+            <div class="dv-alert-actions">${connectButton(row.reconnect_href, t("drive.reconnect"))}</div></div></div>`);
+        } else if (m.sv.nothing) {
+          banners.push(`<div class="dv-alert warn">${driveIcon("eye")}<div class="dv-alert-main">
+            <div class="dv-alert-title">${t("drive.banner_empty_title")}</div>
+            <div class="dv-alert-text">${t("drive.banner_empty_text")}${m.searchOn ? " " + t("drive.banner_empty_search") : ""}</div>
+            <div class="dv-alert-actions">
+              <button type="button" class="btn btn-primary dv-btn-sm" onclick="openDrivePicker('${q}', 'scope')">${t("drive.choose_folders")}</button>
+              <button type="button" class="btn btn-secondary dv-btn-sm" onclick="toggleDriveScopeWhole('${q}', true)">${t("drive.use_whole")}</button>
+            </div></div></div>`);
+        }
+        if (m.full) {
+          banners.push(`<div class="dv-alert danger">${driveIcon("alert")}<div class="dv-alert-main">
+            <div class="dv-alert-title">${t("drive.index_full")}</div>
+            <div class="dv-alert-text">${t("drive.banner_full_text")}</div>
+            <div class="dv-alert-actions"><button type="button" class="btn btn-secondary dv-btn-sm" ${m.needsReconnect ? "disabled" : ""}
+              onclick="openDrivePicker('${q}', 'scope')">${t("drive.review_folders")}</button></div></div></div>`);
+        }
+        if (m.searchOn && m.ix.last_error && !m.needsReconnect) {
+          const category = DRIVE_ERROR_CATEGORIES.includes(m.ix.last_error) ? m.ix.last_error : "internal";
+          banners.push(`<div class="dv-alert note">${driveIcon("info", "sm")}<span>${t("drive.index_problem")}: ${t("drive.err." + category)}</span></div>`);
+        }
+        if (ui.scopeError) banners.push(`<div class="dv-alert danger" role="alert">${driveIcon("alert")}<div class="dv-alert-main">${escapeHtml(ui.scopeError)}</div></div>`);
+        if (ui.folderError) banners.push(`<div class="dv-alert danger" role="alert">${driveIcon("alert")}<div class="dv-alert-main">${escapeHtml(ui.folderError)}</div></div>`);
+        return banners.length ? `<div class="dv-alerts">${banners.join("")}</div>` : "";
+      }
+
+      function driveSeesValue(row, m) {
+        const sv = m.sv;
+        if (sv.whole) return t("drive.whole_title");
+        if (sv.area) return t("drive.own_folder");
+        if (sv.nothing) return t("drive.ov_nothing");
+        if (sv.empty) return t("drive.scope_default");
+        return sv.folders.map((f) => escapeHtml(driveFolderName(f))).join(", ");
+      }
+
+      function driveWriteValue(row, m) {
         const wf = row.write_folder;
-        const options = [
-          `<option value="__none" ${wf === null ? "selected" : ""}>${t("drive.write_folder_none")}</option>`,
-          `<option value="__root" ${wf && wf.id === "" ? "selected" : ""}>${t("drive.write_folder_root")}</option>`,
-        ];
-        if (wf && wf.id !== "") options.push(`<option value="${escapeHtml(wf.id)}" selected>${escapeHtml(wf.path)}</option>`);
+        if (!wf) return { icon: "lock", text: t("drive.write_none_title"), sub: t("drive.write_none_sub") };
+        if (wf.id === "") return { icon: "folder", text: t(m.sv.means === "area" ? "drive.own_folder" : "drive.write_top"), sub: "" };
+        return { icon: "folder", text: escapeHtml(wf.path || wf.id), sub: "" };
+      }
+
+      function renderDriveOverview(row, m, q) {
+        const edit = (tab) => `<button type="button" class="dv-link" onclick="selectDriveTab('${q}', '${tab}')">${t("drive.edit")}</button>`;
+        const line = (label, value, tab, warn) => `
+          <div class="dv-row"><div class="dv-row-main"><div class="dv-row-sub dv-label">${label}</div>
+          <div class="dv-row-title${warn ? " warn" : ""}">${value}</div></div>${edit(tab)}</div>`;
+        let search = "";
+        if (m.hasIndex) {
+          if (!m.searchOn) search = t("drive.ov_search_off");
+          else if (m.needsReconnect) search = t("drive.status_paused");
+          else if (m.emptyIndex) search = t("drive.ov_search_empty");
+          else if (m.building) {
+            search = (m.pct !== null ? driveText("drive.ov_search_building", { pct: m.pct }) + `<div class="dv-bar"><span style="width:${m.pct}%"></span></div>` : t("drive.index_building"));
+          } else search = driveText("drive.ov_search_ok", { n: driveFmt(m.searchable) });
+          if (m.searchOn && m.checking > 0) search += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(m.checking) })}</div>`;
+        }
+        const w = driveWriteValue(row, m);
         return `
-          <div style="margin-top:12px;">
-            <label for="drive-wf-${q}" style="font-size:14px; font-weight:500;">${t("drive.write_folder")}</label>
-            <div style="display:flex; gap:8px; margin-top:4px;">
-              <select id="drive-wf-${q}" style="flex:1; min-width:0;" onchange="saveDriveWriteFolder('${q}', this.value)">${options.join("")}</select>
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" onclick="openDrivePicker('${q}', 'write')">${t("drive.choose_folder")}</button>
-            </div>
+          <div class="dv-group">
+            ${line(t("drive.sees_title"), driveSeesValue(row, m), "access", m.sv.nothing)}
+            ${line(t("drive.saves_title"), w.text, "access", false)}
+            ${m.hasIndex ? line(t("drive.ov_search"), search, "index", m.emptyIndex) : ""}
+            ${line(t("drive.searched_by_default"), t(row.searched_by_default ? "drive.yes" : "drive.no"), "settings", false)}
+          </div>
+          ${row.note ? `<div class="dv-group"><div class="dv-quote"><div class="dv-row-sub">${t("drive.note_title")}</div>${escapeHtml(row.note)}</div></div>` : ""}`;
+      }
+
+      function renderDriveAccess(row, m, q) {
+        const sv = m.sv;
+        const wf = row.write_folder;
+        const locked = m.needsReconnect;
+        const lockAttr = locked ? ` disabled title="${escapeHtml(t("drive.reconnect_to_browse"))}"` : "";
+        const wholeSub = t(sv.means === "nothing" ? "drive.whole_sub_account" : "drive.whole_sub_generic");
+        let rows = "";
+        if (sv.whole) {
+          rows = `<div class="dv-frow">${driveIcon("drive", "fi")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.whole_title")}</div>
+            <div class="dv-row-sub">${wholeSub}</div></div>
+            <button type="button" class="dv-icon-btn" onclick="toggleDriveScopeWhole('${q}', false)" aria-label="${escapeHtml(t("drive.stop_whole"))}">${driveIcon("x", "sm")}</button></div>`;
+        } else if (sv.area) {
+          rows = `<div class="dv-frow">${driveIcon("home", "fi")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.own_folder")}</div>
+            <div class="dv-row-sub">${t("drive.own_folder_sub")}</div></div></div>`;
+        } else if (sv.nothing) {
+          rows = `<div class="dv-empty-scope">${driveIcon("eye")}<span><strong>${t("drive.nothing_selected")}</strong> ${t("drive.nothing_text")}</span></div>`;
+        } else if (sv.empty) {
+          rows = `<div class="dv-frow">${driveIcon("home", "fi")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.scope_default")}</div></div></div>`;
+        } else {
+          rows = sv.folders.map((f, i) => `<div class="dv-frow">${driveIcon("folder", "fi")}<div class="dv-row-main"><div class="dv-row-title">${escapeHtml(f.path || f.id)}
+            ${wf && wf.id === f.id ? `<span class="dv-tag">${t("drive.saves_here_tag")}</span>` : ""}</div></div>
+            <button type="button" class="dv-icon-btn" onclick="removeDriveScopeFolder('${q}', ${i})" aria-label="${escapeHtml(driveText("drive.stop_showing", { name: driveFolderName(f) }))}">${driveIcon("x", "sm")}</button></div>`).join("");
+        }
+        const explain = t(sv.means === "area" ? "drive.sees_explain_area" : "drive.sees_explain_account");
+        const w = driveWriteValue(row, m);
+        const writeLocked = locked || sv.nothing;
+        return `
+          <div class="dv-group">
+            <div class="dv-row"><div class="dv-row-main"><div class="dv-row-title">${t("drive.sees_title")}</div><div class="dv-row-sub">${explain}</div></div>
+              <button type="button" class="btn ${sv.nothing ? "btn-primary" : "btn-secondary"} dv-btn-sm" onclick="openDrivePicker('${q}', 'scope')"${lockAttr}>${t(sv.nothing ? "drive.choose_folders" : "drive.change")}</button></div>
+            ${rows}
+          </div>
+          <div class="dv-group">
+            <div class="dv-row"><div class="dv-row-main"><div class="dv-row-title">${t("drive.saves_title")}</div><div class="dv-row-sub">${t("drive.saves_explain")}</div></div>
+              <button type="button" class="btn btn-secondary dv-btn-sm" onclick="openDrivePicker('${q}', 'write')"${writeLocked ? (locked ? lockAttr : " disabled") : ""}>${t("drive.change")}</button></div>
+            <div class="dv-frow">${driveIcon(w.icon, "fi" + (w.icon === "lock" ? " lock" : ""))}<div class="dv-row-main"><div class="dv-row-title">${w.text}</div>
+              ${w.sub ? `<div class="dv-row-sub">${w.sub}</div>` : ""}</div></div>
           </div>`;
       }
 
-      // Every scope action is saved at once, like the write folder: an unsaved pick looked chosen while the drive
-      // kept its default scope.
-      function renderDriveScope(row, ui, q) {
-        const scope = row.scope;
-        const folders = scope.folders.map((f, i) =>
-          `<li>${escapeHtml(f.path || f.id)} <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="removeDriveScopeFolder('${q}', ${i})">×</button></li>`).join("");
+      function renderDriveSettings(row, data, ui, q) {
         return `
-          <div style="margin-top:12px;">
-            <div style="font-size:14px; font-weight:500;">${t("drive.scope")}</div>
-            <label style="font-size:13px; cursor:pointer;"><input type="checkbox" ${scope.whole_drive ? "checked" : ""}
-              onchange="toggleDriveScopeWhole('${q}', this.checked)"> ${t("drive.scope_whole")}</label>
-            ${scope.whole_drive ? "" : `<ul style="margin:4px 0 4px 18px; font-size:13px;">${folders || `<li>${t("drive.scope_default")}</li>`}</ul>`}
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary" style="padding:4px 14px; font-size:13px;" ${scope.whole_drive ? "disabled" : ""} onclick="openDrivePicker('${q}', 'scope')">${t("drive.add_folder")}</button>
-            </div>
-            ${ui.scopeError ? `<div style="${DRIVE_ERR}">${escapeHtml(ui.scopeError)}</div>` : ""}
-          </div>`;
+          <div class="dv-group">
+            <div class="dv-field"><label for="drive-name-${q}">${t("drive.name")}</label>
+              <div class="dv-inline"><input id="drive-name-${q}" type="text" value="${escapeHtml(row.mount_name)}" maxlength="64">
+                <button type="button" class="btn btn-secondary dv-btn-sm" onclick="renameDrive('${q}')">${t("drive.save")}</button></div>
+              ${ui.nameError ? `<div class="dv-msg err" role="alert">${escapeHtml(ui.nameError)}</div>` : ""}
+              ${ui.nameWarning ? `<div class="dv-msg warn">${escapeHtml(ui.nameWarning)}</div>` : ""}</div>
+            <div class="dv-row"><div class="dv-row-main"><div class="dv-row-title">${t("drive.primary_title")}</div>
+              <div class="dv-row-sub">${t(row.primary ? "drive.primary_yes" : "drive.primary_no")}</div></div>
+              ${row.primary ? "" : `<button type="button" class="btn btn-secondary dv-btn-sm" onclick="makeDrivePrimary('${q}')">${t("drive.make_primary")}</button>`}</div>
+            <div class="dv-row"><div class="dv-row-main"><label class="dv-row-title" for="drive-sbd-${q}">${t("drive.searched_by_default")}</label>
+              <div class="dv-row-sub">${t("drive.searched_by_default_sub")}</div></div>
+              <input type="checkbox" class="dv-switch" id="drive-sbd-${q}" ${row.searched_by_default ? "checked" : ""} onchange="saveDriveSearchedByDefault(this, '${q}')"></div>
+            ${row.primary && typeof data.dr_copy === "boolean" ? `<div class="dv-row dv-stack">${renderDeepResearchCopy(data.dr_copy)}</div>` : ""}
+            ${row.transcribe_enabled ? `<div class="dv-row"><div class="dv-row-main"><div class="dv-row-title">${t("drive.transcribe_title")}</div></div><span class="dv-row-value">${t("drive.on")}</span></div>` : ""}
+          </div>
+          ${row.note ? `<div class="dv-group"><div class="dv-quote"><div class="dv-row-sub">${t("drive.note_title")}</div>${escapeHtml(row.note)}</div></div>` : ""}`;
       }
 
-      function renderDrivePicker(ui, q) {
-        const p = ui.picker;
-        const trail = ["/"].concat(p.trail.map((s) => s.name)).join(" / ");
-        const row = (f, i) =>
-          `<li>${escapeHtml(f.name)}
-             <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="openDrivePickerFolder('${q}', ${i})">${t("drive.open")}</button>
-             <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="pickDriveFolder('${q}', ${i})">${t("drive.select")}</button></li>`;
-        const list = p.folders.map((f, i) => row(f, i)).join("");
-        // Folders outside the drive's root: only at the top level; indexes continue after the root folders.
-        const outer = !p.trail.length && p.outer && p.outer.length
-          ? `<div style="margin-top:8px; font-weight:500;">${t("drive.picker_outer")}</div>
-             <ul style="margin:6px 0 6px 18px;">${p.outer.map((f, i) => row(f, p.folders.length + i)).join("")}</ul>`
-          : "";
-        return `
-          <div style="margin-top:10px; padding:10px; border:1px solid var(--border-light); border-radius:10px; font-size:13px;">
-            <div>${escapeHtml(trail)}</div>
-            ${p.error ? `<div style="${DRIVE_ERR}">${escapeHtml(p.error)}</div>` : ""}
-            <ul style="margin:6px 0 6px 18px;">${list || `<li>${t("drive.no_folders")}</li>`}</ul>
-            ${outer}
-            ${p.trail.length ? `<button class="btn btn-secondary" style="padding:2px 12px; font-size:12px;" onclick="upDrivePicker('${q}')">${t("drive.up")}</button>` : ""}
-            <button class="btn btn-secondary" style="padding:2px 12px; font-size:12px;" onclick="closeDrivePicker('${q}')">${t("drive.cancel")}</button>
-          </div>`;
+      // Disconnect: a quiet link at the bottom of the settings, then its confirmation.
+      function renderDriveDisconnect(row, data, ui, q) {
+        const heirs = data.connections.filter((c) => c.connection_id !== row.connection_id && c.state === "active" && c.write_folder);
+        if (!ui.confirm) {
+          return `<div class="dv-disc"><button type="button" class="dv-link danger" onclick="askDisconnectDrive('${q}')">${driveText("drive.disconnect_named", { name: row.mount_name })}</button></div>`;
+        }
+        return `<div class="dv-disc"><div class="dv-confirm"><p>${escapeHtml(t("drive.disconnect_confirm").replace("{name}", row.mount_name))}</p>
+          ${row.primary && heirs.length
+            ? `<div class="dv-field"><label for="drive-heir-${q}">${t("drive.heir_pick")}</label>
+               <select id="drive-heir-${q}">${heirs.map((h) => `<option value="${escapeHtml(h.connection_id)}">${escapeHtml(h.mount_name)}</option>`).join("")}</select></div>`
+            : ""}
+          <div class="dv-btns"><button type="button" class="btn btn-danger dv-btn-sm" onclick="disconnectDrive('${q}')">${t("platform.disconnect")}</button>
+          <button type="button" class="btn btn-secondary dv-btn-sm" onclick="cancelDisconnectDrive('${q}')">${t("drive.cancel")}</button></div></div></div>`;
+      }
+
+      function toggleDriveCard(id) {
+        const row = driveRowOf(id);
+        if (!row) return;
+        const ui = driveUiOf(id);
+        ui.open = !(ui.open === undefined ? !!row.reconnect : ui.open);
+        redrawDrive();
+      }
+
+      // The open tab is kept per connection (driveUi), so a redraw or a poll never changes it.
+      function selectDriveTab(id, tab) {
+        driveUiOf(id).tab = tab;
+        redrawDrive();
+        const el = document.getElementById(`drive-tab-${id}-${tab}`);
+        if (el) el.focus();
+      }
+
+      function driveTabKey(event, id) {
+        if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+        const row = driveRowOf(id);
+        if (!row) return;
+        const tabs = DRIVE_TABS.filter((k) => k !== "index" || driveModel(row).hasIndex);
+        const ui = driveUiOf(id);
+        const at = Math.max(0, tabs.indexOf(ui.tab || "overview"));
+        event.preventDefault();
+        selectDriveTab(id, tabs[(at + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length]);
       }
 
       // "Add a drive": the kinds come from /api/connectors (no kind is named here); the typed name is kept across the
       // provider round trip and given to the new connection when the page returns (finishAddedDrive).
       function renderAddDrive(data) {
         const buttons = data.add_kinds.map((c) =>
-          `<button class="btn btn-black" onclick="addDrive('${escapeHtml(c.kind)}')">${escapeHtml(c.label)}</button>`).join("");
+          `<button type="button" class="btn btn-black dv-btn-sm" onclick="addDrive('${escapeHtml(c.kind)}')">${escapeHtml(c.label)}</button>`).join("");
         return `
-          <div style="${DRIVE_BOX}">
-            <div style="font-size:14px; font-weight:500;">${t("drive.add_title")}</div>
-            <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
-              <label for="drive-add-name" style="font-size:14px;">${t("drive.name")}</label>
-              <input id="drive-add-name" type="text" value="${escapeHtml(data.default_name || "")}" maxlength="64" style="flex:1; min-width:0;">
+          <section class="card dv-add" aria-labelledby="drive-add-title">
+            <h3 id="drive-add-title">${t("drive.add_title")}</h3>
+            <div class="dv-field">
+              <label for="drive-add-name">${t("drive.name")}</label>
+              <input id="drive-add-name" type="text" value="${escapeHtml(data.default_name || "")}" maxlength="64">
             </div>
-            <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">${buttons}</div>
-            ${driveAddError ? `<div style="${DRIVE_ERR}">${escapeHtml(driveAddError)}</div>` : ""}
-          </div>`;
+            <div class="dv-btns">${buttons}</div>
+            ${driveAddError ? `<div class="dv-msg err" role="alert">${escapeHtml(driveAddError)}</div>` : ""}
+            <p class="dv-hint">${t("drive.add_hint")}</p>
+          </section>`;
       }
 
       async function driveCall(method, path, body) {
@@ -4135,6 +5019,7 @@
           const ui = driveUiOf(fresh.connection_id);
           if (!out.ok) ui.nameError = out.data.error || t("toast.drive_failed");
           else if (out.data.warning) ui.nameWarning = out.data.warning;
+          if (ui.nameError || ui.nameWarning) { ui.open = true; ui.tab = "settings"; }   // the message sits in the settings tab
         } catch {}
       }
 
@@ -4163,14 +5048,22 @@
         await loadDriveStatus();
       }
 
-      async function saveDriveWriteFolder(id, value) {
+      // `inPicker`: the save was made from the picker dialog; a refusal then shows in the dialog (which stays open)
+      // instead of on the card.
+      async function saveDriveWriteFolder(id, value, inPicker) {
         const ui = driveUiOf(id);
         const folderId = value === "__none" ? null : value === "__root" ? "" : value;
         const out = await driveCall("PUT", `/api/drive/connections/${encodeURIComponent(id)}/write-folder`, { folder_id: folderId });
-        ui.folderError = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        const error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        if (!out.ok && inPicker && ui.picker) {
+          ui.picker.error = error;
+          return false;
+        }
+        ui.folderError = error;
         if (out.ok) ui.picker = null;
         _driveStatusSnapshot = null;
         if (out.ok) await loadDriveStatus(); else redrawDrive();
+        return out.ok;
       }
 
       function driveScopeOf(id) {
@@ -4191,60 +5084,389 @@
         await saveDriveScope(id, false, driveScopeOf(id).folders.filter((_, i) => i !== index).map((f) => f.id));
       }
 
-      async function saveDriveScope(id, wholeDrive, folderIds) {
+      async function saveDriveScope(id, wholeDrive, folderIds, inPicker) {
         const ui = driveUiOf(id);
         const out = await driveCall("PUT", `/api/drive/connections/${encodeURIComponent(id)}/scope`,
           { whole_drive: wholeDrive, folder_ids: folderIds });
-        ui.scopeError = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        const error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        if (!out.ok && inPicker && ui.picker) {
+          ui.picker.error = error;
+          return false;
+        }
+        ui.scopeError = error;
         if (out.ok) { ui.picker = null; showToast(t("toast.drive_saved"), "success"); }
         _driveStatusSnapshot = null;
         if (out.ok) await loadDriveStatus(); else redrawDrive();
         return out.ok;
       }
 
-      async function loadDrivePickerFolders(id) {
-        const ui = driveUiOf(id);
-        const parent = ui.picker.trail.length ? ui.picker.trail[ui.picker.trail.length - 1].id : "";
-        const base = `/api/drive/connections/${encodeURIComponent(id)}/folders`;
-        const out = await driveCall("GET", parent ? `${base}?parent=${encodeURIComponent(parent)}` : base);
-        ui.picker.folders = out.ok ? out.data.folders : [];
-        ui.picker.outer = out.ok && !parent ? (out.data.outer || []) : [];
-        ui.picker.error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
-        redrawDrive();
+      // ── The folder picker: a dialog outside the card (#drive-picker-root), one per page ──────────────────────────
+      // State lives in driveUi[id].picker. The scope picker edits a draft (ticked folders + whole drive) and saves it
+      // with its Save (n) button; closing with a pending draft asks first. The write picker works the same way.
+      let drivePickerId = null;       // the connection whose dialog is open
+      let drivePickerOpener = null;   // the element that opened it, focused again on close
+
+      function drivePickerRows(p) {
+        const list = !p.trail.length && p.source === "outer" ? p.outer : p.folders;
+        const f = p.filter.trim().toLowerCase();
+        return f ? list.filter((x) => String(x.name).toLowerCase().includes(f)) : list;
+      }
+
+      // How many things the dialog would change; the Save (n) number.
+      function drivePickerChanges(p) {
+        if (p.purpose === "write") return p.write === p.init.write ? 0 : 1;
+        const now = p.sel.map((s) => s.id);
+        let n = now.filter((x) => !p.init.ids.includes(x)).length + p.init.ids.filter((x) => !now.includes(x)).length;
+        if (p.whole !== p.init.whole) n += 1;
+        return n;
+      }
+
+      // A path is inside the scope when it equals a scope folder's path or lies under it; a folder whose path is
+      // unknown ("") is taken as allowing everything (the server decides and says so).
+      function drivePathInScope(sv, path) {
+        if (sv.whole || sv.area) return true;
+        return sv.folders.some((s) => !s.path || path === s.path || path.startsWith(s.path + "/"));
       }
 
       async function openDrivePicker(id, purpose) {
-        driveUiOf(id).picker = { purpose, trail: [], folders: [], outer: [], error: "" };
+        const row = driveRowOf(id);
+        if (!row) return;
+        const sv = driveScopeView(row);
+        const wf = row.write_folder;
+        const sel = sv.folders.map((f) => ({ id: f.id, path: f.path || "" }));
+        const write = wf ? wf.id : null;
+        drivePickerOpener = document.activeElement;
+        drivePickerId = id;
+        driveUiOf(id).picker = {
+          purpose, source: "root", trail: [], folders: [], outer: [], top: null, loading: true, filter: "", error: "",
+          confirm: false, busy: false, req: 0, sel, whole: sv.whole, stash: null, write, writePath: wf ? wf.path || "" : "",
+          init: { ids: sel.map((s) => s.id), whole: sv.whole, write },
+        };
+        document.body.classList.add("dv-modal-open");
+        renderDrivePicker(id);
         await loadDrivePickerFolders(id);
       }
 
-      async function openDrivePickerFolder(id, index) {
+      async function loadDrivePickerFolders(id) {
         const p = driveUiOf(id).picker;
-        const f = p.folders.concat(p.outer || [])[index];
-        p.trail.push({ id: f.id, name: f.name });
-        await loadDrivePickerFolders(id);
+        if (!p) return;
+        const parent = p.trail.length ? p.trail[p.trail.length - 1].id : "";
+        if (!parent && p.top) {
+          p.folders = p.top.folders;
+          p.outer = p.top.outer;
+          p.loading = false;
+          renderDrivePicker(id);
+          return;
+        }
+        p.loading = true;
+        p.req += 1;
+        const mine = p.req;
+        renderDrivePicker(id);
+        const base = `/api/drive/connections/${encodeURIComponent(id)}/folders`;
+        const out = await driveCall("GET", parent ? `${base}?parent=${encodeURIComponent(parent)}` : base);
+        if (driveUiOf(id).picker !== p || p.req !== mine) return;   // closed, or a newer listing is on its way
+        p.folders = out.ok ? out.data.folders : [];
+        p.outer = out.ok && !parent ? (out.data.outer || []) : [];
+        if (out.ok && !parent) p.top = { folders: p.folders, outer: p.outer };
+        p.error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        p.loading = false;
+        renderDrivePicker(id);
       }
 
-      async function upDrivePicker(id) {
-        driveUiOf(id).picker.trail.pop();
-        await loadDrivePickerFolders(id);
+      function setDrivePickerSource(id, source) {
+        const p = driveUiOf(id).picker;
+        p.source = source;
+        p.trail = [];
+        p.filter = "";
+        p.confirm = false;
+        loadDrivePickerFolders(id);
+      }
+
+      function openDrivePickerFolder(id, index) {
+        const p = driveUiOf(id).picker;
+        const f = drivePickerRows(p)[index];
+        if (!f) return;
+        p.trail.push({ id: f.id, name: f.name });
+        p.filter = "";
+        p.confirm = false;
+        loadDrivePickerFolders(id);
+      }
+
+      function driveCrumb(id, index) {
+        const p = driveUiOf(id).picker;
+        if (index >= p.trail.length) return;
+        p.trail = p.trail.slice(0, index);
+        p.filter = "";
+        p.confirm = false;
+        loadDrivePickerFolders(id);
+      }
+
+      function setDrivePickerFilter(id, value) {
+        const p = driveUiOf(id).picker;
+        p.filter = value;
+        renderDrivePickerPart(id, "list");
+      }
+
+      function toggleDrivePickerFolder(id, index) {
+        const p = driveUiOf(id).picker;
+        const f = drivePickerRows(p)[index];
+        if (!f) return;
+        const at = p.sel.findIndex((s) => s.id === f.id);
+        if (at >= 0) p.sel.splice(at, 1);
+        else {
+          const path = f.path || "";
+          if (path) p.sel = p.sel.filter((s) => !(s.path && s.path.startsWith(path + "/")));   // the parent covers them
+          p.sel.push({ id: f.id, path });
+        }
+        p.confirm = false;
+        p.error = "";
+        renderDrivePicker(id);
+      }
+
+      function removeDrivePickerChip(id, index) {
+        const p = driveUiOf(id).picker;
+        p.sel.splice(index, 1);
+        p.confirm = false;
+        p.error = "";
+        renderDrivePicker(id);
+      }
+
+      function toggleDrivePickerWhole(id, on) {
+        const p = driveUiOf(id).picker;
+        p.whole = on;
+        if (on) {
+          if (p.sel.length) p.stash = p.sel;
+          p.sel = [];
+        } else if (p.stash && !p.sel.length) {
+          p.sel = p.stash;
+          p.stash = null;
+        }
+        p.confirm = false;
+        p.error = "";
+        renderDrivePicker(id);
+      }
+
+      // `index` -1: nowhere (read-only), -2: the drive's top level / own folder; otherwise a row of the list.
+      function setDrivePickerWrite(id, index) {
+        const p = driveUiOf(id).picker;
+        if (index === -1) { p.write = null; p.writePath = ""; }
+        else if (index === -2) { p.write = ""; p.writePath = ""; }
+        else {
+          const f = drivePickerRows(p)[index];
+          if (!f) return;
+          p.write = f.id;
+          p.writePath = f.path || "";
+        }
+        p.confirm = false;
+        p.error = "";
+        renderDrivePicker(id);
+      }
+
+      async function saveDrivePicker(id) {
+        const ui = driveUiOf(id);
+        const p = ui.picker;
+        if (!p || p.busy || drivePickerChanges(p) === 0) return;
+        p.busy = true;
+        p.error = "";
+        renderDrivePickerPart(id, "foot");
+        if (p.purpose === "write") {
+          await saveDriveWriteFolder(id, p.write === null ? "__none" : p.write === "" ? "__root" : p.write, true);
+        } else {
+          await saveDriveScope(id, p.whole, p.sel.map((s) => s.id), true);
+        }
+        if (!ui.picker) { closeDrivePickerDialog(); return; }   // saved
+        p.busy = false;                                          // refused: the dialog stays, with the server's line
+        p.confirm = false;
+        renderDrivePicker(id);
+      }
+
+      function requestCloseDrivePicker(id) {
+        const p = driveUiOf(id).picker;
+        if (!p) return;
+        if (drivePickerChanges(p) > 0 && !p.busy) {
+          p.confirm = true;
+          renderDrivePickerPart(id, "foot");
+          const keep = document.getElementById("drive-pk-save-confirm");
+          if (keep) keep.focus();
+        } else closeDrivePicker(id);
+      }
+
+      function resumeDrivePicker(id) {
+        driveUiOf(id).picker.confirm = false;
+        renderDrivePickerPart(id, "foot");
       }
 
       function closeDrivePicker(id) {
         driveUiOf(id).picker = null;
-        redrawDrive();
+        closeDrivePickerDialog();
       }
 
-      async function pickDriveFolder(id, index) {
-        const ui = driveUiOf(id);
-        const f = ui.picker.folders.concat(ui.picker.outer || [])[index];
-        if (ui.picker.purpose === "write") {
-          await saveDriveWriteFolder(id, f.id);
-          return;
-        }
-        const ids = driveScopeOf(id).folders.map((x) => x.id);
-        await saveDriveScope(id, false, ids.includes(f.id) ? ids : ids.concat(f.id));
+      function closeDrivePickerDialog() {
+        drivePickerId = null;
+        const root = document.getElementById("drive-picker-root");
+        if (root) root.innerHTML = "";
+        document.body.classList.remove("dv-modal-open");
+        if (drivePickerOpener && document.body.contains(drivePickerOpener)) drivePickerOpener.focus();
+        drivePickerOpener = null;
       }
+
+      function renderDrivePicker(id) {
+        const p = driveUiOf(id).picker;
+        const row = driveRowOf(id);
+        const root = document.getElementById("drive-picker-root");
+        if (!p || !row || !root) return;
+        if (!document.getElementById("drive-pk-dialog")) {
+          const q = escapeHtml(id);
+          const sv = driveScopeView(row);
+          const subKey = p.purpose === "write" ? "drive.pk_sub_write" : sv.means === "area" ? "drive.pk_sub_area" : "drive.pk_sub_account";
+          root.innerHTML = `
+            <div class="dv-overlay" onclick="if (event.target === this) requestCloseDrivePicker('${q}')">
+              <div class="dv-sheet" id="drive-pk-dialog" role="dialog" aria-modal="true" aria-labelledby="drive-pk-title">
+                <header class="dv-pk-head"><div><h2 id="drive-pk-title">${t(p.purpose === "write" ? "drive.pk_title_write" : "drive.pk_title_scope")}</h2>
+                  <p class="dv-pk-sub">${escapeHtml(row.mount_name)} · ${t(subKey)}</p></div>
+                  <button type="button" class="dv-icon-btn" id="drive-pk-close" onclick="requestCloseDrivePicker('${q}')" aria-label="${escapeHtml(t("drive.close"))}">${driveIcon("x")}</button></header>
+                <aside class="dv-pk-side" id="drive-pk-side"></aside>
+                <div class="dv-pk-main">
+                  <nav class="dv-pk-crumbs" id="drive-pk-crumbs" aria-label="${escapeHtml(t("drive.pk_path"))}"></nav>
+                  <div class="dv-pk-filter">${driveIcon("search", "sm")}<input type="text" id="drive-pk-filter" autocomplete="off"
+                    placeholder="${escapeHtml(t("drive.pk_filter"))}" aria-label="${escapeHtml(t("drive.pk_filter"))}" oninput="setDrivePickerFilter('${q}', this.value)"></div>
+                  <div class="dv-pk-list" id="drive-pk-list"></div>
+                </div>
+                <footer class="dv-pk-foot" id="drive-pk-foot"></footer>
+              </div></div>`;
+          const close = document.getElementById("drive-pk-close");
+          if (close) close.focus();
+        }
+        for (const part of ["side", "crumbs", "list", "foot"]) renderDrivePickerPart(id, part);
+      }
+
+      function renderDrivePickerPart(id, part) {
+        const p = driveUiOf(id).picker;
+        const row = driveRowOf(id);
+        const el = document.getElementById(`drive-pk-${part}`);
+        if (!p || !row || !el) return;
+        const q = escapeHtml(id);
+        const sv = driveScopeView(row);
+        if (part === "side") {
+          const rootSrc = sv.means === "area"
+            ? { label: t("drive.pk_root_area"), sub: t("drive.pk_root_area_sub"), icon: "home" }
+            : { label: t("drive.pk_root"), sub: t("drive.pk_root_sub"), icon: "drive" };
+          const sources = [{ key: "root", ...rootSrc }];
+          if (p.outer.length || p.source === "outer") sources.push({ key: "outer", label: t("drive.picker_outer"), sub: t("drive.pk_outer_sub"), icon: "shared" });
+          let h = sources.map((s) => `<button type="button" class="dv-pk-src" aria-pressed="${p.source === s.key}" onclick="setDrivePickerSource('${q}', '${s.key}')">
+            ${driveIcon(s.icon, "sm")}<span>${s.label}<small>${s.sub}</small></span></button>`).join("");
+          h += '<div class="dv-pk-divider"></div>';
+          if (p.purpose === "scope") {
+            if (sv.means === "area") h += `<p class="dv-pk-info">${t("drive.pk_area_info")}</p>`;
+            else h += `<label class="dv-pk-special"><input type="checkbox" ${p.whole ? "checked" : ""} onchange="toggleDrivePickerWhole('${q}', this.checked)">
+              <span>${t("drive.whole_title")}<small>${t(sv.means === "nothing" ? "drive.whole_sub_account" : "drive.whole_sub_generic")}</small></span></label>`;
+          } else {
+            const rootOk = sv.means === "area" ? sv.empty : sv.whole;
+            h += `<label class="dv-pk-special"><input type="radio" name="drive-pk-w" ${p.write === null ? "checked" : ""} onchange="setDrivePickerWrite('${q}', -1)">
+              <span>${t("drive.pk_write_none")}<small>${t("drive.pk_write_none_sub")}</small></span></label>
+              <label class="dv-pk-special${rootOk ? "" : " off"}"><input type="radio" name="drive-pk-w" ${p.write === "" ? "checked" : ""} ${rootOk ? "" : "disabled"} onchange="setDrivePickerWrite('${q}', -2)">
+              <span>${t(sv.means === "area" ? "drive.own_folder" : "drive.write_top")}<small>${t(rootOk ? "drive.pk_write_root_sub" : "drive.pk_write_root_needs")}</small></span></label>`;
+          }
+          el.innerHTML = h;
+        } else if (part === "crumbs") {
+          const first = p.source === "outer" ? t("drive.picker_outer") : t(sv.means === "area" ? "drive.pk_root_area" : "drive.pk_root");
+          const items = [first].concat(p.trail.map((s) => escapeHtml(s.name)));
+          el.innerHTML = items.map((n, i) => (i ? driveIcon("chevR", "sm") : "")
+            + `<button type="button" class="dv-crumb" onclick="driveCrumb('${q}', ${i})"${i === items.length - 1 ? ' aria-current="page"' : ""}>${n}</button>`).join("");
+        } else if (part === "list") {
+          if (p.loading) {
+            el.innerHTML = `<div class="dv-pk-loading" role="status">${t("drive.pk_loading")}</div>${'<div class="dv-skel"></div>'.repeat(5)}`;
+            return;
+          }
+          const rows = drivePickerRows(p);
+          if (!rows.length) {
+            el.innerHTML = `<div class="dv-pk-empty">${p.filter.trim() ? driveText("drive.pk_no_match", { q: p.filter }) : t("drive.no_folders")}</div>`;
+            return;
+          }
+          el.innerHTML = rows.map((f, i) => (p.purpose === "write" ? drivePickerWriteRow(p, sv, f, i, q) : drivePickerScopeRow(p, f, i, q))).join("");
+        } else if (part === "foot") {
+          el.innerHTML = drivePickerFoot(p, sv, q);
+        }
+      }
+
+      function drivePickerScopeRow(p, f, i, q) {
+        const path = f.path || "";
+        const picked = p.sel.some((s) => s.id === f.id);
+        const through = !picked && path ? p.sel.find((s) => s.path && path.startsWith(s.path + "/")) : null;
+        const inside = path ? p.sel.filter((s) => s.path && s.path.startsWith(path + "/")).length : 0;
+        const covered = p.whole || !!through;
+        let sub = "";
+        if (p.whole) sub = t("drive.pk_included_whole");
+        else if (through) sub = driveText("drive.pk_included_through", { name: driveLast(through.path) });
+        else if (inside) sub = driveText("drive.pk_inside", { n: inside });
+        return `<div class="dv-prow">
+          <input type="checkbox" ${picked || covered ? "checked" : ""} ${covered ? "disabled" : ""} onchange="toggleDrivePickerFolder('${q}', ${i})"
+            aria-label="${escapeHtml(driveText("drive.pk_show", { name: f.name }))}">
+          <button type="button" class="dv-prow-btn" onclick="openDrivePickerFolder('${q}', ${i})">${driveIcon("folder", "fi")}
+            <span class="dv-prow-text"><span class="dv-prow-name">${escapeHtml(f.name)}</span>${sub ? `<span class="dv-prow-sub">${sub}</span>` : ""}</span>
+            ${driveIcon("chevR", "dv-chevr")}</button></div>`;
+      }
+
+      function drivePickerWriteRow(p, sv, f, i, q) {
+        const path = f.path || "";
+        const allowed = drivePathInScope(sv, path);
+        const leads = !allowed && path && sv.folders.some((s) => s.path && s.path.startsWith(path + "/"));
+        const navigable = allowed || leads;
+        let sub = "";
+        if (!allowed) sub = t(leads ? "drive.pk_contains" : "drive.pk_not_visible");
+        const inside = p.write && p.writePath && p.write !== f.id && path && p.writePath.startsWith(path + "/");
+        return `<div class="dv-prow${!allowed && !leads ? " dim" : ""}">
+          <input type="radio" name="drive-pk-w" ${p.write === f.id ? "checked" : ""} ${allowed ? "" : "disabled"} onchange="setDrivePickerWrite('${q}', ${i})"
+            aria-label="${escapeHtml(driveText("drive.pk_save_to", { name: f.name }))}">
+          <button type="button" class="dv-prow-btn" ${navigable ? `onclick="openDrivePickerFolder('${q}', ${i})"` : "disabled"}>${driveIcon("folder", "fi")}
+            <span class="dv-prow-text"><span class="dv-prow-name">${escapeHtml(f.name)}</span>${sub ? `<span class="dv-prow-sub">${sub}</span>` : ""}</span>
+            ${inside ? `<span class="dv-pill save">${t("drive.pk_saves_inside")}</span>` : ""}${navigable ? driveIcon("chevR", "dv-chevr") : ""}</button></div>`;
+      }
+
+      function drivePickerFoot(p, sv, q) {
+        const n = drivePickerChanges(p);
+        if (p.confirm && n > 0) {
+          return `<div class="dv-pk-confirm" role="alert"><span>${driveText(n === 1 ? "drive.pk_confirm_one" : "drive.pk_confirm_many", { n })}</span>
+            <div class="dv-btns"><button type="button" class="dv-link" onclick="resumeDrivePicker('${q}')">${t("drive.pk_keep")}</button>
+            <button type="button" class="btn btn-secondary dv-btn-sm" onclick="closeDrivePicker('${q}')">${t("drive.pk_discard")}</button>
+            <button type="button" class="btn btn-primary dv-btn-sm" id="drive-pk-save-confirm" ${p.busy ? "disabled" : ""} onclick="saveDrivePicker('${q}')">${t("drive.save")}</button></div></div>`;
+        }
+        let tray = "";
+        if (p.purpose === "scope") {
+          const chips = [];
+          if (p.whole) chips.push(`<span class="dv-tchip">${t("drive.whole_title")}<button type="button" onclick="toggleDrivePickerWhole('${q}', false)" aria-label="${escapeHtml(t("drive.stop_whole"))}">${driveIcon("x", "sm")}</button></span>`);
+          p.sel.forEach((s, i) => chips.push(`<span class="dv-tchip">${escapeHtml(driveLast(s.path) || s.id)}<button type="button" onclick="removeDrivePickerChip('${q}', ${i})"
+            aria-label="${escapeHtml(driveText("drive.pk_remove", { name: s.path || s.id }))}">${driveIcon("x", "sm")}</button></span>`));
+          tray = chips.length ? chips.join("")
+            : sv.means === "area" ? t("drive.pk_tray_empty_area") : `<span class="dv-warn-text">${t("drive.pk_tray_empty")}</span>`;
+        } else {
+          const value = p.write === null ? t("drive.write_none_title")
+            : p.write === "" ? t(sv.means === "area" ? "drive.own_folder" : "drive.write_top") : escapeHtml(p.writePath || p.write);
+          tray = t("drive.pk_saves_to").replace("{v}", `<strong>${value}</strong>`);
+        }
+        return `<div class="dv-tray" aria-label="${escapeHtml(t("drive.pk_selected"))}">${tray}</div>
+          ${p.error ? `<div class="dv-msg err" role="alert">${escapeHtml(p.error)}</div>` : ""}
+          <div class="dv-foot-row"><div class="dv-pk-actions"><button type="button" class="btn btn-secondary dv-btn-sm" onclick="closeDrivePicker('${q}')">${t("drive.cancel")}</button>
+          <button type="button" class="btn btn-primary dv-btn-sm" ${n && !p.busy ? "" : "disabled"} onclick="saveDrivePicker('${q}')">${t("drive.save")}${n ? " (" + n + ")" : ""}</button></div></div>`;
+      }
+
+      // Esc and a click outside ask before dropping a draft; Tab stays inside the dialog.
+      document.addEventListener("keydown", (e) => {
+        if (!drivePickerId) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          requestCloseDrivePicker(drivePickerId);
+        } else if (e.key === "Tab") {
+          const dialog = document.getElementById("drive-pk-dialog");
+          if (!dialog) return;
+          const items = Array.from(dialog.querySelectorAll("button:not([disabled]), input:not([disabled])"));
+          if (!items.length) return;
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      });
 
       function askDisconnectDrive(id) {
         driveUiOf(id).confirm = true;
@@ -4259,7 +5481,8 @@
       // DriveSyncState.last_error categories (USER_DRIVE_INDEXING_RFC §3.5); shown localised, never raw.
       const DRIVE_ERROR_CATEGORIES = ["reconnect_needed", "throttled", "provider_error", "internal"];
 
-      // DriveSyncState.counters keys (records per state, §6), in display order; a key not listed shows raw.
+      // DriveSyncState.counters keys (records per state, §6), in display order. Only a key listed here is
+      // ever shown (the enrichment stats and `chunks` of the stored counters are not).
       const DRIVE_COUNTER_LABELS = {
         carded: "drive.index_searchable",
         indexed: "drive.index_indexed",
@@ -4270,53 +5493,73 @@
         inaccessible: "drive.index_inaccessible",   // files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)
         failed: "drive.index_failed",
         deleting: "drive.index_deleting",
+        profile_current: "drive.index_described",   // files with a current description
+        passages_current: "drive.index_readable_content",   // files readable by their content
+        coverage_no_passages: "drive.index_coverage_gap",   // a problem signal: shown only when non-zero
       };
 
       let driveMirrorRoot = false;   // the user has a _Transcripts folder: the opt-out confirmation names it
+      // The "Search index" tab. The row's model (reconnect, empty scope, progress) is derived from the list the page holds.
       function renderDriveIndexing(ix, linked) {
         const enabled = !!ix.enabled;
         driveMirrorRoot = !!ix.mirror_root;
+        const model = driveModel(driveRowOf(ix.connection_id) || { indexing: ix });
+        const q = escapeHtml(ix.connection_id);
         const c = ix.counters || {};
         const num = (v) => Number(v) || 0;
+        const usd = (v) => `$${num(v).toFixed(2)}`;
         let details = "";
         if (enabled) {
-          const counts = [`${t("drive.index_searchable")}: ${num(c.carded)}`];
-          if (num(ix.readable_chunks)) counts.push(`${t("drive.index_chunks")}: ${num(ix.readable_chunks)}`);
-          // §25.4.5: this month's model dollars per class against its cap, shown once anything was spent, and the
-          // initial build's progress (the §24.7 page and image counters are retired)
-          const usd = (v) => `$${num(v).toFixed(2)}`;
-          const spent = ix.model_usd_month || {};
-          const caps = ix.model_usd_caps || {};
-          const classes = ["reader", "triage", "profile", "passage", "transcribe"].filter((k) => num(spent[k]) > 0)
-            .map((k) => `${t("drive.index_usd_" + k)} ${usd(spent[k])} / ${usd(caps[k])}`);
-          const build = ix.initial_build || {};
-          const usage = [
-            classes.length ? t("drive.index_model_usage").replace("{classes}", classes.join(", ")) : "",
-            num(build.spent_usd) > 0
-              ? t(build.closed ? "drive.index_initial_build_done" : "drive.index_initial_build")
-                  .replace("{spent}", usd(build.spent_usd)).replace("{allowance}", usd(build.allowance_usd))
-              : "",
-          ].filter(Boolean).join("<br>");
-          const known = Object.keys(DRIVE_COUNTER_LABELS);
-          const keys = known.concat(Object.keys(c).filter((k) => !known.includes(k)));
-          for (const key of keys) {
-            // `unread` is waiting plus unreadable: the waiting part is shown as `not_read_yet`, the unreadable files
-            // are listed by name (ix.unreadable); inaccessible_unnotified is the drive notice's gate (§26.2), not the user's
-            if (key === "carded" || key === "unread" || key === "inaccessible_unnotified" || !num(c[key])) continue;
-            counts.push(`${DRIVE_COUNTER_LABELS[key] ? t(DRIVE_COUNTER_LABELS[key]) : escapeHtml(key)}: ${num(c[key])}`);
+          const last = ix.last_success_at ? new Date(ix.last_success_at).toLocaleString() : t("drive.index_never");
+          // the status row: paused, nothing to index, building (with its bar), or up to date
+          let status = "";
+          if (model.needsReconnect) {
+            status = `<div class="dv-status paused">${driveIcon("pause")}${t("drive.status_paused")}</div>`;
+          } else if (model.emptyIndex) {
+            status = `<div class="dv-status warn">${driveIcon("alert")}${t("drive.search_empty")}</div>
+              <div class="dv-row-sub">${t("drive.status_empty_sub")}</div>
+              <div class="dv-alert-actions"><button type="button" class="btn btn-primary dv-btn-sm" onclick="openDrivePicker('${q}', 'scope')">${t("drive.choose_folders")}</button></div>`;
+          } else if (ix.awaiting_rebuild) {
+            status = `<div class="dv-status">${t("drive.index_awaiting_rebuild")}</div>`;
+          } else if (ix.building) {
+            status = `<div class="dv-status">${t("drive.index_building")}${model.pct !== null && model.pct !== undefined ? " " + model.pct + "%" : ""}</div>
+              ${model.pct !== null && model.pct !== undefined ? `<div class="dv-bar"><span style="width:${Math.max(model.pct, 2)}%"></span></div>` : ""}`;
+          } else {
+            status = `<div class="dv-status ok">${driveIcon("check")}${t("drive.status_ok")}</div>`;
           }
-          const last = ix.last_success_at
-            ? new Date(ix.last_success_at).toLocaleString()
-            : t("drive.index_never");
-          const category = ix.last_error
-            ? (DRIVE_ERROR_CATEGORIES.includes(ix.last_error) ? ix.last_error : "internal")
-            : null;
+          const checking = num(c.unresolved);
+          if (checking > 0 && !model.needsReconnect) status += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(checking) })}</div>`;
+          if (!model.needsReconnect || ix.last_success_at) status += `<div class="dv-row-sub">${t("drive.index_last_sync")}: ${escapeHtml(last)}</div>`;
+
+          let tiles = "";
+          let more = "";
+          if (!model.emptyIndex) {
+            // Three tiles. Waiting is `pending` only; `unresolved` has its own line above, `not_read_yet` is under
+            // "All counters".
+            const cant = num(c.inaccessible) + num(c.failed);
+            tiles = `<div class="dv-stats">
+              <div class="dv-stat"><div class="dv-stat-v">${driveFmt(c.carded)}</div><div class="dv-stat-l">${t("drive.index_searchable")}</div></div>
+              <div class="dv-stat"><div class="dv-stat-v">${driveFmt(c.pending)}</div><div class="dv-stat-l">${t("drive.index_pending")}</div></div>
+              <div class="dv-stat${cant ? " warn" : ""}"><div class="dv-stat-v">${driveFmt(cant)}</div><div class="dv-stat-l">${t("drive.index_cant_read")}</div></div></div>`;
+            // Only keys with a label are shown (no raw-key fallback): the enrichment stats and `chunks` stay out.
+            const lines = [["carded", c.carded, false], ["chunks_readable", ix.readable_chunks, false]];
+            for (const key of ["indexed", "metadata_only", "pending", "unresolved", "not_read_yet", "inaccessible", "failed", "deleting"]) {
+              lines.push([key, c[key], false]);
+            }
+            lines.push(["profile_current", c.profile_current, false]);
+            lines.push(["passages_current", c.passages_current, false]);
+            if (num(c.coverage_no_passages) > 0) lines.push(["coverage_no_passages", c.coverage_no_passages, true]);
+            const labels = Object.assign({ chunks_readable: "drive.index_chunks" }, DRIVE_COUNTER_LABELS);
+            more = `<details class="dv-more"><summary>${driveIcon("chevR", "sm")}${t("drive.all_counters")}</summary>
+              <div class="dv-more-body"><dl class="dv-kv">${lines.map(([key, v, attn]) =>
+                `<dt${attn ? ' class="attn"' : ""}>${t(labels[key])}</dt><dd class="${attn ? "attn" : num(v) ? "" : "zero"}">${driveFmt(v)}</dd>`).join("")}</dl></div></details>`;
+          }
           const unreadable = ix.unreadable || {};
           const unreadableFiles = Array.isArray(unreadable.files) ? unreadable.files : [];
           const unreadableMore = num(unreadable.total) - unreadableFiles.length;
-          const unreadableBlock = num(unreadable.total) > 0 ? `
-              <div style="margin-top:6px;">
-                <div>${t("drive.index_unreadable_title")}</div>
+          if (num(unreadable.total) > 0) {
+            more += `<details class="dv-more"><summary>${driveIcon("chevR", "sm")}${t("drive.index_unreadable_title")}<span class="cnt">${num(unreadable.total)}</span></summary>
+              <div class="dv-more-body"><ul class="dv-unread">
                 ${unreadableFiles.map((f) => {
                   const known = ["no_text", "machine_text", "too_large", "user_chunk_cap", "failed"].includes(f.reason);
                   const why = t("drive.unreadable_reason." + (known ? f.reason : "failed"));
@@ -4324,32 +5567,40 @@
                   const name = link
                     ? `<a href="${escapeHtml(f.web_url)}" target="_blank" rel="noopener">${escapeHtml(f.name)}</a>`
                     : escapeHtml(f.name);
-                  return `<div style="padding-left:12px;">${name} \u2014 ${why}</div>`;
+                  return `<li>${name}<span>${why}</span></li>`;
                 }).join("")}
-                ${unreadableMore > 0 ? `<div style="padding-left:12px;">${t("drive.index_unreadable_more").replace("{n}", unreadableMore)}</div>` : ""}
-              </div>` : "";
-          details = `
-            <div style="font-size:13px; color:var(--text-muted); margin-top:10px; line-height:1.6;">
-              ${ix.awaiting_rebuild ? `<div>${t("drive.index_awaiting_rebuild")}</div>`
-                : ix.building ? `<div>${t("drive.index_building")}</div>` : ""}
-              <div>${counts.join(" \u00b7 ")}</div>
-              ${unreadableBlock}
-              ${usage ? `<div>${usage}</div>` : ""}
-              <div>${t("drive.index_last_sync")}: ${last}</div>
-              ${ix.index_full ? `<div style="color:var(--accent-danger);">${t("drive.index_full")}</div>` : ""}
-              ${category ? `<div>${t("drive.index_problem")}: ${t("drive.err." + category)}</div>` : ""}
-            </div>`;
+                ${unreadableMore > 0 ? `<li><span>${t("drive.index_unreadable_more").replace("{n}", unreadableMore)}</span></li>` : ""}
+              </ul></div></details>`;
+          }
+          // §25.4.5: this month's model dollars per class against its cap, and the initial build's progress
+          const spent = ix.model_usd_month || {};
+          const caps = ix.model_usd_caps || {};
+          const meter = (label, value, cap, done) => {
+            const pct = cap > 0 ? Math.min(100, Math.round((100 * value) / cap)) : 0;
+            const text = done ? driveText("drive.finished_spent", { spent: usd(value) }) : driveText("drive.spent_of", { spent: usd(value), cap: usd(cap) });
+            return `<div class="dv-meter"><span>${label}</span><span class="v">${text}</span><div class="dv-bar${done ? " ok" : pct >= 80 ? " warn" : ""}"><span style="width:${done ? 100 : pct}%"></span></div></div>`;
+          };
+          const classes = ["reader", "triage", "profile", "passage", "transcribe"].filter((k) => num(spent[k]) > 0 || num(caps[k]) > 0);
+          const build = ix.initial_build || {};
+          const hasBuild = num(build.spent_usd) > 0 || num(build.allowance_usd) > 0;
+          const meters = (classes.length ? `<div class="dv-meters"><div class="dv-meters-title">${t("drive.spend_title")}</div>
+              ${classes.map((k) => meter(t("drive.index_usd_" + k), num(spent[k]), num(caps[k]), false)).join("")}</div>` : "")
+            + (hasBuild ? `<div class="dv-meters">${meter(t("drive.initial_build_label"), num(build.spent_usd), num(build.allowance_usd), !!build.closed)}</div>` : "");
+          details = `<div class="dv-group"><div class="dv-row"><div class="dv-row-main">${status}</div></div></div>
+            ${tiles}
+            ${more ? `<div class="dv-group">${more}</div>` : ""}
+            ${meters ? `<div class="dv-group">${meters}</div>` : ""}`;
         }
         return `
-          <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-active); border-radius:12px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-              <label style="font-size:14px; font-weight:500; cursor:pointer;" for="drive-index-toggle-${escapeHtml(ix.connection_id)}">${t("drive.index_title")}</label>
-              <input type="checkbox" id="drive-index-toggle-${escapeHtml(ix.connection_id)}" ${enabled ? "checked" : ""}
-                onchange="saveDriveIndexing(this, '${escapeHtml(ix.connection_id)}')" style="width:18px;height:18px;cursor:pointer;">
-            </div>
-            <details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.index_disclosure")}${ix.dr_copy ? " " + t("drive.index_disclosure_dr_copy") : ""}${ix.transcribe_enabled ? " " + t("drive.transcribe_disclosure") : ""}${ix.mirror_root ? " " + t("drive.mirror_clause") : ""}</p></details>
-            ${details}
-          </div>`;
+          <div class="dv-group">
+            <div class="dv-row"><div class="dv-row-main"><label class="dv-row-title" for="drive-index-toggle-${q}">${t("drive.index_title")}</label>
+              <div class="dv-row-sub">${t("drive.index_sub")}</div></div>
+              <input type="checkbox" class="dv-switch" id="drive-index-toggle-${q}" ${enabled ? "checked" : ""}
+                onchange="saveDriveIndexing(this, '${q}')"></div>
+            <div class="dv-row-disc"><details class="disclosure"><summary>${t("drive.disclosure_summary")}</summary><p>${t("drive.index_disclosure")}${ix.dr_copy ? " " + t("drive.index_disclosure_dr_copy") : ""}${ix.transcribe_enabled ? " " + t("drive.transcribe_disclosure") : ""}${ix.mirror_root ? " " + t("drive.mirror_clause") : ""}</p></details></div>
+            ${enabled ? "" : `<div class="dv-row"><span class="dv-row-value">${t("drive.index_search_off")}</span></div>`}
+          </div>
+          ${details}`;
       }
 
       function renderDeepResearchCopy(enabled) {
@@ -4711,5 +5962,6 @@
         window.location.href = "/";
       }
     </script>
+    <div id="drive-picker-root"></div>
   </body>
 </html>

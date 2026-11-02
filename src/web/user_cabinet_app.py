@@ -24,6 +24,7 @@ from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
+from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
@@ -1633,6 +1634,18 @@ def create_user_cabinet_blueprint(
             logger.warning(f"Drive card: reading the account label failed: {exc_brief(exc)}")
             return ""
 
+    async def _empty_scope_meaning(connection: DriveConnection) -> Optional[str]:
+        """What a connection with no folders chosen sees, by its drive's `feed_scope`: "area" (the area root, e.g. an
+        App Folder) or "nothing" (an account-wide drive). None when the capabilities cannot be read (best effort)."""
+        if user_drive_service is None:
+            return None
+        try:
+            capabilities = (await user_drive_service.access(connection.handle))[1]
+        except Exception as exc:
+            logger.warning(f"Drive card: reading the drive capabilities failed: {exc_brief(exc)}")
+            return None
+        return "area" if capabilities.feed_scope is FeedScope.AREA else "nothing"
+
     async def _connection_row(connection: DriveConnection, primary_id: Optional[str], note: str) -> dict:
         grant_present = await _has_credential(connection)
         needs_reconnect = connection.state is ConnectionState.NEEDS_RECONNECT or not grant_present
@@ -1646,6 +1659,7 @@ def create_user_cabinet_blueprint(
             "primary": connection.connection_id == primary_id,
             "write_folder": await _write_folder_json(connection),
             "scope": {"whole_drive": connection.scope_whole_drive,
+                      "empty_means": await _empty_scope_meaning(connection),
                       "folders": [{"id": folder, "path": await _item_path(connection, folder)}
                                   for folder in connection.scope_folder_ids]},
             "searched_by_default": connection.searched_by_default,

@@ -1,7 +1,10 @@
 """The Cabinet shows Search v2's model dollars (USER_DRIVE_INDEXING_RFC §25.4.5; review rv_sv2_p5 MINOR 3): this
-month's dollars per class against its cap and the initial build's progress, in place of the retired §24.7 page and
-image counters."""
+month's dollars per class against its cap and the initial build's progress ("finished" once it closed), in place of
+the retired §24.7 page and image counters. Since the drive card redesign both are meters: a label, "spent of cap" and a
+bar."""
+import json
 import re
+import shutil
 
 import pytest
 
@@ -9,9 +12,10 @@ from src.domain.drive_enrichment import USD_CAPS, UsageClass
 from src.domain.drive_index_params import INITIAL_BUILD_USD
 from src.domain.drive_indexing_status import DriveIndexingStatus
 from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
+from tests.unit.web.test_cabinet_drive_redesign import _card, _render, _row
 from tests.unit.web.test_user_cabinet_drive_index_card import _indexing
 
-KEYS = ("drive.index_model_usage", "drive.index_initial_build", "drive.index_initial_build_done",
+KEYS = ("drive.spend_title", "drive.spent_of", "drive.finished_spent", "drive.initial_build_label",
         *(f"drive.index_usd_{c.value}" for c in UsageClass))
 
 
@@ -30,9 +34,9 @@ async def test_the_api_returns_the_month_dollars_their_caps_and_the_initial_buil
 def test_every_dollar_key_in_every_language_with_its_placeholders(lang):
     _, dicts = _dicts()
     assert [k for k in KEYS if not dicts[lang].get(k)] == []
-    assert "{classes}" in dicts[lang]["drive.index_model_usage"]
-    assert all(p in dicts[lang]["drive.index_initial_build"] for p in ("{spent}", "{allowance}"))
-    assert "{spent}" in dicts[lang]["drive.index_initial_build_done"]
+    # one meter text serves a class against its cap and the open build against its allowance
+    assert all(p in dicts[lang]["drive.spent_of"] for p in ("{spent}", "{cap}"))
+    assert "{spent}" in dicts[lang]["drive.finished_spent"]
     if lang != "en":
         assert [k for k in KEYS if dicts[lang][k] == dicts["en"][k]] == []
 
@@ -43,6 +47,37 @@ def test_the_card_renders_the_dollars_and_no_page_counters():
     for field in ("ix.model_usd_month", "ix.model_usd_caps", "ix.initial_build"):
         assert field in render, field
     assert "model_pages" not in render and "triage_images" not in render
+
+
+_METER_TEXTS = ('t = (key) => key === "drive.spent_of" ? ' + json.dumps("{spent} of {cap}")
+                + ' : key === "drive.finished_spent" ? ' + json.dumps("finished, {spent}") + ' : "T:" + key;')
+
+
+def _meters(month: dict, caps: dict, build: dict) -> str:
+    row = _row(means="area", counters={"carded": 5})
+    row["indexing"].update(model_usd_month=month, model_usd_caps=caps, initial_build=build)
+    return _card(_render([row], 'driveUiOf("c1").tab = "index";' + _METER_TEXTS), "c1")
+
+
+def _meter(html: str, label: str):
+    found = re.search(rf'<div class="dv-meter"><span>T:{re.escape(label)}</span><span class="v">(.*?)</span>', html)
+    return found and found.group(1)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_meters_show_each_class_against_its_cap_and_the_initial_build():
+    html = _meters({"reader": 0.12345, "profile": 1.5}, {"reader": 5.0, "profile": 10.0},
+                   {"spent_usd": 12.5, "allowance_usd": 40.0, "closed": False})
+    assert "T:drive.spend_title" in html
+    assert _meter(html, "drive.index_usd_reader") == "$0.12 of $5.00"
+    assert _meter(html, "drive.index_usd_profile") == "$1.50 of $10.00"
+    assert not _meter(html, "drive.index_usd_triage")            # neither spent nor capped: no meter
+    assert _meter(html, "drive.initial_build_label") == "$12.50 of $40.00"
+    closed = _meters({}, {}, {"spent_usd": 38.2, "allowance_usd": 40.0, "closed": True})
+    assert _meter(closed, "drive.initial_build_label") == "finished, $38.20"
+    assert "T:drive.spend_title" not in closed                   # nothing spent or capped this month
+    nothing = _meters({}, {}, {})
+    assert "dv-meter" not in nothing
 
 
 async def test_the_status_reads_the_usage_document_and_the_initial_build():
