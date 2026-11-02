@@ -457,7 +457,7 @@ class DriveSearchService:
         try:
             capabilities = await self._drive.capabilities(conn.handle)
         except Exception as exc:
-            logger.warning(f"[DriveSearch] capabilities of a connection failed, scope not applied: {exc_brief(exc)}")
+            logger.debug(f"[DriveSearch] capabilities of a connection failed, scope not applied: {exc_brief(exc)}")
             return None
         if not conn.scope_folder_ids and capabilities.feed_scope is FeedScope.AREA:
             return None
