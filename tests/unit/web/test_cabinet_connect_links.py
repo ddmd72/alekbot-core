@@ -40,17 +40,28 @@ def _run(body: str, connectors=CONNECTORS):
     return json.loads(out)
 
 
+def _body(pattern: str) -> str:
+    return re.search(pattern, _HTML, re.S).group(0)
+
+
 def test_no_card_names_a_connect_path_of_its_own():
     assert "/auth/connect-" not in _HTML
-    for card in ("renderGmailStatus", "renderDriveStatus", "renderServiceStatus"):
-        body = re.search(rf"function {card}\(.*?\n      }}\n", _HTML, re.S).group(0)
-        assert "connectButton(data.connect_href" in body, card
-    for loader, integration in (("loadGmailStatus", "mail"), ("loadDriveStatus", "drive"), ("loadTasksStatus", "tasks")):
-        body = re.search(rf"async function {loader}\(\) \{{.*?\n      }}\n", _HTML, re.S).group(0)
+    assert not re.search(r"/auth/connect/[A-Za-z_]", _HTML)   # every link names a kind the server gave
+    for card in ("renderGmailStatus", "renderServiceStatus"):
+        assert "connectButton(data.connect_href" in _body(rf"function {card}\(.*?\n      }}\n"), card
+    for loader, integration in (("loadGmailStatus", "mail"), ("loadTasksStatus", "tasks")):
+        body = _body(rf"async function {loader}\(\) \{{.*?\n      }}\n")
         assert f'connectHref("{integration}")' in body, loader
-    # MULTI_DRIVE_RFC §11.7: the drive card is a connection list; each row's reconnect link names its own credential
     assert 'connectHref("mail", data.credential_id)' in _HTML
-    assert 'connectHref("drive", row.reconnect.credential_id)' in _HTML
+    # Δ14 (GOOGLE_DRIVE_RFC stage 3): the drive card offers every drive connector of /api/connectors, and each row of
+    # the connection list (MULTI_DRIVE_RFC §11.7) reconnects to its own kind with its own credential
+    assert "renderAddDrive(data)" in _body(r"function renderDriveStatus\(.*?\n      }\n")
+    loader = _body(r"async function loadDriveStatus\(\) \{.*?\n      }\n")
+    assert '(await loadConnectors()).filter((c) => c.integration === "drive")' in loader
+    assert ("`/auth/connect/${encodeURIComponent(row.kind)}"
+            "?credential=${encodeURIComponent(row.reconnect.credential_id)}`") in loader
+    assert "addDrive('${escapeHtml(c.kind)}')" in _body(r"function renderAddDrive\(.*?\n      }\n")
+    assert "`/auth/connect/${encodeURIComponent(kind)}?intent=add`" in _body(r"function addDrive\(.*?\n      }\n")
 
 
 def test_the_old_callback_params_are_gone_and_the_new_ones_are_read():

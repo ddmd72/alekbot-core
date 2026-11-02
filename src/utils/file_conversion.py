@@ -22,6 +22,7 @@ from .document_hardening import (  # noqa: F401 — re-exported: the hardening's
     build_markitdown,
     check_zip_container,
 )
+from ..domain.text_data_uris import MAX_TEXT_EXPORT_BYTES, drop_data_uri_images
 from .logger import logger
 
 if TYPE_CHECKING:
@@ -104,11 +105,11 @@ def _truncate_bytes(text: str, limit: int) -> str:
     return encoded[:max(limit, 0)].decode("utf-8", errors="ignore")
 
 
-def _size_alert(filename: str, size_bytes: int) -> str:
+def _size_alert(filename: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES) -> str:
     mb = size_bytes / (1024 * 1024)
     return (
         f"[System: User attempted to attach '{filename}' ({mb:.1f} MB). "
-        f"File exceeds the 5 MB limit and was not included in this message. "
+        f"File exceeds the {limit_bytes // (1024 * 1024)} MB limit and was not included in this message. "
         f"Ask the user to send a smaller file or paste the content directly.]"
     )
 
@@ -221,11 +222,14 @@ async def convert_file_to_text(
     or a [System: ...] alert on failure.
     """
     size = os.path.getsize(local_path)
-    if size > MAX_FILE_BYTES:
+    plain = _is_plain_text(mime_type) and not is_audio(mime_type)
+    # A text file may be larger than MAX_FILE_BYTES: its inline images are dropped first, and the cap then applies to
+    # the text that is left (G1b). Every other mime keeps the cap on the file itself.
+    if size > (MAX_TEXT_EXPORT_BYTES if plain else MAX_FILE_BYTES):
         logger.warning(
             f"[FileConversion] Rejecting oversized file: {filename} ({size / 1024 / 1024:.1f} MB)"
         )
-        return _size_alert(filename, size)
+        return _size_alert(filename, size, MAX_TEXT_EXPORT_BYTES if plain else MAX_FILE_BYTES)
 
     # Audio path — via injected AudioTranscriptionPort. markitdown's own AudioConverter is not
     # registered (it uploads to Google's speech API), so every audio file must be routed here.
@@ -253,6 +257,11 @@ async def convert_file_to_text(
                 with open(local_path, "r", encoding="utf-8", errors="replace") as f:
                     return f.read()
             text = await asyncio.to_thread(_read)
+            text = await asyncio.to_thread(drop_data_uri_images, text)
+            text_size = len(text.encode("utf-8"))
+            if text_size > MAX_FILE_BYTES:
+                logger.warning(f"[FileConversion] Rejecting oversized text: {filename} ({text_size / 1024 / 1024:.1f} MB)")
+                return _size_alert(filename, text_size)
             logger.info(f"[FileConversion] Read plain text '{filename}': {len(text)} chars")
         except Exception as e:
             logger.warning(f"[FileConversion] Failed to read '{filename}': {e}")

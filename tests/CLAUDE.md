@@ -37,7 +37,7 @@ tests/
   floor still counts it.
 - **The aiohttp boundary has one fake.** A test that needs the HTTP surface the To Do, Gmail and Slack webhook adapters use takes
   `tests/support/http_boundary_fake.py` (`install(monkeypatch)`, exact-path routes, unrouted URLs fail loudly), never a new fake.
-  That rule covers stateless wire tests; `tests/support/graph_drive_fake.py` is a stateful Graph fake that serves the drive
+  That rule covers stateless wire tests; `tests/support/graph_drive_fake.py` and `tests/support/google_drive_fake.py` are stateful Graph and Drive v3 fakes that serve the drive
   contract suite (`tests/contracts/user_drive_contract.py`) only.
 - **Drive fakes** (multi-drive): `tests/support/fake_drive_adapter.py` (a `UserDrivePort` for any kind, registered under
   several kinds in the two-provider tests), `drive_handles.py` (handles), `drive_connection_repo.py` (in-memory

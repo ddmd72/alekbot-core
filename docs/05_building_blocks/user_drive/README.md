@@ -200,6 +200,41 @@ holds no drive id; the connection's `drive_identity` names the drive.
   history, and everything on the drive itself (mirror folder, ledger, files). A disconnect that leaves no primary also
   turns the deep-research copy off.
 
+### 1.3 The Google Drive provider (GOOGLE_DRIVE_RFC)
+
+A **Google connection** is one Google account's whole Drive as a drive connection (`kind = google_drive`, adapter
+`src/adapters/google/google_drive_adapter.py`). A user may hold several, each with its own mount name (`Springfield`,
+`Acme`), and a Google account may also hold Gmail: the drive credential is its own grant (Drive's full scope plus the
+identity scopes, never folding in an earlier grant). The Cabinet offers "Google Drive" in "Add a drive" (from
+`GET /api/connectors`). The adapter is built only when `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` are
+configured, at both build sites (`service_container.py`, `indexer_main.py`); without them the kind is unregistered, its
+handles raise `DriveNotConnectedError` and every other kind runs. The drive stack exists when at least one drive adapter
+is built, not only behind the Microsoft keys.
+- **Identity (GE-1, GE-2).** The drive is `google_drive:account:{permissionId}` (from `about.get`); an item is
+  `google_drive:{fileId}`, with no account part, so one file seen from two connected accounts is one identity and one note.
+- **Feed and cursor.** The feed is ACCOUNT-wide (`FeedScope.ACCOUNT`): the Drive `changes` feed enumerates every file the
+  account sees, the connection's scope filters it, and the cursor is the adapter's own encoded string
+  (`google_drive_cursor.py`). Writes happen only inside the write folder, as for any account-wide drive.
+- **Natives and exports (GE-6).** Docs, Sheets, Slides and Drawings have no bytes; they are read through an export on
+  `download`: Docs as Markdown, Sheets as xlsx, Slides as plain text, Drawings as pdf; other natives and shortcuts are
+  metadata only (`mime_type=""`). Natives are read and searched, never edited (`can_write_content=False`). Their change
+  key is the head revision id (`r:`), or `m:` + `modifiedTime` when revisions are not readable. An export over Google's
+  10 MB cap is refused at download time and maps to the "too large" outcome. Inline `data:` images in an exported
+  Markdown are dropped before the size cap.
+- **Outer folders (G8).** Folders shared with the account, and each member shared drive's root, hang under no chain from
+  My Drive's root. `UserDriveService.picker_folders` returns them as `outer` next to the root's children and the Cabinet
+  shows them under "Outside this drive's root", so one of them, or a folder inside one, can be a scope folder. With only
+  such folders chosen, the mount line says `indexes only <paths>` and `list_folder("<mount>")` lists the chosen folders
+  under `Folders indexed on <drive>:`; any other path outside the scope is refused.
+- **`∕` in names (G4).** A `/` inside a Google name prints as `∕` (U+2215) at every path join and is matched the same way,
+  so `Garden plan 2026/27` prints as `Springfield/Garden plan 2026∕27` and resolves back. Reading by path accepts every
+  Google name (`Clients: 2026`); the portable-name check applies only to a folder the bot creates.
+- **The media relay (G2).** Google media needs an `Authorization` header, which must never enter the parser sandbox. A
+  header-carrying `MediaSource` is served to the transcript child by a one-use loopback relay in the indexer process
+  (`media_relay.py`): the child receives only a loopback URL, ffmpeg seeks through it, and the relay adds the header.
+- **Parser user (G13).** Parser children now run next to full-drive tokens, so on Cloud Run a missing `DRIVE_PARSER_USER`
+  fails the start instead of running the children as the indexer's own user.
+
 ### 1.1 Deep research copies (opt-in)
 
 A Cabinet switch in the Drive card, "Copy deep research reports to my drive" (`UserBotConfig.drive_copy_deep_research`,

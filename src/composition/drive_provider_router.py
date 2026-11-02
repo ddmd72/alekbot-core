@@ -100,6 +100,9 @@ class DriveProviderRouter(UserDrivePort):
     async def media_source(self, handle: DriveHandle, item_id: str) -> MediaSource:
         return await self._route(handle).media_source(handle, item_id)
 
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        return await self._route(handle).outer_folders(handle)
+
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
         return await self._route(handle).capabilities(handle)
 

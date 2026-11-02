@@ -13,6 +13,7 @@ from src.ports.account_repository import AccountRepository
 from src.ports.user_drive_port import UserDrivePort
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.unit.composition.test_drive_wiring import NO_DRIVE_CLIENT
 
 _MAIN = Path(__file__).resolve().parents[3] / "main.py"
 
@@ -31,7 +32,7 @@ def _container(monkeypatch, **extra):
 
 class TestContainer:
     def test_absent_without_a_drive(self, monkeypatch):
-        c = _container(monkeypatch)
+        c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.drive_search_service is None
         assert c.agent_services()["drive_search_service"] is None
 

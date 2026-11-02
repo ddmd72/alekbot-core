@@ -26,6 +26,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.file_localization_adapter import FileLocalizationAdapter
 from ..adapters.firestore_quota_service import FirestoreQuotaService
+from ..adapters.drive_parser.media_relay import relay_child_url
 from ..adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.gemini_batch_adapter import GeminiBatchAdapter
@@ -152,7 +153,7 @@ def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, driv
         return None
     batch = GeminiBatchAdapter(api_key=gemini_key, model=GeminiAdapter.MODEL_TIERS[PerformanceTier.BALANCED])
     runner = DriveTranscriptRunner(batch, models.prompt_builder, quota_service=models.quota)
-    return DriveTranscriptStage(repo, drive, SubprocessMediaExtractor(sandbox_user=parser_user), batch, runner,
+    return DriveTranscriptStage(repo, drive, SubprocessMediaExtractor(sandbox_user=parser_user, child_url=relay_child_url), batch, runner,
                                 monthly_cap_usd=monthly_cap_usd, mirror=mirror)
 
 

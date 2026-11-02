@@ -10,7 +10,7 @@ overflow-callback's deferred factory reference.
 """
 
 import os
-from typing import Callable, Optional, Any
+from typing import Callable, Dict, Optional, Any
 
 from ..config.environment import EnvironmentConfig
 from . import cipher_setup
@@ -46,7 +46,7 @@ from ..services.email_review_service import EmailReviewService
 from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from ..adapters.firestore_credential_store import FirestoreCredentialStore
-from .connector_registry import GMAIL, MICROSOFT_ONEDRIVE, MICROSOFT_TODO, ConnectorRegistry
+from .connector_registry import GMAIL, GOOGLE_DRIVE, MICROSOFT_ONEDRIVE, MICROSOFT_TODO, ConnectorRegistry
 from .oauth_connect_setup import build_oauth_edges
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
@@ -57,6 +57,7 @@ from ..adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from ..adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
 from ..adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from ..adapters.firestore_task_search_index import FirestoreTaskSearchIndex
+from ..adapters.google.google_drive_adapter import GoogleDriveAdapter
 from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from ..ports.drive_index_repository import DriveIndexRepository
@@ -206,7 +207,10 @@ class ServiceContainer:
         # carries the fan-out's ticks and UserDriveService's nudges. The queue is None until
         # DRIVE_INDEXER_URL is set (drive_indexing_setup.build_drive_task_queue).
         # Every drive call goes through one `DriveProviderRouter` over the registry's drive adapters (MULTI_DRIVE_RFC
-        # §6, E6): the registry is rebuilt with the OneDrive adapter once it exists (same specs and edges), and
+        # §6, E6): each kind's adapter is built only when its OAuth client is configured (OneDrive: the Microsoft pair;
+        # Google Drive: the Google pair, GOOGLE_DRIVE_RFC GE-31); the registry is rebuilt with them (same specs and
+        # edges) and the drive stack exists when at least one is built (GE-25). A kind without an adapter stays
+        # unregistered and its handles are refused as not connected.
         # `user_drive` is the router. Drive connections and the primary pointer: `drive_connection_service` (§4.4).
         self.user_drive: Optional[UserDrivePort] = None
         self.drive_connection_repo: Optional[DriveConnectionRepository] = None
@@ -217,15 +221,23 @@ class ServiceContainer:
         # The transcript mirror's roots and ledger (§27.9): the Step 1 guard, the deleted-files search and the open of
         # an archived transcript read them on the main service.
         self.drive_mirror_repo: Optional[DriveMirrorRepository] = None
+        drive_adapters: Dict[str, UserDrivePort] = {}
         if config.get("MICROSOFT_TODO_CLIENT_ID") and config.get("MICROSOFT_TODO_CLIENT_SECRET"):
-            onedrive = OneDriveAdapter(
+            drive_adapters[MICROSOFT_ONEDRIVE] = OneDriveAdapter(
                 oauth_credentials=self.oauth_credentials,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
                 connector=self.connectors.get(MICROSOFT_ONEDRIVE),
             )
-            self.connectors = ConnectorRegistry(edges=self.connectors.edges(),
-                                                drive_adapters={MICROSOFT_ONEDRIVE: onedrive})
+        if config.get("GOOGLE_OAUTH_CLIENT_ID") and config.get("GOOGLE_OAUTH_CLIENT_SECRET"):
+            drive_adapters[GOOGLE_DRIVE] = GoogleDriveAdapter(
+                oauth_credentials=self.oauth_credentials,
+                client_id=config["GOOGLE_OAUTH_CLIENT_ID"],
+                client_secret=config["GOOGLE_OAUTH_CLIENT_SECRET"],
+                connector=self.connectors.get(GOOGLE_DRIVE),
+            )
+        if drive_adapters:
+            self.connectors = ConnectorRegistry(edges=self.connectors.edges(), drive_adapters=drive_adapters)
             self.user_drive = DriveProviderRouter(self.connectors.drive_adapters())
             self.drive_connection_repo = build_drive_connection_repository(db_client, env_config)
             self.drive_connection_service = DriveConnectionService(self.drive_connection_repo,

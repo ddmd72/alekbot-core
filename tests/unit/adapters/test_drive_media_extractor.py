@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domain.drive_media_source import MediaSource
 from src.adapters.drive_parser import media, media_launch as launch
 from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from src.domain.drive_transcript_windows import plan_windows
@@ -68,7 +69,7 @@ async def test_env_is_allowlist(tmp_path, monkeypatch):
     monkeypatch.setattr(launch.asyncio, "create_subprocess_exec", record)
     out = tmp_path / "out"
     extractor = _stub(tmp_path)
-    await extractor.extract_windows("env", [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
+    await extractor.extract_windows(MediaSource(url="env"), [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
     assert set(captured) <= {"PATH", "HOME", "LANG", "LC_ALL", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                              "MKL_NUM_THREADS", "MALLOC_ARENA_MAX", "TMPDIR"}
     assert "CLIENT_SECRET_FOR_TEST" not in captured and "PYTHONPATH" not in captured
@@ -91,7 +92,7 @@ async def test_runs_as_parser_user_when_configured(tmp_path, monkeypatch):
 
     monkeypatch.setattr(launch.asyncio, "create_subprocess_exec", record)
     extractor = _stub(tmp_path, sandbox_user="driveparser")
-    outcome = await extractor.extract_windows("ok", [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
+    outcome = await extractor.extract_windows(MediaSource(url="ok"), [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
     assert outcome.status is MediaStatus.OK
     (spawn,) = spawns
     kwargs = spawn["kwargs"]
@@ -119,7 +120,7 @@ async def test_wall_kills_group(tmp_path):
     out = tmp_path / "out"
     extractor = _stub(tmp_path)
     started = time.monotonic()
-    outcome = await extractor.extract_windows("sleep_group", [WindowSpec(0, 0, 10)], str(out), wall_s=3, container=WEBM)
+    outcome = await extractor.extract_windows(MediaSource(url="sleep_group"), [WindowSpec(0, 0, 10)], str(out), wall_s=3, container=WEBM)
     assert outcome.status is MediaStatus.TIMEOUT and outcome.windows == ()
     assert time.monotonic() - started < 15
 
@@ -135,7 +136,7 @@ async def test_wall_kill_reaches_the_grandchild(tmp_path, monkeypatch):
 
     monkeypatch.setattr(launch, "kill_group", spy)
     extractor = _stub(tmp_path)
-    await extractor.extract_windows("sleep_group", [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=3, container=WEBM)
+    await extractor.extract_windows(MediaSource(url="sleep_group"), [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=3, container=WEBM)
     (pgid,) = seen
     await asyncio.sleep(0.3)
     with pytest.raises(ProcessLookupError):                      # nothing is left in the child's process group
@@ -144,7 +145,7 @@ async def test_wall_kill_reaches_the_grandchild(tmp_path, monkeypatch):
 
 async def test_collected_windows_are_copied_and_the_directory_removed(tmp_path):
     out = tmp_path / "out"
-    outcome = await _stub(tmp_path).extract_windows("ok", [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
+    outcome = await _stub(tmp_path).extract_windows(MediaSource(url="ok"), [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
     ((spec, path),) = outcome.windows
     assert spec == WindowSpec(0, 0.0, 10.0) and path == str(out / "window_0.opus")
     assert stat.S_ISREG(os.lstat(path).st_mode) and list((tmp_path / "work").iterdir()) == []
@@ -154,24 +155,24 @@ async def test_collected_windows_are_copied_and_the_directory_removed(tmp_path):
 async def test_collected_window_must_be_regular_file(tmp_path, label):
     out = tmp_path / "out"
     with pytest.raises(MediaUnreadable):
-        await _stub(tmp_path).extract_windows(label, [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
+        await _stub(tmp_path).extract_windows(MediaSource(url=label), [WindowSpec(0, 0, 10)], str(out), wall_s=30, container=WEBM)
     assert not list(out.glob("window_*")) and list((tmp_path / "work").iterdir()) == []
 
 
 async def test_a_window_over_the_file_limit_is_refused(tmp_path):
     extractor = _stub(tmp_path, file_limit_bytes=1000)
     with pytest.raises(MediaUnreadable):
-        await extractor.extract_windows("oversize", [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
+        await extractor.extract_windows(MediaSource(url="oversize"), [WindowSpec(0, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
 
 
 async def test_a_child_error_is_an_unreadable_file(tmp_path):
     with pytest.raises(MediaUnreadable):
-        await _stub(tmp_path).probe("other")
+        await _stub(tmp_path).probe(MediaSource(url="other"))
 
 
 async def test_a_reported_window_outside_the_request_is_refused(tmp_path):
     with pytest.raises(MediaUnreadable):
-        await _stub(tmp_path).extract_windows("ok", [WindowSpec(5, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
+        await _stub(tmp_path).extract_windows(MediaSource(url="ok"), [WindowSpec(5, 0, 10)], str(tmp_path / "out"), wall_s=30, container=WEBM)
 
 
 # =============================================================================
@@ -184,14 +185,14 @@ async def test_probe_and_windows_over_https(tmp_path):
     mp4 = make_audio_mp4(tmp_path / "a.mp4", 100)
     with MediaServer(tmp_path, {"/a.mp4": mp4}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        outcome = await extractor.probe(server.url("/a.mp4"))
+        outcome = await extractor.probe(MediaSource(url=server.url("/a.mp4")))
         probe = outcome.probe
         assert outcome.status is MediaStatus.OK and probe.has_audio and probe.duration_known
         assert probe.duration_s == pytest.approx(100.0, abs=1.0) and "mp4" in probe.container
         # Plan-shaped: the request's last window is the file's last (M2: it is read at a full window's length, and a
         # header that is right ends it where the plan does, so no eof is reported).
         windows = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 70.0)]
-        result = await extractor.extract_windows(server.url("/a.mp4"), windows, str(tmp_path / "o"), wall_s=60,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/a.mp4")), windows, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container)
         assert result.status is MediaStatus.OK and not result.eof
         assert [(w.index, w.start_s) for w, _ in result.windows] == [(0, 0.0), (1, 30.0)]
@@ -211,7 +212,7 @@ async def test_audio_less_file_probes_without_audio(tmp_path):
                     "-t", "3", "-c:v", "libx264", str(path)], check=True)
     with MediaServer(tmp_path, {"/v.mp4": path.read_bytes()}) as server:
         outcome = await SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path)).probe(
-            server.url("/v.mp4"))
+            MediaSource(url=server.url("/v.mp4")))
     assert outcome.probe.has_audio is False
 
 
@@ -224,12 +225,12 @@ async def test_probe_without_duration_takes_one_pass_segment(tmp_path):
     webm = make_cueless_webm(100)
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        outcome = await extractor.probe(server.url("/rec.webm"))
+        outcome = await extractor.probe(MediaSource(url=server.url("/rec.webm")))
         probe = outcome.probe
         assert outcome.status is MediaStatus.OK and probe.has_audio and not probe.duration_known
         assert probe.duration_s == 0.0 and "webm" in probe.container
         plan = plan_windows(14_400)[:3]
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=60,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container, duration_known=False)
     assert result.status is MediaStatus.OK and result.eof and not result.reached_bound
     assert result.duration_s == pytest.approx(100.0, abs=1.0)
@@ -248,7 +249,7 @@ async def test_a_pass_cuts_overlapping_windows_whose_content_matches_the_clock(t
     assert [(w.index, w.start_s) for w in plan] == [(0, 0.0), (1, 30.0), (2, 60.0)]
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=60,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=60,
                                                  container=WEBM, duration_known=False)
     assert result.status is MediaStatus.OK and not result.eof and [w.index for w, _ in result.windows] == [0, 1, 2]
     for spec, path in result.windows:
@@ -266,7 +267,7 @@ async def test_a_resumed_pass_starts_at_the_slice_and_keeps_the_clock(tmp_path):
     plan = plan_windows(100.0, window_s=40, overlap_s=10)[1:]     # indexes 1 and 2: the first window is done
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=60,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=60,
                                                  container=WEBM, duration_known=False)
     assert [(w.index, w.start_s) for w, _ in result.windows] == [(1, 30.0), (2, 60.0)]
     (spec1, path1), (spec2, path2) = result.windows
@@ -303,7 +304,7 @@ async def test_a_pass_cut_by_the_cpu_limit_returns_the_windows_inside_the_prefix
     plan = [WindowSpec(0, 0.0, 60.0), WindowSpec(1, 50.0, 700.0), WindowSpec(2, 740.0, 760.0)]
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path), cpu_limit_s=3)
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=120,
                                                  container=WEBM, duration_known=False)
     assert result.status is MediaStatus.TIMEOUT and not result.eof
     assert 0 < len(result.windows) < 3 and result.windows[0][0].index == 0
@@ -319,7 +320,7 @@ async def test_a_pass_cut_by_the_file_size_limit_returns_the_windows_inside_the_
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path),
                                              file_limit_bytes=200_000)
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=120,
                                                  container=WEBM, duration_known=False)
     assert result.status is MediaStatus.TIMEOUT and not result.eof
     assert 0 < len(result.windows) < 3 and result.windows[0][0].index == 0
@@ -334,7 +335,7 @@ async def test_a_dropped_connection_is_retried_and_the_duration_is_the_whole_fil
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         server.drop_at, server.drop_first_only = int(len(webm) * 0.3), True
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        result = await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=120,
                                                  container=WEBM, duration_known=False)
     assert result.status is MediaStatus.OK and result.eof
     assert result.duration_s == pytest.approx(300.0, abs=2.0)
@@ -349,7 +350,7 @@ async def test_a_connection_that_keeps_dropping_is_an_error_never_an_eof(tmp_pat
         server.drop_at = int(len(webm) * 0.3)
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
         with pytest.raises(MediaUnreadable):
-            await extractor.extract_windows(server.url("/rec.webm"), plan, str(tmp_path / "o"), wall_s=120,
+            await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan, str(tmp_path / "o"), wall_s=120,
                                             container=WEBM, duration_known=False)
     assert not list((tmp_path / "o").glob("window_*"))
 
@@ -363,7 +364,7 @@ async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_it
         server.drop_at = int(len(webm) * 0.5)
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
         with pytest.raises(MediaUnreadable):
-            await extractor.extract_windows(server.url("/a.webm"), [WindowSpec(0, 0.0, 90.0)], str(tmp_path / "o"),
+            await extractor.extract_windows(MediaSource(url=server.url("/a.webm")), [WindowSpec(0, 0.0, 90.0)], str(tmp_path / "o"),
                                             wall_s=60, container=WEBM)
     assert not list((tmp_path / "o").glob("window_*"))
 
@@ -376,7 +377,7 @@ async def test_a_limit_before_the_first_window_is_an_error_not_a_loop(tmp_path):
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path), cpu_limit_s=3)
         with pytest.raises(MediaUnreadable):
-            await extractor.extract_windows(server.url("/rec.webm"), plan_windows(14_400)[:3], str(tmp_path / "o"),
+            await extractor.extract_windows(MediaSource(url=server.url("/rec.webm")), plan_windows(14_400)[:3], str(tmp_path / "o"),
                                             wall_s=170, container=WEBM, duration_known=False)
 
 
@@ -388,10 +389,10 @@ async def test_video_longer_than_the_audio_ends_at_the_audio(tmp_path):
     mp4 = make_overstated_mp4(tmp_path / "v.mp4", video_s=100, audio_s=60)
     with MediaServer(tmp_path, {"/v.mp4": mp4}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/v.mp4"))).probe
+        probe = (await extractor.probe(MediaSource(url=server.url("/v.mp4")))).probe
         assert probe.duration_s == pytest.approx(100.0, abs=1.0)
         plan = [WindowSpec(0, 0.0, 40.0), WindowSpec(1, 30.0, 40.0), WindowSpec(2, 60.0, 40.0)]
-        result = await extractor.extract_windows(server.url("/v.mp4"), plan, str(tmp_path / "o"), wall_s=60,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/v.mp4")), plan, str(tmp_path / "o"), wall_s=60,
                                                  container=probe.container)
     assert result.status is MediaStatus.OK and result.eof and result.duration_s == pytest.approx(60.0, abs=1.0)
     assert [w.index for w, _ in result.windows] == [0, 1]                 # window 2 was never run
@@ -404,10 +405,10 @@ async def test_an_mp3_whose_header_overstates_the_duration_ends_at_the_audio(tmp
     mp3 = make_overstated_mp3(tmp_path / "a.mp3", 120)
     with MediaServer(tmp_path, {"/a.mp3": mp3}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/a.mp3"))).probe
+        probe = (await extractor.probe(MediaSource(url=server.url("/a.mp3")))).probe
         if probe.duration_s < 122:
             pytest.skip("this ffmpeg estimates the duration exactly")
-        result = await extractor.extract_windows(server.url("/a.mp3"), [WindowSpec(0, 0.0, probe.duration_s)],
+        result = await extractor.extract_windows(MediaSource(url=server.url("/a.mp3")), [WindowSpec(0, 0.0, probe.duration_s)],
                                                  str(tmp_path / "o"), wall_s=60, container=probe.container)
     assert result.status is MediaStatus.OK and result.eof and result.duration_s == pytest.approx(120.0, abs=2.0)
     assert len(result.windows) == 1
@@ -421,8 +422,8 @@ async def test_one_corrupt_packet_does_not_fail_the_file(tmp_path):
     mp4 = make_corrupt_mp4(tmp_path / "c.mp4", 120)
     with MediaServer(tmp_path, {"/c.mp4": mp4}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/c.mp4"))).probe
-        result = await extractor.extract_windows(server.url("/c.mp4"), [WindowSpec(0, 0.0, 120.0)],
+        probe = (await extractor.probe(MediaSource(url=server.url("/c.mp4")))).probe
+        result = await extractor.extract_windows(MediaSource(url=server.url("/c.mp4")), [WindowSpec(0, 0.0, 120.0)],
                                                  str(tmp_path / "o"), wall_s=60, container=probe.container)
     assert result.status is MediaStatus.OK and len(result.windows) == 1 and not result.eof
 
@@ -436,8 +437,8 @@ async def test_a_corrupt_packet_late_in_a_long_file_is_re_run_after_earlier_wind
     plan = plan_windows(900.0, window_s=60, overlap_s=5)
     with MediaServer(tmp_path, {"/c.mp4": mp4}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path), cpu_limit_s=3)
-        probe = (await extractor.probe(server.url("/c.mp4"))).probe
-        result = await extractor.extract_windows(server.url("/c.mp4"), plan, str(tmp_path / "o"), wall_s=170,
+        probe = (await extractor.probe(MediaSource(url=server.url("/c.mp4")))).probe
+        result = await extractor.extract_windows(MediaSource(url=server.url("/c.mp4")), plan, str(tmp_path / "o"), wall_s=170,
                                                  container=probe.container)
     assert result.status is MediaStatus.OK and not result.eof
     assert [w.index for w, _ in result.windows] == [w.index for w in plan]
@@ -452,9 +453,9 @@ async def test_a_corrupt_cluster_in_a_pass_is_re_run_and_yields_its_windows(tmp_
     plan = plan_windows(150.0, window_s=60, overlap_s=10)
     with MediaServer(tmp_path, {"/rec.mkv": mkv}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/rec.mkv"))).probe
+        probe = (await extractor.probe(MediaSource(url=server.url("/rec.mkv")))).probe
         assert not probe.duration_known and probe.container == WEBM
-        result = await extractor.extract_windows(server.url("/rec.mkv"), plan, str(tmp_path / "o"), wall_s=120,
+        result = await extractor.extract_windows(MediaSource(url=server.url("/rec.mkv")), plan, str(tmp_path / "o"), wall_s=120,
                                                  container=probe.container, duration_known=False)
         assert result.status is MediaStatus.OK
         assert [w.index for w, _ in result.windows] == [w.index for w in plan]
@@ -631,16 +632,16 @@ def test_network_exit_codes_are_computed_for_this_platform():
 async def test_an_empty_container_is_refused_before_any_child_runs(tmp_path):
     for bad in ("", "-i x"):
         with pytest.raises(MediaUnreadable):
-            await _stub(tmp_path).extract_windows("ok", [WindowSpec(0, 0, 10)], str(tmp_path / "o"), wall_s=30,
+            await _stub(tmp_path).extract_windows(MediaSource(url="ok"), [WindowSpec(0, 0, 10)], str(tmp_path / "o"), wall_s=30,
                                                   container=bad)
 
 
 async def test_a_pass_takes_a_short_contiguous_slice(tmp_path):
     with pytest.raises(ValueError):
-        await _stub(tmp_path).extract_windows("ok", [WindowSpec(i, 0, 10) for i in range(4)], str(tmp_path / "o"),
+        await _stub(tmp_path).extract_windows(MediaSource(url="ok"), [WindowSpec(i, 0, 10) for i in range(4)], str(tmp_path / "o"),
                                               wall_s=30, container=WEBM, duration_known=False)
     with pytest.raises(ValueError):
-        await _stub(tmp_path).extract_windows("ok", [WindowSpec(0, 0, 10), WindowSpec(2, 0, 10)],
+        await _stub(tmp_path).extract_windows(MediaSource(url="ok"), [WindowSpec(0, 0, 10), WindowSpec(2, 0, 10)],
                                               str(tmp_path / "o"), wall_s=30, container=WEBM, duration_known=False)
 
 
@@ -654,9 +655,9 @@ async def test_tls_verify_refuses_an_untrusted_server(tmp_path):
     with MediaServer(tmp_path, {"/a.mp4": mp4}) as server, MediaServer(other) as stranger:
         extractor = SubprocessMediaExtractor(ca_file=stranger.ca_pem, temp_root=str(tmp_path))
         with pytest.raises(MediaUnreadable):
-            await extractor.probe(server.url("/a.mp4"))
+            await extractor.probe(MediaSource(url=server.url("/a.mp4")))
         trusted = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        assert (await trusted.probe(server.url("/a.mp4"))).probe is not None
+        assert (await trusted.probe(MediaSource(url=server.url("/a.mp4")))).probe is not None
 
 
 @pytest.mark.timing   # the outcome is set by a 1.5 s wall against decode speed (owner rule 2026-10-20, T-R33)

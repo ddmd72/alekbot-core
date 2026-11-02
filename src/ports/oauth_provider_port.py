@@ -4,6 +4,7 @@ provider-side revoke. Token refresh is not here: it stays with the data adapters
 """
 
 from abc import ABC, abstractmethod
+from typing import Tuple
 
 from src.domain.connector_spec import ConnectorSpec
 from src.domain.oauth_credential import OAuthCredential
@@ -25,6 +26,12 @@ class OAuthProviderPort(ABC):
     @abstractmethod
     def revocation_scope(self) -> RevocationScope:
         """What a provider-side revoke of this realm ends (§4.3)."""
+
+    @property
+    @abstractmethod
+    def identity_scopes(self) -> Tuple[str, ...]:
+        """Every form in which this edge's identity scopes appear among the granted scopes it returns (design Δ5): the
+        scopes the edge adds to `spec.required_scopes` and the provider's spellings of them. Data, compared only."""
 
     @abstractmethod
     def authorization_url(self, flow: OAuthFlow, spec: ConnectorSpec, redirect_uri: str, *, state: str) -> str:

@@ -1,6 +1,6 @@
 from quart import Blueprint, request, jsonify, g, send_file, redirect, abort, send_from_directory
 from functools import wraps
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 import asyncio
 import os
@@ -1804,13 +1804,19 @@ def create_user_cabinet_blueprint(
     @auth_required
     @drive_route
     async def drive_connection_folders(connection_id: str):
-        """The folder picker: the folder children of `?parent=<item id>` (the root without it)."""
+        """The folder picker: the folder children of `?parent=<item id>` -> {"folders": [...]}. Without `?parent` (the
+        root) the body also carries `"outer"`: the folders outside the drive's root (tops of shared chains, shared-drive
+        roots), `[]` for a drive with one area."""
         connection = await _own_connection(g.user_id, connection_id)
         if user_drive_service is None:
             return jsonify({"error": "Drive integration not configured"}), 501
         parent = request.args.get("parent") or None
         folders = await user_drive_service.picker_folders(connection.handle, parent)
-        return jsonify({"folders": [{"id": f.item_id, "name": f.name, "path": f.path} for f in folders]}), 200
+        body: Dict[str, Any] = {"folders": [{"id": f.item_id, "name": f.name, "path": f.path} for f in folders]}
+        if parent is None:
+            outer = await user_drive_service.picker_outer_folders(connection.handle)
+            body["outer"] = [{"id": f.item_id, "name": f.name, "path": f.path} for f in outer]
+        return jsonify(body), 200
 
     @bp.route("/api/drive/connections/<connection_id>", methods=["DELETE"])
     @auth_required

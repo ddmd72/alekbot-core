@@ -116,6 +116,7 @@ class OAuthConnectService:
             self._check_scopes(spec, grant)
         except OAuthScopeNotGrantedError:
             return self._done(kind, "scope", session_user_id, return_path)
+        self._warn_extra_scopes(spec, grant, edge)
         if flow.intent is FlowIntent.RECONNECT and grant.account.subject != flow.expected_subject:
             return self._done(kind, "account", session_user_id, return_path)
         saved = await self._store(flow, spec, grant, session_account_id)
@@ -146,6 +147,14 @@ class OAuthConnectService:
         if missing:
             raise OAuthScopeNotGrantedError(f"missing scopes for {spec.kind}")
 
+    @staticmethod
+    def _warn_extra_scopes(spec: ConnectorSpec, grant: GrantResult, edge: OAuthProviderPort) -> None:
+        """G14: a grant wider than asked (an earlier grant folded in) is stored as is; the count is logged, never a
+        scope string."""
+        extra = [s for s in grant.scopes if s not in spec.required_scopes and s not in edge.identity_scopes]
+        if extra:
+            logger.warning(f"OAuth grant carries {len(extra)} scopes beyond the asked ones: kind={spec.kind} (stored)")
+
     async def _store(self, flow: OAuthFlow, spec: ConnectorSpec, grant: GrantResult,
                      account_id: str) -> OAuthCredential:
         user_id = flow.user_id
@@ -158,7 +167,8 @@ class OAuthConnectService:
             target = next((c for c in held if c.account.realm == grant.account.realm
                            and c.account.subject == grant.account.subject), None)
         if target is not None:
-            updated = replace(target, access_token=grant.access_token, refresh_token=grant.refresh_token,
+            updated = replace(target, access_token=grant.access_token,
+                              refresh_token=grant.refresh_token or target.refresh_token,
                               token_expiry=grant.token_expiry, scopes=list(grant.scopes),
                               account=grant.account, needs_reconnect=False)
             if await self._credentials.update(updated):

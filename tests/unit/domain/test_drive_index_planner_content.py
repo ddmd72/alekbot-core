@@ -576,9 +576,12 @@ class TestCanStartFile:
     def test_a_fresh_tick_can_start_a_routed_file(self):
         assert can_start_file(0.0, routed=True)
 
-    def test_a_routed_file_fits_at_the_end_of_the_start_budget(self):
-        """§24.3: the configured per-file budgets fit the tick deadline after the whole start budget."""
-        assert can_start_file(TICK_START_BUDGET.total_seconds(), routed=True)
+    def test_at_the_end_of_the_start_budget_a_parsed_file_fits_and_a_routed_one_does_not(self):
+        """§24.3 with GOOGLE_DRIVE_RFC G9: a parsed file's budgets still fit the tick deadline after the whole start
+        budget; a routed file's worst case (300 s transfer) leaves it only the start window before
+        TICK_DEADLINE_S - its worst case, which ends inside the start budget."""
+        assert can_start_file(TICK_START_BUDGET.total_seconds(), routed=False)
+        assert not can_start_file(TICK_START_BUDGET.total_seconds(), routed=True)
 
     def test_the_bound_is_strict(self):
         from src.domain.drive_index_params import (

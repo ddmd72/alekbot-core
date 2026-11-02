@@ -113,6 +113,7 @@ from ..domain.drive_index_params import (
     TRANSCRIBE_USD_PER_MONTH, TRANSCRIBE_WINDOW_S, TRANSCRIPT_ORPHAN_TTL,
 )
 from ..domain.drive_index_planner import month_key
+from ..domain.drive_media_source import MediaSource
 from ..domain.drive_transcript import (
     BATCH_CLOSED_STATES, BATCH_SUBMITTING, JobWindow, MediaProbe, MediaStatus, MediaUnreadable, MediaWindowsOutcome, StoredTranscript, TranscriptBatch,
     TranscriptJob, TranscriptStub, WindowInput, WindowOutcome, WindowResult, WindowSpec, WindowTranscript,
@@ -400,7 +401,7 @@ class DriveTranscriptStage:
                     step.ready[rec.item_id] = (rec, job)
                 elif windows_to_extract(job, now, pass_mode=False):
                     if self._may_start(step):
-                        await self._extract(handle, host, rec, job, step, summary, url=None, probe=None)
+                        await self._extract(handle, host, rec, job, step, summary, source=None, probe=None)
                 elif state_for_job(job) == WAITING:   # submitted, the record write lost (a crash): repaired
                     await self._commit(host, replace(rec, transcript_state=WAITING), rec)
                 return
@@ -441,10 +442,10 @@ class DriveTranscriptStage:
             if job is not None:
                 await self._abandon(handle, host, job, step)
             return
-        url = await self._url(handle, host, rec, job, step, summary)
-        if url is None:
+        source = await self._source(handle, host, rec, job, step, summary)
+        if source is None:
             return
-        probe = await self._probe(handle, host, rec, job, step, summary, url)
+        probe = await self._probe(handle, host, rec, job, step, summary, source)
         if probe is None:
             return
         start = start_file(rec, step.ctx, probe)
@@ -485,23 +486,23 @@ class DriveTranscriptStage:
             if settled is None:
                 return
             working, new_job = settled
-        await self._extract(handle, host, working, new_job, step, summary, url=url, probe=probe)
+        await self._extract(handle, host, working, new_job, step, summary, source=source, probe=probe)
 
     # ------------------------------------------------------------------------------------------------------------
     # Extraction and upload
     # ------------------------------------------------------------------------------------------------------------
 
     async def _extract(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
-                       step: _Step, summary: Dict[str, int], *, url: Optional[str],
+                       step: _Step, summary: Dict[str, int], *, source: Optional[MediaSource],
                        probe: Optional[MediaProbe]) -> None:
         """As many windows as the step's wall allows (§27.4): the first run gets the whole TRANSCRIBE_EXTRACT_WALL_S,
         a further one (the next pass of a file without a duration) starts only with TRANSCRIBE_MIN_RUN_WALL_S left.
         Each window is uploaded as the run returns it and recorded after the provider answered."""
-        if url is None or probe is None:
-            url = await self._url(handle, host, rec, job, step, summary)   # fresh for every step (Δ98, Δ134)
-            if url is None:
+        if source is None or probe is None:
+            source = await self._source(handle, host, rec, job, step, summary)   # fresh for every step (Δ98, Δ134)
+            if source is None:
                 return
-            probe = await self._probe(handle, host, rec, job, step, summary, url)
+            probe = await self._probe(handle, host, rec, job, step, summary, source)
             if probe is None:
                 return
         if not probe.has_audio:
@@ -518,7 +519,7 @@ class DriveTranscriptStage:
                     break
                 began = self._monotonic()
                 try:
-                    outcome = await self._media.extract_windows(url, specs, out_dir, wall_s=wall_left,
+                    outcome = await self._media.extract_windows(source, specs, out_dir, wall_s=wall_left,
                                                                 container=probe.container,
                                                                 duration_known=not pass_mode)
                 except MediaUnreadable as exc:
@@ -1524,30 +1525,22 @@ class DriveTranscriptStage:
     def _may_start(self, step: _Step) -> bool:
         return self._monotonic() < step.stop_at
 
-    async def _url(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
-                   step: _Step, summary: Dict[str, int]) -> Optional[str]:
-        """The URL the media sandbox streams the file from (MULTI_DRIVE_RFC §6, E24): only a header-free media source (a
-        pre-signed URL) is ever passed; the url and headers are secrets, never logged. A source that needs headers would
-        put a provider token in the network-capable sandbox: it is refused (the file is charged an attempt) and logged
-        at ERROR, until the stream-into-the-workdir path exists for the provider that needs it."""
+    async def _source(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord,
+                      job: Optional[TranscriptJob], step: _Step, summary: Dict[str, int]) -> Optional[MediaSource]:
+        """Where the file's bytes stream from (MULTI_DRIVE_RFC §6, E24). The source goes to the media port as is, which
+        keeps every header out of the sandbox (GOOGLE_DRIVE_RFC G2); the url and headers are secrets, never logged."""
         try:
-            source = await self._drive.media_source(handle, rec.item_id)
+            return await self._drive.media_source(handle, rec.item_id)
         except _DRIVE_SYSTEMIC:
             raise
         except _URL_ERRORS as exc:
             await self._charge(handle, host, rec, job, step, summary, f"download URL ({type(exc).__name__})")
             return None
-        if not source.header_free:
-            logger.error(f"[DriveTranscript] {_short(rec.item_id)}: the drive's media source needs request headers; "
-                         f"no provider credential enters the media sandbox (E24): not transcribed")
-            await self._charge(handle, host, rec, job, step, summary, "media source needs headers")
-            return None
-        return source.url
 
     async def _probe(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
-                     step: _Step, summary: Dict[str, int], url: str) -> Optional[MediaProbe]:
+                     step: _Step, summary: Dict[str, int], source: MediaSource) -> Optional[MediaProbe]:
         try:
-            outcome = await self._media.probe(url)
+            outcome = await self._media.probe(source)
         except MediaUnreadable as exc:
             await self._charge(handle, host, rec, job, step, summary, f"probe unreadable ({exc.detail[:80]})")
             return None

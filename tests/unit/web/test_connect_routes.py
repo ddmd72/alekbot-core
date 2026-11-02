@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from src.composition.connector_registry import ConnectorRegistry
 from src.domain.flow_intent import FlowIntent
 from tests.support.firestore_eval import eval_transactions
 from tests.unit.web.connect_world import (
@@ -18,6 +19,9 @@ from tests.unit.web.connect_world import (
 
 LOGIN = "/auth/login?next=/cabinet"
 SRC = Path(__file__).resolve().parents[3] / "src"
+# Every kind a start may begin: the offered ones (a not-offered kind is refused, test_connect_start_offered.py).
+OFFERED = [spec.kind for spec in ConnectorRegistry().offered()]
+CONSENT = {"google": GOOGLE_AUTH, "microsoft": MS_AUTH}
 
 
 @pytest.fixture
@@ -58,10 +62,14 @@ async def test_a_kind_whose_realm_has_no_edge_is_501(monkeypatch):
     assert world.flows == {}
 
 
-@pytest.mark.parametrize("kind, consent", [
-    ("gmail", GOOGLE_AUTH), ("microsoft_todo", MS_AUTH), ("microsoft_onedrive", MS_AUTH), ("google_tasks", GOOGLE_AUTH),
-])
-async def test_a_start_redirects_to_the_realms_consent_with_the_one_callback(world, kind, consent):
+def test_the_starts_cover_both_realms_and_every_connector_offered_today():
+    assert {"gmail", "microsoft_todo", "microsoft_onedrive"} <= set(OFFERED)
+    assert {ConnectorRegistry().get(kind).realm for kind in OFFERED} == set(CONSENT)
+
+
+@pytest.mark.parametrize("kind", OFFERED)
+async def test_a_start_redirects_to_the_realms_consent_with_the_one_callback(world, kind):
+    consent = CONSENT[world.registry.get(kind).realm]
     resp, state = await world.start(kind)
     location = resp.headers["Location"]
     assert resp.status_code == 302 and location.startswith(consent + "?")
@@ -179,7 +187,7 @@ async def test_no_route_sets_a_cookie_and_no_connect_cookie_is_left_in_the_code(
 
 # ------------------------------------------------------------------------------------- the account chooser, add
 
-@pytest.mark.parametrize("kind", ["gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive"])
+@pytest.mark.parametrize("kind", OFFERED)
 async def test_every_connect_shows_the_account_chooser(world, kind):
     resp, _ = await world.start(kind)
     assert "select_account" in _query(resp.headers["Location"])["prompt"].split()

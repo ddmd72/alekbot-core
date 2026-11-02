@@ -119,14 +119,18 @@ def test_make_history_stub_malformed_passthrough():
 
 @pytest.mark.asyncio
 async def test_convert_rejects_oversized_file(tmp_path):
-    large_file = tmp_path / "big.csv"
+    # A non-text file is refused on its size before conversion; a text file's 5 MB cap applies to its text after the
+    # inline images are dropped (GOOGLE_DRIVE_RFC G1b, GE-26; test_file_conversion_text_limit_names_g1b.py).
+    large_file = tmp_path / "big.docx"
     large_file.write_bytes(b"x")  # Create the file
 
     with patch("os.path.getsize", return_value=MAX_FILE_BYTES + 1):
-        result = await convert_file_to_text(str(large_file), "big.csv", "text/csv")
+        result = await convert_file_to_text(
+            str(large_file), "big.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
     assert "5 MB limit" in result
-    assert "big.csv" in result
+    assert "big.docx" in result
     assert result.startswith("[System:")
 
 

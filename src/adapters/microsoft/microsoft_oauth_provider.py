@@ -7,6 +7,7 @@ Microsoft is never revoked at the provider (`RevocationScope.NONE`). Granted sco
 import base64
 import hashlib
 from datetime import datetime, timedelta, timezone
+from typing import Tuple
 from urllib.parse import urlencode
 
 import aiohttp
@@ -28,6 +29,8 @@ _GRAPH_ME = "https://graph.microsoft.com/v1.0/me"
 _GRAPH_PREFIX = "https://graph.microsoft.com/"
 _REALM = "microsoft"
 _IDENTITY_SCOPES = ("offline_access", "User.Read")
+# the identity scopes as granted (already short form) plus the OIDC defaults Microsoft may add (G14)
+_GRANTED_IDENTITY_FORMS = ("offline_access", "User.Read", "openid", "profile", "email")
 _TOKEN_TIMEOUT_S = 30
 _ME_TIMEOUT_S = 10
 
@@ -53,6 +56,10 @@ class MicrosoftOAuthProvider(OAuthProviderPort):
     @property
     def revocation_scope(self) -> RevocationScope:
         return RevocationScope.NONE
+
+    @property
+    def identity_scopes(self) -> Tuple[str, ...]:
+        return _GRANTED_IDENTITY_FORMS
 
     def authorization_url(self, flow: OAuthFlow, spec: ConnectorSpec, redirect_uri: str, *, state: str) -> str:
         scopes = tuple(dict.fromkeys((*spec.required_scopes, *_IDENTITY_SCOPES)))

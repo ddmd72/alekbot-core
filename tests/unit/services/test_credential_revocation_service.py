@@ -18,6 +18,7 @@ class FakeEdge(OAuthProviderPort):
 
     realm = property(lambda self: self._realm)
     revocation_scope = property(lambda self: self._scope)
+    identity_scopes = property(lambda self: ())
 
     def authorization_url(self, flow, spec, redirect_uri, *, state):
         raise NotImplementedError

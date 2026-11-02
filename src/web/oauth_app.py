@@ -543,6 +543,8 @@ def create_oauth_blueprint(
         spec = connectors.specs().get(kind)
         if spec is None:
             return jsonify({"error": "Unknown connector"}), 404
+        if not spec.offered:
+            return jsonify({"error": "Unknown connector"}), 404
         if spec.realm not in connectors.edges():
             return jsonify({"error": f"{spec.label} integration not configured"}), 501
         credential_id = request.args.get("credential") or None

@@ -53,7 +53,7 @@ import secrets
 import tempfile
 from dataclasses import dataclass, replace
 from typing import (
-    TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Set, Tuple, Union,
+    TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union,
 )
 
 import aiofiles
@@ -378,7 +378,8 @@ class DriveOperations:
             tag = conn.ref_tag
             shown_folder = self._shown(conn, out.folder)
             shown_items = [self._shown(conn, i) for i in out.items]
-            lines = [drive_label(shown_folder, tag)] + [f"  {drive_label(i, tag)}" for i in shown_items]
+            head = f"Folders indexed on {conn.mount_name}:" if out.scope_tops else drive_label(shown_folder, tag)
+            lines = [head] + [f"  {drive_label(i, tag)}" for i in shown_items]
             if not out.items:
                 lines.append("  (empty)")
             if out.truncated:
@@ -410,6 +411,13 @@ class DriveOperations:
                 logger.warning("[DriveOperations] write folder read failed: %s", exc_brief(exc))
                 return None
 
+        async def scope_of(mount: Mount) -> Tuple[List[str], int]:
+            try:
+                return await drive_service.scope_folder_paths(mount.connection.handle)
+            except Exception as exc:
+                logger.warning("[DriveOperations] scope folders read failed: %s", exc_brief(exc))
+                return [], 0
+
         async def notes() -> Dict[str, str]:
             if self._drive_notes is None:
                 return {}
@@ -419,10 +427,12 @@ class DriveOperations:
                 logger.warning("[DriveOperations] drive notes read failed for %s: %s", user_id[:8], exc_brief(exc))
                 return {}
 
-        paths, texts = await asyncio.gather(asyncio.gather(*(folder_path_of(m) for m in table.mounts)), notes())
+        paths, scopes, texts = await asyncio.gather(
+            asyncio.gather(*(folder_path_of(m) for m in table.mounts)),
+            asyncio.gather(*(scope_of(m) for m in table.mounts)), notes())
         return tuple(mount_line(m, states.get(m.connection_id), write_folder_path=path,
-                                note=texts.get(m.connection_id, ""))
-                     for m, path in zip(table.mounts, paths))
+                                note=texts.get(m.connection_id, ""), scope_paths=scope[0], scope_more=scope[1])
+                     for m, path, scope in zip(table.mounts, paths, scopes))
 
     async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False) -> DriveOutcome:
         """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today)."""

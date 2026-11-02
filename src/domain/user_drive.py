@@ -187,6 +187,7 @@ class ListOutcome:
     folder: DriveItem
     items: List[DriveItem]
     truncated: bool
+    scope_tops: bool = False   # G11: the items are the chosen folders of a drive whose root is outside its scope
 
 
 @dataclass
@@ -226,21 +227,30 @@ def name_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+NAME_SLASH = "\u2215"   # DIVISION SLASH: a "/" inside a name prints as this (G4)
+
+
+def path_segment(name: str) -> str:
+    """A provider name as one printed path segment: every "/" becomes NAME_SLASH; nothing else changes."""
+    return name.replace("/", NAME_SLASH)
+
+
 def match_child_folder(children: Sequence[DriveItem], name: str) -> Optional[DriveItem]:
-    """The child folder named `name`: exact match first, else by `name_key` (§4.8)."""
+    """The child folder whose printed segment is `name`: exact match first, else by `name_key` (§4.8, G4)."""
     folders = [c for c in children if c.is_folder]
     for child in folders:
-        if child.name == name:
+        if path_segment(child.name) == name:
             return child
     wanted = name_key(name)
     for child in folders:
-        if name_key(child.name) == wanted:
+        if name_key(path_segment(child.name)) == wanted:
             return child
     return None
 
 
 def join_drive_path(parent: str, name: str) -> str:
-    return f"{parent}/{name}" if parent else name
+    """`name` is one provider name, never a path: a "/" inside it is escaped (G4)."""
+    return f"{parent}/{path_segment(name)}" if parent else path_segment(name)
 
 
 def format_size(size_bytes: int) -> str:

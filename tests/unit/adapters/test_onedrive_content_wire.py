@@ -85,7 +85,7 @@ class TestDownloadToFile:
         assert written == 11 and dest.read_bytes() == b"hello world"
         last = session.get.call_args_list[-1]
         assert last.args[0] == "https://dl.example/a" and "headers" not in last.kwargs
-        assert last.kwargs["timeout"].total == 120
+        assert last.kwargs["timeout"].total == 300   # GOOGLE_DRIVE_RFC G9: one transfer bound for every provider
 
     async def test_stream_past_the_cap_raises_too_large(self, tmp_path):
         session = _session([_resp(_FILE), _resp(chunks=[b"12345", b"67890", b"x"])])

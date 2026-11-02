@@ -29,6 +29,8 @@ _USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 _REALM = "google"
 # the account identity is read from userinfo on every consent (SECRETS_AT_REST_RFC §2.3, I9)
 _IDENTITY_SCOPES = ("openid", "email")
+# how Google reports the identity scopes among the granted ones: `email` comes back as the userinfo URL (G14)
+_GRANTED_IDENTITY_FORMS = ("openid", "email", "https://www.googleapis.com/auth/userinfo.email")
 _HTTP_TIMEOUT_S = 30
 
 
@@ -53,6 +55,10 @@ class GoogleOAuthProvider(OAuthProviderPort):
     @property
     def revocation_scope(self) -> RevocationScope:
         return RevocationScope.GRANT_WIDE
+
+    @property
+    def identity_scopes(self) -> Tuple[str, ...]:
+        return _GRANTED_IDENTITY_FORMS
 
     def authorization_url(self, flow: OAuthFlow, spec: ConnectorSpec, redirect_uri: str, *, state: str) -> str:
         scopes: Tuple[str, ...] = tuple(dict.fromkeys((*spec.required_scopes, *_IDENTITY_SCOPES)))
@@ -113,15 +119,21 @@ class GoogleOAuthProvider(OAuthProviderPort):
         )
 
     async def revoke(self, credential: OAuthCredential) -> None:
-        """Best-effort: a failure is logged and never raised."""
+        """Best-effort: a failure is logged and never raised, and no token is ever logged (GE-28). The refresh token is
+        posted when there is one: an expired access token revokes nothing, the refresh token ends the whole grant.
+        Every Google kind's disconnect (Gmail's too) goes through here."""
+        token = credential.refresh_token or credential.access_token
         try:
             async with aiohttp.ClientSession() as session:
-                await session.post(
+                async with session.post(
                     _REVOKE_URL,
-                    params={"token": credential.access_token},
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    data={"token": token},
                     timeout=_timeout(),
-                )
-            logger.info("Google token revoked at Google")
+                ) as resp:
+                    status = resp.status
+            if status == 200:
+                logger.info("Google grant revoked at Google")
+            else:
+                logger.warning(f"Google revoke answered {status}: not revoked")
         except Exception as exc:
             logger.warning(f"Google token revoke failed (ignored): {type(exc).__name__}")

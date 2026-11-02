@@ -63,11 +63,25 @@ def window_name(index: int) -> str:
     return f"window_{index}.opus"
 
 
+RELAY_URL_PREFIX = "http://127.0.0.1:"       # the one-use loopback relay (GOOGLE_DRIVE_RFC G2)
+RELAY_PROTOCOL_WHITELIST = "http,tcp"          # plain http to the relay: no tls, no other protocol
+
+
+def _transport_flags(url: str, ca_file: str) -> List[str]:
+    """Protocol allowlist and TLS flags by URL scheme: the relay's loopback URL gets `http,tcp` and no TLS flags; an
+    `https://` URL keeps TLS verification (ffmpeg verifies nothing by default); any other URL is refused."""
+    if url.startswith(RELAY_URL_PREFIX):
+        return ["-protocol_whitelist", RELAY_PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST]
+    if url.startswith("https://"):
+        return ["-protocol_whitelist", PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST,
+                "-tls_verify", "1", "-ca_file", ca_file]
+    raise ValueError("the media url must be https:// or the loopback relay")
+
+
 def _input_guard(url: str, ca_file: str, container: str) -> List[str]:
     """Flags common to every run: allowlists, TLS verification (ffmpeg verifies nothing by default), the network
     timeout, and the probed demuxer pinned with `-f` when known (G14)."""
-    argv = ["-protocol_whitelist", PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST,
-            "-tls_verify", "1", "-ca_file", ca_file, "-rw_timeout", str(NETWORK_TIMEOUT_US)] + RECONNECT_FLAGS
+    argv = _transport_flags(url, ca_file) + ["-rw_timeout", str(NETWORK_TIMEOUT_US)] + RECONNECT_FLAGS
     if not _FORMAT_NAME.match(container):
         raise ValueError("container name is missing or has an invalid shape")
     return argv + ["-f", container]
@@ -75,8 +89,7 @@ def _input_guard(url: str, ca_file: str, container: str) -> List[str]:
 
 def build_probe_argv(url: str, ca_file: str) -> List[str]:
     """ffprobe has no `-nostdin`; the runner gives it a closed stdin instead."""
-    return [FFPROBE, "-hide_banner", "-v", "error", "-protocol_whitelist", PROTOCOL_WHITELIST,
-            "-format_whitelist", FORMAT_WHITELIST, "-tls_verify", "1", "-ca_file", ca_file,
+    return [FFPROBE, "-hide_banner", "-v", "error", *_transport_flags(url, ca_file),
             "-rw_timeout", str(NETWORK_TIMEOUT_US), *RECONNECT_FLAGS, "-print_format", "json",
             "-show_entries", "format=duration,format_name:stream=codec_type", "-i", url]
 

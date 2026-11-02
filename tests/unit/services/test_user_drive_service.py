@@ -165,10 +165,17 @@ class TestProviderInvalidNames:
             await service.resolve_folder(H, f"Ok/{bad}", create=True)
         drive.create_folder.assert_not_called()
 
-    async def test_invalid_segment_rejected_even_without_create(self, service, drive):
+    async def test_invalid_segment_is_read_as_named_without_create(self, service, drive):
+        """GOOGLE_DRIVE_RFC G12 / GE-30: the portable-set check guards only a segment the bot creates; a read reaches
+        an existing folder whatever its name, and a missing one is a path error that creates nothing."""
+        named = _folder("ab", "a:b")
+        drive.list_children.return_value = [named]
+        res = await service.resolve_folder(H, "a:b", create=False)
+        assert res.folder is named and res.created == []
+        drive.list_children.return_value = []
         with pytest.raises(DrivePathError):
             await service.resolve_folder(H, "a:b", create=False)
-        drive.list_children.assert_not_called()
+        drive.create_folder.assert_not_called()
 
     async def test_invalid_new_name_rejected(self, service, drive):
         drive.get_item.return_value = _file("a", "a.txt", "Inbox")

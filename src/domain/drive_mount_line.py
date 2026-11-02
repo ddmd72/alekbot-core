@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from .drive_line import DriveLine
 from .drive_search_line import SearchLine
@@ -20,3 +20,5 @@ class MountLine:
     write_folder: str = ""          # the canonical path of a write folder below the root; "" = the root or unknown
     write_folder_unknown: bool = False  # a write folder below the root whose path could not be read
     note: str = ""                  # the owner's note on the drive, already bounded (`drive_note_line`)
+    scope_folders: Tuple[str, ...] = ()  # canonical paths of the chosen folders (G11), at most the caller's limit
+    scope_more: int = 0             # how many chosen folders the line does not name

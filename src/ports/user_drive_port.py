@@ -123,6 +123,12 @@ class UserDrivePort(ABC):
         no downloadable content."""
 
     @abstractmethod
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        """The folders the account sees that no parent chain from the root reaches: the tops of shared chains and the
+        roots of the shared drives the account is a member of, each with `path` = its name. [] for a drive with one
+        area (everything hangs under the root). Cached by the adapter per connection; `forget` drops it."""
+
+    @abstractmethod
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
         """What this connection's drive can do (§7.1)."""
 

@@ -116,7 +116,8 @@ class FakeMedia:
         self.runs: List[Dict[str, Any]] = []
         self.on_extract: Optional[Callable[[str], None]] = None
 
-    async def probe(self, url: str) -> MediaProbeOutcome:
+    async def probe(self, source: MediaSource) -> MediaProbeOutcome:
+        url = source.url
         assert url.startswith(URL_PREFIX)
         self.probes.append(url)
         rec = self.recordings[_item_of(url)]
@@ -129,8 +130,9 @@ class FakeMedia:
             duration_s=duration if rec.known else 0.0, has_audio=rec.has_audio, container=rec.container,
             duration_known=rec.known))
 
-    async def extract_windows(self, url: str, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
+    async def extract_windows(self, source: MediaSource, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
                               container: str, duration_known: bool = True) -> MediaWindowsOutcome:
+        url = source.url
         item = _item_of(url)
         self.runs.append({"item": item, "url": url, "indexes": [w.index for w in windows], "wall_s": wall_s,
                           "container": container, "duration_known": duration_known})

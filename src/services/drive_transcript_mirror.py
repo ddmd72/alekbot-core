@@ -116,7 +116,7 @@ from src.domain.drive_mirror_render import (
 from src.domain.drive_transcript import StoredTranscript
 from src.domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError, DrivePathTooLong,
-    DriveStorageFull, DriveThrottled,
+    DriveStorageFull, DriveThrottled, path_segment,
 )
 from src.ports.drive_index_repository import DriveIndexRepository
 from src.ports.drive_mirror_repository import DriveMirrorRepository
@@ -515,11 +515,11 @@ class DriveTranscriptMirror:
             seen: Set[str] = set()
             while rec is not None and rec.item_id not in seen and len(names) < MAX_CHAIN_DEPTH:
                 seen.add(rec.item_id)
-                names.append(rec.name)
+                names.append(path_segment(rec.name))
                 if not rec.parent_id or rec.parent_id == area_root:
                     break
                 rec = await self._record(ctx, rec.parent_id)
-            ctx.root_path = "/".join(reversed(names)) if names else root.root_name
+            ctx.root_path = "/".join(reversed(names)) if names else path_segment(root.root_name)
         return ctx.root_path
 
     async def _quota_hold(self, ctx: "_Run") -> None:
@@ -992,7 +992,7 @@ class DriveTranscriptMirror:
     async def _file_record(self, ctx: "_Run", rec: DriveIndexRecord) -> None:
         stored = await self._stored(ctx, rec)
         chain = await self._source_chain(ctx, rec)
-        source_path = "/".join(a.name for a in chain)
+        source_path = "/".join(path_segment(a.name) for a in chain)
         data = render_file(stored, rec, ctx.host.strings(), source_path=source_path, recorded_on=rec.effective_day)
         work = _FileWork(rec, chain, source_path, data, rendered_hash(data))
         key = _ledger_key(ctx, KIND_FILE, rec)

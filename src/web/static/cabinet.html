@@ -1623,6 +1623,7 @@
           "drive.write_folder_none": "None (read-only)",
           "drive.write_folder_root": "Whole drive",
           "drive.choose_folder": "Choose folder…",
+          "drive.picker_outer": "Outside this drive's root",
           "drive.scope": "Folders to search",
           "drive.scope_whole": "Whole drive",
           "drive.scope_default": "The bot's default area",
@@ -1806,6 +1807,7 @@
           "drive.write_folder_none": "Немає (лише читання)",
           "drive.write_folder_root": "Увесь диск",
           "drive.choose_folder": "Обрати папку…",
+          "drive.picker_outer": "Поза коренем цього диска",
           "drive.scope": "Папки для пошуку",
           "drive.scope_whole": "Увесь диск",
           "drive.scope_default": "Типова зона бота",
@@ -1989,6 +1991,7 @@
           "drive.write_folder_none": "Aucun (lecture seule)",
           "drive.write_folder_root": "Tout le disque",
           "drive.choose_folder": "Choisir un dossier…",
+          "drive.picker_outer": "En dehors de la racine de ce disque",
           "drive.scope": "Dossiers à rechercher",
           "drive.scope_whole": "Tout le disque",
           "drive.scope_default": "La zone par défaut du bot",
@@ -2172,6 +2175,7 @@
           "drive.write_folder_none": "Ninguna (solo lectura)",
           "drive.write_folder_root": "Todo el disco",
           "drive.choose_folder": "Elegir carpeta…",
+          "drive.picker_outer": "Fuera de la raíz de este disco",
           "drive.scope": "Carpetas donde buscar",
           "drive.scope_whole": "Todo el disco",
           "drive.scope_default": "El área predeterminada del bot",
@@ -3841,10 +3845,11 @@
           if (!res.ok) throw new Error();
           const data = await res.json();
           data.dr_copy = await loadDeepResearchCopy();
-          data.connect_href = await connectHref("drive");
           data.add_kinds = (await loadConnectors()).filter((c) => c.integration === "drive");
           for (const row of data.connections) {
-            row.reconnect_href = row.reconnect ? await connectHref("drive", row.reconnect.credential_id) : "";
+            row.reconnect_href = row.reconnect
+              ? `/auth/connect/${encodeURIComponent(row.kind)}?credential=${encodeURIComponent(row.reconnect.credential_id)}`
+              : "";
             if (row.indexing) {
               // the index block of a row carries what its disclosure needs
               row.indexing.connection_id = row.connection_id;
@@ -3909,7 +3914,7 @@
       function renderDriveStatus(data) {
         const container = document.getElementById("drive-container");
         // Not configured on this deployment: show no card rather than a dead connect button.
-        if (!data.connections.length && !data.add_kinds.length && !data.connect_href) {
+        if (!data.connections.length && !data.add_kinds.length) {
           container.innerHTML = "";
           return;
         }
@@ -3920,9 +3925,7 @@
           ? `<div style="${DRIVE_BOX}">${renderDeepResearchCopy(data.dr_copy)}</div>`
           : "";
         const rowsHtml = data.connections.map((row) => renderDriveConnection(row, data)).join("");
-        const actionButtons = linked
-          ? renderAddDrive(data)
-          : connectButton(data.connect_href, t("platform.connect_drive"));
+        const actionButtons = renderAddDrive(data);
         container.innerHTML = `
           <div class="card integration-card tasks-card reveal">
             <div class="integration-icon">
@@ -4054,15 +4057,22 @@
       function renderDrivePicker(ui, q) {
         const p = ui.picker;
         const trail = ["/"].concat(p.trail.map((s) => s.name)).join(" / ");
-        const list = p.folders.map((f, i) =>
+        const row = (f, i) =>
           `<li>${escapeHtml(f.name)}
              <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="openDrivePickerFolder('${q}', ${i})">${t("drive.open")}</button>
-             <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="pickDriveFolder('${q}', ${i})">${t("drive.select")}</button></li>`).join("");
+             <button class="btn btn-secondary" style="padding:0 10px; font-size:12px;" onclick="pickDriveFolder('${q}', ${i})">${t("drive.select")}</button></li>`;
+        const list = p.folders.map((f, i) => row(f, i)).join("");
+        // Folders outside the drive's root: only at the top level; indexes continue after the root folders.
+        const outer = !p.trail.length && p.outer && p.outer.length
+          ? `<div style="margin-top:8px; font-weight:500;">${t("drive.picker_outer")}</div>
+             <ul style="margin:6px 0 6px 18px;">${p.outer.map((f, i) => row(f, p.folders.length + i)).join("")}</ul>`
+          : "";
         return `
           <div style="margin-top:10px; padding:10px; border:1px solid var(--border-light); border-radius:10px; font-size:13px;">
             <div>${escapeHtml(trail)}</div>
             ${p.error ? `<div style="${DRIVE_ERR}">${escapeHtml(p.error)}</div>` : ""}
             <ul style="margin:6px 0 6px 18px;">${list || `<li>${t("drive.no_folders")}</li>`}</ul>
+            ${outer}
             ${p.trail.length ? `<button class="btn btn-secondary" style="padding:2px 12px; font-size:12px;" onclick="upDrivePicker('${q}')">${t("drive.up")}</button>` : ""}
             <button class="btn btn-secondary" style="padding:2px 12px; font-size:12px;" onclick="closeDrivePicker('${q}')">${t("drive.cancel")}</button>
           </div>`;
@@ -4198,18 +4208,19 @@
         const base = `/api/drive/connections/${encodeURIComponent(id)}/folders`;
         const out = await driveCall("GET", parent ? `${base}?parent=${encodeURIComponent(parent)}` : base);
         ui.picker.folders = out.ok ? out.data.folders : [];
+        ui.picker.outer = out.ok && !parent ? (out.data.outer || []) : [];
         ui.picker.error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
         redrawDrive();
       }
 
       async function openDrivePicker(id, purpose) {
-        driveUiOf(id).picker = { purpose, trail: [], folders: [], error: "" };
+        driveUiOf(id).picker = { purpose, trail: [], folders: [], outer: [], error: "" };
         await loadDrivePickerFolders(id);
       }
 
       async function openDrivePickerFolder(id, index) {
         const p = driveUiOf(id).picker;
-        const f = p.folders[index];
+        const f = p.folders.concat(p.outer || [])[index];
         p.trail.push({ id: f.id, name: f.name });
         await loadDrivePickerFolders(id);
       }
@@ -4226,7 +4237,7 @@
 
       async function pickDriveFolder(id, index) {
         const ui = driveUiOf(id);
-        const f = ui.picker.folders[index];
+        const f = ui.picker.folders.concat(ui.picker.outer || [])[index];
         if (ui.picker.purpose === "write") {
           await saveDriveWriteFolder(id, f.id);
           return;

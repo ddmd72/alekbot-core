@@ -91,6 +91,12 @@ def _chain_of(walked: Sequence[str]) -> Ancestry:
     return Ancestry(ids=tuple(reversed(walked)), reached_root=True)
 
 
+def _walked_chain(walked: Sequence[str], reached_root: bool) -> Ancestry:
+    """The chain of a folder walked down from `walked[0]`: item first. `reached_root` is False for a walk that began
+    at an outer top (G8.3, Δ7): a top is parentless, so the chain ends there unreached."""
+    return Ancestry(ids=tuple(reversed(walked)), reached_root=reached_root)
+
+
 def _require_valid_name(name: str) -> None:
     """Refuse a name the provider would reject, before any provider call (it would surface as a raw 400)."""
     if sanitize_drive_filename(name) != name:
@@ -232,6 +238,12 @@ class UserDriveService:
         children = await self._drive.list_children(handle, parent)
         return sorted((c for c in children if c.is_folder), key=lambda c: c.name.casefold())
 
+    async def picker_outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        """The Cabinet picker's "Outside this drive's root" section (the owner's own act, no policy): the folders of
+        `outer_folders`, by name."""
+        return sorted((f for f in await self._drive.outer_folders(handle) if f.is_folder),
+                      key=lambda f: f.name.casefold())
+
     async def top_folder_names(self, handle: DriveHandle) -> List[str]:
         """The names of the drive's top-level folders (the rename's shadowing warning, §11.8)."""
         return [f.name for f in await self.picker_folders(handle, None)]
@@ -253,22 +265,31 @@ class UserDriveService:
         answers "no such folder", RFC §11.3)."""
         op = op if op is not None else (AccessOp.CREATE if create else AccessOp.LIST)
         segments = split_folder_path(path or "")
-        for segment in segments:
-            _require_valid_name(segment)
         current = await self._drive.get_root(handle)
         walked: List[str] = [current.item_id]
+        rooted = True            # False once the walk began at an outer top (G8.3)
         created: List[str] = []
         created_ids: List[str] = []
         checked = False
-        for segment in segments:
+        for index, segment in enumerate(segments):
             match = match_child_folder(await self._drive.list_children(handle, current.item_id), segment)
+            if match is None and index == 0:
+                # G8.3: a folder outside the root (a shared chain's top); a root child of the same name won above.
+                match = match_child_folder(await self._drive.outer_folders(handle), segment)
+                if match is not None:
+                    walked = []
+                    rooted = False
             if match is None:
                 if not create:
-                    await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
+                    await self.check_access(handle, op, item=current, chain=_walked_chain(walked, rooted),
+                                            policy=policy)
                     missing = await self._shown(handle, join_drive_path(current.path, segment))
                     raise DrivePathError(f"No folder '{missing}' on the drive")
+                for pending in segments[index:]:     # G12: only names the bot will create; below a missing folder
+                    _require_valid_name(pending)     # every later segment is missing too, so none is half-created
                 if not checked:
-                    await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
+                    await self.check_access(handle, op, item=current, chain=_walked_chain(walked, rooted),
+                                            policy=policy)
                     checked = True
                 try:
                     match = await self._drive.create_folder(handle, current.item_id, segment)
@@ -287,7 +308,7 @@ class UserDriveService:
             current = match
             walked.append(current.item_id)
         if not checked:
-            await self.check_access(handle, op, item=current, chain=_chain_of(walked), policy=policy)
+            await self.check_access(handle, op, item=current, chain=_walked_chain(walked, rooted), policy=policy)
         return FolderResolution(folder=current, created=created), created_ids
 
     async def _refuse_if_read_only(self, handle: DriveHandle, op: AccessOp,
@@ -337,10 +358,47 @@ class UserDriveService:
         return join_drive_path(base, DEFAULT_INBOX_FOLDER)
 
     async def list_folder(self, handle: DriveHandle, folder: Optional[str]) -> ListOutcome:
+        if not split_folder_path(folder or ""):
+            access, capabilities = await self.access(handle)
+            root_chain = Ancestry(ids=(access.root_item_id,), reached_root=True)
+            if not in_scope(access, capabilities, root_chain):
+                return await self._scope_tops(handle, access)       # G11: the root is outside the scope
         resolution = await self.resolve_folder(handle, folder, create=False)
         children = await self._drive.list_children(handle, resolution.folder.item_id)
         ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
         return ListOutcome(folder=resolution.folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)
+
+    async def _scope_tops(self, handle: DriveHandle, access: ConnectionAccess) -> ListOutcome:
+        """The chosen folders as the listing of a drive whose root is outside its scope (G11)."""
+        folders = await self._chosen_folders(handle, access)
+        return ListOutcome(folder=await self._drive.get_root(handle), items=folders[:LIST_LIMIT],
+                           truncated=len(folders) > LIST_LIMIT, scope_tops=True)
+
+    async def _chosen_folders(self, handle: DriveHandle, access: ConnectionAccess) -> List[DriveItem]:
+        """The scope folders that can still be read, by name; one that is gone is skipped."""
+        found: List[DriveItem] = []
+        for folder_id in sorted(access.scope_folder_ids):
+            try:
+                found.append(await self._drive.get_item(handle, folder_id))
+            except DriveItemNotFoundError:
+                continue
+        return sorted(found, key=lambda i: i.name.casefold())
+
+    async def scope_folder_paths(self, handle: DriveHandle, limit: int = 5) -> Tuple[List[str], int]:
+        """The connection-relative paths of the chosen folders, sorted, at most `limit`, and how many more (the mount
+        line's "indexes only"). None under "whole drive" or with no folder chosen (no provider call then); a chosen
+        root has the path "" and is not named."""
+        connection = await self._connection(handle)
+        if connection.scope_whole_drive or not connection.scope_folder_ids:
+            return [], 0
+        found: List[DriveItem] = []
+        for folder_id in connection.scope_folder_ids:
+            try:
+                found.append(await self._drive.get_item(handle, folder_id))
+            except DriveItemNotFoundError:
+                continue
+        paths = sorted(f.path for f in found if f.path)
+        return paths[:limit], max(0, len(paths) - limit)
 
     async def list_folder_by_id(self, handle: DriveHandle, folder_id: str) -> ListOutcome:
         """A folder given by its `drive:` ref (USER_DRIVE_INDEXING_RFC §26.2, Δ55: search returns folder refs). A file

@@ -9,12 +9,12 @@ that misses one, for every realm); `label` is the display name the Cabinet shows
 Drive kinds (MULTI_DRIVE_RFC §6, §7.2, E7): each DRIVE spec declares a non-empty `id_space`, unique across the
 registry and free of `:`, the prefix of every item and drive identity its adapter builds; its drive adapter is passed
 in by kind (`drive_adapters`) and the composition builds `DriveProviderRouter(registry.drive_adapters())` from them, so
-a new drive kind is one spec plus one adapter here. `specs` replaces the four production specs (tests register fake
+a new drive kind is one spec plus one adapter here. `specs` replaces the five production specs (tests register fake
 kinds that way).
 
 Public interface:
     ConnectorRegistry(edges: Mapping[str, OAuthProviderPort] = {}, drive_adapters: Mapping[str, UserDrivePort] = {},
-                      specs: Sequence[ConnectorSpec] = the four)     ValueError for an inconsistent registry
+                      specs: Sequence[ConnectorSpec] = the five)     ValueError for an inconsistent registry
     get(kind) -> ConnectorSpec                         unknown kind raises KeyError
     kinds(integration) -> List[str]                    in declaration order
     realm_edge(realm) -> OAuthProviderPort             unknown realm raises KeyError
@@ -36,6 +36,7 @@ GMAIL = "gmail"
 GOOGLE_TASKS = "google_tasks"
 MICROSOFT_TODO = "microsoft_todo"
 MICROSOFT_ONEDRIVE = "microsoft_onedrive"
+GOOGLE_DRIVE = "google_drive"
 
 _GOOGLE = "google"
 _MICROSOFT = "microsoft"
@@ -55,6 +56,10 @@ _SPECS = (
     ConnectorSpec(kind=MICROSOFT_ONEDRIVE, integration=Integration.DRIVE, realm=_MICROSOFT,
                   required_scopes=("Files.ReadWrite.AppFolder",), multiple=True,
                   id_space=MICROSOFT_ONEDRIVE, label="OneDrive"),
+    # multiple=True: several Google accounts per user (D12, E15); offered (GE-24)
+    ConnectorSpec(kind=GOOGLE_DRIVE, integration=Integration.DRIVE, realm=_GOOGLE,
+                  required_scopes=("https://www.googleapis.com/auth/drive",), multiple=True,
+                  id_space=GOOGLE_DRIVE, label="Google Drive"),
 )
 
 

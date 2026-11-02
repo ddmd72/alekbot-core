@@ -150,6 +150,9 @@ class _MemDrive(UserDrivePort):
         self._get(handle, item_id)
         return MediaSource(url=f"https://files.example.com/{handle.connection_id}/{item_id}")
 
+    async def outer_folders(self, handle):
+        return []
+
     async def capabilities(self, handle):
         self._check(handle)
         return DriveCapabilities(max_path_chars=self._max)
@@ -267,6 +270,7 @@ class _Echo(UserDrivePort):
     get_root = get_item = list_children = search = download = upload = replace_content = move = None
     create_folder = delete = child_by_name = area_path = get_changes = get_change = None
     list_children_changes = download_to_file = get_thumbnail = media_source = capabilities = forget = None
+    outer_folders = None
 
 
 _ROUTED = sorted(name for name, member in vars(UserDrivePort).items()
@@ -278,7 +282,8 @@ class TestT8:
         assert set(_ROUTED) == {
             "get_root", "get_item", "list_children", "search", "download", "upload", "replace_content", "move",
             "create_folder", "delete", "child_by_name", "area_path", "get_changes", "get_change",
-            "list_children_changes", "download_to_file", "get_thumbnail", "media_source", "capabilities", "forget"}
+            "list_children_changes", "download_to_file", "get_thumbnail", "media_source", "capabilities", "forget",
+            "outer_folders"}
         assert not DriveProviderRouter.__abstractmethods__
         assert all(name in vars(DriveProviderRouter) for name in _ROUTED)
         assert not (SINGLE_DRIVE_MEMBERS & set(vars(DriveProviderRouter)))

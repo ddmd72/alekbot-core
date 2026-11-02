@@ -239,7 +239,8 @@ async def test_revoke_honours_scope(case: _Case) -> None:
     with patch("aiohttp.ClientSession", fake):
         await case.edge.revoke(_credential())
     if case.realm == "google":
-        assert len(fake.calls) == 1 and fake.calls[0]["params"] == {"token": "tok-access-1"}
+        # GE-28: the refresh token ends the grant (an expired access token revokes nothing)
+        assert len(fake.calls) == 1 and fake.calls[0]["data"] == {"token": "tok-refresh-1"} and "params" not in fake.calls[0]   # N4: form body
     else:
         assert fake.calls == []
 

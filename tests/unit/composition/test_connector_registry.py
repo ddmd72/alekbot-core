@@ -44,7 +44,7 @@ def test_kinds_of_an_integration():
     registry = ConnectorRegistry()
     assert registry.kinds(Integration.TASKS) == ["google_tasks", "microsoft_todo"]
     assert registry.kinds(Integration.MAIL) == ["gmail"]
-    assert registry.kinds(Integration.DRIVE) == ["microsoft_onedrive"]
+    assert registry.kinds(Integration.DRIVE) == ["microsoft_onedrive", "google_drive"]
 
 
 def test_an_unknown_kind_raises():
@@ -70,6 +70,10 @@ class _Edge(OAuthProviderPort):
     @property
     def revocation_scope(self):
         raise NotImplementedError
+
+    @property
+    def identity_scopes(self):
+        return ()
 
     def authorization_url(self, flow, spec, redirect_uri, *, state):
         raise NotImplementedError

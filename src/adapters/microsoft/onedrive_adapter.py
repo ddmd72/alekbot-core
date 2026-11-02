@@ -346,6 +346,10 @@ class OneDriveAdapter(UserDrivePort):
         self._root_cache.pop(handle.connection_id, None)
         self._tokens.invalidate(handle.user_id, handle.credential_id)
 
+    async def outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
+        """The App Folder has one area: everything hangs under its root."""
+        return []
+
     async def read_drive_id(self, access_token: str) -> str:
         """The drive id of a just-granted token, for the index's drive-switch check (USER_DRIVE_INDEXING_RFC §10.1
         step 0), read by the drive connect's activation before the credential carries it. Read from the App Folder

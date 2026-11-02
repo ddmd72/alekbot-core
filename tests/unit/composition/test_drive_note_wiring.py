@@ -10,7 +10,7 @@ from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.composition.drive_note_setup import drive_notes_switch_on
 from src.config.environment import EnvironmentConfig
 from src.services.drive_note_service import DriveNoteService
-from tests.unit.composition.test_drive_wiring import _container
+from tests.unit.composition.test_drive_wiring import NO_DRIVE_CLIENT, _container
 
 _DRIVE = {"MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec"}
 
@@ -21,8 +21,8 @@ def test_the_switch_is_on_unless_explicitly_off(raw, on):
     assert drive_notes_switch_on(raw) is on
 
 
-def test_no_service_without_the_drive_pair(monkeypatch):
-    c = _container(monkeypatch)
+def test_no_service_without_any_drive_client(monkeypatch):
+    c = _container(monkeypatch, **NO_DRIVE_CLIENT)
     assert c.drive_note_service is None
     assert c.agent_services()["drive_note_service"] is None and c.agent_services()["drive_notes_enabled"] is True
 

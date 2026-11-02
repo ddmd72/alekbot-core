@@ -14,6 +14,7 @@ import pytest
 import src.adapters.drive_parser.child as child
 import src.adapters.drive_parser.media as media
 import src.adapters.drive_parser.media_launch as launch
+from src.domain.drive_media_source import MediaSource
 from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from src.domain.drive_index_params import TRANSCRIBE_WINDOW_S
 from src.domain.drive_transcript import MediaStatus, MediaUnreadable, WindowSpec
@@ -72,19 +73,19 @@ async def test_a_file_of_each_added_container_probes_and_yields_one_window(tmp_p
     with MediaServer(tmp_path, {"/f": data, "/list.m3u8": b"#EXTM3U\n#EXTINF:10,\nfile:///etc/passwd\n#EXT-X-ENDLIST\n",
                                 "/concat.txt": b"ffconcat version 1.0\nfile 'file:///etc/passwd'\n"}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/f"))).probe
+        probe = (await extractor.probe(MediaSource(url=server.url("/f")))).probe
         assert probe.has_audio and probe.duration_s == pytest.approx(20.0, abs=1.0)
         assert demuxer in probe.container.split(",")
-        result = await extractor.extract_windows(server.url("/f"), [WindowSpec(0, 0.0, probe.duration_s)],
+        result = await extractor.extract_windows(MediaSource(url=server.url("/f")), [WindowSpec(0, 0.0, probe.duration_s)],
                                                  str(tmp_path / "o"), wall_s=60, container=probe.container)
         assert result.status is MediaStatus.OK and len(result.windows) == 1
         # a nested-resource attempt stays refused even with an admitted demuxer pinned
         for bad in ("/list.m3u8", "/concat.txt"):
             with pytest.raises(MediaUnreadable):
-                await extractor.extract_windows(server.url(bad), [WindowSpec(0, 0.0, 10.0)], str(tmp_path / "p"),
+                await extractor.extract_windows(MediaSource(url=server.url(bad)), [WindowSpec(0, 0.0, 10.0)], str(tmp_path / "p"),
                                                 wall_s=60, container=demuxer)
             with pytest.raises(MediaUnreadable):
-                await extractor.probe(server.url(bad))
+                await extractor.probe(MediaSource(url=server.url(bad)))
 
 
 # -- M1: a short window that is not the last ----------------------------------------------------------------------
@@ -161,10 +162,10 @@ async def test_a_header_that_understates_the_audio_does_not_cut_the_last_window_
     data = _mp3_understating(tmp_path)
     with MediaServer(tmp_path, {"/u.mp3": data}) as server:
         extractor = SubprocessMediaExtractor(ca_file=server.ca_pem, temp_root=str(tmp_path))
-        probe = (await extractor.probe(server.url("/u.mp3"))).probe
+        probe = (await extractor.probe(MediaSource(url=server.url("/u.mp3")))).probe
         if probe.duration_s > 110:
             pytest.skip("this ffmpeg reads the duration exactly")
-        result = await extractor.extract_windows(server.url("/u.mp3"), [WindowSpec(0, 0.0, probe.duration_s)],
+        result = await extractor.extract_windows(MediaSource(url=server.url("/u.mp3")), [WindowSpec(0, 0.0, probe.duration_s)],
                                                  str(tmp_path / "o"), wall_s=60, container=probe.container)
     assert result.status is MediaStatus.OK and result.eof
     assert result.duration_s == pytest.approx(120.0, abs=3.0)
@@ -205,7 +206,7 @@ async def test_the_process_limit_is_requested_only_for_the_unprivileged_user(tmp
         extractor = SubprocessMediaExtractor(ca_file="/ca", temp_root=str(tmp_path))
         extractor._sandbox = sandbox
         with pytest.raises(MediaUnreadable):
-            await extractor.probe("https://x.invalid/f")
+            await extractor.probe(MediaSource(url="https://x.invalid/f"))
     assert "nproc" not in requests[0] and requests[1]["nproc"] == media_nproc()
 
 

@@ -14,6 +14,7 @@ from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.unit.composition.test_drive_wiring import NO_DRIVE_CLIENT
 
 
 class _RecordingQueue:
@@ -112,8 +113,8 @@ def _container(monkeypatch, **extra):
 
 
 class TestContainerDriveIndexWiring:
-    def test_absent_without_microsoft_app_registration(self, monkeypatch):
-        c = _container(monkeypatch)
+    def test_absent_without_any_drive_client(self, monkeypatch):
+        c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.drive_index_repo is None and c.drive_task_queue is None
 
     def test_repo_without_queue_when_indexer_url_unset(self, monkeypatch):

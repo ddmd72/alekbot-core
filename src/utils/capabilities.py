@@ -115,6 +115,7 @@ Chat attachments are kept for 90 days; to keep a file, ask me to remember it on 
 
 *Your drive (long-term files)*
 Connect your drive in the Cabinet. Then:
+- Connect a Google account (several are fine) or OneDrive in the Cabinet. Google Docs, Sheets and Slides are read and searched, not edited; folders shared with you can be chosen in the Cabinet
 - Several drives: connect more than one in the Cabinet and name each; I search all of them unless you mark one "searched only when named", and a file on two drives shows once, with "also on"
 - "My work drive is Acme files" — I keep a note on a whole drive, like a file note, and use it to tell your drives apart
 - Every drive setting — its name, the folders I index, the folder I may write into, the primary drive, search, indexing, transcription, connect and disconnect — is set in the Cabinet; in chat I only point you there

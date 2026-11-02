@@ -95,6 +95,17 @@ that the world-writable check passes (neither was built locally). The limits sta
 measures the Phase 0 bomb set on the indexer, as the `driveparser` user
 (`scripts/infrastructure/drive_extract_s1.py`).
 
+## Stage 3: full-drive Google grants (owner decision 2026-11-02, option 1)
+
+A Google Drive connection (GOOGLE_DRIVE_RFC) puts a full-access Drive token for the owner's account in the indexer's
+memory, so the accepted residual now reaches those grants as well: a code-execution bug in a parser library could read
+them from the indexer process. The decision is to accept this for the same reasons as above (whitelisted users the owner
+vouches for, pinned libraries, the child's cleared environment and unprivileged user) and to make the unprivileged user
+mandatory instead of advisory: on Cloud Run a missing `DRIVE_PARSER_USER` fails the start (G13). The bearer header of a
+Google media URL never enters the child (a one-use loopback relay holds it, G2). The containment that would remove the
+residual, a separate zero-IAM parser service, is UNTRUSTED_CONTENT_SANDBOX_RFC C1/C3 and stays deferred to the triggers
+below.
+
 ## Process limit and log content (hardening)
 
 The document child gets `RLIMIT_NPROC` 256 (`EXTRACT_NPROC_LIMIT`), the media child's value, when it runs as the

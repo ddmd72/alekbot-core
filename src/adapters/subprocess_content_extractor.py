@@ -320,6 +320,11 @@ def _resolve_sandbox(user: Optional[str]) -> Optional[Tuple[int, int]]:
     that this process cannot switch to (it is not root) fails the start: never a silent fallback (R3 F3-1)."""
     user = (user or "").strip()
     if not user:
+        if os.environ.get("K_SERVICE"):
+            logger.error(f"[DriveExtract] no parser user ({PARSER_USER_ENV} unset) on Cloud Run: refusing to start "
+                         f"without the sandbox user (G13)")
+            raise RuntimeError(f"{PARSER_USER_ENV} is unset on Cloud Run: parser children would run with the "
+                               f"service's own privileges")
         logger.warning(f"[DriveExtract] no parser user ({PARSER_USER_ENV} unset): parser children run as this "
                        f"process's own user, with its privileges — local development only; the indexer image sets it")
         return None
