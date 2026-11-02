@@ -2054,14 +2054,14 @@ class DriveTranscriptMirror:
         ctx.counters["mirror_readme_written"] += 1
 
     async def _audit_area(self, ctx: "_Run") -> bool:
-        """The App Folder root, one page per read, only until something was reported (`orphans_reported`): a folder
+        """The folder roots are created in (the connection's write folder, else the App Folder root), one page per read, only until something was reported (`orphans_reported`): a folder
         named like the root (`is_root_name`) that is no root of any of the user's drives (the crash orphan of §27.9.2),
         and a previous root that is present again, are reported once (one WARNING, counters); never adopted, never
         written. True when the stage is done."""
         root = ctx.need_root
         if root.orphans_reported:
             return True
-        area = await self._area_root_id(ctx)
+        area = await self._root_parent_id(ctx)   # where roots are created: the write folder (RFC §11.3), else the area
         box: List[Any] = []
 
         async def listing() -> None:

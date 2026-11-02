@@ -66,3 +66,21 @@ async def test_a_root_already_under_the_write_folder_is_left_alone():
     counters = await w.run(write_folder_id=inbox)
     assert not counters.get("mirror_root_moved")
     assert (await current_root(w)).root_item_id == root.root_item_id
+
+
+async def test_the_orphan_root_audit_covers_the_write_folder_where_the_root_lives():
+    """The audit lists the folder roots are created in: an orphan named like the root, under a subfolder write folder, is
+    found (reported once, never adopted)."""
+    from datetime import timedelta
+
+    from src.domain.drive_index_params import MIRROR_AUDIT_DAYS
+    w = MirrorWorld()
+    await w.recording("a.mp4")
+    inbox = await w.folder("Inbox")
+    await w.run(write_folder_id=inbox)
+    orphan = w.drive.add_folder(inbox, "_Transcripts (Alek)")
+    w.advance(timedelta(days=MIRROR_AUDIT_DAYS, hours=1))
+    counters = await w.run(write_folder_id=inbox)
+    root = await current_root(w)
+    assert counters["mirror_orphan_roots"] == 1 and root.orphans_reported
+    assert root.root_item_id != orphan
