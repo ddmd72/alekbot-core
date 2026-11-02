@@ -159,9 +159,7 @@ def _item_forbids(op: AccessOp, item_access: Optional[ItemAccess]) -> bool:
         return not item_access.can_rename_move
     if op is AccessOp.DELETE:
         return not item_access.can_delete
-    if op in (AccessOp.CREATE, AccessOp.SAVE):
-        return not item_access.can_add_children
-    return False
+    return not item_access.can_add_children     # CREATE and SAVE: `decide` calls this for write ops only
 
 
 def decide(op: AccessOp, access: ConnectionAccess, capabilities: DriveCapabilities,
