@@ -26,7 +26,7 @@ Public interface:
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
     await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # find_passages (§28.3 A4-A8, A18)
     await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
-    await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
+    await indexing_status(user_id, *, connection_id=None) -> DriveIndexingStatus     # Cabinet (§6)
     await has_mirror_root(user_id) -> bool
     await access_note(connection, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
     await search_deleted(user_id, drive_query) -> DeletedSearchResult   # archived transcripts (§27.9.11) and the sources
@@ -427,6 +427,11 @@ class DriveSearchService:
             return primary
         live = await self._connections.list_for_user(user_id)
         return live[0] if live else None
+
+    async def _live_connection(self, user_id: str, connection_id: str) -> Optional[DriveConnection]:
+        """One connection of the user when it is live (ACTIVE or NEEDS_RECONNECT), read fresh; else None."""
+        conn = await self._connections.get(user_id, connection_id)
+        return conn if conn is not None and conn.state is not ConnectionState.DISCONNECTED else None
 
     @staticmethod
     def _shown(conn: DriveConnection, path: str) -> str:
@@ -2317,10 +2322,12 @@ class DriveSearchService:
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(conn.user_id, account.realm, account.subject)
 
-    async def indexing_status(self, user_id: str) -> DriveIndexingStatus:
+    async def indexing_status(self, user_id: str, *, connection_id: Optional[str] = None) -> DriveIndexingStatus:
         """The Cabinet card (§6): counters, last sync, error category, index full, building, of the searched connection
-        (stage 1: the primary; its own indexing switch). Usage and the initial build stay the user's (§8, §10)."""
-        conn = await self._searched(user_id)
+        (stage 1: the primary; its own indexing switch), or with `connection_id` of that live connection (MULTI_DRIVE_RFC
+        §11.7; absent or DISCONNECTED reads as no connection). Usage and the initial build stay the user's (§8, §10)."""
+        conn = await self._searched(user_id) if connection_id is None else await self._live_connection(user_id,
+                                                                                                        connection_id)
         state = await self._repo.get_sync_state(conn.scope) if conn is not None else None
         enabled = bool(conn is not None and conn.indexing_enabled)
         if conn is None or state is None:

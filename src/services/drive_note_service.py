@@ -35,6 +35,7 @@ Public interface:
     request_erase_all(user_id) -> EraseRequestReceipt
     erase(user_id, code) -> int
     note_for_item(user_id, identity) -> Optional[DriveNote]
+    drive_note_texts(user_id) -> Dict[str, str]        connection id -> text of its active drive note (§11.10)
 Refusals raise DriveNoteRefused (a NoteRefusal reason and its detail); nothing is stored when one is raised.
 DriveIndexStoreUnavailable from the note store passes through every method unchanged (the caller reports "try again";
 an index-store failure on the record read is absorbed, see `_record`).
@@ -57,6 +58,7 @@ from ..domain.drive_note import (
     DriveNoteConflict, DriveNoteVersion,
     DriveNoteRefused, EraseRequestReceipt, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteReceipt,
     NoteRefusal, NoteSnapshot, NoteState, NoteTarget, content_of, deterministic_note_id, item_binding_key, item_ref,
+    drive_note_connection_id, is_drive_note,
     next_version, note_after_write, note_content, note_embedding_text, note_ref_tag, note_word_count,
     parse_note_target, searchability, snapshot_of, state_after, tagged_ref_key, undo_source,
 )
@@ -570,6 +572,15 @@ class DriveNoteService:
         if note is None or note.erase_pending or note.state == NoteState.CLEARED.value:
             return None
         return note
+
+    async def drive_note_texts(self, user_id: str) -> Dict[str, str]:
+        """Connection id -> text of each active drive note (MULTI_DRIVE_RFC §11.10): the preflight's and the Cabinet's
+        read. One query (the `active` notes, newest first: a connection's newest note wins)."""
+        texts: Dict[str, str] = {}
+        for note in await self._notes.active(user_id, NOTES_PER_USER_MAX):
+            if is_drive_note(note):
+                texts.setdefault(drive_note_connection_id(note), note.text)
+        return texts
 
     # ------------------------------------------------------------------------------------------------------------------
     # helpers

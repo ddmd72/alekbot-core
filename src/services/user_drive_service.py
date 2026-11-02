@@ -16,11 +16,17 @@ Multi-drive (MULTI_DRIVE_RFC §6, E6): every drive method takes the `DriveHandle
 took `user_id`; the nudge carries the connection (`{user_id, connection_id}`). Callers obtain the handle through this
 service's connection reads, which delegate to the injected DriveConnectionService: `primary` for a path (stage 1),
 `resolve_ref` for a ref (§9). Root protection, the mirror guard and the duplicate check are per connection.
+
+Access policy (MULTI_DRIVE_RFC §11.3, slice 2b): `access` reads the connection fresh (E-13) with its capabilities and
+root; `ancestry` walks an item's parent chain by `get_change` (E-3); `check_access` runs `drive_access_policy.decide`,
+walking only when a rule needs a chain (the App Folder default walks none), and raises DriveAccessRefused with the
+policy's line. `write_folder_path`, `picker_folders` and `top_folder_names` serve the preflight and the Cabinet (the
+owner's own act: no policy).
 """
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..domain.user_drive import (
     DEFAULT_INBOX_FOLDER,
@@ -28,6 +34,7 @@ from ..domain.user_drive import (
     MAX_DRIVE_DOWNLOAD_BYTES,
     MOVE_NEEDS_TARGET,
     DeleteOutcome,
+    DriveAccessRefused,
     DriveItem,
     DriveItemNotFoundError,
     DriveMirrorWriteRefused,
@@ -49,7 +56,13 @@ from ..domain.user_drive import (
     sanitize_drive_filename,
     split_folder_path,
 )
-from ..domain.drive_connection import DriveConnection
+from ..domain.drive_access_op import AccessOp
+from ..domain.drive_access_policy import decide, requires_ancestry
+from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_capabilities import DriveCapabilities
+from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
+from ..domain.drive_connection_access import ConnectionAccess
+from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import Nudge
@@ -58,6 +71,7 @@ from ..domain.drive_mount_table import MountTable
 from ..domain.drive_mounts import canonical_path
 from ..domain.drive_ref_refusal import DriveRefRefusal
 from ..domain.drive_resolved_ref import ResolvedDriveRef
+from ..domain.drive_search import MAX_CHAIN_DEPTH
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_task_key, scope_payload
 from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.task_queue import TaskQueue
@@ -129,6 +143,88 @@ class UserDriveService:
             logger.warning("Drive refusal: mount name lookup failed", exc_info=True)
             return path
         return canonical_path(connection.mount_name, path) if connection is not None else path
+
+    # -- access policy (MULTI_DRIVE_RFC §11.3) ------------------------------------------------------------------------
+
+    async def _connection(self, handle: DriveHandle) -> DriveConnection:
+        """The handle's connection, read fresh; DriveNotConnectedError when absent or DISCONNECTED."""
+        connection = await self._connections.get(handle.user_id, handle.connection_id)
+        if connection is None or connection.state is ConnectionState.DISCONNECTED:
+            raise DriveNotConnectedError("The drive connection is absent or no longer connected")
+        return connection
+
+    async def access(self, handle: DriveHandle) -> Tuple[ConnectionAccess, DriveCapabilities]:
+        """The connection's access settings (one fresh connection read, E-13) and its drive's capabilities; the root
+        comes from `get_root` (cached by the adapter). DriveNotConnectedError when absent or DISCONNECTED."""
+        connection = await self._connection(handle)
+        capabilities = await self._drive.capabilities(handle)
+        root = await self._drive.get_root(handle)
+        return ConnectionAccess.of(connection, root.item_id), capabilities
+
+    async def ancestry(self, handle: DriveHandle, item_id: str, *, memo: Optional[Dict[str, str]] = None) -> Ancestry:
+        """The item's parent chain to the root, a parentless item or MAX_CHAIN_DEPTH ids. `memo` (child -> parent id)
+        is shared by the walks of one call, so a common parent is read once."""
+        return await self._walk(handle, item_id, (await self._drive.get_root(handle)).item_id,
+                                memo if memo is not None else {})
+
+    async def _walk(self, handle: DriveHandle, item_id: str, root_id: str, memo: Dict[str, str]) -> Ancestry:
+        ids = [item_id]
+        current = item_id
+        while current != root_id and len(ids) < MAX_CHAIN_DEPTH:
+            if current not in memo:
+                try:
+                    memo[current] = (await self._drive.get_change(handle, current)).parent_id
+                except DriveItemNotFoundError:
+                    if current == item_id:
+                        raise
+                    memo[current] = ""       # a parent closed to the bot: the chain ends unreached
+            parent = memo[current]
+            if not parent or parent in ids:
+                break
+            ids.append(parent)
+            current = parent
+        return Ancestry(ids=tuple(ids), reached_root=current == root_id)
+
+    async def check_access(self, handle: DriveHandle, op: AccessOp, *, item: Optional[DriveItem] = None,
+                           item_id: str = "", chain: Optional[Ancestry] = None,
+                           destination: Optional[Ancestry] = None,
+                           destination_item: Optional[DriveItem] = None) -> None:
+        """Run the access policy on one operation before its provider call: `item` (or `item_id`) is what the operation
+        acts on (a create or save: the destination folder); `chain` its ancestry when the caller has it; `destination`
+        / `destination_item` a move's destination folder. Walks a chain only when `requires_ancestry` says so. Raises
+        DriveAccessRefused with the policy's line; DriveNotConnectedError for a connection that is gone."""
+        access, capabilities = await self.access(handle)
+        target = item.item_id if item is not None else item_id
+        needed = requires_ancestry(op, access, capabilities)
+        memo: Dict[str, str] = {}
+        if chain is None and needed and target:
+            chain = await self._walk(handle, target, access.root_item_id, memo)
+        if (op is AccessOp.MOVE and destination is None and destination_item is not None and needed):
+            destination = await self._walk(handle, destination_item.item_id, access.root_item_id, memo)
+        decision = decide(op, access, capabilities, item.access if item is not None else None, chain,
+                          item_id=target, destination=destination,
+                          destination_access=destination_item.access if destination_item is not None else None)
+        if not decision.allowed:
+            logger.info(f"Drive access refused: op={op.value} connection={handle.connection_id[:8]}")
+            raise DriveAccessRefused(decision.line)
+
+    async def write_folder_path(self, handle: DriveHandle) -> Optional[str]:
+        """The write folder's connection-relative path: None (read-only), "" (the root), else the folder's path."""
+        folder = (await self._connection(handle)).write_folder_id
+        if folder is None or folder == ROOT_FOLDER:
+            return folder
+        return (await self._drive.get_item(handle, folder)).path
+
+    async def picker_folders(self, handle: DriveHandle, folder_id: Optional[str]) -> List[DriveItem]:
+        """The Cabinet's folder picker (the owner's own act, no policy): the folder children of `folder_id` (None: the
+        root), by name."""
+        parent = folder_id if folder_id is not None else (await self._drive.get_root(handle)).item_id
+        children = await self._drive.list_children(handle, parent)
+        return sorted((c for c in children if c.is_folder), key=lambda c: c.name.casefold())
+
+    async def top_folder_names(self, handle: DriveHandle) -> List[str]:
+        """The names of the drive's top-level folders (the rename's shadowing warning, §11.8)."""
+        return [f.name for f in await self.picker_folders(handle, None)]
 
     # -- operations on one connection --------------------------------------------------------------------------------
 
