@@ -558,7 +558,8 @@ class _ScopeView:
         return not self.scope.covers_everything
 
 
-# Per tick: None when the scope covers everything (the App Folder default, or the whole drive): nothing is filtered.
+# Per tick: the connection's scope; `filtered` is False when it covers everything (the App Folder default, or the whole
+# drive): then nothing is filtered and no ancestry is read.
 _TICK_SCOPE: ContextVar[Optional[_ScopeView]] = ContextVar("drive_tick_scope", default=None)
 
 
@@ -958,7 +959,7 @@ class DriveIndexingService:
             # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
             _TICK_MIRROR.set(await self._start_mirror(handle, connection))
             index_scope = IndexScope.of(connection, await self._drive.capabilities(handle))
-            _TICK_SCOPE.set(None if index_scope.covers_everything else _ScopeView(index_scope))
+            _TICK_SCOPE.set(_ScopeView(index_scope))
             _TICK_CLOSED.set(await self._start_marks(handle, state))
             # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b), once per tick: after observe, before the
             # work-off; but first when the round was left incomplete (read before `_observe` resets it), because then
@@ -1153,10 +1154,11 @@ class DriveIndexingService:
         return PlanContext(scope=handle.scope, root_item_id=state.root_item_id, epoch=state.epoch,
                            phase=state.epoch_phase, now=now, place_of=self._place_of,
                            mirror_root_ids=mirror.root_ids if mirror is not None else frozenset(),
-                           scope_root_ids=view.scope.folder_ids if view is not None else frozenset(),
-                           scope_ancestor_ids=frozenset(view.ancestors) if view is not None else frozenset(),
+                           scope_root_ids=view.scope.folder_ids if view is not None and view.filtered else frozenset(),
+                           scope_ancestor_ids=frozenset(view.ancestors) if view is not None and view.filtered
+                           else frozenset(),
                            whole_drive=view.scope.whole_drive if view is not None else False,
-                           filtered=view is not None)
+                           filtered=view is not None and view.filtered)
 
     async def _apply(self, handle: DriveHandle, ctx: PlanContext, changes: Sequence[DriveChange], budget: _Budget,
                      summary: Dict[str, int], *, relisting: bool = False, nudged: bool = False) -> None:
@@ -1166,6 +1168,8 @@ class DriveIndexingService:
         among them needs its own re-listing (§5.2). `nudged`: the items are named in a nudge, so a card
         they are due for is class 0 even when first seen (§7.8)."""
         view = _TICK_SCOPE.get()
+        if view is not None and not view.filtered:
+            view = None
         if view is not None:
             await self._load_scope_ancestors(handle, view, ctx, budget)
             ctx = replace(ctx, scope_ancestor_ids=frozenset(view.ancestors))
@@ -2426,7 +2430,7 @@ class DriveIndexingService:
         """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4). On a filtered scope
         a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan."""
         view = _TICK_SCOPE.get()
-        if (view is not None and rec.item_id not in view.scope.folder_ids and rec.item_id not in ctx.mirror_root_ids
+        if (view is not None and view.filtered and rec.item_id not in view.scope.folder_ids and rec.item_id not in ctx.mirror_root_ids
                 and rec.parent_id not in ctx.mirror_root_ids):
             decided = await self._scope_verdict(handle, view, ctx, change_from_record(rec), {}, {}, budget)
             if decided is False:

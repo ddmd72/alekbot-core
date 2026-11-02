@@ -301,11 +301,11 @@ class DriveSyncSchedulerService:
                 continue
             if cap == CARD_CAP:
                 text = (f"⚠️ Drive index of {_tag(scope)} is at the card cap: {counts.card} files held without a "
-                        f"card (`card_capped`, {MAX_CARD_RECORDS_PER_USER} carded records per user); their content "
+                        f"card (`card_capped`, {MAX_CARD_RECORDS_PER_USER} carded records per drive); their content "
                         f"and triage wait until headroom returns")
             else:
                 text = (f"⚠️ Drive index of {_tag(scope)} is at the chunk cap: {counts.chunk} files not read "
-                        f"(`user_chunk_cap`, {MAX_CHUNKS_PER_USER} readable chunks per user); their content is not "
+                        f"(`user_chunk_cap`, {MAX_CHUNKS_PER_USER} readable chunks per drive); their content is not "
                         f"searchable until headroom holds them")
             await self._alert_sink.post(text)
             await self._repo.update_sync_flags(scope, **{flag: True})
