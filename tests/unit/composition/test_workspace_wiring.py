@@ -1,5 +1,6 @@
 """Wiring: adapter → FileConversionService(workspace=port) → WorkspaceService; Smart gets the service, NotesAgent gets
 workspace_enabled (AGENT_WORKSPACE_RFC §5.5, §12, §13). No key → no workspace anywhere."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest

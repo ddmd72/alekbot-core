@@ -14,6 +14,7 @@ scripted call (module constants; the last test checks them against the declarati
 `test_file_management_drive_tool_fields_e2e.py` (the five mutating Smart-era drive intents, removed by RFC §4.1): each
 stored effect and refusal that file proved is proved here through the specialist's tool that now carries it.
 """
+from tests.support.drive_access_stub import allow_access
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
@@ -113,7 +114,7 @@ class World:
         self.state = FakeNotificationState(NOW)
         notifier = UserNotificationService(self.state, self.channels, coordinator=None, notification_sla={})
         self.operations = DriveOperations(
-            conversion_service=FileConversionService(storage=self.storage, drive=self.drive, connections=connections),
+            conversion_service=FileConversionService(storage=self.storage, drive=self.drive, connections=connections, access=allow_access()),
             notification=notifier, drive_service=UserDriveService(self.drive, connections),
             localization=FileLocalizationAdapter(),
             language_service=FakeLanguageService(),

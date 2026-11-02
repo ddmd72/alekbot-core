@@ -45,6 +45,7 @@ def _users(enabled=True, tz="UTC", missing=False):
 
 def _drive(path="Deep research/2026-10-14 Heat pumps in Springfield.html"):
     drive = AsyncMock(spec=UserDriveService)
+    drive.write_folder_path.return_value = ""   # the root is the write folder: the folder stays at the top
     drive.primary.return_value = MagicMock(handle=HANDLE, mount_name="Drive")   # the user's primary (MULTI_DRIVE_RFC D7)
     item = DriveItem(item_id="i1", name=path.rsplit("/", 1)[-1], path=path, is_folder=False)
     drive.save.return_value = SaveOutcome(item=item, created=[])

@@ -308,7 +308,7 @@ class DriveOperations:
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,
-                            drives: Any = None, file_refs: Any = None, shown: FrozenSet[ChunkId] = frozenset(),
+                            drives: Any = None, file_refs: Any = None, shown: FrozenSet[Tuple[str, ChunkId]] = frozenset(),
                             shown_folders: FrozenSet[str] = frozenset(),
                             described_files: FrozenSet[str] = frozenset()) -> DriveOutcome:
         """The indexed passages nearest `question` (USER_DRIVE_INDEXING_RFC §28.3 A4-A6): within `file_refs`, else
@@ -1180,9 +1180,11 @@ def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
 
 
 def _item_tags(result: Any) -> Tuple[str, ...]:
-    """One ref tag per card (cards of several connections carry their own, `result.ref_tag` is the fallback); none
-    when a card has no valid tag, so the outcome falls back to its single `ref_tag`."""
-    tags = tuple(card.ref_tag or result.ref_tag for card in result.cards)
+    """One ref tag per card or passages file (those of several connections carry their own `ref_tag`; the result's is
+    the fallback, empty for a merged result); none when one has no valid tag, so the outcome falls back to its single
+    `ref_tag`."""
+    entries = result.cards if hasattr(result, "cards") else result.files
+    tags = tuple(getattr(e, "ref_tag", "") or result.ref_tag for e in entries)
     return tags if tags and all(drive_ref.is_valid_tag(t) for t in tags) else ()
 
 
@@ -1222,7 +1224,7 @@ def _passages(result: ExcerptResult, shown_folders: FrozenSet[str], described_fi
                                         paged=result.page is not None,
                                         building=result.building or result.awaiting_rebuild),   # as search's
                         excerpts=result, excerpt_plan=rendered.plan, request_text=request_text,
-                        ref_tag=result.ref_tag)
+                        ref_tag=result.ref_tag, item_tags=_item_tags(result))
 
 
 def _excerpt_class(result: ExcerptResult) -> OutcomeClass:

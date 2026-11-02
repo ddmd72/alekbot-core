@@ -1,6 +1,7 @@
 """DriveOperations and the mount tree (MULTI_DRIVE_RFC §11.1, slice 2a part P1): a path is `<mount>/<path>`, canonical in
 everything printed and relative below; `/` lists the drives; only the primary can be changed; a move across drives is
 refused; a held former name answers with its notice. Technical ids and the invented cast only."""
+from tests.support.drive_access_stub import allow_access
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -75,7 +76,7 @@ async def world():
     w.acme_plan = w.drive.plant(w.two.handle, w.acme_rd, "Hamburg.txt", b"hh")
     w.search = StubSearch()
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                       connections=w.connections)
+                                       connections=w.connections, access=allow_access())
     w.service = UserDriveService(w.drive, w.connections)
     w.ops = DriveOperations(conversion_service=conversion, drive_service=w.service, drive_search=w.search)
     return w

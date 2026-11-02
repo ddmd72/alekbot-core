@@ -6,6 +6,7 @@ guessing, no FileStoragePort/MediaStoragePort involvement. Bare uploads and deli
 document keys (docs/, email_review/, deep_research/, video_generation/) are unaffected.
 """
 
+from tests.support.drive_access_stub import allow_access
 import pytest
 from unittest.mock import AsyncMock
 
@@ -39,7 +40,7 @@ class TestResolveContentSkillRef:
         self, mock_storage, resolver, ref, content,
     ):
         resolver.read.return_value = content
-        svc = FileConversionService(storage=mock_storage, skill_files=resolver)
+        svc = FileConversionService(storage=mock_storage, skill_files=resolver, access=allow_access())
 
         out = await svc.resolve_content(ref, "u1")
 
@@ -52,7 +53,7 @@ class TestResolveBytesSkillRef:
 
     async def test_resolve_bytes_skill_ref_returns_utf8(self, mock_storage, resolver):
         resolver.read.return_value = "hello"
-        svc = FileConversionService(storage=mock_storage, skill_files=resolver)
+        svc = FileConversionService(storage=mock_storage, skill_files=resolver, access=allow_access())
 
         out = await svc.resolve_bytes("skill:fs/r.md", "u1")
 
@@ -64,7 +65,7 @@ class TestResolveBytesSkillRef:
 class TestNoResolverConfigured:
 
     async def test_skill_ref_without_resolver_raises_file_not_found(self, mock_storage):
-        svc = FileConversionService(storage=mock_storage, skill_files=None)
+        svc = FileConversionService(storage=mock_storage, skill_files=None, access=allow_access())
 
         with pytest.raises(FileNotFoundError):
             await svc.resolve_content("skill:fs/r.md", "u1")
@@ -79,7 +80,7 @@ class TestBareAndDeliveredRefsUnchanged:
 
     async def test_bare_ref_still_uses_storage_download(self, mock_storage, resolver):
         mock_storage.download = AsyncMock(return_value=b"hi\n")
-        svc = FileConversionService(storage=mock_storage, skill_files=resolver)
+        svc = FileConversionService(storage=mock_storage, skill_files=resolver, access=allow_access())
 
         out = await svc.resolve_bytes("report.txt", "u1")
 
@@ -91,7 +92,7 @@ class TestBareAndDeliveredRefsUnchanged:
         media_storage = AsyncMock()
         media_storage.fetch = AsyncMock(return_value=b"doc bytes")
         svc = FileConversionService(
-            storage=mock_storage, media_storage=media_storage, skill_files=resolver,
+            storage=mock_storage, media_storage=media_storage, skill_files=resolver, access=allow_access(),
         )
 
         out = await svc.resolve_bytes("docs/u1/report.html", "u1")

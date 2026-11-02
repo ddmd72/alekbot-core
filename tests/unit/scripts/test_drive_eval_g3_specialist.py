@@ -2,6 +2,7 @@
 every DriveOperations call the specialist or FileManagement made, reads as they ran and writes as they were stubbed —
 not Smart's delegations; Smart's `work_with_drive_files` and its `open_file` on a `drive:` ref go to the fixture; a
 call to a removed drive intent and a stubbed drive mutation on an injected case are hard failures."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock
 
 import pytest
@@ -123,7 +124,7 @@ async def test_the_dry_run_log_feeds_the_metrics_and_writes_never_run():
     connections = EvalDriveConnections(eval_connection("u"))
     service = UserDriveService(drive, connections)
     ops = DriveOperations(conversion_service=FileConversionService(storage=AsyncMock(), drive=drive,
-                                                                   connections=connections),
+                                                                   connections=connections, access=allow_access()),
                           drive_service=service, drive_search=None)
     context = {"user_id": "u"}
     log = DriveOpLog()

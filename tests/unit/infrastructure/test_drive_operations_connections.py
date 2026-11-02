@@ -2,6 +2,7 @@
 connection, a path and a save on the primary, every label and `drive_context` ref carries the connection's tag and every
 printed path its mount (`<mount>/<path>`), a write on a drive that is not the primary is refused (slice 2a, D11), and a
 ref of no live connection answers its code-built line once, as not found, with nothing done."""
+from tests.support.drive_access_stub import allow_access
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -39,7 +40,7 @@ async def world():
     assert w.drive.plant(w.two.handle, "root", "on-two.txt", b"two") == "item-1"     # the same item id on purpose (T-4)
     w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                       connections=connections)
+                                       connections=connections, access=allow_access())
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
 

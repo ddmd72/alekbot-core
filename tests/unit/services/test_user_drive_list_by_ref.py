@@ -1,5 +1,6 @@
 """`UserDriveService.list_folder_by_id` (USER_DRIVE_INDEXING_RFC §26.2, Δ55): `list_files_in_drive` takes a folder's
 `drive:` ref as search returns them; the folder is read by id, a file ref is refused, a "not found" propagates."""
+from tests.support.drive_access_stub import policy_connections
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,7 +19,7 @@ def _service(item=FOLDER, children=()):
     drive = AsyncMock(spec=UserDrivePort)
     drive.get_item.return_value = item
     drive.list_children.return_value = list(children)
-    return UserDriveService(drive, connection_service()), drive
+    return UserDriveService(drive, policy_connections(drive, H)), drive
 
 
 async def test_lists_folders_first_by_name():

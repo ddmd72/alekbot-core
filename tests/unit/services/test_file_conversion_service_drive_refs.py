@@ -1,4 +1,5 @@
 """drive: refs in FileConversionService (docs/10_rfcs/USER_DRIVE_RFC.md §4.6)."""
+from tests.support.drive_access_stub import allow_access
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -36,7 +37,7 @@ async def connection():
 
 @pytest.fixture
 def svc(drive, connection):
-    return FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1])
+    return FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1], access=allow_access())
 
 
 class TestDriveRefs:
@@ -85,7 +86,7 @@ class TestDriveRefs:
 
     async def test_no_drive_wired_is_not_found(self):
         with pytest.raises(FileNotFoundError):
-            await FileConversionService(storage=AsyncMock(spec=FileStoragePort)).get_drive_item("drive:i1", "u1")
+            await FileConversionService(storage=AsyncMock(spec=FileStoragePort), access=allow_access()).get_drive_item("drive:i1", "u1")
 
     async def test_no_provider_name_in_alerts(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
@@ -106,7 +107,7 @@ class TestDriveRefs:
         skills = AsyncMock()
         skills.read.return_value = "body"
         svc = FileConversionService(storage=AsyncMock(spec=FileStoragePort), media_storage=media,
-                                    skill_files=skills, drive=drive)
+                                    skill_files=skills, drive=drive, access=allow_access())
         key = "docs/u1/0f8e3b2a-1c2d-4e5f-8a9b-0c1d2e3f4a5b-drive:plan.pdf"
         assert await svc.resolve_bytes(key, "u1") == b"%PDF"
         media.fetch.assert_awaited_once_with(key)
