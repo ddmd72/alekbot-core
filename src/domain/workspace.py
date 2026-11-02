@@ -442,7 +442,7 @@ def apply_str_replace(path: str, text: str, old: str, new: str) -> Replacement:
     return Replacement(
         text=text[:index] + new + text[index + len(old):],
         first_line=text.count("\n", 0, index) + 1,
-        line_count=max(1, new.count("\n") + 1),
+        line_count=new.count("\n") + 1 if new else 0,
     )
 
 
@@ -486,8 +486,37 @@ def apply_insert(path: str, text: str, insert_line: int, insert_text: str) -> Re
     )
 
 
-def changed_lines(r: Replacement) -> str:
-    return number_lines(r.text, r.first_line, r.line_count).text
+ECHO_CONTEXT_LINES = 1
+ECHO_FULL_MAX_LINES = 10
+ECHO_EDGE_LINES = 2
+
+
+def render_mutation_echo(r: Replacement) -> str:
+    """The changed block of the NEW text with one context line each side, in the `number_lines` format. A block over
+    ECHO_FULL_MAX_LINES shows its first and last ECHO_EDGE_LINES lines and counts the rest. A deletion
+    (`line_count` 0) shows only the lines around the cut: no block."""
+    lines = r.text.splitlines()
+
+    def show(n: int) -> str:
+        line = lines[n - 1]
+        if len(line) > VIEW_MAX_LINE_CHARS:
+            line = line[:VIEW_MAX_LINE_CHARS] + " …[line cut]"
+        return f"{n:6d}\t{line}"
+
+    first, count = r.first_line, r.line_count
+    last = first + count - 1
+    out: List[str] = [show(n) for n in range(max(1, first - ECHO_CONTEXT_LINES), min(first, len(lines) + 1))]
+    block = [n for n in range(first, last + 1) if n <= len(lines)]
+    if len(block) > ECHO_FULL_MAX_LINES:
+        hidden = len(block) - 2 * ECHO_EDGE_LINES
+        out += [show(n) for n in block[:ECHO_EDGE_LINES]]
+        out.append(f"   … {hidden} more lines …")
+        out += [show(n) for n in block[-ECHO_EDGE_LINES:]]
+    else:
+        out += [show(n) for n in block]
+    after_from = max(last + 1, first)
+    out += [show(n) for n in range(after_from, min(after_from + ECHO_CONTEXT_LINES, len(lines) + 1))]
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
