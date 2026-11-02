@@ -139,6 +139,11 @@ class InMemoryDriveNoteRepository(DriveNoteRepository):
         found.sort(key=lambda n: (n.updated_at or _OLDEST, n.note_id), reverse=True)
         return [_lean(n) for n in found[:limit]]
 
+    async def cleared(self, user_id: str, limit: int) -> List[DriveNote]:
+        found = [n for n in self._user(user_id) if n.state == NoteState.CLEARED.value]
+        found.sort(key=lambda n: (n.updated_at or _OLDEST, n.note_id), reverse=True)
+        return [_lean(n) for n in found[:limit]]
+
     async def find_nearest(self, user_id: str, vector: Sequence[float], *, state: str, embedding_space: str,
                            limit: int) -> List[Tuple[DriveNote, float]]:
         query = [float(x) for x in vector]
