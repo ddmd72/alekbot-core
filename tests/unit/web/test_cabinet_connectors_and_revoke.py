@@ -74,7 +74,7 @@ class World:
         app = Quart("test_cabinet_connectors_and_revoke")
         app.register_blueprint(create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=sessions, user_repo=Users(), fact_repo=MagicMock(),
-            embedding_service=MagicMock(), oauth_credentials_port=self.store, user_drive=self.drive,
+            embedding_service=MagicMock(), oauth_credentials_port=self.store, user_drive_service=self.drive,
             credential_revocation=self.revocation, reconnect=self.reconnect,
             connectors=self.registry if registry else None, drive_connections=self.drive_connections))
         return app

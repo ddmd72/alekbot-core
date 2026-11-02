@@ -20,7 +20,7 @@ def _app(drive):
     app = Quart("test_drive_cabinet")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None, connectors=ConnectorRegistry(),
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None, connectors=ConnectorRegistry(),
         drive_connections=drive.connections if drive else None,
         oauth_credentials_port=drive.credentials if drive else None,
         credential_revocation=drive.revocation if drive else None,

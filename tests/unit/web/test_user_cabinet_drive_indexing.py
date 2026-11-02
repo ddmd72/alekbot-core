@@ -34,7 +34,7 @@ def _app(drive=None, search=None, queue=None, user_repo=None):
     app = Quart("test_drive_indexing")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo or MagicMock(),
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
         drive_connections=drive.connections if drive else None,
         oauth_credentials_port=drive.credentials if drive else None,

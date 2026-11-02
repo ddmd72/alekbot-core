@@ -22,7 +22,7 @@ async def _app(flag, switch):
     kwargs = {} if switch is None else {"drive_transcribe_switch_on": switch}
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_connections=drive.connections,
         oauth_credentials_port=drive.credentials, **kwargs))
     return app

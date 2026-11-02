@@ -74,7 +74,7 @@ async def _app(has_root):
     app = Quart("test_mirror_flag")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials))
     return app, search

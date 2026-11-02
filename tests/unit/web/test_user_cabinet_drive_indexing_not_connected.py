@@ -19,7 +19,7 @@ def _app(drive: CabinetDrive = None) -> Quart:
     app = Quart("test_drive_indexing_not_connected")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=MagicMock(),
-        embedding_service=MagicMock(), user_drive=None, drive_search_service=None, drive_task_queue=None,
+        embedding_service=MagicMock(), user_drive_service=None, drive_search_service=None, drive_task_queue=None,
         connectors=ConnectorRegistry(),
         drive_connections=drive.connections if drive else None,
         oauth_credentials_port=drive.credentials if drive else None,

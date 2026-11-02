@@ -99,7 +99,7 @@ class World:
                                                                       "role": "owner"})
         kwargs = dict(invite_service=MagicMock(), session_service=session_service, user_repo=self.users,
                       fact_repo=MagicMock(), embedding_service=MagicMock(), oauth_credentials_port=self.store.repo,
-                      credential_revocation=self.revocation, user_drive=self.router, drive_search_service=Search(),
+                      credential_revocation=self.revocation, user_drive_service=self.router, drive_search_service=Search(),
                       drive_task_queue=self.queue, drive_transcribe_switch_on=self.switch_on, reconnect=self.reconnect,
                       connectors=self.registry, drive_connections=self.connections)
         kwargs.update(over)

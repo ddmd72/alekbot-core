@@ -27,7 +27,7 @@ async def _app(status, queue):
     app = Quart("test_drive_index_card")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive_service=None,
         drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
         drive_connections=drive.connections, oauth_credentials_port=drive.credentials,
     ))

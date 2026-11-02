@@ -91,7 +91,7 @@ class World:
         bp = create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
-            task_setup=self.task_setup, user_drive=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
+            task_setup=self.task_setup, user_drive_service=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
             credential_revocation=CredentialRevocationService(self.creds, {}),
             drive_connections=self.drive_connections)
         app = Quart("test_cabinet_reconnect")
