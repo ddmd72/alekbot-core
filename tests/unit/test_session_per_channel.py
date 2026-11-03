@@ -138,6 +138,7 @@ class TestNotificationServiceNotifySession:
         state_repo = AsyncMock(spec=NotificationStatePort)
         channel_factory = MagicMock(spec=NotificationChannelFactoryPort)
         coordinator = MagicMock()
+        coordinator.prefetch_file_ref = AsyncMock()
         coordinator.route_message = AsyncMock(return_value=AgentResponse.success(
             task_id="t1", agent_id="quick", result=SmartResponse(text="OK"),
         ))
@@ -436,6 +437,7 @@ class TestAgentWorkerHandlerOriginContext:
 
     def _make_handler(self):
         coordinator = MagicMock()
+        coordinator.prefetch_file_ref = AsyncMock()
         coordinator.route_message = AsyncMock()
         notification = AsyncMock()
         notification.notify = AsyncMock()
