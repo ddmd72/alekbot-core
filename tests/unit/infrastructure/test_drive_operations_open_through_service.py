@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,10 +15,11 @@ from src.agents.file_management_agent import FileManagementAgent
 from src.domain import drive_ref
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.document_limits import MAX_CONVERTED_CHARS, OPEN_MAX_CHARS
-from src.domain.document_open_texts import conversion_alert, shown_line
+from src.domain.document_open_texts import conversion_alert, shown_line, storage_read_note
 from src.domain.document_read import INTERACTIVE_OPEN_S, OPEN_MARGIN_S, ReadOutcome, ReadStatus
 from src.domain.drive_outcome import DriveOutcome
 from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.drive_mounts import canonical_path
 from src.domain.drive_op import DriveOp
 from src.domain.drive_pass_through import PassThroughCollector
 from src.domain.drive_open_bound import bound, cut_line, path_subject
@@ -159,11 +161,13 @@ async def test_stored_text_is_marked_and_cut_at_60000_with_the_note_outside(conv
     assert "[System:" not in out.text[:closing.start()] and "[System:" in out.text[closing.end():]
 
 
-async def test_a_stored_note_is_shown_as_it_is(conversion):
+async def test_a_stored_note_is_a_failed_open_shown_as_it_is(conversion):
+    # A note is the system's sentence, never file content: a failed open, unmarked, never a body (U3 seam fix).
     note = conversion_alert(CHAT_REF, "application/pdf")
     conversion.open.return_value = opened_note(note, ReadStatus.ENCRYPTED)
     out = await _ops(conversion).fetch_stored(CTX, "ann", CHAT_REF, deadline_at=1.0)
-    assert out.success and out.text == note
+    assert not out.success and out.cls is OutcomeClass.FAILED and not out.body
+    assert out.text == note
 
 
 async def test_a_skill_file_stays_the_systems_own_unmarked_text(conversion):
@@ -266,19 +270,24 @@ async def test_a_stored_note_is_answered_and_logged(conversion, caplog, status, 
     conversion.open.return_value = opened_note(note, status, detail="busy")
     with caplog.at_level(logging.WARNING):
         out = await _ops(conversion).fetch_stored(CTX, "ann", CHAT_REF, deadline_at=1.0)
-    assert out.success and out.text == note
-    records = [r for r in caplog.records if "open gave a note" in r.getMessage()]
+    assert not out.success and out.cls is OutcomeClass.FAILED and not out.body and out.text == note
+    records =[r for r in caplog.records if "open gave a note" in r.getMessage()]
     assert len(records) == 1 and records[0].levelno == level
     assert CHAT_REF in records[0].getMessage() and status.value in records[0].getMessage()
 
 
-async def test_a_drive_note_is_answered_inside_the_wrapper_and_logged(conversion, caplog):
+async def test_a_drive_note_is_a_failed_open_outside_the_wrapper_and_logged(conversion, caplog):
+    # A note is never file text: no wrapper, no reminder, no body, no success; the drive's label line names the file.
     note = "[System: the parser is busy]"
     conversion.open.return_value = opened_note(note, ReadStatus.PARSER_UNAVAILABLE, detail="busy")
     with caplog.at_level(logging.WARNING):
         out = await _ops(conversion, SCAN).open(CTX, "ann", "drive:a1:s1", deadline_at=1.0)
-    assert out.success and note in out.text
+    shown = replace(SCAN, path=canonical_path(CONN.mount_name, SCAN.path))
+    assert not out.success and out.cls is OutcomeClass.FAILED and not out.body and out.file_data is None
+    assert out.text == f"{drive_label(shown, 'a1')}\n{note}"
+    assert "<drive_document" not in out.text and REFERENCE_REMINDER not in out.text
     assert any(r.levelno == logging.ERROR and "busy" in r.getMessage() for r in caplog.records)
+    assert len([r for r in caplog.records if "open gave a note" in r.getMessage()]) == 1
 
 
 async def test_an_open_that_raises_is_a_specific_answer_and_an_error_line(conversion, caplog):
@@ -286,5 +295,5 @@ async def test_an_open_that_raises_is_a_specific_answer_and_an_error_line(conver
     with caplog.at_level(logging.WARNING):
         out = await _ops(conversion).fetch_stored(CTX, "ann", CHAT_REF, deadline_at=1.0)
     assert not out.success and out.cls is OutcomeClass.FAILED
-    assert "RuntimeError" in out.text and "re-upload" in out.text and "parser exploded" not in out.text
+    assert out.text == storage_read_note(CHAT_REF) and "parser exploded" not in out.text
     assert any(r.levelno == logging.ERROR for r in caplog.records)
