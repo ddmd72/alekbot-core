@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
 from ..domain.document_open import Prefetched
-from ..domain.document_open_texts import conversion_alert
+from ..domain.document_open_texts import conversion_alert, open_failed_note
 from ..domain.document_read import INTERACTIVE_OPEN_S
 from ..domain.native_format import NATIVE_FORMATS_KEY
 from ..domain.user_drive import DriveNotConnectedError
@@ -640,7 +640,7 @@ class AgentCoordinator:
                 "❌ [Coordinator] Failed to resolve file_ref '%s': %s",
                 file_ref, e, exc_info=True,
             )
-            params["file_note"] = conversion_alert(str(file_ref))
+            params["file_note"] = open_failed_note(str(file_ref))
             return
         if got.content:
             params["file_content"] = got.content

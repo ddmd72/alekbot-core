@@ -885,12 +885,20 @@ class ConversationHandler(ConversationHandlerPort):
                         temp_files.append(local_path)
                         if self._file_conversion_service:
                             # New path: upload to GCS, return reference-only MessagePart
-                            file_part = await self._file_conversion_service.process_attachment(
-                                local_path,
-                                attachment.filename or "unknown",
-                                attachment.mime_type,
-                                user_id=context.user_id,
-                            )
+                            try:
+                                file_part = await self._file_conversion_service.process_attachment(
+                                    local_path,
+                                    attachment.filename or "unknown",
+                                    attachment.mime_type,
+                                    user_id=context.user_id,
+                                )
+                            except Exception as exc:
+                                # Storage down (e.g. a 5xx): this attachment's slot carries the note, the turn goes on.
+                                logger.error("❌ Attachment upload failed (%s): the slot carries a storage note",
+                                             type(exc).__name__, exc_info=True)
+                                file_part = MessagePart(
+                                    text=storage_unavailable_alert(attachment.filename or "unknown")
+                                )
                         else:
                             # No file service: the upload path never parses in the handler. The slot carries
                             # a note and the failure is loud (ERROR line the Errors-dev alert picks up).

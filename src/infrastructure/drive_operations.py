@@ -68,7 +68,7 @@ from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS
 from ..domain.document_kind import kind_of
 from ..domain.document_open import OpenedFile
-from ..domain.document_open_texts import shown_line
+from ..domain.document_open_texts import shown_line, storage_read_note
 from ..domain.document_presentation import present_text
 from ..domain.document_read import CALLER_OPEN, INTERACTIVE_OPEN_S, ReadOutcome, ReadStatus
 from ..domain.drive_op import DriveOp
@@ -692,11 +692,7 @@ class DriveOperations:
             if ref.startswith(WORKSPACE_REF_PREFIX):
                 return _fail(DriveOp.OPEN, f"The workspace could not be read right now ({type(e).__name__}); try "
                                            "again later.", OutcomeClass.FAILED)
-            return _fail(DriveOp.OPEN, (
-                f"Could not read file '{ref}': {type(e).__name__}. "
-                f"The file exists but could not be converted to text. "
-                f"Ask the user to re-upload or paste the content directly."
-            ), OutcomeClass.FAILED)
+            return _fail(DriveOp.OPEN, storage_read_note(ref), OutcomeClass.FAILED)
 
     async def _fetch_workspace(self, context: Mapping[str, Any], ref: str, user_id: str,
                                deadline_at: Optional[float]) -> DriveOutcome:
@@ -1089,7 +1085,11 @@ class DriveOperations:
                                                      tag),
                        [item], file_data={"path": opened.native_path, "mime_type": opened.native_mime},
                        owner_note=bool(note), tag=tag)
-        content = opened.body or opened.note
+        if opened.note and not opened.body:
+            # The system's sentence about a read that gave no text: never file text, so it is not wrapped as
+            # untrusted data and the open is not a success (`_signal_note` has logged it with ref and status).
+            return _fail(DriveOp.OPEN, f"{drive_label(item, tag)}\n{opened.note}", OutcomeClass.FAILED)
+        content = opened.body or ""
         # what a page-wise read shows (D7), outside the wrapper; "" for a read that was not page-wise
         shown = shown_line(item.path, opened.outcome) if opened.outcome is not None else ""
         # §28.7's trigger for serving opens from stored chunks: how large the live opens are.

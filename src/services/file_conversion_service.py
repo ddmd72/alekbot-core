@@ -32,7 +32,7 @@ from ..domain.drive_handle import DriveHandle
 from ..domain.file_ref import FileRefKind, classify_ref
 from ..domain.document_kind import mime_decides_kind, mime_kind
 from ..domain.document_open import OpenedFile, Prefetched
-from ..domain.document_open_texts import parser_unavailable_note
+from ..domain.document_open_texts import open_failed_note, parser_unavailable_note
 from ..domain.document_presentation import note_for, present_text
 from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
@@ -302,7 +302,7 @@ class FileConversionService:
             opening = await self._open(ref, user_id, account_id, (), deadline_at, CALLER_PREFETCH)
         except Exception as e:
             logger.warning("[FileOpen] prefetch could not open ref=%s: %s: %s", ref, type(e).__name__, e)
-            return Prefetched(note=f"[System: The file '{ref}' could not be opened. Do not guess what it contains.]")
+            return Prefetched(note=open_failed_note(ref))
         opened = opening.opened
         if opened.note:
             return Prefetched(note=opened.note)

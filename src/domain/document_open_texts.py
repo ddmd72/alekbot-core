@@ -14,6 +14,8 @@ Public interface:
     still_working_note(name), deadline_note(name)                  not read in time (the same words, D7)
     model_unavailable_note(name), parser_unavailable_note(name)    an outage of the reader or the parser
     image_too_large_note(name), image_format_note(name)            an image the consumer cannot take
+    open_failed_note(ref)                                          an unexpected error while opening a file
+    storage_read_note(ref)                                         the store could not be read right now
     shown_line(name, outcome) -> str                               D7: what a page-wise read shows; "" for nothing
 """
 from __future__ import annotations
@@ -94,6 +96,17 @@ def image_too_large_note(name: str) -> str:
 def image_format_note(name: str) -> str:
     return (f"[System: The image '{name}' is in a format that cannot be read. "
             f"Ask the user to send it as JPEG or PNG, or describe what it shows.]")
+
+
+def open_failed_note(ref: str) -> str:
+    """An unexpected error while opening a ref: neither the file's fault nor a known outage."""
+    return f"[System: The file '{ref}' could not be opened. Do not guess what it contains.]"
+
+
+def storage_read_note(ref: str) -> str:
+    """The file store failed while a stored file was downloaded: the file may be fine, the store is not."""
+    return (f"[System: The file '{ref}' could not be read from storage right now; try again later. "
+            f"Do not guess what it contains.]")
 
 
 def _pages(pages: Sequence[int]) -> str:
