@@ -2,7 +2,7 @@
 
 **Status:** Proposed (rev 6). Not built. *D* items are owner decisions (2026-10-22 to 2026-11-03); *P* items are author
 proposals the owner has not ruled on, each separable; *A* items are author decisions on engineering points.
-**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: owner decisions D7–D11; rev 4: re-review; rev 5: 2026-10-23, owner decisions D12–D13; rev 6: 2026-11-03, owner decisions D14–D15, code re-read)
+**Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: owner decisions D7–D11; rev 4: re-review; rev 5: 2026-10-23, owner decisions D12–D13; rev 6: 2026-11-03, owner decisions D14–D15, code re-read; owner decisions D16–D20 of the same day)
 Code cites are `main` @ `2280ca78`.
 **Owner decisions (2026-10-22):**
 - **D1. Placement.** The document service is a component inside each runtime (main service, drive indexer). Its
@@ -62,6 +62,18 @@ Code cites are `main` @ `2280ca78`.
   `chat.convert` op; one parse op family, `parse.*` (A1), serves both runtimes; sandbox S4 is "admit the main service's
   identity to that family and flip its knob". Sandbox S-Δ1 (audio stays with the caller) and S-Δ2 (plain text stays
   with the caller, §4.4) hold. Recorded in the sandbox RFC as O13.
+- **D16 (2026-11-03). D15's final go is given.** The U5 re-extract and re-embed cost is approved up front; the measured
+  estimate is still reported before U5 ships.
+- **D17 (2026-11-03). A4 accepted:** the reader's text budget for a drive scan opened in conversation is 60 000
+  characters (§29's open bound).
+- **D18 (2026-11-03). P13 accepted:** the reader's 200-page allowance per open applies to every store. Chat and email
+  opens are not in the drive's monthly ledger.
+- **D19 (2026-11-03). P14 and P15 accepted.** P14 (mark email bodies and search lines) is built in its own PR; P15
+  (workspace and delivered files count as external) follows with U3.
+- **D20 (2026-11-03). P19 accepted in a changed form:** ONE presentation cut for parser text on every open path, 60 000
+  characters with a note naming the cut. Email attachments move from 30 000 to 60 000 (`truncate_with_alert`,
+  `email_search_service.py:260`; `MAX_CONVERTED_CHARS`, `file_conversion.py:32`); chat, workspace and delivered opens,
+  which have no cut today, get it. Realised in U3 (§4.5, §7).
 - **Contract (owner, 2026-10-22):** the sandboxes are not all built; they come later and they are the isolation layer.
   This design works today (in-process engines, the drive parser child) and names the adapter each sandbox slice swaps
   in, with no second migration of callers. D14 fixes when.
@@ -73,7 +85,10 @@ decision records `drive_prefetch_wrapper_slice3.md`, `drive_parser_sandbox_resou
 `MULTI_DRIVE_RFC.md` §9, §11.3 (tagged refs, access policy); `GOOGLE_DRIVE_RFC.md` §3.5, G1, G1b, G2, G10 (exports);
 `USER_DRIVE_INDEXING_RFC.md` §27 (transcripts), §29 (the drive open bound).
 
-**Changes in rev 6** (owner decisions D14–D15 and a re-read of the code at `2280ca78`):
+**Changes in rev 6** (owner decisions D14–D20 and a re-read of the code at `2280ca78`):
+- **Owner decisions 2026-11-03** (D16–D20): D15's final go and the U5 cost approval (D16); A4 (D17), P13 (D18), P14
+  and P15 (D19) accepted; P19 accepted as one 60 000-character cut on every path, email included (D20). §4.4, §4.5, §5
+  and §7 follow them.
 - D14 (order) and D15 (P4 in principle) recorded; §4.8, §4.9, §5 and §7 follow them. P4 is no longer an open proposal.
 - Drive: the drive specialist (`DriveAgent`, intent `work_with_drive_files`) and the shared `DriveOperations` replace
   FileManagement's drive intents; refs are `drive:<tag>:<item>` (`MULTI_DRIVE_RFC.md` §9); the §29 open bound governs
@@ -89,7 +104,7 @@ decision records `drive_prefetch_wrapper_slice3.md`, `drive_parser_sandbox_resou
     the open path as bytes the caller downloaded, with the export mime declared; no special path (§4.2).
   - **A3.** After U5, "plain text read in-process" (sandbox S-Δ2) means the kinds with no converter: `text`,
     `markdown`, `json`, `code`, `log`. `csv`, `html`, `eml`, `rtf` and `subtitles` go to the child's readers (§4.4).
-  - **A4.** D7's text budget follows the store's presentation cap: 30 000 characters, except drive opens, where §29's
+  - **A4** (accepted, D17; the budget is 60 000 everywhere by D20). D7's text budget follows the store's presentation cap: 30 000 characters, except drive opens, where §29's
     60 000-character bound is the presentation cap (§4.4, §4.5).
   - **A5.** The native declaration reaches the drive specialist through `work_with_drive_files`. The specialist passes
     it on to the open unchanged, because its own model reads stand-ins and the bytes go to the delegating engine (§4.3).
@@ -116,7 +131,7 @@ Logfire; D10 shared caps for email; D11 one open verb per store; OQ1–OQ5 close
 - D7 realised exactly: with a text budget the reader reads window 1 alone, then one window at a time, stopping at the
   budget; the note says what is shown ("pages 1–N in full; text cut within pages N+1–N+10", holes listed).
 - D11 quoted as recorded; the email id + attachment name input is P20, for the owner to confirm.
-- The 30 000-character cut on parser text of non-email opens is back as P19; D7 covers reader text only.
+- The cut on parser text of non-email opens is back as P19 (D20 later made it 60 000 on every path); D7 covers reader text only.
 - D9: logfire scrubbing cannot reach the message attributes; three candidates listed; U0-a has an exit to the owner;
   today's native drive opens named as an existing gap.
 - Minors: `STILL_WORKING` maps to a timeout-style note (tested with a fake adapter); each open keeps its agent's
@@ -160,7 +175,7 @@ The bot retried three times. Failure 1 is about reading, failure 2 about refs, f
 |---|---|---|---|---|---|
 | Chat upload | the stored, deduplicated name in `[File: "<ref>" (size)]` (`file_conversion_service.py:284-327`, label `:309`) | `open_file` (FileManagement) → `DriveOperations.fetch_stored` (`src/infrastructure/drive_operations.py:650-695`) | image or PDF by extension guess (`:665-667`), no size cap, temp file (`_fetch_binary`, `:722-733`) | `convert_file_to_text` in a thread of the main service | content never in history (FILE_STORAGE_RFC §2.1); the label carries the ref, not the original name (README §1.1) |
 | Drive file | `drive:<tag>:<item id>` in `[Drive: <path> (size) ref=drive:<tag>:<id>]` (`src/domain/drive_ref.py:57-75`, `src/domain/user_drive.py:264-276`), kept across turns by `drive_context` | the drive specialist's `open_drive_file` (`src/infrastructure/drive_tools.py:225-233`), or `open_file` on a `drive:` ref (lenient, `src/agents/file_management_agent.py:99-102`) → `DriveOperations.open` (`drive_operations.py:437-449`) → `_open_drive_item` (`:991-1096`) | image ≤ 5 MiB in four formats, PDF ≤ 20 MiB, on provider metadata (`user_drive.py:29-30`, `:49`; `drive_operations.py:1003-1004`, `:1043-1057`); the specialist's model reads a stand-in, the bytes go to the delegating engine (`drive_tools.py:176-178`, `src/agents/drive_agent.py:331-332`) | the same converter, then §29's open bound and the nonce wrapper (`drive_operations.py:1077-1096`) | caps "below the strictest provider limits, so a large scan cannot fail Smart's whole turn" (USER_DRIVE_RFC §4.6); the bound: "a text file from the indexed drive above the cap is never handed to a model to read whole" (USER_DRIVE_INDEXING_RFC §29.2) |
-| Email attachment | none; the model passes `email_id` + `filename` | `get_email_attachment` → `EmailSearchService.get_attachment` (`email_search_service.py:198-260`) | never | the same converter; 3 MB cap; 30 000 characters | none recorded beyond the original RFC flow (GMAIL_EMAIL_INDEXING_RFC §2.4) |
+| Email attachment | none; the model passes `email_id` + `filename` | `get_email_attachment` → `EmailSearchService.get_attachment` (`email_search_service.py:198-260`) | never | the same converter; 3 MB cap; 30 000 characters (60 000 after D20) | none recorded beyond the original RFC flow (GMAIL_EMAIL_INDEXING_RFC §2.4) |
 
 Facts that shape the design:
 - **The orchestrator is blind on the upload turn, by design.** `process_attachment` builds one part
@@ -552,7 +567,7 @@ HTML, MIME or RTF parser) and U0-b found the child's reading of them better, wit
 **Statuses, not strings (U3).** The child returns an `ExtractionOutcome` with a status; today's converter returns a
 string, alerts included (`file_conversion.py:108-157`). The chat layer therefore rebuilds today's `[File: …]` wrapper
 and `[System: …]` alert texts from `ReadOutcome.status` and `detail`, so a chat user sees the same notes as today for
-the same failure. The 30 000-character cut stays in the chat and email presentation (§4.5); the child's own ceiling
+the same failure. The 60 000-character cut (D20) sits in the chat and email presentation (§4.5); the child's own ceiling
 (`MAX_TEXT_CHARS`, 2 000 000) is not a presentation cap.
 
 **P21. Audio on open (U3 requirement).** Today no opened audio file is transcribed (§1.2), and the gap is the `defect:D3` line of
@@ -593,8 +608,8 @@ to `ContentExtractorPort`'s request; §6 declares it.
 
 **Long scans: a simple cut (D7).** An interactive scan read reads only as many pages as can be shown, and has no
 "still working" path.
-- **Text budget.** It equals the store's presentation cap for reader text (§4.5, A4): 30 000 characters, and for drive
-  opens §29's 60 000-character bound (`OPEN_MAX_CHARS`, `src/domain/drive_index_params.py:265`), so a drive scan is
+- **Text budget.** It equals the presentation cap for reader text (§4.5, A4/D17, D20): 60 000 characters on every path (today's
+  30 000 outside the drive moves with U3), the drive's being §29's bound (`OPEN_MAX_CHARS`, `src/domain/drive_index_params.py:265`), so a drive scan is
   read as far as §29 would show it and no further.
 - **Deadline.** Each open keeps its agent's existing timeout, minus a 30 s margin for presentation:
   - FileManagement: 120 s → 90 s (`src/composition/user_agent_factory.py:903`). Its reads are not shielded
@@ -702,10 +717,10 @@ slot wait past the deadline map to `PARSER_UNAVAILABLE`.
 | Plain text and text exports, before `data:` images are dropped | 10 MiB (`MAX_TEXT_EXPORT_BYTES`, `src/domain/text_data_uris.py:11`; GOOGLE_DRIVE_RFC G1b) | the 5 MiB cap applies to the text after the drop |
 | Native, per file | the consumer's declaration, never above 5 MiB image / 20 MiB PDF | §4.3 |
 | Drive download, any | 45 MiB (`MAX_DRIVE_DOWNLOAD_BYTES`, `user_drive.py:28`); a Google export 10 MiB (Google's cap, `GOOGLE_EXPORT_MAX_BYTES`, `src/adapters/google/google_drive_mapping.py:91`) | the sandbox-era bound is 32 MiB if sandbox S0-a fails (sandbox O6) |
-| Presentation, email text | 30 000 characters (`MAX_CONVERTED_CHARS`, `file_conversion.py:32`; `truncate_with_alert` at `email_search_service.py:260`) | kept |
+| Presentation, email text | 30 000 characters today (`MAX_CONVERTED_CHARS`, `file_conversion.py:32`; `truncate_with_alert` at `email_search_service.py:260`) | **D20:** 60 000, realised in U3 |
 | Presentation, drive text | 60 000 characters, §29's open bound (`OPEN_MAX_CHARS`, `drive_index_params.py:265`; `src/domain/drive_open_bound.py`): an indexed text above it is refused before download and read through passages, any other is cut at a paragraph with a cut line | kept (owner rule, USER_DRIVE_INDEXING_RFC §29.2); also the drive reader's text budget (A4) |
-| Presentation, reader text, other stores | 30 000 characters | **D7**: also the reader's text budget; the note says what is shown |
-| Presentation, parser text, chat, workspace and delivered | none today below the 5 MiB input | **P19:** 30 000 characters with a note naming the cut |
+| Presentation, reader text, other stores | 30 000 characters today | **D7**: also the reader's text budget; **D20:** 60 000, realised in U3; the note says what is shown |
+| Presentation, parser text, chat, workspace and delivered | none today below the 5 MiB input | **D20 (P19):** 60 000 characters with a note naming the cut, realised in U3; one cut on every open path |
 | Bytes for an action (save, send) | 45 MiB (`MAX_VIDEO_ATTACH_BYTES`, `drive_operations.py:147`) | `resolve_file` takes the action; today's re-send cap, the platform margin |
 
 **The indexer's use (D6), at the seams that exist today:**
@@ -895,7 +910,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | # | Proposal | Status |
 |---|---|---|
 | D1–D6 | as in the header | owner, 2026-10-22 |
-| D7 | long scans: the reader reads only the pages that fit the store's presentation cap (60 000 characters for drive opens, §29; 30 000 elsewhere; A4 awaits the owner's confirmation), within each agent's existing timeout; the note says what is shown; no "still working" path (§4.4, §4.5) | owner, 2026-10-23 |
+| D7 | long scans: the reader reads only the pages that fit the store's presentation cap (60 000 characters for drive opens, §29, A4/D17; 30 000 elsewhere until D20's 60 000 lands in U3), within each agent's existing timeout; the note says what is shown; no "still working" path (§4.4, §4.5) | owner, 2026-10-23 |
 | D8 | `send_file_to_user`: any ref → `resolve_file` → `notify_file_bytes`, origin channel as override; a failed upload is a failure (§4.2) | owner, 2026-10-23 |
 | D9 | no file contents in Logfire from any model call (§4.3) | owner, 2026-10-23 |
 | D10 | email uses the shared caps (§4.5, §4.7) | owner, 2026-10-23 |
@@ -903,7 +918,12 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | D12 | `open_email_attachment` also takes an email id + attachment name; duplicates list the refs (§4.7) | owner, 2026-10-23 |
 | D13 | `send_file_to_user` refuses active kinds from email attachments, by kind from bytes; drive and chat unrestricted (§4.2) | owner, 2026-10-23 |
 | D14 | order: U0–U4, then U5, first; sandbox S3/S4 after, as adapter swaps; the parser child is the accepted residual until then (§4.9, §7) | owner, 2026-11-03 |
-| D15 | P4 in principle: one parse engine, the child's readers; final go after the U0-b report on real files (§4.8, §8) | owner, 2026-11-03 |
+| D15 | P4 in principle: one parse engine, the child's readers (§4.8, §8) | owner, 2026-11-03 |
+| D16 | D15's final go given; the U5 re-extract/re-embed cost approved up front, the measured estimate still reported before shipping (§7) | owner, 2026-11-03 |
+| D17 | = A4: the reader's text budget for a drive scan opened in conversation is 60 000 characters (§4.4, §4.5) | owner, 2026-11-03 |
+| D18 | = P13: the 200-page allowance per open for every store; chat and email opens are not in the drive's monthly ledger (§4.4) | owner, 2026-11-03 |
+| D19 | = P14 (built in its own PR) and P15 (§4.1, §4.6) | owner, 2026-11-03 |
+| D20 | = P19 in a changed form: one 60 000-character presentation cut for parser text on every open path, with a note naming the cut; email attachments 30 000 → 60 000; realised in U3 (§4.5) | owner, 2026-11-03 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
 | P5 | `LLMPort.native_formats(model_name)` with a text-only default; per-attempt key on a context copy (§4.3) | author, realises D3 |
@@ -912,18 +932,18 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | P9 | one ref classifier (§4.1) | author |
 | P10 | pure pieces move to neutral modules; reader names kept (§4.5) | author |
 | P11 | rename the drive tag to the neutral one (§4.6) | author, optional, own slice |
-| P13 | `allowance()` = the existing 200-page ceiling for every store (§4.4) | author, realises D5 |
-| P14 | mark email bodies and search lines (§4.6) | author, separate |
-| P15 | workspace and delivered files count as external (§4.1) | author |
+| P13 | `allowance()` = the existing 200-page ceiling for every store (§4.4) | accepted (D18); realises D5 |
+| P14 | mark email bodies and search lines (§4.6) | accepted (D19); own PR |
+| P15 | workspace and delivered files count as external (§4.1) | accepted (D19) |
 | P16 | the native decision sits inside the service (§4.3) | author |
 | P17 | normalise images in the child (§4.3) | author, optional follow-up |
 | P18 | prefetch reads in the async worker from the ref (§4.2) | author; moves a caller in U3 |
-| P19 | 30 000-character cut on parser text of chat, workspace and delivered opens (§4.5; drive has §29's bound) | author, limit change |
+| P19 | one 60 000-character cut on parser text of every open path (§4.5) | accepted in a changed form (D20); U3 |
 | P21 | audio on open: decided per path in U3; drive recordings under §27's opt-in and cap, chat audio metered and cached, not capped (D5); transcript first; within the deadline (§4.4) | author; U3 |
 | A1 | the sandbox parse op family is `parse.*` (§4.9) | author decision, rev 6 |
 | A2 | provider exports enter `open` as bytes with the export mime; no special path (§4.2) | author decision, rev 6 |
 | A3 | after U5, plain text in the caller = `text`, `markdown`, `json`, `code`, `log`; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (§4.4) | author decision, rev 6 |
-| A4 | D7's text budget = the store's presentation cap; drive: §29's 60 000 (§4.4, §4.5) | author decision, rev 6; awaits the owner's confirmation |
+| A4 | D7's text budget = the store's presentation cap; drive: §29's 60 000 (§4.4, §4.5) | author decision, rev 6; accepted (D17) |
 | A5 | the drive specialist passes the native declaration on unchanged (§4.3) | author decision, rev 6 |
 | A6 | U5's PDF-table fix is a row-aware pass in the child, not a reader route (§7) | author decision, rev 6 |
 
@@ -952,7 +972,7 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 
 ## 7. Slices
 
-**Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); U2 onward not started.
+**Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); U2 built (the native-format declaration, PDF page caps from provider documentation; the measured spike U0-e replaces them); U3 onward not started.
 
 Each slice: tests first, the reviewer rule for any existing test, `make check` green, docs in the same PR.
 
@@ -961,7 +981,7 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | **U0 spikes** | §8 U0-a … U0-e (U0-b: the real-file run) | each result written down | first |
 | **U1 pieces** | P9 (its drive branch on the `drive_ref` codec); P10 moves (G1's mime table moves with `kind_of`); caps table (§4.5, the text-export and §29 rows included); `PdfSplitterPort` (with the optional `deadline_at` and the batch `cut_pdf_windows`, §4.4); the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | after U0 |
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it except for the three opening intents, the drive specialist passes it on (A5); `DriveOperations` decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped, from `open_file` and from the drive specialist; the key never reaches any other specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
-| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, splitter, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the 30 000 cut in the chat and email layer; P21's per-path audio decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
+| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, splitter, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the one 60 000-character cut (D20) on every open path, email attachments moved from 30 000; P21's per-path audio decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
 | **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; `copy_file_to_drive` from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
 | **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, shipped together under **one** parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | **Gate before the bump ships:** the fixes change the child the indexer shares, so the indexer's upgrade pass (`drive_indexing_service.py:2934-2935`, `DRIVE_UPGRADE_PASS`) re-extracts and re-embeds the drive corpus and may route files to the paid reader; a probe measures the cost on a sample and the owner gives an OK under the money rules (over ~$3). Then: the four fixes each tested on a fixture; the U0-b report on real files (PDFs with real fonts, scans, `.msg`, files at the caps, large sheets) accepted by the owner (D15's final go); no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
 | **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P19 parser-text cut | each its own PR | any time after U1 |
