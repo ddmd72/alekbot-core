@@ -3,7 +3,8 @@ kind's chain, re-extracts exactly what that link decided, in class 3, with the o
 import pytest
 
 from src.domain import drive_extraction
-from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import CURRENT_VERSIONS, Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.services.drive_indexing_service import DriveIndexingService

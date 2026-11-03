@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain.drive_feed_scope import FeedScope
-from src.domain.text_data_uris import MAX_TEXT_EXPORT_BYTES
+from src.domain.document_limits import MAX_TEXT_EXPORT_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.file_conversion_service import FileConversionService

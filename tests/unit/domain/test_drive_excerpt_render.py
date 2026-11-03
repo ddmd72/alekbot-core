@@ -9,9 +9,9 @@ from src.domain.drive_excerpt_render import (
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_excerpt_request import ExcerptRequest
 from src.domain.drive_search import (
-    DISABLED_TEXT, REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED,
-    STATUS_FOLDER_NOT_FOUND,
+    DISABLED_TEXT, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND,
 )
+from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_search_texts import REBUILDING_LINE
 from tests.unit.domain.drive_excerpt_builders import LEASE, SCAN, TOMS_PLAN, chunk, excerpt_file, nonces, result
 

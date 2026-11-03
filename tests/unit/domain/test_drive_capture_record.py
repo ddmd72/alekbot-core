@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 
 from src.adapters.firestore_drive_index_repo import RECORD_FIELDS, record_from_doc, record_to_doc
 from src.domain.drive_capture import CaptureSignals, file_capture
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
+from src.domain.drive_extraction import ExtractionOutcome, TriageResult
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import EXTRACTION_VERSION, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict
 from src.domain.drive_index_planner import demoted, indexed, triaged
 from src.domain.drive_media_facts import DriveMediaFacts

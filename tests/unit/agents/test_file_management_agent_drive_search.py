@@ -11,9 +11,10 @@ from src.agents.file_management_agent import FileManagementAgent
 from src.domain import drive_ref
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.drive_search import (
-    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, STATUS_DISABLED, STATUS_OK, DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest,
+    REFERENCE_REMINDER, STATUS_DISABLED, STATUS_OK, DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest,
     DriveSearchResult,
 )
+from src.domain.untrusted_text import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations

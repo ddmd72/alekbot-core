@@ -8,7 +8,8 @@ import pytest
 
 from src.domain.drive_index import Reason, RecordState
 from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES
-from src.domain.user_drive import MAX_DRIVE_DOWNLOAD_BYTES, DriveFileTooLargeError, DriveItem
+from src.domain.user_drive import DriveFileTooLargeError, DriveItem
+from src.domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.ports.user_drive_port import UserDrivePort
 from src.ports.oauth_credentials_port import OAuthCredentialsPort

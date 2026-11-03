@@ -13,9 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.composition.drive_reader_runner import READER_VERSION, DriveReaderRunner
-from src.domain.drive_extraction import (
-    READER, DriveModelUnavailable, ExtractionRequest, ExtractionStatus,
-)
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest, ExtractionStatus
+from src.domain.document_extraction import READER
 from src.domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL
 from src.domain.exceptions import LLMClientError, LLMRateLimitError
 from src.domain.llm import FinishReason

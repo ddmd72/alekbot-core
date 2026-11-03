@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import CURRENT_VERSIONS, POLICY_VERSION, EpochPhase, ErrorCategory, Nudge, Reason, Scope
 from src.domain.drive_index_params import ACCESS_LOSS_TTL, MAX_ATTEMPTS, TICK_START_BUDGET
 from src.domain.user_drive import DriveConnection, DriveReauthRequired, DriveThrottled

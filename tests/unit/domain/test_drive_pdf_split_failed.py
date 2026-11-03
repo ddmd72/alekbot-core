@@ -1,6 +1,7 @@
 """PdfSplitFailed carries the outcome status of a PDF the sandboxed split could not cut (USER_DRIVE_INDEXING_RFC
 §24.3): the reader returns that status as its own outcome."""
-from src.domain.drive_extraction import ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 
 
 def test_carries_status_and_detail():

@@ -5,7 +5,7 @@ fullwidth, division, fraction or big-solidus slash, fullwidth letters, `_` look-
 (bidi controls, tag characters, combining marks, variation selectors) inside the word. Each loses its opener."""
 import pytest
 
-from src.domain.drive_search import escape_text, wrap_untrusted
+from src.domain.untrusted_text import escape_text, wrap_untrusted
 
 NONCE = "a1b2c3d4e5f60718"
 

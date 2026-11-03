@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import src.domain.drive_index_policy as policy
-from src.domain.drive_index_policy import kind_of, mime_decides_kind, mime_kind
+from src.domain.document_kind import kind_of, mime_decides_kind, mime_kind
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

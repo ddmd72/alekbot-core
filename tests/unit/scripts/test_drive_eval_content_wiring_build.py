@@ -6,7 +6,7 @@ from scripts.validation.drive_eval import content_wiring
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 
 
 def test_build_real_content_wires_the_parser_as_the_readers_splitter(monkeypatch):

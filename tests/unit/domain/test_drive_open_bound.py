@@ -3,7 +3,7 @@ import pytest
 
 from src.domain import drive_open_texts as T
 from src.domain.drive_excerpt_context import quoted
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_open_bound import (
     bound, cut_line, head_at_paragraph, refuses, refusal_text, stand_in_cut,
 )

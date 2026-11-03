@@ -11,7 +11,8 @@ from src.domain import drive_extraction
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash, card_text, collapsed_folder, repository_root
 from src.domain.drive_enrichment import DriveProfile
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import (
     ContentClass, DriveChange, DriveIndexRecord, EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )

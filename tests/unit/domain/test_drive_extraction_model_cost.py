@@ -1,5 +1,6 @@
 """The reader and triage report their calls and cost to the tick summary (USER_DRIVE_INDEXING_RFC §24.9)."""
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageBatchOutcome, TriageResult
+from src.domain.drive_extraction import ExtractionOutcome, TriageBatchOutcome, TriageResult
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import TriageVerdict
 
 

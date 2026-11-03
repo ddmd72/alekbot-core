@@ -1,9 +1,9 @@
 """Extraction contract and the parser-first router (USER_DRIVE_INDEXING_RFC §9, §24.3). Pure."""
 import pytest
 
-from src.domain.drive_extraction import (
-    EXTRACTOR_CHAINS, PARSER, READER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, chain_for,
-    garbage_share, model_route,
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import (
+    EXTRACTOR_CHAINS, PARSER, READER, ExtractionStatus, chain_for, garbage_share, model_route,
 )
 from src.domain.drive_index_params import MODEL_EXTRACT_DENSITY
 

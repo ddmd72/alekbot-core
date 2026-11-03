@@ -9,7 +9,7 @@ from src.composition.drive_passage_runner import DrivePassageRunner
 from src.composition.drive_profiler_runner import DriveProfilerRunner
 from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 
 KEYS = {"ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "o", "GEMINI_API_KEY": "g"}
 

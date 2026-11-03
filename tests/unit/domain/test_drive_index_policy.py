@@ -4,8 +4,9 @@ from src.domain.drive_index import ContentClass, DriveChange, Reason
 from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_policy import (
     ADMITTED_KINDS, SLICE2_CONTENT_KINDS, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
-    is_generated_dir, is_marker_child, item_rule, kind_of, probe_from_children,
+    is_generated_dir, is_marker_child, item_rule, probe_from_children,
 )
+from src.domain.document_kind import kind_of
 
 
 @pytest.mark.parametrize("name,mime,kind", [

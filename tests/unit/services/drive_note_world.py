@@ -10,7 +10,7 @@ from typing import Optional
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_note import (
     DriveNote, NoteBinding, NoteSnapshot, NoteState, item_binding_key, tagged_ref_key,
 )

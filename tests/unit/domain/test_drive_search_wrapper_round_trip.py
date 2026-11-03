@@ -5,7 +5,7 @@ not exist, or created as a new one by save/move. So the body keeps `&`, quotes a
 `<drive_document` / `</drive_document` look-alike is neutralised. Attributes escape only `"`, `<` and `>`."""
 import pytest
 
-from src.domain.drive_search import escape_text, wrap_untrusted
+from src.domain.untrusted_text import escape_text, wrap_untrusted
 
 NONCE = "a1b2c3d4e5f60718"
 

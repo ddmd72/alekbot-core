@@ -8,7 +8,7 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_content_identity import ContentIdentity
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import EpochPhase, RecordState
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.drive_media_facts import DriveMediaFacts

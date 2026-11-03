@@ -11,7 +11,7 @@ from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.composition import drive_indexing_setup
 from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 
 
 class _Queue:

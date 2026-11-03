@@ -1,7 +1,8 @@
 """Rendition type from magic bytes (USER_DRIVE_INDEXING_RFC §5.3, §24.5). Pure."""
 import pytest
 
-from src.domain.drive_image_mime import VISION_MIME_TYPES, image_mime
+from src.domain.drive_image_mime import VISION_MIME_TYPES
+from src.domain.document_kind import image_mime
 
 
 @pytest.mark.parametrize("head,mime", [

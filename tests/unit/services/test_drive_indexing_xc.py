@@ -5,7 +5,8 @@ import pytest
 
 from src.domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_WAITING
 from src.domain.drive_enrichment_calls import ModelReplyStatus
-from src.domain.drive_extraction import READER, DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.document_extraction import READER
 from src.domain.billing import calculate_cost
 from src.domain.exceptions import LLMUnavailableError
 

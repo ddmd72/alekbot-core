@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain import drive_ref
-from src.domain.drive_search import REFERENCE_REMINDER_ATTACHED
+from src.domain.untrusted_text import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService

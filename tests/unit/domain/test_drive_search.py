@@ -4,16 +4,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.domain import drive_index_policy
+from src.domain import document_kind
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.drive_search import (
-    KIND_FAMILIES, KIND_NAMES, REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED,
-    STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND, STATUS_OK, DriveSearchCard, DriveSearchEnvelope,
-    DriveSearchRequest, DriveSearchResult, canonical_kind, escape_text, is_unread, kinds_for,
-    make_card, path_match, render_results, request_from_fields, resolve_chain, search_gate,
-    wrap_untrusted,
+    KIND_FAMILIES, KIND_NAMES, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND,
+    STATUS_OK, DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, canonical_kind, is_unread,
+    kinds_for, make_card, path_match, render_results, request_from_fields, resolve_chain, search_gate,
 )
+from src.domain.untrusted_text import REFERENCE_REMINDER, escape_text, wrap_untrusted
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 
@@ -139,7 +138,7 @@ class TestKinds:
             request_from_fields("x", None, raw, None, None)
 
     def test_vocabulary_covers_every_kind_the_policy_assigns(self):
-        assigned = set(drive_index_policy._EXT_KIND.values()) | {"image", "audio", "video", "folder", "other"}
+        assigned = set(document_kind._EXT_KIND.values()) | {"image", "audio", "video", "folder", "other"}
         assert assigned <= KIND_NAMES
         assert all(members <= KIND_NAMES for members in KIND_FAMILIES.values())
 

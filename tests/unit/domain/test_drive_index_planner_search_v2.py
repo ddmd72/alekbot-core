@@ -6,7 +6,8 @@ from datetime import date, datetime, timezone
 
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_enrichment import DriveProfile, PhotoDescription, PhotoObject, ProfileDate
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
+from src.domain.drive_extraction import ExtractionOutcome, TriageResult
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import (
     GEO_TABLE_VERSION, KEYS_VERSION, NAME_KEYS_VERSION, DriveChange, DriveIndexRecord, EpochPhase, Priority, Reason,
     RecordState, Scope, TriageVerdict,

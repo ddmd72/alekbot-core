@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain import drive_index_policy as policy
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState
 from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import MAX_CHUNKS_PER_USER

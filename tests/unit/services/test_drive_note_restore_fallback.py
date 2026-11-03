@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_note import BoundBy, NoteState
 from src.domain.drive_note_merge import NOTE_MERGE_VERSION
 from src.services.drive_indexing_service import DriveIndexingService

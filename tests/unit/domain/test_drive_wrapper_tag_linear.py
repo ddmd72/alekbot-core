@@ -7,7 +7,7 @@ import pytest
 import time
 
 from src.domain.drive_index_params import WRAPPER_TAG_GAP_MAX
-from src.domain.drive_search import escape_text
+from src.domain.untrusted_text import escape_text
 
 
 def _timed(text: str) -> float:

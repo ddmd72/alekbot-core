@@ -15,7 +15,8 @@ from scripts.validation.drive_eval.eval_connection import EVAL_CONNECTION_ID
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
 from scripts.validation.drive_eval.runner import EvalClock, index_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_extraction import PARSER, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.document_extraction import PARSER
 from src.domain.drive_index import Reason, RecordState, Scope
 
 from ..scripts.drive_eval_samples import fake_content

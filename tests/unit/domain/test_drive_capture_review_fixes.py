@@ -3,7 +3,8 @@ a re-triage keeps the reader's word over triage's, and the query side emits `cp:
 is stored under."""
 from datetime import datetime, timezone
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
+from src.domain.drive_extraction import ExtractionOutcome, TriageResult
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import EXTRACTION_VERSION, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict
 from src.domain.drive_index_planner import demoted, triaged
 from src.domain.drive_keys import query_concepts

@@ -54,7 +54,7 @@ from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.domain.billing import BillingAccount
 from src.domain.drive_connection_state import ConnectionState
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.email import IndexingState
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
