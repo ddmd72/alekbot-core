@@ -40,7 +40,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentMessage, AgentResponse, AgentIntent, AgentStatus
 from src.domain.document_open import Prefetched
-from src.domain.document_open_texts import conversion_alert
+from src.domain.document_open_texts import open_failed_note
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 
@@ -415,7 +415,8 @@ class TestResolveFileRefs:
         await self._prefetch(coord, params)
 
         assert "file_content" not in params
-        assert params["file_note"] == conversion_alert("broken.docx")   # the specialist reports it (P18)
+        # a crash is no format verdict: the generic "could not be opened" note (U3 seam fix 4); the specialist reports it (P18)
+        assert params["file_note"] == open_failed_note("broken.docx")
 
     async def test_no_user_id_noop(self):
         resolver = AsyncMock()

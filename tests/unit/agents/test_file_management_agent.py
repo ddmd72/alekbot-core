@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
+from src.domain.document_open_texts import storage_read_note
 from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
@@ -261,7 +262,9 @@ class TestFetchErrors:
         assert response.status == AgentStatus.FAILED
         assert "not found" in response.error.lower() or "expired" in response.error.lower()
 
-    async def test_conversion_error(self, agent, mock_conversion):
+    async def test_an_open_that_raises_answers_the_storage_note(self, agent, mock_conversion):
+        # store errors propagate out of open; the answer is the honest storage note (U3 seam fix 4), never the
+        # exception text
         mock_conversion.open = AsyncMock(side_effect=RuntimeError("conversion failed")
         )
         msg = _make_message(Intent.OPEN_FILE, file_ref="broken.docx")
@@ -269,7 +272,7 @@ class TestFetchErrors:
         response = await agent.execute(msg)
 
         assert response.status == AgentStatus.FAILED
-        assert "RuntimeError" in response.error
+        assert response.error == storage_read_note("broken.docx") and "conversion failed" not in response.error
 
 
 # ---------------------------------------------------------------------------
