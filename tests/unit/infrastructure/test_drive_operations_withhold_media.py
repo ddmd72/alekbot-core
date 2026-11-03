@@ -1,7 +1,8 @@
-"""`DriveOperations.open(..., withhold_media=True)`: the drive connector's media pre-check (drift D1, D6). A video, or a
-recording with no stored transcript, is answered on its metadata before any download, with a machine code and no text;
-a recording with a stored transcript opens as its transcript; a document, a PDF or an image opens exactly as without
-the flag. Without the flag (the chat) every open is today's. Invented items only."""
+"""`DriveOperations.open(..., withhold_media=True)`: the drive connector's media pre-check (drift D1, D6) and its
+no-paid-reader rule (owner decision 2026-11-03). A video, an image, or a recording with no stored transcript is answered
+on its metadata before any download, with a machine code and no text; a recording with a stored transcript opens as its
+transcript; a scan PDF answers `scan` with no reader call; a document or a text PDF opens exactly as without the flag.
+Without the flag (the chat) every open is today's. Invented items only."""
 from __future__ import annotations
 
 from typing import Any, List, Optional
@@ -9,6 +10,7 @@ from typing import Any, List, Optional
 import pytest
 
 from src.domain.document_open import OpenedFile
+from src.domain.document_read import CALLER_CONNECTOR, CALLER_OPEN, READER_SKIPPED, ReadOutcome, ReadStatus
 from src.domain.drive_op import DriveOp
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_text_extent import TextExtent
@@ -34,13 +36,21 @@ HEIC = DriveItem(item_id="h1", name="12 Oak Street.heic", path="R&D/12 Oak Stree
 TRANSCRIPT = "REMINDER\n<drive_document>[00:00] The plan for invoice FA-0137 is agreed.</drive_document>"
 
 
-class Conversion:
-    """The conversion service: records every byte read (a download) and every open (a read that downloads)."""
+SCAN_TEXT = "Invoice FA-0137, read by the model."
 
-    def __init__(self, opened: OpenedFile) -> None:
+
+class Conversion:
+    """The conversion service: records every byte read (a download), every open (a read that downloads) with its
+    caller, and every reader run. `scan=True` is a PDF the router hands to the reader: the reader runs and answers its
+    text, unless the caller is the connector (as `DocumentService` does)."""
+
+    def __init__(self, opened: OpenedFile, *, scan: bool = False) -> None:
         self.opened = opened
+        self.scan = scan
         self.downloads: List[str] = []
         self.opens: List[str] = []
+        self.callers: List[str] = []
+        self.reader_runs = 0
 
     async def resolve_bytes(self, ref: str, user_id: str) -> bytes:
         self.downloads.append(ref)
@@ -48,7 +58,14 @@ class Conversion:
 
     async def open(self, ref: str, user_id: str, account_id: str, **kw: Any) -> OpenedFile:
         self.opens.append(ref)
-        return self.opened
+        self.callers.append(kw["caller"])
+        if not self.scan:
+            return self.opened
+        if kw["caller"] == CALLER_CONNECTOR:
+            return OpenedFile(ReadOutcome(status=ReadStatus.NO_TEXT, detail=f"{READER_SKIPPED}: no_text"),
+                              note="[System: no text]")
+        self.reader_runs += 1
+        return opened_body(SCAN_TEXT)
 
 
 class Drive(ConnectionReads):
@@ -86,8 +103,8 @@ class Notification:
 
 class World:
     def __init__(self, item: DriveItem, *, transcript: Optional[str] = None, search: bool = True,
-                 notification: bool = True, opened: Optional[OpenedFile] = None) -> None:
-        self.conversion = Conversion(opened or opened_body("Step 1. Send invoice FA-0137."))
+                 notification: bool = True, opened: Optional[OpenedFile] = None, scan: bool = False) -> None:
+        self.conversion = Conversion(opened or opened_body("Step 1. Send invoice FA-0137."), scan=scan)
         self.notification = Notification() if notification else None
         self.ops = DriveOperations(conversion_service=self.conversion, notification=self.notification,
                                    drive_service=Drive(item), drive_search=Search(transcript) if search else None)
@@ -138,22 +155,38 @@ async def test_a_recording_with_a_stored_transcript_opens_as_it(item):
     assert on.conversion.downloads == [] and on.conversion.opens == [] and on.posted == 0
 
 
+@pytest.mark.parametrize("item", [PHOTO, HEIC])
+async def test_an_image_is_withheld_without_a_download(item):
+    world = World(item, opened=opened_native("/tmp/12_oak_street.png", "image/png"))
+    out = await world.open(withhold_media=True)
+    assert out.withheld is Withheld.IMAGE and out.withheld == "image"
+    assert (out.cls, out.success, out.text) == (OutcomeClass.OK, True, "")
+    assert world.conversion.downloads == [] and world.conversion.opens == [] and world.posted == 0
+
+
+async def test_a_scan_pdf_answers_scan_and_no_reader_runs():
+    world = World(INVOICE, scan=True)
+    out = await world.open(withhold_media=True)
+    assert out.withheld is Withheld.SCAN and out.withheld == "scan"
+    assert (out.cls, out.success, out.text) == (OutcomeClass.OK, True, "")
+    assert [i.item_id for i in out.items] == ["p1"]
+    assert world.conversion.callers == [CALLER_CONNECTOR] and world.conversion.reader_runs == 0
+
+
 # -- every other file opens as without the flag ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("item, opened", [
     (PLAN, opened_body("Step 1. Send invoice FA-0137.")),
     (INVOICE, opened_body("Invoice FA-0137. 12 Oak Street.")),
-    (PHOTO, opened_body("A photo of 12 Oak Street.")),
-    (PHOTO, opened_native("/tmp/12_oak_street.png", "image/png")),
-    (HEIC, opened_body("unused")),
 ])
-async def test_a_document_a_pdf_or_an_image_opens_exactly_as_without_the_flag(item, opened):
+async def test_a_document_or_a_text_pdf_opens_exactly_as_without_the_flag(item, opened):
     on = World(item, opened=opened)
     off = World(item, opened=opened)
     with_flag = await on.open(withhold_media=True)
     without = await off.open()
     assert with_flag == without and with_flag.withheld is None
     assert on.conversion.opens == off.conversion.opens
+    assert (on.conversion.callers, off.conversion.callers) == ([CALLER_CONNECTOR], [CALLER_OPEN])
 
 
 # -- without the flag: today's open ----------------------------------------------------------------------------------
@@ -172,6 +205,31 @@ async def test_without_the_flag_a_video_with_no_notifier_downloads_then_fails_as
     assert (out.cls, out.success, out.withheld) == (OutcomeClass.FAILED, False, None)
     assert out.text == "File delivery is not configured — cannot send the video."
     assert world.conversion.downloads == [ref("v1")]
+
+
+@pytest.mark.parametrize("item, opened", [
+    (PHOTO, opened_body("A photo of 12 Oak Street.")),
+    (PHOTO, opened_native("/tmp/12_oak_street.png", "image/png")),
+])
+async def test_without_the_flag_an_image_is_read_as_today(item, opened):
+    world = World(item, opened=opened)
+    out = await world.open()
+    assert out.withheld is None and world.conversion.opens == [ref("i1")]
+    assert world.conversion.callers == [CALLER_OPEN]
+
+
+async def test_without_the_flag_a_heic_answers_its_line_as_today():
+    world = World(HEIC)
+    out = await world.open()
+    assert out.withheld is None and out.text.endswith("cannot be viewed yet (image/heic).")
+    assert world.conversion.opens == []
+
+
+async def test_without_the_flag_a_scan_pdf_still_reaches_the_reader():
+    world = World(INVOICE, scan=True)
+    out = await world.open()
+    assert out.withheld is None and SCAN_TEXT in out.text
+    assert world.conversion.callers == [CALLER_OPEN] and world.conversion.reader_runs == 1
 
 
 async def test_without_the_flag_an_untranscribed_recording_is_read_as_today():
