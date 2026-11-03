@@ -500,8 +500,8 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - **P2 (client side) built, not wired:** `SandboxContentExtractor` (`src/adapters/sandbox_client/`) behind both parse ports, `build_sandbox_parser(url)`
   (`src/composition/sandbox_parse_setup.py`), and `SandboxHttpClient`'s file bodies, `windows` meta and deadline-capped retries. An outage of the service ends as
   `drive_extraction.ParserUnavailable` (busy | unavailable | misconfigured), never as the file's outcome: the document service answers the converter note, the indexer
-  abandons the run uncounted and ends the tick. Nothing calls it (`SANDBOX_PARSE` and the indexer slots are P4). Not yet in the reader: the single batch
-  `cut_pdf_windows` call; the reader still cuts its windows one at a time (open decision).
+  abandons the run uncounted and ends the tick. Nothing calls it (`SANDBOX_PARSE` and the indexer slots are P4). The reader cuts its windows in groups of `MODEL_IN_FLIGHT`, one
+  `cut_pdf_windows` (`parse.pdf_windows`) request per group, never all at once and never one request per window; a half is cut from its window's file.
 - Build: the `parse.*` ops (`parse.extract`, `parse.pdf_page_count`, `parse.pdf_windows`; one window is a batch of one) on the light image (the `light` target);
   `SandboxContentExtractor` (both ports, including `PdfSplitterPort`'s batch `cut_pdf_windows` → `parse.pdf_windows` and its deadline → `limits`);
   indexer wiring behind `SANDBOX_PARSE` (its own substitution key); indexer-side cap `SANDBOX_INDEXER_SLOTS`; the indexer's caller group: one
