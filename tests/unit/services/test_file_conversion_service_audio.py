@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
+from src.domain.audio_transcript import AudioTranscript
 from src.ports.audio_transcription_port import AudioTranscriptionPort
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
@@ -50,6 +51,11 @@ class RecordingTranscriber(AudioTranscriptionPort):
         with open(local_path, "rb") as f:
             self.calls.append((f.read(), mime_type))
         return self.transcript
+
+    async def transcribe_metered(self, local_path: str, mime_type: str,
+                                 languages: Optional[Sequence[str]] = None) -> AudioTranscript:
+        # The port's metered twin (P21): the same request, so a subclass that breaks `transcribe` breaks this too.
+        return AudioTranscript(text=await self.transcribe(local_path, mime_type, languages), model="fake-transcriber")
 
 
 @pytest.fixture

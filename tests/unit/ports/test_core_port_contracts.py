@@ -126,7 +126,11 @@ class TestAudioTranscriptionPortContract:
             name for name, method in inspect.getmembers(AudioTranscriptionPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
+        # P21 (EXTERNAL_FILES_RFC §4.4): `transcribe_metered` joins `transcribe`.
+        assert abstract_methods == {"transcribe", "transcribe_metered"}, f"got {abstract_methods}"
+
+    def test_has_transcribe_metered(self):
+        assert getattr(AudioTranscriptionPort.transcribe_metered, "__isabstractmethod__", False)
 
     def test_transcribe_signature(self):
         sig = inspect.signature(AudioTranscriptionPort.transcribe)

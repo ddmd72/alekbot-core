@@ -1,5 +1,5 @@
-"""The caps table (EXTERNAL_FILES_RFC §4.5): every constant keeps today's value, each lookup answers per store, and a
-skill or unknown store is refused. The names the table took over are importable only from it."""
+"""The caps table (EXTERNAL_FILES_RFC §4.5): every constant keeps today's value (D20 moved `MAX_CONVERTED_CHARS` to 60 000),
+each lookup answers per store, and a skill or unknown store is refused. The names the table took over are importable only from it."""
 import pytest
 
 from src.domain import document_limits as limits
@@ -16,7 +16,7 @@ STORES = ["drive", "chat", "email", "workspace", "delivered"]
 
 def test_every_constant_keeps_its_value():
     assert MAX_FILE_BYTES == 5 * MIB
-    assert MAX_CONVERTED_CHARS == 30_000
+    assert MAX_CONVERTED_CHARS == 60_000         # D20: one 60 000 cut on every open path
     assert MAX_TEXT_EXPORT_BYTES == 10 * MIB
     assert MAX_DRIVE_DOWNLOAD_BYTES == 45 * MIB
     assert MAX_DRIVE_VISION_IMAGE_BYTES == 5 * MIB
@@ -52,15 +52,15 @@ def test_native_ceiling_never_above_the_strictest_provider_limits(kind):
     assert native_ceiling(kind) <= {"image": 5 * MIB, "pdf": 20 * MIB}.get(kind, 0)
 
 
-@pytest.mark.parametrize("store, cap", [
-    ("drive", 60_000), ("email", 30_000), ("chat", None), ("workspace", None), ("delivered", None),
+@pytest.mark.parametrize("store, cap", [   # D20: one 60 000 cut on every open path, email included
+    ("drive", 60_000), ("email", 60_000), ("chat", 60_000), ("workspace", 60_000), ("delivered", 60_000),
 ])
 def test_presentation_cap_by_store(store, cap):
     assert presentation_cap(store) == cap
 
 
-@pytest.mark.parametrize("store, budget", [
-    ("drive", 60_000), ("email", 30_000), ("chat", 30_000), ("workspace", 30_000), ("delivered", 30_000),
+@pytest.mark.parametrize("store, budget", [   # D7 follows the presentation cap; D20 makes it 60 000 everywhere
+    ("drive", 60_000), ("email", 60_000), ("chat", 60_000), ("workspace", 60_000), ("delivered", 60_000),
 ])
 def test_reader_text_budget_by_store(store, budget):
     assert reader_text_budget(store) == budget
@@ -68,7 +68,7 @@ def test_reader_text_budget_by_store(store, budget):
 
 def test_the_lookups_take_the_ref_kinds():
     assert presentation_cap(FileRefKind.DRIVE) == 60_000
-    assert reader_text_budget(FileRefKind.CHAT) == 30_000
+    assert reader_text_budget(FileRefKind.CHAT) == 60_000
     assert parse_input_cap(FileRefKind.EMAIL) == 5 * MIB
 
 
