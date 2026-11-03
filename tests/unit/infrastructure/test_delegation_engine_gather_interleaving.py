@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from src.domain.agent import AgentResponse
+from src.domain.document_open import Prefetched
 from src.domain.llm import ToolCall
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, SEARCH_WEB_MAPS_FANOUT, Intent
@@ -161,8 +162,8 @@ class TestFanout:
 class TestFileRefResolution:
 
     async def _dispatch_with_a_file_ref(self):
-        async def resolve(ref: str, user_id: str) -> str:
-            return "BIG TEXT"
+        async def resolve(ref: str, user_id: str, account_id: str, deadline_at: float) -> Prefetched:
+            return Prefetched(content="BIG TEXT")   # the resolver's shape since P18 (EXTERNAL_FILES_RFC §4.2)
 
         async def memory(message) -> str:
             return "facts"

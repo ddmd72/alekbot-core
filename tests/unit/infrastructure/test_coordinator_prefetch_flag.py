@@ -1,7 +1,9 @@
-"""prefetch_file_ref (docs/10_rfcs/USER_DRIVE_RFC.md §4.4)."""
+"""prefetch_file_ref (docs/10_rfcs/USER_DRIVE_RFC.md §4.4; EXTERNAL_FILES_RFC §4.2 P18: the resolver takes the account
+and an absolute deadline and answers a Prefetched; the ASYNC path enqueues the ref and the worker prefetches it)."""
 import logging
 from unittest.mock import AsyncMock
 
+from src.domain.document_open import Prefetched
 from src.domain.user_drive import DriveNotConnectedError
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_registry import AgentDescriptor, AgentRegistry, ExecutionMode
@@ -12,21 +14,28 @@ def _coordinator(prefetch: bool):
     registry.register(AgentDescriptor(agent_id="files", agent_type="files",
                                       capabilities={"open_x": ExecutionMode.SYNC}, prefetch_file_ref=prefetch))
     coord = AgentCoordinator(registry=registry)
-    coord._file_ref_resolver = AsyncMock(return_value="text")
+    coord._file_ref_resolver = AsyncMock(return_value=Prefetched(content="text"))
     return coord
+
+
+DEADLINE = 1_900_000_000.0
+
+
+async def _prefetch(coord, agent_id, params):
+    await coord.prefetch_file_ref(agent_id, params, {"user_id": "u1"}, deadline_at=DEADLINE)
 
 
 async def test_default_still_prefetches():
     coord = _coordinator(True)
     params = {"file_ref": "a.txt"}
-    await coord._maybe_resolve_file_refs("files", params, "u1")
+    await _prefetch(coord, "files", params)
     assert params["file_content"] == "text"
 
 
 async def test_flag_off_skips_prefetch():
     coord = _coordinator(False)
     params = {"file_ref": "drive:abc"}
-    await coord._maybe_resolve_file_refs("files", params, "u1")
+    await _prefetch(coord, "files", params)
     coord._file_ref_resolver.assert_not_called()
     assert "file_content" not in params
 
@@ -34,7 +43,7 @@ async def test_flag_off_skips_prefetch():
 async def test_unknown_agent_keeps_old_behaviour():
     coord = _coordinator(False)
     params = {"file_ref": "a.txt"}
-    await coord._maybe_resolve_file_refs("other", params, "u1")
+    await _prefetch(coord, "other", params)
     assert params["file_content"] == "text"
 
 
@@ -43,8 +52,8 @@ async def test_drive_not_connected_is_a_warning_not_an_error(caplog):
     coord._file_ref_resolver = AsyncMock(side_effect=DriveNotConnectedError("not connected"))
     params = {"file_ref": "drive:abc"}
     with caplog.at_level(logging.DEBUG):
-        await coord._maybe_resolve_file_refs("files", params, "u1")
-    assert "file_content" not in params
+        await _prefetch(coord, "files", params)
+    assert "file_content" not in params and params["file_note"].startswith("[System:")
     records = [r for r in caplog.records if "drive:abc" in r.getMessage()]
     assert records and all(r.levelno == logging.WARNING for r in records)
 
@@ -55,8 +64,8 @@ async def test_other_resolver_errors_still_logged_at_error(caplog):
     coord._file_ref_resolver = AsyncMock(side_effect=RuntimeError("boom"))
     params = {"file_ref": "a.txt"}
     with caplog.at_level(logging.DEBUG):
-        await coord._maybe_resolve_file_refs("files", params, "u1")
-    assert "file_content" not in params
+        await _prefetch(coord, "files", params)
+    assert "file_content" not in params and params["file_note"].startswith("[System:")
     records = [r for r in caplog.records if "a.txt" in r.getMessage()]
     assert records and all(r.levelno == logging.ERROR for r in records)
 
@@ -83,11 +92,15 @@ async def test_async_path_honours_flag():
     coord._task_queue.enqueue_agent_task.assert_awaited_once()
 
 
-async def test_async_path_default_still_prefetches():
+async def test_async_path_carries_the_ref_and_no_file_text():
+    """P18: an ASYNC intent's file_ref rides the Cloud Task as it is; the worker opens it just before the specialist
+    runs (tests/unit/handlers/test_seam_specialist_prefetch.py::
+    test_worker_opens_the_ref_before_the_specialist_with_the_prefetch_deadline). No reader text in a task body."""
     coord = _coordinator(True)
     coord._task_queue = AsyncMock()
     coord._task_queue.enqueue_agent_task = AsyncMock(return_value="task-1")
     context = {"user_id": "u1", "params": {"file_ref": "a.txt"}}
     await coord._execute_async("files", "open_x", "open it", context)
-    coord._file_ref_resolver.assert_awaited_once_with("a.txt", "u1")
-    assert context["params"]["file_content"] == "text"
+    coord._file_ref_resolver.assert_not_awaited()
+    enqueued = coord._task_queue.enqueue_agent_task.await_args.kwargs["context"]["params"]
+    assert enqueued == {"file_ref": "a.txt"}
