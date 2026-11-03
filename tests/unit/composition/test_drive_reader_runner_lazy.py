@@ -42,6 +42,13 @@ class FakeCutter:
             raise self.count_error
         return self.pages_total
 
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        for (first_page, page_count), out_path in zip(windows, out_paths):
+            if deadline_at is None:
+                await self.cut_pdf_window(path, first_page, page_count, out_path)
+            else:
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+
     async def cut_pdf_window(self, path, first_page, page_count, out_path):
         self.cuts.append((first_page, page_count))
         if first_page == self.cut_error_at:
@@ -185,8 +192,15 @@ class _MeasuredParser(SubprocessContentExtractor):
         self.totals: List[int] = []
         self.windows: List[int] = []
 
-    async def cut_pdf_window(self, path, first_page, page_count, out_path):
-        await super().cut_pdf_window(path, first_page, page_count, out_path)
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        for (first_page, page_count), out_path in zip(windows, out_paths):
+            if deadline_at is None:
+                await self.cut_pdf_window(path, first_page, page_count, out_path)
+            else:
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+
+    async def cut_pdf_window(self, path, first_page, page_count, out_path, *, deadline_at=None):
+        await super().cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
         self.windows.append(os.path.getsize(out_path))
         self.totals.append(sum(f.stat().st_size for f in self.work.rglob("*") if f.is_file()))
 

@@ -35,6 +35,13 @@ class _DeadlineCutter(_Cutter):
         self.counted.append(deadline_at)
         return self.pages_total
 
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        for (first_page, page_count), out_path in zip(windows, out_paths):
+            if deadline_at is None:
+                await self.cut_pdf_window(path, first_page, page_count, out_path)
+            else:
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+
     async def cut_pdf_window(self, path, first_page, page_count, out_path, *, deadline_at=None):
         self.deadlines.append(deadline_at)
         if self.busy_from is not None and first_page == self.busy_from:
