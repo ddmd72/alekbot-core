@@ -17,7 +17,8 @@ deployed, not accepted, and no S0 spike has run (`decisions/sandbox_render_servi
   logical and hexagonal way." EXTERNAL_FILES_RFC's document service (its U0 → U1 → U2 → U3 → U4, then U5) is built
   first. S3 (indexer) and S4 (main service) come after it, as adapter swaps under its parse ports
   (`ContentExtractorPort`, `PdfSplitterPort`), with no caller change. Until then the in-runtime parser child is the
-  accepted residual, including for Google full-drive grants (`GOOGLE_DRIVE_RFC.md` §10). Recorded there as D14. It
+  accepted residual, including for Google full-drive grants (`GOOGLE_DRIVE_RFC.md` §10). Recorded there as D14. By code
+  dependency S3 may start once that RFC's U1 and U3 are in, before its U4/U5; S4 waits for U5. It
   amends O8's order for the parse slices; the renderers (S1, S2) stay an independent track.
 - **O13. One parse engine, in principle** (EXTERNAL_FILES_RFC D15, its P4): the child's own readers serve every source;
   the final go follows that RFC's U0-b report on real files. Consequences here: no `DocumentConverterPort`,
@@ -45,6 +46,9 @@ not dependency).
   sources). A Google recording has no pre-authenticated URL, so the caller sends bytes (§4.5, GOOGLE_DRIVE_RFC G2);
   S5's input shape is an open engineering point (OQ-S11).
 - §12 re-verified: item 7 is fixed and dropped; items moved; three new.
+- **Review round 1** (2026-11-03): sized for the 100 MiB PDF cap (§4.7, §11, §12.1, S0-a); `SANDBOX_PARSE` fed by two substitution keys, one per
+  runtime (§4.12); one adapter object for both parse ports, the batch `cut_pdf_windows` behind `parse.pdf_windows` (§7 S3, S4); S3 may start after
+  EXTERNAL_FILES U1+U3 (O12); §12.13.
 - **Author decisions new in rev 4** (minimal, listed in §5): the op family name `parse.*` (A1, shared with
   EXTERNAL_FILES A1); one knob name per runtime, `SANDBOX_PARSE`, replacing `SANDBOX_DRIVE` and `SANDBOX_CHAT` (A2).
 
@@ -241,10 +245,12 @@ One route family, versioned: `POST /v1/{op}`.
 - **Strict envelope validation.** Callers validate the header with a closed schema (known statuses, bounded sizes, no extra keys) and treat the body as **opaque bytes or schema-checked JSON**. Callers never
   parse sandbox binary output in-process: a returned PDF window goes to the model reader as bytes, a DOCX/PDF/PNG goes to the delivery path as bytes. An architecture test forbids importing a
   document, image or archive library in `src/adapters/sandbox_client/`.
-- **Large bodies.** The drive admits files up to 45 MiB (`MAX_DOWNLOAD_BYTES`, `src/domain/drive_index_params.py:56`); Cloud Run's HTTP/1 request limit is 32 MiB. The
+- **Large bodies.** The caps are per kind: the indexer admits a PDF up to 100 MiB (`MAX_PDF_DOWNLOAD_BYTES`, `src/domain/drive_index_params.py:57`;
+  `size_cap`, `drive_index_policy.py:159`) and every other kind up to 45 MiB (`MAX_DOWNLOAD_BYTES`, `:56`); the main service's opens keep 45 MiB
+  (`MAX_DRIVE_DOWNLOAD_BYTES`). The design is sized for the largest admitted kind, so the request cap covers a 100 MiB PDF (§11). Cloud Run's HTTP/1 request limit is 32 MiB. The
   services are deployed with end-to-end HTTP/2 (`--use-http2`; the server is Hypercorn, as elsewhere) and callers use an HTTP/2 client. **This is the main technical
   risk of the design** (S0-a). If bodies above 32 MiB fail, **32 MiB stays a known limitation for parsed files** (O6): there is no fallback in which the service pulls a file
-  by URL, and the drive cap is not changed silently; files above the limit get the existing `too_large` outcome and the limit is documented.
+  by URL, and no drive cap is changed silently (the 100 MiB PDF cap included); files above the proven limit get the existing `too_large` outcome and the limit is documented.
 - **Ops**
 
 | Op | In | Out | Engine behind it |
@@ -332,11 +338,19 @@ Each caller family reads one knob with `os.getenv` at its composition line (opti
 
 | Knob | Read by | Values | Default during the transition |
 |------|---------|--------|-------------------------------|
-| `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's `build_drive_models`, the main service's `build_document_service`; set per deploy step, so S3 and S4 flip apart | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
+| `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's (`indexer_main.py:138`, today `build_drive_models` with the parser aliased as splitter, `drive_model_setup.py:124`), the main service's `build_document_service` | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
 | `SANDBOX_MEDIA` | the indexer's media wiring | same | same |
 | `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py:48`, `:68`) | the main service | same | same |
 
-One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another. Rejected:
+One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another; one
+`SandboxContentExtractor` object implements both ports, as the in-process adapter does today (EXTERNAL_FILES §4.9).
+
+**Two substitution keys for the one variable.** `SANDBOX_PARSE` is the variable each runtime reads, but the deploy feeds it from two separate `.env`
+keys and Cloud Build substitutions, one per runtime (the indexer's for the indexer's deploy step, the main service's for the main step), each mapped
+onto `SANDBOX_PARSE` in its own step's `--set-env-vars`, as `_SANDBOX_RENDER` is today (`cloudbuild-dev.yaml:35`, default `:390`). Why: one shared key
+would flip both runtimes at once, which breaks O9's per-part switch (S3 and S4 are accepted and rolled back apart), and a key reused across steps is
+the deploy-substitution trap the root `CLAUDE.md` names (one local value baked into every step that reads it). The deploy test pins both keys, each
+in its own step. Rejected:
 `SANDBOX_DRIVE` and `SANDBOX_CHAT` (rev 3): with one op family the second would also govern drive and email reads in the main service, and its name would
 say otherwise.
 
@@ -432,8 +446,8 @@ An op family is enabled only when its caller's identity exists (P0, met) and its
 
 ### S0. Spike (no product code; scratch deployment, results to the private spike folder)
 Not run. Each item gates the slices named after it; S1's acceptance needs b, c, d, e, f.
-a. **Large bodies** (S3, S4; S5 if media takes bytes, OQ-S11): a 50 MiB request and response through Cloud Run to a Hypercorn app with HTTP/2 end to end,
-   from an `httpx` HTTP/2 client; memory bounded.
+a. **Large bodies** (S3, S4; S5 if media takes bytes, OQ-S11): a 100 MiB request (the PDF cap) and a 64 MiB response through Cloud Run to a Hypercorn
+   app with HTTP/2 end to end, from an `httpx` HTTP/2 client; memory and the work volume bounded.
 b. **Recycle** (every slice; S1 first): respond, then the supervisor stops the instance; no truncation; a fresh instance for the next call; cold start
    per image; **back-to-back bursts** (20 sequential and 5 parallel calls): rate of `recycling` answers, and whether `httpx` sees GOAWAY or
    `Connection: close`; the flush barrier and the drain time (`--no-cpu-throttling`, `decisions/sandbox_render_service.md`).
@@ -471,10 +485,11 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 
 ### S3. Drive parsers (C1) — after the document service (O12)
 - What it is: an adapter swap in the indexer under the document service's parse ports: `SubprocessContentExtractor` → `SandboxContentExtractor`
-  (`ContentExtractorPort`), the splitter → its HTTP adapter (`PdfSplitterPort`). No caller changes.
+  (`ContentExtractorPort` and `PdfSplitterPort`: one object serves both, as today), at the indexer's composition line (`indexer_main.py:138`). No caller changes.
 - Build: the `parse.*` ops (`parse.extract`, `parse.pdf_page_count`, `parse.pdf_window`, `parse.pdf_windows`) on the light image (the `light` target);
-  `SandboxContentExtractor` and the `PdfSplitterPort` HTTP adapter; indexer wiring behind `SANDBOX_PARSE`; indexer-side cap `SANDBOX_INDEXER_SLOTS`;
-  the indexer's caller group (`parse`, `media` prefixes).
+  `SandboxContentExtractor` (both ports, including `PdfSplitterPort`'s batch `cut_pdf_windows` → `parse.pdf_windows` and its deadline → `limits`);
+  indexer wiring behind `SANDBOX_PARSE` (its own substitution key); indexer-side cap `SANDBOX_INDEXER_SLOTS`; the indexer's caller group: one
+  `GROUP_PREFIXES` row (`src/composition/sandbox_setup.py:37`, today RENDER only; the RENDER-only start check `:87-91` widens with it) plus its identity.
 - Needs: EXTERNAL_FILES U1 and U3; S0 a, b, g, h.
 - Tests: contract suite on every `ExtractionStatus` path; envelope round trip incl. `brief` and `capture_signals`; the request's deadline mapped onto
   `limits` (only lowering, EXTERNAL_FILES §4.4); failure mapping (`recycling` uncharged; reset twice -> `ERROR sandbox_lost` charged); wire tests.
@@ -482,15 +497,15 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `sandbox_lost`. Then `drive_parser_sandbox_resource_isolation.md` gets its status line (S-Δ8) and GOOGLE_DRIVE_RFC §10's residual ends for the indexer.
 
 ### S4. The main service's reads (C2) — after the document service, with one engine (O12, O13)
-- What it is: the same two swaps in the main service's `build_document_service`, behind its `SANDBOX_PARSE`. No caller changes:
+- What it is: the same swap in the main service's `build_document_service`, behind its `SANDBOX_PARSE` (its own substitution key). No caller changes:
   `PARSER_UNAVAILABLE` and its note already exist (EXTERNAL_FILES U3).
-- Build: admit the main service's identity to the `parse` prefix (its caller group); the degraded-start behaviour of the main service (§4.12). Nothing
+- Build: admit the main service's identity to the `parse` prefix (its caller group's `GROUP_PREFIXES` row gains `parse`); the degraded-start behaviour of the main service (§4.12). Nothing
   else: no converter port, no `chat.convert`.
 - Needs: EXTERNAL_FILES U3 and U5 (D15's final go); S0 a, b, g.
 - Tests: the document service's existing cases through both adapters; the audio path untouched (S-Δ1); the 5 MiB check before any call; the
   unavailable note; a hostile-archive case gives the same note as in process.
 - Accept: added p95 latency for a typical 1 MiB docx stated to the owner; a scan opened in chat end to end within D7's deadline, through
-  `parse.pdf_windows`; Slack and Telegram e2e with docx, xlsx, pdf, csv.
+  `parse.pdf_windows`, reached through `PdfSplitterPort.cut_pdf_windows` (EXTERNAL_FILES §4.4); Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
 ### S5. Media for transcripts (C3)
 - What it is: an adapter swap in the indexer under `MediaAudioPort` (built): `SubprocessMediaExtractor` → `SandboxMediaAdapter`. Transcription runs in
@@ -564,7 +579,7 @@ Open (new in rev 4):
 | render: memory / cpu / concurrency / max-instances / timeout | 2 GiB / 2 / 1 / 3 / 300 s | Chromium; `node_timeout_s` 60 s, PDF similar |
 | child limits (parsers) | `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB | current values; S0-g re-measures |
 | media child (per §27.4) | `RLIMIT_CPU` 150 s, wall 240 s, `RLIMIT_FSIZE` 64 MiB, `RLIMIT_AS` 1 GiB | §27.4 |
-| request / response cap | 64 MiB each, streamed | 45 MiB drive cap plus envelope |
+| request / response cap | request 104 MiB, response 64 MiB, streamed | the largest admitted kind, a 100 MiB PDF (`drive_index_params.py:57`), plus margin; the work volume is sized for it (S0-a) |
 | `meta` size | 8 KiB | |
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |
@@ -577,7 +592,8 @@ Open (new in rev 4):
 
 Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) is fixed: the docstring now points here (`src/web/indexer_worker_app.py:23`).
 
-1. **The 45 MiB drive cap exceeds the HTTP/1 request limit** (`drive_index_params.py:56`, §4.7); the design depends on HTTP/2 being proved first (S0-a, not run).
+1. **The drive's caps exceed the HTTP/1 request limit**: 45 MiB for most kinds and 100 MiB for PDFs in the indexer (`drive_index_params.py:56-57`,
+   `drive_index_policy.py:159`; §4.7); the design depends on HTTP/2 being proved at 100 MiB first (S0-a, not run).
 2. **`convert_file_to_text` holds an audio branch** for an LLM provider call (`file_conversion.py:236-252`); it is never given a transcriber in production, and
    it cannot be moved whole (S-Δ1).
 3. **`ExtractionRequest` carries identity** (`user_id`, `account_id`, `item_id`, `name`; `drive_extraction.py:50-59`); a naive serialization would break I3 (S-Δ3).
@@ -600,3 +616,5 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
     serve it (OQ-S11).
 12. **`ContentExtractorPort`'s docstring names no separate-service adapter** (`src/ports/content_extractor_port.py:1-6`), unlike the two runner ports; S3
     updates it with `SandboxContentExtractor`.
+13. **`GROUP_PREFIXES`'s comment plans `drive`/`chat` prefixes** (`src/composition/sandbox_setup.py:35-36`: "INDEXER -> drive, media; MAIN -> chat");
+    with O13 the rows are INDEXER -> `parse`, `media` and MAIN -> `parse`, `render`. S3 edits it with the row it adds.

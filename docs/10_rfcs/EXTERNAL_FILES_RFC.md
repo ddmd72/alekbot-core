@@ -54,7 +54,8 @@ Code cites are `main` @ `2280ca78`.
   as adapter swaps under the document service's ports (`ContentExtractorPort`, `PdfSplitterPort`): S3 in the indexer,
   S4 in the main service, with no caller change (§4.9). Until they run, the parser child in each runtime is the accepted
   residual of `decisions/drive_parser_sandbox_resource_isolation.md`, including for Google full-drive grants
-  (`GOOGLE_DRIVE_RFC.md` §10). Recorded in the sandbox RFC as O12.
+  (`GOOGLE_DRIVE_RFC.md` §10). Recorded in the sandbox RFC as O12. By code dependency S3 may start once U1 and U3 are
+  in, before U4/U5; S4 waits for U5.
 - **D15 (2026-11-03). P4 accepted in principle: one parse engine.** The child's own readers serve every source;
   markitdown's auto-detect path is retired in U5. The final go is given after the U0-b difference report on real files
   (§8). Consequences: no `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter` and no
@@ -93,6 +94,10 @@ decision records `drive_prefetch_wrapper_slice3.md`, `drive_parser_sandbox_resou
   - **A5.** The native declaration reaches the drive specialist through `work_with_drive_files`. The specialist passes
     it on to the open unchanged, because its own model reads stand-ins and the bytes go to the delegating engine (§4.3).
   - **A6.** U5's PDF-table fix is a row-aware text pass in the child, not a reader route for table-heavy pages (§7).
+- **Review round 1** (2026-11-03): `PdfSplitterPort` gains an optional deadline and a batch cut, and the service takes
+  it explicitly (§4.4); the audio requirement is P21, with §27's opt-in and cap for drive recordings only (D5); U5's one
+  parser `VERSION` bump is gated on a measured upgrade-pass cost and the owner's OK (§7); one adapter object serves both
+  parse ports (§4.9); P5 names its deviation from `src/ports/CLAUDE.md`; the D13 macro check runs in the child.
 
 **Changes since rev 1** (rev 2, four reviews, every change arbitrated): the native declaration travels per engine
 attempt on a context copy and carries `max_pages`; one absolute deadline per open; prefetch reads in the worker (P18);
@@ -331,7 +336,9 @@ lenient").
 
   The bytes decide. A name or part mime naming one of these kinds also blocks, never unblocks; this is stricter than
   the bytes alone and covers the kinds without magic. The check reads up to 64 KiB of the head, enough for the ISO
-  marker.
+  marker. The head checks are byte compares in the caller; the macro check, which must list an OOXML ZIP's parts,
+  runs in the parser child under its ZIP caps (`src/utils/document_hardening.py`), so no ZIP is inflated in the main
+  process.
 - The answer is a refusal note, not a failure of the turn: "This attachment is a <kind> file from an email; such
   files are not forwarded to the chat. The user can open it in Gmail." Drive and chat refs are sent without this
   check; an HTML report on the drive is sent as any file.
@@ -393,6 +400,10 @@ the adapter (`grok_adapter.py:107` sets one `vision=True` whose comment names th
 of the four adapters overrides it, the proxies forward it (`AlertingLLMProxy`, `CachingLLMProxy`, as they forward
 `get_capabilities`, `src/services/alerting_llm_proxy.py:93`, `caching_llm_proxy.py:47`), and the six `LLMPort` test
 fakes in five test files need no edit. An abstract method would force an edit to each fake through the reviewer.
+This deviates from `src/ports/CLAUDE.md` ("All methods — `@abstractmethod async def`") on purpose, twice: the method
+is concrete (a safe default exists: "reads nothing natively", so a forgotten override degrades to today's text path,
+never to a crash) and synchronous (a static property of the model, no I/O). The precedent is
+`LLMPort.supports_caching()`, which D3 names.
 
 **Initial values never exceed today's drive caps** (`user_drive.py:29-30`); raising any of them is an owner decision.
 
@@ -505,10 +516,19 @@ class DocumentReadPort(ABC):
 ```
 
 **`DocumentService(DocumentReadPort)`** in `src/services/document_service.py`. Its constructor takes the parser and
-the reader (both `ContentExtractorPort`) and, if U3 wires audio on any path, a transcription port (below). `PdfSplitter`
-is promoted to `src/ports/pdf_splitter_port.py` in U1 (sandbox S-Δ4, pulled forward); the reader keeps holding it.
-These two ports are the seams the sandbox swaps under (D14): `ContentExtractorPort` for the parser,
-`PdfSplitterPort` for the page ops.
+the reader (both `ContentExtractorPort`), the splitter (`PdfSplitterPort`, explicitly: step 3's page count and
+encryption check call it directly), and, if U3 wires audio on any path, a transcription port (P21, below). These two
+ports are the seams the sandbox swaps under (D14): `ContentExtractorPort` for the parser, `PdfSplitterPort` for the
+page ops.
+
+**`PdfSplitterPort` (U1, sandbox S-Δ4 pulled forward).** Today's Protocol has two methods,
+`pdf_page_count(path)` and `cut_pdf_window(path, first_page, page_count, out_path)` (`drive_reader_runner.py:73-78`);
+the parser adapter serves both (`drive_model_setup.py:124` aliases it as the splitter). U1 promotes it to
+`src/ports/pdf_splitter_port.py` with two additions: an optional `deadline_at` on every method (only lowering, like the
+request limits below), and a batch `cut_pdf_windows(path, plan, out_dir, deadline_at=None)` that cuts several windows in
+one child run (in process: one slot wait instead of one per window; in the sandbox: one upload, `parse.pdf_windows`).
+The reader keeps holding the splitter; with a text budget it calls `cut_pdf_window` per window (one at a time, §4.4),
+without one it may batch. The indexer passes no deadline and keeps today's calls.
 
 **`read()` in order:**
 1. **Kind from bytes.** The declared kind comes from `kind_of(name, declared_mime)`, then `sniff_kind` checks it on the
@@ -519,7 +539,7 @@ These two ports are the seams the sandbox swaps under (D14): `ContentExtractorPo
    Over the page limit or encrypted → the pipeline.
 4. **Pipeline.** `chain_for(kind)` → the parser in its child → `model_route` → the reader when routed, for at most
    `allowance()` pages (P13), within the deadline. Plain text is read in-process (sandbox S-Δ2; A3 below). Audio
-   follows the audio requirement below.
+   follows P21 below.
 5. **Return** the outcome, mapped per the status map (§4.5), with `links` and the spend.
 
 **Plain text in the caller (sandbox S-Δ2, A3).** Reading UTF-8 is not parsing, so the service reads the kinds with no
@@ -535,13 +555,17 @@ and `[System: …]` alert texts from `ReadOutcome.status` and `detail`, so a cha
 the same failure. The 30 000-character cut stays in the chat and email presentation (§4.5); the child's own ceiling
 (`MAX_TEXT_CHARS`, 2 000 000) is not a presentation cap.
 
-**Audio (U3 requirement).** Today no opened audio file is transcribed (§1.2), and the gap is the `defect:D3` line of
+**P21. Audio on open (U3 requirement).** Today no opened audio file is transcribed (§1.2), and the gap is the `defect:D3` line of
 `tests/unit/composition/wiring_none_ledger.txt:72`. U3 decides per path (chat upload, drive file, workspace and
 delivered file, specialist prefetch) whether that path transcribes, and any path that does meets all of these:
 - **The drive's transcript first.** A drive recording reuses its stored transcript (USER_DRIVE_INDEXING_RFC §27, as
   `drive_operations.py:1031-1041` does today); a live transcription never duplicates one the indexer holds or will make.
-- **The §27 cap holds.** Every transcription counts against the month's transcription cap (`TRANSCRIBE_USD_PER_MONTH`,
-  `src/domain/drive_index_params.py:212`, D46) or one the owner sets beside it; none bypasses it.
+- **Drive recordings: the §27 opt-in and cap hold.** A drive recording is transcribed live only where its connection's
+  opt-in (`DriveConnection.transcribe_enabled`) and the global `DRIVE_TRANSCRIBE_ENABLED` allow it
+  (USER_DRIVE_INDEXING_RFC §27.12, OQ-T3; sandbox O4), and every such call counts against the month's transcription cap
+  (`TRANSCRIBE_USD_PER_MONTH`, `src/domain/drive_index_params.py:212`, D46); none bypasses it.
+- **Chat and other non-drive audio: no new budget (D5).** The §27 cap applies to drive recordings only; a chat upload,
+  workspace or delivered recording is metered and cached, not capped.
 - **Metered.** Each call is billed to the account like the reader's calls, with its model and seconds.
 - **Cached by content key.** The same bytes are transcribed once (a key over the content hash and the transcriber's
   version); a repeated open or a re-delegation reads the cached text.
@@ -551,6 +575,7 @@ delivered file, specialist prefetch) whether that path transcribes, and any path
   scans") answers the timeout-style note; it never outlives the agent's timeout.
 U3 deletes the `defect:D3` line in the same PR as its decision. A path U3 leaves without transcription keeps today's
 note.
+
 **Two request limits, both only lowering (C, D7).** `ExtractionRequest` gains two optional fields, and neither may
 raise an adapter's own ceilings:
 - a **deadline**: the parser child's wall becomes min(120 s ceiling, remaining), the reader's budget min(its
@@ -602,8 +627,9 @@ indexer's handling of `DriveModelUnavailable` is unchanged. When the reader is u
 the parser text comes back with `may_be_incomplete` and a note saying so.
 
 **Parser slot (G).** The child runs one at a time per adapter (`src/adapters/subprocess_content_extractor.py:101-102`, `max_children=1` at `:89`). In
-the main service that slot is shared by every user's opens and every window cut. The wait for it is bounded by the
-remaining deadline; past it the outcome is `PARSER_UNAVAILABLE(busy)`, which is not a bomb. `max_children` for the
+the main service that slot is shared by every user's opens, page counts and window cuts. Every wait for it, the
+splitter's included (its `deadline_at`), is bounded by the remaining deadline; past it the outcome is
+`PARSER_UNAVAILABLE(busy)`, which is not a bomb. `max_children` for the
 main service is sized from U0-c.
 
 **Presentation** (in the open path):
@@ -840,15 +866,22 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 
 | Sandbox slice | What it swaps under this RFC | Needs | Callers touched |
 |---|---|---|---|
-| S3 drive parsers | in the indexer: `SubprocessContentExtractor` → `SandboxContentExtractor` under `ContentExtractorPort`; the splitter → the `PdfSplitterPort` HTTP adapter | U1 (`PdfSplitterPort`), U3 (the two request limits) | none |
-| S4 chat and on-demand reads | the same two swaps in the main service's `build_document_service`, behind its knob | U3 (`PARSER_UNAVAILABLE` and its note), U5 (one engine, so the sandbox carries no converter op) | none |
+| S3 drive parsers | in the indexer's composition line (`indexer_main.py:138`): `SubprocessContentExtractor` → `SandboxContentExtractor`, which implements both `ContentExtractorPort` and `PdfSplitterPort` | U1 (`PdfSplitterPort`), U3 (the request limits) | none |
+| S4 chat and on-demand reads | the same swap in the main service's `build_document_service`, behind its knob | U3 (`PARSER_UNAVAILABLE` and its note), U5 (one engine, so the sandbox carries no converter op) | none |
+
+- **One adapter object for both ports.** The in-process adapter already serves both (`drive_model_setup.py:124` aliases
+  the parser as the splitter), so the HTTP adapter does too: each composition line swaps one object, the parser and the
+  splitter can never point at different engines, and they share one `SandboxHttpClient` and one client-side slot budget
+  (`SANDBOX_INDEXER_SLOTS`). Rejected: two HTTP classes (two objects to keep in step on every swap and rollback).
 
 - **One op family, `parse.*` (A1).** With D15 there is no `DocumentConverterPort`, `LocalDocumentConverter`,
   `SandboxDocumentConverter` and no `chat.convert` op. Both runtimes call the same ops (`parse.extract`,
   `parse.pdf_page_count`, `parse.pdf_window`, `parse.pdf_windows`). The family is named for what it does, not for its
   first caller: `drive.*` would misname the main service's chat and email reads, and the sandbox's caller gate maps each
   runtime's identity to op prefixes (`src/web/sandbox_caller_gate.py:39-60`), so one family admitted to two identities
-  is plain configuration. S4 = admit the main service's identity to `parse.*` and flip its knob.
+  costs one `GROUP_PREFIXES` row per group (`src/composition/sandbox_setup.py:37`; the RENDER-only start check
+  `:87-91` widens with it) plus the identity and the knob. S4 = admit the main service's identity to `parse.*` and flip
+  its knob.
 - If D15's final go is not given, U5 does not run, and S4 needs a converter op in the family for markitdown's path; that
   would be designed then, not now.
 - S-Δ1 (audio stays with the caller) and S-Δ2 (plain text stays with the caller, §4.4) hold.
@@ -862,7 +895,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | # | Proposal | Status |
 |---|---|---|
 | D1–D6 | as in the header | owner, 2026-10-22 |
-| D7 | long scans: the reader reads only the pages that fit the 30 000-character cap, within each agent's existing timeout; the note says what is shown; no "still working" path (§4.4, §4.5) | owner, 2026-10-23 |
+| D7 | long scans: the reader reads only the pages that fit the store's presentation cap (60 000 characters for drive opens, §29; 30 000 elsewhere; A4 awaits the owner's confirmation), within each agent's existing timeout; the note says what is shown; no "still working" path (§4.4, §4.5) | owner, 2026-10-23 |
 | D8 | `send_file_to_user`: any ref → `resolve_file` → `notify_file_bytes`, origin channel as override; a failed upload is a failure (§4.2) | owner, 2026-10-23 |
 | D9 | no file contents in Logfire from any model call (§4.3) | owner, 2026-10-23 |
 | D10 | email uses the shared caps (§4.5, §4.7) | owner, 2026-10-23 |
@@ -886,10 +919,11 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | P17 | normalise images in the child (§4.3) | author, optional follow-up |
 | P18 | prefetch reads in the async worker from the ref (§4.2) | author; moves a caller in U3 |
 | P19 | 30 000-character cut on parser text of chat, workspace and delivered opens (§4.5; drive has §29's bound) | author, limit change |
+| P21 | audio on open: decided per path in U3; drive recordings under §27's opt-in and cap, chat audio metered and cached, not capped (D5); transcript first; within the deadline (§4.4) | author; U3 |
 | A1 | the sandbox parse op family is `parse.*` (§4.9) | author decision, rev 6 |
 | A2 | provider exports enter `open` as bytes with the export mime; no special path (§4.2) | author decision, rev 6 |
 | A3 | after U5, plain text in the caller = `text`, `markdown`, `json`, `code`, `log`; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (§4.4) | author decision, rev 6 |
-| A4 | D7's text budget = the store's presentation cap; drive: §29's 60 000 (§4.4, §4.5) | author decision, rev 6 |
+| A4 | D7's text budget = the store's presentation cap; drive: §29's 60 000 (§4.4, §4.5) | author decision, rev 6; awaits the owner's confirmation |
 | A5 | the drive specialist passes the native declaration on unchanged (§4.3) | author decision, rev 6 |
 | A6 | U5's PDF-table fix is a row-aware pass in the child, not a reader route (§7) | author decision, rev 6 |
 
@@ -923,11 +957,11 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | Slice | Content | Done when | Order |
 |---|---|---|---|
 | **U0 spikes** | §8 U0-a … U0-e (U0-b: the real-file run) | each result written down | first |
-| **U1 pieces** | P9 (its drive branch on the `drive_ref` codec); P10 moves (G1's mime table moves with `kind_of`); caps table (§4.5, the text-export and §29 rows included); `PdfSplitterPort`; the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | after U0 |
+| **U1 pieces** | P9 (its drive branch on the `drive_ref` codec); P10 moves (G1's mime table moves with `kind_of`); caps table (§4.5, the text-export and §29 rows included); `PdfSplitterPort` (with the optional `deadline_at` and the batch `cut_pdf_windows`, §4.4); the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | after U0 |
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it except for the three opening intents, the drive specialist passes it on (A5); `DriveOperations` decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped, from `open_file` and from the drive specialist; the key never reaches any other specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
-| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the 30 000 cut in the chat and email layer; the audio requirement and its per-path decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
+| **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, splitter, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the 30 000 cut in the chat and email layer; P21's per-path audio decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
 | **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; `copy_file_to_drive` from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
-| **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, each a parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | the four fixes each tested on a fixture; the U0-b report on real files (PDFs with real fonts, scans, `.msg`, files at the caps, large sheets) accepted by the owner (D15's final go); no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
+| **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, shipped together under **one** parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | **Gate before the bump ships:** the fixes change the child the indexer shares, so the indexer's upgrade pass (`drive_indexing_service.py:2934-2935`, `DRIVE_UPGRADE_PASS`) re-extracts and re-embeds the drive corpus and may route files to the paid reader; a probe measures the cost on a sample and the owner gives an OK under the money rules (over ~$3). Then: the four fixes each tested on a fixture; the U0-b report on real files (PDFs with real fonts, scans, `.msg`, files at the caps, large sheets) accepted by the owner (D15's final go); no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
 | **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P19 parser-text cut | each its own PR | any time after U1 |
 | **S3 / S4** (sandbox RFC) | adapter swaps per §4.9 | no caller diff in the PR | after the document service (D14); S3 needs U1 and U3, S4 also U5 |
 
