@@ -13,6 +13,7 @@ import pytest
 
 from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_extraction import DriveModelUnavailable, ParserBusy
+from src.domain.drive_index_params import MODEL_IN_FLIGHT
 from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from tests.unit.agents.drive_model_fakes import reply
 from tests.unit.composition.test_drive_reader_runner_halving import _Cutter, _key, _request
@@ -71,11 +72,15 @@ def _paragraphs(request):
 
 
 async def test_the_budget_reads_window_1_alone_and_stops_cutting_once_it_is_reached(tmp_path):
-    runner, llm, cutter = _runner(lambda r: reply({"text": f"text of {_key(r)}", "brief": None}), pages_total=40)
+    # one group of MODEL_IN_FLIGHT windows plus one more: the first group is cut in one request, window 1 alone is
+    # read, and the second group is never requested
+    pages_total = 10 * MODEL_IN_FLIGHT + 10
+    runner, llm, cutter = _runner(lambda r: reply({"text": f"text of {_key(r)}", "brief": None}),
+                                  pages_total=pages_total)
     out = await runner.extract(_limited(tmp_path, text_budget=len("text of 1-10")))
-    assert cutter.cuts == [(0, 10)] and len(llm.requests) == 1
+    assert cutter.cuts == [(p, 10) for p in range(0, 10 * MODEL_IN_FLIGHT, 10)] and len(llm.requests) == 1
     assert out.status is S.TEXT and out.text == "text of 1-10" and out.truncated is True
-    assert (out.pages_total, out.pages_sent, out.pages_read, out.cut_within_pages) == (40, 10, 10, ())
+    assert (out.pages_total, out.pages_sent, out.pages_read, out.cut_within_pages) == (pages_total, 10, 10, ())
 
 
 async def test_with_a_budget_windows_are_read_one_at_a_time_in_page_order(tmp_path):
@@ -87,12 +92,13 @@ async def test_with_a_budget_windows_are_read_one_at_a_time_in_page_order(tmp_pa
 
 
 async def test_the_text_is_trimmed_to_the_budget_at_a_paragraph(tmp_path):
-    runner, llm, cutter = _runner(_paragraphs, pages_total=40)
+    runner, llm, cutter = _runner(_paragraphs, pages_total=10 * MODEL_IN_FLIGHT + 10)
     # joined: "A1\n\nB1\n\nA11\n\nB11": room 12 holds "A1\n\nB1\n\nA11" (11), not B11
     out = await runner.extract(_limited(tmp_path, text_budget=12))
     assert out.text == "A1\n\nB1\n\nA11" and out.truncated is True
     assert out.pages_read == 10 and out.cut_within_pages == tuple(range(11, 21))
-    assert cutter.cuts == [(0, 10), (10, 10)]
+    # windows 1 and 2 are read; the rest of the first group is cut but never sent, no second group is requested
+    assert cutter.cuts == [(p, 10) for p in range(0, 10 * MODEL_IN_FLIGHT, 10)] and len(llm.requests) == 2
 
 
 async def test_a_cut_between_windows_has_no_window_cut_in_part(tmp_path):
@@ -167,11 +173,14 @@ async def test_a_deadline_already_passed_calls_nothing(tmp_path, caplog):
 
 
 async def test_a_busy_parser_ends_the_run_like_the_deadline_and_keeps_the_prefix(tmp_path, caplog):
-    runner, llm, _ = _runner(_paragraphs, pages_total=40)
-    _with_cutter(runner, _DeadlineCutter(40, busy_from=10))
+    # the windows are cut in groups of MODEL_IN_FLIGHT, so the parser can be busy only for a later group: the
+    # second group's request (pages 41+) finds it busy after the first group was read
+    runner, llm, _ = _runner(_paragraphs, pages_total=60)
+    _with_cutter(runner, _DeadlineCutter(60, busy_from=40))
     caplog.set_level(logging.WARNING)
     out = await runner.extract(_limited(tmp_path, deadline_at=time.time() + 60))
-    assert out.status is S.TEXT and out.text == "A1\n\nB1" and out.truncated and len(llm.requests) == 1
+    assert out.status is S.TEXT and out.text == "A1\n\nB1\n\nA11\n\nB11\n\nA21\n\nB21\n\nA31\n\nB31"
+    assert out.truncated and len(llm.requests) == MODEL_IN_FLIGHT == 4
     assert any(r.levelno >= logging.WARNING and "deadline" in r.getMessage() for r in caplog.records)
 
 
