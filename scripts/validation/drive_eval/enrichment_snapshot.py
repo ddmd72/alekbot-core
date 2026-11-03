@@ -34,7 +34,8 @@ from src.domain.drive_enrichment import (
     DriveProfile, HintItem, KeyValue, PhotoDescription, PhotoObject, ProfileDate, ProfileEntity,
 )
 from src.domain.drive_enrichment_calls import ProfileRequest
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DocumentBrief
 
 SNAPSHOT_FORMAT = 1

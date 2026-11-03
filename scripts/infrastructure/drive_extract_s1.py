@@ -158,7 +158,7 @@ def _nested_html(path: Path, depth: int) -> Path:
 
 
 def kind_for(path: Path) -> str:
-    from src.domain.drive_index_policy import kind_of
+    from src.domain.document_kind import kind_of
     from src.domain.document_kind import SNIFF_HEAD_BYTES, sniff_kind
 
     with open(path, "rb") as fh:

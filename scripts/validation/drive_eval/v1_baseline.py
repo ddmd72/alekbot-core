@@ -47,7 +47,8 @@ def _caption(photo: Optional[Dict[str, Any]]) -> str:
 
 def build_ports(snapshot: Dict[str, Any], parser: Any) -> Dict[str, Any]:
     """v1's reader and triage answered from the snapshot, and a parse cache in front of the tag's parser."""
-    from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageBatchOutcome, TriageResult
+    from src.domain.drive_extraction import ExtractionOutcome, TriageBatchOutcome, TriageResult
+    from src.domain.document_extraction import ExtractionStatus
     from src.domain.document_extraction import READER
     from src.domain.drive_index import DocumentBrief, TriageVerdict
     from src.ports.content_extractor_port import ContentExtractorPort
