@@ -217,7 +217,7 @@ is built, not only behind the Microsoft keys.
   account sees, the connection's scope filters it, and the cursor is the adapter's own encoded string
   (`google_drive_cursor.py`). Writes happen only inside the write folder, as for any account-wide drive.
 - **Natives and exports (GE-6).** Docs, Sheets, Slides and Drawings have no bytes; they are read through an export on
-  `download`: Docs as Markdown, Sheets as xlsx, Slides as plain text, Drawings as pdf; other natives and shortcuts are
+  `download`: Docs as Markdown, Sheets as xlsx, Slides as plain text, Drawings as pdf (the parser's readers never depend on the temp file's name or extension: the kind is sniffed from the bytes); other natives and shortcuts are
   metadata only (`mime_type=""`). Natives are read and searched, never edited (`can_write_content=False`). Their change
   key is the head revision id (`r:`), or `m:` + `modifiedTime` when revisions are not readable. An export over Google's
   10 MB cap is refused at download time and maps to the "too large" outcome. Inline `data:` images in an exported

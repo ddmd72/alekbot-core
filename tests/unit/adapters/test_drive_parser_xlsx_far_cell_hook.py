@@ -51,3 +51,12 @@ def test_the_same_sheet_without_the_far_value_is_not_truncated(tmp_path, dimensi
     saved = _book(tmp_path / "w.xlsx", [(1, 1, "Item"), (2, 1, "Rent")])
     sheet = _rewrite_dimension(saved, tmp_path / "declared.xlsx", dimension)
     assert read_content(str(sheet), "xlsx").truncated is False
+
+
+def test_a_workbook_staged_without_an_extension_reads_like_one_named_xlsx(tmp_path):
+    """A native Sheet's export is staged as `source`; openpyxl must not judge the kind by the file name."""
+    cells = [(1, 1, "A1"), (2, 1, 10), (2, 2, 20)]
+    named = read_content(str(_book(tmp_path / "book.xlsx", cells)), "xlsx")
+    bare = read_content(str(_book(tmp_path / "source", cells)), "xlsx")
+    assert bare.status is ExtractionStatus.TEXT
+    assert bare.text == named.text and "| A1 |" in bare.text and "| 10 | 20 |" in bare.text
