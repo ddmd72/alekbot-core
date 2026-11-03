@@ -952,6 +952,8 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 
 ## 7. Slices
 
+**Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); U2 onward not started.
+
 Each slice: tests first, the reviewer rule for any existing test, `make check` green, docs in the same PR.
 
 | Slice | Content | Done when | Order |

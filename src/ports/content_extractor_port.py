@@ -2,7 +2,7 @@
 ContentExtractorPort — one file on local disk to text (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §9, §24.3).
 
 Several implementations: the child-process parser and the document reader agent, chained per kind by
-`drive_extraction.EXTRACTOR_CHAINS`. Composition builds the registry `{extractor_id: adapter}`; the record stores
+`document_extraction.EXTRACTOR_CHAINS`. Composition builds the registry `{extractor_id: adapter}`; the record stores
 `extracted_by` as `extractor_id@version`, so a new parser for one kind re-extracts that kind only (§12.3).
 """
 from abc import ABC, abstractmethod
@@ -15,7 +15,7 @@ class ContentExtractorPort(ABC):
     @property
     @abstractmethod
     def extractor_id(self) -> str:
-        """The id `EXTRACTOR_CHAINS` names this extractor by (e.g. `drive_extraction.PARSER`)."""
+        """The id `EXTRACTOR_CHAINS` names this extractor by (e.g. `document_extraction.PARSER`)."""
 
     @property
     @abstractmethod

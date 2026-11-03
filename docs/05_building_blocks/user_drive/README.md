@@ -657,7 +657,7 @@ big PNG; the port raises `DriveThumbnailTooLarge`, distinct from `None` = no ren
 `READER_RENDITION_STEPS` (`c2048x2048`, `c1536x1536`, `c1024x1024`) until one fits. With no rendition (or none that
 fits), the original is used only when it is JPEG/PNG/WebP/GIF within the 3.75 MiB vision cap (`original_fallback`),
 else the record is `metadata_only / no_text` (no rendition) or `metadata_only / too_large` (every rendition was over
-the cap). The triage thumbnail (`large`) is unchanged: over the cap counts as no rendition. `sniff_kind` (`src/domain/drive_sniff.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
+the cap). The triage thumbnail (`large`) is unchanged: over the cap counts as no rendition. `sniff_kind` (`src/domain/document_kind.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
 that is a ZIP is an archive); a sniffed kind the policy does not admit is `metadata_only / kind_not_admitted`; a file
 whose bytes show a kind that may reach the reader, with no time left in this tick for the reader's worst case, waits
 one second for the next tick. A gone item (404/410) is re-observed at once instead of being read as "no content"
@@ -665,7 +665,7 @@ one second for the next tick. A gone item (404/410) is re-observed at once inste
 
 ### Step 5 — extract: parser first, model second
 
-`_extract` walks `chain_for(kind)` (`EXTRACTOR_CHAINS` in `src/domain/drive_extraction.py`): PDF `(parser, reader)`,
+`_extract` walks `chain_for(kind)` (`EXTRACTOR_CHAINS` in `src/domain/document_extraction.py`): PDF `(parser, reader)`,
 image `(reader)`, every other admitted kind `(parser)`.
 
 - **Parser** (`SubprocessContentExtractor`, `src/adapters/subprocess_content_extractor.py`): a fresh child Python
@@ -2670,7 +2670,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Keys and labels (Search v2) | `src/domain/drive_keys.py` (families, `word_keys`, `about_keys_of`, `query_concepts`, `name_keys_v2`), `drive_key_forms.py` (tokens, forms, skeletons), `drive_key_sources.py`, `drive_match.py` (families, source classes, tiers), `drive_labels.py` (fixed enums, D31 names, `k:` table), `drive_name_keys.py` (shared helpers) |
 | Enrichment (Search v2) | `src/domain/drive_enrichment.py`, `drive_enrichment_calls.py` (types), `drive_profile.py` (`PROFILE_POLICY`, input, verification), `drive_hints.py` (grounding, reuse), `drive_enrich_plan.py` (job states, queue fields, coverage gaps), `drive_usage.py` (usage and initial-build documents) |
 | Tiers and render (Search v2) | `src/domain/drive_tiers.py` (coverage, strict AND, allowances, meaning score), `drive_tier_pool.py` (df, candidates, order), `drive_tier_explain.py` (match sources, passages), `drive_tier_result.py`, `drive_tier_render.py`, `drive_search_texts.py` (frozen texts) |
-| Extraction contract, router, run rules (Slice 2+4) | `src/domain/drive_extraction.py`, `drive_index_run.py`, `drive_sniff.py`, `drive_image_mime.py` |
+| Extraction contract, router, run rules (Slice 2+4) | `src/domain/drive_extraction.py`, `document_extraction.py`, `document_kind.py`, `drive_index_run.py`, `drive_image_mime.py` |
+| Source-neutral file pieces shared with chat and email (EXTERNAL_FILES_RFC U1): untrusted marking, caps, ref kinds, PDF splitter port | `src/domain/untrusted_text.py`, `document_limits.py`, `file_ref.py`; `src/ports/pdf_splitter_port.py` |
 | Text gate, chunker, number terms | `src/domain/drive_text_gate.py`, `drive_chunker.py`, `drive_content_terms.py` (the `n:` normaliser) |
 | Model ports | `src/ports/content_extractor_port.py`, `src/ports/image_triage_port.py`, `src/ports/document_profiler_port.py`, `src/ports/passage_hint_port.py` |
 | Parser (sandboxed child) | `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`, `readers.py`; `src/utils/document_hardening.py`; the `driveparser` user and the world-writable check in `Dockerfile` |

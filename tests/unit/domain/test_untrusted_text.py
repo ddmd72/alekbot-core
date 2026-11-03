@@ -169,6 +169,8 @@ def _forms(word):
     ]
 
 
+# The one deliberate change to drive output: drive text holding an `external_content` look-alike is now escaped too,
+# so a drive file cannot forge an external block in the same context. Do not "restore" byte-identity for it.
 @pytest.mark.parametrize("forged", _forms("drive_document") + _forms("external_content"))
 def test_every_lookalike_of_either_word_loses_its_opener(forged):
     out = escape_text(forged)
