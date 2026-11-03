@@ -2,7 +2,8 @@
 # deploy-main -> main-public-iam. Only after that do the independent rest run in PARALLEL (queue -> indexer -> its IAM;
 # the research job; relay -> its IAM; the scheduler script after the queue it feeds), so a drive or relay failure can
 # never stop a bot hotfix: every one of them waits for main-public-iam, and none of them is a dependency of main.
-# The sandbox steps stay serial and wait for all four branches, exactly as before (after every drive step).
+# The sandbox steps (light family, then render family) stay serial and wait for all four branches, exactly as before
+# (after every drive step).
 steps:
   # Pull previous image to use as build cache (|| true so first deploy doesn't fail)
   - name: "gcr.io/cloud-builders/docker"
@@ -317,6 +318,57 @@ steps:
       - "PROJECT_ID=$PROJECT_ID"
       - "SERVICE_URL=$_SERVICE_URL"
 
+  # Untrusted-content sandbox, light (parse) family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12, §11). Same rules as the render
+  # family below: after every drive step, each step a no-op while _SANDBOX_LIGHT_SA is empty. The render steps stay the
+  # last four.
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-pull"
+    waitFor: ["indexer-public-iam", "deploy-research-job", "relay-public-iam", "scheduler-jobs"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "pull"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-build"
+    waitFor: ["sandbox-light-pull"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "build"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-push"
+    waitFor: ["sandbox-light-build"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "push"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "sandbox-light-deploy"
+    waitFor: ["sandbox-light-push"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "deploy"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
   # Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). After every drive step on purpose: a
   # failing sandbox step never blocks a hotfix of the bot. Each step is a no-op while _SANDBOX_RENDER_SA is empty (the
   # service identity does not exist yet), so these steps cannot break the main deploy. The script holds the logic (Cloud
@@ -392,3 +444,7 @@ substitutions:
   _SANDBOX_RENDER_URL: ""
   _SANDBOX_RENDER_SA: ""
   _SANDBOX_RENDER_CALLERS: ""
+  _SANDBOX_LIGHT_SA: ""
+  _SANDBOX_LIGHT_URL: ""
+  _SANDBOX_LIGHT_CALLERS_MAIN: ""
+  _SANDBOX_LIGHT_CALLERS_INDEXER: ""
