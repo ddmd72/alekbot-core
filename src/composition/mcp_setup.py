@@ -31,8 +31,11 @@ from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientReposit
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.mcp import KEYWORDS_MAX, normalize_keywords, normalize_phrase
+from ..domain.mcp_resource import DRIVE_SCOPE, FACTS_SCOPE, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..ports.cipher_port import CipherPort
+from ..ports.user_repository import UserRepository
+from ..ports.whitelist_repository import WhitelistRepository
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..utils.logger import logger
@@ -43,7 +46,7 @@ from .mcp_sdk_oauth_provider import AlekAccessToken, MCPSdkOAuthProvider
 # namespaced to avoid collision with the Firestore `user_context`
 # collection name (which arch test REQ-ARCH-21 guards against in core
 # layers). Composition is free of that restriction.
-MCP_DEFAULT_SCOPE = "user_context"
+MCP_DEFAULT_SCOPE = FACTS_SCOPE
 
 # Redirect-URI host allowlist for DCR. Any OAuth client registering via
 # /register must supply a redirect_uri whose host matches (or is a
@@ -55,6 +58,32 @@ _ALLOWED_REDIRECT_HOSTS = (
     "localhost",
     "127.0.0.1",
 )
+
+
+def build_transport_security(resource_uri: str) -> TransportSecuritySettings:
+    """DNS-rebinding allowlist for the public host of `resource_uri` (shared by the facts and drive apps).
+
+    FastMCP's default constructor auto-enables DNS rebinding protection whenever `host` is a loopback address,
+    which locks the allowlist to 127.0.0.1/localhost/::1. Behind Cloud Run under the public hostname that rejects
+    every real request with "Invalid Host header", so the public hostname derived from the resource URI is
+    allowlisted instead. The protection stays enabled.
+    """
+    parsed = urlparse(resource_uri)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            parsed.netloc,
+            f"{parsed.netloc}:*",
+            "127.0.0.1:*",
+            "localhost:*",
+        ],
+        allowed_origins=[
+            f"{parsed.scheme}://{parsed.netloc}",
+            f"{parsed.scheme}://{parsed.netloc}:*",
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+        ],
+    )
 
 
 @dataclass
@@ -153,6 +182,8 @@ def build_mcp_components(
     search_enrichment_service: SearchEnrichmentService,
     cipher: CipherPort,
     digest_key: bytes,
+    user_repo: UserRepository,
+    whitelist_repo: WhitelistRepository,
 ) -> MCPComponents:
     """
     Build the FastMCP server for the remote MCP endpoint.
@@ -167,6 +198,7 @@ def build_mcp_components(
             (never here: main.py swallows this build's errors, so a missing
             key would read as "MCP off", not as a failed start)
         digest_key: the verify-only digest key, built there too
+        user_repo / whitelist_repo: read by the authorization service at every refresh rotation
 
     Returns:
         MCPComponents with the FastMCP instance and the authorization
@@ -189,6 +221,9 @@ def build_mcp_components(
         mcp_resource_uri=auth_config.mcp_resource_uri,
         consent_base_url=consent_base_url,
         allowed_redirect_hosts=_ALLOWED_REDIRECT_HOSTS,
+        drive_resource_uri=drive_resource_uri(auth_config.mcp_resource_uri),
+        user_repo=user_repo,
+        whitelist_repo=whitelist_repo,
         access_token_ttl=auth_config.mcp_access_token_ttl,
         refresh_token_ttl=auth_config.mcp_refresh_token_ttl,
         auth_code_ttl=auth_config.mcp_auth_code_ttl,
@@ -216,29 +251,7 @@ def build_mcp_components(
     parsed_resource = urlparse(auth_config.mcp_resource_uri)
     issuer_root = f"{parsed_resource.scheme}://{parsed_resource.netloc}"
 
-    # Transport security: FastMCP's default constructor auto-enables DNS
-    # rebinding protection whenever `host` is a loopback address, which
-    # locks the allowed_hosts allowlist to 127.0.0.1/localhost/::1. Since
-    # we serve behind Cloud Run + Google Frontend under the public
-    # hostname `dev.alekbot.app`, that default rejects every real request
-    # with "Invalid Host header". Allowlist the public hostname(s) derived
-    # from mcp_resource_uri instead. DNS rebinding protection remains
-    # enabled — we just extend the allow-list.
-    transport_security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=[
-            parsed_resource.netloc,
-            f"{parsed_resource.netloc}:*",
-            "127.0.0.1:*",
-            "localhost:*",
-        ],
-        allowed_origins=[
-            f"{parsed_resource.scheme}://{parsed_resource.netloc}",
-            f"{parsed_resource.scheme}://{parsed_resource.netloc}:*",
-            "http://127.0.0.1:*",
-            "http://localhost:*",
-        ],
-    )
+    transport_security = build_transport_security(auth_config.mcp_resource_uri)
 
     fastmcp = FastMCP(
         name="alekbot",
@@ -251,8 +264,8 @@ def build_mcp_components(
             required_scopes=[MCP_DEFAULT_SCOPE],
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
-                valid_scopes=[MCP_DEFAULT_SCOPE],
-                default_scopes=[MCP_DEFAULT_SCOPE],
+                valid_scopes=[FACTS_SCOPE, DRIVE_SCOPE],
+                default_scopes=[FACTS_SCOPE, DRIVE_SCOPE],
             ),
         ),
         transport_security=transport_security,
