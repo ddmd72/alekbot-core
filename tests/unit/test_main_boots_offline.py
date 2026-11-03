@@ -49,7 +49,8 @@ from src.domain.deep_research_notices import cancelled_notice, research_failed_n
 from src.domain.email import IndexingJob
 from tests.support import http_boundary_fake
 from tests.support.oauth_credentials_store import creds
-from tests.support.prompt_seed import seed_agent_prompt
+from src.composition.drive_connector_tools import RESULT_TEXTS_TOKEN, TOOL_TEXTS_TOKEN
+from tests.support.prompt_seed import seed_agent_prompt, seed_tokens
 
 ROOT = Path(__file__).resolve().parents[2]
 URL_MAP = Path(__file__).with_name("main_boots_offline_url_map.txt")
@@ -325,6 +326,8 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
     boot = Boot()
     services = prod_env.install_offline_services(monkeypatch)
     boot.db = services.db
+    # The drive connector's tools load these two tokens at boot (DRIVE_MCP_CONNECTOR_RFC §5.3), as the uploaded tokens.
+    await seed_tokens(services.db, EnvironmentConfig(), (TOOL_TEXTS_TOKEN, RESULT_TEXTS_TOKEN))
     monkeypatch.setattr(main, "init_telemetry", lambda *a, **k: None)
     monkeypatch.setattr(main, "build_memory_telemetry", lambda *a, **k: None)
 
