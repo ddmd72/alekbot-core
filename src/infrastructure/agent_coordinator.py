@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
 from ..domain.document_open import Prefetched
 from ..domain.document_open_texts import conversion_alert, open_failed_note
@@ -27,6 +27,12 @@ from ..ports.alert_sink import AlertSinkPort
 
 if TYPE_CHECKING:
     from ..agents.base_agent import BaseAgent
+
+
+class FileRefResolver(Protocol):
+    """The prefetch seam (FileConversionService.prefetch): `deadline_at` is keyword-only."""
+
+    async def __call__(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched: ...
 
 
 def _specialist_context(intent: str, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -63,7 +69,7 @@ class AgentCoordinator:
         self,
         registry: Optional[AgentRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
-        file_ref_resolver: Optional[Callable[[str, str, str, float], Awaitable[Prefetched]]] = None,
+        file_ref_resolver: Optional[FileRefResolver] = None,
         agent_factory: Optional[AgentFactoryPort] = None,
         alert_sink: Optional[AlertSinkPort] = None,
     ):
@@ -626,7 +632,7 @@ class AgentCoordinator:
             )
             return
         try:
-            got = await self._file_ref_resolver(file_ref, user_id, account_id, deadline_at)
+            got = await self._file_ref_resolver(file_ref, user_id, account_id, deadline_at=deadline_at)
         except DriveNotConnectedError as e:
             # An expected state (drive not connected / access expired), not a fault to page on.
             logger.warning(
