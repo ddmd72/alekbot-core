@@ -11,6 +11,7 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.document_presentation import present_text
 from src.domain.document_read import ReadOutcome, ReadStatus
 from src.domain.document_limits import MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES
+from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.language import LanguageCode
 from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain, to_plain
 from src.domain.ui_messages import UIMessage
@@ -176,11 +177,14 @@ class TestOpenCaps:
     # Since U3 the service sizes the file on metadata before any download (EXTERNAL_FILES_RFC §4.2 step 2, P16;
     # tests/unit/services/test_file_conversion_open.py::test_a_drive_file_over_the_cap_gives_the_size_line_before_download):
     # here the open is asked once with the consumer's declaration, nothing is fetched as bytes, and its note is shown.
+    # The size note is a failed open (U3 seam fix: a note is never file content and never a success), like the drive
+    # wrapper's own DriveFileTooLargeError refusal; only §29's too-long refusal answers as success (L13).
     async def test_large_image_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = BIG_IMAGE
         conversion.open.return_value = opened_note(TOO_LARGE_AS_TEXT, ReadStatus.TOO_LARGE)
         out = await ops.open({**CTX, **NATIVE_AT_CAPS}, "u1", "drive:a1:i1")
-        assert out.success and TOO_LARGE_AS_TEXT in out.text and out.file_data is None
+        assert not out.success and out.cls is OutcomeClass.FAILED and not out.body and out.file_data is None
+        assert out.text.endswith(f"ref=drive:a1:i1]\n{TOO_LARGE_AS_TEXT}") and "<drive_document" not in out.text
         conversion.resolve_bytes.assert_not_called()
         conversion.open.assert_awaited_once()
         assert conversion.open.await_args.args == ("drive:a1:i1", "u1", "a1")
@@ -193,7 +197,8 @@ class TestOpenCaps:
         msg = _msg(Intent.OPEN_FILE, file_ref="drive:a1:p1")
         msg.context.update(NATIVE_AT_CAPS)
         resp = await agent.execute(msg)
-        assert resp.status == AgentStatus.SUCCESS and TOO_LARGE_AS_TEXT in resp.result
+        assert resp.status == AgentStatus.FAILED and resp.error.endswith(f"ref=drive:a1:p1]\n{TOO_LARGE_AS_TEXT}")
+        assert "<drive_document" not in resp.error and resp.result is None
         assert "file_data" not in resp.metadata
         conversion.resolve_bytes.assert_not_called()
         conversion.open.assert_awaited_once()
