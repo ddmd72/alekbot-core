@@ -1,4 +1,5 @@
-"""indexer_main wiring of the content side (USER_DRIVE_INDEXING_RFC §24.2): the parser and the reader runner under the
+"""indexer_main wiring of the content side (USER_DRIVE_INDEXING_RFC §24.2): the parser (the sandbox light service's
+adapter, UNTRUSTED_CONTENT_SANDBOX_RFC O14) and the reader runner under the
 EXTRACTOR_CHAINS ids, the triage runner, the three model providers (Claude, OpenAI, and Gemini for the fallback) from
 their own env keys, the optional billing alert.
 Google clients are replaced, so nothing leaves the process."""
@@ -7,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import indexer_main
-from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
+from src.adapters.sandbox_client.sandbox_content_extractor import SandboxContentExtractor
 from src.composition import drive_indexing_setup
 from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
@@ -27,6 +28,7 @@ def wired(monkeypatch):
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
                        # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid", "ANTHROPIC_API_KEY": "ak",
@@ -43,7 +45,7 @@ def test_extractors_and_triage_reach_the_tick(wired):
     indexer_main.build_app()
     extractors, triage = wired["extractors"], wired["triage"]
     assert set(extractors) == {PARSER, READER}
-    assert isinstance(extractors[PARSER], SubprocessContentExtractor)
+    assert isinstance(extractors[PARSER], SandboxContentExtractor)
     reader = extractors[READER]
     assert isinstance(reader, DriveReaderRunner) and reader._splitter is extractors[PARSER]
     assert isinstance(triage, DriveTriageRunner)

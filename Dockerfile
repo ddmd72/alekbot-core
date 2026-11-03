@@ -35,8 +35,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # whose version is whatever requirements.txt resolves (one source of truth, no second pin in this file).
 RUN python -m playwright install chromium --with-deps
 
-# The drive parser child runs as this unprivileged user in both services (R3 F3-1, USER_DRIVE_INDEXING_RFC §9; the main
-# service reads DRIVE_PARSER_USER too, USER_FILE_PARSING_RFC §4.8): another uid cannot read the parent's
+# The parser user serves the indexer's media children and local in-process parser runs (R3 F3-1, USER_DRIVE_INDEXING_RFC §9;
+# the deployed runtimes parse through the sandbox light service): another uid cannot read the parent's
 # /proc/<pid>/environ (its API keys) or rewrite the app source and libraries it loads. A named user missing from the
 # image fails the start. No USER directive: the services stay root, which switching the child to this user needs.
 ENV DRIVE_PARSER_USER=driveparser

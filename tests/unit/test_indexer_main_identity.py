@@ -24,6 +24,7 @@ def env(monkeypatch):
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
                        # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "legacy@example.invalid\n"}.items():

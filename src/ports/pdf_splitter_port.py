@@ -3,7 +3,7 @@ PdfSplitterPort — a PDF's page operations, run where the PDF is parsed (docs/1
 §4.5; USER_DRIVE_INDEXING_RFC §24.3).
 
 The document reader counts a routed PDF's pages and reads it in page windows; it never parses the PDF itself. The
-sandboxed parser (`SubprocessContentExtractor` today, the sandbox's parse engine later) does both.
+sandboxed parser (the sandbox's `SandboxContentExtractor` in the deployed runtimes; `SubprocessContentExtractor` for local in-process runs) does both.
 
 Every method raises `drive_extraction.PdfSplitFailed` with the outcome status (`encrypted`, `unsupported`, `timeout`,
 `memory`, `too_large` or `error`). `deadline_at` is an absolute time in epoch seconds (`time.time()`), so it survives

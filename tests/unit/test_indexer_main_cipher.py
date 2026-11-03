@@ -25,6 +25,7 @@ def env(monkeypatch):
     monkeypatch.delenv("KMS_CRYPTO_KEY", raising=False)
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid"}.items():
         monkeypatch.setenv(key, value)

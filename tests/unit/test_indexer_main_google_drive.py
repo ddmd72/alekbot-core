@@ -22,6 +22,7 @@ def built(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid"}.items():

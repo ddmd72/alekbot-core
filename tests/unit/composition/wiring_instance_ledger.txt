@@ -78,6 +78,9 @@ src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design sing
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_token_repository.FirestoreTokenRepository 1  # by-design single instance
+src.adapters.sandbox_client.metadata_id_token_provider.MetadataIdTokenProvider 1  # by-design the main service's one ID-token source for the light service, built with the parse adapter (sandbox_parse_setup.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10)
+src.adapters.sandbox_client.sandbox_content_extractor.SandboxContentExtractor 1  # by-design the main service's one parse adapter, parser and splitter of the document service (application_graph.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10, O14)
+src.adapters.sandbox_client.sandbox_http_client.SandboxHttpClient 1  # by-design the one signed HTTP client of the parse adapter (sandbox_parse_setup.py)
 src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, and one shared by the skill and note services (service_container.py shared_security_port, prompt_assembly_setup.py:29)
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
@@ -86,7 +89,6 @@ src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1 
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
 src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (application_graph.py:895), shared by the Slack RichContentService and the notification service's platform media
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
-src.adapters.subprocess_content_extractor.SubprocessContentExtractor 1  # by-design the main service's one parser child, parser and splitter of the document service (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:970), shared by the Telegram RichContentService and the notification service's platform media
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance

@@ -8,6 +8,8 @@ revisit before the whitelist admits anyone beyond the people the owner vouches f
 identity (`DRIVE_PARSER_USER`, one slot, `MAIN_PARSER_MAX_CHILDREN`), for chat, workspace, delivered and drive opens. The
 trigger below applies there as well, and the residual risk is accepted in both runtimes until the sandbox's parse slices
 S3/S4 replace the child with an adapter behind the same port (UNTRUSTED_CONTENT_SANDBOX_RFC).
+**Status update (P4, UNTRUSTED_CONTENT_SANDBOX_RFC O14):** once P4 is deployed the parser child no longer runs in either
+deployed runtime (both parse through the light service); the indexer's media children still run under this identity (S5).
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §16 (Phase 0), §24.3,
 §24.14; `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`,
 `src/adapters/drive_parser/readers.py`, `src/utils/document_hardening.py`, `Dockerfile`, `indexer_main.py`.

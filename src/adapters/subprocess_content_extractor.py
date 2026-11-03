@@ -7,9 +7,12 @@ allowlisted environment and a private temp directory removed afterwards. Parsers
 peaked at ~1.75 GB), so only a killed process bounds them. A kill is an outcome: `timeout` (wall clock, SIGXCPU) or
 `memory` (MemoryError, SIGKILL from the kernel); the indexer process never parses a byte.
 
+The deployed runtimes no longer construct this adapter for parsing (they use the sandbox's light service); it serves
+local in-process runs, scripts, the drive eval and the sandbox's own engine.
+
 The deployment is multi-user (one whitelist, many users' files on one indexer), so the child also runs as an
-unprivileged user (R3 F3-1): `sandbox_user`, which the indexer passes from DRIVE_PARSER_USER — the Dockerfile creates
-that user and sets the variable, so the deployed indexer always sandboxes, and a configured user that is missing, is
+unprivileged user (R3 F3-1): `sandbox_user`, from DRIVE_PARSER_USER — the Dockerfile creates
+that user and sets the variable, so a deployed use always sandboxes, and a configured user that is missing, is
 root, or cannot be switched to fails the start. The child gets that uid/gid and no supplementary groups, a per-run
 directory it owns (its TMPDIR and HOME), a read-only link of the source file in it, and writes its window there for
 the parent to collect. A child of another uid cannot read the parent's `/proc/<ppid>/environ` (the API keys, the

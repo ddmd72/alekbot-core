@@ -8,8 +8,6 @@
   connections and the primary). Index, chunk, hint, transcript-job and sync-state keys are `{connection_id}:…`; the usage,
   initial build, transcript store, mirror roots/ledger and notes are user- or drive-scoped on purpose
   (`user_drive/README.md` §3, "Keys by scope"). A `drive:` ref without a tag is never resolved ("search again").
-- **The parser child runs one at a time per adapter object** (`SubprocessContentExtractor`, `MAIN_PARSER_MAX_CHILDREN = 1`
-  in `composition/document_service_setup.py`), and in the main service the parser, the PDF splitter and the document
-  reader share that one slot across all users. Every wait for it is bounded by the open's `deadline_at`; past it
-  `ParserBusy` raises, no child starts, and the open answers a "converter busy" note (`PARSER_UNAVAILABLE` / `busy`).
-  Never add an unbounded `await` on the slot to an open path (`docs/05_building_blocks/file_conversion/README.md`).
+- **Parsing goes through the sandbox light service** (`SandboxContentExtractor`, `docs/05_building_blocks/file_conversion/README.md`
+  § Parser service); an outage is `ParserUnavailable` (`PARSER_UNAVAILABLE`), never the file's outcome. Never add an
+  in-process parser to a deployed composition.

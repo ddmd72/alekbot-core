@@ -1,7 +1,8 @@
-"""The indexer runs the parser child as the unprivileged user its image names (R3 F3-1, USER_DRIVE_INDEXING_RFC §9,
-§24.14): indexer_main passes DRIVE_PARSER_USER to the parser; the Dockerfile creates that user and sets the variable,
-so the deployed indexer always sandboxes, and a user missing from the container fails the start. Without the variable
-(local development) the parser runs unsandboxed, with a WARNING. The main service never builds the parser."""
+"""The indexer runs its media children (transcription) as the unprivileged user its image names (R3 F3-1,
+USER_DRIVE_INDEXING_RFC §9, §24.14): indexer_main passes DRIVE_PARSER_USER to the media extractor; the Dockerfile creates
+that user and sets the variable, and with transcription on a user missing from the container fails the start. Document
+parsing no longer runs a child in the indexer: it goes through the sandbox light service (UNTRUSTED_CONTENT_SANDBOX_RFC
+O14), so with transcription off no parser user is looked up."""
 import re
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -9,10 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import indexer_main
-from src.adapters import subprocess_content_extractor as extractor_module
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.composition import drive_indexing_setup
-from src.domain.document_extraction import PARSER
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 
@@ -30,6 +29,7 @@ def wired(monkeypatch):
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
                        # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid", "ANTHROPIC_API_KEY": "ak"}.items():
@@ -41,23 +41,10 @@ def wired(monkeypatch):
     return captured
 
 
-def test_without_the_variable_the_parser_is_unsandboxed(wired):
-    indexer_main.build_app()
-    assert wired["extractors"][PARSER]._sandbox is None
-
-
-def test_the_named_user_reaches_the_parser(wired, monkeypatch):
-    monkeypatch.setenv(PARSER_USER_ENV, "driveparser")
-    monkeypatch.setattr(extractor_module.pwd, "getpwnam",
-                        lambda name: MagicMock(pw_name=name, pw_uid=999, pw_gid=998))
-    monkeypatch.setattr(extractor_module, "_effective_uid", lambda: 0)
-    indexer_main.build_app()
-    assert wired["extractors"][PARSER]._sandbox == (999, 998)
-
-
-def test_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
+def test_with_transcription_on_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
+    monkeypatch.setenv("DRIVE_TRANSCRIBE_ENABLED", "on")
     monkeypatch.setenv(PARSER_USER_ENV, "no-such-user-r3-f3-1")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="no-such-user-r3-f3-1"):
         indexer_main.build_app()
 
 
