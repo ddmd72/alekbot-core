@@ -138,7 +138,8 @@ def in_scope(access: ConnectionAccess, capabilities: DriveCapabilities, ancestry
 def in_connector(access: ConnectionAccess, ancestry: Optional[Ancestry]) -> bool:
     """The item lies inside the connector's access (§7.3): nothing when none is set; everything with the whole drive
     (the scope still applies, `decide` checks both); else the ancestry (required) holds a connector folder. Whether the
-    chain reached the root is never read, so a folder of a Google shared drive (no reachable parent) works (E11)."""
+    chain reached the root is never read, so a folder outside the root (no reachable parent, `UserDrivePort.outer_folders`)
+    works (E11)."""
     connector = access.connector_access
     if connector is None:
         return False
