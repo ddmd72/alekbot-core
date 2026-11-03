@@ -513,7 +513,12 @@ def plan_observation(change: DriveChange, existing: Optional[DriveIndexRecord], 
     (§7.1 step 1), read with QUIET = 0, so its content is due at once (§7.3).
 
     A record the bot cannot open (§26.2) that this observation sees again is flagged observed: its next read is due
-    INACCESSIBLE_RETRY_MIN after the last one (Δ51); a re-plan (`observed=False`) is no observation."""
+    INACCESSIBLE_RETRY_MIN after the last one (Δ51); a re-plan (`observed=False`) is no observation.
+
+    A change whose key is still pending (`content_version_pending`) is a ValueError: the caller resolves it first, and a
+    path that forgot to must fail loudly rather than store a key that is not final."""
+    if change.content_version_pending:
+        raise ValueError(f"item {change.item_id}: change key still pending; resolve it before planning")
     plan = _collecting(_plan(change, existing, parent, probe, ctx, previous_parent, observed, nudged), existing)
     if not (observed and existing is not None and inaccessible(existing) and not change.deleted
             and plan.delete_item_id != existing.item_id):

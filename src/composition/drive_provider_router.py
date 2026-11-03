@@ -13,7 +13,7 @@ Public interface:
     every UserDrivePort method by handle (the single-drive members of the port's transitional block are not routed)
 """
 from types import MappingProxyType
-from typing import List, Literal, Mapping, Optional
+from typing import List, Literal, Mapping, Optional, Sequence
 
 from ..domain.drive_capabilities import DriveCapabilities
 from ..domain.drive_handle import DriveHandle
@@ -83,6 +83,9 @@ class DriveProviderRouter(UserDrivePort):
 
     async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         return await self._route(handle).get_changes(handle, cursor)
+
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        return await self._route(handle).resolve_content_versions(handle, changes)
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         return await self._route(handle).get_change(handle, item_id)
