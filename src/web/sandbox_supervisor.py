@@ -5,10 +5,12 @@ Sandbox supervisor (UNTRUSTED_CONTENT_SANDBOX_RFC §4.6, §4.12; plan G4, G7).
 engine, parser or web framework: stdlib and the logger only. Spawning, waiting and signalling are injected so the
 policy is unit-testable without processes.
 
-Policy (`always` | `never`; anything else, including the RFC's historical `abnormal`, refuses to start, G4):
+Policy (`always` | `abnormal` | `never`; anything else refuses to start, G4):
     always  the server writes one byte to the pipe after its one response is out. The supervisor then sends SIGTERM
             to the server (Hypercorn finishes the in-flight response and stops), waits, kills what is left of the
             server's process group, and returns 0 so the platform replaces the instance.
+    abnormal  the same stop, but the server writes the byte only after an abnormal request (RFC §4.6); a normal one
+            keeps the instance warm and writes nothing.
     never   local development only: the server stays up until the supervisor itself is told to stop.
 A server that exits on its own is a failure (non-zero), never a quiet end. `terminate()` (SIGTERM/SIGINT to the
 supervisor) is forwarded to the server. If the server ignores SIGTERM for `kill_grace_s` it gets SIGKILL.
@@ -27,7 +29,7 @@ from typing import Callable, Optional, Tuple
 
 from ..utils.logger import logger
 
-POLICIES = ("always", "never")
+POLICIES = ("always", "abnormal", "never")
 
 
 class SandboxSupervisor:
@@ -93,7 +95,7 @@ class SandboxSupervisor:
                 time.sleep(self._poll_s)
             if self._reap():
                 break
-            if served and self._policy == "always":
+            if served and self._policy in ("always", "abnormal"):
                 logger.info("[Sandbox] request served: stopping the instance")
                 stopping = True
             elif served:

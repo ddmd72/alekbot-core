@@ -466,7 +466,7 @@ def test_bad_recycle_policy_is_a_construction_error(tmp_path):
     with pytest.raises(ValueError):
         sandbox_app.create_sandbox_blueprint(
             {}, FakeGate(), FakeRecycler(), CEILING,
-            {"work_root": str(tmp_path), "engine_user": None, "recycle": "abnormal"})
+            {"work_root": str(tmp_path), "engine_user": None, "recycle": "sometimes"})
 
 
 def test_module_imports_no_document_library():

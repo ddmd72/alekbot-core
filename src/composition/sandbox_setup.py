@@ -50,6 +50,7 @@ _FAMILY_GROUPS: Mapping[str, Mapping[str, FrozenSet[str]]] = {
 
 RECYCLE_ALWAYS = "always"
 RECYCLE_NEVER = "never"
+RECYCLE_ABNORMAL = "abnormal"   # light (parse) service only: a normal request keeps the instance warm
 # The unprivileged uid the engine child runs as on Cloud Run; the image (T9) creates this user.
 DEFAULT_ENGINE_USER = "sandboxengine"
 _CLOUD_RUN_WORK_ROOT = "/work"
@@ -61,7 +62,7 @@ class SandboxStartupError(Exception):
 
 @dataclass(frozen=True)
 class StartupPlan:
-    recycle: str                                   # "always" | "never" (never: local only)
+    recycle: str                                   # "always" | "abnormal" (light only) | "never" (local only)
     service_url: str                               # no trailing slash; "" -> unconfigured
     unconfigured: bool                             # only /health served, every op answers 503 unconfigured
     caller_sets: Mapping[str, FrozenSet[str]]      # {group: emails}
@@ -86,14 +87,17 @@ def validate_startup(
         raise SandboxStartupError(f"secret-like environment names present: {', '.join(violations)}")
 
     recycle = env.get("SANDBOX_RECYCLE", RECYCLE_ALWAYS)
-    if recycle not in (RECYCLE_ALWAYS, RECYCLE_NEVER) or (recycle == RECYCLE_NEVER and on_cloud_run):
+    if recycle not in (RECYCLE_ALWAYS, RECYCLE_NEVER, RECYCLE_ABNORMAL) or (recycle == RECYCLE_NEVER and on_cloud_run):
         logger.error("[Sandbox] refusing to start: unusable SANDBOX_RECYCLE policy")
-        raise SandboxStartupError("SANDBOX_RECYCLE must be 'always' ('never' is local only)")
+        raise SandboxStartupError("SANDBOX_RECYCLE must be 'always' or 'abnormal' ('never' is local only)")
 
     family = env.get("SANDBOX_SERVICE", FAMILY_RENDER)
     if family not in _FAMILY_GROUPS:
         logger.error("[Sandbox] refusing to start: unknown SANDBOX_SERVICE family")
         raise SandboxStartupError(f"SANDBOX_SERVICE must be one of {sorted(_FAMILY_GROUPS)}")
+    if recycle == RECYCLE_ABNORMAL and family != FAMILY_LIGHT:
+        logger.error("[Sandbox] refusing to start: policy abnormal is for the light service only")
+        raise SandboxStartupError("SANDBOX_RECYCLE=abnormal is for SANDBOX_SERVICE=light only")
     group_prefixes = _FAMILY_GROUPS[family]
 
     caller_sets: Dict[str, FrozenSet[str]] = load_caller_sets(env)   # raises on overlap / empty on Cloud Run

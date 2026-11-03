@@ -10,7 +10,11 @@ Classification is by HTTP status FIRST, then the outcome header (Cloud Run's own
     401 / 403, any 404 / 405        SandboxMisconfigured + ERROR log, whatever the header says (the server adds an outcome
                                     to routing misses too); bad_request `unknown_op` / `bad_meta` likewise
     408                             the server's body timeout: our upload stalled, a transport loss (retry once)
-    429, 503 other than recycling   SandboxUnavailable(reason="busy"), no retry (systemic, nothing charged)
+    429, 503 with the sandbox's own SandboxUnavailable(reason="busy"), no retry (systemic, nothing charged)
+      outcome header other than recycling
+    503 WITHOUT an outcome header   Cloud Run's own answer from an instance that was exiting (a lost instance): one retry
+                                    on the `recycling` budget (never more than one retry per call, never past
+                                    `deadline_at`); lost again -> SandboxUnavailable(reason="unavailable"), WARNING line
     connect error / refused,        SandboxUnavailable(reason="unavailable"), no retry
     not configured
     503 `recycling`                 one retry at once (2 attempts, short jitter); still recycling -> Unavailable("busy")
@@ -204,6 +208,17 @@ class SandboxHttpClient:
                     recycling += 1
                     if recycling >= MAX_RECYCLING_ATTEMPTS:
                         raise SandboxUnavailable("sandbox kept recycling", reason="busy")
+                    await self._sleep(random.uniform(*_JITTER_S))
+                    continue
+                if outcome is None:
+                    # Cloud Run's 503 ("malformed response or connection error") from an instance that was exiting:
+                    # the sandbox never sent it, so it is a lost instance, not a busy service. Shares the one retry.
+                    recycling += 1
+                    if recycling >= MAX_RECYCLING_ATTEMPTS:
+                        logger.warning("[SandboxClient] request_id=%s op=%s instance lost twice (503 without a "
+                                       "sandbox answer)", request_id, op.value)
+                        raise SandboxUnavailable("sandbox instance lost (503 without a sandbox answer)",
+                                                 reason="unavailable")
                     await self._sleep(random.uniform(*_JITTER_S))
                     continue
                 raise SandboxUnavailable("sandbox answered 503", reason="busy")

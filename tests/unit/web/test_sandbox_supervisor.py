@@ -104,7 +104,7 @@ def test_never_leaves_server_running():
     assert sigterms(kernel) == [(SERVER_PID, signal.SIGTERM)]
 
 
-@pytest.mark.parametrize("policy", ["abnormal", "sometimes", "", "ALWAYS", "never "])
+@pytest.mark.parametrize("policy", ["ABNORMAL", "sometimes", "", "ALWAYS", "never "])
 def test_unknown_policy_refuses_start(policy):
     spawned = []
     with pytest.raises(ValueError, match="recycle policy"):
@@ -193,7 +193,8 @@ def test_policy_constants_match_the_startup_plan():
     from src.composition import sandbox_setup
     from src.web import sandbox_supervisor
 
-    assert set(sandbox_supervisor.POLICIES) == {sandbox_setup.RECYCLE_ALWAYS, sandbox_setup.RECYCLE_NEVER}
+    assert set(sandbox_supervisor.POLICIES) == {
+        sandbox_setup.RECYCLE_ALWAYS, sandbox_setup.RECYCLE_ABNORMAL, sandbox_setup.RECYCLE_NEVER}
 
 
 # ---- PipeRecycler -------------------------------------------------------------------------------------------

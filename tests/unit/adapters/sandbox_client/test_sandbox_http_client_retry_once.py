@@ -49,8 +49,8 @@ async def test_recycling_twice_is_busy_after_exactly_two_requests():
     assert len(transport.requests) == 2
 
 
-@pytest.mark.parametrize("response", [reply(429), reply(503)])
-async def test_429_and_a_plain_503_are_busy_without_a_retry(response):
+@pytest.mark.parametrize("response", [reply(429), reply(503, SandboxStatus.ERROR)])
+async def test_429_and_a_sandbox_503_are_busy_without_a_retry(response):
     transport = Scripted(response)
     with pytest.raises(SandboxUnavailable) as caught:
         await client_for(transport).call(OP, b"b", LIMITS)
@@ -142,3 +142,51 @@ async def test_summary_line_is_an_error_on_misconfigured(caplog):
         with pytest.raises(SandboxMisconfigured):
             await client_for(Scripted(reply(403))).call(OP, b"b", LIMITS)
     assert logging.ERROR in [r.levelno for r in _summaries(caplog)]
+
+
+async def test_a_headerless_503_is_a_lost_instance_retried_once_then_ok():
+    transport = Scripted(reply(503, body=b"malformed response or connection error"),
+                         reply(200, SandboxStatus.OK, b"fine"))
+    result = await client_for(transport).call(OP, b"b", LIMITS)
+    assert result.outcome.status is SandboxStatus.OK and result.body == b"fine"
+    assert len(transport.requests) == 2
+
+
+async def test_a_headerless_503_twice_is_unavailable_not_busy_and_warns(caplog):
+    transport = Scripted(reply(503))
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SandboxUnavailable) as caught:
+            await client_for(transport).call(OP, b"b", LIMITS)
+    assert caught.value.reason == "unavailable" and caught.value.charges_file is False
+    assert "lost" in str(caught.value)
+    assert len(transport.requests) == 2
+    assert any(r.levelno == logging.WARNING and "instance lost" in r.getMessage() for r in caplog.records)
+
+
+async def test_recycling_then_a_headerless_503_shares_the_one_retry_budget():
+    transport = Scripted(reply(503, SandboxStatus.RECYCLING), reply(503))
+    with pytest.raises(SandboxUnavailable):
+        await client_for(transport).call(OP, b"b", LIMITS)
+    assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize("response", [reply(429, SandboxStatus.ERROR), reply(503, SandboxStatus.ERROR),
+                                      reply(503, SandboxStatus.BAD_REQUEST)])
+async def test_a_sandbox_busy_answer_with_its_own_header_is_not_retried(response):
+    transport = Scripted(response)
+    with pytest.raises(SandboxUnavailable) as caught:
+        await client_for(transport).call(OP, b"b", LIMITS)
+    assert caught.value.reason == "busy" and len(transport.requests) == 1
+
+
+async def test_the_headerless_503_retry_respects_the_deadline():
+    deadline = time.time() + 0.2
+
+    def slow_503(request: httpx.Request):
+        time.sleep(0.3)
+        return reply(503)
+
+    transport = Scripted(slow_503)
+    result = await client_for(transport).call(OP, b"b", LIMITS, deadline_at=deadline)
+    assert (result.outcome.status, result.outcome.detail) == (SandboxStatus.TIMEOUT, "deadline")
+    assert len(transport.requests) == 1
