@@ -53,13 +53,13 @@ Tell the user it is not available through this connector. The user chooses the f
 Cut at the connector's size limit: the rest of this result is not shown. Narrow the request (a folder, fewer files, a more specific question), or read a later part with read_passages.
 
 ### W_VIDEO
-A video: this connector does not return videos. Answer from its search card (what it shows, its place and date). The video itself cannot be fetched through this connector yet.
+A video: this connector does not return videos. Answer from its search card (what it shows, its place and date; search_drive for it when you have no card). The video itself cannot be fetched through this connector.
 
 ### W_RECORDING_UNTRANSCRIBED
-A recording that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The recording itself cannot be fetched through this connector yet.
+A recording that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The recording itself cannot be fetched through this connector.
 
 ### W_IMAGE
-An image: this connector does not return images. Its description is in its search card and in its passages (find_passages with file_refs set to this file). The image itself cannot be fetched through this connector yet.
+An image: this connector does not return images. Its description is in its search card and in its passages (find_passages with file_refs set to this file). The image itself cannot be fetched through this connector.
 
 ### W_SCAN
 A scanned PDF, or one whose text layer is missing or garbled: its text is not returned here. Read its passages instead (find_passages with file_refs set to this file): they hold the index's reading of the scan. Say that a value from them was read from an image.
@@ -128,13 +128,13 @@ Versions: when several results look like versions of one document and their valu
 While the index is still being built or rebuilt, never say a document does not exist: say the index is not complete yet and offer to list the folder.
 
 ### R_NOT_SEARCHED
-When the coverage line names what the search could not see (documents not read yet or not described yet, a truncated card, only names and metadata searched, a drive not searched), a not-found says what was not searched (e.g. '3 documents are not read yet', 'the drive Acme was not searched') and offers to list or open the folder, or to search that drive.
+When the coverage line names what the search could not see (documents not read yet or not described yet, a truncated card, only names and metadata searched, a drive not searched), a not-found says what was not searched (e.g. '3 documents are not read yet', 'the drive Acme was not searched') and offers to list the folder, or to search that drive.
 
 ### R_FOLDER_CARD
 When a folder card is shown under About (its name holds the words), search within it (search_drive with folder) or list it before answering that nothing was found.
 
 ### R_NUMBERS
-Numbers: passages are windows, not whole tables. For a total or a count over a table, open the file, then compute from the opened text; never page through it for a total. For a value or a point compared, use passages.
+Numbers: passages are windows, not whole tables. For a total or a count you must add up over a table's rows, open the file, then compute from the opened text; never page through it for a total. A total printed in the document is a value: use passages, as for any value or a point compared.
 
 ### R_DOC_VS_MEMORY
 Document vs memory: a document is authoritative for its own contents (its terms, amounts, dates). It does not outrank what you know about the user's current situation: when they disagree, give both and cite the document's path and date.
