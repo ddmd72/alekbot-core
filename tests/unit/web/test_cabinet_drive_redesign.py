@@ -254,27 +254,31 @@ def test_only_labelled_counters_are_rendered_and_the_enrichment_stats_stay_out()
     more = html.split("T:drive.all_counters")[1].split("</details>")[0]
     rows = dict(re.findall(r"<dt[^>]*>T:(drive\.\w+)</dt><dd[^>]*>([\d,]+)</dd>", more))
     assert rows["drive.index_described"] == "209" and rows["drive.index_readable_content"] == "178"
-    assert rows["drive.index_coverage_gap"] == "26" and 'class="attn"' in more
     labelled = {"drive.index_searchable", "drive.index_chunks", "drive.index_indexed", "drive.index_metadata_only",
                 "drive.index_pending", "drive.index_unresolved", "drive.index_unread", "drive.index_inaccessible",
-                "drive.index_failed", "drive.index_deleting", "drive.index_described", "drive.index_readable_content",
-                "drive.index_coverage_gap"}
+                "drive.index_failed", "drive.index_deleting", "drive.index_described", "drive.index_readable_content"}
     assert set(rows) <= labelled                      # every rendered line has a label; no raw key, no `chunks`
     assert "mystery_key" not in more and "8,362" not in more and "8362" not in more
 
 
 @node
-def test_the_coverage_gap_line_appears_only_when_non_zero():
-    zero = _card(_render([_row(means="area", counters={"carded": 5, "coverage_no_passages": 0})], 'driveUiOf("c1").tab = "index";'), "c1")
-    assert "drive.index_coverage_gap" not in zero
-    some = _card(_render([_row(means="area", counters={"carded": 5, "coverage_no_passages": 3})], 'driveUiOf("c1").tab = "index";'), "c1")
-    assert "drive.index_coverage_gap" in some
+def test_files_without_passage_hints_by_policy_are_never_listed_as_a_problem():
+    """Sheets, books and data files get no passage hints by policy: that is no gap for the owner, so the Cabinet never
+    shows the counter, at any value; search still reads it from the sync state."""
+    html = _card(_render([_row(means="area", counters={"carded": 5, "passages_current": 2,
+                                                       "coverage_no_passages": 30})], 'driveUiOf("c1").tab = "index";'), "c1")
+    more = html.split("T:drive.all_counters")[1].split("</details>")[0]
+    assert "T:drive.index_readable_content" in more
+    assert "coverage" not in more and 'class="attn"' not in more and ">30<" not in more
+    assert "coverage_no_passages" not in COUNTERS + INDEX
+    _, dicts = _dicts()
+    assert all("drive.index_coverage_gap" not in dicts[lang] for lang in LANGS)
 
 
 def test_there_is_no_raw_key_fallback_and_chunks_is_not_listed():
     assert "escapeHtml(key)" not in INDEX and "Object.keys(c)" not in INDEX
     assert "chunks:" not in COUNTERS and '"chunks"' not in INDEX
-    assert "coverage_no_passages" in COUNTERS and "profile_current" in COUNTERS and "passages_current" in COUNTERS
+    assert "profile_current" in COUNTERS and "passages_current" in COUNTERS
     assert "profile_none" not in COUNTERS + INDEX and "passages_none" not in COUNTERS + INDEX
 
 
@@ -501,7 +505,7 @@ def test_the_new_texts_are_translated_not_copied():
     _, dicts = _dicts()
     same_ok = {"drive.search_count", "drive.pk_saves_to", "drive.spent_of", "drive.chip_indexing"}   # numbers and placeholders only
     for key in ("drive.chip_nothing", "drive.pk_confirm_one", "drive.pk_keep", "drive.whole_sub_account",
-                "drive.index_checking", "drive.index_described", "drive.index_readable_content", "drive.index_coverage_gap",
+                "drive.index_checking", "drive.index_described", "drive.index_readable_content",
                 "drive.pk_title_scope", "drive.add_hint", "drive.tab_access"):
         assert key not in same_ok
         assert all(dicts[lang][key] != dicts["en"][key] for lang in ("uk", "fr", "es")), key

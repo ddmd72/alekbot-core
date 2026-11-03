@@ -236,8 +236,9 @@ is built, not only behind the Microsoft keys.
   folders" or "Use the whole drive", which there means everything the account can see, shared items included. Search
   index counters: three tiles (Searchable, Waiting = `pending` only, Can't read); `unresolved` is its own progress line
   ("Checking which files are in your folders"), never part of Waiting; "All counters" lists only labelled keys
-  (`profile_current` as Described, `passages_current` as Readable by content, `coverage_no_passages` as a problem
-  signal when non-zero); `chunks` and the other enrichment keys are not shown. The folder picker is a dialog with a
+  (`profile_current` as Described, `passages_current` as Readable by content); `coverage_no_passages` is not shown
+  (sheets, books and data files without passage hints by policy are no gap for the owner; search still reads the
+  counter), nor are `chunks` and the other enrichment keys. The folder picker is a dialog with a
   Save (n) button: closing with unsaved changes asks "Save N changes before closing?", and a refusal of the server
   (for instance a scope that would leave the write folder outside) is shown in the dialog, which stays open. Toggles,
   rename and the other settings still save on change.
