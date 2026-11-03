@@ -23,6 +23,9 @@ from .document_hardening import (  # noqa: F401 — re-exported: the hardening's
     check_zip_container,
 )
 from ..domain.document_limits import MAX_CONVERTED_CHARS, MAX_FILE_BYTES, MAX_TEXT_EXPORT_BYTES
+from ..domain.document_open_texts import audio_unavailable_note, cut_note
+from ..domain.document_open_texts import conversion_alert as _conversion_alert
+from ..domain.document_open_texts import size_alert as _size_alert
 from ..domain.text_data_uris import drop_data_uri_images
 from .logger import logger
 
@@ -104,19 +107,10 @@ def _truncate_bytes(text: str, limit: int) -> str:
     return encoded[:max(limit, 0)].decode("utf-8", errors="ignore")
 
 
-def _size_alert(filename: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES) -> str:
-    mb = size_bytes / (1024 * 1024)
-    return (
-        f"[System: User attempted to attach '{filename}' ({mb:.1f} MB). "
-        f"File exceeds the {limit_bytes // (1024 * 1024)} MB limit and was not included in this message. "
-        f"Ask the user to send a smaller file or paste the content directly.]"
-    )
-
-
 def download_alert(filename: str) -> str:
     """System note standing in for an attachment that never reached us.
 
-    Public, unlike its `_size_alert` / `_conversion_alert` siblings: the download happens in the
+    Public, unlike its `_size_alert` / `_conversion_alert` siblings (now in `domain/document_open_texts`): the download happens in the
     response channel, one layer above conversion, so ConversationHandler builds this part itself.
     Same contract though — the attachment slot carries an instruction, and the ordinary agent
     tells the user in its own voice instead of the failure being invisible (2026-07-31: an
@@ -144,29 +138,13 @@ def transcription_alert(filename: str) -> str:
     )
 
 
-def _conversion_alert(filename: str, mime_type: str = "") -> str:
-    mime_suffix = f" ({mime_type})" if mime_type else ""
-    return (
-        f"[System: User attempted to attach '{filename}'{mime_suffix}. "
-        f"The file could not be read or is not a supported text format. "
-        f"Supported formats: images, PDF, plain text, CSV, DOCX, XLSX, MP3, WAV. "
-        f"Ask the user to convert the file or paste the content directly.]"
-    )
-
-
 def truncate_with_alert(text: str, filename: str) -> str:
     """Truncate text to MAX_CONVERTED_CHARS and append a system alert if needed."""
     if len(text) <= MAX_CONVERTED_CHARS:
         return text
     omitted = len(text) - MAX_CONVERTED_CHARS
     logger.info(f"[FileConversion] Truncated '{filename}' to {MAX_CONVERTED_CHARS} chars ({omitted} omitted)")
-    return (
-        text[:MAX_CONVERTED_CHARS]
-        + f"\n[System: File '{filename}' was truncated — only the first {MAX_CONVERTED_CHARS:,} characters "
-        f"were included ({omitted:,} characters omitted). "
-        f"Inform the user that the file was too large for full analysis and suggest "
-        f"splitting it or pasting only the relevant section.]"
-    )
+    return text[:MAX_CONVERTED_CHARS] + "\n" + cut_note(filename, MAX_CONVERTED_CHARS, omitted)
 
 
 def make_history_stub(full_output: str, filename: str) -> str:
@@ -238,11 +216,7 @@ async def convert_file_to_text(
     ):
         if audio_service is None:
             logger.warning(f"[FileConversion] No audio_service for '{filename}' ({mime_type})")
-            return (
-                f"[System: User attached an audio file '{filename}'. "
-                f"Audio transcription is not available. "
-                f"Ask the user to provide a text transcript or describe what they want to discuss about the audio.]"
-            )
+            return audio_unavailable_note(filename)
         try:
             text = await audio_service.transcribe(local_path, mime_type)
             logger.info(f"[FileConversion] Transcribed audio '{filename}': {len(text)} chars")
