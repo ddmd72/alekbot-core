@@ -1,10 +1,11 @@
-"""Opening an uploaded audio file transcribes it through the injected audio service (P9 D3).
+"""Opening an uploaded audio file transcribes it (P9 D3; EXTERNAL_FILES_RFC P21: the document service owns audio now).
 
-`resolve_content` is what `open_file` calls. With an audio service the file's bytes reach `transcribe` and the transcript comes
-back in the `[File: …]` wrapper; without one the user gets the honest "transcription is not available" alert.
+`open` is what `open_file` calls. A chat upload reaches the document service, which holds the transcriber: the file's
+bytes reach `transcribe` and the transcript comes back in the `[File: …]` wrapper; without a transcriber the user gets
+the honest "transcription is not available" note.
 """
-from tests.support.drive_access_stub import allow_access
 import mimetypes
+import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import pytest
@@ -12,7 +13,11 @@ import pytest
 from src.domain.audio_transcript import AudioTranscript
 from src.ports.audio_transcription_port import AudioTranscriptionPort
 from src.ports.file_storage_port import FileStoragePort
+from src.services.document_service import DocumentService
 from src.services.file_conversion_service import FileConversionService
+from tests.support.drive_access_stub import allow_access
+from tests.unit.services.test_document_service_audio import FakeQuota
+from tests.unit.services.test_document_service_read import FakeExtractor, FakeSplitter
 
 AUDIO_BYTES = b"RIFF....WAVEfmt fake audio bytes"
 
@@ -63,22 +68,30 @@ def storage():
     return MemoryStorage({("u1", "memo.m4a"): AUDIO_BYTES})
 
 
+def _service(storage, transcriber: Optional[AudioTranscriptionPort]) -> FileConversionService:
+    service = FileConversionService(storage=storage, access=allow_access())
+    service.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter(),
+                                             transcriber=transcriber, quota=FakeQuota()))
+    return service
+
+
+async def _open(service: FileConversionService):
+    return await service.open("memo.m4a", "u1", "u1", deadline_at=time.time() + 60)
+
+
 async def test_an_audio_file_is_transcribed_and_the_transcript_is_returned(storage):
     audio = RecordingTranscriber()
-    service = FileConversionService(storage=storage, audio_service=audio, access=allow_access())
+    opened = await _open(_service(storage, audio))
 
-    text = await service.resolve_content("memo.m4a", "u1")
-
-    assert text == "[File: memo.m4a]\ngood morning, call the dentist at nine\n[/File: memo.m4a]"
+    assert opened.body == "[File: memo.m4a]\ngood morning, call the dentist at nine\n[/File: memo.m4a]"
     assert audio.calls == [(AUDIO_BYTES, mimetypes.guess_type("memo.m4a")[0])]
 
 
 async def test_without_an_audio_service_the_user_is_told_transcription_is_unavailable(storage):
-    service = FileConversionService(storage=storage, access=allow_access())
+    opened = await _open(_service(storage, None))
 
-    text = await service.resolve_content("memo.m4a", "u1")
-
-    assert "Audio transcription is not available" in text and "[File:" not in text
+    assert "Audio transcription is not available" in opened.note and "[File:" not in opened.note
+    assert not opened.body
 
 
 async def test_a_failing_transcriber_gives_the_conversion_alert_not_an_exception(storage):
@@ -86,6 +99,6 @@ async def test_a_failing_transcriber_gives_the_conversion_alert_not_an_exception
         async def transcribe(self, local_path, mime_type, languages=None):
             raise RuntimeError("provider down")
 
-    text = await FileConversionService(storage=storage, audio_service=Broken(), access=allow_access()).resolve_content("memo.m4a", "u1")
+    opened = await _open(_service(storage, Broken()))
 
-    assert text.startswith("[System:") and "memo.m4a" in text
+    assert opened.note.startswith("[System:") and "memo.m4a" in opened.note
