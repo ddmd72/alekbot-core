@@ -24,7 +24,7 @@ import hashlib
 import itertools
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
 
 from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_content_identity import ContentIdentity
@@ -314,6 +314,10 @@ class FakeDriveAdapter(UserDrivePort):
         rows = [DriveChange(item_id=i, deleted=True, identity=self._item_identity(tree, i)) if gone or i not in tree.nodes
                 else self._change(tree, tree.nodes[i]) for i, gone in latest.items()]
         return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, False, tree.root.item_id, identity)
+
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        self._enter("resolve_content_versions", handle)
+        return list(changes)
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         tree = self._enter("get_change", handle)
