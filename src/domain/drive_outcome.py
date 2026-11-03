@@ -22,6 +22,7 @@ from .drive_open_bound_info import OpenBoundInfo
 from .drive_outcome_class import OutcomeClass
 from .drive_read_facts import ReadFacts
 from .drive_ref import is_valid_tag
+from .drive_withheld import Withheld
 from .user_drive import DriveItem, drive_context_entry, drive_label, item_ref
 
 
@@ -60,6 +61,9 @@ class DriveOutcome:
     # A search across connections (MULTI_DRIVE_RFC §11.4): one tag per item, in item order; empty: every item is on
     # `ref_tag`. Given, it must hold one valid tag per item (then `ref_tag` may be empty).
     item_tags: Tuple[str, ...] = ()
+    # An open that withheld a media file before any download (`open(..., withhold_media=True)`, the drive connector's
+    # pre-check): the code says why, the text stays empty. None on every other outcome, every chat outcome included.
+    withheld: Optional[Withheld] = None
 
     def __post_init__(self) -> None:
         if self.item_tags:

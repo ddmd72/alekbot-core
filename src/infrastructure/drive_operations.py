@@ -16,7 +16,8 @@ Public interface (one call = one operation; `context` is the caller's message co
     async read_passages(context, user_id, *, file_ref, passages, shown_folders, described_files)
                                                          one file's passages by number (§28.3 A7)
     async list_folder(context, user_id, folder) -> DriveOutcome
-    async open(context, user_id, ref, *, original=False, deadline_at=None) -> DriveOutcome   drive ref, or a stored file (lenient)
+    async open(context, user_id, ref, *, original=False, deadline_at=None, withhold_media=False) -> DriveOutcome
+                                                         drive ref, or a stored file (lenient)
     async fetch_stored(context, user_id, ref, *, deadline_at=None) -> DriveOutcome   chat file, delivered key, skill:, workspace:
     async copy(context, user_id, source_ref, *, folder, file_name, wait_s) -> DriveOutcome
     async save_text(context, user_id, text, *, file_name, folder, wait_s) -> DriveOutcome
@@ -128,6 +129,7 @@ from ..domain.workspace import BINARY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, p
 from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
 from ..domain.drive_open_bound_info import OpenBoundInfo
 from ..domain.drive_text_extent import ExtentState, TextExtent
+from ..domain.drive_withheld import Withheld
 from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
@@ -438,14 +440,18 @@ class DriveOperations:
                      for m, path, scope in zip(table.mounts, paths, scopes))
 
     async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False,
-                   deadline_at: Optional[float] = None) -> DriveOutcome:
+                   deadline_at: Optional[float] = None, withhold_media: bool = False) -> DriveOutcome:
         """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today). Every read goes
-        through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default)."""
+        through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default).
+        `withhold_media` (the drive connector; the chat never sets it): a drive video, or a recording with no stored
+        transcript, is answered on its metadata before any download, with `DriveOutcome.withheld` set and no text; a
+        recording with a stored transcript still opens as it. Images, PDFs and every other file open as without it."""
         async def run() -> DriveOutcome:
             if not drive_ref.is_drive_ref(ref or ""):
                 return await self.fetch_stored(context, user_id, ref, deadline_at=deadline_at)
             try:
-                return await self._open_drive_item(context, ref, user_id, original=original, deadline_at=deadline_at)
+                return await self._open_drive_item(context, ref, user_id, original=original, deadline_at=deadline_at,
+                                                   withhold_media=withhold_media)
             except DriveItemNotFoundError:
                 note = await self._access_note(user_id, ref=ref)
                 if note is None:
@@ -1005,7 +1011,8 @@ class DriveOperations:
             return TextExtent.UNKNOWN
 
     async def _open_drive_item(self, context: Mapping[str, Any], ref: str, user_id: str, *,
-                               original: bool, deadline_at: Optional[float] = None) -> DriveOutcome:
+                               original: bool, deadline_at: Optional[float] = None,
+                               withhold_media: bool = False) -> DriveOutcome:
         target = await self._svc().resolve_ref(user_id, ref)
         conn, tag = target.connection, target.connection.ref_tag
         item = self._shown(conn, await self._svc().get_item(target.handle, target.item_id))
@@ -1059,6 +1066,14 @@ class DriveOperations:
                                     open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
                                                              cut_state=extent.state) if cut else None,
                                     ref_tag=tag)
+        if withhold_media:
+            # The media pre-check, before any download: each code stands for the branch below that would download for
+            # nothing here (a video posted to the chat; a recording with no transcript, which no open can read).
+            why = (Withheld.VIDEO if mime.startswith("video/")
+                   else Withheld.RECORDING_UNTRANSCRIBED if recording else None)
+            if why is not None:
+                logger.info("[DriveOperations] open withheld: %s %s", ref, why.value)
+                return _withheld(item, tag, why)
         if mime.startswith("video/"):
             try:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
@@ -1238,6 +1253,14 @@ def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
     return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data,
                         body=body, facts=ReadFacts(owner_note=owner_note) if owner_note else ReadFacts(),
                         ref_tag=tag)
+
+
+def _withheld(item: DriveItem, tag: str, why: Withheld) -> DriveOutcome:
+    """A media file the open withheld on its metadata (`open(..., withhold_media=True)`): no text, the code says why.
+    A success of class OK, as the other answers decided before any download (an image format that cannot be viewed,
+    a video above the size cap)."""
+    return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="", success=True, items=(item,), ref_tag=tag,
+                        withheld=why)
 
 
 def _item_tags(result: Union[DriveSearchResult, ExcerptResult]) -> Tuple[str, ...]:
