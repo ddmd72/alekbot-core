@@ -115,8 +115,10 @@ class DriveIndexRepository(ABC):
         """Delete records (and their card vectors)."""
 
     @abstractmethod
-    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int) -> List[DriveIndexRecord]:
-        """Records with due_at <= now, ordered by (priority, due_at, item_id) (§7.8)."""
+    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int,
+                          skip_classes: AbstractSet[int] = frozenset()) -> List[DriveIndexRecord]:
+        """Records with due_at <= now, ordered by (priority, due_at, item_id) (§7.8). `skip_classes`: priority classes
+        left out (a class the tick no longer works, MULTI_DRIVE_RFC E87); the order of the rest is unchanged."""
 
     @abstractmethod
     async def oldest_due_at(self, scope: ConnectionScope, priority: int) -> Optional[datetime]:

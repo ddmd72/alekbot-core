@@ -313,11 +313,11 @@ class TestRfcBehaviourPinned:
         orig_due = w.repo.due_records
         calls = {"n": 0}
 
-        async def bounded_due(user_id, now, limit):
+        async def bounded_due(user_id, now, limit, **kwargs):
             calls["n"] += 1
             if calls["n"] > 500:   # the real path needs a few dozen at most
                 raise _Runaway("due loop never ended")
-            return await orig_due(user_id, now, limit)
+            return await orig_due(user_id, now, limit, **kwargs)
 
         w.repo.due_records = bounded_due
         await w.tick()

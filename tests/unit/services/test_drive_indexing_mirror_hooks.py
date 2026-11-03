@@ -618,7 +618,7 @@ async def test_unknown_why_when_a_caller_passes_none(world):
 # -- every delete site passes a why (§27.9.4; the callers enumerated in the task report) ---------------------------------
 
 _DELETE_SITES = {"_apply", "_sweep", "_cascade_step", "_remove_orphan", "_rescope_step", "_commit_plan", "_reread",
-                 "_upgrade_page"}
+                 "_upgrade_page", "_remove_out_of_scope"}
 
 
 def _functions():
