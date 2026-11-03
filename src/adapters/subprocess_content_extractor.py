@@ -183,13 +183,14 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
         A `deadline_at` (epoch seconds) lowers the child's wall to the time left once a slot is free; with none left,
         no child starts and the outcome is `timeout` / `deadline`."""
         async with self._slots:
-            wall, wall_detail = self._wall, f"wall clock {self._wall:g}s"
+            wall: Optional[float] = None          # None: the adapter's own wall clock, today's path
+            wall_detail = f"wall clock {self._wall:g}s"
             if deadline_at is not None:
                 remaining = deadline_at - time.time()
                 if remaining <= 0:
                     logger.warning(f"[DriveExtract] {payload.get('op')}: the deadline passed, no child started")
                     return None, ExtractionStatus.TIMEOUT, "deadline"
-                if remaining < wall:
+                if remaining < self._wall:
                     wall, wall_detail = remaining, "deadline"
             workdir = tempfile.mkdtemp(prefix="drive-extract-", dir=self._temp_root)
             started = time.monotonic()
@@ -201,7 +202,8 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
                 if self._sandbox is not None:     # root ignores it and a dev user's own processes would count against it
                     request["nproc"] = EXTRACT_NPROC_LIMIT
                 with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
-                    returncode, timed_out = await self._spawn(request, workdir, errors, wall)
+                    returncode, timed_out = await (self._spawn(request, workdir, errors) if wall is None
+                                                   else self._spawn(request, workdir, errors, wall=wall))
                     status, detail = self._exit_status(returncode, timed_out, wall_detail)
                     if status is ExtractionStatus.ERROR:
                         # its length and a hash only: a parser's traceback can quote the document (R3 F3-5)
@@ -247,10 +249,11 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
             window = (staged["out_path"], str(payload["out_path"]))
         return staged, window
 
-    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes], wall: float
-                     ) -> Tuple[int, bool]:
+    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes],
+                     wall: Optional[float] = None) -> Tuple[int, bool]:
+        """Runs the child; `wall` (seconds) replaces the adapter's own wall clock only when a deadline lowered it."""
         with memory_scope(SCOPE_SUBPROCESS, "drive_parser"):
-            return await self._spawn_child(request, workdir, stderr, wall)
+            return await self._spawn_child(request, workdir, stderr, self._wall if wall is None else wall)
 
     async def _spawn_child(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes], wall: float
                            ) -> Tuple[int, bool]:
