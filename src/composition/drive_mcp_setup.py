@@ -17,10 +17,10 @@ from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 
 from ..config.auth import AuthConfig
-from ..domain.mcp_resource import DRIVE_PATH, DRIVE_SCOPE, drive_resource_uri
+from ..domain.mcp_resource import DRIVE_PATH, drive_resource_uri
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from .mcp_sdk_oauth_provider import AlekAccessToken
-from .mcp_setup import build_transport_security
+from .mcp_setup import DRIVE_SCOPE, build_transport_security
 
 
 class DriveTokenVerifier:

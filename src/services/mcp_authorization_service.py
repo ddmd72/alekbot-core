@@ -19,13 +19,12 @@ import hashlib
 import secrets
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import jwt
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken, normalize_client_name
 from ..domain.mcp_resource import (
-    FACTS_SCOPE,
     MCPResource,
     ResourceRefused,
     ScopeRefused,
@@ -136,6 +135,7 @@ class MCPAuthorizationService:
         consent_base_url: str,
         allowed_redirect_hosts: Tuple[str, ...],
         drive_resource_uri: str,
+        scope_of: Mapping[MCPResource, str],
         user_repo: UserRepository,
         whitelist_repo: WhitelistRepository,
         access_token_ttl: int = 3600,
@@ -159,6 +159,7 @@ class MCPAuthorizationService:
                 substrings (e.g. ("claude.ai", "claude.com", "localhost"))
             drive_resource_uri: canonical URI of the drive connector
                 resource (the second audience this server mints)
+            scope_of: the one OAuth scope of each resource (injected: the strings live in composition)
             user_repo / whitelist_repo: read at every refresh rotation
                 (required, no default: a missing reader must fail the
                 build, not open the gate)
@@ -172,6 +173,7 @@ class MCPAuthorizationService:
             MCPResource.FACTS: canonical_resource(mcp_resource_uri),
             MCPResource.DRIVE: canonical_resource(drive_resource_uri),
         }
+        self._scope_of = dict(scope_of)
         self._user_repo = user_repo
         self._whitelist_repo = whitelist_repo
         self._consent_base_url = consent_base_url
@@ -226,7 +228,7 @@ class MCPAuthorizationService:
             raise MCPAuthError("only S256 code_challenge_method is supported")
 
         try:
-            _, uri, scopes = bind_resource(params.resource, params.scopes, self._uris)
+            _, uri, scopes = bind_resource(params.resource, params.scopes, self._uris, self._scope_of)
         except ResourceRefused as e:
             raise MCPInvalidResource(str(e)) from e
         except ScopeRefused as e:
@@ -234,7 +236,7 @@ class MCPAuthorizationService:
         # The SDK checks requested scopes against the client's registered scope only when a scope was sent; a
         # resource with no scope is bound to the resource's own scope here, so it is checked here too. A client
         # stored without a scope is a pre-DCR-change one, which could only ever hold the facts scope.
-        registered = client.scope.split() or [FACTS_SCOPE]
+        registered = client.scope.split() or [self._scope_of[MCPResource.FACTS]]
         if any(sc not in registered for sc in scopes):
             raise MCPInvalidScope("scope not registered for this client")
         params = replace(params, resource=uri, scopes=scopes)
@@ -377,7 +379,7 @@ class MCPAuthorizationService:
 
         final_scopes = list(requested_scopes) if requested_scopes else list(existing.scopes)
         try:
-            bind_resource(existing.resource, final_scopes, self._uris)
+            bind_resource(existing.resource, final_scopes, self._uris, self._scope_of)
         except (ResourceRefused, ScopeRefused) as e:
             raise MCPInvalidGrant(f"refresh scope not allowed: {e}") from e
         now = datetime.now(timezone.utc)

@@ -1,8 +1,9 @@
 """
 The two protected resources of the remote MCP server and the rule that binds a scope to its resource.
 
-One authorization server fronts two resource servers: the facts connector (`/mcp`, scope `user_context`) and the
-drive connector (`/drive-mcp`, scope `drive_read`). A token must never carry an audience its scope does not belong
+One authorization server fronts two resource servers: the facts connector (`/mcp`) and the drive connector
+(`/drive-mcp`). Each has one OAuth scope; the scope strings live in the composition layer (one of them is also a
+Firestore collection name, which core layers must not spell) and are injected as a `scope_of` mapping. A token must never carry an audience its scope does not belong
 to (DRIVE_MCP_CONNECTOR_RFC §3.3, E1). Pure: stdlib only.
 """
 
@@ -16,14 +17,7 @@ class MCPResource(str, Enum):
     DRIVE = "drive"
 
 
-FACTS_SCOPE = "user_context"
-DRIVE_SCOPE = "drive_read"
 DRIVE_PATH = "/drive-mcp"
-
-SCOPE_OF: Mapping[MCPResource, str] = {
-    MCPResource.FACTS: FACTS_SCOPE,
-    MCPResource.DRIVE: DRIVE_SCOPE,
-}
 
 
 class ResourceRefused(ValueError):
@@ -53,13 +47,15 @@ def bind_resource(
     resource: Optional[str],
     scopes: Sequence[str],
     uris: Mapping[MCPResource, str],
+    scope_of: Mapping[MCPResource, str],
 ) -> Tuple[MCPResource, str, List[str]]:
     """Return (kind, canonical uri, bound scopes).
 
+    `scope_of` maps each resource to its one scope.
     `resource` given: it must canonicalise to one of `uris` (else ResourceRefused); every requested scope must be
     that resource's own (else ScopeRefused); none requested -> the resource's own scope.
-    `resource` absent: DRIVE when the scopes are exactly {drive_read}; FACTS when they are empty or exactly
-    {user_context}; anything else (a mix, an unknown scope) -> ScopeRefused.
+    `resource` absent: DRIVE when the scopes are exactly its scope; FACTS when they are empty or exactly its scope;
+    anything else (a mix, an unknown scope) -> ScopeRefused.
     """
     requested = list(scopes)
     if resource is not None:
@@ -67,21 +63,21 @@ def bind_resource(
         kind = next((k for k, u in uris.items() if canonical_resource(u) == canon), None)
         if kind is None:
             raise ResourceRefused("unknown resource")
-        own = SCOPE_OF[kind]
+        own = scope_of[kind]
         if any(s != own for s in requested):
             raise ScopeRefused(f"scope not for resource {kind.value}")
         return kind, canonical_resource(uris[kind]), [own]
 
     unique = set(requested)
-    if unique == {DRIVE_SCOPE}:
+    if unique == {scope_of[MCPResource.DRIVE]}:
         kind = MCPResource.DRIVE
-    elif not unique or unique == {FACTS_SCOPE}:
+    elif not unique or unique == {scope_of[MCPResource.FACTS]}:
         kind = MCPResource.FACTS
     else:
         raise ScopeRefused("scope not for resource: unknown or mixed scopes")
-    return kind, canonical_resource(uris[kind]), [SCOPE_OF[kind]]
+    return kind, canonical_resource(uris[kind]), [scope_of[kind]]
 
 
-def is_drive_grant(scopes: Sequence[str]) -> bool:
-    """The consent page's text choice: the grant carries the drive scope."""
-    return DRIVE_SCOPE in scopes
+def is_drive_grant(resource: Optional[str]) -> bool:
+    """The consent page's text choice: the resource bound at authorize is the drive connector's."""
+    return resource is not None and urlsplit(resource).path.rstrip("/") == DRIVE_PATH
