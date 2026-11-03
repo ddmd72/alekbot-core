@@ -46,6 +46,7 @@ src.adapters.firestore_skill_repository.FirestoreSkillRepository 1  # by-design 
 src.adapters.firestore_task_claim_store.FirestoreTaskClaimStore 1  # by-design single instance
 src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  # by-design single instance
 src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
+src.adapters.firestore_transcript_cache.FirestoreTranscriptCache 1  # by-design the document service's one transcript cache on {prefix}audio_transcripts (application_graph.py, EXTERNAL_FILES_RFC P21)
 src.adapters.firestore_user_repo.FirestoreUserRepository 1  # by-design the graph's user_repo; the drive search and note services no longer hold one: the drive switches live on the connection, read through DriveConnectionService (MULTI_DRIVE_RFC 3 Removed, 6)
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
 src.adapters.gcp_kms_cipher_adapter.GcpKmsCipherAdapter 1  # by-design single instance
@@ -85,6 +86,7 @@ src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1 
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
 src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (application_graph.py:895), shared by the Slack RichContentService and the notification service's platform media
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
+src.adapters.subprocess_content_extractor.SubprocessContentExtractor 1  # by-design the main service's one parser child, parser and splitter of the document service (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:970), shared by the Telegram RichContentService and the notification service's platform media
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
@@ -94,6 +96,7 @@ src.composition.application_graph.ApplicationGraph 1  # by-design the root of th
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
+src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -118,6 +121,7 @@ src.services.consolidation_service.ConsolidationService 1  # by-design single in
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
+src.services.document_service.DocumentService 1  # by-design one document service, attached to the file conversion service (application_graph.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
 src.services.drive_disconnect_service.DriveDisconnectService 1  # by-design the Cabinet's one drive disconnect flow (MULTI_DRIVE_RFC 4.3, REQ-ARCH-34)
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
