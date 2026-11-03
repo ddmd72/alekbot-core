@@ -18,10 +18,12 @@ from tests.unit.web.test_cabinet_drive_index_strings import LANGS, _dicts
 from tests.unit.web.test_cabinet_drive_redesign import _card, _render, _row
 
 node = pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
-# The enrichment counters the card labels (owner decision): the described and content-readable files, and the
-# coverage gap. The other `profile_*`, `passages_*` and `coverage_*` stats stay out.
-ENRICHMENT_LABELLED = {f"profile_{JobState.CURRENT.value}", f"passages_{JobState.CURRENT.value}",
-                       COVERAGE_COUNTERS[GAP_NO_PASSAGES]}
+# The enrichment counters the card labels (owner decision): the described and content-readable files. The other
+# `profile_*`, `passages_*` and `coverage_*` stats stay out.
+ENRICHMENT_LABELLED = {f"profile_{JobState.CURRENT.value}", f"passages_{JobState.CURRENT.value}"}
+# Written to the sync state and read by search, never labelled (owner decision 2026-11-03): sheets, books and data
+# files get no passage hints by policy, so their count is no problem for the owner.
+DELIBERATELY_UNLABELLED = {COVERAGE_COUNTERS[GAP_NO_PASSAGES]}
 
 NEW_KEYS = ("drive.reconnect_hint_neutral", "drive.index_indexed", "drive.index_metadata_only",
             "drive.index_unresolved", "drive.index_deleting", "drive.index_unread")
@@ -52,6 +54,7 @@ def test_every_counter_the_index_writes_has_a_label_in_every_language():
     # shown: the unreadable files are listed by name (decisions/drive_unreadable_files_cabinet_only.md)
     assert set(labels) == ({s.value for s in RecordState} | {"carded", NOT_READ_YET_COUNTER, INACCESSIBLE_COUNTER}
                            | ENRICHMENT_LABELLED)
+    assert not DELIBERATELY_UNLABELLED & set(labels)
     assert [(lang, k) for lang in LANGS for k in labels.values() if not dicts[lang].get(k)] == []
 
 
