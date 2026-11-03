@@ -1050,17 +1050,21 @@ class DriveOperations:
         try:
             if is_native:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
-                logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", ref, mime, len(data),
-                            extent.pages_total or "-")
-                tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
-                os.close(tmp_fd)
-                async with aiofiles.open(tmp_path, "wb") as f:
-                    await f.write(data)
-                # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} is "
-                                                         f"attached. You can see and analyse it directly.", item, note,
-                                                         tag),
-                           [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note), tag=tag)
+                # The reported size can be 0 or stale: the bytes read decide too, as for a stored file.
+                if len(data) > native.max_bytes:
+                    is_native = False
+                if is_native:
+                    logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", ref, mime, len(data),
+                                extent.pages_total or "-")
+                    tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
+                    os.close(tmp_fd)
+                    async with aiofiles.open(tmp_path, "wb") as f:
+                        await f.write(data)
+                    # The model reads an attached PDF or image natively: the reminder travels with it (D2).
+                    return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} is "
+                                                             f"attached. You can see and analyse it directly.", item, note,
+                                                             tag),
+                               [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note), tag=tag)
             if mime.startswith("video/"):
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
                 if not self._notification:

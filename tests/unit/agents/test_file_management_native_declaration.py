@@ -153,3 +153,12 @@ class TestDriveFiles:
         out = await ops.open(_ctx(NativeFormat("application/pdf", MIB, 100)), "u1", "drive:a1:p2")
         assert out.file_data is None
         conversion.resolve_bytes.assert_not_called()
+
+
+class TestDriveFileOfStaleSize:
+    async def test_actual_bytes_above_the_cap_take_the_converter(self, ops, conversion, drive):
+        drive.get_item.return_value = DriveItem(item_id="i3", name="b.png", path="b.png", is_folder=False,
+                                                size_bytes=0, mime_type="image/png")
+        conversion.resolve_bytes.return_value = b"x" * (IMAGES.max_bytes + 1)
+        out = await ops.open(_ctx(IMAGES), "u1", "drive:a1:i3")
+        assert out.file_data is None and "converted text" in out.text
