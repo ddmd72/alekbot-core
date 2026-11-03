@@ -70,6 +70,7 @@ def build_mcp_consent_blueprint(
         req_jwt: str,
         client_name: str,
         scopes: list[str],
+        resource: str | None,
         error: str | None = None,
     ) -> str:
         # Every value is text: the client name comes from anonymous registration (RFC 7591).
@@ -79,7 +80,7 @@ def build_mcp_consent_blueprint(
         )
         client_name = escape(client_name)
         req_jwt = escape(req_jwt, quote=True)
-        if is_drive_grant(scopes):
+        if is_drive_grant(resource):
             heading = "Authorize drive connector"
             intro_block = (
                 f"<p><strong>{client_name}</strong> is asking to read your drives through alekbot. "
@@ -164,6 +165,7 @@ def build_mcp_consent_blueprint(
             req_jwt=req_jwt,
             client_name=client_name,
             scopes=parsed.scopes,
+            resource=parsed.resource,
         )
         resp = await make_response(html)
         resp.headers["Content-Type"] = "text/html; charset=utf-8"

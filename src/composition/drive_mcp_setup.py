@@ -48,7 +48,7 @@ from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_tool_texts import FIND_PASSAGES, LIST_FOLDER, OPEN_DRIVE_FILE, READ_PASSAGES, SEARCH_DRIVE
 from ..domain.exceptions import ConnectorTextsUnavailable
 from ..domain.mcp import normalize_phrase
-from ..domain.mcp_resource import DRIVE_PATH, DRIVE_SCOPE, drive_resource_uri
+from ..domain.mcp_resource import DRIVE_PATH, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..utils.logger import logger
@@ -56,7 +56,7 @@ from ..utils.telemetry import start_span
 from ..infrastructure.drive_note_tools import read_note_for_connector
 from .drive_connector_tools import DriveConnectorTools
 from .mcp_sdk_oauth_provider import AlekAccessToken
-from .mcp_setup import build_transport_security
+from .mcp_setup import DRIVE_SCOPE, build_transport_security
 from .token_text_fastmcp import TokenTextFastMCP
 
 # One tool call's budget: under claude.ai's 240 s per call and Claude Code's 2-minute backgrounding (§4.4, E8).

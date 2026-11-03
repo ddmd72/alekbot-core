@@ -5,6 +5,7 @@ Only the reads the service calls are implemented (`get_user`, `get_whitelist`); 
 
 from typing import Dict, Optional
 
+from src.composition.mcp_setup import SCOPE_OF  # noqa: F401  (re-exported for the service constructions)
 from src.domain.user import UserProfile
 from src.domain.whitelist import WhitelistEntry
 

@@ -17,7 +17,7 @@ from src.services.mcp_authorization_service import (
 )
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
-from tests.support.mcp_gate_fakes import allowing_repos
+from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 
 FACTS = "https://mcp.example.test/mcp"
 DRIVE = "https://mcp.example.test/drive-mcp"
@@ -32,7 +32,7 @@ class World:
         self.repo = FirestoreMCPClientRepository(self.db, ENV, cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
         users, whitelist = allowing_repos("u1")
         self.service = MCPAuthorizationService(
-            self.repo, jwt_secret=SECRET, mcp_resource_uri=FACTS, drive_resource_uri=DRIVE,
+            self.repo, jwt_secret=SECRET, mcp_resource_uri=FACTS, drive_resource_uri=DRIVE, scope_of=SCOPE_OF,
             consent_base_url="https://mcp.example.test/mcp/consent", allowed_redirect_hosts=("claude.ai",),
             user_repo=users, whitelist_repo=whitelist)
         self.client = MCPClient(client_id="c1", client_secret="s", redirect_uris=[REDIRECT],
@@ -119,7 +119,7 @@ async def test_a_service_built_with_a_non_canonical_facts_uri_mints_and_verifies
     w = World()
     users, whitelist = allowing_repos("u1")
     w.service = MCPAuthorizationService(
-        w.repo, jwt_secret=SECRET, mcp_resource_uri="https://MCP.Example.test/mcp/", drive_resource_uri=DRIVE,
+        w.repo, jwt_secret=SECRET, mcp_resource_uri="https://MCP.Example.test/mcp/", drive_resource_uri=DRIVE, scope_of=SCOPE_OF,
         consent_base_url="https://mcp.example.test/mcp/consent", allowed_redirect_hosts=("claude.ai",),
         user_repo=users, whitelist_repo=whitelist)
     token = await w.token_for(None, [])

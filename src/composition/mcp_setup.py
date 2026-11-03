@@ -31,7 +31,7 @@ from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientReposit
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.mcp import KEYWORDS_MAX, normalize_keywords, normalize_phrase
-from ..domain.mcp_resource import DRIVE_SCOPE, FACTS_SCOPE, drive_resource_uri
+from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..ports.cipher_port import CipherPort
 from ..ports.user_repository import UserRepository
@@ -46,7 +46,11 @@ from .mcp_sdk_oauth_provider import AlekAccessToken, MCPSdkOAuthProvider
 # namespaced to avoid collision with the Firestore `user_context`
 # collection name (which arch test REQ-ARCH-21 guards against in core
 # layers). Composition is free of that restriction.
-MCP_DEFAULT_SCOPE = FACTS_SCOPE
+MCP_DEFAULT_SCOPE = "user_context"
+# The drive connector's scope (DRIVE_MCP_CONNECTOR_RFC §3). Both scope strings live here, in composition: the facts
+# one is also a Firestore collection name, which core layers must not spell.
+DRIVE_SCOPE = "drive_read"
+SCOPE_OF = {MCPResource.FACTS: MCP_DEFAULT_SCOPE, MCPResource.DRIVE: DRIVE_SCOPE}
 
 # Redirect-URI host allowlist for DCR. Any OAuth client registering via
 # /register must supply a redirect_uri whose host matches (or is a
@@ -222,6 +226,7 @@ def build_mcp_components(
         consent_base_url=consent_base_url,
         allowed_redirect_hosts=_ALLOWED_REDIRECT_HOSTS,
         drive_resource_uri=drive_resource_uri(auth_config.mcp_resource_uri),
+        scope_of=SCOPE_OF,
         user_repo=user_repo,
         whitelist_repo=whitelist_repo,
         access_token_ttl=auth_config.mcp_access_token_ttl,
@@ -264,8 +269,8 @@ def build_mcp_components(
             required_scopes=[MCP_DEFAULT_SCOPE],
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
-                valid_scopes=[FACTS_SCOPE, DRIVE_SCOPE],
-                default_scopes=[FACTS_SCOPE, DRIVE_SCOPE],
+                valid_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
+                default_scopes=[MCP_DEFAULT_SCOPE, DRIVE_SCOPE],
             ),
         ),
         transport_security=transport_security,
