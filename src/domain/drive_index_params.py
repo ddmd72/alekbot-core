@@ -4,7 +4,7 @@ eval may revise them. Slice 1 parameters first, then the content parameters of S
 """
 from datetime import timedelta
 
-from .document_limits import OPEN_MAX_CHARS   # the caps table (EXTERNAL_FILES_RFC §4.5); §29 open bound
+from src.domain.document_limits import OPEN_MAX_CHARS  # the caps table (EXTERNAL_FILES_RFC §4.5); §29 open bound
 
 TICK_INTERVAL = timedelta(minutes=10)
 TICK_DEADLINE_S = 1800                      # Cloud Tasks HTTP maximum = indexer service timeout
