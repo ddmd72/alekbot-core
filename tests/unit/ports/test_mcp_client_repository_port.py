@@ -94,6 +94,9 @@ class InMemoryMCPRepo(MCPClientRepository):
                 update={"revoked_at": datetime.now(timezone.utc)}
             )
 
+    async def has_active_grant(self, grant_id: str, now: datetime) -> bool:
+        raise NotImplementedError
+
 
 @pytest.fixture
 def repo():
