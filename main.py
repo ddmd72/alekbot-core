@@ -25,6 +25,7 @@ from src.web.deep_research_webhooks import create_deep_research_webhooks_bluepri
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
+from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain.mcp_resource import DRIVE_PATH
 
@@ -556,12 +557,23 @@ async def main():
                     )
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
-                    # The drive connector has its own build so a failure there (e.g. a missing token, once the
-                    # connector texts are token-backed) never takes the facts connector down.
+                    # The drive connector has its own build so a failure there (a missing or invalid connector-text
+                    # token with the tools knob on: its first load alerts and raises) never takes the facts connector
+                    # down; /drive-mcp then answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
                     try:
+                        _assembly = app.container.assembly_service
+                        drive_tools = await build_drive_connector_tools(
+                            conversion_service=app.container.file_conversion_service,
+                            drive_service=app.container.user_drive_service,
+                            drive_search=app.container.drive_search_service,
+                            drive_notes=app.container.drive_note_service,
+                            token_repo=_assembly.token_repo if _assembly is not None else None,
+                            alert_sink=app.alert_sink,
+                        )
                         drive_mcp = build_drive_mcp_app(
                             authorization_service=mcp_components.authorization_service,
                             auth_config=app.auth_config,
+                            tools=drive_tools,
                         )
                     except Exception as drive_err:
                         drive_mcp = None
