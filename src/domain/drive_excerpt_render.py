@@ -8,7 +8,7 @@ the context plan the render returns: noted folders before their first file, then
 note outside the wrapper; the file's description first inside it.
 
 Public interface:
-    render_excerpts(result, *, nonce, shown_folders, described_files) -> RenderedExcerpts   one call's tool result
+    render_excerpts(result, *, nonce, shown_folders, described_files, page_next) -> RenderedExcerpts   one call's tool result
     render_block(files, context, *, nonce, pages, matched) -> str   the consolidated block the ledger builds for the orchestrator
     searched_line(results) -> str                       A12: what a passages run did, from the collector
     head_line(file, run) -> str                         one run's `[id <ref>:<i>-<j> · <path> · passages i–j of N]`
@@ -188,16 +188,18 @@ def _ids(result: ExcerptResult) -> str:
 
 
 def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str] = frozenset(),
-                    described_files: FrozenSet[str] = frozenset()) -> RenderedExcerpts:
-    """One call's tool result; a former drive name's RENAME_NOTICE is its first line."""
-    rendered = _render_excerpts(result, nonce=nonce, shown_folders=shown_folders, described_files=described_files)
+                    described_files: FrozenSet[str] = frozenset(), page_next: str = PAGE_NEXT) -> RenderedExcerpts:
+    """One call's tool result; a former drive name's RENAME_NOTICE is its first line. `page_next` is the template of
+    a page's "next page" line (`page_line`): a consumer other than the chat (the drive connector) words it its own way."""
+    rendered = _render_excerpts(result, nonce=nonce, shown_folders=shown_folders, described_files=described_files,
+                                page_next=page_next)
     if not result.notice or result.status == STATUS_DRIVE_REFUSED:
         return rendered
     return RenderedExcerpts(text=f"{result.notice}\n{rendered.text}", plan=rendered.plan)
 
 
 def _render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str],
-                     described_files: FrozenSet[str]) -> RenderedExcerpts:
+                     described_files: FrozenSet[str], page_next: str) -> RenderedExcerpts:
     gate = _gate_text(result)
     if gate is not None:
         return RenderedExcerpts(text=gate, plan=ContextPlan.EMPTY)
@@ -229,7 +231,7 @@ def _render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_f
     out.extend(blocks)
     if result.page is not None:
         if not result.page.past_end:
-            out.append(page_line(result.page))
+            out.append(page_line(result.page, page_next=page_next))
     elif result.continue_at is not None:
         out.append(CONTINUE.format(number=result.continue_at))
     return RenderedExcerpts(text="\n".join(out), plan=plan)
@@ -240,11 +242,12 @@ def page_past_end(page: PageSpan) -> str:
                                 first=page.first, last_page=last_page_start(page.total))
 
 
-def page_line(page: PageSpan) -> str:
-    """The code line after a page's blocks (§29.7): where the page stands and where the next one starts."""
+def page_line(page: PageSpan, *, page_next: str = PAGE_NEXT) -> str:
+    """The code line after a page's blocks (§29.7): where the page stands and where the next one starts. `page_next`
+    is the template of a page that is not the last (PAGE_NEXT's placeholders); the end lines are fixed."""
     numbers = dict(first=page.first, last=page.last, total=page.total, path=quoted(page.path or "/"),
                    version=page.version, next=page.next)
-    text = (PAGE_END_TRUNCATED if page.end and page.truncated else PAGE_END if page.end else PAGE_NEXT).format(**numbers)
+    text = (PAGE_END_TRUNCATED if page.end and page.truncated else PAGE_END if page.end else page_next).format(**numbers)
     return text + (PAGE_STALE if page.stale else "")
 
 
