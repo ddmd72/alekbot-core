@@ -153,7 +153,7 @@ src.services.memory_fact_service.MemoryFactService 1  # by-design single instanc
 src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (application_graph.py, MULTI_DRIVE_RFC 5.2)
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
 src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
-src.services.prompt_builder.PromptBuilder 1  # by-design single instance
+src.services.prompt_builder.PromptBuilder 2  # by-design two plain repo=None builders over the one assembly service: the email classifier's (service_container.py:378) and the document service reader's (document_service_setup.py:41), not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
 src.services.prompt_component_service.PromptComponentService 1  # by-design single instance
