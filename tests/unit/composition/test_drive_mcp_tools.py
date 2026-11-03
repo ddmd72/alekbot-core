@@ -1,7 +1,8 @@
 """The drive connector's read tools end to end on the drive ASGI app (DRIVE_MCP_CONNECTOR_RFC §4, §6, §9, §11 slice 2).
 
-The app is built as `main()` builds it: `build_drive_connector_tools` (the knob on) over the production
-`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`), a fake search
+The app is built as `main()` builds it: `build_drive_connector_tools` over the production
+`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`, its whole drive
+shared with the connector: a drive with no connector access is hidden, §7.1), a fake search
 service, a fake conversion service and a fake note store; then `build_drive_mcp_app`. Bearer tokens are verified by a
 stand-in for the authorization service (the auth seam has its own tests). Results are read from `tools/call` over
 HTTP; texts are markers, never the tokens' wording. Invented items only.
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +26,7 @@ from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.document_open import OpenedFile
 from src.domain.document_read import CALLER_CONNECTOR, READER_SKIPPED, ReadOutcome, ReadStatus
+from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_excerpt_page import PageSpan
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_note_view import NoteView
@@ -33,7 +36,7 @@ from src.domain.drive_withheld import Withheld
 from src.domain.user_drive import DriveItem, DriveItemNotFoundError
 from src.services.mcp_authorization_service import VerifiedAccessToken
 from tests.support.drive_connector_texts import TokenStore, marker
-from tests.support.drive_service_connections import ConnectionReads, ref
+from tests.support.drive_service_connections import CONNECTION_ID, ConnectionReads, ref
 from tests.support.opened_file import opened_body
 from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
@@ -96,6 +99,13 @@ class Conversion:
 
 
 class Drive(ConnectionReads):
+    def _reads(self, user_id: str):
+        reads = super()._reads(user_id)
+        key = (user_id, CONNECTION_ID)    # the whole drive shared with the connector (default: nothing, §7.1)
+        conn = self._reads_repo.connections[key]
+        self._reads_repo.connections[key] = replace(conn, connector_access=ConnectorAccess.whole_drive())
+        return reads
+
     async def get_item(self, handle: Any, item_id: str) -> DriveItem:
         if item_id not in ITEMS:
             raise DriveItemNotFoundError(item_id)

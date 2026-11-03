@@ -35,8 +35,10 @@ SIGNATURES = {
     "rename": ["user_id", "connection_id", "name", "primary_top_folders"],
     "set_searched_by_default": ["user_id", "connection_id", "enabled"],
     "set_scope": ["user_id", "connection_id", "folder_ids", "whole_drive", "capabilities", "write_folder_ancestry",
-                  "folder_ancestries"],
+                  "folder_ancestries", "connector_ancestries"],   # drive MCP slice 3: the strand check (§7.6)
     "set_write_folder": ["user_id", "connection_id", "folder_id", "capabilities", "ancestry"],
+    # drive MCP connector slice 3 (DRIVE_MCP_CONNECTOR_RFC §7.1, §7.6): what the connector reads on this drive
+    "set_connector_access": ["user_id", "connection_id", "access", "capabilities", "root_item_id", "folder_ancestries"],
 }
 
 
