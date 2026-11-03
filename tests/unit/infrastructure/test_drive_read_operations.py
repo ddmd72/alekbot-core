@@ -126,7 +126,7 @@ async def test_a_video_opened_through_the_facade_is_never_downloaded_or_posted()
     conversion, notification = Conversion(), Notification()
     ops = DriveOperations(conversion_service=conversion, notification=notification, drive_service=Drive())
     out = await DriveReadOperations(ops).open(CTX, "u1", ref("v1"))
-    assert out.withheld is Withheld.VIDEO and out.text == ""
+    assert out.withheld is Withheld.RECORDING_UNTRANSCRIBED and out.text == ""   # a video with no transcript
     assert conversion.downloads == [] and notification.files == []
 
 
@@ -145,7 +145,7 @@ async def test_open_refuses_a_ref_that_is_not_a_drive_ref_before_any_call(not_dr
     out = await DriveReadOperations(rec).open(CTX, "u1", not_drive, deadline_at=1_090.0)   # type: ignore[arg-type]
     assert rec.calls == []
     assert (out.op, out.cls, out.success, out.text, out.items) == (DriveOp.OPEN, OutcomeClass.REFUSED, False, "", ())
-    assert out.withheld is Withheld.OUTSIDE_DRIVE and out.withheld == "outside_drive"
+    assert out.withheld is None   # the plain neutral refusal: no code tells "outside" from "missing"
 
 
 async def test_a_drive_ref_still_delegates():

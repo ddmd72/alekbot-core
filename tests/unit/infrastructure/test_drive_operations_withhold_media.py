@@ -1,6 +1,6 @@
 """`DriveOperations.open(..., withhold_media=True)`: the drive connector's media pre-check (drift D1, D6) and its
-no-paid-reader rule (owner decision 2026-11-03). A video, an image, or a recording with no stored transcript is answered
-on its metadata before any download, with a machine code and no text; a recording with a stored transcript opens as its
+no-paid-reader rule (owner decision 2026-11-03). An image, or a recording (audio or video) with no stored transcript, is
+answered on its metadata before any download, with a machine code and no text; a recording with a stored transcript opens as its
 transcript; a scan PDF answers `scan` with no reader call; a document or a text PDF opens exactly as without the flag.
 Without the flag (the chat) every open is today's. Invented items only."""
 from __future__ import annotations
@@ -126,10 +126,12 @@ def fixed_nonce(monkeypatch):
 # -- withheld before any download ------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("notification", [True, False])
-async def test_a_video_is_withheld_without_a_download_or_a_post(notification):
+async def test_a_video_with_no_stored_transcript_is_withheld_as_untranscribed_without_a_download_or_a_post(
+        notification):
+    # every video/* is a recording to the kind classifier: with no transcript it is "not transcribed"
     world = World(VIDEO, notification=notification)
     out = await world.open(withhold_media=True)
-    assert out.withheld is Withheld.VIDEO and out.withheld == "video"
+    assert out.withheld is Withheld.RECORDING_UNTRANSCRIBED and out.withheld == "recording_untranscribed"
     assert (out.op, out.cls, out.success, out.text) == (DriveOp.OPEN, OutcomeClass.OK, True, "")
     assert [i.item_id for i in out.items] == ["v1"] and out.ref_tag == "a1"
     assert world.conversion.downloads == [] and world.conversion.opens == [] and world.posted == 0
