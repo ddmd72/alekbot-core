@@ -1,1 +1,2 @@
 # Mutants a reviewer ruled equivalent for src.agents.notes_agent: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.
+a39d02eb  # NotesAgent._notify: the try/except is the last statement of a -> None best-effort helper whose callers ignore its value; return None skips only the warning log
