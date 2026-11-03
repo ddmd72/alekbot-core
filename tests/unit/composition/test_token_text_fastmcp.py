@@ -14,6 +14,7 @@ import pytest
 
 from src.composition.drive_connector_tools import DriveConnectorTools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
+from src.composition.token_text_fastmcp import TokenTextFastMCP
 from src.domain import drive_connector_contract as c
 from src.domain.exceptions import ConnectorTextsUnavailable
 from src.infrastructure.drive_operations import DriveOperations
@@ -157,3 +158,52 @@ async def test_a_call_with_no_texts_is_an_error_result():
         if resp.headers["content-type"].startswith("text/event-stream") else resp.text
     message = json.loads(data)
     assert message["result"]["isError"] is True
+
+
+async def test_a_bare_token_text_app_fills_its_one_tool_from_the_texts():
+    world = World()
+    app = TokenTextFastMCP(texts=world.texts, initial=await world.texts.texts(), name="probe")
+
+    @app.tool(name="list_folder", meta={"probe": 1})
+    async def list_folder(folder: str = "") -> str:
+        return folder
+
+    [tool] = await app.list_tools()
+    assert (tool.name, tool.description) == ("list_folder", marker("list_folder"))
+    assert tool.inputSchema["properties"]["folder"]["description"] == marker("list_folder.folder")
+    assert tool.annotations.readOnlyHint is True and tool.meta == {"probe": 1}
+    assert app.instructions is None   # FastMCP's own instructions stay empty: the texts serve them
+    assert app._mcp_server.create_initialization_options().instructions == marker(c.INSTRUCTIONS_KEY)
+
+
+async def test_the_drive_app_with_tools_is_a_token_text_app(world):
+    assert isinstance(world.app, TokenTextFastMCP)
+
+
+class LoadedOnce:
+    """Texts that load at boot, then become unavailable (a defensive branch: the real service keeps the last good)."""
+
+    def __init__(self, texts: Any) -> None:
+        self._texts, self.calls = texts, 0
+
+    async def texts(self):
+        self.calls += 1
+        if self.calls > 1:
+            raise ConnectorTextsUnavailable("connector texts could not be loaded: token missing")
+        return self._texts
+
+
+async def test_a_call_after_the_texts_became_unavailable_is_an_error_result():
+    world = World()
+    world = await world.build(texts=LoadedOnce(await world.texts.texts()))
+    listing = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_folder", "arguments": {}}}
+    transport = httpx.ASGITransport(app=world.app.streamable_http_app(), raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE) as http:
+        async with world.app.session_manager.run():
+            await http.post("/drive-mcp", json=listing, headers=HEADERS)   # fills the server's tool cache
+            resp = await http.post("/drive-mcp", json=call, headers=HEADERS)
+    data = next(line[len("data: "):] for line in resp.text.splitlines() if line.startswith("data: ")) \
+        if resp.headers["content-type"].startswith("text/event-stream") else resp.text
+    result = json.loads(data)["result"]
+    assert result["isError"] is True and "not available" in result["content"][0]["text"]

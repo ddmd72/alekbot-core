@@ -1,8 +1,9 @@
 """What the drive connector's tools run on (DRIVE_MCP_CONNECTOR_RFC §4.2, §4.4, §5.3, §11 slices 2 and 3).
 
-`build_drive_connector_tools` is awaited by `main()` before `build_drive_mcp_app`. The tools are always built: what
-the connector may read is each drive's connector access (§7; default nothing), checked under the connector audience
-the drive MCP handler sets around each call.
+`build_drive_connector_tools_from_container` (the graph's singletons; `main()` awaits it before `build_drive_mcp_app`,
+so the composition root never names the note service itself) calls `build_drive_connector_tools`. The tools are always
+built: what the connector may read is each drive's connector access (§7; default nothing), checked under the connector
+audience the drive MCP handler sets around each call.
 
 - ONE connector `DriveOperations` from the graph's singletons (conversion, drive, search, notes), as
   `UserAgentFactory._drive_operations` builds the chat's, with no notifier, no localization and no language service, so
@@ -14,7 +15,7 @@ the drive MCP handler sets around each call.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..domain.connector_texts import ConnectorTexts
 from ..domain.drive_connector_contract import REQUIRED_RESULT_KEYS, REQUIRED_TOOL_KEYS
@@ -29,6 +30,9 @@ from ..services.drive_search_service import DriveSearchService
 from ..services.file_conversion_service import FileConversionService
 from ..services.user_drive_service import UserDriveService
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .service_container import ServiceContainer
 
 TOOL_TEXTS_TOKEN = "MCP_DRIVE_TOOL_TEXTS"
 RESULT_TEXTS_TOKEN = "MCP_DRIVE_RESULT_TEXTS"
@@ -67,3 +71,14 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
                 "on" if drive_notes is not None and drive_service is not None else "off")
     return DriveConnectorTools(texts=texts, initial_texts=initial, operations=DriveReadOperations(operations),
                                notes=drive_notes, items=drive_service)
+
+
+async def build_drive_connector_tools_from_container(container: "ServiceContainer", *,
+                                                    alert_sink: Optional[AlertSinkPort]) -> DriveConnectorTools:
+    """`build_drive_connector_tools` over the container's singletons (the prompt token store is the assembly
+    service's; None when the assembly service did not initialize)."""
+    assembly = container.assembly_service
+    return await build_drive_connector_tools(
+        conversion_service=container.file_conversion_service, drive_service=container.user_drive_service,
+        drive_search=container.drive_search_service, drive_notes=container.drive_note_service,
+        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=alert_sink)
