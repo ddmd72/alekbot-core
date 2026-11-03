@@ -1,1 +1,15 @@
 # Mutants a reviewer ruled equivalent for src.handlers.conversation_handler: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.
+a39d02eb  # html_gcs_link except is the last statement of its elif branch and nothing follows the if/elif chain in _deliver_item; only the log differs
+1fcf455c  # file_upload except is the last statement of its elif branch and nothing follows the if/elif chain in _deliver_item; only the log differs
+3c476131  # document except is the last statement of its elif branch and nothing follows the if/elif chain in _deliver_item; only the log differs
+d2e961bb  # except in the nested send_failure_notice is its last statement; every caller returns right after it; only the log differs
+d579eb15  # command send except is the last statement of _deliver_skill_preview; only the log differs
+ced6b3cb  # inner failure-notice except sits inside the outer except, which returns right after it anyway; only the log differs
+c8e8b9ac  # command send except is the last statement of _deliver_memory_preview; only the log differs
+47f8ca0d  # _get_voice_languages falls through to `return None` after the except; same return value, only the log differs
+0406c56a  # `break` is the last statement of the while body and nothing follows the loop in update_status_animation; return None and break both end the coroutine with None
+df73ee36  # CancelledError handler is the last statement of stop_status_updates, so returning None skips nothing; only the debug log differs
+30b10acf  # error-reply except is the last statement of the outer except and nothing follows try/except/finally; the finally (temp cleanup) still runs on return
+d843bf05  # inner except of the failure-line send in _finish_long_turn: the original body logs then hits the outer except's bare return; return None exits identically, finally still runs
+207b9433  # _close_long_turn_in_session: the try/except is the last statement of a -> None function; return None skips nothing but the log line
+295f14f1  # _handle_skill_save: the history-append try/except is the last statement of a -> None function, after SKILL_SAVED was sent; return None skips only the log line
