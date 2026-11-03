@@ -1358,14 +1358,17 @@ class DriveIndexingService:
         read itself fails."""
         live: List[int] = []
         batch: List[DriveChange] = []
+        entries: Dict[int, _Seen] = {}
         for i, change in enumerate(page):
-            looked: Optional[DriveChange] = change
             if seen is not None:
                 entry = seen[i]
-                looked = entry.change if entry is not None else None
-            if looked is not None and looked.content_version_pending and not looked.deleted:
+                if entry is None:
+                    continue   # failed in the verdict pass: never planned, never read
+                entries[i] = entry
+                change = entry.change
+            if change.content_version_pending and not change.deleted:
                 live.append(i)
-                batch.append(looked)
+                batch.append(change)
         from_stored = sum(1 for a, b in zip(observed, page) if a.content_version_pending and not b.content_version_pending)
         unread = sum(1 for c in page if c.content_version_pending) - len(batch)
         if batch:
@@ -1378,10 +1381,8 @@ class DriveIndexingService:
             for i, change in zip(live, resolved):
                 if seen is None:
                     page[i] = change
-                    continue
-                looked_seen = seen[i]
-                if looked_seen is not None:
-                    seen[i] = replace(looked_seen, change=change)
+                else:
+                    seen[i] = replace(entries[i], change=change)
         logger.info(f"[DriveIndex] change keys for {handle.user_id[:8]}: {len(batch)} read, {from_stored} kept from the "
                     f"stored record, {unread} not read (out of scope or failed)")
 

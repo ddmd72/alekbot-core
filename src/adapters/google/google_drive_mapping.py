@@ -294,9 +294,7 @@ def to_change(raw: Mapping[str, Any], id_space: str, head_revision_id: Optional[
 
 def resolved_change(change: DriveChange, head_revision_id: Optional[str]) -> DriveChange:
     """A pending change with its final key: `r:{head revision id}` when the list was read, else the `m:` fallback it
-    already carries (a refused or empty list). A change that is not pending is returned as it is."""
-    if not change.content_version_pending:
-        return change
+    already carries (a refused or empty list). The caller passes pending changes only."""
     version = native_content_version(head_revision_id, None) if head_revision_id else change.content_version
     return replace(change, content_version=version, content_version_pending=False)
 
