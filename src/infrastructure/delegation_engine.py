@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Union
 
 from ..domain.agent import AgentStatus, DeliveryItem
+from ..domain.file_ref import FileRefKind
 from ..domain.messaging import SmartResponse
+from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
 from ..domain.llm import MessagePart, build_tool_turn
 from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_since
@@ -140,8 +143,18 @@ def normalize_delegate_context(raw: Any) -> Dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def _format_email_search_compact(result: Any) -> str:
-    """Compact text representation of email search results for the LLM."""
+def _email_nonce() -> str:
+    return secrets.token_hex(8)
+
+
+def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_nonce) -> str:
+    """Compact text representation of email search results for the LLM.
+
+    The result lines carry the sender's text (address, attachment names, the fact sentence drawn from the email), so
+    they go inside ONE `<external_content>` wrapper after its reminder (EXTERNAL_FILES_RFC §4.6, P14); the count line
+    and the follow-up hints are the tool's own and stay outside. One wrapper, not one per result: a search returns
+    every hit past the distance filter, and a wrapper per hit would double the lines; the nonce, not the count of
+    wrappers, is what a forged closing tag cannot guess."""
     if not isinstance(result, str):
         return str(result)
     try:
@@ -151,7 +164,7 @@ def _format_email_search_compact(result: Any) -> str:
     emails = parsed.get("emails") if isinstance(parsed, dict) else None
     if not emails:
         return result
-    lines = [f"Found {len(emails)} email(s):"]
+    lines: List[str] = []
     for e in emails:
         line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
         atts = e.get("attachments") or []
@@ -161,11 +174,13 @@ def _format_email_search_compact(result: Any) -> str:
         text = e.get("text") or ""
         if text:
             lines.append(f"  → {text[:150]}")
-    lines.append(
+    return "\n".join([
+        EXTERNAL_REMINDER,
+        f"Found {len(emails)} email(s):",
+        wrap_untrusted("\n".join(lines), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label=""),
         "\nTo read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}"
-        "\nTo read attachment: delegate get_email_attachment with context={\"email_id\": \"<id>\", \"filename\": \"<filename>\"}"
-    )
-    return "\n".join(lines)
+        "\nTo read attachment: delegate get_email_attachment with context={\"email_id\": \"<id>\", \"filename\": \"<filename>\"}",
+    ])
 
 
 # ------------------------------------------------------------------ #

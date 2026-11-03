@@ -21,10 +21,11 @@ import asyncio
 from dataclasses import replace
 import json
 import mimetypes
+import secrets
 import tempfile
 import os
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -32,7 +33,9 @@ from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
 from ..domain.connector_spec import ConnectorSpec
 from ..domain.email import IndexedEmail
+from ..domain.file_ref import FileRefKind
 from ..domain.oauth_credential import OAuthCredential
+from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ..utils.file_conversion import (
     convert_file_to_text,
     truncate_with_alert,
@@ -45,6 +48,11 @@ _MAX_TOTAL_BYTES  = 10 * 1024 * 1024  # 10 MB
 
 # RRF constant — same as used in fact repository
 _RRF_K = 60
+
+
+def _nonce() -> str:
+    """A fresh nonce per wrapped body, as the drive draws one per result (EXTERNAL_FILES_RFC §4.6)."""
+    return secrets.token_hex(8)
 
 
 class EmailSearchService:
@@ -61,8 +69,11 @@ class EmailSearchService:
         embedding_service: EmbeddingService,
         *,
         connector: ConnectorSpec,
+        nonce: Callable[[], str] = _nonce,
     ) -> None:
-        """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
+        """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`.
+        `nonce` tags the untrusted wrapper of each body `get_details` returns."""
+        self._nonce = nonce
         self._email_repo = indexed_email_repo
         self._oauth = oauth_credentials
         self._kind = connector.kind
@@ -166,6 +177,10 @@ class EmailSearchService:
         """
         Fetch full email body from Gmail (no attachments).
         Returns formatted text or an error message.
+
+        The body and the attachment names are the sender's text, so they go inside one `<external_content>` wrapper
+        (EXTERNAL_FILES_RFC §4.6, P14) after its reminder; the tool's own frame (the id line) stays outside. The
+        wrapper's name is empty: this fetch carries no subject (`EmailFullContent` has none).
         """
         logger.info(f"📧 EmailSearchService.get_details: {email_id} user={user_id[:8]}")
 
@@ -185,11 +200,9 @@ class EmailSearchService:
         attachments_str = (
             f"\nAttachments: {', '.join(email.attachments)}" if email.attachments else ""
         )
-        return (
-            f"Email {email_id}:\n"
-            f"Body:\n{body_preview}"
-            + attachments_str
-        )
+        wrapped = wrap_untrusted(body_preview + attachments_str, nonce=self._nonce(), store=FileRefKind.EMAIL,
+                                 ref=email_id, label="")
+        return f"{EXTERNAL_REMINDER}\nEmail {email_id}:\nBody:\n{wrapped}"
 
     # ------------------------------------------------------------------
     # Fetch + convert attachment
