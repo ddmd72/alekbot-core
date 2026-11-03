@@ -389,7 +389,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         registry=agent_registry,
         task_queue=agent_task_queue,
         file_ref_resolver=(
-            container.file_conversion_service.resolve_content if container.file_conversion_service else None
+            container.file_conversion_service.prefetch if container.file_conversion_service else None
         ),
         alert_sink=_alert_webhook,
     )

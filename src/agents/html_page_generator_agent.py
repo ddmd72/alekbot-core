@@ -95,6 +95,15 @@ class HtmlPageGeneratorAgent(BaseAgent):
     async def execute(self, message: AgentMessage) -> AgentResponse:
         raw_query = message.payload.get("query", "")
         file_content = message.payload.get("file_content")
+        file_note = message.payload.get("file_note")
+        if file_note and not file_content:
+            # The prefetch could not read the file: the note is the user's answer, never document text.
+            logger.warning("[%s] file not readable, failing the task with the prefetch note", self.agent_id)
+            return AgentResponse.failure(
+                task_id=message.task_id,
+                agent_id=self.agent_id,
+                error=file_note,
+            )
         if file_content:
             raw_query = f"{raw_query}\n\n{file_content}" if raw_query else file_content
         if not raw_query:

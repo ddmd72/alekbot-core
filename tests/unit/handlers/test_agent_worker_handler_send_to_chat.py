@@ -20,6 +20,7 @@ _PAYLOAD = {"task_type": "agent_execution", "agent_id": "alek_agent", "intent": 
 
 def _handler(route_result=None, route_error=None):
     coordinator = MagicMock()
+    coordinator.prefetch_file_ref = AsyncMock()
     coordinator.route_message = AsyncMock(return_value=route_result, side_effect=route_error)
     notification = AsyncMock()
     handler = AgentWorkerHandler(coordinator=coordinator, notification_service=notification,
