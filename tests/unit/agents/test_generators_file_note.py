@@ -64,6 +64,6 @@ async def test_a_file_note_fails_the_task_with_the_note_and_renders_nothing(kind
 @pytest.mark.parametrize("kind", ["pdf", "html"])
 async def test_content_wins_over_a_note_and_generation_runs(kind):
     agent, llm = _build(kind)
-    response = await agent.execute(_message(file_content="Invoice 2026-114: painting, 12 Oak Street", file_note=NOTE))
+    response = await agent.execute(_message(file_content="Invoice 2026/078: painting, 12 Oak Street", file_note=NOTE))
     assert response.status == AgentStatus.SUCCESS
     llm.generate_content.assert_called()

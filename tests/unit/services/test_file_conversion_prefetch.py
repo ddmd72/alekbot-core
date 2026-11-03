@@ -16,14 +16,14 @@ async def test_prefetch_reads_as_text_only_under_the_prefetch_caller(world):
     (request,) = world.documents.requests
     assert request.caller == CALLER_PREFETCH and request.native_formats == () and request.deadline_at == DEADLINE
     assert prefetched.note == ""
-    assert "Total due: 120 EUR" in prefetched.content
+    assert "Total due: 680,00 EUR" in prefetched.content
     assert "external_content" in prefetched.content and "[File:" not in prefetched.content
 
 
 async def test_prefetch_marks_a_drive_text_with_the_drive_tag(world):
     ref = _plant(world, "lab_report_2025_03.pdf", b"%PDF", PDF)
     prefetched = await world.service.prefetch(ref, "ann", "ann", deadline_at=DEADLINE)
-    assert "drive_document" in prefetched.content and "Total due: 120 EUR" in prefetched.content
+    assert "drive_document" in prefetched.content and "Total due: 680,00 EUR" in prefetched.content
 
 
 async def test_prefetch_cuts_long_text_at_the_one_presentation_cap(world):
@@ -35,7 +35,7 @@ async def test_prefetch_cuts_long_text_at_the_one_presentation_cap(world):
 
 
 async def test_prefetch_of_a_workspace_text_is_marked(world):
-    world.workspace.seed("ann", "scratch/flat_viewing_uk.md", "# Flat\n- 2 rooms")
+    world.workspace.seed("ann", "scratch/flat_viewing_uk.md", "# Flat")
     prefetched = await world.service.prefetch("workspace:scratch/flat_viewing_uk.md", "ann", "ann",
                                               deadline_at=DEADLINE)
     assert "# Flat" in prefetched.content and "external_content" in prefetched.content

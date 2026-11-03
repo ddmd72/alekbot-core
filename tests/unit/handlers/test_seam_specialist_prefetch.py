@@ -16,7 +16,7 @@ from tests.support.seam_world import ACCOUNT, USER, Delegation, SeamWorld, Step,
 
 REF = "invoice_painting_es.pdf"
 QUERY = "a one-page summary of the painting invoice for 12 Oak Street"
-TEXT = "[File: invoice_painting_es.pdf]\nInvoice 2026-114: painting, 12 Oak Street"
+TEXT = "[File: invoice_painting_es.pdf]\nInvoice 2026/078: painting, 12 Oak Street"
 NOW = 1_000_000.0
 
 

@@ -24,8 +24,8 @@ async def test_a_note_without_content_fails_the_task_with_the_note(agent, mock_l
 
 
 async def test_a_note_next_to_content_is_not_added_to_the_query(agent, mock_llm):
-    await agent.execute(_message(file_note=NOTE, file_content="Viewing notes: two rooms."))
+    await agent.execute(_message(file_note=NOTE, file_content="Viewing notes."))
     request = mock_llm.generate_content.call_args.kwargs.get("request") or \
         mock_llm.generate_content.call_args.args[0]
     sent = repr(request.messages)
-    assert "Viewing notes: two rooms." in sent and "could not be opened" not in sent
+    assert "Viewing notes." in sent and "could not be opened" not in sent

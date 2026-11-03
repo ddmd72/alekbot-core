@@ -34,7 +34,7 @@ DEADLINE = 1_900_000_000.0
 class RecordingDocuments(DocumentReadPort):
     def __init__(self, outcome: Optional[ReadOutcome] = None, raises: Optional[Exception] = None) -> None:
         self.requests: List[ReadRequest] = []
-        self.outcome = outcome or ReadOutcome(status=ReadStatus.TEXT, kind="pdf", text="Total due: 120 EUR")
+        self.outcome = outcome or ReadOutcome(status=ReadStatus.TEXT, kind="pdf", text="Total due: 680,00 EUR")
         self.raises = raises
 
     async def read(self, request: ReadRequest) -> ReadOutcome:
@@ -116,7 +116,7 @@ async def test_a_chat_file_is_read_with_its_store_caller_mime_consumer_and_deadl
     assert (request.native_formats, request.deadline_at) == (consumer, DEADLINE)
     assert (request.user_id, request.account_id, request.content) == ("ann", "ann-acc", b"%PDF-1")
     assert request.request_id
-    assert opened.body == "[File: invoice_painting_es.pdf]\nTotal due: 120 EUR\n[/File: invoice_painting_es.pdf]"
+    assert opened.body == "[File: invoice_painting_es.pdf]\nTotal due: 680,00 EUR\n[/File: invoice_painting_es.pdf]"
     assert opened.outcome is world.documents.outcome
 
 
@@ -149,9 +149,9 @@ async def test_a_workspace_binary_reads_as_workspace(world):
 
 
 async def test_a_workspace_text_is_decoded_verbatim_without_a_read(world):
-    world.workspace.seed("ann", "scratch/flat_viewing_uk.md", "# Flat\n- 2 rooms")
+    world.workspace.seed("ann", "scratch/flat_viewing_uk.md", "# Flat")
     opened = await world.service.open("workspace:scratch/flat_viewing_uk.md", "ann", "ann", deadline_at=DEADLINE)
-    assert opened.body == ("[File: workspace:scratch/flat_viewing_uk.md]\n# Flat\n- 2 rooms\n"
+    assert opened.body == ("[File: workspace:scratch/flat_viewing_uk.md]\n# Flat\n"
                            "[/File: workspace:scratch/flat_viewing_uk.md]")
     assert world.documents.requests == []
 

@@ -161,7 +161,7 @@ async def test_an_executable_is_unsupported_with_a_warning(caplog):
 
 async def test_plain_text_is_read_in_process_raw():
     service, parser, *_ = make()
-    out = await service.read(req("# gym pass\nvalid until 2027\n".encode(), "gym_pass_uk.md", "text/markdown"))
+    out = await service.read(req("# gym pass\nGym pass (Taras) 360 EUR\n".encode(), "gym_pass_uk.md", "text/markdown"))
     assert out.status is ReadStatus.TEXT and out.text.startswith("# gym pass") and parser.requests == []
 
 
