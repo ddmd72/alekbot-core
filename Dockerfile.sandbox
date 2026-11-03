@@ -2,6 +2,8 @@
 # Untrusted-content sandbox (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §4.2, §4.3, §4.11)
 # ================================
 # Target `render` (S1): Python + Node + the `docx` npm package. No Chromium, no Puppeteer (they arrive with S2).
+# Target `light` (P1): Python + the drive parser's libraries, for the `parse.*` ops. No node, no npm, no media tools
+# (those arrive with S5). Always build with an explicit `--target`.
 # The image holds nothing: COPY is an explicit allowlist (never `.`), computed from the static import closure of
 # sandbox_main.py and pinned by tests/unit/test_dockerfile_sandbox.py. No .env, key file, Firestore, Secret Manager or
 # Storage client. The server runs as root (G12): only the engine children drop to the unprivileged user below.
@@ -51,4 +53,41 @@ RUN chown -R root:root /app && chmod -R go-w /app \
     fi
 
 # Exec form: sandbox_main.py is PID 1 and reaps orphaned grandchildren.
+CMD ["python", "sandbox_main.py"]
+
+# ================================
+# Target `light` (plan P1): the parse family. The same service, started with SANDBOX_SERVICE=light, runs the drive
+# parser's child under the sandbox launcher. COPY = the closure of sandbox_main.py plus the drive child's closure plus
+# parse_child.py, file by file (tests/unit/test_sandbox_light_image.py). Same engine user, work volume and root-owned tree.
+# ================================
+FROM python:3.11-slim AS light
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    SANDBOX_SERVICE=light
+
+WORKDIR /app
+
+COPY requirements-sandbox-light.txt .
+RUN pip install --no-cache-dir -r requirements-sandbox-light.txt
+
+RUN useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sandboxengine
+
+COPY sandbox_main.py /app/
+COPY src/adapters/drive_parser/__init__.py src/adapters/drive_parser/capture.py src/adapters/drive_parser/child.py src/adapters/drive_parser/epub_package.py src/adapters/drive_parser/html_text.py src/adapters/drive_parser/media.py src/adapters/drive_parser/readers.py /app/src/adapters/drive_parser/
+COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/parse_child.py src/adapters/sandbox_engine/parse_engine.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
+COPY src/composition/__init__.py src/composition/sandbox_callers.py src/composition/sandbox_setup.py /app/src/composition/
+COPY src/domain/connection_scope.py src/domain/document_extraction.py src/domain/document_limits.py src/domain/docx_script_prelude.py src/domain/drive_capture.py src/domain/drive_content_identity.py src/domain/drive_enrichment.py src/domain/drive_extraction.py src/domain/drive_index.py src/domain/drive_index_params.py src/domain/drive_media_facts.py src/domain/drive_note_check.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_parse_result.py src/domain/sandbox_startup_check.py src/domain/sandbox_windows_frame.py src/domain/text_data_uris.py /app/src/domain/
+COPY src/utils/document_hardening.py src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
+COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
+
+RUN mkdir -p /work && chmod 711 /work && chown root:root /tmp && chmod 0700 /tmp
+
+RUN chown -R root:root /app && chmod -R go-w /app \
+    && find /app -name __pycache__ -type d -prune -exec rm -rf {} + \
+    && if find /app /usr/local/lib/python3.11/site-packages -perm -o+w ! -type l -print | grep -q .; then \
+      echo "world-writable files under /app or site-packages: the engine user could rewrite them" >&2; \
+      exit 1; \
+    fi
+
 CMD ["python", "sandbox_main.py"]
