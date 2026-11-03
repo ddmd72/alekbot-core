@@ -25,6 +25,7 @@ import jwt
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken, normalize_client_name
 from ..domain.mcp_resource import (
+    FACTS_SCOPE,
     MCPResource,
     ResourceRefused,
     ScopeRefused,
@@ -230,6 +231,12 @@ class MCPAuthorizationService:
             raise MCPInvalidResource(str(e)) from e
         except ScopeRefused as e:
             raise MCPInvalidScope(str(e)) from e
+        # The SDK checks requested scopes against the client's registered scope only when a scope was sent; a
+        # resource with no scope is bound to the resource's own scope here, so it is checked here too. A client
+        # stored without a scope is a pre-DCR-change one, which could only ever hold the facts scope.
+        registered = client.scope.split() or [FACTS_SCOPE]
+        if any(sc not in registered for sc in scopes):
+            raise MCPInvalidScope("scope not registered for this client")
         params = replace(params, resource=uri, scopes=scopes)
 
         consent_jwt = self._mint_consent_jwt(client.client_id, params)
@@ -369,6 +376,10 @@ class MCPAuthorizationService:
             raise
 
         final_scopes = list(requested_scopes) if requested_scopes else list(existing.scopes)
+        try:
+            bind_resource(existing.resource, final_scopes, self._uris)
+        except (ResourceRefused, ScopeRefused) as e:
+            raise MCPInvalidGrant(f"refresh scope not allowed: {e}") from e
         now = datetime.now(timezone.utc)
 
         await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
@@ -407,14 +418,23 @@ class MCPAuthorizationService:
         self, token_str: str, *, resource: Optional[str] = None
     ) -> Optional[VerifiedAccessToken]:
         try:
+            # Audiences are compared in canonical form: tokens minted with the raw configured URI (legacy) and
+            # with the canonical one (bound at authorize) both verify against the same resource.
             payload = jwt.decode(
                 token_str,
                 self._secret,
                 algorithms=[_JWT_ALG],
-                audience=resource or self._resource_uri,
+                options={"verify_aud": False},
             )
         except jwt.InvalidTokenError as e:
             logger.debug(f"MCP access token rejected: {e}")
+            return None
+
+        aud = payload.get("aud")
+        if not isinstance(aud, str) or canonical_resource(aud) != canonical_resource(
+            resource or self._resource_uri
+        ):
+            logger.debug("MCP access token rejected: audience does not match")
             return None
 
         if payload.get("type") != _ACCESS_TOKEN_TYPE:
