@@ -23,6 +23,11 @@ the file is opened first, then the workdir and `dirname(output_path)` are remove
 or never iterated leaves nothing behind. One bounded log line per request, with the closed field set of §4.14:
 nothing from the meta besides `request_id`, no names, no URL, no engine output.
 
+Policy `abnormal` (the light service): a normal request (an `ok` answer, whatever parser status the detail carries)
+leaves the instance warm for the next one; a request that ends in any other outcome after payload bytes were written
+(engine non-ok, engine raised, body too large or too slow, internal error, a cancel before an answer) recycles it as
+`always` does (I2).
+
 Three tiny Protocols live here by design (R2: gate decision, gate, recycler), next to the one blueprint factory.
 """
 from __future__ import annotations
@@ -63,6 +68,7 @@ from ..utils.logger import logger
 
 RECYCLE_ALWAYS = "always"
 RECYCLE_NEVER = "never"
+RECYCLE_ABNORMAL = "abnormal"
 TIMEOUT_MARGIN_S = 30.0  # Quart BODY_TIMEOUT / RESPONSE_TIMEOUT sit above the op's wall ceiling by this much
 _CHUNK = 64 * 1024
 _TRUNCATION_MARKER = "\n[truncated]"
@@ -106,14 +112,14 @@ def create_sandbox_blueprint(
     limits_ceiling: SandboxLimits,
     config: Mapping[str, Any],
 ) -> Blueprint:
-    """`config`: `work_root` (str), `engine_user` (name or None), `recycle` ("always" | "never"), and optionally
+    """`config`: `work_root` (str), `engine_user` (name or None), `recycle` ("always" | "abnormal" | "never"), and optionally
     `output_root` (the engines' server-only output root; without it only `render_out_*` directories are removable).
 
     Raises ValueError for an unknown policy, or when the effective uid is 0 and the engine user is missing."""
     work_root = str(config["work_root"])
     output_root = os.path.normpath(str(config["output_root"])) if config.get("output_root") else None
     policy = str(config.get("recycle", RECYCLE_ALWAYS))
-    if policy not in (RECYCLE_ALWAYS, RECYCLE_NEVER):
+    if policy not in (RECYCLE_ALWAYS, RECYCLE_NEVER, RECYCLE_ABNORMAL):
         raise ValueError(f"unknown recycle policy {policy!r}")
     engine_ids = _resolve_engine_ids(config.get("engine_user"))
     body_deadline_s = max(CEILING_WALL_S, limits_ceiling.wall_s) + TIMEOUT_MARGIN_S
@@ -193,7 +199,8 @@ def create_sandbox_blueprint(
             _chown(workdir, engine_ids)
             body_path = os.path.join(workdir, "body")
             fd = os.open(body_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            # From here on payload bytes exist (or are about to): this request ends the instance (G8).
+            # From here on payload bytes exist (or are about to): under `always` this request ends the instance (G8);
+            # under `abnormal` only a non-ok end does (`_mark_abnormal`).
             ctx.wrote = True
             ctx.recycles = policy == RECYCLE_ALWAYS
             if ctx.recycles:
@@ -244,6 +251,7 @@ def create_sandbox_blueprint(
             _cleanup(ctx)
             if not handed_off:
                 # Refused before any payload byte, or cancelled before an answer existed.
+                _mark_abnormal(ctx)
                 _finish(ctx)
                 _log(ctx, SandboxStatus.ERROR)
 
@@ -259,6 +267,7 @@ def create_sandbox_blueprint(
     def _answer_text(ctx: "_RequestState", status: SandboxStatus, header_detail: str, text: str, *,
                      code: Optional[int] = None) -> Response:
         resp = _text_response(code or _HTTP_STATUS[status], status, header_detail, text, ctx)
+        _mark_abnormal(ctx)
         if ctx.recycles:
             resp.headers["Connection"] = "close"
         _log(ctx, status)
@@ -288,6 +297,12 @@ def create_sandbox_blueprint(
         _log(ctx, SandboxStatus.OK)
         _register_finish(ctx)
         return resp
+
+    def _mark_abnormal(ctx: "_RequestState") -> None:
+        """Policy `abnormal`: this request did not end `ok`, so the instance ends with it (I2)."""
+        if policy == RECYCLE_ABNORMAL and ctx.wrote:
+            ctx.recycles = True
+            state["draining"] = True
 
     def _register_finish(ctx: "_RequestState") -> None:
         """Finish the request when the ASGI handler task ends: after the final frame, and also on a cancel

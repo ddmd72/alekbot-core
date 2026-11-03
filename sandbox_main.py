@@ -41,6 +41,7 @@ from quart import Quart
 
 from src.composition.sandbox_callers import SandboxCallersError
 from src.composition.sandbox_setup import (
+    RECYCLE_ABNORMAL,
     RECYCLE_ALWAYS,
     SandboxStartupError,
     StartupPlan,
@@ -90,9 +91,9 @@ def build_app(env: Mapping[str, str], recycler: Optional[Any]) -> Quart:
         app.register_blueprint(create_unconfigured_blueprint())
         logger.warning("[Sandbox] unconfigured: only /health is served")
         return app
-    if recycler is None and plan.recycle == RECYCLE_ALWAYS:
+    if recycler is None and plan.recycle in (RECYCLE_ALWAYS, RECYCLE_ABNORMAL):
         logger.error("[Sandbox] refusing to start: policy always without the supervisor's pipe")
-        raise SandboxStartupError("--serve under policy 'always' must be started by the supervisor")
+        raise SandboxStartupError("--serve under policy 'always' or 'abnormal' must be started by the supervisor")
     engines = build_engine_registry(plan)
     gate = SandboxCallerGate(plan.caller_sets, plan.group_prefixes, plan.service_url)
     app.register_blueprint(create_sandbox_blueprint(
