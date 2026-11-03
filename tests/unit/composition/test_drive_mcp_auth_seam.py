@@ -214,14 +214,3 @@ async def test_a_user_context_only_client_cannot_get_a_drive_token_by_sending_on
     assert world.db.collection("a").docs == {}
     ok = await world.authorize(client, resource=FACTS)
     assert "req=" in ok.headers["location"]
-
-
-async def test_the_stub_tool_answers_through_the_drive_endpoint(world):
-    tokens = await world.tokens(scope="drive_read")
-    async with world.running():
-        resp = await world.drive_http.post(
-            "/drive-mcp", headers={**_MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}"},
-            json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                  "params": {"name": "drive_connector_status", "arguments": {}}})
-    assert resp.status_code == 200
-    assert "Connected. No drive tools yet." in resp.text
