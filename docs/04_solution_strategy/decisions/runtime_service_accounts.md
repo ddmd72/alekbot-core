@@ -1,6 +1,7 @@
 # Decision: per-runtime service accounts and split OIDC identities
 
-**Status:** Step 0 (code) landed; later steps move runtimes onto their own service accounts.
+**Status:** Live: the main service, the indexer, the voice relay and the research job each run under their own
+service account (`--service-account` in `cloudbuild-dev.yaml`).
 **Context:** every runtime (main, indexer, relay, research job) and every build ran as the project's default
 service account with broad project roles. One secret, `SERVICE_ACCOUNT_EMAIL`, played five roles: the main
 `/worker` expected email, the `/voice/*` expected email, the indexer's expected email, the OIDC identity attached

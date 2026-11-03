@@ -39,7 +39,8 @@ never blocks a fix of the bot, and the parallel tail costs the longest branch (t
 apply to the main service.
 - **`--allow-unauthenticated` is required:** Twilio's Media Streams WebSocket cannot present a Google OIDC token. The
   relay's own calls into the main service's `/voice/session-config` and `/voice/submit-transcript` stay OIDC-protected.
-- **Identity.** The relay runs as the default runtime service account and mints an OIDC token from it. `main.py` accepts
+- **Identity.** The relay runs as its own service account (`--service-account` in `cloudbuild-dev.yaml`) and mints an
+  OIDC token from it. `main.py` accepts
   `{SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL} ∪ OIDC_TRANSITION_SA_EMAILS` on `/voice/*` (`parse_sa_emails` /
   `build_oidc_gate`, `src/web/worker_oidc_verifier.py`). A separate relay service account works once
   `VOICE_RELAY_SA_EMAIL` (a Secret Manager secret holding its email) is mounted on the main service; without it every

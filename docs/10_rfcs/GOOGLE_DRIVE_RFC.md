@@ -627,8 +627,9 @@ account). It applies only once outer shared folders from other organisations are
 indexes nothing until folders are chosen (parent §11.3).
 
 **Decision (owner, 2026-11-02): option 1.** Google ships with this RFC. The separate zero-IAM sandbox service is
-[UNTRUSTED_CONTENT_SANDBOX_RFC.md](UNTRUSTED_CONTENT_SANDBOX_RFC.md) (C1 drive parsing, C3 media), built right after
-the multi-drive programme. Until it runs, choosing outer shared folders from other organisations for indexing is the
+[UNTRUSTED_CONTENT_SANDBOX_RFC.md](UNTRUSTED_CONTENT_SANDBOX_RFC.md) (C1 drive parsing, C3 media), built after the
+document service of [EXTERNAL_FILES_RFC.md](EXTERNAL_FILES_RFC.md), as adapter swaps under its parse ports (owner order
+of 2026-11-03: EXTERNAL_FILES D14, sandbox O12). Until it runs, choosing outer shared folders from other organisations for indexing is the
 owner's choice per connection, with the residual risk of `drive_parser_sandbox_resource_isolation.md`. Rejected:
 building the separate service before Google ships (option 2); not offering outer folders in the picker until it exists
 (option 3). No other part of this RFC depends on the answer.
