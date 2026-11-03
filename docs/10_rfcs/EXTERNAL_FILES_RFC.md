@@ -730,7 +730,11 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
   transcripts, the standing line (owner upload) and the G3 bar.
 - **P14 (separate):** mark email bodies from `get_email_details` (`email_search_service.py:165-192`) and the email
   search lines (`delegation_engine.py:143-168`) with the same function. They are not files; this changes two tool
-  outputs, so it is outside U4's done-criterion.
+  outputs, so it is outside U4's done-criterion. **Built (P14 PR):** the body with its attachment names is one
+  `<external_content ref=<email id>>` block, the search lines one block around the list (a block per hit would double
+  the lines); each block has a fresh nonce and `EXTERNAL_REMINDER` before it. The name attribute is empty: neither
+  output carries a subject today. The standing `untrusted` line names email in the repo snapshot; the owner's upload
+  ships it.
 - Native bytes cannot be wrapped: they travel with `REFERENCE_REMINDER_ATTACHED`, worded per store, and the label is
   escaped like a wrapper attribute.
 - Content built from stored data (search cards, transcripts) never passes through `read()`, so marking cannot live
@@ -913,7 +917,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | P10 | pure pieces move to neutral modules; reader names kept (§4.5) | author |
 | P11 | rename the drive tag to the neutral one (§4.6) | author, optional, own slice |
 | P13 | `allowance()` = the existing 200-page ceiling for every store (§4.4) | author, realises D5 |
-| P14 | mark email bodies and search lines (§4.6) | author, separate |
+| P14 | mark email bodies and search lines (§4.6) | owner, 2026-11-03; built |
 | P15 | workspace and delivered files count as external (§4.1) | author |
 | P16 | the native decision sits inside the service (§4.3) | author |
 | P17 | normalise images in the child (§4.3) | author, optional follow-up |
@@ -952,7 +956,8 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 
 ## 7. Slices
 
-**Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); U2 onward not started.
+**Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); optional P14 built (§4.6);
+U2 onward not started.
 
 Each slice: tests first, the reviewer rule for any existing test, `make check` green, docs in the same PR.
 
