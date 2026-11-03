@@ -224,7 +224,7 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
 - **`concurrency=1`, `max-instances=N`** (§11). One request per container at a time.
 - **Recycle (`SANDBOX_RECYCLE`, O5):** `always` (default; the render service): the instance serves **one** request and ends; `abnormal` (the light/parse service only, owner decision 2026-11-03): a
   normal request, any `ok` answer including a parser status such as `no_text` or `encrypted` inside it, keeps the instance warm, and a request that ends in anything else after payload bytes
-  were written (child out of memory, crash, timeout, a non-ok engine outcome, an oversize or too-slow body, an engine exception, a cancel) recycles it as `always` does, so no instance serves a second
+  were written (child out of memory, crash, timeout, a non-ok engine outcome, an oversize or too-slow body, an engine exception, a cancel before an answer, or any process still alive under the engine uid after an `ok` child ended: it escaped the child's process group, is killed, and the instance ends with one ERROR line) recycles it as `always` does; a client disconnect while an `ok` body streams does not recycle (nothing is left behind), so no instance serves a second
   request after an abnormal one (I2); `never` (local only). `abnormal` is refused for the render family. Why: with `always` every request was a 10-25 s cold start and Cloud Run sometimes routed the next
   request to the exiting instance (its own 503, no sandbox header). **`always` still applies to every render op (O5)**.
   The recycling is done by a **supervisor that never touches untrusted bytes** (a separate process from the one reading payload files): the server finishes the response, then the supervisor

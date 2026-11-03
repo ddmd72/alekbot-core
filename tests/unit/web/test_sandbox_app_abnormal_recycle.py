@@ -79,3 +79,52 @@ async def test_policy_always_is_unchanged_an_ok_request_still_recycles(tmp_path)
     assert r.status_code == 200 and r.headers.get("Connection", "").lower() == "close"
     assert rec.calls == 1
     assert (await post(app)).status_code == 503
+
+
+def _root_app(tmp_path, monkeypatch, leftovers):
+    from types import SimpleNamespace
+    from quart import Quart
+    from src.domain.sandbox_contract import SandboxOp
+    from src.web import sandbox_app
+    from tests.unit.web.test_sandbox_app import CEILING, FakeGate, FakeRecycler
+    monkeypatch.setattr(sandbox_app.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(sandbox_app.os, "chown", lambda p, u, g: None)
+    monkeypatch.setattr(sandbox_app.pwd, "getpwnam", lambda n: SimpleNamespace(pw_uid=4242, pw_gid=4343))
+    seen = []
+    monkeypatch.setattr(sandbox_app, "_kill_uid_processes", lambda uid: seen.append(uid) or leftovers)
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    engine, rec = FakeEngine(tmp_path), FakeRecycler()
+    app = Quart(__name__)
+    app.register_blueprint(sandbox_app.create_sandbox_blueprint(
+        {SandboxOp.RENDER_DOCX: engine}, FakeGate(), rec, CEILING,
+        {"work_root": str(work_root), "engine_user": "sbx", "recycle": "abnormal",
+         "output_root": str(engine.out_root)}))
+    return app, rec, seen
+
+
+async def test_a_leftover_process_after_an_ok_recycles_and_logs_an_error(tmp_path, monkeypatch, caplog):
+    app, rec, seen = _root_app(tmp_path, monkeypatch, leftovers=1)
+    with caplog.at_level("ERROR"):
+        r = await post(app)
+    assert r.status_code == 200 and rec.calls == 1 and seen == [4242]
+    assert r.headers.get("Connection", "").lower() == "close"
+    assert any(x.levelname == "ERROR" and "survived" in x.getMessage() for x in caplog.records)
+    assert (await post(app)).status_code == 503
+
+
+async def test_no_leftover_process_after_an_ok_stays_warm(tmp_path, monkeypatch, caplog):
+    app, rec, seen = _root_app(tmp_path, monkeypatch, leftovers=0)
+    with caplog.at_level("ERROR"):
+        assert (await post(app)).status_code == 200
+        assert (await post(app)).status_code == 200
+    assert rec.calls == 0 and seen == [4242, 4242]
+    assert not [x for x in caplog.records if x.levelname == "ERROR"]
+
+
+def test_kill_uid_processes_ignores_other_uids():
+    import os
+    from src.web import sandbox_app
+    if not os.path.isdir("/proc"):
+        pytest.skip("no /proc")
+    assert sandbox_app._kill_uid_processes(2 ** 31 - 2) == 0

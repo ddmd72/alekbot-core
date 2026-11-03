@@ -26,7 +26,9 @@ nothing from the meta besides `request_id`, no names, no URL, no engine output.
 Policy `abnormal` (the light service): a normal request (an `ok` answer, whatever parser status the detail carries)
 leaves the instance warm for the next one; a request that ends in any other outcome after payload bytes were written
 (engine non-ok, engine raised, body too large or too slow, internal error, a cancel before an answer) recycles it as
-`always` does (I2).
+`always` does (I2). So does an `ok` request after which a process under the engine uid is still alive (it escaped the
+child's process group): it is killed and the instance ends. A client disconnect while an `ok` body streams does not
+recycle: nothing is left behind.
 
 Three tiny Protocols live here by design (R2: gate decision, gate, recycler), next to the one blueprint factory.
 """
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import pwd
 import shutil
 import stat
@@ -228,6 +231,10 @@ def create_sandbox_blueprint(
                 handed_off = True
                 return resp
             ctx.peak_rss = int(result.peak_rss_bytes)
+            if policy == RECYCLE_ABNORMAL and engine_ids is not None and _kill_uid_processes(engine_ids[0]):
+                # A payload process escaped the child's process group and outlived it: the instance must not stay warm.
+                logger.error("[Sandbox] a process survived the engine child (op=%s): recycling the instance", ctx.op)
+                _mark_abnormal(ctx)
             if result.output_path:
                 if _removable_output_dir(result.output_path, output_root, work_root):
                     ctx.output_dir = os.path.dirname(result.output_path)
@@ -422,6 +429,28 @@ def _engine_for(engines: Mapping[SandboxOp, SandboxEngine], op: str) -> Optional
         return engines.get(SandboxOp(op))
     except ValueError:
         return None
+
+
+def _kill_uid_processes(uid: int) -> int:
+    """SIGKILL every process whose real uid is `uid` (the engine uid) and return how many there were. Run after the
+    engine child ended, so any hit is a leftover (a fork that left the child's process group). Linux `/proc` only;
+    a process that vanishes meanwhile is not counted."""
+    found = 0
+    try:
+        entries = [e for e in os.listdir("/proc") if e.isdigit()]
+    except OSError:
+        return 0
+    for name in entries:
+        try:
+            with open(f"/proc/{name}/status", "r", encoding="ascii", errors="replace") as fh:
+                real_uid = next((int(line.split()[1]) for line in fh if line.startswith("Uid:")), None)
+            if real_uid != uid:
+                continue
+            os.kill(int(name), signal.SIGKILL)
+            found += 1
+        except (OSError, ValueError):
+            continue
+    return found
 
 
 def _resolve_engine_ids(engine_user: Optional[str]) -> Optional[Tuple[int, int]]:
