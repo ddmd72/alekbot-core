@@ -176,6 +176,29 @@ class TestFanOut:
         await env.svc.fan_out()
         assert len(_drive_tasks(env.queue)) == 1
 
+    async def test_live_lease_skips_the_user_although_the_marker_is_cleared(self, env):
+        """A running tick clears the continuation marker at its start; its lease is what still shows it is running."""
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
+        await env.repo.acquire_lease(U_SCOPE, "tick-1", env.clock.now, env.clock.now + timedelta(seconds=TICK_DEADLINE_S),
+                                     create=False)
+        env.clock.advance(TICK_DEADLINE_S - 1)
+        summary = await env.svc.fan_out()
+        assert summary["continuing"] == 1 and summary["enqueued"] == 0 and _drive_tasks(env.queue) == []
+
+    async def test_expired_lease_does_not_block_the_user(self, env):
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
+        await env.repo.acquire_lease(U_SCOPE, "tick-1", env.clock.now, env.clock.now + timedelta(seconds=TICK_DEADLINE_S),
+                                     create=False)
+        env.clock.advance(TICK_DEADLINE_S + 1)
+        summary = await env.svc.fan_out()
+        assert summary["continuing"] == 0 and summary["enqueued"] == 1 and len(_drive_tasks(env.queue)) == 1
+
+    async def test_stale_marker_without_a_lease_is_enqueued(self, env):
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", continuation_enqueued_at=env.clock.now))
+        env.clock.advance(TICK_DEADLINE_S + 1)
+        summary = await env.svc.fan_out()
+        assert summary["continuing"] == 0 and len(_drive_tasks(env.queue)) == 1
+
     async def test_one_failing_user_does_not_stop_the_rest(self, env):
         env.connected.append("v")
         env.users.enabled["v"] = True
