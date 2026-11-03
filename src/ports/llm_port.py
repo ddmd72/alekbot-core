@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Optional, Tuple, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
+from ..domain.native_format import NativeFormat
 from ..domain.user import PerformanceTier
 
 if TYPE_CHECKING:
@@ -74,6 +75,16 @@ class LLMPort(ABC):
         vision, and max context size.
         """
         pass
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        """
+        The file formats `model_name` reads natively, each with its caps (EXTERNAL_FILES_RFC §4.3, P5).
+
+        Concrete and synchronous on purpose, unlike this folder's rule: "reads nothing natively" is a safe default
+        (a missing override degrades to today's text path, never to a crash), and the answer is a static property of
+        the model, no I/O. Adapters override it; proxies forward it.
+        """
+        return ()
 
     @abstractmethod
     def get_model_for_tier(self, tier: PerformanceTier) -> str:

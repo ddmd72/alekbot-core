@@ -8,7 +8,9 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.document_limits import MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES
 from src.domain.language import LanguageCode
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.domain.ui_messages import UIMessage
 from src.domain.user_drive import (
     DeleteOutcome,
@@ -109,6 +111,11 @@ def agent(conversion, drive, notifier, ops):
 
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
+# A consumer that reads PNG and PDF natively at today's drive caps (EXTERNAL_FILES_RFC §4.3); without it an open is text.
+NATIVE_AT_CAPS = {NATIVE_FORMATS_KEY: to_plain([NativeFormat("image/png", MAX_DRIVE_VISION_IMAGE_BYTES, 1),
+                                                NativeFormat("application/pdf", MAX_DRIVE_VISION_PDF_BYTES, 100)])}
+# The converter's own size line, refused on metadata before any download (FileConversionService._resolve_drive_content)
+TOO_LARGE_AS_TEXT = "[System: files above 5.0 MB cannot be read as text yet.]"
 WAIT = 100.0   # FileManagement's former MUTATION_WAIT_S, now a call argument
 
 
@@ -155,17 +162,26 @@ class TestStoreGuards:
 
 
 class TestOpenCaps:
+    # Above the declared cap the open goes the converter's way (EXTERNAL_FILES_RFC §4.3, U2), never a native download;
+    # the converter refuses an oversized file on metadata before downloading it.
     async def test_large_image_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = BIG_IMAGE
-        out = await ops.open(CTX, "u1", "drive:a1:i1")
-        assert out.success and "cannot be opened yet" in out.text
+        conversion.resolve_content.return_value = TOO_LARGE_AS_TEXT
+        out = await ops.open({**CTX, **NATIVE_AT_CAPS}, "u1", "drive:a1:i1")
+        assert out.success and TOO_LARGE_AS_TEXT in out.text and out.file_data is None
         conversion.resolve_bytes.assert_not_called()
+        conversion.resolve_content.assert_awaited_once_with("drive:a1:i1", "u1")
 
     async def test_large_pdf_refused_without_download(self, agent, conversion, drive):
         drive.get_item.return_value = BIG_PDF
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:p1"))
-        assert resp.status == AgentStatus.SUCCESS and "cannot be opened yet" in resp.result
+        conversion.resolve_content.return_value = TOO_LARGE_AS_TEXT
+        msg = _msg(Intent.OPEN_FILE, file_ref="drive:a1:p1")
+        msg.context.update(NATIVE_AT_CAPS)
+        resp = await agent.execute(msg)
+        assert resp.status == AgentStatus.SUCCESS and TOO_LARGE_AS_TEXT in resp.result
+        assert "file_data" not in resp.metadata
         conversion.resolve_bytes.assert_not_called()
+        conversion.resolve_content.assert_awaited_once_with("drive:a1:p1", "u1")
 
     async def test_heic_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = HEIC
@@ -177,7 +193,9 @@ class TestOpenCaps:
     async def test_small_image_is_attached_for_vision(self, agent, conversion, drive):
         drive.get_item.return_value = SMALL_PNG
         conversion.resolve_bytes.return_value = b"\x89PNG"
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:i2"))
+        msg = _msg(Intent.OPEN_FILE, file_ref="drive:a1:i2")
+        msg.context.update(NATIVE_AT_CAPS)
+        resp = await agent.execute(msg)
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
         assert resp.history_context == {"drive_context": [{"path": "Drive/a.png", "ref": "drive:a1:i2", "op": "opened"}]}

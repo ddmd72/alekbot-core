@@ -52,6 +52,9 @@ from ..ports.llm_port import (
 from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.memory_telemetry import payload_fields
 from ..domain.user import PerformanceTier
+from ..domain.drive_image_mime import VISION_MIME_TYPES
+from ..domain.document_limits import native_ceiling
+from ..domain.native_format import NativeFormat
 from ..domain.exceptions import (
     LLMAccountError,
     LLMClientError,
@@ -68,6 +71,15 @@ from ..utils.logger import logger
 # An exhausted quota normally arrives as HTTP 429 and stays LLMRateLimitError; on any other 4xx these are
 # LLMAccountError — about the account, not the request.
 _ACCOUNT_ERROR_CODES = frozenset({"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"})
+
+
+# What OpenAI models read natively (EXTERNAL_FILES_RFC §4.3): the four image formats up to 5 MiB, a PDF up to 20 MiB.
+# The PDF page cap: https://developers.openai.com/api/docs/guides/pdf-files documents no page limit (only 50 MB per
+# file), so this takes the smallest documented value among the other providers (Claude's 100). A measured spike
+# (U0-e) will replace it.
+_OPENAI_NATIVE_FORMATS = tuple(
+    NativeFormat(m, native_ceiling("image"), 1) for m in VISION_MIME_TYPES
+) + (NativeFormat("application/pdf", native_ceiling("pdf"), 100),)
 
 
 def _default_filename(mime: str) -> str:
@@ -484,6 +496,10 @@ class OpenAIAdapter(LLMPort):
 
     def get_capabilities(self) -> ProviderCapabilities:
         return self.CAPABILITIES
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        """Images and PDF for the GPT models; nothing for any other name."""
+        return _OPENAI_NATIVE_FORMATS if model_name.startswith("gpt-") else ()
 
     def get_model_for_tier(self, tier: PerformanceTier) -> str:
         if tier not in self.MODEL_TIERS:

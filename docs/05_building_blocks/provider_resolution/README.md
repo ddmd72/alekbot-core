@@ -83,6 +83,37 @@ Defines the default provider and allowed overrides for each agent type.
 
 ---
 
+### 2.5 Native-format declaration
+
+What a model reads as file bytes instead of converted text (EXTERNAL_FILES_RFC §4.3).
+
+- **Port:** `LLMPort.native_formats(model_name) -> Tuple[NativeFormat, ...]` (`src/ports/llm_port.py:79`); the default is
+  text-only (no declaration). The caching and alerting proxies forward it (`caching_llm_proxy.py:53`,
+  `alerting_llm_proxy.py:97`).
+- **Values:** per adapter, constants citing the provider's documentation; the measured spike U0-e replaces the PDF page
+  caps. Images (`VISION_MIME_TYPES`) and PDF unless noted.
+
+  | Adapter | `native_formats` | Declared |
+  |---|---|---|
+  | Claude (`claude_adapter.py:780`) | `claude-*` | images; PDF 600 pages, Haiku 100 (`:191-197`) |
+  | Gemini (`gemini_adapter.py:285`) | `gemini-*` | images; PDF 1000 pages (`:59-61`) |
+  | OpenAI (`openai_adapter.py:500`) | `gpt-*` | images; PDF 100 pages (`:80-82`; no documented limit, the smallest documented value of the others) |
+  | Grok (`grok_adapter.py:402`) | `_GROK_VISION_MODELS` (`:67`) | images only |
+
+  Any other model name returns `()`.
+- **Per attempt:** the four engine runners (`quick_response_agent.py:248`, `smart_response_agent.py:578`,
+  `domain_researcher_agent.py:145`, `tutor_agent.py:197`) put `to_plain(provider.native_formats(model))` under
+  `context["native_formats"]` (`NATIVE_FORMATS_KEY`, `src/domain/native_format.py:26`) in a copy of the context, so a
+  fallback attempt on another provider declares its own formats.
+- **Scope:** `AgentCoordinator._specialist_context` (`agent_coordinator.py:28-33`, used at `:541` and `:572`) drops the key
+  for every intent outside `NATIVE_OPENING_INTENTS` (`open_file`, `work_with_drive_files`;
+  `src/infrastructure/agent_manifest.py:108`): the declaration is the caller's provider's, not a specialist's.
+- **Decision:** `DriveOperations` reads the key (`_declared_format`, `src/infrastructure/drive_operations.py:664`, `:710`,
+  `:1013`): a file is native when its mime is declared, its bytes are within `max_bytes` and a PDF's pages within
+  `max_pages`; otherwise it goes to the converter as text. No declaration means text.
+
+---
+
 ## 3. Resolution Process
 
 The `AgentContextBuilder` orchestrates the resolution of an `AgentExecutionContext` for every request.

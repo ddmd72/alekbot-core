@@ -18,6 +18,9 @@ AgentDescriptor instances:
     in their respective agent classes. agent_id in orchestrator descriptors is a static
     type-level identifier — coordinator never routes TO orchestrators via registry.
 
+NATIVE_OPENING_INTENTS:
+    The intents that open files, the only ones whose message keeps the native-format declaration.
+
 ALL_DESCRIPTORS:
     Specialist descriptors imported by build_application_graph and registered into AgentRegistry at startup.
     Orchestrator descriptors are NOT in ALL_DESCRIPTORS — they are not registered in the
@@ -28,6 +31,8 @@ To add a new specialist agent:
     2. Add AgentDescriptor and include it in ALL_DESCRIPTORS.
     3. Wire the agent class in user_agent_factory.py.
 """
+
+from typing import FrozenSet
 
 from ..domain.companion_config import CompanionConfig
 from ..domain.voice_errand import SEND_TO_CHAT_INTENT
@@ -95,6 +100,12 @@ class Intent:
     # Video generation/editing via grok-imagine-video-1.5
     GENERATE_VIDEO      = "generate_video"
     EDIT_VIDEO          = "edit_video"
+
+
+# The SYNC intents that open files: the only readers of the native-format declaration
+# (`domain/native_format.NATIVE_FORMATS_KEY`, EXTERNAL_FILES_RFC §4.3). The coordinator drops the key from every other
+# specialist's message and from every enqueued task. `open_email_attachment` joins in slice U4.
+NATIVE_OPENING_INTENTS: FrozenSet[str] = frozenset({Intent.OPEN_FILE, Intent.WORK_WITH_DRIVE_FILES})
 
 
 # ---------------------------------------------------------------------------

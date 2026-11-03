@@ -5,7 +5,7 @@ import os
 import time
 import anthropic
 from anthropic import types, AsyncAnthropic
-from typing import List, Any, Optional, Dict
+from typing import List, Any, Optional, Dict, Tuple
 from ..ports.llm_port import (
     LLMPort,
     LLMResponse,
@@ -19,6 +19,9 @@ from ..ports.llm_port import (
 )
 from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR, build_persona_anchor
 from ..domain.user import PerformanceTier
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES
+from ..domain.document_limits import native_ceiling
+from ..domain.native_format import NativeFormat
 from ..domain.exceptions import (
     LLMAccountError,
     LLMClientError,
@@ -178,6 +181,20 @@ _DELIVER_RESPONSE_TOOL: Dict[str, Any] = {
         "required": ["response"],
     },
 }
+
+
+# What Claude reads natively (EXTERNAL_FILES_RFC §4.3). Images: 3.75 MiB raw, because the 5 MB per-image limit applies
+# to the base64 (MAX_VISION_IMAGE_BYTES). PDF: 20 MiB; pages per
+# https://platform.claude.com/docs/en/build-with-claude/pdf-support ("Maximum pages per request: 600 (100 when the
+# request's context window is under 1M tokens)"). Sonnet, Opus and Fable run 1M windows (600); Haiku's window is not
+# stated there, so it takes the safe 100. A measured spike (U0-e) will replace these.
+_NATIVE_PDF_BYTES = native_ceiling("pdf")
+_CLAUDE_NATIVE_FORMATS = tuple(
+    NativeFormat(m, MAX_VISION_IMAGE_BYTES, 1) for m in VISION_MIME_TYPES
+) + (NativeFormat("application/pdf", _NATIVE_PDF_BYTES, 600),)
+_CLAUDE_HAIKU_NATIVE_FORMATS = _CLAUDE_NATIVE_FORMATS[:-1] + (
+    NativeFormat("application/pdf", _NATIVE_PDF_BYTES, 100),
+)
 
 
 class ClaudeAdapter(LLMPort):
@@ -760,6 +777,14 @@ class ClaudeAdapter(LLMPort):
     # Plan: docs/architecture/provider_refactor/PROVIDER_REFACTOR_EXECUTION_PLAN.md
     # Purpose: Expose provider feature support for routing/feature gating
     # ====================================================================
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        """Images and PDF for every Claude model; Haiku's PDF page cap is the smaller one (see the constants)."""
+        if model_name.startswith("claude-haiku"):
+            return _CLAUDE_HAIKU_NATIVE_FORMATS
+        if model_name.startswith("claude-"):
+            return _CLAUDE_NATIVE_FORMATS
+        return ()
+
     def get_capabilities(self) -> ProviderCapabilities:
         """
         Return Claude provider capabilities.

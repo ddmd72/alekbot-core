@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
@@ -39,6 +40,11 @@ def _make_message(intent: str, file_ref: str = None, user_id: str = "user1"):
     msg.payload = payload
     msg.context = {"user_id": user_id}
     return msg
+
+
+# A consumer that reads PNG and PDF natively (EXTERNAL_FILES_RFC §4.3): without a declaration an open is text only.
+NATIVE_PNG_PDF = to_plain([NativeFormat("image/png", 5 * 1024 * 1024, 1),
+                           NativeFormat("application/pdf", 20 * 1024 * 1024, 100)])
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +126,7 @@ class TestFetchBinary:
         # path), so delivered-document keys resolve with the ownership check too.
         mock_conversion.resolve_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
         msg = _make_message(Intent.OPEN_FILE, file_ref="photo.png")
+        msg.context[NATIVE_FORMATS_KEY] = NATIVE_PNG_PDF
 
         with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
              patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \
@@ -141,6 +148,7 @@ class TestFetchBinary:
         """PDFs are native binary — should use binary path."""
         mock_conversion.resolve_bytes = AsyncMock(return_value=b"%PDF-1.4")
         msg = _make_message(Intent.OPEN_FILE, file_ref="document.pdf")
+        msg.context[NATIVE_FORMATS_KEY] = NATIVE_PNG_PDF
 
         with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
              patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \

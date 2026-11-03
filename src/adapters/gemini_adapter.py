@@ -1,6 +1,6 @@
 import asyncio
 import base64
-from typing import List, Any, Optional, cast
+from typing import List, Any, Optional, Tuple, cast
 import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
@@ -17,6 +17,9 @@ from ..ports.llm_port import (
 )
 from ..domain.llm import FinishReason
 from ..domain.user import PerformanceTier
+from ..domain.drive_image_mime import VISION_MIME_TYPES
+from ..domain.document_limits import native_ceiling
+from ..domain.native_format import NativeFormat
 from ..domain.exceptions import (
     LLMClientError,
     LLMNetworkError,
@@ -48,6 +51,14 @@ def _map_finish_reason(raw) -> Optional[FinishReason]:
     if raw is None:
         return None
     return _FINISH_REASONS.get(getattr(raw, "name", None) or str(raw), FinishReason.OTHER)
+
+
+# What Gemini reads natively (EXTERNAL_FILES_RFC §4.3): the four image formats up to 5 MiB, a PDF up to 20 MiB. Pages per
+# https://aistudio.google.com/docs/document-processing ("Gemini supports PDF files up to 50MB or 1000 pages"). A
+# measured spike (U0-e) will replace it.
+_GEMINI_NATIVE_FORMATS = tuple(
+    NativeFormat(m, native_ceiling("image"), 1) for m in VISION_MIME_TYPES
+) + (NativeFormat("application/pdf", native_ceiling("pdf"), 1000),)
 
 
 class GeminiAdapter(LLMPort):
@@ -270,6 +281,10 @@ class GeminiAdapter(LLMPort):
 
     def supports_caching(self) -> bool:
         return False
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        """Images and PDF for the Gemini models; nothing for any other name."""
+        return _GEMINI_NATIVE_FORMATS if model_name.startswith("gemini-") else ()
 
     # ====================================================================
     # NEW Provider Refactor Session 6: Provider capabilities accessor

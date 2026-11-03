@@ -74,6 +74,11 @@ mocks cannot detect translation regressions) + contract validators in
     don't infer a new model's floor, probe it** (see memory `reference_openai_reasoning_effort_floor`).
     Surfaced via the Smart provider-rotation landing ULTRA on OpenAI. `_REASONING_PREFIXES` now only
     selects the `reasoning.effort` path; no sampling param is sent.
+  - **`native_formats(model_name)`** — each adapter declares the files its model reads natively (`NativeFormat(mime,
+    max_bytes, max_pages)`, one module-level constant per adapter, EXTERNAL_FILES_RFC §4.3); an unknown model name
+    declares `()`. Claude images are capped at 3.75 MiB raw (5 MB limit applies to the base64), Grok declares images
+    only and never a PDF (its adapter sends no file part). `max_pages` are provider-documented values (URL in a comment
+    on each constant) until the U0-e spike measures them.
   - **GeminiAdapter sends no `temperature` / `top_p` / `top_k` / `thinking_budget`** (deprecated by
     Google 2026-10, hard 400 announced) — thinking is `thinking_level` only. See
     `decisions/gemini_sampling_params_removed.md`.

@@ -18,6 +18,7 @@ from src.domain.drive_search import (
     DriveSearchRequest,
     DriveSearchResult,
 )
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.untrusted_text import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
@@ -172,7 +173,11 @@ class TestOpenIsWrapped:
     async def test_vision_attachments_carry_the_reminder(self, conversion, search, drive, item):
         drive.get_item.return_value = item
         conversion.resolve_bytes.return_value = b"%PDF" if item is SCAN else b"\x89PNG"
-        resp = await _ops(conversion, search, drive=drive).open(CTX, "u1", drive_ref.format("a1", item.item_id))
+        # a consumer that reads both natively: without a declaration they open as text (EXTERNAL_FILES_RFC §4.3)
+        native = to_plain([NativeFormat("application/pdf", 20 * 1024 * 1024, 100),
+                           NativeFormat("image/png", 5 * 1024 * 1024, 1)])
+        resp = await _ops(conversion, search, drive=drive).open({**CTX, NATIVE_FORMATS_KEY: native}, "u1",
+                                                                 drive_ref.format("a1", item.item_id))
         assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
         assert resp.text.endswith("is attached. You can see and analyse it directly.")
         assert f"[Drive: Drive/{item.path} (" in resp.text   # the label names the real path, verbatim, on its mount

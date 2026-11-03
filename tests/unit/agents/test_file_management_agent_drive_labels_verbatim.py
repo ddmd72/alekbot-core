@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.domain import drive_ref
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.domain.untrusted_text import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
@@ -30,6 +31,9 @@ async def test_the_label_keeps_the_real_path(item):
     search.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
     agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
                             drive_service=drive, drive_search=search)
-    resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", drive_ref.format("a1", item.item_id))
+    # a consumer that reads PDFs natively: without a declaration the PDF opens as text (EXTERNAL_FILES_RFC §4.3)
+    native = to_plain([NativeFormat("application/pdf", 20 * 1024 * 1024, 100)])
+    resp = await agent.open({"user_id": "u1", "account_id": "a1", NATIVE_FORMATS_KEY: native}, "u1",
+                            drive_ref.format("a1", item.item_id))
     assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
     assert f"[Drive: Drive/{item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text

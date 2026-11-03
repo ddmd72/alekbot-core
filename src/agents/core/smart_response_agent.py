@@ -29,6 +29,7 @@ from ...domain.messaging import SmartResponse
 from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
+from ...domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from ...domain.workspace import WORKSPACE_TOOL, WorkspaceReferences
 from ...infrastructure.workspace_tools import build_workspace_tool_declaration, make_workspace_handler
@@ -572,7 +573,10 @@ class SmartResponseAgent(BaseAgent):
             delegation_result = await engine.execute(
                 call_llm=call_llm_for_engine,
                 base_request=base_request,
-                context=message.context,
+                context={
+                    **message.context,
+                    NATIVE_FORMATS_KEY: to_plain(eff.ctx.provider.native_formats(eff.ctx.model_name)),
+                },
                 max_turns=clock.max_loop_turns if clock is not None else self.MAX_DELEGATION_TURNS,
                 terminal_tool="deliver_response",
                 intent_fanout=dict(self._descriptor.intent_fanout),

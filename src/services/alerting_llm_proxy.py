@@ -19,10 +19,11 @@ flood Slack. In-process state — fine for the single-instance Cloud Run deploym
 """
 
 import asyncio
-from typing import Awaitable, Callable, Dict
+from typing import Awaitable, Callable, Dict, Tuple
 import time
 
 from ..domain.exceptions import LLMClientError
+from ..domain.native_format import NativeFormat
 from ..domain.user import PerformanceTier
 from ..ports.llm_port import (
     LLMPort,
@@ -92,6 +93,9 @@ class AlertingLLMProxy(LLMPort):
 
     def get_capabilities(self) -> ProviderCapabilities:
         return self._inner.get_capabilities()
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        return self._inner.native_formats(model_name)
 
     def get_model_for_tier(self, tier: PerformanceTier) -> str:
         return self._inner.get_model_for_tier(tier)
