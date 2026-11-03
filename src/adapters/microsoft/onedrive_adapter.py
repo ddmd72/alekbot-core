@@ -38,7 +38,7 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
@@ -627,6 +627,10 @@ class OneDriveAdapter(UserDrivePort):
             root_item_id=root_id,
             drive_identity=onedrive_drive_identity(drive_id, self._id_space),
         )
+
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        """The changes unchanged: a delta item's cTag is final, so this adapter never returns a pending change."""
+        return list(changes)
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         """One item by id. A 404 raises DriveItemNotFoundError and is never turned into a deletion

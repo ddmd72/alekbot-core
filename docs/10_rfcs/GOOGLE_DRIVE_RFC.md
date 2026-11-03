@@ -1,6 +1,6 @@
 # RFC: Google Drive connection (multi-drive, stage 3)
 
-**Status:** ACCEPTED (rev 1, 2026-11-02: security and end-to-end reviews folded in; the owner's sandbox decision in §10); built, live acceptance after deploy.
+**Status:** ACCEPTED (rev 1.1: the change feed defers the natives' head revision to the indexer, GE-36; rev 1, 2026-11-02: security and end-to-end reviews folded in; the owner's sandbox decision in §10); built, live acceptance after deploy.
 **Owner:** AI Engineering
 **Builds on:** [MULTI_DRIVE_RFC.md](MULTI_DRIVE_RFC.md) (stages 1 and 2: connections, handles, the router and registry,
 the account-wide feed, scopes, the access policy, the Cabinet list). Its D-rows (§2), E-rows (§16) and T-rows (§13) are
@@ -65,7 +65,7 @@ provider-neutral: no Google string enters `domain/`, `services/`, `web/` or `src
 | G3 | Google folders have no child count; the density rule never fires | none: adapter reports 0, accepted (GE-11) | — |
 | G4 | Drive allows `/` in names (seen live); paths join names with a bare `/` (`src/domain/user_drive.py:242-243`) | one escape of `/` in a name wherever a path is built from names, and in segment matching | parent §11.1 already says read names are escaped "for display and resolution" |
 | G5 | Does not exist: trashing or untrashing a folder emits a change for the folder **and** every descendant [PROBE P-a] | none | — |
-| G6 | A native's `version` and `modifiedTime` both move on a rename [PROBE P-d]; as a change key they would re-index (model money) on every rename | none: the adapter reads the head revision (GE-4) | — |
+| G6 | A native's `version` and `modifiedTime` both move on a rename [PROBE P-d]; as a change key they would re-index (model money) on every rename | the adapter reads the head revision (GE-4); the feed returns that key pending and the port's `resolve_content_versions` reads it for the items the indexer keeps (GE-36) | any provider whose change key costs a read; OneDrive's cTag is final and passes through |
 | G7 | Parent §7.1/E21 say "reported `can_download=False` when an export would exceed the cap": not computable from metadata; Google refuses at export time with 403 `exportSizeLimitExceeded` [PROBE P-e] | that refusal maps to the existing `DriveFileTooLarge(Error)` at download time; GE-22 supersedes the sentence | no code seam |
 | G8 | The picker walks down from My Drive's root; shared folders and shared-drive roots are not under it, and paths printed for them do not resolve | a port method listing the folders outside the root, a picker section, and path resolution from those chain tops | `[]` for an App Folder; the fake account-wide provider has outer folders |
 | G9 | A large Docs export can run for minutes; `DOWNLOAD_TIMEOUT_S = 120` (`src/domain/drive_index_params.py:51`) bounds both the adapter's transfer and the planner's worst case (`src/domain/drive_index_planner.py:1166-1171`) | `DOWNLOAD_TIMEOUT_S` = 300 | one bound for any provider's transfer |
@@ -403,9 +403,10 @@ revision, a rename does not) [PROBE P-d]. For a native whose `capabilities.canRe
 (the list runs oldest first) and `content_version = "r:" + head id`. When `canReadRevisions` is false (typical for a
 native shared to the account view- or comment-only) there is no call and `content_version = "m:" + modifiedTime`, so
 such a native re-cards on a rename. A refused or empty list falls back the same way and never fails the page (§3.7).
-The calls run inside `get_changes`, `get_change` and `list_children_changes`, natives only, at most 4 in flight per page;
-walks that only need a parent (`UserDriveService._walk`, `src/services/user_drive_service.py:176-192`) pay them too, which
-the gate keeps small. Decision and rejected alternatives: GE-4.
+The calls run inside `get_change`, `list_children_changes` and every item read, natives only, at most 4 in flight per
+call; walks that only need a parent (`UserDriveService._walk`, `src/services/user_drive_service.py:176-192`) pay them too,
+which the gate keeps small. `get_changes` makes none: GE-36 supersedes its part of this paragraph (the feed returns the
+key pending; the indexer resolves it only for items it keeps). Decision and rejected alternatives: GE-4, GE-36.
 
 ### G7 — over-cap exports
 
@@ -614,6 +615,7 @@ E37 (retired by G2) and E72 (superseded by G11), and the RFC index status.
 | GE-33 | G14: extra granted scopes log a WARNING; the grant is kept. | Turns P-k into a standing signal at no product cost. | Refusing such a grant (a provider change could block every connect). |
 | GE-34 | `changeType=drive`: removed → resync; otherwise the drive root's change. | A lost membership must purge that drive's items; a rename must rename the root. | Skipping drive changes. |
 | GE-35 | A refused stored `files.list` token restarts its pass. | List tokens have no documented lifetime; a stuck cursor would stall the build forever. | Mapping it to a plain `ValueError`. |
+| GE-36 | The feed and the enumeration defer a native's head revision: `get_changes` returns such a native with `content_version_pending` and its `m:` key, and the port's `resolve_content_versions` reads it (`r:` head id; a refusal keeps `m:`; at most 4 in flight). The indexer resolves a pending change only for an item it plans as a live record, after the page's scope verdicts, in one batched call per page, and skips the call when the stored record has the change's modified time (it keeps the stored key). The planner refuses a pending change. Supersedes G6/GE-4's "calls run inside `get_changes`". | Read inside the feed, every exportable native of the account paid its full revision history before the scope filter dropped most of them: a full pass ran for a long time and indexed nothing until it ended. An unchanged modified time rules out both an edit and a rename. | Reading the revision after the planner (a record stored with a key that is not final); dropping the revision read from the feed with no resolution step (a rename re-cards, GE-4); resolving before the verdicts (out-of-scope reads again); one sequential read per kept item (a page waits on each). |
 
 ## 10. Owner decision on the parser sandbox (resolved)
 

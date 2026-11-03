@@ -376,6 +376,9 @@ class ScriptedDrive(UserDrivePort):
     async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         raise NotImplementedError
 
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        raise NotImplementedError
+
     async def download_to_file(self, handle: DriveHandle, item_id: str, dest_path: str, max_bytes: int) -> int:
         raise NotImplementedError
 

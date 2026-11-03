@@ -140,7 +140,7 @@ from ..domain.drive_access import access_counts
 from ..domain.drive_index import (
     ACCURACY_VERSION, CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
     DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost,
-    Nudge, Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible,
+    Nudge, Priority, Reason, RecordState, Scope, TriageVerdict, inaccessible, with_stored_version,
 )
 from ..domain.drive_index_params import (
     CASCADE_OPS_PER_TICK, EMBED_FILE_BUDGET_S, EMBED_IN_FLIGHT, ENRICH_FILE_BUDGET_S, ENRICH_IN_FLIGHT,
@@ -578,6 +578,15 @@ class _ScopeView:
     @property
     def filtered(self) -> bool:
         return not self.scope.covers_everything
+
+
+@dataclass(frozen=True)
+class _Seen:
+    """One change of a page after the verdict pass (GOOGLE_DRIVE_RFC GE-36): the change as the planner takes it (a
+    deletion when out of scope), whether the scope filter put it out, and the folder probe read for it."""
+    change: DriveChange
+    out_of_scope: bool
+    probe: Optional[FolderProbe]
 
 
 # Per tick: the connection's scope; `filtered` is False when it covers everything (the App Folder default, or the whole
@@ -1188,7 +1197,12 @@ class DriveIndexingService:
 
         `relisting`: the changes are a re-listing of a never-stored subtree, so every new normal folder
         among them needs its own re-listing (§5.2). `nudged`: the items are named in a nudge, so a card
-        they are due for is class 0 even when first seen (§7.8)."""
+        they are due for is class 0 even when first seen (§7.8).
+
+        A change whose key is pending (`content_version_pending`, GOOGLE_DRIVE_RFC GE-36) is resolved before it is
+        planned, and only when it is planned as a live item: the stored key when the stored record has the change's
+        modified time (`with_stored_version`), else one batched `resolve_content_versions` for the page. On a filtered
+        scope the verdicts come first (`_verdicts`), so an item the filter puts out is never resolved."""
         view = _TICK_SCOPE.get()
         if view is not None and not view.filtered:
             view = None
@@ -1206,23 +1220,28 @@ class DriveIndexingService:
         collects: Set[str] = set()
         gone: Dict[str, str] = {}   # §27.9.4: a tombstone is `gone`, any other planner delete `unstored`
         page_parents = {c.item_id: c.parent_id for c in changes if not c.deleted}
-        for change in changes:
+        page = [with_stored_version(c, cache.get(c.item_id)) for c in changes]
+        seen: Optional[List[Optional[_Seen]]] = None
+        if any(c.content_version_pending and not c.deleted for c in page):
+            if view is not None:
+                seen = await self._verdicts(handle, view, ctx, page, page_parents, dict(cache), budget, summary,
+                                            relisting=relisting, nudged=nudged)
+            await self._resolve_page(handle, changes, page, seen)
+        for i, change in enumerate(page):
             out_of_scope = False
             stored = cache.get(change.item_id)
             if view is not None and (change.is_folder or (stored is not None and stored.is_folder)):
                 view.folder_changed = True   # E87: no drain on a tick whose feed changed the tree's folders
             try:
-                if view is not None and not change.deleted and self._scope_applies(change, cache, ctx):
-                    decided = await self._scope_verdict(handle, view, ctx, change, page_parents, cache, budget)
-                    if decided is False:
-                        # a deletion for the planner: a folder leaves through the DELETING cascade, a file is deleted;
-                        # the mirror's notice is `unstored`, never `gone` (the item is still on the drive)
-                        out_of_scope = True
-                        change = replace(change, deleted=True)
-                existing = cache.get(change.item_id)
-                parent = cache.get(change.parent_id) if not change.deleted else None
-                previous_parent = cache.get(existing.parent_id) if existing is not None else None
-                probe = await self._maybe_probe(handle, change, parent, existing, ctx, budget)
+                if seen is not None:
+                    looked = seen[i]
+                    if looked is None:
+                        continue   # failed in the verdict pass: logged and counted there
+                    change, out_of_scope, probe = looked.change, looked.out_of_scope, looked.probe
+                    existing, parent, previous_parent = self._neighbours(change, cache)
+                else:
+                    change, out_of_scope, probe, existing, parent, previous_parent = await self._observe_one(
+                        handle, view, ctx, change, page_parents, cache, budget)
                 plan = plan_observation(change, existing, parent, probe, ctx, previous_parent, nudged=nudged)
             except (DriveNotConnectedError, DriveThrottled, _OptedOut) as exc:   # systemic: ends the tick (§8.2)
                 logger.warning(f"[DriveIndex] observation of item {change.item_id} hit a systemic error for "
@@ -1233,30 +1252,139 @@ class DriveIndexingService:
                              exc_info=True)
                 summary["skipped"] = summary.get("skipped", 0) + 1
                 continue
-            if (view is not None and not relisting and existing is None and ctx.phase is not EpochPhase.ENUMERATING
-                    and plan.upsert is not None and plan.upsert.is_folder and plan.upsert.scope is Scope.NORMAL
-                    and plan.upsert.reason is not Reason.SCOPE_ANCESTOR):
-                # a folder new to a filtered index during a delta round (moved into the scope): its children were never
-                # stored, so it is listed once (the `relisting` rule below)
-                plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
-                                                     first_seen=True))
-            if (relisting and existing is None and plan.upsert is not None and plan.upsert.is_folder
-                    and plan.upsert.scope is Scope.NORMAL):
-                plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
-                                                     first_seen=True))
-            if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
-                    and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
-                plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
+            plan = self._adjusted(plan, existing, ctx, view is not None, relisting=relisting, nudged=nudged)
             if plan.delete_item_id is not None and existing is not None:
                 gone.update(self._mirror_notices([existing], GONE if change.deleted and not out_of_scope else UNSTORED))
             elif (existing is not None and existing.owner_note_id and plan.upsert is not None
                   and plan.upsert.item_id == existing.item_id and record_moved(existing, plan.upsert)):
                 note_snapshot_due(existing.owner_note_id, existing.item_id)   # notes RFC §7.5
             self._fold(plan, cache, writes, deletes, collects)
-        await self._observe_closed_children(handle, ctx, changes, cache, writes, deletes)
+        await self._observe_closed_children(handle, ctx, page, cache, writes, deletes)
         # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
         await self._commit(handle, list(writes.values()), deletes, collects=collects, gone=gone)
         summary["observed"] = summary.get("observed", 0) + len(changes)
+
+    @staticmethod
+    def _neighbours(change: DriveChange, cache: Mapping[str, Optional[DriveIndexRecord]],
+                    ) -> Tuple[Optional[DriveIndexRecord], Optional[DriveIndexRecord], Optional[DriveIndexRecord]]:
+        """(existing, parent, previous parent) of a change in the in-page view: the planner's record inputs."""
+        existing = cache.get(change.item_id)
+        parent = cache.get(change.parent_id) if not change.deleted else None
+        previous_parent = cache.get(existing.parent_id) if existing is not None else None
+        return existing, parent, previous_parent
+
+    async def _observe_one(self, handle: DriveHandle, view: Optional[_ScopeView], ctx: PlanContext,
+                           change: DriveChange, page_parents: Mapping[str, str],
+                           cache: Dict[str, Optional[DriveIndexRecord]], budget: _Budget,
+                           ) -> Tuple[DriveChange, bool, Optional[FolderProbe], Optional[DriveIndexRecord],
+                                      Optional[DriveIndexRecord], Optional[DriveIndexRecord]]:
+        """One change's scope verdict, planner inputs and folder probe against the in-page view: (the change as the
+        planner takes it, out of scope, probe, existing, parent, previous parent)."""
+        out_of_scope = False
+        if view is not None and not change.deleted and self._scope_applies(change, cache, ctx):
+            decided = await self._scope_verdict(handle, view, ctx, change, page_parents, cache, budget)
+            if decided is False:
+                # a deletion for the planner: a folder leaves through the DELETING cascade, a file is deleted; the
+                # mirror's notice is `unstored`, never `gone` (the item is still on the drive). A deletion has no key
+                # to resolve (GE-36): the item is never read for one.
+                out_of_scope = True
+                change = replace(change, deleted=True, content_version_pending=False)
+        existing, parent, previous_parent = self._neighbours(change, cache)
+        probe = await self._maybe_probe(handle, change, parent, existing, ctx, budget)
+        return change, out_of_scope, probe, existing, parent, previous_parent
+
+    @staticmethod
+    def _adjusted(plan: ObservationPlan, existing: Optional[DriveIndexRecord], ctx: PlanContext, filtered: bool, *,
+                  relisting: bool, nudged: bool) -> ObservationPlan:
+        """The tick's own scheduling on top of the planner's plan: a folder new to a filtered index or to a re-listing
+        is listed once; a nudged item's due card is class 0."""
+        if (filtered and not relisting and existing is None and ctx.phase is not EpochPhase.ENUMERATING
+                and plan.upsert is not None and plan.upsert.is_folder and plan.upsert.scope is Scope.NORMAL
+                and plan.upsert.reason is not Reason.SCOPE_ANCESTOR):
+            # a folder new to a filtered index during a delta round (moved into the scope): its children were never
+            # stored, so it is listed once (the `relisting` rule below)
+            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
+                                                 first_seen=True))
+        if (relisting and existing is None and plan.upsert is not None and plan.upsert.is_folder
+                and plan.upsert.scope is Scope.NORMAL):
+            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
+                                                 first_seen=True))
+        if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
+                and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
+            plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
+        return plan
+
+    async def _verdicts(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext, page: Sequence[DriveChange],
+                        page_parents: Mapping[str, str], scratch: Dict[str, Optional[DriveIndexRecord]],
+                        budget: _Budget, summary: Dict[str, int], *, relisting: bool,
+                        nudged: bool) -> List[Optional[_Seen]]:
+        """The scope verdict and folder probe of every change of a page, in feed order, against the in-page view the
+        planning pass of `_apply` builds (GE-36). A verdict reads what earlier changes of the page folded
+        (`_scope_applies` a parent's scope, `_scope_verdict` every record's parent), so each change is planned and
+        folded into `scratch` here too. A pending change is planned with its fallback key: what a later verdict or
+        probe reads of a record (presence, scope, parent, folder) never depends on a change key. Nothing is written,
+        noticed or resolved here. None: the change failed (logged and counted here, skipped by the planning pass)."""
+        writes: Dict[str, DriveIndexRecord] = {}
+        deletes: Set[str] = set()
+        out: List[Optional[_Seen]] = []
+        for change in page:
+            stored = scratch.get(change.item_id)
+            if change.is_folder or (stored is not None and stored.is_folder):
+                view.folder_changed = True   # E87, as in the planning pass
+            try:
+                looked, out_of_scope, probe, existing, parent, previous_parent = await self._observe_one(
+                    handle, view, ctx, change, page_parents, scratch, budget)
+                provisional = replace(looked, content_version_pending=False)
+                plan = plan_observation(provisional, existing, parent, probe, ctx, previous_parent, nudged=nudged)
+            except (DriveNotConnectedError, DriveThrottled, _OptedOut) as exc:   # systemic: ends the tick (§8.2)
+                logger.warning(f"[DriveIndex] observation of item {change.item_id} hit a systemic error for "
+                               f"{handle.user_id[:8]}: {type(exc).__name__}; the page is not applied")
+                raise
+            except Exception as exc:   # one bad item never stalls the user's index (§8.2)
+                logger.error(f"[DriveIndex] observation of item {change.item_id} failed for {handle.user_id[:8]}: {exc}",
+                             exc_info=True)
+                summary["skipped"] = summary.get("skipped", 0) + 1
+                out.append(None)
+                continue
+            self._fold(self._adjusted(plan, existing, ctx, True, relisting=relisting, nudged=nudged), scratch, writes,
+                       deletes)
+            out.append(_Seen(looked, out_of_scope, probe))
+        return out
+
+    async def _resolve_page(self, handle: DriveHandle, observed: Sequence[DriveChange], page: List[DriveChange],
+                            seen: Optional[List[Optional[_Seen]]]) -> None:
+        """Every pending change planned as a live item gets its final key in one batched port call (GE-36), written
+        back into `page` (no verdict pass) or `seen`. Any error is raised: the page is not applied, as when the feed
+        read itself fails."""
+        live: List[int] = []
+        batch: List[DriveChange] = []
+        entries: Dict[int, _Seen] = {}
+        for i, change in enumerate(page):
+            if seen is not None:
+                entry = seen[i]
+                if entry is None:
+                    continue   # failed in the verdict pass: never planned, never read
+                entries[i] = entry
+                change = entry.change
+            if change.content_version_pending and not change.deleted:
+                live.append(i)
+                batch.append(change)
+        from_stored = sum(1 for a, b in zip(observed, page) if a.content_version_pending and not b.content_version_pending)
+        unread = sum(1 for c in page if c.content_version_pending) - len(batch)
+        if batch:
+            try:
+                resolved = await self._drive.resolve_content_versions(handle, batch)
+            except Exception as exc:
+                logger.warning(f"[DriveIndex] change keys of {len(batch)} items not resolved for {handle.user_id[:8]}: "
+                               f"{type(exc).__name__}; the page is not applied")
+                raise
+            for i, change in zip(live, resolved):
+                if seen is None:
+                    page[i] = change
+                else:
+                    seen[i] = replace(entries[i], change=change)
+        logger.info(f"[DriveIndex] change keys for {handle.user_id[:8]}: {len(batch)} read, {from_stored} kept from the "
+                    f"stored record, {unread} not read (out of scope or failed)")
 
     # -- the scope filter (MULTI_DRIVE_RFC §11.3, E20) -------------------------------------------------------
 

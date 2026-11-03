@@ -128,6 +128,10 @@ class _MemDrive(UserDrivePort):
                             root_item_id="root",
                             drive_identity=f"{self.kind}:{handle.connection_id}")
 
+    async def resolve_content_versions(self, handle, changes):
+        self._check(handle)
+        return list(changes)
+
     async def get_change(self, handle, item_id):
         item = self._get(handle, item_id)
         return DriveChange(item_id=item.item_id, name=item.name, identity=item.identity)
@@ -270,7 +274,7 @@ class _Echo(UserDrivePort):
     get_root = get_item = list_children = search = download = upload = replace_content = move = None
     create_folder = delete = child_by_name = area_path = get_changes = get_change = None
     list_children_changes = download_to_file = get_thumbnail = media_source = capabilities = forget = None
-    outer_folders = None
+    outer_folders = resolve_content_versions = None
 
 
 _ROUTED = sorted(name for name, member in vars(UserDrivePort).items()
@@ -281,7 +285,7 @@ class TestT8:
     def test_every_handle_member_of_the_port_is_routed(self):
         assert set(_ROUTED) == {
             "get_root", "get_item", "list_children", "search", "download", "upload", "replace_content", "move",
-            "create_folder", "delete", "child_by_name", "area_path", "get_changes", "get_change",
+            "create_folder", "delete", "child_by_name", "area_path", "get_changes", "resolve_content_versions", "get_change",
             "list_children_changes", "download_to_file", "get_thumbnail", "media_source", "capabilities", "forget",
             "outer_folders"}
         assert not DriveProviderRouter.__abstractmethods__

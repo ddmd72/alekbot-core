@@ -5,8 +5,8 @@ GoogleDriveAdapter — UserDrivePort over Google Drive API v3, one Google accoun
 Public interface (the port's methods, in the port's order, then the module's constants):
     GoogleDriveAdapter(oauth_credentials, client_id, client_secret, *, connector: ConnectorSpec)
     get_root, get_item, list_children, search, download, upload, replace_content, move, create_folder, delete,
-    child_by_name, area_path, get_changes, get_change, list_children_changes, download_to_file, get_thumbnail,
-    media_source, outer_folders, capabilities, forget
+    child_by_name, area_path, get_changes, resolve_content_versions, get_change, list_children_changes,
+    download_to_file, get_thumbnail, media_source, outer_folders, capabilities, forget
     GOOGLE_CALL_TIMEOUT_S, GOOGLE_MAX_PATH_CHARS, MEDIA_TOKEN_MIN_LIFE, GOOGLE_EXPORT_MAX_BYTES
 
 Every call takes the `DriveHandle` of its connection: the grant is found by `handle.credential_id`; the token cache and
@@ -35,6 +35,9 @@ from `GoogleDriveTokenProvider`.
 - Writes (§3.6, GE-15): Drive has no conflict parameter; conflict modes are emulated by listing the parent and
   comparing `name_key` (oldest by `createdTime` first). `delete` trashes, never deletes (GE-19). Natives never take a
   content write (D10).
+- Natives' change keys (G6, GE-4, GE-36): `get_changes` reads no revision list; a native that needs one is returned
+  pending with its `m:` key and `resolve_content_versions` reads it for the items the indexer keeps. `get_change`,
+  `list_children_changes`, `child_by_name` and every item read still read it at once.
 - Secrets: tokens, thumbnail links and media URLs are never logged or put in an error (GE-17).
 - `area_path` is "/": an account drive has no area, its root is the drive root (the account-wide fake's convention;
   the RFC's "" would not be an absolute path, which the port asks for).
@@ -92,7 +95,7 @@ GOOGLE_EXPORT_MAX_BYTES = 10 * 1024 * 1024       # Google's export cap [DOC expo
 SIMPLE_UPLOAD_MAX = 5 * 1024 * 1024              # ≤ 5 MB multipart, above resumable [DOC uploads]
 UPLOAD_CHUNK = 8 * 1024 * 1024                   # a multiple of 256 KiB [DOC uploads]
 PAGE_SIZE = 1000                                 # [DOC files.list, changes.list]
-REVISION_CALLS_IN_FLIGHT = 4                     # G6: at most 4 revisions.list calls per page
+REVISION_CALLS_IN_FLIGHT = 4                     # G6: at most 4 revisions.list calls at once, per port call
 RETRIES = 3
 MAX_BACKOFF_S = 32.0                             # truncated exponential backoff [DOC limits]
 THROTTLE_HINT_S = 60.0
@@ -384,6 +387,20 @@ class GoogleDriveAdapter(UserDrivePort):
                 return await self._feed_page(s, handle, cur, root_id, identity)
             return await self._enumeration_page(s, handle, cur, root_id, identity)
 
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        """Each pending change's head revision (GE-36): one `revisions.list` read per pending item, at most
+        REVISION_CALLS_IN_FLIGHT at once; a head id gives `r:{id}`, a refused or empty list keeps the `m:` key. Changes
+        that are not pending are returned as they are, and nothing is called when none is pending."""
+        pending = [i for i, change in enumerate(changes) if change.content_version_pending]
+        if not pending:
+            return list(changes)
+        async with aiohttp.ClientSession() as s:
+            heads = await self._heads(s, handle, [changes[i].item_id for i in pending])
+        out = list(changes)
+        for i, head in zip(pending, heads):
+            out[i] = gm.resolved_change(changes[i], head)
+        return out
+
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         """One item by id; trashed is a deletion; 404 is DriveItemNotFoundError, never a deletion."""
         async with aiohttp.ClientSession() as s:
@@ -517,7 +534,7 @@ class GoogleDriveAdapter(UserDrivePort):
         changes: List[DriveChange] = []
         if corpus["c"] == "drive" and not cur.list_token:
             changes.append(gm.drive_root_change(corpus["id"], corpus["name"], self._id_space))
-        changes += await self._changes(s, handle, list(page.get("files") or []))
+        changes += self._feed_changes(list(page.get("files") or []))
         self._drop_paths(handle, changes)
         nxt = page.get("nextPageToken")
         complete = False
@@ -548,7 +565,7 @@ class GoogleDriveAdapter(UserDrivePort):
         rows = [row for row in (page.get("changes") or []) if isinstance(row, dict)]
         files = [row["file"] for row in rows
                  if row.get("changeType") != "drive" and not row.get("removed") and isinstance(row.get("file"), dict)]
-        built = iter(await self._changes(s, handle, files))
+        built = iter(self._feed_changes(files))
         changes: List[DriveChange] = []
         for row in rows:
             if row.get("changeType") == "drive":
@@ -656,18 +673,22 @@ class GoogleDriveAdapter(UserDrivePort):
                               raws: Sequence[Dict[str, Any]]) -> Dict[str, Optional[str]]:
         """The head revision id of each exportable native whose `canReadRevisions` is true (G6, GE-4), at most
         REVISION_CALLS_IN_FLIGHT calls at once. A refused or empty list is None (the item falls back to `m:`)."""
-        wanted = [raw for raw in raws if gm.is_native(raw) and gm.export_mime(raw) and gm.can_read_revisions(raw)
-                  and raw.get("trashed") is not True]
+        wanted = [raw for raw in raws if gm.head_revision_due(raw)]
         if not wanted:
             return {}
+        ids = [str(raw.get("id") or "") for raw in wanted]
+        return dict(zip(ids, await self._heads(s, handle, ids)))
+
+    async def _heads(self, s: aiohttp.ClientSession, handle: DriveHandle,
+                     file_ids: Sequence[str]) -> List[Optional[str]]:
+        """`_head_revision` of each id, in order, at most REVISION_CALLS_IN_FLIGHT at once."""
         gate = asyncio.Semaphore(REVISION_CALLS_IN_FLIGHT)
 
-        async def head(raw: Dict[str, Any]) -> Optional[str]:
+        async def head(file_id: str) -> Optional[str]:
             async with gate:
-                return await self._head_revision(s, handle, str(raw.get("id") or ""))
+                return await self._head_revision(s, handle, file_id)
 
-        heads = await asyncio.gather(*(head(raw) for raw in wanted))
-        return {str(raw.get("id") or ""): rev for raw, rev in zip(wanted, heads)}
+        return list(await asyncio.gather(*(head(file_id) for file_id in file_ids)))
 
     async def _head_revision(self, s: aiohttp.ClientSession, handle: DriveHandle, file_id: str) -> Optional[str]:
         last: Optional[str] = None
@@ -693,6 +714,11 @@ class GoogleDriveAdapter(UserDrivePort):
                        raws: Sequence[Dict[str, Any]]) -> List[DriveChange]:
         heads = await self._head_revisions(s, handle, raws)
         return [gm.to_change(raw, self._id_space, heads.get(str(raw.get("id") or ""))) for raw in raws]
+
+    def _feed_changes(self, raws: Sequence[Dict[str, Any]]) -> List[DriveChange]:
+        """The change feed's observations (GE-36): no revision read here; a native that needs one comes back pending
+        with its `m:` key, for `resolve_content_versions`."""
+        return [gm.to_change(raw, self._id_space, defer_head=True) for raw in raws]
 
     async def _items(self, s: aiohttp.ClientSession, handle: DriveHandle, raws: Sequence[Dict[str, Any]], *,
                      base: Optional[str] = None) -> List[DriveItem]:

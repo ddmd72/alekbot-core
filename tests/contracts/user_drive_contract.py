@@ -9,7 +9,8 @@ Cases: identities in the adapter's `id_space` (an item's nested in its drive's, 
 content version and content identity; the three conflict modes; 404 is not deletion; resync; recoverable delete; typed
 media facts only (`alias_of` included); every name of the portable set accepted; a `MediaSource` the sandbox may receive (no headers) or bytes that stream; capabilities (T-7: one case per
 value the world declares: the path limit, `drive_writable`, `feed_scope`); the path limit; two handles of one adapter share no cache, and `forget` drops one's own;
-`outer_folders` answers the parentless tops a world plants, or [] for a drive with one area (GOOGLE_DRIVE_RFC G8).
+`outer_folders` answers the parentless tops a world plants, or [] for a drive with one area (GOOGLE_DRIVE_RFC G8);
+resolving the feed's pending keys gives each item the key an id read gives (GE-36).
 A drive that is read-only by design (the eval fixture) declares `writable = False` and skips the cases that write beyond
 `upload`; a drive that cannot isolate connections declares `isolates_connections = False`.
 """
@@ -391,6 +392,19 @@ class UserDriveContract:
         await port.forget(a)                             # twice is harmless
         assert (await port.get_root(a)).is_folder        # the drive is still there; the next call reads afresh
         assert world.holds_state_for(a)
+
+    async def test_resolving_the_feed_gives_each_item_its_id_read_key(self, world: DriveWorld) -> None:
+        """GOOGLE_DRIVE_RFC GE-36: `resolve_content_versions` returns the feed's changes in order, none pending, a live
+        file with the key an id read gives it; an id read is never pending."""
+        port, h = world.port, world.handle
+        item = await port.upload(h, await _root(world), "r.txt", b"r", "text/plain")
+        changes, _ = await drain(port, h)
+        resolved = await port.resolve_content_versions(h, changes)
+        assert [c.item_id for c in resolved] == [c.item_id for c in changes]
+        assert not any(c.content_version_pending for c in resolved)
+        one = await port.get_change(h, item.item_id)
+        assert not one.content_version_pending
+        assert [c.content_version for c in resolved if c.item_id == item.item_id] == [one.content_version]
 
     async def test_outer_folders_are_parentless_tops_or_empty(self, world: DriveWorld) -> None:
         port, h = world.port, world.handle

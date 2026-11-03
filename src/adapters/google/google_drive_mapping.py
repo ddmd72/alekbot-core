@@ -4,6 +4,8 @@
   `DriveChange` / `DriveItem` fields of RFC §3.4: identities `{id_space}:{fileId}` with no account part (GE-2), the
   drive identity `{id_space}:account:{permissionId}` (GE-1), the export mime of a native (GE-6), `content_version`
   (GE-3, GE-4), `ContentIdentity("md5", …)` for binaries only (GE-5), `ItemAccess` from `capabilities`, typed media.
+  The change feed defers a native's head revision (GE-36): `to_change(defer_head=True)` emits it pending with the
+  `m:` key, `resolved_change` gives it its final key once the revision list was read (or refused).
 - Errors: `classify` maps an HTTP status and the error body's `reason` to one outcome class (§3.7). A 403 is read by its
   reason, never by its status alone: Google answers 403 both for a rate limit and for a refused permission (GE-18).
 - Queries: `escape_query` escapes `'` and `\\` with `\\` [DOC search].
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Tuple
 
@@ -104,6 +107,12 @@ def export_mime(raw: Mapping[str, Any]) -> Optional[str]:
 def can_read_revisions(raw: Mapping[str, Any]) -> bool:
     caps = _section(raw, "capabilities")
     return caps.get("canReadRevisions") is True
+
+
+def head_revision_due(raw: Mapping[str, Any]) -> bool:
+    """An exportable native, not trashed, whose `canReadRevisions` is true: its change key is `r:{head revision id}`,
+    which costs a `revisions.list` read (G6, GE-4). Anything else has its key from the resource alone."""
+    return is_native(raw) and export_mime(raw) is not None and can_read_revisions(raw) and raw.get("trashed") is not True
 
 
 def parent_of(raw: Mapping[str, Any]) -> str:
@@ -253,13 +262,16 @@ def access_of(raw: Mapping[str, Any]) -> ItemAccess:
 # -- neutral shapes --------------------------------------------------------------------------------------------------
 
 
-def to_change(raw: Mapping[str, Any], id_space: str, head_revision_id: Optional[str] = None) -> DriveChange:
+def to_change(raw: Mapping[str, Any], id_space: str, head_revision_id: Optional[str] = None, *,
+              defer_head: bool = False) -> DriveChange:
     """A `files` resource as an observation. A trashed item is a deletion (§3.3). `head_revision_id` is a native's
-    head revision when the caller read it (GE-4)."""
+    head revision when the caller read it (GE-4). `defer_head` (the change feed): an item whose key needs the revision
+    read (`head_revision_due`) comes back pending with its `m:` fallback key, resolved later by `resolved_change`."""
     file_id = str(raw.get("id") or "")
     identity = item_identity(id_space, file_id)
     if raw.get("trashed") is True:
         return DriveChange(item_id=file_id, deleted=True, identity=identity)
+    pending = defer_head and head_revision_due(raw)
     return DriveChange(
         item_id=file_id,
         parent_id=parent_of(raw),
@@ -267,7 +279,7 @@ def to_change(raw: Mapping[str, Any], id_space: str, head_revision_id: Optional[
         is_folder=is_folder(raw),
         size_bytes=size_of(raw),
         mime_type=mime_of(raw),
-        content_version=content_version(raw, head_revision_id),
+        content_version=content_version(raw, None if pending else head_revision_id),
         modified_at=parse_time(raw.get("modifiedTime")),
         fs_modified_at=None,
         web_url=str(raw.get("webViewLink") or ""),
@@ -276,7 +288,15 @@ def to_change(raw: Mapping[str, Any], id_space: str, head_revision_id: Optional[
         identity=identity,
         content_identity=content_identity(raw),
         media=media_facts(raw, id_space),
+        content_version_pending=pending,
     )
+
+
+def resolved_change(change: DriveChange, head_revision_id: Optional[str]) -> DriveChange:
+    """A pending change with its final key: `r:{head revision id}` when the list was read, else the `m:` fallback it
+    already carries (a refused or empty list). The caller passes pending changes only."""
+    version = native_content_version(head_revision_id, None) if head_revision_id else change.content_version
+    return replace(change, content_version=version, content_version_pending=False)
 
 
 def to_item(raw: Mapping[str, Any], path: str, id_space: str, drive_id: str,

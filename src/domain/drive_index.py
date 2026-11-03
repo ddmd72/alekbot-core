@@ -6,7 +6,7 @@ One record per drive item the sync keeps; chunks (Slice 2) are children of a rec
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum, IntEnum
 from typing import Mapping, Optional, Tuple
@@ -194,6 +194,10 @@ class DriveChange:
     identity: str = ""                        # `{id_space}:{…}`, unique across providers
     content_identity: Optional[ContentIdentity] = None   # None: the provider gave no hash
     media: DriveMediaFacts = DriveMediaFacts()
+    # The provider's change key is not final: the indexer resolves it (`UserDrivePort.resolve_content_versions`) before
+    # planning. `content_version` then holds the fallback key the adapter would use without the extra read, so a refused
+    # resolution keeps it. Only `get_changes` returns such a change; never stored (DriveIndexRecord has no such field).
+    content_version_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -472,6 +476,17 @@ class DriveIndexRecord:
 def inaccessible(rec: DriveIndexRecord) -> bool:
     """The bot cannot open this item (§26.2): a 404 on an id-addressed read of an item delta still lists."""
     return rec.inaccessible_since is not None
+
+
+def with_stored_version(change: DriveChange, stored: Optional[DriveIndexRecord]) -> DriveChange:
+    """A pending change (`content_version_pending`) whose stored record holds a change key and the same modified time
+    takes that key: neither an edit nor a rename happened, so the provider read that would resolve it is skipped.
+    Otherwise the change is returned as it is (a pending one still needs the read). A change or record without a
+    modified time proves nothing and keeps the read."""
+    if (not change.content_version_pending or stored is None or not stored.content_version
+            or change.modified_at is None or stored.modified_at != change.modified_at):
+        return change
+    return replace(change, content_version=stored.content_version, content_version_pending=False)
 
 
 @dataclass(frozen=True)

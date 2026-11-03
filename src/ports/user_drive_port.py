@@ -13,7 +13,7 @@ Every write may also raise DriveStorageFull (the drive is full) or DrivePathTooL
 exceeds the provider's limit).
 """
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Sequence
 
 from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_handle import DriveHandle
@@ -84,7 +84,18 @@ class UserDrivePort(ABC):
     async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         """One page of the change feed from `cursor` (None: a full enumeration from scratch).
         Raises DriveResyncRequired when the cursor expired, DriveThrottled when the provider keeps
-        throttling, DriveReauthRequired when the refresh token is rejected."""
+        throttling, DriveReauthRequired when the refresh token is rejected.
+
+        A change may come back pending (`content_version_pending`): its key costs the provider an extra read, which
+        the adapter leaves to `resolve_content_versions` so the caller pays it only for the items it keeps."""
+
+    @abstractmethod
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        """The same changes in the same order: each pending one with its final `content_version` and
+        `content_version_pending=False` (a refused or failed per-item read keeps the fallback key it carries), every
+        other one unchanged. Only `get_changes` may return pending changes; `get_change`, `list_children_changes`,
+        `child_by_name` and every item read return final keys. A systemic failure (DriveNotConnectedError,
+        DriveThrottled) is raised."""
 
     @abstractmethod
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
