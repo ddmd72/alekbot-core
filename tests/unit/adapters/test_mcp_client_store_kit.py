@@ -37,6 +37,7 @@ from src.domain.secret_digest import keyed_digest
 from src.services.mcp_authorization_service import MCPAuthorizationService, MCPInvalidGrant
 from tests.support.firestore_eval import EvalDb
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.mcp_gate_fakes import allowing_repos
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CLIENTS, CODES, REFRESH = "eval_mcp_oauth_clients", "eval_mcp_auth_codes", "eval_mcp_refresh_tokens"
@@ -77,7 +78,9 @@ class MCPStore:
             mcp_refresh_tokens_collection=REFRESH), cipher=AesGcmTestCipher(), digest_key=DIGEST_KEY)
         self.service = MCPAuthorizationService(
             self.repo, jwt_secret="kit-secret-that-is-at-least-32-characters", mcp_resource_uri="https://dev.example/mcp",
-            consent_base_url="https://dev.example/mcp/consent", allowed_redirect_hosts=("claude.ai",))
+            consent_base_url="https://dev.example/mcp/consent", allowed_redirect_hosts=("claude.ai",),
+            drive_resource_uri="https://dev.example/drive-mcp",
+            user_repo=allowing_repos("usr-1", "usr-x", "usr-cli-a", "usr-cli-b")[0], whitelist_repo=allowing_repos("usr-1", "usr-x", "usr-cli-a", "usr-cli-b")[1])
         provider = MCPSdkOAuthProvider(self.service)
         self.handler = TokenHandler(provider=provider, client_authenticator=ClientAuthenticator(provider))
 
