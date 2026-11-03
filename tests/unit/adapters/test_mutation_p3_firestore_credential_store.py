@@ -13,16 +13,6 @@ from tests.support.firestore_eval import EvalDb
 CREDS = "eval_credentials"
 
 
-class CountingCipher(AesGcmTestCipher):
-    def __init__(self) -> None:
-        super().__init__()
-        self.encrypts = 0
-
-    async def encrypt(self, plaintext: str, *, aad: str) -> str:
-        self.encrypts += 1
-        return await super().encrypt(plaintext, aad=aad)
-
-
 def _cred() -> OAuthCredential:
     return OAuthCredential(user_id="usr-1", account_id="acc-1", kind="gmail",
                            integration=ConnectorRegistry().get("gmail").integration,
@@ -32,12 +22,10 @@ def _cred() -> OAuthCredential:
 
 async def test_save_reruns_when_the_found_document_is_changed_by_a_concurrent_transaction():
     db = EvalDb()
-    cipher = CountingCipher()
-    repo = FirestoreCredentialStore(db, SimpleNamespace(credentials_collection=CREDS), cipher=cipher)
+    repo = FirestoreCredentialStore(db, SimpleNamespace(credentials_collection=CREDS), cipher=AesGcmTestCipher())
     credential_id = await repo.save(_cred())
-    per_run = cipher.encrypts   # one body run seals each secret once
-    assert per_run > 0
     doc_id = next(iter(db.collection(CREDS).docs))
-    db.interfere_on_txn_query(CREDS, doc_id, {"touched": True})
-    assert await repo.save(_cred()) == credential_id
-    assert cipher.encrypts == 3 * per_run   # the second save ran its body twice: the read was part of the transaction
+    db.interfere_on_txn_query(CREDS, doc_id, {"account.subject": "sub-other"})
+    second = await repo.save(_cred())
+    assert second != credential_id   # the re-run no longer finds the same account, so it creates a new credential
+    assert db.collection(CREDS).docs[doc_id]["account"]["subject"] == "sub-other"

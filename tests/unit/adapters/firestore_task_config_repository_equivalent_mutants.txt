@@ -1,1 +1,2 @@
 # Mutants a reviewer ruled equivalent for src.adapters.firestore_task_config_repository: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.
+af275077  # select-drop 'primary_list_id' (list_user_ids): `select([])` is an empty Projection, which Firestore answers with all fields; only snapshot ids are read, so the result is identical, and reads are billed per document, not per field; the only observable is the fake's executed-query log (implementation), same class as fact_store_kit_equivalent_mutants.txt select-drops
