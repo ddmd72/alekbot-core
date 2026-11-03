@@ -133,7 +133,7 @@ from ..domain.drive_enrichment_calls import (
 )
 from ..domain.drive_hints import chunk_text_hash, drop_if_far, ground, old_chunk, reuse_source
 from ..domain.drive_extraction import (
-    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, TriageImage, TriageResult,
+    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserUnavailable, TriageImage, TriageResult,
 )
 from ..domain.document_extraction import PARSER, READER, ExtractionStatus, chain_for, model_route
 from ..domain.drive_access import access_counts
@@ -296,7 +296,7 @@ class _FolderClosed(Exception):
 # outage, the embedding provider's errors, a transient index-store error and a wiring error. Anything else is this
 # file's: a counted per-file retry.
 _RUN_SYSTEMIC = (DriveNotConnectedError, DriveThrottled, DriveReauthRequired, LLMError, DriveIndexStoreUnavailable,
-                 _NotWired)
+                 _NotWired, ParserUnavailable)
 
 
 @dataclass
@@ -2907,6 +2907,10 @@ class DriveIndexingService:
                 outcome = await extractor.extract(ExtractionRequest(
                     path=path, name=readme.name, kind=sniffed, mime_type=readme.mime_type, user_id=handle.user_id,
                     account_id=self._account_ids.get(handle.connection_id, ""), item_id=readme.item_id))
+            except ParserUnavailable as exc:   # systemic: the tick ends, the README is not read as "no content"
+                logger.warning(f"[DriveIndex] README parse hit an unavailable parser for {handle.user_id[:8]}: "
+                               f"{exc.reason}")
+                raise
             except Exception as exc:   # the parser reports failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] README parse failed for {handle.user_id[:8]}: {exc}", exc_info=True)
                 return None
@@ -3094,6 +3098,18 @@ class DriveIndexingService:
                                    f"({charged.model_outages or MAX_ATTEMPTS}/{MAX_ATTEMPTS})")
                     return None, charged
                 return None, deferred(_cleared(run), _backoff_until(models), now, priority=cls)
+            except ParserUnavailable as exc:
+                # the sandbox cannot take the work: systemic, nothing is charged to the file and no model outage is
+                # recorded (the model is fine); what the reader spent before it hit this is already billed
+                logger.warning(f"[DriveIndex] parser unavailable ({exc.reason}) on item {run.item_id} of "
+                               f"{handle.user_id[:8]}; the tick ends")
+                if extractor_id == READER and exc.model_calls:
+                    _count_reader(models, summary, now, calls=exc.model_calls, cost=exc.model_cost,
+                                  pages=exc.pages_sent)
+                    await self._spend_usd(handle, UsageClass.READER.value, exc.model_cost, exc.model_fallback_cost,
+                                          exc.model_calls)
+                    await self._persist_usage(models)
+                raise
             except Exception as exc:   # the port reports per-file failures as outcomes; anything else is this file's
                 logger.error(f"[DriveIndex] {extractor_id} failed on item {run.item_id} of {handle.user_id[:8]}: {exc}",
                              exc_info=True)

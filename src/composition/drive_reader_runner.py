@@ -54,7 +54,8 @@ from ..infrastructure.drive_model_call import (
 )
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
-    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed,
+    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable,
+    PdfSplitFailed,
 )
 from ..domain.document_extraction import READER, ExtractionStatus
 from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES
@@ -210,6 +211,16 @@ class DriveReaderRunner(ContentExtractorPort):
         try:
             pages_total = await (self._splitter.pdf_page_count(request.path, deadline_at=request.deadline_at)
                                  if request.deadline_at is not None else self._splitter.pdf_page_count(request.path))
+        except ParserUnavailable as exc:
+            # the sandbox cannot take the call: systemic, never the file's outcome (the document service answers the
+            # unavailable note, the indexer ends its tick)
+            logger.warning(f"[DriveReader] page count: the parser is unavailable ({exc.reason})")
+            raise
+        except ParserBusy:
+            # the slot did not come free before the deadline: raised, not turned into a `split failed` outcome, so
+            # the document service answers the busy note (an outcome of timeout/"split failed: busy" matched nothing)
+            logger.warning("[DriveReader] page count: the parser is busy")
+            raise
         except PdfSplitFailed as exc:
             # the sandboxed parser's own verdict (encrypted, timeout, memory, ...) is the file's outcome (§24.3)
             logger.warning(f"[DriveReader] page count failed: {exc}")
@@ -241,6 +252,12 @@ class DriveReaderRunner(ContentExtractorPort):
                                         model_calls=run.total("calls"), model_cost=run.total("cost"),
                                         model_fallback_cost=run.total("fallback_cost"),
                                         charges_file=unavailable.charges_file) from unavailable
+        parser_down = next((e for e in failures if isinstance(e, ParserUnavailable)), None)
+        if parser_down is not None:
+            # the sandbox could not cut a window: systemic; what the other windows spent is billed (never an outcome)
+            raise ParserUnavailable(parser_down.reason, pages_sent=run.total("pages_sent"),
+                                    model_calls=run.total("calls"), model_cost=run.total("cost"),
+                                    model_fallback_cost=run.total("fallback_cost")) from parser_down
         if failures:
             first = failures[0]
             status, detail = S.ERROR, str(first)
@@ -290,6 +307,7 @@ class DriveReaderRunner(ContentExtractorPort):
         budget = request.text_budget
         stop = ""          # "", "budget", "deadline", "unavailable"
         unavailable: Optional[DriveModelUnavailable] = None
+        parser_down: Optional[ParserUnavailable] = None
         failure: Optional[BaseException] = None
         with tempfile.TemporaryDirectory(prefix="drive-reader-", dir=self._temp_root) as work:
             for i, win in enumerate(run.windows):
@@ -312,6 +330,8 @@ class DriveReaderRunner(ContentExtractorPort):
                     continue
                 if isinstance(exc, DriveModelUnavailable):
                     stop, unavailable = "unavailable", exc
+                elif isinstance(exc, ParserUnavailable):
+                    parser_down = exc
                 elif isinstance(exc, ParserBusy) or (isinstance(exc, PdfSplitFailed) and exc.detail == "deadline"):
                     stop = "deadline"
                 else:
@@ -319,6 +339,10 @@ class DriveReaderRunner(ContentExtractorPort):
                 break
         spend = dict(pages_sent=run.total("pages_sent"), model_calls=run.total("calls"),
                      model_cost=run.total("cost"), model_fallback_cost=run.total("fallback_cost"))
+        if parser_down is not None:
+            raise ParserUnavailable(parser_down.reason, pages_sent=spend["pages_sent"],
+                                    model_calls=spend["model_calls"], model_cost=spend["model_cost"],
+                                    model_fallback_cost=spend["model_fallback_cost"]) from parser_down
         finished = [w for w in run.windows if w.finished]
         if stop == "unavailable" and not finished:
             if unavailable is None:
