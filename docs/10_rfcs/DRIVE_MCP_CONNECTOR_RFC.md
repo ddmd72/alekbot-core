@@ -399,6 +399,29 @@ Setting every drive to "Nothing" is the owner's revoke lever (D10): access is re
 One neutral code line that never says whether the item exists (proposed wording in §13). The chat lines
 (`OUTSIDE_SCOPE_LINE` and the rest, `drive_access_policy.py:60-82`) are not shown to the connector.
 
+### 7.8 As built (slice 3): the adopted deltas
+
+- **Hidden drives on two more reads.** `DriveConnectionService.status` and `connection_of_tag` are filtered under the
+  audience too (the tag lookup feeds the search's mount names and the notes' paths); `get` is never filtered.
+- **The `/` listing and the connector-tops head are code-built** (`domain/drive_connector_listing.py`): each visible
+  drive shows "connector reads everything the bot sees on it" or "connector reads only <paths>", never its write folder
+  or scope; a drive top outside connector access lists the connector folders under "Folders shared with this connector
+  on {drive}:". No token key.
+- **`NOT_CONNECTED` result key.** A not-connected outcome answers `MCP_DRIVE_RESULT_TEXTS`'s own `NOT_CONNECTED` line
+  (no drive shared with the connector, or one needs reconnecting), not the chat's "not connected" text. Deploy order:
+  upload the token first, then deploy (the key set is checked for equality, §5.3).
+- **`access_note` under the audience** returns nothing for an item outside connector access (the index chain, fail
+  closed), so the "the bot cannot open this file" sentence never reveals that such an item exists.
+- **Stored form.** `connector_access` is stored as `{"mode": "whole"}` / `{"mode": "folders", "folder_ids": [...]}`, null
+  or absent for nothing; a damaged value reads as nothing with an ERROR (never a raise into chat's reads).
+- **Two more Cabinet refusals** (code lines beside the strand line): a folder outside the scope ("A folder the connector
+  reads must be inside the folders {drive} indexes.") and the drive's root sent as a folder ("Choose "Everything the bot
+  sees on this drive" instead of the drive's root.").
+- **An unreadable ancestor is not on the provider chain under the audience.** A parent that answers "not found" to an
+  id read ends the walk and is left out of the chain, as the index admit never sees an unrecorded ancestor and a real
+  provider names no parent the account cannot read; so a connector folder closed to the bot admits nothing below it.
+- The `DRIVE_MCP_TOOLS_ENABLED` knob is gone: the tools are always registered, and every drive starts at "Nothing".
+
 ## 8. One-time download link (slice 4)
 
 The provider's file URL (what chat's recording link returns, `drive_operations.py:1042-1050`) opens only for someone
@@ -476,8 +499,8 @@ Vertical, each deployable alone; the connector shows no drive content until slic
    offline test shows the snapshot tokens cover every key; one live call per tool from claude.ai and from Claude Code; a
    token upload changes a description in a new conversation within 60 s with no deploy (this also measures claude.ai's
    list caching); a missing key leaves the app unbuilt and logs an ERROR.
-3. **Connector access.** The field, the audience variable, the rule, the fail-closed index admit, mount hiding, the
-   `get_note` check, the Cabinet block and route; the knob removed. *Done:* fake-provider acceptance for nothing /
+3. **Connector access** (built; deltas in §7.8). The field, the audience variable, the rule, the fail-closed index
+   admit, mount hiding, the `get_note` check, the Cabinet block and route; the knob removed. *Done:* fake-provider acceptance for nothing /
    folders / whole / a folder moved out / an unknown ancestor / a shared-drive folder; live, a file outside the chosen
    folder (for example the 12 Oak Street bathroom invoice when only "R&D" is chosen) is neither found, opened, listed,
    quoted nor note-read.

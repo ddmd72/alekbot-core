@@ -609,12 +609,6 @@ indexer does no notes work. Reads go on (the open header, the deleted-files sear
 the local name `DRIVE_NOTES_ENABLED` for the deploy, and never set it by hand with `services update` (`--set-env-vars`
 replaces it at the next deploy).
 
-**Drive connector tools** (`docs/10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md` §11 slice 2, until slice 3 removes it).
-`DRIVE_MCP_TOOLS_ENABLED` (main service, `os.getenv`, default off; `1`/`on`/`true`/`yes` turn it on): off, `/drive-mcp`
-lists no tool and reads no token; on, it serves the six read tools and needs `MCP_DRIVE_TOOL_TEXTS` and
-`MCP_DRIVE_RESULT_TEXTS` uploaded first (a missing or invalid token leaves `/drive-mcp` unbuilt, with an ops alert). It
-is set by hand with `services update --update-env-vars`, so every deploy turns it off again (`--set-env-vars`).
-
 **Sandbox render.** Back to in-process: `SANDBOX_RENDER_DEV=inprocess` (or empty) and `make deploy`; the render service can
 stay up unused. **Hard stop:** remove the caller's `roles/run.invoker` binding on the render service. Never empty
 `SANDBOX_RENDER_CALLERS_DEV` to stop it: an empty caller list refuses the new revision, so the old one keeps serving.

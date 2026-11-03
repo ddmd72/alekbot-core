@@ -123,8 +123,10 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   (claude.ai) through six tools (`search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`,
   `get_note`) over the same `DriveOperations`, with no model of ours in the loop. Its open never runs the paid model
   reader: a scan or thin-text PDF answers a line pointing to its passages, an image and an untranscribed recording
-  answer before any download. Today the tools are behind the deploy knob `DRIVE_MCP_TOOLS_ENABLED` (off by default);
-  per-drive Cabinet connector access, which limits what it can read, is slice 3.
+  answer before any download. What it reads is each drive's Cabinet **Connector access**
+  (`DriveConnection.connector_access`: nothing by default, the whole scope, or folders inside it), checked under the
+  connector audience (`domain/drive_audience.py`) at `UserDriveService.check_access`, the search's index admit (fail
+  closed) and the connection reads (a drive with nothing shared is hidden).
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
