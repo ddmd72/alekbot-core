@@ -32,7 +32,8 @@ class FakeSplitter:
     """The parser's lazy page-window ops (§24.3). `pdf_page_count` answers `pages_total` (or raises `error`); every
     `cut_pdf_window` writes `<source>|w<n>#<pages>` to the caller's path, where `n` is the window of
     MODEL_PAGES_PER_CALL pages the cut starts in; a later cut inside that window is a half, `|w<n>|w1` (it starts
-    the window) or `|w<n>|w2`. Records every count and cut."""
+    the window) or `|w<n>|w2`. A half is cut from its window's file at an offset relative to that window; the fake
+    maps it back to the source and its pages. Records every count and cut (in source pages)."""
 
     def __init__(self, pages_total: int, truncated: bool = False, error: Exception = None) -> None:
         self.pages_total = pages_total
@@ -40,6 +41,7 @@ class FakeSplitter:
         self.counts: List[str] = []
         self.cuts: List[Tuple[int, int]] = []
         self._windows_cut: set = set()
+        self._window_files: dict = {}   # window file -> (source path, its first page in the source)
 
     @property
     def calls(self) -> List[object]:
@@ -54,12 +56,16 @@ class FakeSplitter:
 
     async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
         for (first_page, page_count), out_path in zip(windows, out_paths):
+            self._window_files[out_path] = (path, first_page)
             if deadline_at is None:
                 await self.cut_pdf_window(path, first_page, page_count, out_path)
             else:
                 await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
 
     async def cut_pdf_window(self, path, first_page, page_count, out_path):
+        if path in self._window_files:   # a half, cut from its window's file at an offset relative to that window
+            path, base = self._window_files[path]
+            first_page += base
         self.cuts.append((first_page, page_count))
         source = Path(path).read_bytes().decode()
         window = first_page // MODEL_PAGES_PER_CALL + 1

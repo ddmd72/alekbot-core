@@ -35,6 +35,8 @@ class FakeCutter:
         self.counts: List[str] = []
         self.cuts: List[Tuple[int, int]] = []
         self.on_disk: List[int] = []
+        self.from_window: List[Tuple[int, int]] = []   # the cuts made from a window's file (halves), in source pages
+        self._window_files: dict = {}                  # window file -> its first page in the source
 
     async def pdf_page_count(self, path):
         self.counts.append(path)
@@ -44,12 +46,16 @@ class FakeCutter:
 
     async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
         for (first_page, page_count), out_path in zip(windows, out_paths):
+            self._window_files[out_path] = first_page
             if deadline_at is None:
                 await self.cut_pdf_window(path, first_page, page_count, out_path)
             else:
                 await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
 
     async def cut_pdf_window(self, path, first_page, page_count, out_path):
+        if path in self._window_files:   # a half, cut from its window's file at an offset relative to that window
+            first_page += self._window_files[path]
+            self.from_window.append((first_page, page_count))
         self.cuts.append((first_page, page_count))
         if first_page == self.cut_error_at:
             await asyncio.sleep(0.05)   # the windows before it answer first
@@ -140,7 +146,7 @@ async def test_a_cut_failure_mid_file_is_the_outcome_and_keeps_the_usage(tmp_pat
     assert out.pages_sent == 20 and out.model_calls == 2 and out.model_cost > 0
 
 
-async def test_an_output_limited_window_is_halved_from_the_source(tmp_path):
+async def test_an_output_limited_window_is_halved_from_its_window_file(tmp_path):
     def handler(request):
         if _key(request) == "11-20":
             return reply(text="{", finish=FinishReason.MAX_TOKENS)
@@ -150,6 +156,7 @@ async def test_an_output_limited_window_is_halved_from_the_source(tmp_path):
     runner, _, work = _runner(handler, cutter, tmp_path)
     out = await runner.extract(_request(tmp_path))
     assert (10, 5) in cutter.cuts and (15, 5) in cutter.cuts
+    assert sorted(cutter.from_window) == [(10, 5), (15, 5)]
     assert out.text == "text of 1-10\n\ntext of 11-15\n\ntext of 16-20\n\ntext of 21-25"
     assert max(cutter.on_disk) <= MODEL_IN_FLIGHT and list(work.iterdir()) == []
 

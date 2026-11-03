@@ -24,21 +24,27 @@ S = ExtractionStatus
 
 
 class _Cutter:
+    """`cuts` holds every cut in the source's 1-based-page terms: a half is cut from its window's file at an offset
+    relative to that window, so the fake maps it back to the source pages it holds."""
+
     def __init__(self, pages_total):
         self.pages_total = pages_total
         self.cuts: List[tuple] = []
+        self._window_files: dict = {}   # window file -> its first page in the source
 
     async def pdf_page_count(self, path):
         return self.pages_total
 
     async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
         for (first_page, page_count), out_path in zip(windows, out_paths):
+            self._window_files[out_path] = first_page
             if deadline_at is None:
                 await self.cut_pdf_window(path, first_page, page_count, out_path)
             else:
                 await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
 
     async def cut_pdf_window(self, path, first_page, page_count, out_path):
+        first_page += self._window_files.get(path, 0)
         self.cuts.append((first_page, page_count))
         last = min(first_page + page_count, self.pages_total)
         with open(out_path, "wb") as fh:
