@@ -138,7 +138,7 @@ def test_env_has_exactly_the_light_names():
     env = re.search(r"--set-env-vars=\"?([^\s\"]+)", _deploy_flags()).group(1)
     pairs = dict(p.split("=", 1) for p in env.split(","))
     assert set(pairs) == _ALLOWED_ENV_NAMES, set(pairs)
-    assert pairs["SANDBOX_SERVICE"] == "light" and pairs["SANDBOX_RECYCLE"] == "always"
+    assert pairs["SANDBOX_SERVICE"] == "light" and pairs["SANDBOX_RECYCLE"] == "abnormal"
 
 
 def test_no_secret_no_public_binding_no_invoker_bypass_no_literals():
@@ -196,7 +196,7 @@ def test_with_the_service_account_set_build_and_deploy_carry_the_light_values(tm
     assert proc.returncode == 0
     assert "gcloud run deploy alek-bot-sandbox-light-dev" in calls
     assert f"--service-account={_SA}" in calls
-    for token in ("SANDBOX_SERVICE=light", "SANDBOX_RECYCLE=always", "SANDBOX_URL=u-placeholder",
+    for token in ("SANDBOX_SERVICE=light", "SANDBOX_RECYCLE=abnormal", "SANDBOX_URL=u-placeholder",
                   "SANDBOX_CALLERS_MAIN=m-placeholder", "SANDBOX_CALLERS_INDEXER=i-placeholder",
                   "--max-instances=5", "--timeout=900", "--concurrency=1", "size-limit=320Mi"):
         assert token in calls, token

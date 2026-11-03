@@ -73,6 +73,6 @@ case "$mode" in
       --timeout=900 \
       --add-volume=name=sandbox-work,type=in-memory,size-limit="$WORK_VOLUME_SIZE" \
       --add-volume-mount=volume=sandbox-work,mount-path=/work \
-      --set-env-vars="APP_ENV=development,SANDBOX_SERVICE=light,SANDBOX_RECYCLE=always,SANDBOX_URL=${SANDBOX_LIGHT_URL:-},SANDBOX_CALLERS_MAIN=${SANDBOX_LIGHT_CALLERS_MAIN:-},SANDBOX_CALLERS_INDEXER=${SANDBOX_LIGHT_CALLERS_INDEXER:-}"
+      --set-env-vars="APP_ENV=development,SANDBOX_SERVICE=light,SANDBOX_RECYCLE=abnormal,SANDBOX_URL=${SANDBOX_LIGHT_URL:-},SANDBOX_CALLERS_MAIN=${SANDBOX_LIGHT_CALLERS_MAIN:-},SANDBOX_CALLERS_INDEXER=${SANDBOX_LIGHT_CALLERS_INDEXER:-}"
     ;;
 esac

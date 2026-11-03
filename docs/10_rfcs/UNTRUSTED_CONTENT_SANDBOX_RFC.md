@@ -222,8 +222,11 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
   process group. Different ops use different uids where cheap. The result goes back through a file the child writes, which the
   server reads and **validates as an envelope only** (§4.7); the server never interprets binary output.
 - **`concurrency=1`, `max-instances=N`** (§11). One request per container at a time.
-- **Recycle (`SANDBOX_RECYCLE`, O5):** `always` (default): the instance serves **one** request and ends; `never` (local only); no other value exists
-  (`sandbox_supervisor.py:30`). **`always` applies to every op, chat uploads and PNG widgets included (O5)**.
+- **Recycle (`SANDBOX_RECYCLE`, O5):** `always` (default; the render service): the instance serves **one** request and ends; `abnormal` (the light/parse service only, owner decision 2026-11-03): a
+  normal request, any `ok` answer including a parser status such as `no_text` or `encrypted` inside it, keeps the instance warm, and a request that ends in anything else after payload bytes
+  were written (child out of memory, crash, timeout, a non-ok engine outcome, an oversize or too-slow body, an engine exception, a cancel before an answer, or any process still alive under the engine uid after an `ok` child ended: it escaped the child's process group, is killed, and the instance ends with one ERROR line) recycles it as `always` does; a client disconnect while an `ok` body streams does not recycle (nothing is left behind), so no instance serves a second
+  request after an abnormal one (I2); `never` (local only). `abnormal` is refused for the render family. Why: with `always` every request was a 10-25 s cold start and Cloud Run sometimes routed the next
+  request to the exiting instance (its own 503, no sandbox header). **`always` still applies to every render op (O5)**.
   The recycling is done by a **supervisor that never touches untrusted bytes** (a separate process from the one reading payload files): the server finishes the response, then the supervisor
   stops the instance. An instance holding a request does not accept a second one.
 - **Draining is visible to the caller.** Before the last response byte the server marks the connection as ending (HTTP/2 `GOAWAY`, or `Connection: close`). A request that reaches an
@@ -303,7 +306,8 @@ The statuses **do not change**. The sandbox returns the ones callers already kno
 | `BUDGET_EXHAUSTED` | never from the sandbox | it is the reader's status |
 | request too large (413) | `TOO_LARGE` | |
 | 503 `recycling` | retried once at once (2 attempts, short jitter); still recycling -> `SandboxUnavailable(reason=busy)`; **never charged to the file** | §4.6 |
-| 429, other 503 (`reason=busy`, no retry), connection refused, an instance not started (`reason=unavailable`, no retry) | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
+| 503 **without** the sandbox's outcome header (Cloud Run's own "malformed response or connection error" from an instance that was exiting) | a lost instance: the same one retry as `recycling` (one budget per call, never past `deadline_at`); lost again -> `SandboxUnavailable(reason=unavailable)` with a WARNING line; **never charged to the file** | §4.6 |
+| 429, other 503 that carries the sandbox's own header (`reason=busy`, no retry), connection refused, an instance not started (`reason=unavailable`, no retry) | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
 | 401 / 403 | `SandboxMisconfigured`: ERROR log, systemic defer | a deployment mistake, not a file |
 | connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance (a retry starts only with time left before the caller's deadline, its wall lowered to that time); if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
 | a malformed envelope | `ERROR` | |
@@ -398,7 +402,7 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | O2 | All of C1-C6 move there; LLM calls and platform APIs never do | owner (scope), author (list) |
 | O3 | The drive parser's residual ends when the drive parsers move (S3) | owner |
 | O4 | Transcripts for a second user wait for the media part (S5) | owner |
-| **O5** | **Every request runs on a fresh instance (`recycle=always`) for all ops, chat uploads and PNG widgets included; +1-3 s accepted; real latency measured after deploy** (§4.6) | owner (2026-10-20) |
+| **O5** | **Every request runs on a fresh instance (`recycle=always`) for all ops, chat uploads and PNG widgets included; +1-3 s accepted; real latency measured after deploy** (§4.6). **Amended 2026-11-03: the light (parse) service uses `abnormal` (fresh instance only after an abnormal request); the render service keeps `always`** | owner (2026-10-20, 2026-11-03) |
 | **O6** | **No egress for pulling large files.** HTTP/2 end to end is tried for bodies above 32 MiB; if it fails, 32 MiB stays a known limitation for parsed files, with no signed-URL fallback (§4.7) | owner (2026-10-20) |
 | **O7** | **The media op may have egress, only through the in-sandbox loopback proxy:** host allowlist by name suffix (never address pinning; raw-IP URLs refused; DNS per request); no redirects; the allowlist is configuration built from the real download-URL hosts seen in the transcripts measurement (drive RFC §27 T0), extendable without a code change (§4.5) | owner (2026-10-20) |
 | **O8** | **Slice order and prerequisite:** `render.docx`, then the other renderers, then drive parsers, then chat uploads, then media; each part is enabled only after its caller's own service account exists (§7, §4.4). The parse slices' place is amended by O12 | owner (2026-10-20) |

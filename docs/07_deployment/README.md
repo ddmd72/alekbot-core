@@ -421,7 +421,7 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
 (`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
 concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (size
 fixed in `scripts/infrastructure/cloudbuild_sandbox_render.sh`; changed by editing that script, not through `.env`). One
-request per instance (`SANDBOX_RECYCLE=always`). The main service uses it only when `SANDBOX_RENDER=sandbox`; the default
+request per instance (`SANDBOX_RECYCLE=always`, unchanged). The main service uses it only when `SANDBOX_RENDER=sandbox`; the default
 is `inprocess`.
 
 | `.env` key | Substitution | Meaning |
@@ -469,7 +469,7 @@ before step 1.
 allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU, concurrency 1, min 0, max 5 (a cost guard), timeout 900 s,
 `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
 response windows up to 101 MiB + one child file up to 64 MiB; fixed in `scripts/infrastructure/cloudbuild_sandbox_light.sh`,
-changed by editing that script). One request per instance (`SANDBOX_RECYCLE=always`), `SANDBOX_SERVICE=light`. No runtime
+changed by editing that script). The instance stays warm after a normal request and is recycled only after an abnormal one (`SANDBOX_RECYCLE=abnormal`, light only; RFC §4.6), `SANDBOX_SERVICE=light`. No runtime
 calls it until the parse switch ships; the deploy steps only create the service.
 
 | `.env` key | Substitution | Meaning |
