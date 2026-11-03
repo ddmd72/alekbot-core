@@ -118,6 +118,8 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   deleted recordings from the mirror ledger, even with drive search off; a default search never returns an archived
   transcript. A ref to a file of the mirror opens from the pinned store entry, capped like any transcript. The Cabinet
   says that `_Transcripts` and its Archive stay on the drive after an indexing opt-out (wording to be reviewed by the owner).
+- **Drive MCP connector, proposed** ([DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md)): the
+  drive's read tools for an outside MCP client (claude.ai), read-only, limited per drive to the Cabinet's connector access.
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
