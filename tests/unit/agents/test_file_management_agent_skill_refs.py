@@ -103,8 +103,7 @@ class TestOpenFileSkillRef:
         mock_conversion.resolve_bytes.assert_not_called()
 
     async def test_open_file_skill_ref_not_found_message(self, agent, mock_conversion):
-        mock_conversion.resolve_content = AsyncMock(
-            side_effect=FileNotFoundError("Skill 'fs' has no file 'r.md'"),
+        mock_conversion.open = AsyncMock(side_effect=FileNotFoundError("Skill 'fs' has no file 'r.md'"),
         )
         msg = _make_message(Intent.OPEN_FILE, file_ref="skill:fs/r.md")
 

@@ -17,6 +17,7 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_service_connections import seed_user, seeded_connections
+from tests.support.opened_file import opened_body
 
 MIB = 1024 * 1024
 PNG = DriveItem(item_id="i2", name="a.png", path="a.png", is_folder=False, size_bytes=4 * MIB, mime_type="image/png")
@@ -48,7 +49,7 @@ def _msg(ctx, **payload):
 def conversion():
     c = AsyncMock(spec=FileConversionService)
     c.resolve_bytes.return_value = b"%PDF-1.4"
-    c.resolve_content.return_value = "converted text"
+    c.open.return_value = opened_body("converted text")
     return c
 
 
@@ -93,7 +94,7 @@ class TestStoredFiles:
     async def test_a_pdf_not_declared_is_text_though_images_are(self, agent, conversion):
         resp = await agent.execute(_msg(_ctx(IMAGES), file_ref="lease.pdf"))
         assert "file_data" not in resp.metadata
-        conversion.resolve_content.assert_awaited_once()
+        conversion.open.assert_awaited_once()
 
     async def test_a_file_above_the_declared_bytes_takes_the_converter(self, agent, conversion):
         conversion.resolve_bytes.return_value = b"x" * (IMAGES.max_bytes + 1)

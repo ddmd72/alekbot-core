@@ -9,6 +9,7 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search import STATUS_AMBIGUOUS_FOLDER, DriveSearchResult
 from src.domain.user_drive import DriveItem, ListOutcome
 from src.infrastructure.drive_operations import MAX_VIDEO_ATTACH_BYTES, DriveOperations
+from tests.support.opened_file import opened_body
 from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
@@ -49,9 +50,9 @@ class FakeConversion:
         self.byte_reads.append(ref)
         return self.data
 
-    async def resolve_content(self, ref, user_id):
+    async def open(self, ref, user_id, account_id, **kw):
         self.text_reads.append(ref)
-        return self.text
+        return opened_body(self.text)
 
 
 class FakeNotification:
