@@ -66,6 +66,7 @@ from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import Nudge
+from ..domain.drive_media_source import MediaSource
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_mount_table import MountTable
 from ..domain.drive_mounts import canonical_path
@@ -432,6 +433,16 @@ class UserDriveService:
         item = await self._drive.get_item(handle, item_id)
         await self.check_access(handle, AccessOp.READ, item=item)
         return item
+
+    async def media_source(self, handle: DriveHandle, item_id: str) -> Tuple[DriveItem, MediaSource]:
+        """The file's metadata and where its bytes stream from, once the policy allows READ of it under the current
+        audience (`get_item`): the one way the one-time link reaches bytes (DRIVE_MCP_CONNECTOR_RFC §8). DrivePathError
+        for a folder; DriveItemNotFoundError for an item with no downloadable content. The source's url and headers are
+        secrets: never logged."""
+        item = await self.get_item(handle, item_id)
+        if item.is_folder:
+            raise DrivePathError(f"'{await self._shown(handle, item.path)}' is a folder, not a file")
+        return item, await self._drive.media_source(handle, item_id)
 
     async def move(self, handle: DriveHandle, item_id: str, folder: Optional[str], new_name: Optional[str]) -> MoveOutcome:
         if not (folder and folder.strip()) and not (new_name and new_name.strip()):

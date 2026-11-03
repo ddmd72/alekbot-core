@@ -4,9 +4,10 @@ class: mcp_texts
 metadata:
   description: Drive MCP connector — the result lines by key (status and what to
     do, every reading line R_*, the withheld-media lines W_*, the too-long route,
-    the next-page line, the refusal line and its guidance, the size-guard line),
+    the next-page line, the refusal line and its guidance, the size-guard line,
+    the one-time download link line LINK),
     formatted by code with the chat constants' placeholders (DRIVE_MCP_CONNECTOR_RFC
-    §5.2, §5.5, §6.2, §7.7). A draft, tuned live; no profile references it.
+    §5.2, §5.5, §6.2, §7.7, §8). A draft, tuned live; no profile references it.
   override_by:
   - SYSTEM
   - AGENT
@@ -52,11 +53,14 @@ Tell the user it is not available through this connector. The user chooses the f
 ### OVER_SIZE
 Cut at the connector's size limit: the rest of this result is not shown. Narrow the request (a folder, fewer files, a more specific question), or read a later part with read_passages.
 
+### LINK
+Download link (opens once, within five minutes): {link}
+
 ### W_RECORDING_UNTRANSCRIBED
-A recording (audio or video) that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The recording itself cannot be fetched through this connector.
+A recording (audio or video) that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The file itself: the download link below; when there is none, call get_download_link with this file's ref.
 
 ### W_IMAGE
-An image: this connector does not return images. Its description is in its search card and in its passages (find_passages with file_refs set to this file). The image itself cannot be fetched through this connector.
+An image: this connector does not return images. Its description is in its search card and in its passages (find_passages with file_refs set to this file). The file itself: the download link below; when there is none, call get_download_link with this file's ref.
 
 ### W_SCAN
 A scanned PDF, or one whose text layer is missing or garbled: its text is not returned here. Read its passages instead (find_passages with file_refs set to this file): they hold the index's reading of the scan. Say that a value from them was read from an image.

@@ -124,7 +124,14 @@ connector runs as before; the AS fixes below live in the shared service, so a sw
 7. **Grant lifetime.** As today, 30 days from the last refresh (sliding, D9): no change in code.
 8. **Grant id (E13, slice 4).** A `grant_id` minted at code exchange (or at the first rotation of a refresh token stored
    without one), copied through every rotation and into the access token (`gid`); the link stores it and checks at
-   fetch that the grant still has an active refresh token.
+   fetch that the grant still has an active refresh token. Stored as a field of the refresh token
+   (`MCPRefreshToken.grant_id`); "an active refresh token" is `MCPClientRepository.has_active_grant(grant_id, now)`: some
+   refresh token with that `grant_id`, `revoked_at` null and `expires_at` > now (two equality filters, served by the
+   automatic single-field indexes). `MCPAuthorizationService.grant_allowed(user_id, grant_id)` adds the whitelist check.
+   An access token minted before the grant id existed carries no `gid`: for at most its hour, `get_download_link`
+   answers the neutral refusal and the withheld lines carry no link. Rotation revokes, then saves (a save-first order
+   would let a replayed old token mint again), so a fetch in the milliseconds between the two is refused; the client
+   asks again.
 
 ## 4. The tool set, read-only by absence
 
@@ -336,8 +343,8 @@ embedded PDFs are reported ignored by Anthropic clients, and `structuredContent`
   `"scan"` code, the "read its passages" line.
   The codes are `recording_untranscribed`, `image` and `scan` (`src/domain/drive_withheld.py`); a non-drive ref carries
   none (§4.3 b).
-- Until slice 4 the image/video/recording lines say the file itself cannot be fetched through the connector; slice 4
-  swaps in the link.
+- Slice 4 issues a one-time link (§8) after the image and untranscribed-recording lines (the `LINK` line); when the issue
+  fails or the token carries no grant id, the line tells the client to call `get_download_link`.
 
 ## 7. Connector access per drive
 
@@ -407,16 +414,32 @@ not look like a credential to the client's fetch filter) with server-side state:
 `expires_at` (+5 min), `used_at`, `purge_after`. It is not a reuse of `/f/<token>` (`src/web/file_access_app.py`:
 GCS-only, long-lived, a JWT).
 
+- **State:** `<prefix>drive_links`, the doc id the keyed digest of the raw id (`keyed_digest(digest_key, "drive_link",
+  id)`, as the MCP authorization codes are stored): the raw id is never stored or logged. `purge_after` (a day after
+  issue) carries a TTL policy (`docs/07_deployment/README.md`); expiry is checked on every read.
 - **GET:** a transactional consume → the grant still has an active refresh token and the whitelist holds → a fresh
-  connection read → `check_access(READ)` under the connector audience (the folder is checked at fetch, not at issue) →
-  `media_source` (`src/ports/user_drive_port.py:120-124`) → stream.
-- **HEAD** answers without consuming. If a client burns the use before reading (its fetch tool's caching and retry
-  behaviour is undocumented; measured in the slice), the fallback is "N reads within 5 minutes", not a page.
-- **Headers:** `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`;
-  `Content-Disposition: attachment` by default, inline only for images and PDF, never `text/html` inline on our domain.
-- **Large files:** a 302 to the provider's pre-signed URL when `MediaSource.header_free`, if streaming hits Cloud Run
-  limits (verified in the slice).
-- Issued by `get_download_link(file_ref)` (any kind) and by the §6.2 image/video/recording lines; one link per call.
+  connection read (a hidden or disconnected drive is refused; the connection must be the one the link was issued on)
+  → `check_access(READ)` under the connector audience (the folder is checked at fetch, not at issue) →
+  `media_source` (`src/ports/user_drive_port.py:120-124`) → stream. A source that fails before its first byte is a
+  refusal; every refusal (unknown, expired, spent, refused) is one 404.
+- **HEAD** runs the same checks, consumes nothing and reads no bytes (a HEAD that skipped them would leak the file
+  name in `Content-Disposition` after the folder left access). Quart serves HEAD through the GET view, so the route
+  branches on the method before any consume.
+- **N reads.** `LINK_MAX_READS` (`src/domain/drive_link.py`) is 1 (owner, 2026-11-03). If a client burns the use before
+  reading (its fetch tool's caching and retry behaviour is undocumented), it is raised, never above 3, and only after
+  that pre-fetch has been measured live; a test pins both bounds.
+- **Headers:** `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: sandbox; default-src 'none'` on every response; `Content-Disposition: attachment` by
+  default (RFC 6266 `filename*` with an ASCII fallback), inline only for `image/png`, `image/jpeg`, `image/gif`,
+  `image/webp` and `application/pdf`. SVG is an image that runs script on our origin, so it is not inline: HTML, XHTML,
+  SVG, XML and JavaScript are served as `application/octet-stream`, always as an attachment.
+- **Large files always stream through us** (owner, 2026-11-03): never a redirect to the provider's URL, for any source,
+  `header_free` included. The response sets no Quart response timeout (`RESPONSE_TIMEOUT` defaults to 60 s) and no
+  `Content-Length` (chunked transfer, so the HTTP/1 buffered-response limit does not apply); one download is capped
+  by the main service's Cloud Run request timeout (1800 s). Measured live with a file over 32 MiB.
+- Issued by `get_download_link(file_ref)` (any kind) and by the §6.2 image and untranscribed-recording lines (a video
+  is a recording kind; a scan gets none: its passages are the read); one link per call. The link is a separate result
+  line `LINK` after the withheld line; a failed issue leaves the withheld line without a link.
   Example: asked for invoice `FA-0137` from the locksmith, the client finds it with `search_drive` and gets one link
   that opens once within five minutes.
 
@@ -522,7 +545,9 @@ Vertical, each deployable alone; the connector shows no drive content until slic
   `list_tools` override, never by mutating shared tool objects; per-result rules in result lines.
 - **E16** The connector's index admit fails closed; chat's stays fail-open.
 - **E17** `maxResultSizeChars` on open only; a 100k hard guard on every tool.
-- **E18** The link is an opaque id with server state; GET consumes, HEAD is free; the folder is checked at fetch.
+- **E18** The link is an opaque id with server state, stored as its keyed digest; GET consumes, HEAD runs the checks
+  and consumes nothing; the folder is checked at fetch; the bytes always stream through the main service (no
+  redirect); N reads is one constant, 1 until a client's pre-fetch is measured.
 - Out of scope: DCR's deprecation in favour of client ID metadata documents in the 2026-07-28 MCP spec; both connectors
   use DCR today.
 

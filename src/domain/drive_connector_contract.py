@@ -16,7 +16,7 @@ Result keys:
   `WHAT_TO_DO`, `ANSWER_FROM_RESULTS`, `UNFINISHED_LINE`, `LANGUAGE_LINE` re-voiced);
 - `ROUTE` after an open refused as too long (in place of `ROUTE_SPECIALIST`), `PAGE_NEXT` (in place of the excerpt
   renderer's `PAGE_NEXT`), `REFUSED` (the §13 refusal line) and `REFUSED_GUIDANCE` (its companion guidance, §5.2),
-  `OVER_SIZE` (the line the 100,000-character guard appends, §6.1).
+  `OVER_SIZE` (the line the 100,000-character guard appends, §6.1), `LINK` (a one-time download link, §8).
 
 `RESULT_PLACEHOLDERS` names the `{placeholders}` code fills in a result text; a key it does not list is printed as is.
 Pure: no I/O.
@@ -39,8 +39,10 @@ from .drive_tool_texts import FIND_PASSAGES, LIST_FOLDER, OPEN_DRIVE_FILE, READ_
 from .drive_withheld import Withheld
 
 # -- tools ------------------------------------------------------------------------------------------------------------
-# get_download_link comes with the one-time link (RFC §8, slice 4); it is not part of this contract yet.
-TOOL_NAMES: Tuple[str, ...] = (SEARCH_DRIVE, FIND_PASSAGES, READ_PASSAGES, OPEN_DRIVE_FILE, LIST_FOLDER, GET_NOTE)
+GET_DOWNLOAD_LINK = "get_download_link"        # the one-time link (RFC §8); the connector's own tool, no chat twin
+
+TOOL_NAMES: Tuple[str, ...] = (SEARCH_DRIVE, FIND_PASSAGES, READ_PASSAGES, OPEN_DRIVE_FILE, LIST_FOLDER, GET_NOTE,
+                               GET_DOWNLOAD_LINK)
 
 TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
     SEARCH_DRIVE: ("query", "folder", "drives", "kind", "date_from", "date_to"),
@@ -50,6 +52,7 @@ TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
     LIST_FOLDER: ("folder",),
     # whole_drive_name stays: a whole-drive note is readable for a drive the connector sees (RFC §7.5)
     GET_NOTE: ("item_ref", "whole_drive_name"),
+    GET_DOWNLOAD_LINK: ("file_ref",),
 })
 
 INSTRUCTIONS_KEY = "instructions"
@@ -85,9 +88,10 @@ PAGE_NEXT = "PAGE_NEXT"                        # a page that is not the file's l
 REFUSED = "REFUSED"                            # outside the connector's folders, or no such item (RFC §7.7, §13)
 REFUSED_GUIDANCE = "REFUSED_GUIDANCE"          # what to do after a refusal
 OVER_SIZE = "OVER_SIZE"                        # the result was cut at the connector's hard size guard
+LINK = "LINK"                                  # a one-time download link; {link} is its URL (RFC §8)
 
 LINE_KEYS: Tuple[str, ...] = (STATUS, WHAT_TO_DO, ANSWER_FROM_RESULTS, UNFINISHED, LANGUAGE, ROUTE, PAGE_NEXT,
-                              REFUSED, REFUSED_GUIDANCE, OVER_SIZE)
+                              REFUSED, REFUSED_GUIDANCE, OVER_SIZE, LINK)
 
 REQUIRED_RESULT_KEYS: FrozenSet[str] = frozenset({*READING_KEYS, *WITHHELD_KEYS, *LINE_KEYS})
 
@@ -96,5 +100,6 @@ RESULT_PLACEHOLDERS: Mapping[str, FrozenSet[str]] = MappingProxyType({
     STATUS: frozenset({"status"}),
     WHAT_TO_DO: frozenset({"line"}),
     ROUTE: frozenset({"ref"}),
+    LINK: frozenset({"link"}),
     PAGE_NEXT: frozenset({"first", "last", "total", "path", "version", "next"}),
 })

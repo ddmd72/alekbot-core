@@ -259,13 +259,14 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   --enable-ttl --database=us-production --project=<PROJECT_ID>
 ```
 
-Three collections expire on a different field, **`purge_after`**, which exists only in storage:
+Four collections expire on a different field, **`purge_after`**, which exists only in storage:
 
 | Collection group | What expires |
 |---|---|
 | `<prefix>fact_review_questions` | closed memory-review questions (90 days after closing; an open question has no `purge_after`) |
 | `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written) |
 | `<prefix>audio_transcripts` | cached transcripts of opened chat audio (90 days after they were written, the life of the upload) |
+| `<prefix>drive_links` | the drive connector's one-time download links (a day after issue; a link itself dies 5 minutes after issue, checked on read) |
 
 ```bash
 gcloud firestore fields ttls update purge_after --collection-group=<collection-group> \

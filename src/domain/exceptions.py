@@ -355,3 +355,8 @@ class DriveLinkFolder(Exception):
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__("a download link is for one file")
+
+
+class MediaStreamFailed(Exception):
+    """A file's bytes could not be streamed from its media source (a refused or failed upstream request, a broken
+    connection). The message never carries the source's url or headers (they are secrets)."""

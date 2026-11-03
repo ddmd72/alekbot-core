@@ -25,6 +25,7 @@ from ..infrastructure.drive_read_operations import DriveReadOperations
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.prompt_v3.token_repository import TokenRepository
 from ..services.connector_text_service import ConnectorTextService
+from ..services.drive_link_service import DriveLinkService
 from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
 from ..services.file_conversion_service import FileConversionService
@@ -45,11 +46,12 @@ def drive_mcp_tools_switch_on(raw: Optional[str]) -> bool:
 @dataclass(frozen=True)
 class DriveConnectorTools:
     """The connector's tool backends: the texts (with the boot-loaded value), the read facade, the note reader (None:
-    `get_note` is not registered)."""
+    `get_note` is not registered), the one-time link service (required: `get_download_link` is always registered)."""
     texts: ConnectorTextService
     initial_texts: ConnectorTexts
     operations: DriveReadOperations
     notes: Optional[DriveNoteService]
+    links: DriveLinkService
 
 
 async def build_drive_connector_tools(*, conversion_service: Optional[FileConversionService],
@@ -57,7 +59,8 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
                                       drive_search: Optional[DriveSearchService],
                                       drive_notes: Optional[DriveNoteService],
                                       token_repo: Optional[TokenRepository],
-                                      alert_sink: Optional[AlertSinkPort]) -> Optional[DriveConnectorTools]:
+                                      alert_sink: Optional[AlertSinkPort],
+                                      links: DriveLinkService) -> Optional[DriveConnectorTools]:
     """None when the knob is off. Raises when it is on and the tools cannot run (see the module docstring)."""
     if not drive_mcp_tools_switch_on(os.getenv(DRIVE_MCP_TOOLS_ENABLED_ENV)):
         logger.info("[DriveMCP] tools off (%s not set): the drive connector lists no tool", DRIVE_MCP_TOOLS_ENABLED_ENV)
@@ -75,4 +78,4 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
                                  language_service=None, drive_notes=drive_notes)
     logger.info("[DriveMCP] tools on: texts loaded, notes %s", "on" if drive_notes is not None else "off")
     return DriveConnectorTools(texts=texts, initial_texts=initial, operations=DriveReadOperations(operations),
-                               notes=drive_notes)
+                               notes=drive_notes, links=links)

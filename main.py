@@ -27,6 +27,8 @@ from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
+from src.composition.drive_link_setup import build_drive_link_service
+from src.web.drive_link_app import create_drive_link_blueprint
 from src.domain.mcp_resource import DRIVE_PATH
 
 
@@ -562,6 +564,14 @@ async def main():
                     # down; /drive-mcp then answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
                     try:
                         _assembly = app.container.assembly_service
+                        drive_links = build_drive_link_service(
+                            db_client=db_client,
+                            env_config=env_config,
+                            drive_service=app.container.user_drive_service,
+                            authorization_service=mcp_components.authorization_service,
+                            digest_key=app.digest_key,
+                            auth_config=app.auth_config,
+                        )
                         drive_tools = await build_drive_connector_tools(
                             conversion_service=app.container.file_conversion_service,
                             drive_service=app.container.user_drive_service,
@@ -569,12 +579,14 @@ async def main():
                             drive_notes=app.container.drive_note_service,
                             token_repo=_assembly.token_repo if _assembly is not None else None,
                             alert_sink=app.alert_sink,
+                            links=drive_links,
                         )
                         drive_mcp = build_drive_mcp_app(
                             authorization_service=mcp_components.authorization_service,
                             auth_config=app.auth_config,
                             tools=drive_tools,
                         )
+                        main_app.register_blueprint(create_drive_link_blueprint(drive_links))
                     except Exception as drive_err:
                         drive_mcp = None
                         logger.error(
@@ -600,6 +612,7 @@ async def main():
                     logger.info("   - /mcp/consent (OAuth consent UI)")
                     if drive_mcp is not None:
                         logger.info("   - /drive-mcp (drive connector)")
+                        logger.info("   - /d/<id> (one-time drive links)")
 
                 # Override start() to launch shared app instead of individual adapter
                 async def start_shared_app():
