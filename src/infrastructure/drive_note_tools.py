@@ -32,6 +32,7 @@ Public interface:
     DriveNoteSession                  one execution's write count and read set
     DriveNoteToolRun(run, service, ops, context, user_id, account_id, provenance, *, writes, session=None)
         .handlers -> Dict[str, LocalToolHandler]     get_note always; the ten writers only when `writes`
+    read_note_for_connector(service, user_id, item_ref, whole_drive_name) -> DriveOutcome   the drive connector's get_note
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ from ..domain.drive_collected_result import CollectedResult
 from ..domain.drive_index import DriveIndexStoreUnavailable
 from ..domain.drive_note import (
     DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, NOTE_WRITES_PER_TURN, OWNER_TURN_RUN_ORIGINS,
-    DriveNoteRefused, EraseRequestReceipt, NoteOrigin, NoteProvenance, NoteReceipt, NoteRefusal,
+    NOTE_REF_PREFIX, DriveNoteRefused, EraseRequestReceipt, NoteOrigin, NoteProvenance, NoteReceipt, NoteRefusal,
     drive_note_context_entry, is_owner_turn, note_content,
 )
 from ..domain.drive_note_change import NoteChange
@@ -57,6 +58,7 @@ from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
+from ..domain.drive_ref import is_drive_ref
 from ..domain.llm import ToolCall
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..utils.logger import logger
@@ -159,6 +161,48 @@ def _drive_kw(drive: str) -> Dict[str, str]:
 
 def _failed(op: DriveOp, text: str, cls: OutcomeClass) -> DriveOutcome:
     return DriveOutcome(op=op, cls=cls, text=text, success=False)
+
+
+def _service_error(op: DriveOp, tool: str, user_id: str, exc: Exception) -> DriveOutcome:
+    """A service call that raised: a refusal by its reason's class; the store outage and anything else FAILED. The
+    log names the reason or the error's type only: a validation error from a stored document carries its values,
+    the note's text among them."""
+    user = user_id[:8]
+    if isinstance(exc, DriveNoteRefused):
+        logger.info(f"[DriveNote] tool user={user} {tool} refused:{exc.reason.value}")
+        return _failed(op, f"{exc} {nt.NOTHING_STORED}", _REFUSAL_CLASS.get(exc.reason, OutcomeClass.FAILED))
+    if isinstance(exc, DriveIndexStoreUnavailable):
+        logger.warning(f"[DriveNote] tool user={user} {tool}: the note store is unavailable")
+        return _failed(op, nt.STORE_DOWN, OutcomeClass.FAILED)
+    logger.error(f"❌ [DriveNote] tool user={user} {tool} failed: {type(exc).__name__}")
+    return _failed(op, nt.UNEXPECTED, OutcomeClass.FAILED)
+
+
+async def read_note_for_connector(service: "DriveNoteService", user_id: str, item_ref: str, whole_drive_name: str,
+                                  *, new_nonce: Callable[[], str] = lambda: secrets.token_hex(8)) -> DriveOutcome:
+    """`get_note` for the drive connector (DRIVE_MCP_CONNECTOR_RFC §4.1, §7.5): the chat's one-target rule (§11.10)
+    and its refusal classes and error mapping (`_REFUSAL_CLASS`, `_service_error`), with three connector rules: an
+    `item_ref` that is not a `drive:` ref (a `drive_note:` ref included) is refused before any call with no text (the
+    connector prints its neutral line); a cleared note reads as no note; an archived note (its file is gone from the
+    drive, D7) is refused with no text. The connector access check of §7.5 is slice 3's."""
+    op, tool = DriveOp.NOTE_READ, nt.GET_NOTE
+    ref, drive = item_ref.strip(), whole_drive_name.strip()
+    if bool(ref) == bool(drive):                            # §11.10: exactly one target, never both, never none
+        logger.info(f"[DriveNote] tool user={user_id[:8]} {tool} refused:{'both_targets' if ref else 'no_ref'}")
+        return _failed(op, nt.ONE_TARGET, OutcomeClass.REQUEST_ERROR)
+    if ref and (NOTE_REF_PREFIX in ref or not is_drive_ref(ref)):
+        logger.info(f"[DriveNote] tool user={user_id[:8]} {tool} refused:not_a_drive_ref")
+        return _failed(op, "", OutcomeClass.REFUSED)
+    try:
+        view = await service.get(user_id, ref, **_drive_kw(drive))
+    except Exception as exc:
+        return _service_error(op, tool, user_id, exc)
+    if view is None or view.cleared:
+        return _failed(op, nt.NO_NOTE_READ.format(ref=ref or drive), OutcomeClass.NOT_FOUND)
+    if view.archived:
+        return _failed(op, "", OutcomeClass.REFUSED)
+    return DriveOutcome(op=op, cls=OutcomeClass.OK, success=True, text=nt.note_view_text(view, new_nonce()),
+                        facts=ReadFacts(owner_note=True))
 
 
 class DriveNoteToolRun:
@@ -379,18 +423,7 @@ class DriveNoteToolRun:
                            reason=exc.reason.value)
 
     def _error(self, op: DriveOp, tool: str, exc: Exception) -> DriveOutcome:
-        """A service call that raised: a refusal by its reason's class; the store outage and anything else FAILED. The
-        log names the reason or the error's type only: a validation error from a stored document carries its values,
-        the note's text among them."""
-        user = self._user_id[:8]
-        if isinstance(exc, DriveNoteRefused):
-            logger.info(f"[DriveNote] tool user={user} {tool} refused:{exc.reason.value}")
-            return _failed(op, f"{exc} {nt.NOTHING_STORED}", _REFUSAL_CLASS.get(exc.reason, OutcomeClass.FAILED))
-        if isinstance(exc, DriveIndexStoreUnavailable):
-            logger.warning(f"[DriveNote] tool user={user} {tool}: the note store is unavailable")
-            return _failed(op, nt.STORE_DOWN, OutcomeClass.FAILED)
-        logger.error(f"❌ [DriveNote] tool user={user} {tool} failed: {type(exc).__name__}")
-        return _failed(op, nt.UNEXPECTED, OutcomeClass.FAILED)
+        return _service_error(op, tool, self._user_id, exc)
 
     @staticmethod
     def _seen(tc: ToolCall, result: CollectedResult) -> ToolResult:
@@ -399,4 +432,4 @@ class DriveNoteToolRun:
         return ToolResult(name=tc.name, result_str=f"[{result.handle}]\n{result.outcome.text}")
 
 
-__all__ = ["DRIVE_NOTE_CONTEXT_KEY", "DriveNoteSession", "DriveNoteToolRun", "note_provenance"]
+__all__ = ["DRIVE_NOTE_CONTEXT_KEY", "DriveNoteSession", "DriveNoteToolRun", "note_provenance", "read_note_for_connector"]

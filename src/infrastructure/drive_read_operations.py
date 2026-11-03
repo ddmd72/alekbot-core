@@ -5,8 +5,8 @@
 `preflight`, `folder_path`, `fetch_stored` or `search_deleted`, and no attribute pass-through (a test pins the set).
 
 `open` refuses every ref that is not a `drive:` ref before any call (a chat upload, a delivered document, `workspace:`,
-`skill:` lie outside the connector's folder access): class REFUSED, no text, `DriveOutcome.withheld` =
-`Withheld.OUTSIDE_DRIVE`; the connector composes its own line. A `drive:` ref always runs with `withhold_media=True`: no outside client can make an open download a video or an untranscribed
+`skill:` lie outside the connector's folder access): class REFUSED, no text, no withheld code; the connector answers
+its plain neutral refusal, the same as for an item outside its folders or one that does not exist. A `drive:` ref always runs with `withhold_media=True`: no outside client can make an open download a video or an untranscribed
 recording, or post a video to the owner's chat (the outcome carries `DriveOutcome.withheld` instead); it takes no
 `original` either (a recording's link is not the connector's). Every other argument goes through unchanged, and each
 method returns the `DriveOutcome` the wrapped call returns.
@@ -20,7 +20,6 @@ from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
-from ..domain.drive_withheld import Withheld
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -64,6 +63,5 @@ class DriveReadOperations:
         """A `drive:` ref only, refused otherwise before any call; the media pre-check is always on."""
         if not drive_ref.is_drive_ref(ref or ""):
             logger.info("[DriveReadOperations] open refused: not a drive ref")
-            return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="", success=False,
-                                withheld=Withheld.OUTSIDE_DRIVE)
+            return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="", success=False)
         return await self._ops.open(context, user_id, ref, deadline_at=deadline_at, withhold_media=True)

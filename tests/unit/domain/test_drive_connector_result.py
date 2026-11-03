@@ -28,6 +28,10 @@ def head(status: str, line: str) -> list:
     return [marker(c.STATUS).format(status=status), marker(c.WHAT_TO_DO).format(line=line)]
 
 
+NEUTRAL = [marker(c.STATUS).format(status="refused"), marker(c.WHAT_TO_DO).format(line=marker(c.REFUSED_GUIDANCE)),
+           marker(c.REFUSED)]
+
+
 def reading(*keys: str) -> list:
     return [t.READING_PREFIX + marker(k) for k in keys]
 
@@ -111,10 +115,9 @@ class TestOpen:
                                ref_tag="a1", withheld=code)
         assert compose(outcome) == [*head("ok", marker(c.withheld_key(code))), outcome.label_of(VIDEO)]
 
-    def test_a_ref_outside_the_drive_answers_its_code_line_only(self):
-        outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="", success=False,
-                               withheld=Withheld.OUTSIDE_DRIVE)
-        assert compose(outcome) == head("refused", marker(c.withheld_key(Withheld.OUTSIDE_DRIVE)))
+    def test_a_ref_that_is_not_a_drive_ref_answers_the_neutral_refusal(self):
+        outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="", success=False)
+        assert compose(outcome) == NEUTRAL
 
 
 class TestRefusalsAndFailures:
@@ -124,6 +127,14 @@ class TestRefusalsAndFailures:
         lines = compose(outcome)
         assert lines == [*head("refused", marker(c.REFUSED_GUIDANCE)), marker(c.REFUSED)]
         assert line not in "\n".join(lines)
+
+    @pytest.mark.parametrize("op, text", [(DriveOp.OPEN, "The file is gone."), (DriveOp.LIST, "No folder R&D/x."),
+                                          (DriveOp.NOTE_READ, "There is no note on drive:a1:x9."),
+                                          (DriveOp.PASSAGES, "That ref resolves to no drive.")])
+    def test_an_item_that_does_not_exist_answers_the_same_neutral_refusal(self, op, text):
+        outcome = DriveOutcome(op=op, cls=OutcomeClass.NOT_FOUND, text=text, success=False)
+        lines = compose(outcome)
+        assert lines == NEUTRAL and text not in "\n".join(lines)
 
     def test_the_index_note_that_the_bot_cannot_open_a_file_keeps_its_text(self):
         outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="The bot cannot open this file.",

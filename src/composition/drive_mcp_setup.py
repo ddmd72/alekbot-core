@@ -9,24 +9,23 @@ one instance, hence two. Named `drive_mcp_setup`, not `mcp_drive_setup`: the dri
 
 Tools (§4.1, slice 2): with `tools` (the `DRIVE_MCP_TOOLS_ENABLED` knob on, `drive_connector_tools`) the app is a
 `TokenTextFastMCP` with the six read tools of `drive_connector_contract.TOOL_NAMES` (`get_note` only when the notes
-service exists), each a thin handler over `DriveReadOperations` (or `DriveNoteService.get`); without, a plain FastMCP
+service exists), each a thin handler over `DriveReadOperations` (or `drive_note_tools.read_note_for_connector`); without, a plain FastMCP
 that lists no tool and carries no instructions (no inline text, D4). Nothing that writes is registered.
 
 Each call: the user and account from the verified access token (as the facts tool); the context
 `{"user_id", "account_id", "run_origin": "mcp:drive"}` and no `native_formats` (§4.4, §6.2); `RequestContext`; a
 `CALL_TIMEOUT_S` `wait_for`, an open's `deadline_at` that much minus `OPEN_MARGIN_S` (E8); one result composed by
 `compose_connector_result`, cut by `cap_result`, in `content[].text` only (no structured content, §6.2); one span
-`mcp.drive.<tool>` and one log line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. The query, question, path or
-ref is never logged (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
+`mcp.drive.<tool>` and one log line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. The query and question are
+never logged; the ref or folder label is logged as `DriveOperations._call` logs it in chat (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
 validators; an empty required ref is a correctable line, not a protocol error.
 
-`get_note` in slice 2: `drive:` refs only (a `drive_note:` ref and any other ref answer the neutral refusal); the
-connector access check of §7.5 comes with slice 3. A cleared note reads as no note; an archived one (its file is gone
-from the drive, D7) as the refusal.
+`get_note` in slice 2 (`read_note_for_connector`, the chat's rules and refusal classes): `drive:` refs only, any other
+ref answers the neutral refusal; the connector access check of §7.5 comes with slice 3. A ref that is not a drive ref
+(on `open_drive_file` too) and an item that does not exist answer the same neutral REFUSED line: no existence oracle.
 """
 
 import asyncio
-import secrets
 import time
 from typing import Annotated, Any, Awaitable, Callable, Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -40,25 +39,21 @@ from pydantic import AnyHttpUrl, BeforeValidator
 from ..config.auth import AuthConfig
 from ..domain import drive_connector_contract as contract
 from ..domain import drive_note_tool_texts as nt
-from ..domain import drive_ref
 from ..domain.document_read import OPEN_MARGIN_S
 from ..domain.drive_connector_result import RESULT_MAX_CHARS, cap_result, compose_connector_result, connector_status
 from ..domain.drive_excerpt_request import FILE_REF_REQUIRED
-from ..domain.drive_index import DriveIndexStoreUnavailable
-from ..domain.drive_note import NOTE_REF_PREFIX, DriveNoteRefused, NoteRefusal
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
-from ..domain.drive_read_facts import ReadFacts
 from ..domain.drive_tool_texts import FIND_PASSAGES, LIST_FOLDER, OPEN_DRIVE_FILE, READ_PASSAGES, SEARCH_DRIVE
 from ..domain.exceptions import ConnectorTextsUnavailable
 from ..domain.mcp import normalize_phrase
 from ..domain.mcp_resource import DRIVE_PATH, DRIVE_SCOPE, drive_resource_uri
 from ..domain.request_context import RequestContext
-from ..services.drive_note_service import DriveNoteService
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
+from ..infrastructure.drive_note_tools import read_note_for_connector
 from .drive_connector_tools import DriveConnectorTools
 from .mcp_sdk_oauth_provider import AlekAccessToken
 from .mcp_setup import build_transport_security
@@ -69,14 +64,6 @@ CALL_TIMEOUT_S = 120.0
 RUN_ORIGIN = "mcp:drive"
 # Claude Code files a result over 50,000 characters to disk unless the tool declares its own limit (§6.1, E17).
 MAX_RESULT_SIZE_META_KEY = "anthropic/maxResultSizeChars"
-
-_NOTE_REFUSAL_CLASS: Dict[NoteRefusal, OutcomeClass] = {
-    NoteRefusal.NOT_CONNECTED: OutcomeClass.NOT_CONNECTED,
-    NoteRefusal.NOT_ON_DRIVE: OutcomeClass.NOT_FOUND,
-    NoteRefusal.NO_NOTE: OutcomeClass.NOT_FOUND,
-    NoteRefusal.CANNOT_OPEN: OutcomeClass.REFUSED,
-    NoteRefusal.INVALID_REF: OutcomeClass.REQUEST_ERROR,
-}
 
 _Run = Callable[[Dict[str, Any], str, str], Awaitable[DriveOutcome]]
 
@@ -185,7 +172,7 @@ def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
     @app.tool(name=nt.GET_NOTE)
     async def get_note(ctx: Context, item_ref: _Text = "", whole_drive_name: _Text = "") -> CallToolResult:
         async def run(_c: Dict[str, Any], user_id: str, _a: str) -> DriveOutcome:
-            return await _read_note(notes, user_id, item_ref, whole_drive_name)
+            return await read_note_for_connector(notes, user_id, item_ref, whole_drive_name)
         return await call.run(nt.GET_NOTE, DriveOp.NOTE_READ, ctx, run)
 
 
@@ -225,7 +212,8 @@ async def _outcome(tool: str, op: DriveOp, run: _Run, context: Dict[str, Any], u
     except asyncio.TimeoutError:
         return DriveOutcome(op=op, cls=OutcomeClass.NOT_FINISHED, text="", success=False)
     except Exception as exc:   # DriveOperations answers its own failures; this is a bug's last line
-        logger.error(f"❌ [DriveMCP] tool={tool} user={user_id[:8]} failed: {type(exc).__name__}", exc_info=True)
+        # the type only: an exception's message or traceback can carry the user's words or a file's text
+        logger.error(f"❌ [DriveMCP] tool={tool} user={user_id[:8]} failed: {type(exc).__name__}")
         return DriveOutcome(op=op, cls=OutcomeClass.FAILED, text=f"Drive operation failed: {type(exc).__name__}.",
                             success=False)
 
@@ -247,33 +235,6 @@ def _token_user(ctx: Context, tool: str) -> Tuple[str, str]:
 
 def _error_result(text: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)], isError=True)
-
-
-async def _read_note(notes: DriveNoteService, user_id: str, item_ref: str, whole_drive_name: str) -> DriveOutcome:
-    """`get_note` on the store (`DriveNoteService.get`): exactly one target; a `drive:` ref or a drive's name."""
-    op = DriveOp.NOTE_READ
-    if bool(item_ref) == bool(whole_drive_name):
-        return DriveOutcome(op=op, cls=OutcomeClass.REQUEST_ERROR, text=nt.ONE_TARGET, success=False)
-    if item_ref and (NOTE_REF_PREFIX in item_ref or not drive_ref.is_drive_ref(item_ref)):
-        logger.info(f"[DriveMCP] get_note user={user_id[:8]} refused: not a drive ref")
-        return DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text="", success=False)
-    kwargs = {"whole_drive_name": whole_drive_name} if whole_drive_name else {}
-    try:
-        view = await notes.get(user_id, item_ref, **kwargs)
-    except DriveNoteRefused as exc:
-        logger.info(f"[DriveMCP] get_note user={user_id[:8]} refused:{exc.reason.value}")
-        return DriveOutcome(op=op, cls=_NOTE_REFUSAL_CLASS.get(exc.reason, OutcomeClass.FAILED), text=str(exc),
-                            success=False)
-    except DriveIndexStoreUnavailable:
-        logger.warning(f"[DriveMCP] get_note user={user_id[:8]}: the note store is unavailable")
-        return DriveOutcome(op=op, cls=OutcomeClass.FAILED, text=nt.STORE_DOWN, success=False)
-    if view is None or view.cleared:
-        return DriveOutcome(op=op, cls=OutcomeClass.NOT_FOUND, success=False,
-                            text=nt.NO_NOTE_READ.format(ref=item_ref or whole_drive_name))
-    if view.archived:
-        return DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text="", success=False)
-    return DriveOutcome(op=op, cls=OutcomeClass.OK, success=True, text=nt.note_view_text(view, secrets.token_hex(8)),
-                        facts=ReadFacts(owner_note=True))
 
 
 def _check_contract(app: FastMCP) -> None:

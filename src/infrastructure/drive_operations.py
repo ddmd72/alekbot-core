@@ -979,7 +979,8 @@ class DriveOperations:
         return text or None
 
     async def _archived_transcript_of(self, context: Mapping[str, Any], target: ResolvedDriveRef, ref: str,
-                                      item: DriveItem, deadline_at: Optional[float]) -> Optional[str]:
+                                      item: DriveItem, deadline_at: Optional[float],
+                                      caller: str = CALLER_OPEN) -> Optional[str]:
         """A ref whose item is a file of the bot's `_Transcripts` folder opens from the pinned store entry, capped; with
         none, the downloaded file, capped the same way (§27.9.11). None for any other file, or when the lookup failed
         (the plain open then runs)."""
@@ -988,7 +989,7 @@ class DriveOperations:
         conn = target.connection
 
         async def downloaded() -> str:
-            opened = await self._open_opened(context, ref, conn.user_id, deadline_at, ())
+            opened = await self._open_opened(context, ref, conn.user_id, deadline_at, (), caller)
             return opened.body or opened.note
 
         try:
@@ -1024,7 +1025,8 @@ class DriveOperations:
         if item.is_folder:
             return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; list it instead.",
                          OutcomeClass.REQUEST_ERROR)
-        archived = await self._archived_transcript_of(context, target, ref, item, deadline_at)
+        archived = await self._archived_transcript_of(context, target, ref, item, deadline_at,
+                                                      CALLER_CONNECTOR if withhold_media else CALLER_OPEN)
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True, tag=tag)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
@@ -1077,8 +1079,9 @@ class DriveOperations:
         if withhold_media:
             # The media pre-check, before any download: each code stands for the branch below that would download for
             # nothing here (a video posted to the chat; a recording with no transcript, which no open can read).
-            why = (Withheld.VIDEO if mime.startswith("video/")
-                   else Withheld.RECORDING_UNTRANSCRIBED if recording else None)
+            # a recording first: a .webm recording carries a video mime, and it is a recording with no transcript
+            why = (Withheld.RECORDING_UNTRANSCRIBED if recording
+                   else Withheld.VIDEO if mime.startswith("video/") else None)
             if why is not None:
                 return _withheld(ref, item, tag, why)
         if mime.startswith("video/"):

@@ -64,9 +64,6 @@ An image: this connector does not return images. Its description is in its searc
 ### W_SCAN
 A scanned PDF, or one whose text layer is missing or garbled: its text is not returned here. Read its passages instead (find_passages with file_refs set to this file): they hold the index's reading of the scan. Say that a value from them was read from an image.
 
-### W_OUTSIDE_DRIVE
-Only drive: refs open through this connector; chat files, delivered documents, workspace: and skill: files are not available here. Find the file on the drive with search_drive or list_folder.
-
 ### R_FIND
 "Find", "show me", "which files", "do I have …" — the user wants the files. Answer from the search results alone: each result already says what the file is, where it is, its date and why it matched. Do not open files to confirm them.
 

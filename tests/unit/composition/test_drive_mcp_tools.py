@@ -30,7 +30,7 @@ from src.domain.drive_note_view import NoteView
 from src.domain.drive_search import STATUS_OK, DriveSearchCard, DriveSearchResult
 from src.domain.drive_text_extent import TextExtent
 from src.domain.drive_withheld import Withheld
-from src.domain.user_drive import DriveItem
+from src.domain.user_drive import DriveItem, DriveItemNotFoundError
 from src.services.mcp_authorization_service import VerifiedAccessToken
 from tests.support.drive_connector_texts import TokenStore, marker
 from tests.support.drive_service_connections import ConnectionReads, ref
@@ -54,7 +54,11 @@ PHOTO = DriveItem(item_id="i1", name="12 Oak Street.png", path="12 Oak Street/12
                   size_bytes=2000, mime_type="image/png")
 SCAN = DriveItem(item_id="p1", name="FA-0137.pdf", path="12 Oak Street/FA-0137.pdf", is_folder=False,
                  size_bytes=3000, mime_type="application/pdf")
-ITEMS = {i.item_id: i for i in (PLAN, VIDEO, AUDIO, PHOTO, SCAN)}
+WEBM = DriveItem(item_id="w1", name="standup.webm", path="R&D/standup.webm", is_folder=False, size_bytes=4000,
+                 mime_type="video/webm")
+ARCHIVED = DriveItem(item_id="t1", name="standup.txt", path="_Transcripts/standup.txt", is_folder=False,
+                     size_bytes=500, mime_type="text/plain")
+ITEMS = {i.item_id: i for i in (PLAN, VIDEO, AUDIO, PHOTO, SCAN, WEBM, ARCHIVED)}
 PLAN_TEXT = "After the first review, Tom sends invoice FA-0137."
 
 
@@ -93,7 +97,12 @@ class Conversion:
 
 class Drive(ConnectionReads):
     async def get_item(self, handle: Any, item_id: str) -> DriveItem:
+        if item_id not in ITEMS:
+            raise DriveItemNotFoundError(item_id)
         return ITEMS[item_id]
+
+    async def list_folder_by_id(self, handle: Any, item_id: str):
+        raise DriveItemNotFoundError(item_id)   # only a missing folder is listed by ref here
 
     async def scope_folder_paths(self, handle: Any):
         return [], 0
@@ -127,21 +136,28 @@ class Search:
         return result(file, request=ExcerptRangeRequest(ref(PLAN.item_id), 1, 10, page=True), page=span,
                       ref_tag="a1")
 
+    async def access_note(self, conn: Any, **kw: Any) -> Optional[str]:
+        return None   # the index knows no item the bot cannot open
+
     async def text_extent(self, conn: Any, item_id: str) -> TextExtent:
         return TextExtent.UNKNOWN
 
     async def archived_text(self, conn: Any, item_id: str, **kw: Any) -> Optional[str]:
-        return None
+        """A file of the bot's transcripts folder with no pinned entry: its downloaded text, read through `file_text`."""
+        if item_id != ARCHIVED.item_id:
+            return None
+        return await kw["file_text"]()
 
     async def transcript_text(self, conn: Any, item_id: str, **kw: Any) -> Optional[str]:
         return None
 
 
 class Notes:
-    """The note store's reads: the owner's note on Tom's plan only."""
+    """The note store's reads: the owner's note on Tom's plan only; `fail` makes `get` raise it."""
 
     def __init__(self) -> None:
         self.reads: List[str] = []
+        self.fail: Optional[Exception] = None
 
     async def note_for_item(self, user_id: str, identity: Any) -> None:
         return None
@@ -151,6 +167,8 @@ class Notes:
 
     async def get(self, user_id: str, ref_: str, *, whole_drive_name: str = "") -> Optional[NoteView]:
         self.reads.append(ref_ or whole_drive_name)
+        if self.fail is not None:
+            raise self.fail
         if ref_ != ref(PLAN.item_id):
             return None
         return NoteView(note_id="n1", ref=ref_, note_ref="drive_note:n1", path=PLAN.path, version=2, state="active",
@@ -209,6 +227,10 @@ def text_of(res: Dict[str, Any]) -> str:
     assert [block["type"] for block in res["content"]] == ["text"]
     assert "structuredContent" not in res or res["structuredContent"] is None
     return res["content"][0]["text"]
+
+
+NEUTRAL = [marker(c.STATUS).format(status="refused"), marker(c.WHAT_TO_DO).format(line=marker(c.REFUSED_GUIDANCE)),
+           marker(c.REFUSED)]
 
 
 def what_to_do(text: str) -> str:
@@ -271,18 +293,32 @@ class TestHappyPaths:
 
 
 class TestOpenWithholds:
-    @pytest.mark.parametrize("item, code", [(VIDEO, Withheld.VIDEO), (PHOTO, Withheld.IMAGE),
-                                            (AUDIO, Withheld.RECORDING_UNTRANSCRIBED), (SCAN, Withheld.SCAN)])
+    # every video is a recording to the kind classifier: one with no transcript is "not transcribed", never a post
+    @pytest.mark.parametrize("item, code", [(VIDEO, Withheld.RECORDING_UNTRANSCRIBED), (PHOTO, Withheld.IMAGE),
+                                            (AUDIO, Withheld.RECORDING_UNTRANSCRIBED),
+                                            (WEBM, Withheld.RECORDING_UNTRANSCRIBED), (SCAN, Withheld.SCAN)])
     async def test_media_answer_their_line_without_a_download_or_a_post(self, world, item, code):
         text = text_of(await world.call("open_drive_file", file_ref=ref(item.item_id)))
         assert what_to_do(text) == marker(c.WHAT_TO_DO).format(line=marker(c.withheld_key(code)))
         assert world.conversion.downloads == []      # a video is posted only after its download
         assert world.conversion.reader_runs == 0
 
-    async def test_a_workspace_ref_is_refused_before_any_call(self, world):
+    async def test_a_workspace_ref_is_the_neutral_refusal_before_any_call(self, world):
         text = text_of(await world.call("open_drive_file", file_ref="workspace:notes/plan.md"))
-        assert what_to_do(text) == marker(c.WHAT_TO_DO).format(line=marker(c.withheld_key(Withheld.OUTSIDE_DRIVE)))
+        assert text.split("\n") == NEUTRAL
         assert world.conversion.callers == []
+
+    async def test_a_ref_that_does_not_exist_answers_the_same_neutral_refusal(self, world):
+        missing = text_of(await world.call("open_drive_file", file_ref=ref("x9")))
+        outside = text_of(await world.call("open_drive_file", file_ref="workspace:notes/plan.md"))
+        listed = text_of(await world.call("list_folder", folder=ref("x9")))
+        assert missing == outside == listed
+        assert missing.split("\n") == NEUTRAL
+
+    async def test_a_transcripts_folder_file_is_read_as_the_connector(self, world):
+        text = text_of(await world.call("open_drive_file", file_ref=ref(ARCHIVED.item_id)))
+        assert PLAN_TEXT in text
+        assert world.conversion.callers == [CALLER_CONNECTOR]
 
     async def test_an_empty_ref_is_a_line_to_correct(self, world):
         text = text_of(await world.call("open_drive_file", file_ref=""))
@@ -316,9 +352,18 @@ class TestGetNote:
         assert none == both and "Give exactly one target" in what_to_do(none)
         assert world.notes.reads == []
 
-    async def test_a_file_with_no_note_is_not_found(self, world):
+    async def test_a_file_with_no_note_answers_the_neutral_refusal(self, world):
         text = text_of(await world.call("get_note", item_ref=ref("v1")))
-        assert text.split("\n")[0] == marker(c.STATUS).format(status="not_found")
+        assert text.split("\n") == NEUTRAL
+
+    async def test_a_store_error_carrying_note_text_is_logged_by_type_only(self, world, caplog):
+        world.notes.fail = ValueError("noted by the owner: Tom's private plan for Acme Hamburg")
+        with caplog.at_level(logging.DEBUG):
+            text = text_of(await world.call("get_note", item_ref=ref("d1")))
+        assert text.split("\n")[0] == marker(c.STATUS).format(status="failed")
+        logged = "\n".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+        assert "private plan" not in logged and "ValueError" in logged
+        assert "private plan" not in text
 
 
 class TestInputIsLiberal:

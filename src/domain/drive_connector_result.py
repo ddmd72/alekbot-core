@@ -10,8 +10,10 @@
 - the call did not finish in time (`NOT_FINISHED`): UNFINISHED, no block;
 - the open withheld the file (`DriveOutcome.withheld`): the `W_<code>` line; the block is the file's label;
 - the open was refused as too long (`facts.too_long`): ROUTE with the file's ref; the block is the refusal text;
-- any other refusal (`REFUSED`) but the index's "the bot cannot open this file" (`facts.inaccessible`): REFUSED_GUIDANCE;
-  the block is the REFUSED line (the chat's refusal lines never reach the connector, §7.7);
+- any other refusal (`REFUSED`) but the index's "the bot cannot open this file" (`facts.inaccessible`), and an item
+  that does not exist (`NOT_FOUND` on any call but a search or a passages result, whose text is the result): status
+  `refused`, REFUSED_GUIDANCE; the block is the REFUSED line. One neutral line for "outside", "not a drive ref" and
+  "no such item", so a result is never an existence oracle; the chat's refusal lines never reach the connector (§7.7);
 - content (`OK`), or a search or passages call that found nothing (its text is the result): ANSWER_FROM_RESULTS; the
   block is the call's text;
 - every other outcome: its own text (a correctable request error, not connected, gone, a failure), no block.
@@ -73,8 +75,19 @@ def _default_nonce() -> str:
 
 
 def connector_status(outcome: DriveOutcome) -> DriveStatus:
-    """The status of one call's result: its class's, as the chat's answer maps it."""
-    return _STATUS[outcome.cls]
+    """The status of one call's result: its class's, as the chat's answer maps it; `refused` for every outcome the
+    neutral refusal answers (a missing item included: its status must not tell it apart either)."""
+    return DriveStatus.REFUSED if _neutral_refusal(outcome) else _STATUS[outcome.cls]
+
+
+def _neutral_refusal(outcome: DriveOutcome) -> bool:
+    """A refusal or a missing item, answered by the one neutral REFUSED line (the module docstring's rule)."""
+    if outcome.withheld is not None or outcome.facts.too_long:
+        return False
+    if outcome.cls is OutcomeClass.REFUSED:
+        return not outcome.facts.inaccessible
+    return (outcome.cls is OutcomeClass.NOT_FOUND and outcome.op is not DriveOp.SEARCH
+            and outcome.excerpts is None)
 
 
 def compose_connector_result(outcome: DriveOutcome, texts: ConnectorTexts, *,
@@ -115,7 +128,7 @@ def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable
     if outcome.facts.too_long:
         ref = outcome.ref_of(outcome.items[0]) if outcome.items else ""
         return r[c.ROUTE].format(ref=ref), outcome.text
-    if outcome.cls is OutcomeClass.REFUSED and not outcome.facts.inaccessible:
+    if _neutral_refusal(outcome):
         return r[c.REFUSED_GUIDANCE], r[c.REFUSED]
     if outcome.cls is OutcomeClass.OK or (outcome.cls is OutcomeClass.NOT_FOUND and outcome.op in _RESULT_TEXT_OPS):
         return r[c.ANSWER_FROM_RESULTS], _block_text(outcome, r, nonce)
