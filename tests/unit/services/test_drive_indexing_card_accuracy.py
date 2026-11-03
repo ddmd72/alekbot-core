@@ -7,7 +7,8 @@ from dataclasses import replace
 import pytest
 
 from src.domain import drive_accuracy, drive_index as di
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import ACCURACY_VERSION, MIGRATION_GATE_KEY
 from src.services import drive_indexing_service as svc_mod
 

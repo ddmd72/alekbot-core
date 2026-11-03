@@ -4,7 +4,8 @@ chunk embeddings. A capped record holds that work until it is released; a record
 its chunks, which stop counting toward the user's chunk cap."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import RecordState, TriageVerdict
 from src.services import drive_indexing_service as svc_mod
 

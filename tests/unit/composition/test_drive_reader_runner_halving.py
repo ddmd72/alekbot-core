@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.composition.drive_reader_runner import DriveReaderRunner
-from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.exceptions import LLMClientError, LLMTimeoutError
 from src.domain.user import UserBotConfig
 from src.infrastructure.drive_model_call import (

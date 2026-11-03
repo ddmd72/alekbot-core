@@ -7,7 +7,8 @@ import pytest
 
 from src.adapters.drive_parser import readers
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
-from src.domain.drive_extraction import ExtractionRequest, ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import ExtractionRequest, PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.document_extraction import failure_label, text_digest
 from tests.unit.adapters.drive_parser_stderr_stub import SECRET
 

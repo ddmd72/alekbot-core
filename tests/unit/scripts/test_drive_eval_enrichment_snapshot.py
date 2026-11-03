@@ -15,7 +15,8 @@ from src.domain.drive_enrichment import (
     DriveProfile, HintItem, KeyValue, PhotoDescription, PhotoObject, ProfileDate, ProfileEntity,
 )
 from src.domain.drive_enrichment_calls import ProfileInput, ProfileLabels, ProfileRequest
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.document_extraction import PARSER
 from src.domain.drive_index import DocumentBrief
 

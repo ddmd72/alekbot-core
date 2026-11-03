@@ -11,7 +11,7 @@ from src.adapters.drive_parser.html_text import (
     HTML_TAG_SHARE_MIN, SCRIPT_RENDERED_TEXT_MAX, html_page_text, tag_share, text_is_html,
 )
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 
 _TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9:-]*(?:\s[^<>]*)?/?>|<!--|<!DOCTYPE", re.IGNORECASE)
 

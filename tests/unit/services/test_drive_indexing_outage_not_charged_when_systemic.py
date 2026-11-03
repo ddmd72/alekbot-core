@@ -5,7 +5,8 @@ permission, model id, quota), a network failure or an open breaker are the model
 runner to the tick."""
 import pytest
 
-from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import Priority, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS
 from src.domain.exceptions import (

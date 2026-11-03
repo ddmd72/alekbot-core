@@ -11,7 +11,8 @@ import pytest
 
 from src.adapters.drive_parser.readers import cut_pdf_window, pdf_page_count
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
-from src.domain.drive_extraction import ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 from tests.unit.adapters.drive_extraction_fixtures import encrypt_pdf, make_pdf
 
 _ROOT = Path(__file__).resolve().parents[3]

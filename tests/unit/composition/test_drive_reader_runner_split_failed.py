@@ -2,7 +2,8 @@
 status is the file's outcome, and no model call is made."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 
 from .test_drive_reader_runner import FakeSplitter, _request, _runner, _text
 

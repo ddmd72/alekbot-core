@@ -3,9 +3,8 @@ import pytest
 
 from src.domain.drive_enrichment import PhotoDescription
 from src.domain.drive_enrichment_calls import ModelReplyStatus
-from src.domain.drive_extraction import (
-    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
-)
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, TriageImage
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.document_extraction import READER
 from src.domain.drive_index import TriageVerdict
 from src.domain.user_drive import DriveFileTooLarge, DriveItemNotFoundError

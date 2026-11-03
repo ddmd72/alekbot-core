@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.composition.drive_reader_runner import DriveReaderRunner
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.user import UserBotConfig
 from tests.unit.agents.drive_model_fakes import RoutedLLM, context, prompt_builder, reply
 

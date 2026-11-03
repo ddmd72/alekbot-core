@@ -9,7 +9,8 @@ from scripts.validation.drive_eval import parse_cache, search_v2_eval
 from scripts.validation.drive_eval.parse_cache import ParseCache
 from scripts.validation.drive_eval.v2_metrics import GoldError, case_pass, validate_gold_v2
 from src.composition.drive_reader_runner import READER_VERSION
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 
 from ..services.drive_content_fakes import FakeExtractor
 

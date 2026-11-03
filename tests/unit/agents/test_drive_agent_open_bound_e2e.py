@@ -12,7 +12,7 @@ from src.agents.drive_agent import DriveAgent
 from src.domain import drive_answer_texts as t
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_open_texts import ROUTE_SPECIALIST
 from src.domain.llm import PROMPT_CACHE_BOUNDARY
 from src.domain.user_drive import DriveItem

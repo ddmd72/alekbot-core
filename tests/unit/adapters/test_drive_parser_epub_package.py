@@ -10,7 +10,7 @@ import pytest
 from src.adapters.drive_parser import epub_package
 from src.adapters.drive_parser.epub_package import PackageError, epub_zip_from_tar, is_tar_package
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 
 CONTAINER = ('<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
              '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'

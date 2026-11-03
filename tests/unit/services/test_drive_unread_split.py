@@ -11,7 +11,8 @@ from dataclasses import replace
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import POLICY_VERSION, DriveIndexRecord, Reason, RecordState
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS
 from src.domain.drive_search import (

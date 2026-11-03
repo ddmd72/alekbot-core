@@ -17,7 +17,8 @@ import pytest
 
 from src.adapters import subprocess_content_extractor as module
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
-from src.domain.drive_extraction import ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
 UID, GID = os.getuid(), os.getgid()

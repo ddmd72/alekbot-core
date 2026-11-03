@@ -15,7 +15,7 @@ from src.domain.drive_index_params import TRANSCRIPT_OPEN_MAX_CHARS
 from src.domain.drive_mirror import (
     ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot, ledger_key,
 )
-from src.domain.drive_search import REFERENCE_REMINDER
+from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
 from src.domain.drive_transcript_render import render_body
 from src.domain.user_drive import DriveItem

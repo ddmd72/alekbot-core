@@ -43,12 +43,14 @@ async def test_gate_chunker_and_terms_run_off_the_event_loop(w, monkeypatch):
 # -- B-M4: a file waits for the month that can read all of it ------------------------------------------------------
 
 def _scan(pages):
-    from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+    from src.domain.drive_extraction import ExtractionOutcome
+    from src.domain.document_extraction import ExtractionStatus
     return ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=pages)
 
 
 def _read(pages):
-    from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+    from src.domain.drive_extraction import ExtractionOutcome
+    from src.domain.document_extraction import ExtractionStatus
     return ExtractionOutcome(status=ExtractionStatus.TEXT, text="Receipt. Total 12.50 EUR. Thank you.",
                              pages_total=pages, pages_sent=pages, model_calls=1)
 
@@ -105,7 +107,8 @@ async def test_only_a_file_over_the_whole_monthly_budget_is_cut_to_it(w, monkeyp
 # -- minor: a deferral keeps the class the run started from ----------------------------------------------------------
 
 async def test_an_outage_on_an_edit_keeps_it_in_the_edit_class(w):
-    from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+    from src.domain.drive_extraction import ExtractionOutcome
+    from src.domain.document_extraction import ExtractionStatus
     from src.domain.drive_index import Priority
     w.parser.outcomes["scan.pdf"] = ExtractionOutcome(status=ExtractionStatus.TEXT, text=prose(40), pages_total=1)
     doc = w.add_doc("scan.pdf", "")

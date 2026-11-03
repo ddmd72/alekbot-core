@@ -5,7 +5,7 @@ import pytest
 
 import src.adapters.drive_parser.readers as readers
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
 _LINE = "Page {n:02d} of a long report with numbers and words"     # 50 characters

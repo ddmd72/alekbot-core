@@ -4,7 +4,8 @@ tick before anything is billed and counts nothing against the file; and a user w
 reader call at all."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DriveIndexStoreUnavailable, Reason, RecordState
 from src.domain.drive_index_params import MAX_CHUNKS_PER_USER
 

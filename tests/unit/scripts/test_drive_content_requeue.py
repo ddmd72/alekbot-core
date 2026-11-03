@@ -9,7 +9,8 @@ import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Priority, Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_index_planner import content_due

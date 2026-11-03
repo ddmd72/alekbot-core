@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_op import DriveOp
 from src.domain.drive_open_bound import refusal_text
 from src.domain.drive_open_cut import cut_line
 from src.domain.drive_open_bound_text import BoundText
 from src.domain.drive_outcome_class import OutcomeClass
-from src.domain.drive_search import REFERENCE_REMINDER
+from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_text_extent import ExtentState, ExtentWhy, TextExtent
 from src.domain import drive_open_texts as T
 from src.domain.user_drive import DriveItem

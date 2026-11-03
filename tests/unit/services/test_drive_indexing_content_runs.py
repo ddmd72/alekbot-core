@@ -7,7 +7,8 @@ import pytest
 from src.domain import drive_index as di
 from src.domain.drive_card import card_text
 from src.domain.drive_keys import word_keys_capped
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import Priority, Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_index_planner import backoff

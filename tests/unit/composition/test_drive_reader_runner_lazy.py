@@ -12,7 +12,8 @@ import pytest
 
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.composition.drive_reader_runner import DriveReaderRunner
-from src.domain.drive_extraction import ExtractionRequest, ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import ExtractionRequest, PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL
 from src.domain.llm import FinishReason
 from src.domain.user import UserBotConfig

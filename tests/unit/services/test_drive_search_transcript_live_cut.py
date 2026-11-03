@@ -9,7 +9,7 @@ import pytest
 from src.domain import drive_open_texts as T
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import Scope
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_text_extent import ExtentWhy
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
 

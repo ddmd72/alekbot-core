@@ -10,7 +10,8 @@ import pytest
 
 from src.adapters import subprocess_content_extractor as module
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
-from src.domain.drive_extraction import ExtractionRequest, ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import ExtractionRequest, PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.document_extraction import PARSER
 from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_TEXT_CHARS
 from src.ports.content_extractor_port import ContentExtractorPort
