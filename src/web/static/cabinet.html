@@ -1923,6 +1923,12 @@
           "drive.on": "On",
           "drive.note_title": "Bot's note about this drive",
           "drive.sees_title": "What the bot sees",
+          "drive.connector_title": "Connector access",
+          "drive.connector_explain": "What apps connected through the drive connector (for example claude.ai) can read on this drive. They can never change anything.",
+          "drive.connector_nothing": "Nothing",
+          "drive.connector_whole": "Everything the bot sees on this drive",
+          "drive.connector_choose": "Choose folders…",
+          "drive.connector_n": "{n} folders",
           "drive.sees_explain_area": "The bot has its own folder on this drive. Search covers the same files.",
           "drive.sees_explain_account": "Only these folders, and everything inside them. Search covers the same files.",
           "drive.whole_title": "Whole drive",
@@ -2214,6 +2220,12 @@
           "drive.on": "Увімкнено",
           "drive.note_title": "Нотатка бота про цей диск",
           "drive.sees_title": "Що бачить бот",
+          "drive.connector_title": "Доступ конектора",
+          "drive.connector_explain": "Що можуть читати на цьому диску застосунки, під’єднані через конектор диска (наприклад, claude.ai). Змінювати щось вони не можуть ніколи.",
+          "drive.connector_nothing": "Нічого",
+          "drive.connector_whole": "Усе, що бачить бот на цьому диску",
+          "drive.connector_choose": "Вибрати папки…",
+          "drive.connector_n": "Папок: {n}",
           "drive.sees_explain_area": "У бота є власна папка на цьому диску. Пошук охоплює ті самі файли.",
           "drive.sees_explain_account": "Лише ці папки та все всередині них. Пошук охоплює ті самі файли.",
           "drive.whole_title": "Увесь диск",
@@ -2505,6 +2517,12 @@
           "drive.on": "Activée",
           "drive.note_title": "Note du bot sur ce lecteur",
           "drive.sees_title": "Ce que voit le bot",
+          "drive.connector_title": "Accès du connecteur",
+          "drive.connector_explain": "Ce que les applications connectées via le connecteur du disque (par exemple claude.ai) peuvent lire sur ce disque. Elles ne peuvent jamais rien modifier.",
+          "drive.connector_nothing": "Rien",
+          "drive.connector_whole": "Tout ce que le bot voit sur ce disque",
+          "drive.connector_choose": "Choisir des dossiers…",
+          "drive.connector_n": "{n} dossiers",
           "drive.sees_explain_area": "Le bot a son propre dossier sur ce lecteur. La recherche couvre les mêmes fichiers.",
           "drive.sees_explain_account": "Seulement ces dossiers et tout leur contenu. La recherche couvre les mêmes fichiers.",
           "drive.whole_title": "Tout le lecteur",
@@ -2796,6 +2814,12 @@
           "drive.on": "Activada",
           "drive.note_title": "Nota del bot sobre este disco",
           "drive.sees_title": "Qué ve el bot",
+          "drive.connector_title": "Acceso del conector",
+          "drive.connector_explain": "Lo que las aplicaciones conectadas mediante el conector de la unidad (por ejemplo, claude.ai) pueden leer en esta unidad. Nunca pueden cambiar nada.",
+          "drive.connector_nothing": "Nada",
+          "drive.connector_whole": "Todo lo que el bot ve en esta unidad",
+          "drive.connector_choose": "Elegir carpetas…",
+          "drive.connector_n": "{n} carpetas",
           "drive.sees_explain_area": "El bot tiene su propia carpeta en este disco. La búsqueda cubre los mismos archivos.",
           "drive.sees_explain_account": "Solo estas carpetas y todo lo que contienen. La búsqueda cubre los mismos archivos.",
           "drive.whole_title": "Todo el disco",
@@ -4822,6 +4846,20 @@
         return sv.folders.map((f) => escapeHtml(driveFolderName(f))).join(", ");
       }
 
+      // The connector access (DRIVE_MCP_CONNECTOR_RFC §7.6): nothing (the default), the whole drive, or chosen folders.
+      function driveConnectorView(row) {
+        const ca = row.connector_access || {};
+        const mode = ca.mode === "whole" || ca.mode === "folders" ? ca.mode : "nothing";
+        return { mode, folders: mode === "folders" ? (ca.folders || []) : [] };
+      }
+
+      function driveConnectorValue(row) {
+        const cv = driveConnectorView(row);
+        if (cv.mode === "whole") return t("drive.connector_whole");
+        if (cv.mode === "folders") return driveText("drive.connector_n", { n: cv.folders.length });
+        return t("drive.connector_nothing");
+      }
+
       function driveWriteValue(row, m) {
         const wf = row.write_folder;
         if (!wf) return { icon: "lock", text: t("drive.write_none_title"), sub: t("drive.write_none_sub") };
@@ -4849,6 +4887,7 @@
           <div class="dv-group">
             ${line(t("drive.sees_title"), driveSeesValue(row, m), "access", m.sv.nothing)}
             ${line(t("drive.saves_title"), w.text, "access", false)}
+            ${line(t("drive.connector_title"), driveConnectorValue(row), "access", false)}
             ${m.hasIndex ? line(t("drive.ov_search"), search, "index", m.emptyIndex) : ""}
             ${line(t("drive.searched_by_default"), t(row.searched_by_default ? "drive.yes" : "drive.no"), "settings", false)}
           </div>
@@ -4892,6 +4931,28 @@
               <button type="button" class="btn btn-secondary dv-btn-sm" onclick="openDrivePicker('${q}', 'write')"${writeLocked ? (locked ? lockAttr : " disabled") : ""}>${t("drive.change")}</button></div>
             <div class="dv-frow">${driveIcon(w.icon, "fi" + (w.icon === "lock" ? " lock" : ""))}<div class="dv-row-main"><div class="dv-row-title">${w.text}</div>
               ${w.sub ? `<div class="dv-row-sub">${w.sub}</div>` : ""}</div></div>
+          </div>
+          ${renderDriveConnector(row, q, lockAttr, locked)}`;
+      }
+
+      // The third block of the access tab: what the drive connector may read. Nothing / everything the bot sees /
+      // chosen folders (the picker, limited to the scope); the server checks every choice.
+      function renderDriveConnector(row, q, lockAttr, locked) {
+        const cv = driveConnectorView(row);
+        const ui = driveUiOf(row.connection_id);
+        const pick = (mode, key) => `<button type="button" class="btn ${cv.mode === mode ? "btn-primary" : "btn-secondary"} dv-btn-sm"
+          aria-pressed="${cv.mode === mode}" ${mode === "folders" ? `onclick="openDrivePicker('${q}', 'connector')"${lockAttr}`
+          : `onclick="saveDriveConnectorAccess('${q}', '${mode}', [], false)"${locked ? " disabled" : ""}`}>${t(key)}</button>`;
+        let current = "";
+        if (cv.mode === "whole") current = `<div class="dv-frow">${driveIcon("drive", "fi")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.connector_whole")}</div></div></div>`;
+        else if (cv.mode === "folders") current = cv.folders.map((f) => `<div class="dv-frow">${driveIcon("folder", "fi")}<div class="dv-row-main"><div class="dv-row-title">${escapeHtml(f.path || f.id)}</div></div></div>`).join("");
+        else current = `<div class="dv-frow">${driveIcon("lock", "fi lock")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.connector_nothing")}</div></div></div>`;
+        return `
+          <div class="dv-group" id="drive-connector-${q}">
+            <div class="dv-row"><div class="dv-row-main"><div class="dv-row-title">${t("drive.connector_title")}</div><div class="dv-row-sub">${t("drive.connector_explain")}</div></div></div>
+            ${current}
+            <div class="dv-btns">${pick("nothing", "drive.connector_nothing")}${pick("whole", "drive.connector_whole")}${pick("folders", "drive.connector_choose")}</div>
+            ${ui.connectorError ? `<div class="dv-msg err" role="alert">${escapeHtml(ui.connectorError)}</div>` : ""}
           </div>`;
       }
 
@@ -5096,6 +5157,24 @@
         return out.ok;
       }
 
+      // Set the connector access: mode "nothing" | "whole" | "folders" (with `folderIds`). A refusal shows the server's
+      // line in the picker when it is open, else under the block.
+      async function saveDriveConnectorAccess(id, mode, folderIds, inPicker) {
+        const ui = driveUiOf(id);
+        const out = await driveCall("PUT", `/api/drive/connections/${encodeURIComponent(id)}/connector-access`,
+          mode === "folders" ? { mode, folder_ids: folderIds } : { mode });
+        const error = out.ok ? "" : (out.data.error || t("toast.drive_failed"));
+        if (!out.ok && inPicker && ui.picker) {
+          ui.picker.error = error;
+          return false;
+        }
+        ui.connectorError = error;
+        if (out.ok) { ui.picker = null; showToast(t("toast.drive_saved"), "success"); }
+        _driveStatusSnapshot = null;
+        if (out.ok) await loadDriveStatus(); else redrawDrive();
+        return out.ok;
+      }
+
       // ── The folder picker: a dialog outside the card (#drive-picker-root), one per page ──────────────────────────
       // State lives in driveUi[id].picker. The scope picker edits a draft (ticked folders + whole drive) and saves it
       // with its Save (n) button; closing with a pending draft asks first. The write picker works the same way.
@@ -5111,6 +5190,10 @@
       // How many things the dialog would change; the Save (n) number.
       function drivePickerChanges(p) {
         if (p.purpose === "write") return p.write === p.init.write ? 0 : 1;
+        if (p.purpose === "connector") {
+          const picked = p.sel.map((s) => s.id);
+          return picked.filter((x) => !p.init.ids.includes(x)).length + p.init.ids.filter((x) => !picked.includes(x)).length;
+        }
         const now = p.sel.map((s) => s.id);
         let n = now.filter((x) => !p.init.ids.includes(x)).length + p.init.ids.filter((x) => !now.includes(x)).length;
         if (p.whole !== p.init.whole) n += 1;
@@ -5129,7 +5212,8 @@
         if (!row) return;
         const sv = driveScopeView(row);
         const wf = row.write_folder;
-        const sel = sv.folders.map((f) => ({ id: f.id, path: f.path || "" }));
+        const chosen = purpose === "connector" ? driveConnectorView(row).folders : sv.folders;
+        const sel = chosen.map((f) => ({ id: f.id, path: f.path || "" }));
         const write = wf ? wf.id : null;
         drivePickerOpener = document.activeElement;
         drivePickerId = id;
@@ -5267,6 +5351,9 @@
         renderDrivePickerPart(id, "foot");
         if (p.purpose === "write") {
           await saveDriveWriteFolder(id, p.write === null ? "__none" : p.write === "" ? "__root" : p.write, true);
+        } else if (p.purpose === "connector") {
+          const ids = p.sel.map((s) => s.id);
+          await saveDriveConnectorAccess(id, ids.length ? "folders" : "nothing", ids, true);
         } else {
           await saveDriveScope(id, p.whole, p.sel.map((s) => s.id), true);
         }
@@ -5314,11 +5401,12 @@
         if (!document.getElementById("drive-pk-dialog")) {
           const q = escapeHtml(id);
           const sv = driveScopeView(row);
-          const subKey = p.purpose === "write" ? "drive.pk_sub_write" : sv.means === "area" ? "drive.pk_sub_area" : "drive.pk_sub_account";
+          const subKey = p.purpose === "write" ? "drive.pk_sub_write" : p.purpose === "connector" ? "drive.connector_explain"
+            : sv.means === "area" ? "drive.pk_sub_area" : "drive.pk_sub_account";
           root.innerHTML = `
             <div class="dv-overlay" onclick="if (event.target === this) requestCloseDrivePicker('${q}')">
               <div class="dv-sheet" id="drive-pk-dialog" role="dialog" aria-modal="true" aria-labelledby="drive-pk-title">
-                <header class="dv-pk-head"><div><h2 id="drive-pk-title">${t(p.purpose === "write" ? "drive.pk_title_write" : "drive.pk_title_scope")}</h2>
+                <header class="dv-pk-head"><div><h2 id="drive-pk-title">${t(p.purpose === "write" ? "drive.pk_title_write" : p.purpose === "connector" ? "drive.connector_title" : "drive.pk_title_scope")}</h2>
                   <p class="dv-pk-sub">${escapeHtml(row.mount_name)} · ${t(subKey)}</p></div>
                   <button type="button" class="dv-icon-btn" id="drive-pk-close" onclick="requestCloseDrivePicker('${q}')" aria-label="${escapeHtml(t("drive.close"))}">${driveIcon("x")}</button></header>
                 <aside class="dv-pk-side" id="drive-pk-side"></aside>
@@ -5351,8 +5439,10 @@
           if (p.outer.length || p.source === "outer") sources.push({ key: "outer", label: t("drive.picker_outer"), sub: t("drive.pk_outer_sub"), icon: "shared" });
           let h = sources.map((s) => `<button type="button" class="dv-pk-src" aria-pressed="${p.source === s.key}" onclick="setDrivePickerSource('${q}', '${s.key}')">
             ${driveIcon(s.icon, "sm")}<span>${s.label}<small>${s.sub}</small></span></button>`).join("");
-          h += '<div class="dv-pk-divider"></div>';
-          if (p.purpose === "scope") {
+          if (p.purpose !== "connector") h += '<div class="dv-pk-divider"></div>';
+          if (p.purpose === "connector") {
+            // no special choice here: "Everything the bot sees" is a button of the block
+          } else if (p.purpose === "scope") {
             if (sv.means === "area") h += `<p class="dv-pk-info">${t("drive.pk_area_info")}</p>`;
             else h += `<label class="dv-pk-special"><input type="checkbox" ${p.whole ? "checked" : ""} onchange="toggleDrivePickerWhole('${q}', this.checked)">
               <span>${t("drive.whole_title")}<small>${t(sv.means === "nothing" ? "drive.whole_sub_account" : "drive.whole_sub_generic")}</small></span></label>`;
@@ -5379,7 +5469,8 @@
             el.innerHTML = `<div class="dv-pk-empty">${p.filter.trim() ? driveText("drive.pk_no_match", { q: p.filter }) : t("drive.no_folders")}</div>`;
             return;
           }
-          el.innerHTML = rows.map((f, i) => (p.purpose === "write" ? drivePickerWriteRow(p, sv, f, i, q) : drivePickerScopeRow(p, f, i, q))).join("");
+          el.innerHTML = rows.map((f, i) => (p.purpose === "write" ? drivePickerWriteRow(p, sv, f, i, q)
+            : p.purpose === "connector" ? drivePickerConnectorRow(p, sv, f, i, q) : drivePickerScopeRow(p, f, i, q))).join("");
         } else if (part === "foot") {
           el.innerHTML = drivePickerFoot(p, sv, q);
         }
@@ -5401,6 +5492,26 @@
           <button type="button" class="dv-prow-btn" onclick="openDrivePickerFolder('${q}', ${i})">${driveIcon("folder", "fi")}
             <span class="dv-prow-text"><span class="dv-prow-name">${escapeHtml(f.name)}</span>${sub ? `<span class="dv-prow-sub">${sub}</span>` : ""}</span>
             ${driveIcon("chevR", "dv-chevr")}</button></div>`;
+      }
+
+      // A connector folder must lie inside the scope: a folder outside it is not selectable, only opened when it leads
+      // to a scope folder (as the write picker); a folder under a picked one is covered by it.
+      function drivePickerConnectorRow(p, sv, f, i, q) {
+        const path = f.path || "";
+        const allowed = drivePathInScope(sv, path);
+        const leads = !allowed && path && sv.folders.some((s) => s.path && s.path.startsWith(path + "/"));
+        const navigable = allowed || leads;
+        const picked = p.sel.some((s) => s.id === f.id);
+        const through = !picked && path ? p.sel.find((s) => s.path && path.startsWith(s.path + "/")) : null;
+        let sub = "";
+        if (!allowed) sub = t(leads ? "drive.pk_contains" : "drive.pk_not_visible");
+        else if (through) sub = driveText("drive.pk_included_through", { name: driveLast(through.path) });
+        return `<div class="dv-prow${!allowed && !leads ? " dim" : ""}">
+          <input type="checkbox" ${picked || through ? "checked" : ""} ${allowed && !through ? "" : "disabled"} onchange="toggleDrivePickerFolder('${q}', ${i})"
+            aria-label="${escapeHtml(driveText("drive.pk_show", { name: f.name }))}">
+          <button type="button" class="dv-prow-btn" ${navigable ? `onclick="openDrivePickerFolder('${q}', ${i})"` : "disabled"}>${driveIcon("folder", "fi")}
+            <span class="dv-prow-text"><span class="dv-prow-name">${escapeHtml(f.name)}</span>${sub ? `<span class="dv-prow-sub">${sub}</span>` : ""}</span>
+            ${navigable ? driveIcon("chevR", "dv-chevr") : ""}</button></div>`;
       }
 
       function drivePickerWriteRow(p, sv, f, i, q) {
@@ -5428,7 +5539,11 @@
             <button type="button" class="btn btn-primary dv-btn-sm" id="drive-pk-save-confirm" ${p.busy ? "disabled" : ""} onclick="saveDrivePicker('${q}')">${t("drive.save")}</button></div></div>`;
         }
         let tray = "";
-        if (p.purpose === "scope") {
+        if (p.purpose === "connector") {
+          const chips = p.sel.map((s, i) => `<span class="dv-tchip">${escapeHtml(driveLast(s.path) || s.id)}<button type="button" onclick="removeDrivePickerChip('${q}', ${i})"
+            aria-label="${escapeHtml(driveText("drive.pk_remove", { name: s.path || s.id }))}">${driveIcon("x", "sm")}</button></span>`);
+          tray = chips.length ? chips.join("") : t("drive.connector_nothing");
+        } else if (p.purpose === "scope") {
           const chips = [];
           if (p.whole) chips.push(`<span class="dv-tchip">${t("drive.whole_title")}<button type="button" onclick="toggleDrivePickerWhole('${q}', false)" aria-label="${escapeHtml(t("drive.stop_whole"))}">${driveIcon("x", "sm")}</button></span>`);
           p.sel.forEach((s, i) => chips.push(`<span class="dv-tchip">${escapeHtml(driveLast(s.path) || s.id)}<button type="button" onclick="removeDrivePickerChip('${q}', ${i})"
