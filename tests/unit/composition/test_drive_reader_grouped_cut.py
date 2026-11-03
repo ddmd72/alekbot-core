@@ -149,3 +149,38 @@ async def test_a_half_is_cut_from_its_window_file_with_a_relative_offset(tmp_pat
     for path, _, _ in cutter.single_cuts:
         assert path != source and os.path.dirname(path).startswith(str(work)) and "pages-0011-010" in path
     assert list(work.iterdir()) == []
+
+
+async def test_busy_on_the_first_group_answers_the_busy_note_not_a_generic_error(tmp_path, caplog):
+    import logging
+
+    from src.domain.document_open_texts import parser_unavailable_note
+    from src.domain.document_presentation import note_for
+    from src.domain.document_read import ReadStatus
+    from src.services.document_service import DocumentService
+    from tests.unit.services.test_document_service_read import PDF, SCAN_OUT, FakeExtractor, FakeSplitter, req
+
+    cutter = GroupCutter(60, fail_group=0, fail_with=ParserBusy())
+    runner, llm, _ = _runner(_text, cutter, tmp_path)
+    service = DocumentService(FakeExtractor("parser", SCAN_OUT), runner, FakeSplitter())
+    with caplog.at_level(logging.INFO):
+        out = await service.read(req(PDF, "scan_0012.pdf", "application/pdf"))
+    assert (out.status, out.detail) == (ReadStatus.PARSER_UNAVAILABLE, "busy") and llm.requests == []
+    assert note_for(out, "scan_0012.pdf", "application/pdf") == parser_unavailable_note("scan_0012.pdf")
+    assert any(r.levelno == logging.WARNING and "parser was busy before any window" in r.getMessage()
+               for r in caplog.records)
+    assert not any("deadline reached" in r.getMessage() for r in caplog.records)
+    assert not any(r.levelno >= logging.ERROR and "DriveReader" in r.getMessage() for r in caplog.records)
+
+
+async def test_busy_after_a_prefix_keeps_the_prefix_and_logs_busy_not_deadline(tmp_path, caplog):
+    import logging
+
+    cutter = GroupCutter(60, fail_group=1, fail_with=ParserBusy())
+    runner, llm, _ = _runner(_text, cutter, tmp_path)
+    with caplog.at_level(logging.INFO):
+        out = await runner.extract(replace(_request(tmp_path), deadline_at=time.time() + 60))
+    assert out.status is S.TEXT and out.truncated is True and len(llm.requests) == MODEL_IN_FLIGHT
+    assert "stop=busy" in out.detail
+    assert any(r.levelno == logging.WARNING and "parser was busy" in r.getMessage() for r in caplog.records)
+    assert not any("deadline reached" in r.getMessage() for r in caplog.records)

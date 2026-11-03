@@ -349,7 +349,7 @@ class DriveReaderRunner(ContentExtractorPort):
         if request.deadline_at is not None:
             end = min(end, request.deadline_at)
         budget = request.text_budget
-        stop = ""          # "", "budget", "deadline", "unavailable"
+        stop = ""          # "", "budget", "deadline", "busy", "unavailable"
         unavailable: Optional[DriveModelUnavailable] = None
         parser_down: Optional[ParserUnavailable] = None
         failure: Optional[BaseException] = None
@@ -387,7 +387,9 @@ class DriveReaderRunner(ContentExtractorPort):
                     stop, unavailable = "unavailable", exc
                 elif isinstance(exc, ParserUnavailable):
                     parser_down = exc
-                elif isinstance(exc, ParserBusy) or (isinstance(exc, PdfSplitFailed) and exc.detail == "deadline"):
+                elif isinstance(exc, ParserBusy):
+                    stop = "busy"
+                elif isinstance(exc, PdfSplitFailed) and exc.detail == "deadline":
                     stop = "deadline"
                 else:
                     failure = exc
@@ -399,6 +401,14 @@ class DriveReaderRunner(ContentExtractorPort):
                                     model_calls=spend["model_calls"], model_cost=spend["model_cost"],
                                     model_fallback_cost=spend["model_fallback_cost"]) from parser_down
         finished = [w for w in run.windows if w.finished]
+        if stop == "busy" and not finished:
+            # nothing was read: not a file outcome and not a deadline. The document service answers the busy note.
+            logger.warning(f"[DriveReader] item={request.item_id}: the parser was busy before any window was read")
+            if spend["model_calls"]:
+                raise ParserUnavailable("busy", pages_sent=spend["pages_sent"], model_calls=spend["model_calls"],
+                                        model_cost=spend["model_cost"],
+                                        model_fallback_cost=spend["model_fallback_cost"])
+            raise ParserBusy()
         if stop == "unavailable" and not finished:
             if unavailable is None:
                 raise RuntimeError("reader stopped as unavailable without the model error")
@@ -420,6 +430,10 @@ class DriveReaderRunner(ContentExtractorPort):
         if stop == "deadline":
             logger.warning(f"[DriveReader] item={request.item_id}: the deadline reached, {unread} of "
                            f"{len(run.windows)} windows not read")
+        elif stop == "busy":
+            logger.warning(f"[DriveReader] item={request.item_id}: the parser was busy (its slot did not come "
+                           f"free before the deadline), {unread} of {len(run.windows)} windows not read; the finished "
+                           f"prefix is kept")
         elif stop == "unavailable":
             logger.error(f"[DriveReader] item={request.item_id}: the model became unavailable, {len(finished)} of "
                          f"{len(run.windows)} windows kept")
