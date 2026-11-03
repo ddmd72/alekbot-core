@@ -69,6 +69,7 @@ from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS
 from ..domain.document_kind import kind_of
 from ..domain.drive_op import DriveOp
+from ..domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
@@ -116,10 +117,9 @@ from ..domain.user_drive import (
     prepare_drive_text_file,
 )
 from ..domain.document_limits import (
-    MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES, MAX_VIDEO_ATTACH_BYTES, OPEN_MAX_CHARS,
+    MAX_VIDEO_ATTACH_BYTES, OPEN_MAX_CHARS,
 )
 from ..domain.workspace import BINARY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
-from ..utils.file_conversion import is_native_binary
 from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
 from ..domain.drive_open_bound_info import OpenBoundInfo
 from ..domain.drive_text_extent import ExtentState, TextExtent
@@ -661,8 +661,9 @@ class DriveOperations:
             if ref.startswith(SKILL_REF_PREFIX):
                 return await self._fetch_text(ref, user_id)
             mime_type = mimetypes.guess_type(ref)[0] or "application/octet-stream"
-            if is_native_binary(mime_type):
-                return await self._fetch_binary(ref, user_id, mime_type)
+            native = _declared_format(context, mime_type)
+            if native is not None:
+                return await self._fetch_binary(ref, user_id, mime_type, native)
             if mime_type.startswith("video/"):
                 return await self._fetch_video(context, ref, user_id)
             return await self._fetch_text(ref, user_id)
@@ -706,8 +707,9 @@ class DriveOperations:
         if workspace_kind(path) == "text":
             return await self._fetch_text(ref, user_id)
         mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        if is_native_binary(mime_type):
-            return await self._fetch_binary(ref, user_id, mime_type)
+        native = _declared_format(context, mime_type)
+        if native is not None:
+            return await self._fetch_binary(ref, user_id, mime_type, native)
         if mime_type.startswith("video/"):
             return await self._fetch_video(context, ref, user_id)
         return await self._fetch_text(ref, user_id)
@@ -717,10 +719,14 @@ class DriveOperations:
         content = await self._conversion_service.resolve_content(ref, user_id)
         return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=content, success=True, body=True)
 
-    async def _fetch_binary(self, ref: str, user_id: str, mime_type: str) -> DriveOutcome:
+    async def _fetch_binary(self, ref: str, user_id: str, mime_type: str, native: NativeFormat) -> DriveOutcome:
         """Native binary (image/PDF) as file_data for LLM vision, through the conversion service so delivered-document
-        keys (docs/…, deep_research/…) resolve via MediaStoragePort with the ownership check."""
+        keys (docs/…, deep_research/…) resolve via MediaStoragePort with the ownership check. A file above the declared
+        `max_bytes` goes the converter's way, as a file the model does not read natively (EXTERNAL_FILES_RFC §4.3); the
+        page count of a stored file is not known before the read, so only the bytes are checked."""
         data = await self._conversion_service.resolve_bytes(ref, user_id)
+        if len(data) > native.max_bytes:
+            return await self._fetch_text(ref, user_id)
         suffix = os.path.splitext(ref)[1] or ".bin"
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
         os.close(tmp_fd)
@@ -998,13 +1004,16 @@ class DriveOperations:
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True, tag=tag)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
-        vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
-                      else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
         # The open bound (RFC §29): a text above the cap is never handed to a model whole. An indexed one is refused
         # before any download and read through the index; any other is cut after the conversion. A recording's link
         # (`original`) is no text and asks nothing.
         extent = TextExtent.UNKNOWN if original else await self._text_extent(conn, item)
-        if vision_cap is None and refuses(extent):
+        # Native or text is decided from the consumer's declaration (§4.3): the format declared, the file within its
+        # bytes and, for a PDF whose page count is known, within its pages. No declaration: text.
+        native = _declared_format(context, mime)
+        is_native = native is not None and item.size_bytes <= native.max_bytes and not (
+            mime == "application/pdf" and extent.pages_total and extent.pages_total > native.max_pages)
+        if not is_native and refuses(extent):
             logger.info("[DriveOperations] open refused: %s chars=%d passages=%d truncated=%s", ref,
                         extent.text_chars, extent.passages, extent.truncated)
             return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text=refusal_text(item.path, extent),
@@ -1039,9 +1048,7 @@ class DriveOperations:
                                                              cut_state=extent.state) if cut else None,
                                     ref_tag=tag)
         try:
-            if vision_cap is not None:
-                if item.size_bytes > vision_cap:
-                    raise DriveFileTooLargeError(item, vision_cap)
+            if is_native:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
                 logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", ref, mime, len(data),
                             extent.pages_total or "-")
@@ -1180,6 +1187,15 @@ class DriveOperations:
 # ----------------------------------------------------------------------
 # Outcome helpers
 # ----------------------------------------------------------------------
+
+def _declared_format(context: Mapping[str, Any], mime: str) -> Optional[NativeFormat]:
+    """The format the consumer's declaration lists for `mime`, or None: not declared, or no declaration at all (the key
+    absent means text only, never native; EXTERNAL_FILES_RFC §4.3)."""
+    for fmt in from_plain(context.get(NATIVE_FORMATS_KEY)):
+        if fmt.mime == mime:
+            return fmt
+    return None
+
 
 def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
         file_data: Optional[Dict[str, Any]] = None, body: bool = False, owner_note: bool = False) -> DriveOutcome:

@@ -250,6 +250,16 @@ is built, not only behind the Microsoft keys.
 - **Parser user (G13).** Parser children now run next to full-drive tokens, so on Cloud Run a missing `DRIVE_PARSER_USER`
   fails the start instead of running the children as the indexer's own user.
 
+### 1.0 Native caps by consumer
+
+An open (`DriveOperations.open` and `fetch_stored`, reached through `open_file` and `work_with_drive_files`) reads an
+image or a PDF natively only when the consumer declared it: the message context carries the model's
+`native_formats` (`src/domain/native_format.py`, `NATIVE_FORMATS_KEY`; EXTERNAL_FILES_RFC §4.3). A file whose mime type is
+declared, within the format's `max_bytes` and, for a PDF whose page count is known, its `max_pages`, is attached as
+before; any other file takes the converter and arrives as text. No declaration (the key absent) is text, never native.
+The same caps now apply to chat, workspace and delivered files, which had none; a stored file's page count is not known
+before the read, so only its bytes are checked. `FileManagementAgent` hands its message context to the open unchanged.
+
 ### 1.1 Deep research copies (opt-in)
 
 A Cabinet switch in the Drive card, "Copy deep research reports to my drive" (`UserBotConfig.drive_copy_deep_research`,
