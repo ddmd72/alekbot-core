@@ -6,8 +6,10 @@ Mocking: FileConversionService + FileStoragePort.
 """
 
 import os
+import re
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
@@ -15,6 +17,7 @@ from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.infrastructure.agent_manifest import Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
+from tests.support.opened_file import opened_body, opened_native
 
 
 # ---------------------------------------------------------------------------
@@ -92,27 +95,34 @@ class TestCanHandle:
 # ---------------------------------------------------------------------------
 
 class TestFetchText:
+    # The read goes through FileConversionService.open (EXTERNAL_FILES_RFC §4.2); the stored file's text is marked
+    # with the neutral tag and cut at D20's 60 000 by the store's presenter (P15, D20).
 
     async def test_fetch_text_success(self, agent, mock_conversion):
-        mock_conversion.resolve_content = AsyncMock(
-            return_value="# Report\n\nSome content here."
-        )
+        mock_conversion.open = AsyncMock(return_value=opened_body("# Report\n\nSome content here."))
         msg = _make_message(Intent.OPEN_FILE, file_ref="report.docx")
 
         response = await agent.execute(msg)
 
         assert response.status == AgentStatus.SUCCESS
         assert "Report" in response.result
-        mock_conversion.resolve_content.assert_called_once_with("report.docx", "user1")
+        assert re.search(r'<external_content nonce="[0-9a-f]{16}" ref="report.docx" name="report.docx">',
+                         response.result)
+        mock_conversion.open.assert_awaited_once()
+        assert mock_conversion.open.await_args.args == ("report.docx", "user1", "")
 
     async def test_fetch_text_returns_full_content(self, agent, mock_conversion):
         long_content = "x" * 10_000
-        mock_conversion.resolve_content = AsyncMock(return_value=long_content)
+        mock_conversion.open = AsyncMock(return_value=opened_body(long_content))
         msg = _make_message(Intent.OPEN_FILE, file_ref="big.txt")
 
         response = await agent.execute(msg)
 
-        assert len(response.result) == 10_000
+        # the whole text is inside the wrapper: 10 000 characters are under the store's 60 000 cut (D20)
+        inner = re.search(r'<external_content nonce="([0-9a-f]{16})"[^>]*>\n(.*)\n</external_content nonce="\1">',
+                          response.result, re.S)
+        assert inner is not None and len(inner.group(2)) == 10_000
+        assert "[System:" not in response.result
 
 
 # ---------------------------------------------------------------------------
@@ -120,48 +130,36 @@ class TestFetchText:
 # ---------------------------------------------------------------------------
 
 class TestFetchBinary:
+    # Native or text is the document service's decision (EXTERNAL_FILES_RFC P16): the agent hands its context's
+    # declaration to `open` and attaches the native file the service answers.
 
     async def test_fetch_binary_returns_file_data(self, agent, mock_conversion):
-        # Binary path resolves via the conversion service (symmetric with the text
-        # path), so delivered-document keys resolve with the ownership check too.
-        mock_conversion.resolve_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+        mock_conversion.open = AsyncMock(return_value=opened_native("/tmp/photo_abc.png", "image/png"))
         msg = _make_message(Intent.OPEN_FILE, file_ref="photo.png")
         msg.context[NATIVE_FORMATS_KEY] = NATIVE_PNG_PDF
 
-        with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
-             patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \
-             patch("src.infrastructure.drive_operations.os") as mock_os:
-            mock_tempfile.mkstemp.return_value = (5, "/tmp/photo_abc.png")
-            mock_aio_ctx = AsyncMock()
-            mock_aiofiles.open.return_value.__aenter__ = mock_aio_ctx
-            mock_aiofiles.open.return_value.__aexit__ = AsyncMock()
-
-            response = await agent.execute(msg)
+        response = await agent.execute(msg)
 
         assert response.status == AgentStatus.SUCCESS
         assert "photo.png" in response.result
         assert response.metadata["file_data"]["mime_type"] == "image/png"
         assert response.metadata["file_data"]["path"].endswith(".png")
-        mock_conversion.resolve_bytes.assert_called_once_with("photo.png", "user1")
+        mock_conversion.open.assert_awaited_once()
+        assert mock_conversion.open.await_args.args == ("photo.png", "user1", "")
+        assert mock_conversion.open.await_args.kwargs["consumer"] == tuple(NativeFormat(**f) for f in NATIVE_PNG_PDF)
+        mock_conversion.resolve_bytes.assert_not_called()
 
     async def test_fetch_pdf_is_binary(self, agent, mock_conversion):
         """PDFs are native binary — should use binary path."""
-        mock_conversion.resolve_bytes = AsyncMock(return_value=b"%PDF-1.4")
+        mock_conversion.open = AsyncMock(return_value=opened_native("/tmp/doc_abc.pdf", "application/pdf"))
         msg = _make_message(Intent.OPEN_FILE, file_ref="document.pdf")
         msg.context[NATIVE_FORMATS_KEY] = NATIVE_PNG_PDF
 
-        with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
-             patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \
-             patch("src.infrastructure.drive_operations.os") as mock_os:
-            mock_tempfile.mkstemp.return_value = (5, "/tmp/doc_abc.pdf")
-            mock_aio_ctx = AsyncMock()
-            mock_aiofiles.open.return_value.__aenter__ = mock_aio_ctx
-            mock_aiofiles.open.return_value.__aexit__ = AsyncMock()
-
-            response = await agent.execute(msg)
+        response = await agent.execute(msg)
 
         assert response.status == AgentStatus.SUCCESS
         assert response.metadata["file_data"]["mime_type"] == "application/pdf"
+        assert mock_conversion.open.await_args.kwargs["consumer"] == tuple(NativeFormat(**f) for f in NATIVE_PNG_PDF)
 
 
 # ---------------------------------------------------------------------------
