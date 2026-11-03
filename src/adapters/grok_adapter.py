@@ -23,7 +23,7 @@ explicit `LLMRequest.timeout` is forwarded to the SDK as well as bounding total
 wall-time. The previous 60s ceiling silently capped both.
 """
 
-from typing import List, Any, Optional, Set
+from typing import List, Any, Optional, Set, Tuple
 import asyncio
 import base64
 import hashlib
@@ -47,6 +47,9 @@ from ..ports.llm_port import (
     LLMRequest
 )
 from ..domain.user import PerformanceTier
+from ..domain.drive_image_mime import VISION_MIME_TYPES
+from ..domain.document_limits import native_ceiling
+from ..domain.native_format import NativeFormat
 from ..domain.exceptions import (
     LLMClientError,
     LLMNetworkError,
@@ -56,6 +59,13 @@ from ..domain.exceptions import (
     LLMUnavailableError,
 )
 from ..utils.logger import logger
+
+
+# What Grok reads natively (EXTERNAL_FILES_RFC §4.3, D2): the four image formats up to 5 MiB on the models that see
+# (see the `vision` comment in CAPABILITIES), and never a PDF: xAI reads PDFs only through its Files API and a
+# server-side search tool, neither implemented here, so a PDF arrives as text.
+_GROK_VISION_MODELS = ("grok-4.3", "grok-4.6", "grok-4.7")
+_GROK_NATIVE_FORMATS = tuple(NativeFormat(m, native_ceiling("image"), 1) for m in VISION_MIME_TYPES)
 
 
 class GrokAdapter(LLMPort):
@@ -388,6 +398,10 @@ class GrokAdapter(LLMPort):
     def get_capabilities(self) -> ProviderCapabilities:
         """Return Grok provider capabilities."""
         return self.CAPABILITIES
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        """Images on the vision models, never a PDF."""
+        return _GROK_NATIVE_FORMATS if model_name in _GROK_VISION_MODELS else ()
 
     def get_model_for_tier(self, tier: PerformanceTier) -> str:
         """
