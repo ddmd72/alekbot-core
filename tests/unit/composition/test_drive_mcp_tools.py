@@ -221,6 +221,19 @@ async def world(monkeypatch):
     return await World().build()
 
 
+class TestKnob:
+    async def test_knob_off_lists_no_tool(self, monkeypatch):
+        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
+        built = await World().build()
+        assert built.tools is None
+        assert await built.list_tools() == []
+
+    async def test_knob_on_lists_the_six_tools_each_read_only(self, world):
+        tools = await world.list_tools()
+        assert [t["name"] for t in tools] == list(c.TOOL_NAMES)
+        assert all(t["annotations"]["readOnlyHint"] is True for t in tools)
+
+
 class TestHappyPaths:
     async def test_the_six_read_tools_are_listed_and_nothing_else(self, world):
         assert [t["name"] for t in await world.list_tools()] == list(c.TOOL_NAMES)
