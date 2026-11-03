@@ -22,11 +22,13 @@ The sandbox render service has its own image (`Dockerfile.sandbox`) and is built
 
 | Unit | Type | Region | Timeout | Scaling | Secrets it reads | `make` targets |
 |------|------|--------|---------|---------|-------------------|-----------------|
-| `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
+| `alek-bot-dev` | Cloud Run service (gen2: the parser child's limits were measured there) | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
 | `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
+
+The main service's execution environment is pinned to gen2 in `cloudbuild-dev.yaml` (`--execution-environment=gen2`); the document service's parser child needs no new knob (its slot count is a constant, `MAIN_PARSER_MAX_CHILDREN`, and `DRIVE_PARSER_USER` is set by the image).
 
 `cloudbuild-dev.yaml` deploys the main service first (pull, build, push, deploy, public-invoker binding; it depends on
 nothing drive- or relay-related). Only after that do the independent rest run in parallel (`id` + `waitFor`): the drive
@@ -255,12 +257,13 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   --enable-ttl --database=us-production --project=<PROJECT_ID>
 ```
 
-Two collections expire on a different field, **`purge_after`**, which exists only in storage:
+Three collections expire on a different field, **`purge_after`**, which exists only in storage:
 
 | Collection group | What expires |
 |---|---|
 | `<prefix>fact_review_questions` | closed memory-review questions (90 days after closing; an open question has no `purge_after`) |
 | `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written) |
+| `<prefix>audio_transcripts` | cached transcripts of opened chat audio (90 days after they were written, the life of the upload) |
 
 ```bash
 gcloud firestore fields ttls update purge_after --collection-group=<collection-group> \

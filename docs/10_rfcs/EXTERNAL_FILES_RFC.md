@@ -960,25 +960,39 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 | USER_DRIVE_INDEXING_RFC §9, last bullet | No `/extract` on the indexer. Each runtime runs the same pieces; a remote unit may come later under D1 | D1 |
 | USER_DRIVE_INDEXING_RFC §16 "Slice 3 — one extraction path" | Realised by U1–U4 (isolation and routing) and U5 (one engine, D15). Done-criterion "same text as the current path" becomes the U0-b report with accepted differences and U5's four fixes | D6, D15 |
 | USER_DRIVE_INDEXING_RFC §24.3; `ContentExtractorPort` | `ExtractionRequest` gains an optional deadline and an optional text budget, both only lowering the adapter's ceilings. Only when one is set does the reader run windows one at a time against a shared prefix counter, return the finished prefix on a deadline, and return it on an outage instead of raising. The indexer passes neither, so its runs and its `DriveModelUnavailable` handling are unchanged | §4.4, D7 |
-| USER_DRIVE_INDEXING_RFC Δ35; `decisions/drive_prefetch_wrapper_slice3.md` | Closed in U3: prefetch goes through `open` and is marked | D6 |
+| USER_DRIVE_INDEXING_RFC Δ35; `decisions/drive_prefetch_wrapper_slice3.md` | **Done in U3.** Closed in U3: prefetch goes through `open` and is marked | D6 |
 | `decisions/drive_extract_ingress_slice3.md` | Obsolete: no main → indexer call | D1 |
-| `decisions/drive_parser_sandbox_resource_isolation.md` | A status line: the child also runs in the main runtime; the trigger applies there; the residual is accepted in both runtimes until S3/S4 (D14) | §4.8, D14 |
+| `decisions/drive_parser_sandbox_resource_isolation.md` | **Done in U3.** A status line: the child also runs in the main runtime; the trigger applies there; the residual is accepted in both runtimes until S3/S4 (D14) | §4.8, D14 |
 | USER_DRIVE_RFC §4.4; DRIVE_SPECIALIST_RFC | The store-in-the-name rule now covers reading too: `open_file`, the drive specialist's `open_drive_file`, `open_email_attachment`, one shared open path behind them. Reads stay lenient. Prefetch stays off for FileManagement and the drive specialist; the native declaration reaches the specialist through `work_with_drive_files` (A5) | D11 |
 | USER_DRIVE_RFC §4.6, `_fetch_video` (`DriveOperations`) | Sending bytes to the user becomes the general `send_file_to_user`; the video branches stay as they are | D8 |
 | USER_DRIVE_RFC §4.6 | Native caps come from the consuming adapter, never above today's 5/20 MiB; formats from the bytes; PDFs page-checked | D3, P5 |
-| FILE_STORAGE_RFC §2.4 step 3, §2.8, §5; file_storage README §2.1 diagram | Record that the upload turn is label-only (README §1.1 holds) and that the legacy branch is retired | §1.2 |
+| FILE_STORAGE_RFC §2.4 step 3, §2.8, §5; file_storage README §2.1 diagram | **Done in U3 for §2.4 step 3 (a note) and README §2.1.** Record that the upload turn is label-only (README §1.1 holds) and that the legacy branch is retired | §1.2 |
 | UNTRUSTED_CONTENT_SANDBOX_RFC rev 4 (O12, O13; §1 C2, §4.4, §4.7, §4.8, §4.10, §4.12, §7, §12) | Applied in that RFC's rev 4: one `parse.*` family for both runtimes, no `DocumentConverterPort` or `chat.convert`; S3/S4 after the document service; S4 = identity + knob; the chat cap is this RFC's caps table; one knob per runtime governs its parser and splitter; S4's acceptance adds a scan opened in chat within D7's deadline, through the batched `parse.pdf_windows` | D14, D15 |
 | GOOGLE_DRIVE_RFC §10 | Its "built right after the multi-drive programme" points at D14's order | D14 |
 | GMAIL_EMAIL_INDEXING_RFC §2.4 | `get_email_attachment` is removed; `open_email_attachment` opens a ref or an id plus name; `get_email_details` lists refs; the download of every attachment per call ends | D3, D4, D11 |
 | `DRIVE_FILE_NOTES_RFC`, `SYSTEM_TURN_FINGERPRINT_RFC` | Only if P11 is accepted: they name `<drive_document>` / `wrap_untrusted` and follow the rename | P11 |
 | `decisions/grok_revival_2026_08.md` ("upstream converts non-images to text") | Becomes true: Grok declares no PDF, so PDFs reach it as text | D2 |
-| `tests/unit/composition/wiring_none_ledger.txt:72` (`defect:D3`) | Deleted in U3 with its audio decision | §4.4 |
+| `tests/unit/composition/wiring_none_ledger.txt:72` (`defect:D3`) | Audio decision made in U3 (chat only); the line itself (now `:75`) is still in the ledger, a test edit for the test reviewer | §4.4 |
 
 ## 7. Slices
 
 **Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); optional P14 built (§4.6);
 U2 built (the native-format declaration, PDF page caps from provider documentation; the measured spike U0-e replaces
-them); U3 onward not started.
+them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_blocks/file_conversion/README.md`); U4 onward
+not started. Deltas of U3 from this RFC as written:
+- **One field added to the contract:** `ReadOutcome.cut_within_pages` (the 1-based pages of the one window shown in part),
+  which D7's note needs; every other `ReadOutcome` field is as in §4.4.
+- **The drive presentation stays in `DriveOperations`** (the §29 refusal, the cut line and the drive wrapper); the other
+  stores use `present_text`. Both add D7's "what was shown" line outside the wrapper.
+- **`resolve_file` is deferred to U4**, with the email and send work that needs it; `FileConversionService.open` and
+  `prefetch` are the only new service methods.
+- **P21's per-path audio decision: chat only.** Only a chat upload opened interactively is transcribed (metered, cached
+  90 days in `<prefix>audio_transcripts`); a prefetch, a workspace or delivered file, and a drive file give the audio note,
+  and drive recordings keep their transcript-first rule. The shared converter still has no transcriber. The ledger line
+  `FileConversionService._audio_service  # defect:D3` is still in `wiring_none_ledger.txt` on this branch: its removal is a
+  test-file edit left to the test reviewer.
+- **The parser child in the main service is an interim step** until the untrusted-content sandbox's parse service
+  replaces it as an adapter behind the same port (UNTRUSTED_CONTENT_SANDBOX_RFC).
 
 Each slice: tests first, the reviewer rule for any existing test, `make check` green, docs in the same PR.
 
@@ -1033,7 +1047,7 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 
 ## 9. Where current code disagrees with this design
 
-Re-verified at `2280ca78`; items 1–8 still hold, items 9–12 are new.
+Re-verified at `2280ca78`; items 1–8 held, items 9–12 were new. Items 4, 6, 9 and 12 are resolved by U3 (their text is kept as written for the record).
 
 1. Email attachments have no ref; `get_email_attachment` returns converted text (`email_search_service.py:198-260`).
    No `email:` ref exists anywhere in the code.
@@ -1042,14 +1056,14 @@ Re-verified at `2280ca78`; items 1–8 still hold, items 9–12 are new.
    (`gmail_provider_adapter.py:419-424` against `:343-356`). Two parts with the same name collide (`:413`).
 3. The MIME of an attachment comes from its file name (`email_search_service.py:242`). The 10 MB total guard is
    unreachable (`:236-240`): the 3 MB check (`:230`) runs first on the same size.
-4. The consumer-blind native decision, the two parse engines and drive-only marking, as described in §1.2. None of
+4. **Resolved in U3.** The consumer-blind native decision, the two parse engines and drive-only marking, as described in §1.2. None of
    `document_kind.py`, `document_limits.py`, `untrusted_text.py`, `pdf_splitter_port.py` exists; `wrap_untrusted` is
    drive-only (`src/domain/drive_search.py:584`); `PdfSplitter` is a Protocol in `drive_reader_runner.py:73`.
 5. Two caps for one provider limit: drive opens allow images up to 5 MiB raw (`user_drive.py:29`, applied at
    `drive_operations.py:1003-1004`), while the reader holds images to 3.75 MiB because Anthropic's 5 MB limit applies
    to the base64 (`drive_image_mime.py:12-16`). Chat and workspace native opens have no cap at all
    (`drive_operations.py:722-733` → `file_conversion_service.py:377-385`).
-6. `ContentExtractorPort` has no per-request limit: `ExtractionRequest` has no deadline or budget
+6. **Resolved in U3** (`ExtractionRequest.deadline_at` and `text_budget`). `ContentExtractorPort` had no per-request limit: `ExtractionRequest` has no deadline or budget
    (`drive_extraction.py:50-59`); the child's wall and the reader's budget are constructor values
    (`subprocess_content_extractor.py:88`, `:96`; `drive_reader_runner.py:112`), and the reader starts every window at
    once (`drive_reader_runner.py:211-217`).
@@ -1060,7 +1074,7 @@ Re-verified at `2280ca78`; items 1–8 still hold, items 9–12 are new.
    resolver excludes other prefixes first (`file_conversion_service.py:90-99`). `required_capabilities` in
    `STRATEGIES` is enforced nowhere (`agent_context_builder.py:27`; nothing reads the key). FILE_STORAGE_RFC §2.4/§2.8
    still describe native bytes on the upload turn.
-9. **No opened audio is transcribed**: the production `FileConversionService` has no
+9. **Resolved in U3** (chat audio is transcribed, metered and cached; §7). **No opened audio was transcribed**: the production `FileConversionService` has no
    transcriber (`service_container.py:449-459`), recorded as `defect:D3` (`wiring_none_ledger.txt:72`). U3 (§4.4).
 10. **The drive's open path is shared infrastructure, not an agent branch.** `DriveOperations` serves both the drive
     specialist and FileManagement's lenient `open_file`; the drive specialist's model reads a stand-in for an opened
@@ -1069,7 +1083,7 @@ Re-verified at `2280ca78`; items 1–8 still hold, items 9–12 are new.
 11. **Text files have a two-stage cap.** Plain text is read up to 10 MiB, `data:` images dropped, then the 5 MiB cap
     applies (`file_conversion.py:225-232`, `:261-264`; drive text streamed to 10 MiB, `file_conversion_service.py:194-200`).
     §4.5's caps table records it.
-12. **The coordinator documents a resolver signature it does not use:** `(ref, user_id, mime_type)` in its docstring
+12. **Resolved in U3** (P18: the resolver is `(ref, user_id, account_id, deadline_at) -> Prefetched`). **The coordinator documented a resolver signature it did not use:** `(ref, user_id, mime_type)` in its docstring
     (`agent_coordinator.py:64`) against `(file_ref, user_id)` at the call (`:602`). P18 replaces both.
 
 ## 10. Follow-ups outside this RFC

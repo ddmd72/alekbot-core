@@ -1817,6 +1817,15 @@ paged `read_passages` in the same specialist run is answered `ONE_PAGE` (code, `
 page in a new commission with the `next: from N` number its history line names (§29.16 B8). Smart's block shows a `pages read:` line per
 paged file and the reading lines `R_PAGED` / `R_TOO_LONG`. A failed extent lookup fails safe (one WARNING; the cut still holds).
 
+**Opens read through the document service (EXTERNAL_FILES_RFC U3).** Every drive open and every stored-file open from `DriveOperations`
+goes through `FileConversionService.open` (`docs/05_building_blocks/file_conversion/README.md`): kind from bytes, the caps table, native or
+pipeline, the parser child, the reader with a 60 000-character budget, all under the opener's deadline (`deadline_at`, 90 s by default).
+The §29 refusal (before download, from the index extent) and the cut line stay in `DriveOperations`, which takes the raw body and applies
+the drive wrapper and the §29 bound itself (it does not use the service's `present_text`, which the other stores use). After the wrapper it
+adds the reader's "what is shown" line when the read was page-wise (for example the first N of M pages of a scan), then the owner's note
+block. A video is still resent as a file by `DriveOperations`, not read. A recording keeps the transcript-first rule (§4.23): without a
+transcript the open gives today's audio note and never transcribes at open.
+
 **Logs.** `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` (counts, no
 text); `[DriveOperations] opened: <ref> chars=<n>`, `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…`, `opened vision: <ref> mime=… bytes=… pages=…`; `[DriveAgent] … refused: passages were read …`.
 
