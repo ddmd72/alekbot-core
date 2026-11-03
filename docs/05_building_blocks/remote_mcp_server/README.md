@@ -4,10 +4,20 @@
 
 ### What it does
 
-Exposes one MCP tool, `get_user_context(query, alternate_phrasing?, keywords?)`, to any
+Exposes the MCP tool `get_user_context(query, alternate_phrasing?, keywords?)`, to any
 remote MCP client. When Claude on claude.ai calls the tool, the server runs a 6-vector RRF
 search across the user's indexed facts and returns a formatted text block of memory facts,
 RRF-ordered and grouped by domain.
+
+One authorization server fronts two protected resources (resource-server apps, one FastMCP each):
+
+| Resource | Path | Server name | Scope | Tools |
+|---|---|---|---|---|
+| facts | `/mcp` | `alekbot` | `user_context` | `get_user_context` |
+| drive (read-only) | `/drive-mcp` | `alekbot-drive` | `drive_read` | placeholder `drive_connector_status` (the read tools come with the next slice) |
+
+The drive connector is specified in [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md).
+Scope and resource are bound one to one (§ 4); the pure binding rule is `src/domain/mcp_resource.py`.
 
 ### Status
 
@@ -15,8 +25,8 @@ MVP, dev-only, experimental.
 
 ### What it is not
 
-- **Not** a generic MCP framework. It exposes exactly one tool; to add more, edit
-  `composition/mcp_setup.py`.
+- **Not** a generic MCP framework. The facts connector exposes exactly one tool; to add more, edit
+  `composition/mcp_setup.py` (drive connector: `composition/drive_mcp_setup.py`).
 - **Not** an OAuth provider for Cabinet login. The Cabinet login (Firebase OAuth) is
   independent; it's the *input* to the MCP OAuth flow (we read the Cabinet JWT cookie at
   the consent step to identify the user).
@@ -29,8 +39,6 @@ Claude on claude.ai has great UX but no memory of the user. alekbot has rich mem
 (biographical facts, consolidated knowledge, indexed emails) but a simpler UX. A remote
 MCP connector bridges the two: Claude keeps its UX and gains retrieval into alekbot's
 memory at conversation time. See [RFC § 1](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md#1-problem-statement).
-A second protected resource on the same authorization server, the read-only drive connector at `/drive-mcp`, is
-proposed in [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md).
 
 ---
 
@@ -39,6 +47,7 @@ proposed in [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.m
 ```
 src/domain/
     mcp.py                                 # MCPClient, MCPAuthCode, MCPRefreshToken (pydantic)
+    mcp_resource.py                        # the two resources, scope-resource binding, canonical URI (pure)
 
 src/ports/
     mcp_client_repository.py               # MCPClientRepository (ABC)
@@ -52,6 +61,7 @@ src/services/
 src/composition/
     mcp_sdk_oauth_provider.py              # SDK shim: implements OAuthAuthorizationServerProvider
     mcp_setup.py                           # builds FastMCP + provider + registers the tool
+    drive_mcp_setup.py                     # drive FastMCP: resource server only (token verifier, no provider)
 
 src/web/
     mcp_consent_app.py                     # Quart blueprint: /mcp/consent GET/POST
@@ -98,7 +108,9 @@ When the user pastes `https://dev.alekbot.app/mcp` into claude.ai Settings → C
 | Path | Method | Owner | Purpose |
 |------|--------|-------|---------|
 | `/mcp` | POST | FastMCP | MCP JSON-RPC protocol (initialize, tools/list, tools/call, ping) |
-| `/.well-known/oauth-protected-resource/mcp` | GET | FastMCP | RFC 9728 protected-resource metadata |
+| `/drive-mcp` | POST | FastMCP (drive app) | The drive connector's MCP endpoint (scope `drive_read`) |
+| `/.well-known/oauth-protected-resource/mcp` | GET | FastMCP | RFC 9728 protected-resource metadata (facts) |
+| `/.well-known/oauth-protected-resource/drive-mcp` | GET | FastMCP (drive app) | RFC 9728 protected-resource metadata (drive) |
 | `/.well-known/oauth-authorization-server` | GET | FastMCP | RFC 8414 AS metadata |
 | `/authorize` | GET/POST | FastMCP | OAuth 2.1 /authorize handler (→ provider.authorize() → redirect to `/mcp/consent`) |
 | `/token` | POST | FastMCP | OAuth 2.1 token exchange (auth_code + PKCE, refresh_token) |
@@ -110,6 +122,8 @@ under `/mcp/*`. This is a deliberate design: the SDK registers routes at absolut
 uses `issuer_url` for metadata URL construction, so we set `issuer_url = https://host` (root)
 to make the metadata URLs match the actual routes. See
 [RFC § 4.3](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md#43-oauth-server-at-server-root-not-under-mcp).
+The drive app serves only its endpoint and its metadata; authorization, token and registration stay with the
+facts app. The drive connector is built separately, so a failure there never takes `/mcp` down.
 
 ### 3.2 Tool definition
 
@@ -193,13 +207,15 @@ Here's the short version:
    registration is anonymous, so the name is the registrant's choice.
 3. **Authorize:** browser GET to `/authorize` with PKCE challenge + resource indicator.
    SDK calls `provider.authorize(client, params)` which calls
-   `service.build_consent_redirect(client, params)`. The service mints a short-lived
+   `service.build_consent_redirect(client, params)`. The service first binds `resource` and scope
+   (see "Resource and scope binding" below), then mints a short-lived
    **consent-state JWT** containing the full `AuthorizationParams`, and returns
    `https://host/mcp/consent?req=<jwt>`. The SDK 302-redirects the browser there.
 4. **Consent UI:** `/mcp/consent` (Quart blueprint) verifies the consent JWT. If the user
    has no Cabinet JWT cookie, redirects to `/auth/login?next=<self, URL-encoded>` → Firebase
    flow → back here. Renders an HTML form with the client's `client_name` + requested scopes +
-   Approve/Deny buttons. Every value is HTML-escaped, and the page is served with a
+   Approve/Deny buttons; the explanatory text depends on the grant (a `drive_read` grant gets the drive
+   wording: read access only to the folders the user chose in the Cabinet). Every value is HTML-escaped, and the page is served with a
    Content-Security-Policy that allows only its inline style (`default-src 'none'`,
    `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy:
    no-referrer` (its URL carries the consent token).
@@ -218,7 +234,9 @@ Here's the short version:
    and mints an access JWT + refresh token. The SDK returns them to claude.ai.
 7. **Protocol calls:** claude.ai POSTs `/mcp` with `Authorization: Bearer <access_jwt>`.
    The SDK's `BearerAuthBackend` middleware calls `provider.load_access_token(jwt_str)`
-   which calls `service.verify_access_token(jwt_str)`. If valid, the SDK attaches our
+   which calls `service.verify_access_token(jwt_str)` (the drive app uses a token verifier that passes the
+   drive resource URI). The audience is compared in canonical form (lowercase scheme and host, no trailing
+   slash). If valid, the SDK attaches our
    `AlekAccessToken` subclass to `request.user.access_token`. The MCP protocol layer
    dispatches `tools/call` to our tool handler.
 8. **Tool execution:** handler reads `user_id` + `account_id` from `request.user.access_token`,
@@ -228,6 +246,19 @@ Here's the short version:
    `grant_type=refresh_token`. The SDK validates and calls
    `provider.exchange_refresh_token()`. The shim calls `service.rotate_refresh_token(value)`
    which revokes the old refresh token (by sha256 hash) and mints a fresh pair.
+   Before rotating, the service re-checks that the grant's user still exists, has an email and is whitelisted;
+   otherwise the presented refresh token is revoked and the grant is refused (`invalid_grant`). A repository
+   error fails closed. This applies to both connectors.
+
+**Resource and scope binding** (`bind_resource`, applied at `/authorize` and again at refresh):
+
+- `resource` present: it must canonicalise to the facts or the drive URI, else it is refused; every requested
+  scope must be that resource's own; no scope requested means the resource's own scope.
+- `resource` absent: scope `drive_read` alone selects drive; empty or `user_context` alone selects facts;
+  a mix or an unknown scope is refused.
+- A scope the client did not register at DCR is refused. DCR registers both scopes
+  (`user_context`, `drive_read`).
+- A token therefore never carries an audience its scope does not belong to.
 
 ---
 
@@ -316,8 +347,9 @@ Neither is stored in Firestore:
 
 - **Access tokens** — HS256 JWTs signed with `auth_config.oauth_session_secret`
   (reused from Cabinet JWT signing). Claims: `sub=user_id`, `account_id`, `client_id`,
-  `scope`, `type="mcp_access"`, `aud=<mcp_resource_uri>`, `iat`, `exp`. TTL 1h. Validated
-  on every `/mcp` request by the SDK via `provider.load_access_token` →
+  `scope`, `type="mcp_access"`, `aud=<resource uri>` (facts: `mcp_resource_uri`; drive: same scheme and host, path
+  `/drive-mcp`, derived, no extra env key), `iat`, `exp`. TTL 1h. Validated
+  on every `/mcp` and `/drive-mcp` request by the SDK via `provider.load_access_token` →
   `service.verify_access_token`.
 - **Consent state** — HS256 JWT passed in the URL `?req=<jwt>` between
   `/authorize` and `/mcp/consent`. Claims: all `AuthorizationParams` fields plus
@@ -334,8 +366,10 @@ Every query in the adapter is a doc-id lookup (`.document(...)`). No `.where()`,
 
 ### 6.1 The dispatcher
 
-`main.py` wraps both `FastMCP.streamable_http_app()` and the existing Quart `main_app` in
-a plain ASGI callable that routes by path:
+`main.py` wraps both FastMCP apps (`streamable_http_app()` of facts and of drive) and the existing Quart
+`main_app` in a plain ASGI callable that routes by path (`mcp_owner(path)` returns `"drive"`, `"facts"` or
+`None`). The drive checks (`/drive-mcp`, `/drive-mcp/`, `/.well-known/oauth-protected-resource/drive-mcp`)
+run first, because the facts metadata test is a prefix match. The facts test:
 
 ```python
 def is_mcp_path(path: str) -> bool:
@@ -359,7 +393,10 @@ async def parent_asgi(scope, receive, send):
                 elif msg["type"] == "lifespan.shutdown":
                     await send({"type": "lifespan.shutdown.complete"})
                     return
-    if is_mcp_path(scope.get("path", "")):
+    owner = mcp_owner(scope.get("path", ""))   # drive paths first, then is_mcp_path
+    if owner == "drive":
+        await _drive_asgi(scope, receive, send)
+    elif owner == "facts":
         await _mcp_asgi(scope, receive, send)
     else:
         await main_app(scope, receive, send)
@@ -371,14 +408,15 @@ routes and the RFC 9728 PRM path. See
 [RFC § 6.3](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md#63-asgi-routing-at-the-top).
 
 **Lifespan:** FastMCP's StreamableHTTP transport requires a running session manager
-(`_fastmcp.session_manager.run()`). We run it inside the parent's lifespan so it stays
+(`session_manager.run()`, one per FastMCP app, entered through an `AsyncExitStack`). We run them inside the parent's lifespan so it stays
 alive for the process. Quart has no `before_serving` / `after_serving` hooks in this
 project (grep confirmed), so a second lifespan chain is not needed.
 
 ### 6.2 Path ownership
 
-- **FastMCP owns**: `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`,
+- **FastMCP (facts) owns**: `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`,
   `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource/mcp`
+- **FastMCP (drive) owns**: `/drive-mcp`, `/.well-known/oauth-protected-resource/drive-mcp`
 - **Quart owns**: everything else, including `/mcp/consent`, `/auth/*`, `/api/*`, `/slack/*`,
   `/cabinet`, `/worker`, `/health`, `/telegram/*`, etc.
 
@@ -507,7 +545,8 @@ async def get_user_context(
 
 - `MCP_RESOURCE_URI` — canonical resource URI, e.g. `https://dev.alekbot.app/mcp`.
   Set in `cloudbuild-dev.yaml` via the `$_SERVICE_URL/mcp` substitution.
-  Not yet in `cloudbuild-prod.yaml` — add when ready to promote.
+  Not yet in `cloudbuild-prod.yaml` — add when ready to promote. The drive resource URI is derived from it
+  (same host, path `/drive-mcp`).
 
 ### 10.2 Firestore
 
@@ -609,6 +648,8 @@ It handles the full OAuth flow including browser-based consent and lets you call
 - Service: [`src/services/mcp_authorization_service.py`](../../../src/services/mcp_authorization_service.py)
 - SDK shim: [`src/composition/mcp_sdk_oauth_provider.py`](../../../src/composition/mcp_sdk_oauth_provider.py)
 - Factory: [`src/composition/mcp_setup.py`](../../../src/composition/mcp_setup.py)
+- Drive factory: [`src/composition/drive_mcp_setup.py`](../../../src/composition/drive_mcp_setup.py)
+- Resource binding: [`src/domain/mcp_resource.py`](../../../src/domain/mcp_resource.py)
 - Consent blueprint: [`src/web/mcp_consent_app.py`](../../../src/web/mcp_consent_app.py)
 - main.py wiring: [`main.py`](../../../main.py) (search for `MCP components`)
 - Config: [`src/config/auth.py`](../../../src/config/auth.py) (`mcp_*` fields on AuthConfig)
