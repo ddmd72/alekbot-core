@@ -427,43 +427,46 @@ def _read_xlsx(path: str, kind: str) -> _Read:
     for that, nor is a formatted-empty cell: a sheet read in full is not `truncated` (R2 P-m3)."""
     import openpyxl
 
-    book = openpyxl.load_workbook(path, read_only=True, data_only=True)
     blocks: List[str] = []
     collected = 0
     truncated = False
-    try:
-        for sheet in book.worksheets:
-            if collected >= MAX_TEXT_CHARS:
-                truncated = True
-                break
-            bound = _MAX_TABLE_COLUMNS + 1
-            sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
-            past_bound = _watch_far_cells(sheet, bound)
-            rows: List[Sequence[Any]] = []
-            missing: Optional[Sequence[Any]] = None
-            for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
-                if row is missing:
-                    continue                          # openpyxl yields one shared tuple for every absent row
-                if row.count(None) == len(row):
-                    missing = row
-                    continue
-                values = _trim_row(row)
-                texts = [str(value) for value in values if value is not None]
-                if not any(text.strip() for text in texts):
-                    continue
-                rows.append(values)
-                collected += sum(len(text) + 3 for text in texts)     # "| " separators included
-                if len(rows) > MAX_SHEET_ROWS:
-                    break
+    # An open file, not the path: openpyxl checks a path's extension, and a native Sheet's export is staged without one
+    # (the kind is already sniffed from the bytes). A file object skips that check.
+    with open(path, "rb") as handle:
+        book = openpyxl.load_workbook(handle, read_only=True, data_only=True)
+        try:
+            for sheet in book.worksheets:
                 if collected >= MAX_TEXT_CHARS:
                     truncated = True
                     break
-            table, cut = markdown_table(rows)
-            truncated = truncated or cut or past_bound[0]
-            if table:
-                blocks.append(f"## {sheet.title}\n\n{table}")
-    finally:
-        book.close()
+                bound = _MAX_TABLE_COLUMNS + 1
+                sheet.reset_dimensions()                  # a declared A1:XFD1048576 must not pad every row
+                past_bound = _watch_far_cells(sheet, bound)
+                rows: List[Sequence[Any]] = []
+                missing: Optional[Sequence[Any]] = None
+                for row in sheet.iter_rows(max_col=_MAX_TABLE_COLUMNS + 1, values_only=True):
+                    if row is missing:
+                        continue                          # openpyxl yields one shared tuple for every absent row
+                    if row.count(None) == len(row):
+                        missing = row
+                        continue
+                    values = _trim_row(row)
+                    texts = [str(value) for value in values if value is not None]
+                    if not any(text.strip() for text in texts):
+                        continue
+                    rows.append(values)
+                    collected += sum(len(text) + 3 for text in texts)     # "| " separators included
+                    if len(rows) > MAX_SHEET_ROWS:
+                        break
+                    if collected >= MAX_TEXT_CHARS:
+                        truncated = True
+                        break
+                table, cut = markdown_table(rows)
+                truncated = truncated or cut or past_bound[0]
+                if table:
+                    blocks.append(f"## {sheet.title}\n\n{table}")
+        finally:
+            book.close()
     return "\n\n".join(blocks), 0, truncated
 
 
