@@ -7,6 +7,9 @@ the request with cache_config before forwarding to the real adapter.
 See: docs/10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md
 """
 
+from typing import Tuple
+
+from ..domain.native_format import NativeFormat
 from ..ports.llm_port import (
     LLMPort,
     LLMRequest,
@@ -46,6 +49,9 @@ class CachingLLMProxy(LLMPort):
 
     def get_capabilities(self) -> ProviderCapabilities:
         return self._inner.get_capabilities()
+
+    def native_formats(self, model_name: str) -> Tuple[NativeFormat, ...]:
+        return self._inner.native_formats(model_name)
 
     def get_model_for_tier(self, tier: PerformanceTier) -> str:
         return self._inner.get_model_for_tier(tier)
