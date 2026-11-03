@@ -49,8 +49,8 @@ async def test_recycling_twice_is_busy_after_exactly_two_requests():
     assert len(transport.requests) == 2
 
 
-@pytest.mark.parametrize("response", [reply(429), reply(503)])
-async def test_429_and_a_plain_503_are_busy_without_a_retry(response):
+@pytest.mark.parametrize("response", [reply(429), reply(503, SandboxStatus.ERROR)])
+async def test_429_and_a_sandbox_503_are_busy_without_a_retry(response):
     transport = Scripted(response)
     with pytest.raises(SandboxUnavailable) as caught:
         await client_for(transport).call(OP, b"b", LIMITS)

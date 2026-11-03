@@ -141,12 +141,16 @@ async def test_429_is_unavailable():
     assert len(transport.requests) == 1
 
 
-@pytest.mark.parametrize("status", [None, SandboxStatus.ERROR])
-async def test_503_other_is_unavailable(status):
+@pytest.mark.parametrize("status, requests, reason", [
+    (None, 2, "unavailable"),            # Cloud Run's header-less 503: a lost instance, one retry
+    (SandboxStatus.ERROR, 1, "busy"),    # the sandbox's own 503: no retry
+])
+async def test_503_other_is_unavailable(status, requests, reason):
     transport = Scripted(reply(503, status))
-    with pytest.raises(SandboxUnavailable):
+    with pytest.raises(SandboxUnavailable) as caught:
         await client_for(transport).call(OP, b"b", LIMITS)
-    assert len(transport.requests) == 1
+    assert caught.value.reason == reason
+    assert len(transport.requests) == requests
 
 
 async def test_503_unconfigured_is_unavailable_without_retry():
