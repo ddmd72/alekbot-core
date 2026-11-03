@@ -321,7 +321,8 @@ class DriveReaderRunner(ContentExtractorPort):
                      model_cost=run.total("cost"), model_fallback_cost=run.total("fallback_cost"))
         finished = [w for w in run.windows if w.finished]
         if stop == "unavailable" and not finished:
-            assert unavailable is not None
+            if unavailable is None:
+                raise RuntimeError("reader stopped as unavailable without the model error")
             raise DriveModelUnavailable(str(unavailable), pages_sent=spend["pages_sent"],
                                         model_calls=spend["model_calls"], model_cost=spend["model_cost"],
                                         model_fallback_cost=spend["model_fallback_cost"],
