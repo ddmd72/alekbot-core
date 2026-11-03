@@ -25,10 +25,12 @@ class ContentExtractorPort(ABC):
     @abstractmethod
     async def extract(self, request: ExtractionRequest) -> ExtractionOutcome:
         """Text of `request.path`. Every per-file failure is an outcome (`no_text`, `timeout`, `error`, ...), never
-        an exception. Two exceptions only: the reader's DriveModelUnavailable, the model cannot be used now (429,
+        an exception. Three exceptions only: the reader's DriveModelUnavailable, the model cannot be used now (429,
         5xx, timeout, a missing prompt), which defers model work for the user, not this file (§24.8); and the
         parser's `drive_extraction.ParserBusy`, its slot did not come free before `request.deadline_at`, raised only
-        when that deadline is set (EXTERNAL_FILES_RFC §4.4; the indexer never sets it).
+        when that deadline is set (EXTERNAL_FILES_RFC §4.4; the indexer never sets it); and
+        `drive_extraction.ParserUnavailable`, the sandboxed parser service cannot take work now (busy, unreachable,
+        misconfigured): systemic, never charged to the file.
 
         `request.deadline_at` and `request.text_budget` can only lower an extractor's own ceilings (§4.4); with both
         unset the extractor behaves as before they existed."""

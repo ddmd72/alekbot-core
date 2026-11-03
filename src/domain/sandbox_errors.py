@@ -18,6 +18,10 @@ class SandboxUnavailable(Exception):
     # Same shape as `DriveModelUnavailable`: a deferral must not count toward a file's attempts.
     charges_file = False
 
+    def __init__(self, message: str = "", reason: str = "unavailable") -> None:
+        super().__init__(message)
+        self.reason = reason   # "busy" (429, 503, still recycling) or "unavailable" (unreachable, not configured)
+
 
 class SandboxMisconfigured(Exception):
     """The sandbox rejected the caller's identity (401 / 403): the deployment is wrong."""

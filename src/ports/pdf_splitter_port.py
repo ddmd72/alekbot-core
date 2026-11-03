@@ -10,7 +10,8 @@ Every method raises `drive_extraction.PdfSplitFailed` with the outcome status (`
 serialization; it can only lower the adapter's own wall clock, never raise it. A deadline already passed raises
 `PdfSplitFailed(TIMEOUT, detail="deadline")` and starts no work; one that passes while the call waits for the parser's
 slot raises its subclass `drive_extraction.ParserBusy` (TIMEOUT, detail "busy"). Without it, the adapter's own wall
-applies alone.
+applies alone. A sandboxed adapter whose service cannot take the call raises `drive_extraction.ParserUnavailable`
+(not a `PdfSplitFailed`: it is systemic, never the file's outcome).
 """
 from abc import ABC, abstractmethod
 from typing import Optional, Sequence, Tuple
