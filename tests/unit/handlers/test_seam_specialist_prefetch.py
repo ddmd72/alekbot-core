@@ -7,7 +7,7 @@ from typing import List, Tuple
 import pytest
 
 from src.domain.document_open import Prefetched
-from src.domain.document_open_texts import conversion_alert
+from src.domain.document_open_texts import conversion_alert, open_failed_note
 from src.domain.document_read import INTERACTIVE_OPEN_S, PREFETCH_OPEN_S
 from src.domain.request_context import get_current_user_id
 from src.handlers import agent_worker_handler
@@ -112,7 +112,8 @@ async def test_a_resolver_that_raises_is_contained_with_a_note_and_an_error_line
     require(not world.unscripted(), "the stand-in ran out of steps")
     assert answer is not None
     payload = pdf.received[0].payload
-    assert payload["file_note"] == conversion_alert(REF) and "file_content" not in payload  # honest, no raw exception
+    # a crash is no format verdict: the generic "could not be opened" note (U3 seam fix 4), no raw exception
+    assert payload["file_note"] == open_failed_note(REF) and "file_content" not in payload
     assert "boom" not in payload["file_note"]
     assert any(r.levelno == logging.ERROR and REF in r.getMessage() for r in caplog.records)
 
