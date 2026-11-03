@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from src.composition.drive_connector_tools import (DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools,
+                                                   build_drive_connector_tools_from_container,
                                                    drive_mcp_tools_switch_on)
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
@@ -156,3 +157,31 @@ async def test_an_alert_that_cannot_be_delivered_never_hides_the_failed_load(mon
     with caplog.at_level(logging.WARNING), pytest.raises(ConnectorTextsUnavailable):
         await build(store, BrokenSink())  # type: ignore[arg-type]
     assert any("alert not delivered (ConnectionError)" in r.getMessage() for r in caplog.records)
+
+
+def container(store: Any, *, notes: Any = None, assembly: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(file_conversion_service="conversion", user_drive_service=None, drive_search_service=None,
+                           drive_note_service=notes,
+                           assembly_service=SimpleNamespace(token_repo=store) if assembly else None)
+
+
+class TestFromContainer:
+    async def test_the_container_singletons_reach_the_tools(self, monkeypatch):
+        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
+        notes = object()
+        tools = await build_drive_connector_tools_from_container(container(TokenStore(), notes=notes),
+                                                                 alert_sink=None)  # type: ignore[arg-type]
+        assert tools is not None and tools.notes is notes
+        assert tools.initial_texts.tools[c.INSTRUCTIONS_KEY] == marker(c.INSTRUCTIONS_KEY)
+
+    async def test_no_assembly_service_means_no_token_store(self, monkeypatch):
+        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
+        with pytest.raises(RuntimeError, match="token store"):
+            await build_drive_connector_tools_from_container(container(TokenStore(), assembly=False),
+                                                             alert_sink=None)  # type: ignore[arg-type]
+
+    async def test_off_builds_nothing_from_the_container(self, monkeypatch):
+        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
+        store = CountingStore()
+        assert await build_drive_connector_tools_from_container(container(store), alert_sink=None) is None  # type: ignore[arg-type]
+        assert store.reads == []
