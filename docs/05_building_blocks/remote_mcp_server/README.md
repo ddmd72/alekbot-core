@@ -29,6 +29,8 @@ Claude on claude.ai has great UX but no memory of the user. alekbot has rich mem
 (biographical facts, consolidated knowledge, indexed emails) but a simpler UX. A remote
 MCP connector bridges the two: Claude keeps its UX and gains retrieval into alekbot's
 memory at conversation time. See [RFC § 1](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md#1-problem-statement).
+A second protected resource on the same authorization server, the read-only drive connector at `/drive-mcp`, is
+proposed in [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md).
 
 ---
 
