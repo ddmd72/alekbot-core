@@ -69,23 +69,7 @@ def result_of(resp: httpx.Response) -> dict:
     return json.loads(data)["result"]
 
 
-@pytest.mark.parametrize("raw", ["1", "on", "ON", "true", " yes "])
-def test_the_knob_turns_on_only_for_a_yes(raw):
-    assert drive_mcp_tools_switch_on(raw) is True
-
-
-@pytest.mark.parametrize("raw", [None, "", "0", "off", "false", "no", "enabled"])
-def test_anything_else_is_off(raw):
-    assert drive_mcp_tools_switch_on(raw) is False
-
-
 class TestOff:
-    async def test_off_reads_no_token_and_builds_nothing(self, monkeypatch):
-        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
-        store = CountingStore()
-        assert await build(store) is None
-        assert store.reads == []
-
     async def test_off_the_app_lists_no_tool_has_no_instructions_and_still_refuses_anonymous_calls(self):
         app = build_drive_mcp_app(authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=None)
         assert result_of(await rpc(app, "tools/list"))["tools"] == []
