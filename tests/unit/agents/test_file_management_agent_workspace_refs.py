@@ -6,18 +6,23 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
 
 
-def _message(intent, file_ref):
+def _message(intent, file_ref, **context):
     msg = MagicMock(spec=AgentMessage)
     msg.task_id = "task1"
     msg.intent = AgentIntent.QUERY
     msg.payload = {"intent": intent, "file_ref": file_ref}
-    msg.context = {"user_id": "user1"}
+    msg.context = {"user_id": "user1", **context}
     return msg
+
+
+# A consumer that reads PDFs natively (EXTERNAL_FILES_RFC §4.3): without a declaration a PDF copy opens as text.
+NATIVE_PDF = {NATIVE_FORMATS_KEY: to_plain([NativeFormat("application/pdf", 20 * 1024 * 1024, 100)])}
 
 
 @pytest.fixture
@@ -40,7 +45,7 @@ def agent(conversion, storage):
 class TestOpen:
     async def test_a_pdf_copy_opens_for_vision(self, agent, conversion):
         conversion.resolve_bytes.return_value = b"%PDF"
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "application/pdf"
         conversion.resolve_bytes.assert_awaited_once_with("workspace:binary_files/lease.pdf", "user1")
@@ -64,13 +69,13 @@ class TestOpen:
 
     async def test_a_missing_copy(self, agent, conversion):
         conversion.resolve_bytes.side_effect = FileNotFoundError("binary_files/lease.pdf")
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED and "is not in your workspace" in resp.error
         assert "re-upload" not in resp.error
 
     async def test_a_store_error_has_its_own_message(self, agent, conversion):
         conversion.resolve_bytes.side_effect = RuntimeError("gcs down")
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED
         assert resp.error == "The workspace could not be read right now (RuntimeError); try again later."
 
