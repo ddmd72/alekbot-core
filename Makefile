@@ -80,6 +80,14 @@ _SANDBOX_RENDER_URL = $(SANDBOX_RENDER_URL_DEV)
 _SANDBOX_RENDER_SA = $(SANDBOX_RENDER_SA_DEV)
 _SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
 
+# Untrusted-content sandbox, light (parse) family. Deploy-only keys (never a local key: the deploy-substitution trap);
+# the light steps skip while SANDBOX_LIGHT_SA_DEV is empty, and deploy refuses nothing yet. Keys and owner steps:
+# docs/07_deployment/README.md § Sandbox light (parse) service.
+_SANDBOX_LIGHT_SA = $(SANDBOX_LIGHT_SA_DEV)
+_SANDBOX_LIGHT_URL = $(SANDBOX_LIGHT_URL_DEV)
+_SANDBOX_LIGHT_CALLERS_MAIN = $(SANDBOX_LIGHT_CALLERS_MAIN_DEV)
+_SANDBOX_LIGHT_CALLERS_INDEXER = $(SANDBOX_LIGHT_CALLERS_INDEXER_DEV)
+
 # The indexer's upgrade-pass emergency switch (USER_DRIVE_INDEXING_RFC §25.8): DRIVE_UPGRADE_PASS_DEV=off in .env
 # keeps it off across deploys (the indexer step's --set-env-vars replaces every variable, so a switch set with
 # `gcloud run services update` alone would turn back on at the next deploy). Default on. A deploy-only key, never
@@ -349,7 +357,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json

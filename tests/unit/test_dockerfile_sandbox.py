@@ -50,9 +50,48 @@ def test_no_env_or_key_file_is_copied():
         assert not (name.endswith(".json") and src not in _NON_CODE_COPIES), src
 
 
-def test_copy_covers_the_import_closure_and_nothing_else():
+def _copy_sources_by_stage():
+    """COPY sources per build stage (`FROM ... AS <name>`)."""
+    stages, current = {}, None
+    for ins in _instructions():
+        match = re.match(r"FROM \S+ AS (\S+)$", ins, re.I)
+        if match:
+            current = match.group(1).lower()
+            stages[current] = set()
+        elif ins.upper().startswith("COPY "):
+            parts = [p for p in ins.split()[1:] if not p.startswith("--")]
+            stages[current].update(parts[:-1])
+    return stages
+
+
+def _render_closure():
     files, _ = closure()
-    copied = set(_copy_sources()) - _NON_CODE_COPIES
+    return files
+
+
+def _light_closure_of_the_image():
+    from tests.unit.test_sandbox_light_image import _light_closure
+
+    return _light_closure()
+
+
+# Per target: (its closure, its non-code copies). The light closure = the service's plus the drive child's (P1).
+_TARGETS = {
+    "render": (_render_closure, _NON_CODE_COPIES),
+    "light": (_light_closure_of_the_image, {"requirements-sandbox-light.txt"}),
+}
+
+
+def test_every_stage_has_a_closure_check():
+    assert set(_copy_sources_by_stage()) == set(_TARGETS)
+
+
+@pytest.mark.parametrize("target", sorted(_TARGETS))
+def test_copy_covers_the_import_closure_and_nothing_else(target):
+    """Each target copies exactly its own closure: nothing the image does not need, nothing it needs is missing."""
+    closure_of, non_code = _TARGETS[target]
+    files = closure_of()
+    copied = _copy_sources_by_stage()[target] - non_code
     assert copied == files, {"missing": sorted(files - copied), "extra": sorted(copied - files)}
 
 

@@ -79,7 +79,7 @@ class ExtractionOutcome:
 class PdfSplitFailed(Exception):
     """The sandboxed parser could not count or cut the PDF's pages: `status` is `encrypted`, `unsupported`,
     `timeout`, `memory`, `too_large` or `error`, and the reader returns it as its outcome (§24.3). The reader cuts
-    one page window at a time, on demand, so at most MODEL_IN_FLIGHT windows exist at once."""
+    window at a time (limited path) or all windows at once, so at most MODEL_IN_FLIGHT are read together."""
 
     def __init__(self, status: ExtractionStatus, detail: str = "") -> None:
         super().__init__(f"{status.value}: {detail}" if detail else status.value)
@@ -96,6 +96,26 @@ class ParserBusy(PdfSplitFailed):
 
     def __init__(self) -> None:
         super().__init__(ExtractionStatus.TIMEOUT, "busy")
+
+
+class ParserUnavailable(Exception):
+    """The sandboxed parser service cannot take the work now: `reason` is `busy`, `unavailable` or `misconfigured`
+    (the `PARSER_UNAVAILABLE` details of `document_read`). Systemic, never the file's: `charges_file` is False, so an
+    outage is not counted as an attempt of the file. Deliberately NOT a `PdfSplitFailed`: every `except PdfSplitFailed`
+    would turn it into the file's outcome. Raised by the sandbox adapter from either port; the document service maps
+    it to `PARSER_UNAVAILABLE(reason)`, the indexer ends its tick. Carries what the reader spent before it hit it
+    (shaped like `DriveModelUnavailable`), already billed."""
+
+    charges_file = False
+
+    def __init__(self, reason: str = "unavailable", *, pages_sent: int = 0, model_calls: int = 0,
+                 model_cost: float = 0.0, model_fallback_cost: float = 0.0) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.pages_sent = pages_sent
+        self.model_calls = model_calls
+        self.model_cost = model_cost
+        self.model_fallback_cost = model_fallback_cost
 
 
 class DriveModelUnavailable(Exception):

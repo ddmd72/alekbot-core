@@ -18,7 +18,7 @@ memory, never in this file.
 
 The first four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) and one build config
 (`cloudbuild-dev.yaml`); one `make deploy` builds and deploys them all, and a unit differs only by `--command`/`--args`.
-The sandbox render service has its own image (`Dockerfile.sandbox`) and is built by the same `make deploy`.
+The sandbox render and light (parse) services have their own image file (`Dockerfile.sandbox`, one target each) and are built by the same `make deploy`.
 
 | Unit | Type | Region | Timeout | Scaling | Secrets it reads | `make` targets |
 |------|------|--------|---------|---------|-------------------|-----------------|
@@ -27,6 +27,7 @@ The sandbox render service has its own image (`Dockerfile.sandbox`) and is built
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
 | `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
+| `alek-bot-sandbox-light-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 900s | min=0, max=5 | **none** (zero-role identity, no secret) | (see Sandbox light (parse) service) |
 
 The main service's execution environment is pinned to gen2 in `cloudbuild-dev.yaml` (`--execution-environment=gen2`); the document service's parser child needs no new knob (its slot count is a constant, `MAIN_PARSER_MAX_CHILDREN`, and `DRIVE_PARSER_USER` is set by the image).
 
@@ -97,6 +98,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
 | `SANDBOX_RENDER_DEV`, `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
+| `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | see Sandbox light (parse) service |
 
 `DRIVE_FIRST_PASS=1` is a command-line flag for the indexer's first pass only; never put it in `.env`.
 
@@ -456,6 +458,50 @@ is `inprocess`.
 
 While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works
 before step 1.
+
+---
+
+### Sandbox light (parse) service
+
+`alek-bot-sandbox-light-dev` parses uploaded and drive files for the main service and the indexer
+([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §11 light row). It is
+`sandbox_main.py` in the same image file as the render service (`Dockerfile.sandbox`, target `light`; an explicit COPY
+allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU, concurrency 1, min 0, max 5 (a cost guard), timeout 900 s,
+`--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
+response windows up to 101 MiB + one child file up to 64 MiB; fixed in `scripts/infrastructure/cloudbuild_sandbox_light.sh`,
+changed by editing that script). One request per instance (`SANDBOX_RECYCLE=always`), `SANDBOX_SERVICE=light`. No runtime
+calls it until the parse switch ships; the deploy steps only create the service.
+
+| `.env` key | Substitution | Meaning |
+|---|---|---|
+| `SANDBOX_LIGHT_SA_DEV` | `_SANDBOX_LIGHT_SA` | the light service's runtime identity; **empty skips every light build step** |
+| `SANDBOX_LIGHT_URL_DEV` | `_SANDBOX_LIGHT_URL` | the light service's own `https://` URL: the callers' target and the service's token audience (`SANDBOX_URL`) |
+| `SANDBOX_LIGHT_CALLERS_MAIN_DEV` | `_SANDBOX_LIGHT_CALLERS_MAIN` | emails admitted as the main service (`:`-separated; a comma is refused) |
+| `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_CALLERS_INDEXER` | emails admitted as the indexer (`:`-separated; a comma is refused) |
+
+**Owner steps, in order** (nothing here is run by an agent):
+1. **Create the identity and grant it nothing.** Its name must start with `alek-sandbox-`: the deploy script refuses any
+   other `SANDBOX_LIGHT_SA_DEV` with exit 3. Verify that
+   `gcloud projects get-iam-policy <PROJECT_ID> --flatten=bindings[].members --filter="bindings.members:<sandbox-light-sa>"`
+   prints nothing.
+2. **Let the deployer act as it:** `roles/iam.serviceAccountUser` on `<sandbox-light-sa>` (that account only) for the
+   build's deployer identity.
+3. **Put the keys in `.env`:** `SANDBOX_LIGHT_SA_DEV=<sandbox-light-sa>`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV=<main-runtime-sa>`
+   and `SANDBOX_LIGHT_CALLERS_INDEXER_DEV=<indexer-runtime-sa>`. Leave `SANDBOX_LIGHT_URL_DEV` empty. The callers must be set
+   **before the first deploy**: an empty caller set on Cloud Run refuses the revision.
+4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
+   op with `503 unconfigured`.
+5. **Read the URL back** and put it in `.env` as `SANDBOX_LIGHT_URL_DEV=<service URL>`:
+   ```bash
+   gcloud run services describe alek-bot-sandbox-light-dev --region=us-central1 --format='value(status.url)'
+   ```
+6. **Grant invoker to the two callers only:** `roles/run.invoker` on the light service to `<main-runtime-sa>` and
+   `<indexer-runtime-sa>`; never `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy that neither the
+   project nor the service policy contains them.
+7. **Pass two: `make deploy`.** The light service now knows its audience.
+
+While `SANDBOX_LIGHT_SA_DEV` is empty, `cloudbuild_sandbox_light.sh` exits 0 in every mode, so `make deploy` works before
+step 1.
 
 ---
 

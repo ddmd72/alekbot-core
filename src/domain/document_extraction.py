@@ -5,7 +5,7 @@ service read the same chains, statuses and routing. The router's two thresholds 
 (`drive_index_params`) and are imported.
 
 Public interface:
-    PARSER, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
+    PARSER, PARSER_VERSION, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
     ExtractionStatus
     text_digest(text) -> str, failure_label(exc) -> str
     garbage_share(text) -> float
@@ -22,6 +22,10 @@ from typing import Mapping, Optional, Protocol, Tuple
 from .drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 
 PARSER = "parser"   # the child-process parser adapter (§24.3)
+# 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
+# parser-decided record (§25.4.8). Every parser adapter (in-process and sandbox) reports it, so switching adapters
+# never re-extracts the drive index.
+PARSER_VERSION = 3
 READER = "reader"   # the document reader agent (§24.2)
 
 # Which extractor reads which kind, in order; the next link runs only when model_route says so (§9).
