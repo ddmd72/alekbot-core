@@ -11,7 +11,7 @@ item id, file name or path ever reaches the service) is enforced on the wire. A 
 
 Public interface:
     SandboxOp, SandboxStatus            the op and outcome vocabularies
-    SandboxLimits, SandboxMeta          the request metadata
+    SandboxLimits, SandboxMeta          the request metadata (`windows`: the page-window plan of `parse.pdf_windows`)
     SandboxOutcome                      the response envelope
     SandboxEngineResult, SandboxEngine  what an engine returns to the server (the web layer may not import adapters)
     new_request_id()                    random correlation id, the only correlation
@@ -30,7 +30,7 @@ import re
 import secrets
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Dict, Mapping, Optional, Protocol, Tuple, Union, runtime_checkable
 
 META_HEADER = "X-Sandbox-Meta"
 OUTCOME_HEADER = "X-Sandbox-Outcome"
@@ -38,6 +38,7 @@ OUTCOME_HEADER = "X-Sandbox-Outcome"
 META_MAX_BYTES = 8192  # RFC §4.7 / §11: `meta` size 8 KiB
 
 # RFC §11 initial value (64 MiB each, streamed); revisit after S0-a (large bodies).
+# 100 MiB product cap pending owner delta D6: until then a PDF over 64 MiB gets a 413 `too_large`.
 REQUEST_CAP_BYTES = 64 * 1024 * 1024
 # RFC §11 initial value (64 MiB each, streamed); revisit after S0-a (large bodies).
 RESPONSE_CAP_BYTES = 64 * 1024 * 1024
@@ -51,6 +52,10 @@ CEILING_WALL_S = 120.0
 CEILING_MEMORY_BYTES = 1 << 30
 CEILING_CPU_S = 90.0
 CEILING_FILE_BYTES = 64 * 1024 * 1024
+
+# Windows one `parse.pdf_windows` call may cut. A mirror of `drive_index_params.MODEL_EXTRACT_MAX_PAGES`, not an import:
+# that would grow the render image's closure. A test pins the two equal.
+SANDBOX_MAX_WINDOWS = 200
 
 OUTCOME_DETAIL_MAX_CHARS = 256
 OUTCOME_STATS_MAX_ITEMS = 16
@@ -70,6 +75,9 @@ class SandboxContractError(ValueError):
 class SandboxOp(str, Enum):
     """Ops are added by the slice that implements them, not pre-declared."""
     RENDER_DOCX = "render.docx"
+    PARSE_EXTRACT = "parse.extract"
+    PARSE_PDF_PAGE_COUNT = "parse.pdf_page_count"
+    PARSE_PDF_WINDOWS = "parse.pdf_windows"
 
 
 class SandboxStatus(str, Enum):
@@ -78,6 +86,7 @@ class SandboxStatus(str, Enum):
     TIMEOUT = "timeout"
     EMPTY_OUTPUT = "empty_output"
     TOO_LARGE = "too_large"
+    MEMORY = "memory"   # a killed parser child leaves no result (the parse ops)
     RECYCLING = "recycling"
     UNCONFIGURED = "unconfigured"
     BAD_REQUEST = "bad_request"
@@ -98,6 +107,7 @@ class SandboxMeta:
     limits: SandboxLimits
     kind: Optional[str] = None
     ext: Optional[str] = None
+    windows: Optional[Tuple[Tuple[int, int], ...]] = None   # (first_page, page_count) per window, in order
 
 
 @dataclass(frozen=True)
@@ -133,7 +143,9 @@ class SandboxEngineResult:
 
 @runtime_checkable
 class SandboxEngine(Protocol):
-    async def run(self, body_path: str, workdir: str, limits: SandboxLimits) -> SandboxEngineResult: ...
+    async def run(
+        self, body_path: str, workdir: str, limits: SandboxLimits, meta: SandboxMeta,
+    ) -> SandboxEngineResult: ...
 
 
 def new_request_id() -> str:
@@ -164,8 +176,25 @@ def _is_number(value: Any) -> bool:
 
 
 _LIMIT_KEYS = frozenset({"wall_s", "memory_bytes", "cpu_s", "file_bytes"})
-_META_KEYS = frozenset({"request_id", "limits", "kind", "ext"})
+_META_KEYS = frozenset({"request_id", "limits", "kind", "ext", "windows"})
 _OUTCOME_KEYS = frozenset({"status", "detail", "stats"})
+
+
+def _checked_windows(raw: Any) -> Tuple[Tuple[int, int], ...]:
+    """A window plan: 1..SANDBOX_MAX_WINDOWS pairs of ints (no bools), first_page >= 0, page_count >= 1."""
+    if not isinstance(raw, (list, tuple)) or not 1 <= len(raw) <= SANDBOX_MAX_WINDOWS:
+        raise SandboxContractError("windows must be a list of 1..SANDBOX_MAX_WINDOWS pairs")
+    pairs = []
+    for pair in raw:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise SandboxContractError("a window must be [first_page, page_count]")
+        first_page, page_count = pair
+        if any(isinstance(v, bool) or not isinstance(v, int) for v in pair):
+            raise SandboxContractError("window values must be integers")
+        if first_page < 0 or page_count < 1:
+            raise SandboxContractError("window out of range")
+        pairs.append((first_page, page_count))
+    return tuple(pairs)
 
 
 def encode_meta(meta: SandboxMeta) -> str:
@@ -182,6 +211,8 @@ def encode_meta(meta: SandboxMeta) -> str:
         obj["kind"] = meta.kind
     if meta.ext is not None:
         obj["ext"] = meta.ext
+    if meta.windows is not None:
+        obj["windows"] = [list(pair) for pair in _checked_windows(meta.windows)]
     encoded = _b64_encode(obj)
     if len(encoded) > META_MAX_BYTES:
         raise SandboxContractError("meta exceeds 8 KiB")
@@ -206,13 +237,14 @@ def decode_meta(header: str) -> SandboxMeta:
         raise SandboxContractError("bad kind")
     if ext is not None and (not isinstance(ext, str) or not _EXT_RE.fullmatch(ext)):
         raise SandboxContractError("bad ext")
+    windows = _checked_windows(obj["windows"]) if "windows" in obj else None
     limits = SandboxLimits(
         wall_s=float(raw_limits["wall_s"]),
         memory_bytes=int(raw_limits["memory_bytes"]),
         cpu_s=float(raw_limits["cpu_s"]),
         file_bytes=int(raw_limits["file_bytes"]),
     )
-    return SandboxMeta(request_id=request_id, limits=limits, kind=kind, ext=ext)
+    return SandboxMeta(request_id=request_id, limits=limits, kind=kind, ext=ext, windows=windows)
 
 
 def encode_outcome(outcome: SandboxOutcome) -> str:

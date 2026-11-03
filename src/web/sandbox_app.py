@@ -44,6 +44,7 @@ from ..domain.sandbox_contract import (
     CEILING_WALL_S,
     ERROR_TEXT_CAP_BYTES,
     META_HEADER,
+    OUTCOME_DETAIL_MAX_CHARS,
     OUTCOME_HEADER,
     REQUEST_CAP_BYTES,
     RESPONSE_CAP_BYTES,
@@ -74,6 +75,7 @@ _HTTP_STATUS = {
     SandboxStatus.EMPTY_OUTPUT: 422,
     SandboxStatus.TIMEOUT: 504,
     SandboxStatus.TOO_LARGE: 413,
+    SandboxStatus.MEMORY: 422,
     SandboxStatus.RECYCLING: 503,
     SandboxStatus.UNCONFIGURED: 503,
     SandboxStatus.BAD_REQUEST: 400,
@@ -212,7 +214,7 @@ def create_sandbox_blueprint(
                 return resp
 
             try:
-                result = await engine.run(body_path, workdir, limits)
+                result = await engine.run(body_path, workdir, limits, meta)
             except Exception as exc:
                 logger.error("[Sandbox] engine raised %s (op=%s)", type(exc).__name__, ctx.op)
                 resp = _answer_text(ctx, SandboxStatus.ERROR, "", "engine failure")
@@ -279,7 +281,7 @@ def create_sandbox_blueprint(
         resp = Response(_EndBody(_FileChunks(handle), ctx.close_handle), status=200,
                         content_type="application/octet-stream")
         resp.headers["Content-Length"] = str(size)
-        _attach_outcome(resp, ctx, SandboxStatus.OK, "")
+        _attach_outcome(resp, ctx, SandboxStatus.OK, result.detail[:OUTCOME_DETAIL_MAX_CHARS])   # the parse ops: the parser's own status
         if ctx.recycles:
             resp.headers["Connection"] = "close"
         # The open file stays valid after the workdir and output directory are removed by the handler.
@@ -483,7 +485,7 @@ def _log(ctx: "_RequestState", status: Optional[SandboxStatus]) -> None:
     if status is None or ctx.logged:
         return
     ctx.logged = True
-    logger.info(
+    (logger.info if status == SandboxStatus.OK else logger.warning)(
         "[Sandbox] request_id=%s op=%s input_bytes=%d status=%s wall_s=%.3f peak_rss_bytes=%d recycled=%s",
         ctx.request_id, ctx.op, ctx.input_bytes, status.value, time.monotonic() - ctx.started,
         ctx.peak_rss, str(ctx.recycles).lower(),
