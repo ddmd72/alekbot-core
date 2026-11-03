@@ -30,9 +30,9 @@ RUN useradd --system --user-group --no-create-home --home-dir /nonexistent --she
 
 # The code: one COPY per directory, files named one by one.
 COPY sandbox_main.py /app/
-COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
+COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/parse_engine.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
 COPY src/composition/__init__.py src/composition/sandbox_callers.py src/composition/sandbox_setup.py /app/src/composition/
-COPY src/domain/docx_script_prelude.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_startup_check.py /app/src/domain/
+COPY src/domain/docx_script_prelude.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_parse_result.py src/domain/sandbox_startup_check.py src/domain/sandbox_windows_frame.py /app/src/domain/
 COPY src/utils/logfire_redacting_exporter.py src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
 COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
 
@@ -78,7 +78,7 @@ COPY src/adapters/drive_parser/__init__.py src/adapters/drive_parser/capture.py 
 COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/parse_child.py src/adapters/sandbox_engine/parse_engine.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
 COPY src/composition/__init__.py src/composition/sandbox_callers.py src/composition/sandbox_setup.py /app/src/composition/
 COPY src/domain/connection_scope.py src/domain/document_extraction.py src/domain/document_limits.py src/domain/docx_script_prelude.py src/domain/drive_capture.py src/domain/drive_content_identity.py src/domain/drive_enrichment.py src/domain/drive_extraction.py src/domain/drive_index.py src/domain/drive_index_params.py src/domain/drive_media_facts.py src/domain/drive_note_check.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_parse_result.py src/domain/sandbox_startup_check.py src/domain/sandbox_windows_frame.py src/domain/text_data_uris.py /app/src/domain/
-COPY src/utils/document_hardening.py src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
+COPY src/utils/document_hardening.py src/utils/logfire_redacting_exporter.py src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
 COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
 
 RUN mkdir -p /work && chmod 711 /work && chown root:root /tmp && chmod 0700 /tmp
