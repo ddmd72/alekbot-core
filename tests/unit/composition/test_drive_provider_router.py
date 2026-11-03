@@ -285,7 +285,7 @@ class TestT8:
     def test_every_handle_member_of_the_port_is_routed(self):
         assert set(_ROUTED) == {
             "get_root", "get_item", "list_children", "search", "download", "upload", "replace_content", "move",
-            "create_folder", "delete", "child_by_name", "area_path", "get_changes", "get_change",
+            "create_folder", "delete", "child_by_name", "area_path", "get_changes", "resolve_content_versions", "get_change",
             "list_children_changes", "download_to_file", "get_thumbnail", "media_source", "capabilities", "forget",
             "outer_folders"}
         assert not DriveProviderRouter.__abstractmethods__
