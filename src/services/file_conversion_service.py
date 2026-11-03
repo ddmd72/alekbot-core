@@ -19,17 +19,22 @@ any download or any text that prints the item's path. `access` is required: a se
 """
 import mimetypes
 import os
+import secrets
 import tempfile
-from typing import TYPE_CHECKING, Optional, Tuple
+import uuid
+from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
 
 import aiofiles
 
 from ..domain import drive_ref
 from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
+from ..domain.file_ref import FileRefKind, classify_ref
 from ..domain.document_kind import mime_decides_kind, mime_kind
 from ..domain.document_open import OpenedFile, Prefetched
-from ..domain.document_read import CALLER_OPEN
+from ..domain.document_open_texts import parser_unavailable_note
+from ..domain.document_presentation import note_for, present_text
+from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
@@ -51,14 +56,10 @@ from ..domain.workspace import (
     workspace_kind,
 )
 from ..ports.file_storage_port import FileStoragePort
-from ..utils.file_conversion import (
-    convert_file_to_text,
-    is_native_binary,
-)
+from ..utils.file_conversion import is_native_binary
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
-    from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..ports.document_read_port import DocumentReadPort
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.user_drive_port import UserDrivePort
@@ -77,6 +78,52 @@ def _too_large_line(path: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTE
     return (f"[System: '{path}' is {format_size(size_bytes)}; files above "
             f"{format_size(limit_bytes)} cannot be read as text yet. Long audio and video "
             f"processing is not available yet.]")
+
+
+class _Opening(NamedTuple):
+    """An open's answer with what its presenter needs: the name shown and the bare text (no `[File:]` wrapper)."""
+    opened: OpenedFile
+    display: str
+    text: str = ""
+
+
+def _staged_name(path: str, name: str, item_mime: str) -> str:
+    """The name a drive file is read under: its path, with the suffix the mime decides (a native Google Sheet has none)."""
+    ext = os.path.splitext(name)[1]
+    if item_mime and (not ext or mime_decides_kind(name, item_mime)):
+        ext = _KIND_SUFFIX.get(mime_kind(item_mime) or "") or ext
+    base, current = os.path.splitext(path)
+    return path if current == ext else (base if current else path) + ext
+
+
+def _drive_cap(mime: str, consumer: Tuple[NativeFormat, ...]) -> int:
+    """The byte cap of a drive file that is not text: MAX_FILE_BYTES, or the consumer's declared `max_bytes` for the
+    item's mime when that is larger (a native-eligible PDF up to 20 MiB must still download)."""
+    bare = mime.split(";")[0].strip().lower()
+    return max([MAX_FILE_BYTES] + [f.max_bytes for f in consumer if f.mime == bare])
+
+
+def _native_file(outcome: ReadOutcome, content: bytes, declared_mime: str, name: str) -> OpenedFile:
+    """Write the bytes of a NATIVE outcome outside any staging directory: the adapter reads the file later in the turn
+    (the leak is today's, EXTERNAL_FILES_RFC §10)."""
+    native_mime = outcome.native_mime or declared_mime
+    suffix = os.path.splitext(name)[1] or mimetypes.guess_extension(native_mime) or ".bin"
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "wb") as f:
+        f.write(content)
+    return OpenedFile(outcome, native_path=path, native_mime=native_mime)
+
+
+# Statuses that are the system's, not the file's: they log at ERROR, where the alerting looks (severity >= ERROR).
+_SYSTEM_STATUSES = frozenset({ReadStatus.MEMORY, ReadStatus.TIMEOUT, ReadStatus.ERROR, ReadStatus.PARSER_UNAVAILABLE,
+                              ReadStatus.MODEL_UNAVAILABLE, ReadStatus.STILL_WORKING})
+
+
+def _log_unread(outcome: ReadOutcome, store: str, ref: str) -> None:
+    """One structured line for a read that gave no text: ERROR when the system failed, WARNING when the file is at fault."""
+    line = "[FileOpen] %s store=%s ref=%s kind=%s detail=%s"
+    level = logger.error if outcome.status in _SYSTEM_STATUSES else logger.warning
+    level(line, outcome.status.value, store, ref, outcome.kind, outcome.detail)
 
 
 def _is_delivered_key(ref: str) -> bool:
@@ -116,7 +163,6 @@ class FileConversionService:
     def __init__(
         self,
         storage: FileStoragePort,
-        audio_service: Optional["AudioTranscriptionPort"] = None,
         media_storage: Optional["MediaStoragePort"] = None,
         skill_files: Optional["SkillFileResolver"] = None,
         drive: Optional["UserDrivePort"] = None,
@@ -126,7 +172,6 @@ class FileConversionService:
         access: "UserDriveService",
     ) -> None:
         self._storage = storage
-        self._audio_service = audio_service
         # MediaStoragePort serves system-delivered documents (docs/, email_review/,
         # deep_research/) so agents can re-read them via open_file without an external
         # URL fetch. None → delivered-document re-read is unavailable.
@@ -161,15 +206,113 @@ class FileConversionService:
         uncut; the store's presenter marks and cuts it), a `[System: …]` note, or a native file for the consumer to
         attach. `consumer` empty means text only. `caller` is `CALLER_OPEN` or `CALLER_PREFETCH`. Store-specific
         branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
-        Not built yet (U3 part C)."""
-        raise NotImplementedError("FileConversionService.open is built in U3 part C")
+        Store errors (FileNotFoundError, PermissionError, DriveRefRefused, DriveItemNotFoundError, WorkspaceRefused)
+        propagate; the callers map them. Every failed read is logged at WARNING (the file's) or ERROR (the system's)."""
+        return (await self._open(ref, user_id, account_id, consumer, deadline_at, caller)).opened
+
+    async def _open(self, ref: str, user_id: str, account_id: str, consumer: Tuple[NativeFormat, ...],
+                    deadline_at: float, caller: str) -> "_Opening":
+        kind = classify_ref(ref)
+        if kind is FileRefKind.SKILL:
+            text = await self._read_skill(ref, user_id)
+            return _Opening(OpenedFile(None, body=f"[File: {ref}]\n{text}\n[/File: {ref}]"), ref, text)
+        if kind is FileRefKind.EMAIL:
+            raise FileNotFoundError(f"{ref!r}: email attachments open through the email tool")
+
+        display, declared_mime, name = ref, "", ref
+        if kind is FileRefKind.DRIVE:
+            handle, item = await self._drive_item(ref, user_id)
+            if item.is_folder:
+                return _Opening(OpenedFile(None, note=(
+                    f"[System: '{item.path or '/'}' is a folder, not a file. "
+                    f"List the folder to see what is inside.]")), item.path)
+            display = item.path
+            declared_mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
+            name = _staged_name(item.path, item.name, item.mime_type)
+            if declared_mime.startswith("text/"):
+                # a text file's size is not the text it holds once inline images are dropped (G1b): stream it up to
+                # the export cap and let the reader apply the 5 MB cap to what is left
+                with tempfile.TemporaryDirectory() as staging:
+                    staged = os.path.join(staging, "staged" + (os.path.splitext(name)[1] or ".bin"))
+                    try:
+                        await self._require_drive().download_to_file(handle, item.item_id, staged,
+                                                                     MAX_TEXT_EXPORT_BYTES)
+                    except DriveFileTooLarge:
+                        logger.warning("[FileOpen] too_large store=drive ref=%s limit=%d", ref, MAX_TEXT_EXPORT_BYTES)
+                        return _Opening(OpenedFile(None, note=_too_large_line(
+                            item.path, max(item.size_bytes, MAX_TEXT_EXPORT_BYTES), MAX_TEXT_EXPORT_BYTES)), display)
+                    async with aiofiles.open(staged, "rb") as f:
+                        content = await f.read()
+            else:
+                cap = _drive_cap(declared_mime, consumer)
+                if item.size_bytes > cap:
+                    logger.warning("[FileOpen] too_large store=drive ref=%s size=%d limit=%d", ref, item.size_bytes, cap)
+                    return _Opening(OpenedFile(None, note=_too_large_line(item.path, item.size_bytes, cap)), display)
+                content = await self._require_drive().download(handle, item.item_id)
+        elif kind is FileRefKind.WORKSPACE:
+            path, content = await self._read_workspace(ref, user_id)
+            declared_mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            name = path
+            if workspace_kind(path) == "text":
+                if len(content) > OPEN_FILE_MAX_TEXT_BYTES:
+                    logger.warning("[FileOpen] too_large store=workspace ref=%s size=%d limit=%d",
+                                   ref, len(content), OPEN_FILE_MAX_TEXT_BYTES)
+                    return _Opening(OpenedFile(None, note=(
+                        f"[System: '{ref}' is {format_size(len(content))}; open_file reads a workspace text file only "
+                        f"up to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
+                        f"command view, path {path}, offset and limit (lines).]")), display)
+                try:
+                    # The skill: rule — text kinds are decoded, never mime-guessed (§12).
+                    text = content.decode("utf-8")
+                    return _Opening(OpenedFile(None, body=f"[File: {ref}]\n{text}\n[/File: {ref}]"), display, text)
+                except UnicodeDecodeError:
+                    logger.info("FileConversionService: %s is not UTF-8; reading it as a file", ref)
+        else:
+            content = await self._download_by_ref(ref, user_id)
+            declared_mime = mimetypes.guess_type(ref)[0] or "application/octet-stream"
+
+        if self._documents is None:
+            logger.error("[FileOpen] parser_unavailable store=%s ref=%s: no document service attached", kind.value, ref)
+            return _Opening(OpenedFile(None, note=parser_unavailable_note(display)), display)
+        request = ReadRequest(
+            content=content, name=name, declared_mime=declared_mime, store=kind.value, caller=caller,
+            native_formats=consumer, user_id=user_id, account_id=account_id, deadline_at=deadline_at,
+            request_id=uuid.uuid4().hex)
+        try:
+            outcome = await self._documents.read(request)
+        except Exception:
+            logger.error("[FileOpen] read raised store=%s ref=%s", kind.value, ref, exc_info=True)
+            raise
+        if outcome.status is ReadStatus.NATIVE:
+            return _Opening(_native_file(outcome, content, declared_mime, name), display)
+        if outcome.status is ReadStatus.TEXT:
+            body = f"[File: {display}]\n{outcome.text}\n[/File: {display}]"
+            return _Opening(OpenedFile(outcome, body=body), display, outcome.text)
+        _log_unread(outcome, kind.value, ref)
+        return _Opening(OpenedFile(outcome, note=note_for(outcome, display, declared_mime, size_bytes=len(content))),
+                        display)
 
     async def prefetch(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched:
         """A specialist's prefetch of a ref (EXTERNAL_FILES_RFC §4.2 P18): `open` as text only, under the worker's
-        `deadline_at`, answering the text as `content`, or a `note` the specialist reports when the file could not
-        be read (a recording, a folder or a video ref gets a note too). Never transcribes (P21). Not built yet (U3
-        part C)."""
-        raise NotImplementedError("FileConversionService.prefetch is built in U3 part C")
+        `deadline_at`, answering the text as `content` (marked, cut at D20's 60 000), or a `note` the specialist
+        reports when the file could not be read (a recording, a folder or a video ref gets a note too). Never
+        transcribes (P21) and never raises: a store error becomes a one-line note, logged at WARNING. A skill ref's
+        body is the system's own text and comes back unmarked."""
+        try:
+            opening = await self._open(ref, user_id, account_id, (), deadline_at, CALLER_PREFETCH)
+        except Exception as e:
+            logger.warning("[FileOpen] prefetch could not open ref=%s: %s: %s", ref, type(e).__name__, e)
+            return Prefetched(note=f"[System: The file '{ref}' could not be opened. Do not guess what it contains.]")
+        opened = opening.opened
+        if opened.note:
+            return Prefetched(note=opened.note)
+        kind = classify_ref(ref)
+        if kind is FileRefKind.SKILL:
+            return Prefetched(content=opened.body)
+        # The presenter marks the bare text, not today's `[File:]` body.
+        return Prefetched(content=present_text(opening.text, store=kind.value, ref=ref, label=opening.display,
+                                               nonce=secrets.token_hex(8),
+                                               outcome=opened.outcome or ReadOutcome(status=ReadStatus.TEXT)))
 
     async def _read_skill(self, ref: str, user_id: str) -> str:
         if self._skill_files is None:
@@ -205,39 +348,6 @@ class FileConversionService:
             raise FileNotFoundError("The user's drive is unavailable")
         return self._drive
 
-    async def _resolve_drive_content(self, ref: str, user_id: str) -> str:
-        handle, item = await self._drive_item(ref, user_id)
-        if item.is_folder:
-            return (f"[System: '{item.path or '/'}' is a folder, not a file. "
-                    f"List the folder to see what is inside.]")
-        mime_type = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
-        is_text = mime_type.startswith("text/")
-        if not is_text and item.size_bytes > MAX_FILE_BYTES:
-            return _too_large_line(item.path, item.size_bytes)
-        ext = os.path.splitext(item.name)[1]
-        if item.mime_type and (not ext or mime_decides_kind(item.name, item.mime_type)):
-            ext = _KIND_SUFFIX.get(mime_kind(item.mime_type) or "") or ext
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext or ".bin")
-        try:
-            os.close(tmp_fd)
-            if is_text:
-                # a text file's size is not the text it holds once inline images are dropped (G1b): stream it up to
-                # the export cap and let the conversion apply the 5 MB cap to what is left
-                try:
-                    await self._require_drive().download_to_file(handle, item.item_id, tmp_path, MAX_TEXT_EXPORT_BYTES)
-                except DriveFileTooLarge:
-                    return _too_large_line(item.path, max(item.size_bytes, MAX_TEXT_EXPORT_BYTES), MAX_TEXT_EXPORT_BYTES)
-            else:
-                data = await self._require_drive().download(handle, item.item_id)
-                async with aiofiles.open(tmp_path, "wb") as f:
-                    await f.write(data)
-            return await convert_file_to_text(tmp_path, item.path, mime_type, audio_service=self._audio_service)
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                logger.debug("Failed to remove temp file %s", tmp_path)
-
     async def _resolve_drive_bytes(self, ref: str, user_id: str) -> bytes:
         handle, item = await self._drive_item(ref, user_id)
         if item.is_folder:
@@ -257,31 +367,6 @@ class FileConversionService:
             raise FileNotFoundError(str(e)) from e
         blob = await self._workspace.read(user_id, path)
         return path, blob.data
-
-    async def _resolve_workspace_content(self, ref: str, user_id: str) -> str:
-        path, data = await self._read_workspace(ref, user_id)
-        if workspace_kind(path) == "text":
-            if len(data) > OPEN_FILE_MAX_TEXT_BYTES:
-                return (f"[System: '{ref}' is {format_size(len(data))}; open_file reads a workspace text file only up "
-                        f"to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
-                        f"command view, path {path}, offset and limit (lines).]")
-            try:
-                # The skill: rule — text kinds are decoded, never mime-guessed (§12).
-                return f"[File: {ref}]\n{data.decode('utf-8')}\n[/File: {ref}]"
-            except UnicodeDecodeError:
-                logger.info("FileConversionService: %s is not UTF-8; converting it as a file", ref)
-        mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(path)[1] or ".bin")
-        try:
-            os.close(tmp_fd)
-            async with aiofiles.open(tmp_path, "wb") as f:
-                await f.write(data)
-            return await convert_file_to_text(tmp_path, ref, mime_type, audio_service=self._audio_service)
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                logger.debug("Failed to remove temp file %s", tmp_path)
 
     async def _download_by_ref(self, ref: str, user_id: str) -> bytes:
         """Fetch bytes for a ref, dispatching by ref shape (no LLM decision).
@@ -354,54 +439,6 @@ class FileConversionService:
             filename, ref, _format_size(size_bytes),
         )
         return MessagePart(text=label, file_data=file_data)
-
-    async def resolve_content(
-        self,
-        ref: str,
-        user_id: str,
-    ) -> str:
-        """
-        Download from GCS and convert to text.
-
-        Mime type is inferred from the filename extension — callers never pass it.
-        Uses existing conversion logic: audio → transcribe, text/* → read UTF-8,
-        everything else → markitdown.
-        Native binary images cannot be converted — returns a descriptive message.
-        PDFs are handled by markitdown (text extraction).
-
-        Returns text wrapped in [File: ref]...[/File: ref] markers,
-        or a [System: ...] alert on failure.
-        """
-        if ref.startswith(SKILL_REF_PREFIX):
-            text = await self._read_skill(ref, user_id)
-            return f"[File: {ref}]\n{text}\n[/File: {ref}]"
-        if _is_workspace_ref(ref):
-            return await self._resolve_workspace_content(ref, user_id)
-        if _is_drive_ref(ref):
-            return await self._resolve_drive_content(ref, user_id)
-
-        mime_type, _ = mimetypes.guess_type(ref)
-        mime_type = mime_type or "application/octet-stream"
-
-        data = await self._download_by_ref(ref, user_id)
-
-        suffix = os.path.splitext(ref)[1] or ".bin"
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-        try:
-            os.close(tmp_fd)
-            async with aiofiles.open(tmp_path, "wb") as f:
-                await f.write(data)
-
-            text = await convert_file_to_text(
-                tmp_path, ref, mime_type,
-                audio_service=self._audio_service,
-            )
-            return text
-        finally:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                logger.debug("Failed to remove temp file %s", tmp_path)
 
     async def resolve_bytes(self, ref: str, user_id: str) -> bytes:
         """Download raw bytes. For specialists that need the original.
