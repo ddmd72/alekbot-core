@@ -28,9 +28,12 @@ from ..domain import drive_ref
 from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
 from ..domain.document_kind import mime_decides_kind, mime_kind
+from ..domain.document_open import OpenedFile, Prefetched
+from ..domain.document_read import CALLER_OPEN
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
+from ..domain.native_format import NativeFormat
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
 from ..domain.user_drive import (
     DriveFileTooLarge,
@@ -56,6 +59,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
+    from ..ports.document_read_port import DocumentReadPort
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.user_drive_port import UserDrivePort
     from ..ports.workspace_store_port import WorkspaceStorePort
@@ -139,6 +143,33 @@ class FileConversionService:
         self._workspace = workspace
         # The access policy of the user's drives (MULTI_DRIVE_RFC §11.3): required, so an unwired service cannot skip it.
         self._access = access
+        # The document service `open` and `prefetch` read through (EXTERNAL_FILES_RFC §4.4); attached by the graph
+        # right after it is built (`attach_documents`), None until then.
+        self._documents: Optional["DocumentReadPort"] = None
+
+    def attach_documents(self, documents: "DocumentReadPort") -> None:
+        """Attach the document service (`composition/document_service_setup.py`). Built after this service, because
+        it needs the graph's quota service and context builder."""
+        self._documents = documents
+
+    async def open(self, ref: str, user_id: str, account_id: str, *, consumer: Tuple[NativeFormat, ...] = (),
+                   deadline_at: float, caller: str = CALLER_OPEN) -> OpenedFile:
+        """Open a ref for a model (EXTERNAL_FILES_RFC §4.2): classify and resolve it in its store (the ownership
+        check on delivered keys), check its size on metadata before download, stage its bytes for this call only,
+        read them through the document service with the consumer's native declaration and the one absolute
+        `deadline_at` (epoch seconds), and answer an `OpenedFile`: today's `[File: <name>]` body (raw, unmarked,
+        uncut; the store's presenter marks and cuts it), a `[System: …]` note, or a native file for the consumer to
+        attach. `consumer` empty means text only. `caller` is `CALLER_OPEN` or `CALLER_PREFETCH`. Store-specific
+        branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
+        Not built yet (U3 part C)."""
+        raise NotImplementedError("FileConversionService.open is built in U3 part C")
+
+    async def prefetch(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched:
+        """A specialist's prefetch of a ref (EXTERNAL_FILES_RFC §4.2 P18): `open` as text only, under the worker's
+        `deadline_at`, answering the text as `content`, or a `note` the specialist reports when the file could not
+        be read (a recording, a folder or a video ref gets a note too). Never transcribes (P21). Not built yet (U3
+        part C)."""
+        raise NotImplementedError("FileConversionService.prefetch is built in U3 part C")
 
     async def _read_skill(self, ref: str, user_id: str) -> str:
         if self._skill_files is None:
