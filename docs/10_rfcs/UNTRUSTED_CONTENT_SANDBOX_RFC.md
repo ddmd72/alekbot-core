@@ -302,10 +302,10 @@ The statuses **do not change**. The sandbox returns the ones callers already kno
 | child killed on time or memory | `TIMEOUT` / `MEMORY` as today (counted per-file retries, never routed to the reader) | `drive_parser_sandbox_resource_isolation.md` |
 | `BUDGET_EXHAUSTED` | never from the sandbox | it is the reader's status |
 | request too large (413) | `TOO_LARGE` | |
-| 503 `recycling` | retried immediately (up to 3 times, short jitter), **never charged to the file** | §4.6 |
-| 429, other 503, connection refused, an instance not started | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
+| 503 `recycling` | retried once at once (2 attempts, short jitter); still recycling -> `SandboxUnavailable(reason=busy)`; **never charged to the file** | §4.6 |
+| 429, other 503 (`reason=busy`, no retry), connection refused, an instance not started (`reason=unavailable`, no retry) | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
 | 401 / 403 | `SandboxMisconfigured`: ERROR log, systemic defer | a deployment mistake, not a file |
-| connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance; if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
+| connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance (a retry starts only with time left before the caller's deadline, its wall lowered to that time); if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
 | a malformed envelope | `ERROR` | |
 
 Details for parsers stay what they are: a failure type, a code position and a hash, never text (`failure_label`). The DOCX op is the exception **by purpose**: the
@@ -497,6 +497,11 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   (`ContentExtractorPort` and `PdfSplitterPort`: one object serves both, as today), at the indexer's composition line (`indexer_main.py:138`). No caller changes.
 - **P1 (service side) built, not deployed:** the three `parse.*` ops (§4.7) on the `light` target (`SANDBOX_SERVICE=light`, groups MAIN and INDEXER), over
   `drive_parser/child.py` unchanged; no client, no deploy step, no caller. The rest of this list is P2 and later.
+- **P2 (client side) built, not wired:** `SandboxContentExtractor` (`src/adapters/sandbox_client/`) behind both parse ports, `build_sandbox_parser(url)`
+  (`src/composition/sandbox_parse_setup.py`), and `SandboxHttpClient`'s file bodies, `windows` meta and deadline-capped retries. An outage of the service ends as
+  `drive_extraction.ParserUnavailable` (busy | unavailable | misconfigured), never as the file's outcome: the document service answers the converter note, the indexer
+  abandons the run uncounted and ends the tick. Nothing calls it (`SANDBOX_PARSE` and the indexer slots are P4). Not yet in the reader: the single batch
+  `cut_pdf_windows` call; the reader still cuts its windows one at a time (open decision).
 - Build: the `parse.*` ops (`parse.extract`, `parse.pdf_page_count`, `parse.pdf_windows`; one window is a batch of one) on the light image (the `light` target);
   `SandboxContentExtractor` (both ports, including `PdfSplitterPort`'s batch `cut_pdf_windows` → `parse.pdf_windows` and its deadline → `limits`);
   indexer wiring behind `SANDBOX_PARSE` (its own substitution key); indexer-side cap `SANDBOX_INDEXER_SLOTS`; the indexer's caller group: one

@@ -32,7 +32,7 @@ import os
 import random
 import time
 from dataclasses import dataclass, replace
-from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Sequence, Tuple, Union
 
 import httpx
 
@@ -101,14 +101,16 @@ class SandboxHttpClient:
 
     async def call(self, op: SandboxOp, body: Optional[bytes], limits: SandboxLimits, *,
                    kind: Optional[str] = None, ext: Optional[str] = None, body_path: Optional[str] = None,
-                   deadline_at: Optional[float] = None) -> SandboxReply:
-        """Exactly one of `body` (bytes) and `body_path` (a file streamed from disk) is given."""
+                   deadline_at: Optional[float] = None,
+                   windows: Optional[Sequence[Tuple[int, int]]] = None) -> SandboxReply:
+        """Exactly one of `body` (bytes) and `body_path` (a file streamed from disk) is given. `windows`: the
+        `(first_page, page_count)` plan of `parse.pdf_windows`, sent in the meta."""
         if (body is None) == (body_path is None):
             raise ValueError("exactly one of body and body_path is required")
         started = time.monotonic()
         state: dict = {"ids": [], "status": "error"}
         try:
-            reply = await self._call(op, body, body_path, limits, kind, ext, deadline_at, state)
+            reply = await self._call(op, body, body_path, limits, kind, ext, deadline_at, windows, state)
             state["status"] = reply.outcome.status.value
             return reply
         except SandboxUnavailable:
@@ -131,7 +133,7 @@ class SandboxHttpClient:
 
     async def _call(self, op: SandboxOp, body: Optional[bytes], body_path: Optional[str], limits: SandboxLimits,
                     kind: Optional[str], ext: Optional[str], deadline_at: Optional[float],
-                    state: dict) -> SandboxReply:
+                    windows: Optional[Sequence[Tuple[int, int]]], state: dict) -> SandboxReply:
         try:
             token = await self._token_provider()
         except (SandboxUnavailable, SandboxMisconfigured):
@@ -139,6 +141,7 @@ class SandboxHttpClient:
         except Exception as exc:
             logger.error("[SandboxClient] request_id=- op=%s no ID token: %s", op.value, type(exc).__name__)
             raise SandboxMisconfigured("could not obtain an ID token") from exc
+        planned = tuple((int(first), int(count)) for first, count in windows) if windows is not None else None
         recycling = 0
         lost = 0
         while True:
@@ -157,7 +160,7 @@ class SandboxHttpClient:
             headers = {
                 "Authorization": f"Bearer {token}",
                 META_HEADER: encode_meta(SandboxMeta(request_id=request_id, limits=attempt_limits, kind=kind,
-                                                     ext=ext)),
+                                                     ext=ext, windows=planned)),
                 "Content-Type": "application/octet-stream",
                 "Accept-Encoding": "identity",
             }
