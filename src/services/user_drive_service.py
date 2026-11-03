@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from .drive_connection_service import DriveConnectionService
 
 LIST_LIMIT = 100
+_CLOSED = "\x00closed"       # `_walk` memo: the item answered "not found" to an id read (never a real id)
 SEARCH_LIMIT = 25
 COUNT_CAP = 10_000
 
@@ -186,6 +187,9 @@ class UserDriveService:
                                 memo if memo is not None else {})
 
     async def _walk(self, handle: DriveHandle, item_id: str, root_id: str, memo: Dict[str, str]) -> Ancestry:
+        """The chain of `item_id`. A parent closed to the bot ends it unreached; under the connector audience that
+        parent is left out too (DRIVE_MCP_CONNECTOR_RFC §7.3: an unknown ancestor never admits; the index admit does
+        not see an unrecorded ancestor either, and a real provider names no parent the account cannot read)."""
         ids = [item_id]
         current = item_id
         while current != root_id and len(ids) < MAX_CHAIN_DEPTH:
@@ -195,12 +199,15 @@ class UserDriveService:
                 except DriveItemNotFoundError:
                     if current == item_id:
                         raise
-                    memo[current] = ""       # a parent closed to the bot: the chain ends unreached
+                    memo[current] = _CLOSED       # a parent closed to the bot: the chain ends unreached
             parent = memo[current]
-            if not parent or parent in ids:
+            if not parent or parent == _CLOSED or parent in ids:
                 break
             ids.append(parent)
             current = parent
+        if (memo.get(current) == _CLOSED and current != item_id
+                and CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR):
+            ids.pop()
         return Ancestry(ids=tuple(ids), reached_root=current == root_id)
 
     async def check_access(self, handle: DriveHandle, op: AccessOp, *, item: Optional[DriveItem] = None,
