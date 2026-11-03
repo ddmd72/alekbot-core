@@ -220,8 +220,10 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
             self.records.pop((scope.connection_id, item_id), None)
             self.vectors.pop((scope.connection_id, item_id), None)
 
-    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int) -> List[DriveIndexRecord]:
-        due = [r for r in self._conn(scope) if r.due_at is not None and r.due_at <= now]
+    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int,
+                          skip_classes: AbstractSet[int] = frozenset()) -> List[DriveIndexRecord]:
+        due = [r for r in self._conn(scope) if r.due_at is not None and r.due_at <= now
+               and (r.priority is None or r.priority not in skip_classes)]
         due.sort(key=lambda r: (r.priority if r.priority is not None else 99, r.due_at, r.item_id))
         return due[:limit]
 

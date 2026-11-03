@@ -928,12 +928,16 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                 batch.delete(self._ref(scope, item_id))
             await batch.commit()
 
-    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int) -> List[DriveIndexRecord]:
-        """One equality query per class keeps due_at the first (and only range) ordering (§7.8)."""
+    async def due_records(self, scope: ConnectionScope, now: datetime, limit: int,
+                          skip_classes: AbstractSet[int] = frozenset()) -> List[DriveIndexRecord]:
+        """One equality query per class keeps due_at the first (and only range) ordering (§7.8); a skipped class is
+        not queried (the same index serves the rest)."""
         due: List[DriveIndexRecord] = []
         for priority in Priority:
             if len(due) >= limit:
                 break
+            if int(priority) in skip_classes:
+                continue
             query = (self._conn_query(scope)
                      .where(filter=FieldFilter("priority", "==", int(priority)))
                      .where(filter=FieldFilter("due_at", "<=", now))

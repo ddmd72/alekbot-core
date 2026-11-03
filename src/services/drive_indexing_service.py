@@ -252,6 +252,12 @@ _PURGE_JOB_SCAN = 1000   # the purge's read of records and open batches that may
 # the user (§8.2). ValueError is the adapter's 5xx; OSError covers connection resets.
 _PER_ITEM_ERRORS = (DriveAccessDenied, DriveItemNotFoundError, asyncio.TimeoutError, ValueError, OSError)
 _STEP_ASIDE = timedelta(seconds=1)   # a deleting folder waiting for its children comes back after them
+# MULTI_DRIVE_RFC E87: the stored records one False scope verdict reads under the links of its chain (the drain), at
+# most; the removals also spend the cascade budget, so one verdict never takes a tick
+_DRAIN_PER_STEP = RECORD_WRITE_BATCH
+# tick summary keys that are not progress (`last_success_at`): read pages, and class-1 records left for want of an item
+# call (E87)
+_NOT_PROGRESS = frozenset({"pages", "waiting_item_calls"})
 _GATE_RECHECK_S = 5.0   # the opt-out flag is re-read before a write batch at most this often
 # The kinds a profile or passage job can exist for (§25.3): the job counts read only these (`kind in` batches)
 _ENRICH_KINDS = frozenset(PROFILE_POLICY) | {"image"}
@@ -439,6 +445,16 @@ class _CardSlots:
     admitted: int = 0
 
 
+@dataclass(frozen=True)
+class _ClassPass:
+    """One pass of `_work_class` over a page of one due class. `progressed`: a record of the page moved.
+    `waits_for_item_calls`: nothing moved, and every record the pass took up stopped only because no item call was left
+    this tick (a parent lookup or a density probe, RFC Δ9, of a record with no rescope pending); no other stop, a
+    cascade or rescope out of its budget included, was among them (MULTI_DRIVE_RFC E87)."""
+    progressed: bool
+    waits_for_item_calls: bool = False
+
+
 @dataclass
 class _Models:
     """Model availability during one tick (§24.8, §25.4.6): the reader's and triage's shared backoff (the v1 fields)
@@ -546,12 +562,16 @@ class _ScopeView:
     """The tick's view of the connection's scope when it does not cover everything (MULTI_DRIVE_RFC §11.3, E20).
     `ancestors`: the folders on the path from the root to a selected folder (stored as skeletons), complete once
     `loaded`; `parents`: item id -> parent id as read this tick (`get_change` or a stored record); `memo`: folder id ->
-    the verdict taken for it this tick, so a chain is walked once per folder."""
+    the verdict taken for it this tick, so a chain is walked once per folder. `drained`: links of a False chain whose
+    stored children the drain has gone through this tick (E87); `drain_after`: where a link's drain, cut by its bound,
+    goes on (the last child id read)."""
     scope: IndexScope
     ancestors: Set[str] = field(default_factory=set)
     parents: Dict[str, str] = field(default_factory=dict)
     memo: Dict[str, bool] = field(default_factory=dict)
     loaded: bool = False
+    drained: Set[str] = field(default_factory=set)
+    drain_after: Dict[str, str] = field(default_factory=dict)
 
     @property
     def filtered(self) -> bool:
@@ -992,7 +1012,7 @@ class DriveIndexingService:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},
                                                  **job_counts})
-            progressed = any(v for k, v in summary.items() if k != "pages")
+            progressed = any(v for k, v in summary.items() if k not in _NOT_PROGRESS)
             state = _notes_onto(replace(models.onto(state), continuation_enqueued_at=now if more else None,
                                         last_error=None, systemic_failures=0,
                                         last_success_at=now if (progressed or not more) else state.last_success_at))
@@ -2262,12 +2282,20 @@ class DriveIndexingService:
         any record was worked.
 
         A class that runs out of its budget stops the loop: lower classes wait for the next tick. That is
-        what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15). Search v2's
-        order (§25.4.5): content classes 0-2 stop at their share of the start budget (checked once work was done, so
-        every tick progresses); the enrichment phase runs once, after them — before classes 3-4, or when the content
-        share or the due work ends; classes 3-4 then have the maintenance share."""
+        what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15, Δ19 a); it holds
+        for every stop on the cascade budget, and for any class-1 page in which one record stopped for a reason other
+        than the item calls. One exception (MULTI_DRIVE_RFC E87): a class-1 page in which every record waits only for an
+        item call (parent lookups and density probes, RFC Δ9, none left this tick, of records with no rescope pending)
+        is skipped for the rest of the tick and the loop goes on with the next class. Such records carry no content and
+        hold their subtrees unresolved, so nothing below them can be carded early; a folder that also has a rescope
+        pending still has stored children to re-classify, so it keeps the stop. Without the skip a narrow scope's held
+        records kept content waiting for good. A skipped class still counts as the class the budget stopped at (the upgrade pass and the cap releases
+        wait, RFC Δ30). Search v2's order (§25.4.5): content classes 0-2 stop at their share of the start budget
+        (checked once work was done, so every tick progresses); the enrichment phase runs once, after them — before
+        classes 3-4, or when the content share or the due work ends; classes 3-4 then have the maintenance share."""
         worked = False
         enriched = False
+        skipped: Set[int] = set()   # classes left for want of item calls (E87)
 
         async def enrich_once() -> None:
             nonlocal worked, enriched
@@ -2276,10 +2304,10 @@ class DriveIndexingService:
                 worked |= await self._enrich_phase(handle, now, budget, summary, models)
 
         while budget.time_left():
-            batch = await self._repo.due_records(handle.scope, now, _DUE_PAGE)
+            batch = await self._repo.due_records(handle.scope, now, _DUE_PAGE, skip_classes=frozenset(skipped))
             if not batch:
                 await enrich_once()
-                return None, worked
+                return (min(skipped) if skipped else None), worked
             cls = batch[0].priority if batch[0].priority is not None else int(Priority.RETRY)
             same = [r for r in batch if r.priority == cls]
             if cls <= Priority.FIRST_SEEN and worked and not budget.content_allowed():
@@ -2291,11 +2319,15 @@ class DriveIndexingService:
                 return cls, worked
             started = self._monotonic()
             more_beyond = len(same) == _DUE_PAGE   # the page holds only this class: more of it may follow
-            progressed = await self._work_class(handle, state, same, now, budget, summary, models, more_beyond)
-            worked |= progressed
+            done = await self._work_class(handle, state, same, now, budget, summary, models, more_beyond)
+            worked |= done.progressed
             if cls >= Priority.MAINTENANCE:
                 budget.maintenance_s += self._monotonic() - started
-            if not progressed:
+            if not done.progressed:
+                if cls == Priority.CASCADE and done.waits_for_item_calls:
+                    skipped.add(cls)   # E87: the page only waits for item calls; the next class goes on
+                    _inc(summary, "waiting_item_calls", len(same))
+                    continue
                 if cls <= Priority.FIRST_SEEN:
                     await enrich_once()
                 return cls, worked
@@ -2303,14 +2335,18 @@ class DriveIndexingService:
         return int(Priority.RETRY), worked
 
     async def _work_class(self, handle: DriveHandle, state: DriveSyncState, recs: List[DriveIndexRecord], now: datetime,
-                          budget: _Budget, summary: Dict[str, int], models: _Models, more_beyond: bool) -> bool:
+                          budget: _Budget, summary: Dict[str, int], models: _Models, more_beyond: bool) -> _ClassPass:
         """Content and triage come before the card of the same record, so a read file is carded once, with its
         lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once. Card headroom
-        is decided before both: a record the cap would refuse a card is capped instead of read (§5.4; R3 F1-2)."""
+        is decided before both: a record the cap would refuse a card is capped instead of read (§5.4; R3 F1-2).
+        A parent lookup or a density probe that waits for an item call is counted apart from any other stop, so the due
+        loop can tell a page that only waits for item calls (MULTI_DRIVE_RFC E87)."""
         ctx = self._ctx(handle, state, now)
         cards: List[DriveIndexRecord] = []
         images: List[DriveIndexRecord] = []
         progressed = False
+        taken = 0         # records this pass took up (not skipped as changed or no longer due)
+        item_waits = 0    # of them, those that stopped only for want of an item call
         page_ids = {r.item_id for r in recs}
         slots = _CardSlots()
         content_class = (recs[0].priority if recs and recs[0].priority is not None else 0) <= Priority.FIRST_SEEN
@@ -2326,12 +2362,16 @@ class DriveIndexingService:
             content_now = content_due(rec, now) and quiet_over(rec, now)
             if content_now and content_class and runs and not budget.content_allowed():
                 break   # the content classes' share is spent (§25.4.5): the rest waits for the next tick
+            taken += 1
             if rec.state is RecordState.DELETING:
                 progressed |= await self._cascade_step(handle, rec, now, budget, summary, page_ids)
-            elif rec.probe_pending:
-                progressed |= await self._probe_step(handle, rec, ctx, budget)
-            elif rec.state is RecordState.UNRESOLVED:
-                progressed |= await self._resolve_step(handle, rec, state, ctx, budget)
+            elif rec.probe_pending or rec.state is RecordState.UNRESOLVED:
+                moved = (await self._probe_step(handle, rec, ctx, budget, summary) if rec.probe_pending
+                         else await self._resolve_step(handle, rec, state, ctx, budget, summary))
+                # a folder whose rescope is pending as well still has stored children to re-classify: it holds content
+                # back like any rescope (Δ19 a), so it is never a mere item-call wait
+                item_waits += moved is None and not rec.rescope_pending
+                progressed |= bool(moved)
             elif rec.rescope_pending:
                 progressed |= await self._rescope_step(handle, rec, ctx, budget, summary)
             elif access_recheck_due(rec, now):
@@ -2374,7 +2414,7 @@ class DriveIndexingService:
         if cards:
             await self._embed_cards(handle, cards, now, summary)
             progressed = True
-        return progressed
+        return _ClassPass(progressed, waits_for_item_calls=not progressed and taken > 0 and item_waits == taken)
 
     async def _cascade_step(self, handle: DriveHandle, folder: DriveIndexRecord, now: datetime, budget: _Budget,
                             summary: Dict[str, int], page_ids: Set[str]) -> bool:
@@ -2404,9 +2444,12 @@ class DriveIndexingService:
         summary["deleted"] = summary.get("deleted", 0) + len(files)
         return True
 
-    async def _probe_step(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget) -> bool:
+    async def _probe_step(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                          summary: Optional[Dict[str, int]] = None) -> Optional[bool]:
+        """A folder's density probe (§3.6). True: the record moved. None: it waits for an item call (none left this
+        tick, RFC Δ9; MULTI_DRIVE_RFC E87)."""
         if not budget.item_call_allowed():
-            return False
+            return None
         try:
             probe = await self._probe(handle, rec.item_id, budget, report_closed=True)
         except _FolderClosed:
@@ -2423,18 +2466,29 @@ class DriveIndexingService:
         plan = plan_observation(change_from_record(rec), replace(rec, attempts=0), parent, probe, ctx, parent,
                                 observed=False)
         await self._commit_plan(handle, plan, rec)
+        _inc(summary if summary is not None else {}, "probed")
         return True
 
     async def _resolve_step(self, handle: DriveHandle, rec: DriveIndexRecord, state: DriveSyncState, ctx: PlanContext,
-                            budget: _Budget) -> bool:
+                            budget: _Budget, summary: Optional[Dict[str, int]] = None) -> Optional[bool]:
         """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4). On a filtered scope
-        a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan."""
+        a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan, and drains
+        the records stored under the links of that chain which are certainly out of scope too (`_drain_out_of_scope`,
+        MULTI_DRIVE_RFC E87).
+
+        True: the record moved (resolved, parked, removed, or backed off after a failed lookup). None: it waits for an
+        item call, none being left this tick (RFC Δ9): the due loop tells this apart from any other stop (E87). The
+        moves are counted in `summary` (`resolved`, `parked`, `out_of_scope_removed`, `orphans_removed`): tick-summary
+        keys only, never the stored counters."""
+        out = summary if summary is not None else {}
         view = _TICK_SCOPE.get()
         if (view is not None and view.filtered and rec.item_id not in view.scope.folder_ids and rec.item_id not in ctx.mirror_root_ids
                 and rec.parent_id not in ctx.mirror_root_ids):
             decided = await self._scope_verdict(handle, view, ctx, change_from_record(rec), {}, {}, budget)
             if decided is False:
-                await self._remove_out_of_scope(handle, rec, ctx)
+                await self._remove_out_of_scope(handle, [rec], ctx)
+                _inc(out, "out_of_scope_removed")
+                await self._drain_out_of_scope(handle, view, ctx, rec, budget, out)
                 return True
         parent = await self._parent_of(handle, rec, ctx)
         if parent is not None or rec.parent_id == state.root_item_id:
@@ -2444,12 +2498,14 @@ class DriveIndexingService:
                 # unresolved record is not card-eligible, and parked it is never due to drop its card (§3.4).
                 await self._commit(handle, [replace(rec, has_card=False, card_hash=None, due_at=None, priority=None)],
                                    set())
+                _inc(out, "parked")
                 return True
             await self._commit_plan(handle, plan_observation(change_from_record(rec), rec, parent, None, ctx, parent,
                                                               observed=False), rec)
+            _inc(out, "resolved")
             return True
         if not budget.item_call_allowed():
-            return False
+            return None
         budget.item_calls -= 1
         try:
             parent_change = await self._drive.get_change(handle, rec.parent_id)
@@ -2471,17 +2527,84 @@ class DriveIndexingService:
             return True
         if parent_change.deleted:
             await self._remove_orphan(handle, rec, ctx)
+            _inc(out, "orphans_removed")
             return True
         grandparent = (await self._repo.get_records(handle.scope, [parent_change.parent_id])).get(parent_change.parent_id)
         await self._commit_plan(handle, plan_observation(parent_change, None, grandparent, None, ctx), None)
+        _inc(out, "resolved")
         return True
 
-    async def _remove_out_of_scope(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
-        """A record outside the connection's scope (RFC §11.3): planned as a deletion, so a folder goes through the
-        DELETING cascade and a file is deleted; `_commit_plan` names the record, so the mirror's notice is `unstored`
-        (the item is still on the drive)."""
-        plan = plan_observation(replace(change_from_record(rec), deleted=True), rec, None, None, ctx, None)
-        await self._commit_plan(handle, plan, rec)
+    async def _remove_out_of_scope(self, handle: DriveHandle, recs: Sequence[DriveIndexRecord], ctx: PlanContext) -> None:
+        """Records outside the connection's scope (RFC §11.3), in one write: each planned as a deletion, so a folder
+        goes through the DELETING cascade and a file is deleted; the records are named, so the mirror's notice is
+        `unstored` (the item is still on the drive)."""
+        writes: Dict[str, DriveIndexRecord] = {}
+        deletes: Set[str] = set()
+        collects: Set[str] = set()
+        for rec in recs:
+            plan = plan_observation(replace(change_from_record(rec), deleted=True), rec, None, None, ctx, None)
+            self._fold(plan, {}, writes, deletes, collects)
+        await self._commit(handle, list(writes.values()), deletes, collects=collects,
+                           gone=self._mirror_notices(recs, UNSTORED))
+
+    @staticmethod
+    def _out_of_scope_links(view: _ScopeView, ctx: PlanContext, start: str) -> List[str]:
+        """The links of a chain the scope verdict just found False, from `start` (the record's parent) up: every folder
+        until the root, a parentless top ("") or a folder already judged False this tick. Empty when the chain is not
+        known to its end from this tick's reads (or is cut at MAX_CHAIN_DEPTH): only a chain known to its end proves
+        its links out of scope. None of them is a scope folder (the chain would be True)."""
+        links: List[str] = []
+        current = start
+        for _ in range(MAX_CHAIN_DEPTH):
+            if current in ("", ctx.root_item_id):
+                return links
+            if current in view.scope.folder_ids:
+                return []   # never on a False chain; refuse rather than drain under a scope folder
+            links.append(current)
+            if view.memo.get(current) is False:
+                return links
+            if current not in view.parents:
+                return []
+            current = view.parents[current]
+        return []
+
+    async def _drain_out_of_scope(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext, rec: DriveIndexRecord,
+                                  budget: _Budget, summary: Dict[str, int]) -> None:
+        """A False verdict proves every link of its chain out of scope (MULTI_DRIVE_RFC E87): the records stored under
+        those links go with the record, through the same removal, instead of waiting each for its own walk of the
+        chain. A link being out of scope does not make its subtree out of scope: a scope folder may sit below it. So a
+        child of a link stays when it is a scope folder, an ancestor of one (the scope's ancestry, complete only once
+        `loaded`: no drain before), a skeleton ancestor record, or a mirror root, and a link that is a mirror root is
+        not drained; a deleting child is already on its way. Every other child's own subtree holds no scope folder
+        (else the child would be an ancestor), so it is removed whole (a folder through the DELETING cascade).
+
+        Bounded: at most `_DRAIN_PER_STEP` children read per step through the existing children query (no new index),
+        and the removals spend the cascade budget (stopping at 0); a link cut by the bound goes on, from where it
+        stopped, at the next False verdict of the tick, and a fully drained link is not read again this tick."""
+        if not view.loaded:
+            return
+        keep = view.scope.folder_ids | view.ancestors | ctx.mirror_root_ids | ctx.scope_ancestor_ids
+        left = _DRAIN_PER_STEP
+        for link in self._out_of_scope_links(view, ctx, rec.parent_id):
+            if link in view.drained or link in ctx.mirror_root_ids:
+                continue
+            while left > 0 and budget.cascade_ops > 0 and budget.time_left():
+                limit = min(left, budget.cascade_ops, RECORD_WRITE_BATCH)
+                kids = await self._repo.children(handle.scope, link, view.drain_after.get(link), limit)
+                left -= len(kids)
+                out = [k for k in kids if k.item_id != rec.item_id and k.item_id not in keep
+                       and k.reason is not Reason.SCOPE_ANCESTOR and k.state is not RecordState.DELETING]
+                if out:
+                    await self._remove_out_of_scope(handle, out, ctx)
+                    budget.cascade_ops -= len(out)
+                    _inc(summary, "out_of_scope_removed", len(out))
+                if len(kids) < limit:
+                    view.drained.add(link)
+                    view.drain_after.pop(link, None)
+                    break
+                view.drain_after[link] = kids[-1].item_id
+            if left <= 0 or budget.cascade_ops <= 0 or not budget.time_left():
+                return
 
     async def _remove_orphan(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
         """A folder goes through the cascade, so children parked under it go with it (§3.4)."""
