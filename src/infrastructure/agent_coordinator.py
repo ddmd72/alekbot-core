@@ -11,9 +11,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
+from ..domain.native_format import NATIVE_FORMATS_KEY
 from ..domain.user_drive import DriveNotConnectedError
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
+from .agent_manifest import NATIVE_OPENING_INTENTS
 from .agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 from ..ports.task_queue import TaskQueue
 from ..ports.agent_factory_port import AgentFactoryPort
@@ -21,6 +23,14 @@ from ..ports.alert_sink import AlertSinkPort
 
 if TYPE_CHECKING:
     from ..agents.base_agent import BaseAgent
+
+
+def _specialist_context(intent: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """The context a specialist message or a Cloud Task body carries. The caller's native-format declaration is its own
+    provider's: only the opening intents keep it, every other specialist gets none (EXTERNAL_FILES_RFC §4.3)."""
+    if NATIVE_FORMATS_KEY not in context or intent in NATIVE_OPENING_INTENTS:
+        return context
+    return {k: v for k, v in context.items() if k != NATIVE_FORMATS_KEY}
 
 
 class AgentCoordinator:
@@ -528,7 +538,7 @@ class AgentCoordinator:
             recipient=agent_id,
             intent=AgentIntent.QUERY,
             payload={"query": query, "intent": intent, **extra_payload},
-            context={k: v for k, v in context.items() if k != "params"},
+            context={k: v for k, v in _specialist_context(intent, context).items() if k != "params"},
         )
         return await self.route_message(message)
 
@@ -559,7 +569,7 @@ class AgentCoordinator:
             agent_id=base_agent_id,
             intent=intent,
             query=query,
-            context=context,
+            context=_specialist_context(intent, context),
             deadline_seconds=deadline_seconds,
         )
 

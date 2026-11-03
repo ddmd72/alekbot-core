@@ -45,6 +45,7 @@ from ...ports.llm_port import AgentExecutionContext
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...domain.messaging import SmartResponse
+from ...domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 
 if TYPE_CHECKING:
@@ -242,7 +243,10 @@ class QuickResponseAgent(BaseAgent):
             delegation_result = await engine.execute(
                 call_llm=self._call_llm,
                 base_request=base_request,
-                context=message.context,
+                context={
+                    **message.context,
+                    NATIVE_FORMATS_KEY: to_plain(self.llm.native_formats(self.model_name)),
+                },
                 max_turns=self.MAX_DELEGATION_TURNS,
                 intent_remap=dict(self._descriptor.intent_remap),
                 intent_fanout=dict(self._descriptor.intent_fanout),

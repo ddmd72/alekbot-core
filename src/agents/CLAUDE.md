@@ -186,6 +186,11 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
   `request.messages` is not provider-locked (no `tool_call`/`tool_response` part, no `raw_content`); once locked it retries
   the same provider and otherwise raises `TranscriptLockedError`, never a mixed transcript
   (`decisions/transcript_integrity_one_provider.md`).
+- **Native-format declaration — one provider's, never carried across.** Smart (per attempt, so a rotation re-declares), Quick,
+  DomainResearcher and Tutor set `context[NATIVE_FORMATS_KEY] = to_plain(provider.native_formats(model))` on a COPY of the
+  context handed to the engine, always overwriting. `AgentCoordinator` drops the key from every specialist message and every
+  Cloud Task body except for `NATIVE_OPENING_INTENTS`; the drive specialist hands the key it received to its open calls
+  unchanged (EXTERNAL_FILES_RFC §4.3).
 - **Cross-provider execution retry (provider rotation) — Smart.** `SmartResponseAgent.execute()` catches
   `TranscriptLockedError` and rotates: rebuilds the run on the next `allowed_provider` at the same tier
   (`resolve_next_provider`, `next_provider_override`), only then falls to the Quick rung. `_run` re-raises the lock,

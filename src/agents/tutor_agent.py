@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, List, Optional
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import Message, MessagePart
+from ..domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ..domain.messaging import SmartResponse
 from ..domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ..infrastructure.agent_config import TUTOR
@@ -191,7 +192,10 @@ class TutorAgent(BaseAgent):
                 result = await engine.execute(
                     call_llm=self._call_llm,
                     base_request=base_request,
-                    context=message.context,
+                    context={
+                        **message.context,
+                        NATIVE_FORMATS_KEY: to_plain(self._llm.native_formats(self.model_name)),
+                    },
                     max_turns=TUTOR.max_delegation_turns,
                     calling_agent_id=self.agent_id,
                     terminal_tool="deliver_response",
