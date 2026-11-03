@@ -1,7 +1,8 @@
 """The drive connector's read tools end to end on the drive ASGI app (DRIVE_MCP_CONNECTOR_RFC §4, §6, §9, §11 slice 2).
 
-The app is built as `main()` builds it: `build_drive_connector_tools` (the knob on) over the production
-`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`), a fake search
+The app is built as `main()` builds it: `build_drive_connector_tools` over the production
+`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`, its whole drive
+shared with the connector: a drive with no connector access is hidden, §7.1), a fake search
 service, a fake conversion service and a fake note store; then `build_drive_mcp_app`. Bearer tokens are verified by a
 stand-in for the authorization service (the auth seam has its own tests). Results are read from `tools/call` over
 HTTP; texts are markers, never the tokens' wording. Invented items only.
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -20,11 +22,12 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition import drive_connector_tools as dct
 from src.composition import drive_mcp_setup
-from src.composition.drive_connector_tools import DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools
+from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.document_open import OpenedFile
 from src.domain.document_read import CALLER_CONNECTOR, READER_SKIPPED, ReadOutcome, ReadStatus
+from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_excerpt_page import PageSpan
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_note_view import NoteView
@@ -35,7 +38,7 @@ from src.domain.user_drive import DriveItem, DriveItemNotFoundError
 from src.infrastructure.drive_read_operations import DriveReadOperations
 from src.services.mcp_authorization_service import VerifiedAccessToken
 from tests.support.drive_connector_texts import TokenStore, marker
-from tests.support.drive_service_connections import ConnectionReads, ref
+from tests.support.drive_service_connections import CONNECTION_ID, ConnectionReads, ref
 from tests.support.opened_file import opened_body
 from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
@@ -98,6 +101,13 @@ class Conversion:
 
 
 class Drive(ConnectionReads):
+    def _reads(self, user_id: str):
+        reads = super()._reads(user_id)
+        key = (user_id, CONNECTION_ID)    # the whole drive shared with the connector (default: nothing, §7.1)
+        conn = self._reads_repo.connections[key]
+        self._reads_repo.connections[key] = replace(conn, connector_access=ConnectorAccess.whole_drive())
+        return reads
+
     async def get_item(self, handle: Any, item_id: str) -> DriveItem:
         if item_id not in ITEMS:
             raise DriveItemNotFoundError(item_id)
@@ -244,17 +254,10 @@ def what_to_do(text: str) -> str:
 
 @pytest.fixture
 async def world(monkeypatch):
-    monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
     return await World().build()
 
 
 class TestKnob:
-    async def test_knob_off_lists_no_tool(self, monkeypatch):
-        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
-        built = await World().build()
-        assert built.tools is None
-        assert await built.list_tools() == []
-
     async def test_knob_on_lists_the_six_tools_each_read_only(self, world):
         tools = await world.list_tools()
         assert [t["name"] for t in tools] == list(c.TOOL_NAMES)
@@ -338,7 +341,6 @@ class TestOpenWithholds:
             seen.update(kwargs)
             return real(**kwargs)
 
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "1")
         monkeypatch.setattr(dct, "DriveOperations", spy)
         await World().build()
         assert seen["notification"] is None and seen["localization"] is None and seen["language_service"] is None

@@ -24,6 +24,7 @@ from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
+from ..domain.drive_connector_access import ConnectorAccess
 from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_connection_state import ConnectionState
@@ -1623,6 +1624,17 @@ def create_user_cabinet_blueprint(
             return {"id": ROOT_FOLDER, "path": ""}
         return {"id": connection.write_folder_id, "path": await _item_path(connection, connection.write_folder_id)}
 
+    async def _connector_access_json(connection: DriveConnection) -> dict:
+        """The connector access as the Cabinet shows it (DRIVE_MCP_CONNECTOR_RFC §7.6): `mode` nothing | whole |
+        folders, and each folder with its path (best effort)."""
+        access = connection.connector_access
+        if access is None:
+            return {"mode": "nothing", "folders": []}
+        if access.whole:
+            return {"mode": "whole", "folders": []}
+        return {"mode": "folders", "folders": [{"id": folder, "path": await _item_path(connection, folder)}
+                                               for folder in access.folder_ids]}
+
     async def _account_label(connection: DriveConnection) -> str:
         """The grant's account label (one decrypt per row), best effort."""
         if oauth_credentials_port is None:
@@ -1662,6 +1674,7 @@ def create_user_cabinet_blueprint(
                       "empty_means": await _empty_scope_meaning(connection),
                       "folders": [{"id": folder, "path": await _item_path(connection, folder)}
                                   for folder in connection.scope_folder_ids]},
+            "connector_access": await _connector_access_json(connection),
             "searched_by_default": connection.searched_by_default,
             "indexing_enabled": connection.indexing_enabled,
             "transcribe_enabled": _transcribe_enabled(connection),
@@ -1744,12 +1757,43 @@ def create_user_cabinet_blueprint(
         write_ancestry = (await user_drive_service.ancestry(handle, write, memo=memo)
                           if write not in (None, ROOT_FOLDER) else None)
         ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in dict.fromkeys(ids)}
+        connector = connection.connector_access
+        connector_ids = connector.folder_ids if connector is not None else ()
+        connector_ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in connector_ids}
         stored = await drive_connections.set_scope(
             g.user_id, connection.connection_id, folder_ids=ids, whole_drive=whole, capabilities=capabilities,
-            write_folder_ancestry=write_ancestry, folder_ancestries=ancestries)
+            write_folder_ancestry=write_ancestry, folder_ancestries=ancestries,
+            connector_ancestries=connector_ancestries)
         queued = await _nudge(stored)
         return jsonify({"whole_drive": stored.scope_whole_drive, "folder_ids": list(stored.scope_folder_ids),
                         "queued": queued}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/connector-access", methods=["PUT"])
+    @auth_required
+    @drive_route
+    async def drive_connection_connector_access(connection_id: str):
+        """Set what the drive MCP connector reads on this drive (DRIVE_MCP_CONNECTOR_RFC §7.6). Body: {"mode":
+        "nothing" | "whole" | "folders", "folder_ids": [str] (folders only, non-empty)}. A folder outside the scope or
+        the drive's root → 400 with its line. The index is unaffected: no nudge."""
+        body = await _json_body()
+        mode, ids = body.get("mode"), body.get("folder_ids", [])
+        valid_ids = isinstance(ids, list) and all(isinstance(i, str) and i for i in ids)
+        if mode not in ("nothing", "whole", "folders") or not valid_ids or (mode == "folders") != bool(ids):
+            return jsonify({"error": "mode (nothing, whole or folders) and, for folders, folder_ids (list of ids) "
+                                     "required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        if user_drive_service is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        handle = connection.handle
+        access, capabilities = await user_drive_service.access(handle)
+        memo: dict = {}
+        ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in dict.fromkeys(ids)}
+        chosen = (None if mode == "nothing" else ConnectorAccess.whole_drive() if mode == "whole"
+                  else ConnectorAccess.folders(ids))
+        stored = await drive_connections.set_connector_access(
+            g.user_id, connection.connection_id, chosen, capabilities=capabilities,
+            root_item_id=access.root_item_id, folder_ancestries=ancestries)
+        return jsonify({"connector_access": await _connector_access_json(stored)}), 200
 
     @bp.route("/api/drive/connections/<connection_id>/write-folder", methods=["PUT"])
     @auth_required

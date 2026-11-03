@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState, can_transition
+from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_mount_name_check import MountNameCheck
 from src.domain.drive_mounts import renamed_history
 from src.domain.drive_user_settings import DriveUserSettings
@@ -81,6 +82,16 @@ class FakeDriveConnectionRepository(DriveConnectionRepository):
                 return None
             updated = replace(current, searched_by_default=searched_by_default, write_folder_id=write_folder_id,
                               scope_folder_ids=tuple(scope_folder_ids), scope_whole_drive=scope_whole_drive)
+            self.connections[(user_id, connection_id)] = updated
+            return updated
+
+    async def update_connector_access(self, user_id: str, connection_id: str,
+                                      access: Optional[ConnectorAccess]) -> Optional[DriveConnection]:
+        async with self._lock:
+            current = self.connections.get((user_id, connection_id))
+            if current is None:
+                return None
+            updated = replace(current, connector_access=access)
             self.connections[(user_id, connection_id)] = updated
             return updated
 

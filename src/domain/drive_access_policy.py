@@ -16,19 +16,26 @@ but cannot widen it: the scope, the write folder and the primary are Cabinet set
 Ancestry is walked only when a rule needs it (`requires_ancestry`): the App Folder default (no folders chosen, write
 folder = root) never needs a chain, so it costs no provider call (G3).
 
+Under the connector audience (DRIVE_MCP_CONNECTOR_RFC §7.3) a read passes only when `in_scope` and `in_connector` hold
+on the same chain, and every write is refused. With no audience every answer is the chat's, unchanged.
+
 Texts are English, code-built and name no provider. The Cabinet-side lines (`WRITE_FOLDER_OUTSIDE_SCOPE_LINE`,
-`SCOPE_LEAVES_WRITE_FOLDER_LINE`, `SCOPE_BOTH_LINE`) are raised by `DriveConnectionService` as `DriveSettingRefused`.
+`SCOPE_LEAVES_WRITE_FOLDER_LINE`, `SCOPE_BOTH_LINE`, `SCOPE_STRANDS_CONNECTOR_LINE`,
+`CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE`, `CONNECTOR_ROOT_LINE`) are raised by `DriveConnectionService` as
+`DriveSettingRefused`. `CONNECTOR_REFUSED_LINE` is internal: the connector prints its own neutral token line (§7.7).
 
 Public interface:
     READ_OPS, WRITE_OPS
     scope_key(folder_ids, whole_drive) -> str
     in_scope(access, capabilities, ancestry) -> bool
+    in_connector(access, ancestry) -> bool
     inside_write_folder(access, capabilities, ancestry) -> bool
-    requires_ancestry(op, access, capabilities) -> bool
+    requires_ancestry(op, access, capabilities, *, audience=None) -> bool
     decide(op, access, capabilities, item_access, ancestry, *, item_id="", destination=None, destination_access=None,
-           other_connection=False) -> AccessDecision
+           other_connection=False, audience=None) -> AccessDecision
     Texts: OUTSIDE_SCOPE_LINE, NO_WRITE_FOLDER_LINE, OUTSIDE_WRITE_FOLDER_LINE, READ_ONLY_DRIVE_LINE, PROTECTED_LINE,
-    ITEM_FORBIDS, WRITE_FOLDER_OUTSIDE_SCOPE_LINE, SCOPE_LEAVES_WRITE_FOLDER_LINE, SCOPE_BOTH_LINE
+    ITEM_FORBIDS, WRITE_FOLDER_OUTSIDE_SCOPE_LINE, SCOPE_LEAVES_WRITE_FOLDER_LINE, SCOPE_BOTH_LINE,
+    CONNECTOR_REFUSED_LINE, SCOPE_STRANDS_CONNECTOR_LINE, CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE, CONNECTOR_ROOT_LINE
 """
 from __future__ import annotations
 
@@ -38,6 +45,7 @@ from typing import Dict, FrozenSet, Iterable, Optional
 from .drive_access_decision import ALLOWED, AccessDecision
 from .drive_access_op import AccessOp
 from .drive_ancestry import Ancestry
+from .drive_audience import DriveAudience
 from .drive_capabilities import DriveCapabilities
 from .drive_connection import ROOT_FOLDER
 from .drive_connection_access import ConnectionAccess
@@ -46,10 +54,11 @@ from .drive_item_access import ItemAccess
 from .drive_mounts import CROSS_DRIVE_LINE
 
 __all__ = [
-    "READ_OPS", "WRITE_OPS", "scope_key", "in_scope", "inside_write_folder", "requires_ancestry", "decide",
-    "OUTSIDE_SCOPE_LINE", "NO_WRITE_FOLDER_LINE", "OUTSIDE_WRITE_FOLDER_LINE", "READ_ONLY_DRIVE_LINE",
+    "READ_OPS", "WRITE_OPS", "scope_key", "in_scope", "in_connector", "inside_write_folder", "requires_ancestry",
+    "decide", "OUTSIDE_SCOPE_LINE", "NO_WRITE_FOLDER_LINE", "OUTSIDE_WRITE_FOLDER_LINE", "READ_ONLY_DRIVE_LINE",
     "PROTECTED_LINE", "ITEM_FORBIDS", "WRITE_FOLDER_OUTSIDE_SCOPE_LINE", "SCOPE_LEAVES_WRITE_FOLDER_LINE",
-    "SCOPE_BOTH_LINE", "CROSS_DRIVE_LINE",
+    "SCOPE_BOTH_LINE", "CROSS_DRIVE_LINE", "CONNECTOR_REFUSED_LINE", "SCOPE_STRANDS_CONNECTOR_LINE",
+    "CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE", "CONNECTOR_ROOT_LINE",
 ]
 
 READ_OPS: FrozenSet[AccessOp] = frozenset({AccessOp.READ, AccessOp.LIST, AccessOp.OPEN, AccessOp.SEARCH})
@@ -80,6 +89,13 @@ WRITE_FOLDER_OUTSIDE_SCOPE_LINE = "The write folder must be inside the folders {
 SCOPE_LEAVES_WRITE_FOLDER_LINE = ("The write folder {drive} has would be outside the folders indexed: choose "
                                   "another write folder first.")
 SCOPE_BOTH_LINE = "Choose folders to index or the whole drive, not both."
+# The connector (DRIVE_MCP_CONNECTOR_RFC §7, §13): the refusal is internal (the connector prints its own token line);
+# the strand line is §13 verbatim; the last two are the owner-approved Cabinet refusals of slice 3.
+CONNECTOR_REFUSED_LINE = "Outside the connector's access."
+SCOPE_STRANDS_CONNECTOR_LINE = ("This would leave folders the connector reads outside what the bot sees: change the "
+                                "connector access first.")
+CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE = "A folder the connector reads must be inside the folders {drive} indexes."
+CONNECTOR_ROOT_LINE = "Choose \"Everything the bot sees on this drive\" instead of the drive's root."
 
 _PROTECTABLE = frozenset({AccessOp.RENAME, AccessOp.MOVE, AccessOp.DELETE})
 _SCOPE_KEY_HEX = 16
@@ -119,6 +135,20 @@ def in_scope(access: ConnectionAccess, capabilities: DriveCapabilities, ancestry
     return any(chain.contains(folder) for folder in access.scope_folder_ids)
 
 
+def in_connector(access: ConnectionAccess, ancestry: Optional[Ancestry]) -> bool:
+    """The item lies inside the connector's access (§7.3): nothing when none is set; everything with the whole drive
+    (the scope still applies, `decide` checks both); else the ancestry (required) holds a connector folder. Whether the
+    chain reached the root is never read, so a folder outside the root (no reachable parent, `UserDrivePort.outer_folders`)
+    works (E11)."""
+    connector = access.connector_access
+    if connector is None:
+        return False
+    if connector.whole:
+        return True
+    chain = _needs(ancestry, "connector folders")
+    return any(chain.contains(folder) for folder in connector.folder_ids)
+
+
 def inside_write_folder(access: ConnectionAccess, capabilities: DriveCapabilities,
                         ancestry: Optional[Ancestry]) -> bool:
     """The item lies inside the write folder's subtree: never without a write folder; with the root as the write folder
@@ -137,12 +167,20 @@ def _folders_chosen(access: ConnectionAccess) -> bool:
     return bool(access.scope_folder_ids) and not access.scope_whole_drive
 
 
-def requires_ancestry(op: AccessOp, access: ConnectionAccess, capabilities: DriveCapabilities) -> bool:
-    """Whether `decide` needs the item's chain: a read when folders are chosen (not the whole drive); a write that can
-    pass the first write checks (a writable drive with a write folder) when the write folder is a folder below the
-    root, when folders are chosen (the scope check on the same chain), or on an ACCOUNT feed (the root's subtree). The
-    App Folder default (AREA, no folders, the root as the write folder) needs none."""
+def _connector_folders_chosen(access: ConnectionAccess) -> bool:
+    return access.connector_access is not None and bool(access.connector_access.folder_ids)
+
+
+def requires_ancestry(op: AccessOp, access: ConnectionAccess, capabilities: DriveCapabilities, *,
+                      audience: Optional[DriveAudience] = None) -> bool:
+    """Whether `decide` needs the item's chain: a read when folders are chosen (not the whole drive), and under the
+    connector audience also when connector folders are chosen; a write that can pass the first write checks (a
+    writable drive with a write folder) when the write folder is a folder below the root, when folders are chosen (the
+    scope check on the same chain), or on an ACCOUNT feed (the root's subtree). The App Folder default (AREA, no
+    folders, the root as the write folder) needs none."""
     if op in READ_OPS:
+        if audience is DriveAudience.CONNECTOR:
+            return _folders_chosen(access) or _connector_folders_chosen(access)
         return _folders_chosen(access)
     if not capabilities.writable or access.write_folder_id is None:
         return False
@@ -165,16 +203,26 @@ def _item_forbids(op: AccessOp, item_access: Optional[ItemAccess]) -> bool:
 def decide(op: AccessOp, access: ConnectionAccess, capabilities: DriveCapabilities,
            item_access: Optional[ItemAccess], ancestry: Optional[Ancestry], *, item_id: str = "",
            destination: Optional[Ancestry] = None, destination_access: Optional[ItemAccess] = None,
-           other_connection: bool = False) -> AccessDecision:
+           other_connection: bool = False, audience: Optional[DriveAudience] = None) -> AccessDecision:
     """Every row of RFC §11.3, first refusal wins. `ancestry` is the item's chain, for a create or save the destination
     folder's (and `item_access` that folder's access); `destination` and `destination_access` are a move's destination
     folder. ValueError when a rule needs a chain that was not given (`requires_ancestry`): a programming error, never a
-    refusal."""
+    refusal. Under the connector audience every write is refused and a read needs `in_scope` and `in_connector` on the
+    same chain (DRIVE_MCP_CONNECTOR_RFC §7.3), both refusals `CONNECTOR_REFUSED_LINE`."""
+    connector = audience is DriveAudience.CONNECTOR
+    if connector and op in WRITE_OPS:
+        return AccessDecision(False, CONNECTOR_REFUSED_LINE)        # defence in depth: the connector registers no write
     if other_connection:
         return AccessDecision(False, CROSS_DRIVE_LINE)
-    if ancestry is None and requires_ancestry(op, access, capabilities):
+    if ancestry is None and requires_ancestry(op, access, capabilities, audience=audience):
         raise ValueError(f"the access policy needs the item's ancestry for {op.value} on this connection")
     drive = access.drive_name
+    if connector and op in READ_OPS:
+        if not (in_scope(access, capabilities, ancestry) and in_connector(access, ancestry)):
+            return AccessDecision(False, CONNECTOR_REFUSED_LINE)
+        if op in (AccessOp.OPEN, AccessOp.READ) and item_access is not None and not item_access.can_download:
+            return AccessDecision(False, ITEM_FORBIDS[op])
+        return ALLOWED
     if op in READ_OPS:
         if not in_scope(access, capabilities, ancestry):
             return AccessDecision(False, OUTSIDE_SCOPE_LINE.format(drive=drive))

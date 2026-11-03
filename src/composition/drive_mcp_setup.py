@@ -7,22 +7,25 @@ The facts instance (`mcp_setup.build_mcp_components`) stays the authorization se
 one instance, hence two. Named `drive_mcp_setup`, not `mcp_drive_setup`: the drive-notes isolation test treats
 `mcp_*.py` as memory-side.
 
-Tools (§4.1, slice 2): with `tools` (the `DRIVE_MCP_TOOLS_ENABLED` knob on, `drive_connector_tools`) the app is a
-`TokenTextFastMCP` with the six read tools of `drive_connector_contract.TOOL_NAMES` (`get_note` only when the notes
-service exists), each a thin handler over `DriveReadOperations` (or `drive_note_tools.read_note_for_connector`); without, a plain FastMCP
-that lists no tool and carries no instructions (no inline text, D4). Nothing that writes is registered.
+Tools (§4.1): with `tools` (`drive_connector_tools`; `main()` always passes them) the app is a `TokenTextFastMCP` with
+the six read tools of `drive_connector_contract.TOOL_NAMES` (`get_note` only when the notes service and the item reads
+exist), each a thin handler over `DriveReadOperations` (or `drive_note_tools.read_note_for_connector`); without (the
+auth-seam tests), a plain FastMCP that lists no tool and carries no instructions (no inline text, D4). Nothing that
+writes is registered.
 
 Each call: the user and account from the verified access token (as the facts tool); the context
-`{"user_id", "account_id", "run_origin": "mcp:drive"}` and no `native_formats` (§4.4, §6.2); `RequestContext`; a
-`CALL_TIMEOUT_S` `wait_for`, an open's `deadline_at` that much minus `OPEN_MARGIN_S` (E8); one result composed by
+`{"user_id", "account_id", "run_origin": "mcp:drive"}` and no `native_formats` (§4.4, §6.2); `RequestContext`; the
+connector audience (`drive_audience.connector_audience`, §7.2) around the whole call, outside the `wait_for` so its task
+inherits it; a `CALL_TIMEOUT_S` `wait_for`, an open's `deadline_at` that much minus `OPEN_MARGIN_S` (E8); one result composed by
 `compose_connector_result`, cut by `cap_result`, in `content[].text` only (no structured content, §6.2); one span
 `mcp.drive.<tool>` and one log line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. The query and question are
 never logged; the ref or folder label is logged as `DriveOperations._call` logs it in chat (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
 validators; an empty required ref is a correctable line, not a protocol error.
 
-`get_note` in slice 2 (`read_note_for_connector`, the chat's rules and refusal classes): `drive:` refs only, any other
-ref answers the neutral refusal; the connector access check of §7.5 comes with slice 3. A ref that is not a drive ref
-(on `open_drive_file` too) and an item that does not exist answer the same neutral REFUSED line: no existence oracle.
+`get_note` (`read_note_for_connector`, the chat's rules and refusal classes): `drive:` refs only, any other ref answers
+the neutral refusal; a `drive:` ref's item is read under the connector audience first (§7.5). A ref that is not a drive
+ref (on `open_drive_file` too), an item outside connector access and an item that does not exist answer the same
+neutral REFUSED line: no existence oracle.
 """
 
 import asyncio
@@ -40,6 +43,7 @@ from ..config.auth import AuthConfig
 from ..domain import drive_connector_contract as contract
 from ..domain import drive_note_tool_texts as nt
 from ..domain.document_read import OPEN_MARGIN_S
+from ..domain.drive_audience import connector_audience
 from ..domain.drive_connector_result import RESULT_MAX_CHARS, cap_result, compose_connector_result, connector_status
 from ..domain.drive_excerpt_request import FILE_REF_REQUIRED
 from ..domain.drive_op import DriveOp
@@ -165,14 +169,14 @@ def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
     async def list_folder(ctx: Context, folder: _Text = "") -> CallToolResult:
         return await call.run(LIST_FOLDER, DriveOp.LIST, ctx, lambda c, u, _: ops.list_folder(c, u, folder or None))
 
-    notes = tools.notes
-    if notes is None:
+    notes, items = tools.notes, tools.items
+    if notes is None or items is None:
         return
 
     @app.tool(name=nt.GET_NOTE)
     async def get_note(ctx: Context, item_ref: _Text = "", whole_drive_name: _Text = "") -> CallToolResult:
         async def run(_c: Dict[str, Any], user_id: str, _a: str) -> DriveOutcome:
-            return await read_note_for_connector(notes, user_id, item_ref, whole_drive_name)
+            return await read_note_for_connector(notes, items, user_id, item_ref, whole_drive_name)
         return await call.run(nt.GET_NOTE, DriveOp.NOTE_READ, ctx, run)
 
 
@@ -193,7 +197,7 @@ class _Caller:
                 span.set_attribute("status", "no_texts")
                 return _error_result("The drive connector's texts are not available; try again later.")
             context = {"user_id": user_id, "account_id": account_id, "run_origin": RUN_ORIGIN}
-            with RequestContext(user_id=user_id, account_id=account_id):
+            with RequestContext(user_id=user_id, account_id=account_id), connector_audience():
                 outcome = await _outcome(tool, op, run, context, user_id, account_id)
             text = cap_result(compose_connector_result(outcome, texts), texts.results[contract.OVER_SIZE],
                               limit=RESULT_MAX_CHARS)

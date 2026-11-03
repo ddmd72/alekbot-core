@@ -14,7 +14,7 @@ One authorization server fronts two protected resources (resource-server apps, o
 | Resource | Path | Server name | Scope | Tools |
 |---|---|---|---|---|
 | facts | `/mcp` | `alekbot` | `user_context` | `get_user_context` |
-| drive (read-only) | `/drive-mcp` | `alekbot-drive` | `drive_read` | `search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`, `get_note` with `DRIVE_MCP_TOOLS_ENABLED` on, none off; texts from the tokens `MCP_DRIVE_TOOL_TEXTS` / `MCP_DRIVE_RESULT_TEXTS` |
+| drive (read-only) | `/drive-mcp` | `alekbot-drive` | `drive_read` | `search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`, `get_note`, always registered; each call sees only each drive's Connector access (Cabinet, default nothing); texts from the tokens `MCP_DRIVE_TOOL_TEXTS` / `MCP_DRIVE_RESULT_TEXTS` |
 
 The drive connector is specified in [DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md).
 Scope and resource are bound one to one (§ 4); the pure binding rule is `src/domain/mcp_resource.py`.

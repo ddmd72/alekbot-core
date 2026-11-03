@@ -12,6 +12,8 @@ Writes:
 - `transition` moves the state atomically under `can_transition` (domain), stamping `disconnected_at` on
   DISCONNECTED; True only when the state changed (the False->True edge the reconnect notice needs).
 - `update_settings` writes the four Cabinet settings whole (MULTI_DRIVE_RFC §11.3, D4, D11), never the state.
+- `update_connector_access` writes only the connector access (DRIVE_MCP_CONNECTOR_RFC §7.1), never the state or the
+  four settings.
 - `rename` validates and writes a new mount name in one transaction over the user's connections (§11.8).
 """
 from abc import ABC, abstractmethod
@@ -20,6 +22,7 @@ from typing import Callable, List, Optional, Sequence
 
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
+from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_mount_name_check import MountNameCheck
 from src.domain.drive_user_settings import DriveUserSettings
 from src.domain.provider_account import ProviderAccount
@@ -65,6 +68,13 @@ class DriveConnectionRepository(ABC):
                               scope_whole_drive: bool) -> Optional[DriveConnection]:
         """Write the four settings whole (one transaction on the one document; never `state` / `disconnected_at`) and
         return the stored connection; None when absent (nothing written)."""
+
+    @abstractmethod
+    async def update_connector_access(self, user_id: str, connection_id: str,
+                                      access: Optional[ConnectorAccess]) -> Optional[DriveConnection]:
+        """Write the connector access (None: nothing) in one transaction on the one document: only
+        `connector_access` and `updated_at`, never `state` / `disconnected_at` or the four settings. Returns the stored
+        connection; None when absent (nothing written)."""
 
     @abstractmethod
     async def rename(self, user_id: str, connection_id: str, at: datetime,

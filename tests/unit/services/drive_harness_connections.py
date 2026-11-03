@@ -63,6 +63,9 @@ class HarnessConnectionRepository(DriveConnectionRepository):
     async def rename(self, user_id: str, connection_id: str, at: datetime, check: Any) -> Any:
         raise NotImplementedError("the harness connection is derived, not stored")
 
+    async def update_connector_access(self, user_id: str, connection_id: str, access: Any) -> Any:
+        raise NotImplementedError("the harness connection is derived, not stored")
+
 
 def harness_connections(users: Any, drive: Any, credentials: Any = None) -> DriveConnectionService:
     """The production `DriveConnectionService` reading the harness's one connection per user."""

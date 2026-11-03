@@ -23,6 +23,8 @@ Fields:
   empty `drives` value searches it); `write_folder_id` (None: read-only; `ROOT_FOLDER`: the drive's root, the migrated
   connection's and the dataclass default; else a folder id; a new connection starts None); `scope_folder_ids` and
   `scope_whole_drive` (never both; neither: the feed's default scope).
+- `connector_access` (DRIVE_MCP_CONNECTOR_RFC §7.1; written only by `DriveConnectionService`): what the drive MCP
+  connector may read on this drive; None (the default, and every document stored before the field) is nothing.
 
 Drives read reconnect state only from here (`state`), never from the credential.
 
@@ -41,6 +43,7 @@ from typing import Optional, Tuple
 
 from .connection_scope import ConnectionScope, check_connection_id
 from .drive_connection_state import ConnectionState, can_transition
+from .drive_connector_access import ConnectorAccess
 from .drive_handle import DriveHandle
 from .drive_mount_name_change import MountNameChange, mount_name_key
 from .drive_ref import is_valid_tag
@@ -71,6 +74,7 @@ class DriveConnection:
     write_folder_id: Optional[str] = ROOT_FOLDER
     scope_folder_ids: Tuple[str, ...] = ()
     scope_whole_drive: bool = False
+    connector_access: Optional[ConnectorAccess] = None
 
     def __post_init__(self) -> None:
         check_connection_id(self.connection_id)
@@ -87,6 +91,8 @@ class DriveConnection:
             raise ValueError("a drive connection's scope is folders or the whole drive, not both")
         if not all(isinstance(f, str) and f for f in self.scope_folder_ids):
             raise ValueError("a scope folder id is a non-empty string")
+        if self.connector_access is not None and not isinstance(self.connector_access, ConnectorAccess):
+            raise ValueError("a drive connection's connector access is None or a ConnectorAccess")
 
     @property
     def handle(self) -> DriveHandle:

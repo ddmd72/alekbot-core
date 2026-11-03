@@ -185,6 +185,8 @@ class ListOutcome:
     items: List[DriveItem]
     truncated: bool
     scope_tops: bool = False   # G11: the items are the chosen folders of a drive whose root is outside its scope
+    connector_tops: bool = False   # the items are the connector folders of a drive whose root is outside connector
+    #                                access (DRIVE_MCP_CONNECTOR_RFC §7.4)
 
 
 @dataclass

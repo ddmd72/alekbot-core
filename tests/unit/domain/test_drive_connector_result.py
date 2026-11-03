@@ -146,9 +146,16 @@ class TestRefusalsAndFailures:
         assert compose(outcome) == head("unfinished", marker(c.UNFINISHED))
 
     def test_a_failure_is_its_own_line(self):
+        outcome = DriveOutcome(op=DriveOp.LIST, cls=OutcomeClass.FAILED, text="The drive did not answer.",
+                               success=False)
+        assert compose(outcome) == head("failed", "The drive did not answer.")
+
+    def test_not_connected_answers_the_connector_line_never_the_chat_text(self):
         outcome = DriveOutcome(op=DriveOp.LIST, cls=OutcomeClass.NOT_CONNECTED, text="Connect the drive.",
                                success=False)
-        assert compose(outcome) == head("not_connected", "Connect the drive.")
+        lines = compose(outcome)
+        assert lines == head("not_connected", marker(c.NOT_CONNECTED))
+        assert "Connect the drive." not in "\n".join(lines)
 
     def test_a_missing_text_raises_instead_of_dropping_a_line(self):
         texts = marker_texts()

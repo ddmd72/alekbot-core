@@ -11,9 +11,7 @@ from typing import Any, List, Optional
 import httpx
 import pytest
 
-from src.composition.drive_connector_tools import (DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools,
-                                                   build_drive_connector_tools_from_container,
-                                                   drive_mcp_tools_switch_on)
+from src.composition.drive_connector_tools import build_drive_connector_tools, build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.exceptions import ConnectorTextsUnavailable
@@ -72,23 +70,7 @@ def result_of(resp: httpx.Response) -> dict:
     return json.loads(data)["result"]
 
 
-@pytest.mark.parametrize("raw", ["1", "on", "ON", "true", " yes "])
-def test_the_knob_turns_on_only_for_a_yes(raw):
-    assert drive_mcp_tools_switch_on(raw) is True
-
-
-@pytest.mark.parametrize("raw", [None, "", "0", "off", "false", "no", "enabled"])
-def test_anything_else_is_off(raw):
-    assert drive_mcp_tools_switch_on(raw) is False
-
-
 class TestOff:
-    async def test_off_reads_no_token_and_builds_nothing(self, monkeypatch):
-        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
-        store = CountingStore()
-        assert await build(store) is None
-        assert store.reads == []
-
     async def test_off_the_app_lists_no_tool_has_no_instructions_and_still_refuses_anonymous_calls(self):
         app = build_drive_mcp_app(authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=None)
         assert result_of(await rpc(app, "tools/list"))["tools"] == []
@@ -107,7 +89,6 @@ class TestOff:
 
 class TestOn:
     async def test_on_loads_the_texts_once_and_lists_the_tools(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store = CountingStore()
         tools = await build(store)
         assert tools is not None and tools.notes is None
@@ -118,7 +99,6 @@ class TestOn:
         assert names == [n for n in c.TOOL_NAMES if n != "get_note"]   # no note service: no get_note
 
     async def test_a_missing_token_raises_and_alerts_once(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store, sink = TokenStore(), Sink()
         del store.tokens[RESULT_TOKEN]
         with pytest.raises(ConnectorTextsUnavailable):
@@ -126,7 +106,6 @@ class TestOn:
         assert len(sink.posts) == 1 and RESULT_TOKEN in sink.posts[0]
 
     async def test_a_token_missing_a_key_raises(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store = TokenStore()
         tool = store.tokens["MCP_DRIVE_TOOL_TEXTS"]
         store.tokens["MCP_DRIVE_TOOL_TEXTS"] = type(tool)(
@@ -137,7 +116,6 @@ class TestOn:
 
     @pytest.mark.parametrize("missing", ["conversion", "token_repo"])
     async def test_on_without_conversion_or_the_token_store_raises(self, monkeypatch, missing):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         with pytest.raises(RuntimeError):
             if missing == "conversion":
                 await build(TokenStore(), conversion=None)
@@ -151,7 +129,6 @@ class BrokenSink:
 
 
 async def test_an_alert_that_cannot_be_delivered_never_hides_the_failed_load(monkeypatch, caplog):
-    monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
     store = TokenStore()
     del store.tokens[RESULT_TOKEN]
     with caplog.at_level(logging.WARNING), pytest.raises(ConnectorTextsUnavailable):
@@ -167,7 +144,6 @@ def container(store: Any, *, notes: Any = None, assembly: bool = True) -> Simple
 
 class TestFromContainer:
     async def test_the_container_singletons_reach_the_tools(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         notes = object()
         tools = await build_drive_connector_tools_from_container(container(TokenStore(), notes=notes),
                                                                  alert_sink=None)  # type: ignore[arg-type]
@@ -175,13 +151,6 @@ class TestFromContainer:
         assert tools.initial_texts.tools[c.INSTRUCTIONS_KEY] == marker(c.INSTRUCTIONS_KEY)
 
     async def test_no_assembly_service_means_no_token_store(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         with pytest.raises(RuntimeError, match="token store"):
             await build_drive_connector_tools_from_container(container(TokenStore(), assembly=False),
                                                              alert_sink=None)  # type: ignore[arg-type]
-
-    async def test_off_builds_nothing_from_the_container(self, monkeypatch):
-        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
-        store = CountingStore()
-        assert await build_drive_connector_tools_from_container(container(store), alert_sink=None) is None  # type: ignore[arg-type]
-        assert store.reads == []
