@@ -18,6 +18,7 @@ import pytest
 
 from src.domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
 from src.ports.mcp_client_repository import MCPClientRepository
+from tests.support.mcp_gate_fakes import ALLOWED_EMAIL, FakeUserRepo, FakeWhitelistRepo
 from src.services.mcp_authorization_service import (
     AuthorizationParams,
     MCPAuthError,
@@ -88,6 +89,9 @@ def service(repo):
         mcp_resource_uri=_TEST_RESOURCE_URI,
         consent_base_url="https://dev.alekbot.app/mcp/consent",
         allowed_redirect_hosts=_TEST_ALLOWED_HOSTS,
+        drive_resource_uri="https://mcp.example.test/drive-mcp",
+        user_repo=FakeUserRepo({"user-1": ALLOWED_EMAIL}),
+        whitelist_repo=FakeWhitelistRepo(),
         access_token_ttl=3600,
         refresh_token_ttl=2592000,
         auth_code_ttl=600,

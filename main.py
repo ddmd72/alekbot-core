@@ -2,6 +2,8 @@ import sys
 import os
 import signal
 import asyncio
+import contextlib
+from typing import Optional
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
@@ -23,6 +25,33 @@ from src.web.deep_research_webhooks import create_deep_research_webhooks_bluepri
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
+from src.composition.drive_mcp_setup import build_drive_mcp_app
+from src.domain.mcp_resource import DRIVE_PATH
+
+
+def _is_mcp_path(path: str) -> bool:
+    # The paths the facts app (authorization server + `/mcp`) serves. No docstring: a test reads this body's literals.
+    if path == "/mcp" or path == "/mcp/":
+        return True
+    if path in ("/authorize", "/token", "/register", "/revoke"):
+        return True
+    if path == "/.well-known/oauth-authorization-server":
+        return True
+    if path.startswith("/.well-known/oauth-protected-resource"):
+        return True
+    return False
+
+
+def mcp_owner(path: str) -> Optional[str]:
+    """Which MCP app owns `path`: "drive", "facts", or None (the Quart app).
+
+    The drive checks run first: the facts protected-resource-metadata test is a prefix match.
+    """
+    if path in (DRIVE_PATH, DRIVE_PATH + "/"):
+        return "drive"
+    if path == "/.well-known/oauth-protected-resource" + DRIVE_PATH:
+        return "drive"
+    return "facts" if _is_mcp_path(path) else None
 
 
 async def main():
@@ -487,6 +516,7 @@ async def main():
                 # Mounted under /mcp in a Starlette parent alongside main_app.
                 # ====================================================================
                 mcp_components = None
+                drive_mcp = None
                 try:
                     # SearchEnrichmentService isn't a container singleton —
                     # UserAgentFactory builds one per user with tier-specific
@@ -513,6 +543,8 @@ async def main():
                         search_enrichment_service=mcp_search_enrichment,
                         cipher=app.cipher,
                         digest_key=app.digest_key,
+                        user_repo=app.user_repo,
+                        whitelist_repo=app.whitelist_repo,
                     )
                     # Consent blueprint is built in main.py (not in
                     # composition/) because composition must not depend
@@ -524,6 +556,20 @@ async def main():
                     )
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
+                    # The drive connector has its own build so a failure there (e.g. a missing token, once the
+                    # connector texts are token-backed) never takes the facts connector down.
+                    try:
+                        drive_mcp = build_drive_mcp_app(
+                            authorization_service=mcp_components.authorization_service,
+                            auth_config=app.auth_config,
+                        )
+                    except Exception as drive_err:
+                        drive_mcp = None
+                        logger.error(
+                            f"❌ Failed to initialize drive MCP connector: {drive_err}",
+                            exc_info=True,
+                        )
+                        logger.warning("🤖 Bot will continue without the drive connector")
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
@@ -540,6 +586,8 @@ async def main():
                 if mcp_components is not None:
                     logger.info("   - /mcp (remote MCP for claude.ai)")
                     logger.info("   - /mcp/consent (OAuth consent UI)")
+                    if drive_mcp is not None:
+                        logger.info("   - /drive-mcp (drive connector)")
 
                 # Override start() to launch shared app instead of individual adapter
                 async def start_shared_app():
@@ -568,20 +616,14 @@ async def main():
                         _fastmcp = mcp_components.fastmcp
                         _mcp_asgi = McpErrorLogger(_fastmcp.streamable_http_app())
 
-                        def _is_mcp_path(path: str) -> bool:
-                            if path == "/mcp" or path == "/mcp/":
-                                return True
-                            if path in ("/authorize", "/token", "/register", "/revoke"):
-                                return True
-                            if path == "/.well-known/oauth-authorization-server":
-                                return True
-                            if path.startswith("/.well-known/oauth-protected-resource"):
-                                return True
-                            return False
+                        _drive_asgi = McpErrorLogger(drive_mcp.streamable_http_app()) if drive_mcp is not None else None
 
                         async def parent_asgi(scope, receive, send):
                             if scope["type"] == "lifespan":
-                                async with _fastmcp.session_manager.run():
+                                async with contextlib.AsyncExitStack() as stack:
+                                    await stack.enter_async_context(_fastmcp.session_manager.run())
+                                    if drive_mcp is not None:
+                                        await stack.enter_async_context(drive_mcp.session_manager.run())
                                     while True:
                                         message = await receive()
                                         if message["type"] == "lifespan.startup":
@@ -589,9 +631,11 @@ async def main():
                                         elif message["type"] == "lifespan.shutdown":
                                             await send({"type": "lifespan.shutdown.complete"})
                                             return
-                            path = scope.get("path", "")
-                            if _is_mcp_path(path):
+                            owner = mcp_owner(scope.get("path", ""))
+                            if owner == "facts":
                                 await _mcp_asgi(scope, receive, send)
+                            elif owner == "drive" and _drive_asgi is not None:
+                                await _drive_asgi(scope, receive, send)
                             else:
                                 await main_app(scope, receive, send)
 

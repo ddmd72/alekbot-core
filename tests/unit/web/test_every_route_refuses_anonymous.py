@@ -51,6 +51,7 @@ from src.web.voice_web_call_app import create_voice_web_call_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.worker_oidc_verifier import build_oidc_gate
 from tests.support.firestore_eval import EvalDb
+from tests.support.mcp_gate_fakes import allowing_repos
 from tests.unit.web.gate_fakes import SESSION_SECRET, Tripwire, session_service
 from src.composition.connector_registry import ConnectorRegistry
 
@@ -402,7 +403,8 @@ def _mcp_world():
                                     mcp_access_token_ttl=3600, mcp_refresh_token_ttl=2592000, mcp_auth_code_ttl=600,
                                     mcp_consent_request_ttl=600),
         search_enrichment_service=MagicMock(side_effect=AssertionError("search reached anonymously")),
-        cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
+        cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
+        user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
     return db, components.fastmcp.streamable_http_app()
 
 

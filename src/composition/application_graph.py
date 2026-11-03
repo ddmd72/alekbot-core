@@ -144,6 +144,7 @@ class ApplicationGraph:
     notification_service: UserNotificationService
     # consumed by main()'s blueprint calls and its voice, MCP, file-access, short-link and landing wiring
     user_repo: FirestoreUserRepository
+    whitelist_repo: FirestoreWhitelistRepository
     account_repo: FirestoreAccountRepository
     invite_service: InviteCodeService
     cabinet_facts: CabinetFactService
@@ -1103,6 +1104,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         telegram_adapter=telegram_adapter,
         notification_service=notification_service,
         user_repo=user_repo,
+        whitelist_repo=whitelist_repo,
         account_repo=account_repo,
         invite_service=invite_service,
         cabinet_facts=cabinet_facts,
