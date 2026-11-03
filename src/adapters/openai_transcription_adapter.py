@@ -11,10 +11,11 @@ multilingual speaker is the normal case here, not an edge one. Env-overridable
 
 import asyncio
 import os
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from openai import AsyncOpenAI
 
+from ..domain.audio_transcript import AudioTranscript
 from ..ports.audio_transcription_port import AudioTranscriptionPort
 from ..utils.logger import logger
 
@@ -55,6 +56,25 @@ class OpenAITranscriptionAdapter(AudioTranscriptionPort):
         mime_type: str,
         languages: Optional[Sequence[str]] = None,
     ) -> str:
+        return (await self._transcribe(local_path, mime_type, languages))[0]
+
+    async def transcribe_metered(
+        self,
+        local_path: str,
+        mime_type: str,
+        languages: Optional[Sequence[str]] = None,
+    ) -> AudioTranscript:
+        """The same request as `transcribe`; the usage is read from the response (EXTERNAL_FILES_RFC P21)."""
+        text, result = await self._transcribe(local_path, mime_type, languages)
+        return _metered(text, self.model, getattr(result, "usage", None))
+
+    async def _transcribe(
+        self,
+        local_path: str,
+        mime_type: str,
+        languages: Optional[Sequence[str]],
+    ) -> Tuple[str, Any]:
+        """The transcript's stripped text and the SDK's response."""
         def _read() -> bytes:
             with open(local_path, "rb") as f:
                 return f.read()
@@ -89,4 +109,16 @@ class OpenAITranscriptionAdapter(AudioTranscriptionPort):
             f"[OpenAITranscriptionAdapter] Transcribed '{filename}' "
             f"({len(audio_bytes)} bytes, languages={list(languages or [])}) → {len(text)} chars"
         )
-        return text
+        return text, result
+
+
+def _metered(text: str, model: str, usage: Any) -> AudioTranscript:
+    """The response's usage, token-shaped (`type == "tokens"`) or duration-shaped (`type == "duration"`); none, or a
+    shape this adapter does not know, reports zeros."""
+    kind = getattr(usage, "type", None)
+    if kind == "tokens":
+        return AudioTranscript(text=text, model=model, input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                               output_tokens=int(getattr(usage, "output_tokens", 0) or 0))
+    if kind == "duration":
+        return AudioTranscript(text=text, model=model, seconds=float(getattr(usage, "seconds", 0.0) or 0.0))
+    return AudioTranscript(text=text, model=model)
