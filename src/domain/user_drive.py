@@ -24,10 +24,7 @@ from .drive_media_facts import DriveMediaFacts
 
 DEFAULT_INBOX_FOLDER = "Inbox"
 
-# Size caps, all checked on metadata before any download (§4.6, §4.9).
-MAX_DRIVE_DOWNLOAD_BYTES = 45 * 1024 * 1024       # = FileManagementAgent's video re-send cap
-MAX_DRIVE_VISION_IMAGE_BYTES = 5 * 1024 * 1024    # below the strictest provider image limit
-MAX_DRIVE_VISION_PDF_BYTES = 20 * 1024 * 1024     # below the strictest provider PDF/inline limit
+# Write caps (what the bot writes). The read caps live in `document_limits` (EXTERNAL_FILES_RFC §4.5).
 MAX_DRIVE_APPEND_FILE_BYTES = 5 * 1024 * 1024
 
 MAX_DRIVE_TEXT_FILE_BYTES = 5 * 1024 * 1024           # encoded size of text the bot writes (§4.7.1); = the append-target cap

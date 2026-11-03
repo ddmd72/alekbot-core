@@ -22,14 +22,13 @@ from .document_hardening import (  # noqa: F401 — re-exported: the hardening's
     build_markitdown,
     check_zip_container,
 )
-from ..domain.text_data_uris import MAX_TEXT_EXPORT_BYTES, drop_data_uri_images
+from ..domain.document_limits import MAX_CONVERTED_CHARS, MAX_FILE_BYTES, MAX_TEXT_EXPORT_BYTES
+from ..domain.text_data_uris import drop_data_uri_images
 from .logger import logger
 
 if TYPE_CHECKING:
     from ..ports.audio_transcription_port import AudioTranscriptionPort
 
-MAX_FILE_BYTES = 5 * 1024 * 1024    # 5 MB — context window would explode beyond this
-MAX_CONVERTED_CHARS = 30_000         # ~7K tokens — hard truncation to protect context
 HISTORY_PREVIEW_CHARS = 1000         # chars kept in history stub per file
 
 NAME_MAX_BYTES = 255                 # ext4 / overlayfs limit for ONE path component, in bytes

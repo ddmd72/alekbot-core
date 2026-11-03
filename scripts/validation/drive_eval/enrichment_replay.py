@@ -24,7 +24,8 @@ from src.domain.drive_enrichment import DriveProfile
 from src.domain.drive_enrichment_calls import (
     HintReply, HintRequest, ModelReplyStatus, ProfileReply, ProfileRequest, TriageReply, TriageResultV2,
 )
-from src.domain.drive_extraction import READER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage
+from src.domain.document_extraction import READER
 from src.domain.drive_index import TriageVerdict
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.document_profiler_port import DocumentProfilerPort

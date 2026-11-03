@@ -39,7 +39,7 @@ def _files(root: Path) -> List[Path]:
 
 def _kind_for(path: Path) -> str:
     from src.domain.drive_index_policy import kind_of
-    from src.domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
+    from src.domain.document_kind import SNIFF_HEAD_BYTES, sniff_kind
 
     with open(path, "rb") as fh:
         head = fh.read(SNIFF_HEAD_BYTES)

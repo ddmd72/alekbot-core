@@ -8,7 +8,7 @@ text.
 """
 from __future__ import annotations
 
-from .drive_index_params import OPEN_MAX_CHARS
+from .document_limits import OPEN_MAX_CHARS
 from .drive_search_texts import PROTOCOL_TIERS_LINE
 
 # -- the answer shape (§7.1, §7.2) -------------------------------------------------------------------------------

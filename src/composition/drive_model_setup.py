@@ -32,7 +32,7 @@ from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.gemini_batch_adapter import GeminiBatchAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..adapters.openai_adapter import OpenAIAdapter
-from ..domain.drive_extraction import PARSER, READER
+from ..domain.document_extraction import PARSER, READER
 from ..domain.user import PerformanceTier
 from ..ports.account_repository import AccountRepository
 from ..ports.prompt_v3.agent_profile_repository import AgentProfileRepository

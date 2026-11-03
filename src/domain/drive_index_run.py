@@ -27,7 +27,8 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Sequence, Tuple
 
-from .drive_extraction import READER, ExtractionOutcome, ExtractionStatus, TriageResult, chain_for
+from .drive_extraction import ExtractionOutcome, TriageResult
+from .document_extraction import READER, ExtractionStatus, chain_for
 from .drive_image_mime import MAX_VISION_IMAGE_BYTES
 from .drive_media_facts import DriveMediaFacts
 from .drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState, TriageVerdict

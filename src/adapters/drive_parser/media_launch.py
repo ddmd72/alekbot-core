@@ -20,7 +20,7 @@ import stat
 import sys
 from typing import IO, Any, Dict, Mapping, Optional, Tuple
 
-from src.domain.drive_extraction import text_digest
+from src.domain.document_extraction import text_digest
 from src.domain.memory_telemetry import SCOPE_SUBPROCESS
 from src.utils.logger import logger
 from src.utils.memory_scope import memory_scope

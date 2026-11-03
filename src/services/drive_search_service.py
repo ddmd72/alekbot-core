@@ -84,12 +84,13 @@ from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.drive_index_params import (
-    EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW,
-    ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
-    ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
-    NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
-    CABINET_UNREADABLE_MAX, OPEN_MAX_CHARS, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
+    EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW, ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH,
+    FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS, ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH,
+    INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
+    NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN,
+    WINDOW_CHARS_TOTAL_V2, CABINET_UNREADABLE_MAX, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
+from ..domain.document_limits import OPEN_MAX_CHARS
 from ..domain.drive_index_planner import month_key
 from ..domain import drive_index_policy as policy
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -109,11 +110,14 @@ from ..domain.drive_mounts import (
 )
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    INACCESSIBLE_COUNTER, UNREAD_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, STATUS_OK,
-    DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
-    hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
-    render_results, resolve_chain, search_gate,
+    INACCESSIBLE_COUNTER, UNREAD_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER,
+    STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, STATUS_OK, DriveSearchCard,
+    DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance, hides_descendants,
+    in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible, render_results, resolve_chain,
+    search_gate,
 )
+from ..domain.file_ref import FileRefKind
+from ..domain.untrusted_text import REFERENCE_REMINDER, wrap_untrusted
 from ..domain.drive_deleted_result import DeletedSearchResult
 from ..domain.drive_deleted_search import (
     DeletedHit, matches as deleted_matches, merge_hits, passage, render_deleted, transcript_line,
@@ -2193,7 +2197,7 @@ class DriveSearchService:
         if not body:
             return None
         wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(),
-                                 ref=drive_ref.format(conn.ref_tag, item_id), path=path)
+                                 store=FileRefKind.DRIVE, ref=drive_ref.format(conn.ref_tag, item_id), label=path)
         return f"{REFERENCE_REMINDER}\n{wrapped}"
 
     # ------------------------------------------------------------------------------------------
@@ -2417,7 +2421,8 @@ class DriveSearchService:
         if not body:
             return None
         wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(),
-                                 ref=drive_ref.format(conn.ref_tag, mirror_item_id), path=path or mirror_path)
+                                 store=FileRefKind.DRIVE, ref=drive_ref.format(conn.ref_tag, mirror_item_id),
+                                 label=path or mirror_path)
         return f"{REFERENCE_REMINDER}\n{wrapped}"
 
     async def _building(self, conn: DriveConnection, state: DriveSyncState) -> bool:

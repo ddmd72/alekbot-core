@@ -48,7 +48,8 @@ from src.adapters.drive_parser.child import is_memory_failure
 from src.adapters.drive_parser.epub_package import PackageError, epub_zip_from_tar, is_tar_package
 from src.adapters.drive_parser.html_text import html_page_text, text_is_html
 from src.domain.drive_capture import CaptureSignals
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
+from src.domain.drive_extraction import ExtractionOutcome, PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus, failure_label
 from src.domain.drive_index_params import MAX_SHEET_ROWS, MAX_TEXT_CHARS
 from src.domain.text_data_uris import drop_data_uri_images
 from src.utils.document_hardening import ArchiveTooLargeError, check_zip_container

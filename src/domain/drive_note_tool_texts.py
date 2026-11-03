@@ -29,7 +29,8 @@ from .drive_note import (
     STATUS_NOT_INDEXED, STATUS_OTHER_DRIVE, STATUS_SOON, EraseRequestReceipt, NoteReceipt,
 )
 from .drive_note_view import NoteView
-from .drive_search import wrap_untrusted
+from .file_ref import FileRefKind
+from .untrusted_text import wrap_untrusted
 
 GET_NOTE = "get_note"
 CREATE_NOTE = "create_note"
@@ -152,7 +153,8 @@ def note_view_text(view: NoteView, nonce: str) -> str:
     if view.archived:
         head += ": the file is gone from the drive; change this note by its note ref"
     body = owner_note_line(view.text, view.doc_type, view.life_areas)
-    return f"{head}:\n{wrap_untrusted(body, nonce=nonce, ref=view.ref or view.note_ref, path=view.path)}"
+    wrapped = wrap_untrusted(body, nonce=nonce, store=FileRefKind.DRIVE, ref=view.ref or view.note_ref, label=view.path)
+    return f"{head}:\n{wrapped}"
 
 
 # -- declarations -----------------------------------------------------------------------------------------------------

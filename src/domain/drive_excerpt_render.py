@@ -36,9 +36,10 @@ from .drive_excerpts import display_text, merge_runs
 from .drive_index_params import CARD_ACCURACY_TRUST, EXCERPT_FOLDER_NOTES_CHARS_MAX
 from .drive_op import DriveOp
 from .drive_search import (
-    REFERENCE_REMINDER, STATUS_AMBIGUOUS_FOLDER, STATUS_DRIVE_REFUSED, STATUS_OK, DriveSearchRequest, DriveSearchResult, escape_text,
-    render_results, wrap_untrusted,
+    STATUS_AMBIGUOUS_FOLDER, STATUS_DRIVE_REFUSED, STATUS_OK, DriveSearchRequest, DriveSearchResult, render_results,
 )
+from .file_ref import FileRefKind
+from .untrusted_text import REFERENCE_REMINDER, escape_text, wrap_untrusted
 from .drive_search_texts import NOT_SEARCHED_DRIVES_LINE, REBUILDING_LINE
 from .drive_tool_texts import READ_PASSAGES
 from . import drive_ref
@@ -143,7 +144,7 @@ def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optio
     return [*(folder_line(note) for note in plan.before.get(key, ())),
             *([pages_line] if pages_line else []),
             *(head_line(file, run) for run in runs), *own_note,
-            wrap_untrusted("\n".join(body), nonce=nonce, ref=file.ref, path=file.path)]
+            wrap_untrusted("\n".join(body), nonce=nonce, store=FileRefKind.DRIVE, ref=file.ref, label=file.path)]
 
 
 def _planned(files: Sequence[ExcerptFile], context: ExcerptContext, *, shown_folders: FrozenSet[str],

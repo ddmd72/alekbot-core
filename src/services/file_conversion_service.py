@@ -27,13 +27,12 @@ import aiofiles
 from ..domain import drive_ref
 from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
-from ..domain.drive_index_policy import mime_decides_kind, mime_kind
+from ..domain.document_kind import mime_decides_kind, mime_kind
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
 from ..domain.user_drive import (
-    MAX_DRIVE_DOWNLOAD_BYTES,
     DriveFileTooLarge,
     DriveFileTooLargeError,
     DriveItem,
@@ -41,16 +40,15 @@ from ..domain.user_drive import (
     DriveRefRefused,
     format_size,
 )
+from ..domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES, MAX_FILE_BYTES, MAX_TEXT_EXPORT_BYTES
 from ..domain.workspace import (
     OPEN_FILE_MAX_TEXT_BYTES,
     WORKSPACE_REF_PREFIX,
     parse_workspace_path,
     workspace_kind,
 )
-from ..domain.text_data_uris import MAX_TEXT_EXPORT_BYTES
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.file_conversion import (
-    MAX_FILE_BYTES,
     convert_file_to_text,
     is_native_binary,
 )

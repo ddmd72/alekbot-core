@@ -41,9 +41,8 @@ import time
 from typing import IO, Any, Dict, Mapping, Optional, Tuple
 
 from src.domain.drive_capture import signals_from_json
-from src.domain.drive_extraction import (
-    PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed, text_digest,
-)
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, PdfSplitFailed
+from src.domain.document_extraction import PARSER, ExtractionStatus, text_digest
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort

@@ -103,7 +103,7 @@ async def record_fixture(cap_usd: float, out: Path) -> int:
     from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
     from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
     from src.composition.drive_indexing_setup import build_place_lookup
-    from src.domain.drive_extraction import PARSER, READER
+    from src.domain.document_extraction import PARSER, READER
     from src.domain.drive_index import PASSAGES_VERSION, PROFILE_VERSION, TRIAGE_VERSION
 
     from . import fixture_texts_v2

@@ -28,7 +28,8 @@ from ..agents.drive_image_triage_agent import AGENT_TYPE, DriveImageTriageAgent,
 from ..domain.drive_enrichment import PhotoDescription
 from ..domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
 from ..domain.drive_extraction import DriveModelUnavailable, TriageImage
-from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES, image_mime
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES
+from ..domain.document_kind import image_mime
 from ..domain.drive_index import TriageVerdict
 from ..domain.drive_index_params import TRIAGE_BATCH
 from ..infrastructure.drive_model_call import DriveModelCallFailed, reply_status

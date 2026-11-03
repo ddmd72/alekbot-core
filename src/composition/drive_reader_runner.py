@@ -49,10 +49,10 @@ from ..infrastructure.drive_model_call import (
     DriveInputRefused, DriveInputTooLarge, DriveModelCallFailed, DriveModelTimedOut,
 )
 from ..domain.agent import AgentConfig
-from ..domain.drive_extraction import (
-    READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, PdfSplitFailed,
-)
-from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES, image_mime
+from ..domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, PdfSplitFailed
+from ..domain.document_extraction import READER, ExtractionStatus
+from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES
+from ..domain.document_kind import image_mime
 from ..domain.drive_index import DocumentBrief
 from ..domain.drive_index_params import (
     MODEL_EXTRACT_MAX_PAGES, MODEL_FILE_BUDGET_S, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL,

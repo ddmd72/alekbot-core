@@ -89,7 +89,7 @@ class SyntheticReader(ContentExtractorPort):
 
     @property
     def extractor_id(self) -> str:
-        from src.domain.drive_extraction import READER
+        from src.domain.document_extraction import READER
         return READER
 
     @property
@@ -127,7 +127,7 @@ async def write_synthetic(snapshot_path: Path) -> int:
     from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
     from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
     from src.composition.drive_indexing_setup import build_place_lookup
-    from src.domain.drive_extraction import PARSER, READER
+    from src.domain.document_extraction import PARSER, READER
 
     from . import fixture_texts_v2
     from .enrichment_record import CostMeter, recording_ports

@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Tuple
 
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.image_triage_port import ImageTriagePort
 

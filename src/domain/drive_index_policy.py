@@ -10,34 +10,12 @@ import os
 from enum import Enum
 from typing import Dict, FrozenSet, Optional, Sequence
 
+from .document_kind import kind_of
 from .drive_index import ContentClass, DriveChange, FolderProbe, Reason
 from .drive_index_params import (
     DENSE_FOLDER_CHILDREN, MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES,
 )
 
-_EXT_KIND: Dict[str, str] = {
-    ".pdf": "pdf", ".docx": "docx", ".doc": "doc", ".pptx": "pptx", ".ppt": "ppt", ".xlsx": "xlsx",
-    ".xls": "xls", ".odt": "odt", ".ods": "ods", ".odp": "odp", ".epub": "epub", ".html": "html",
-    ".htm": "html", ".xhtml": "html", ".mhtml": "mhtml", ".mht": "mhtml", ".md": "markdown",
-    ".markdown": "markdown", ".txt": "text", ".csv": "csv", ".json": "json", ".rtf": "rtf", ".msg": "msg",
-    ".eml": "eml", ".vtt": "subtitles", ".srt": "subtitles",
-    ".jpg": "image", ".jpeg": "image", ".png": "image", ".gif": "image", ".webp": "image", ".heic": "image",
-    ".heif": "image", ".tif": "image", ".tiff": "image", ".bmp": "image", ".svg": "image", ".raw": "image",
-    ".dng": "image", ".mp3": "audio", ".m4a": "audio", ".wav": "audio", ".flac": "audio", ".ogg": "audio",
-    ".opus": "audio", ".aac": "audio", ".mp4": "video", ".mov": "video", ".webm": "video", ".mkv": "video",
-    ".avi": "video", ".zip": "archive", ".7z": "archive", ".rar": "archive", ".tar": "archive", ".gz": "archive",
-    ".tgz": "archive", ".bz2": "archive", ".xz": "archive", ".py": "code", ".js": "code", ".ts": "code",
-    ".tsx": "code", ".jsx": "code", ".java": "code", ".kt": "code", ".go": "code", ".rs": "code", ".c": "code",
-    ".h": "code", ".cpp": "code", ".cs": "code", ".rb": "code", ".php": "code", ".swift": "code", ".sh": "code",
-    ".yaml": "code", ".yml": "code", ".toml": "code", ".ini": "code", ".xml": "code", ".css": "code",
-    ".ipynb": "code", ".log": "log", ".sql": "data_dump", ".har": "data_dump", ".jsonl": "data_dump",
-    ".ndjson": "data_dump", ".sqlite": "database", ".db": "database", ".mdb": "database", ".accdb": "database",
-    ".exe": "executable", ".dll": "executable", ".msi": "executable", ".dmg": "disk_image", ".iso": "disk_image",
-    ".img": "disk_image", ".vhd": "disk_image", ".pages": "iwork", ".numbers": "iwork", ".key": "iwork",
-}
-# An Apple Books package (`<name>.epub.pkgf`) is a tar of the EPUB folder; the parser repacks it (§5.1).
-_PACKAGE_EXT = ".pkgf"
-_PACKAGED_EXTS: FrozenSet[str] = frozenset({".epub"})
 _DOCUMENT_KINDS: FrozenSet[str] = frozenset({
     "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "mhtml",
     "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork",
@@ -56,18 +34,6 @@ ADMITTED_KINDS: FrozenSet[str] = SLICE2_CONTENT_KINDS   # content read (§5.1)
 TRIAGED_KINDS: FrozenSet[str] = SLICE2_TRIAGED_KINDS    # every image enters triage first (§5.3, §24.5)
 TRANSCRIBED_KINDS: FrozenSet[str] = frozenset({"audio", "video"})   # transcribed, not parsed (§27.3, policy 3)
 _SHEET_KINDS: FrozenSet[str] = frozenset({"xlsx", "xls"})
-# G1 (GOOGLE_DRIVE_RFC §5): the document mimes the parser reads. IANA names only, never a provider's own type.
-_MIME_KIND: Dict[str, str] = {
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
-    "application/pdf": "pdf",
-    "text/markdown": "markdown",
-    "text/plain": "text",
-    "text/csv": "csv",
-}
-_MIME_TEXT_KINDS: FrozenSet[str] = frozenset({"markdown", "text", "csv"})
-_MIME_TABLE_KINDS: FrozenSet[str] = frozenset(_MIME_KIND.values())
 
 
 class Admission(str, Enum):
@@ -85,59 +51,6 @@ _UNSEARCHABLE_REASONS: FrozenSet[Reason] = frozenset({Reason.OS_ARTIFACT, Reason
 _MARKERS = frozenset({".git", "pyvenv.cfg"})
 # Folders only tools create, wherever they sit (RFC Δ16): an extracted repository without `.git` is still opaque.
 _GENERATED_DIRS = frozenset({"node_modules", "__pycache__", "site-packages"})
-
-
-def mime_kind(mime: str) -> Optional[str]:
-    """The document kind `mime` names (parameters such as `; charset=utf-8` ignored, case-insensitive), else None."""
-    return _MIME_KIND.get(mime.split(";", 1)[0].strip().lower())
-
-
-def _effective_ext(name: str) -> str:
-    """The name's extension, lower-cased, with an Apple Books package unwrapped to the extension it packs."""
-    stem, ext = os.path.splitext(name.lower())
-    if ext == _PACKAGE_EXT and os.path.splitext(stem)[1] in _PACKAGED_EXTS:
-        ext = os.path.splitext(stem)[1]
-    return ext
-
-
-def _kind_from_ext(name: str) -> Optional[str]:
-    return _EXT_KIND.get(_effective_ext(name))
-
-
-def mime_decides_kind(name: str, mime: str) -> bool:
-    """True when `mime` decides the kind instead of the name's extension (G1, design Δ4): the mime names a table kind
-    and the extension gives no kind, or the extension's kind is another table kind and the two are not both text
-    kinds. An extension whose kind is outside the table (log, code, subtitles, json, …) always keeps its reading."""
-    by_mime = mime_kind(mime)
-    if by_mime is None:
-        return False
-    by_ext = _kind_from_ext(name)
-    if by_ext is None:
-        return True
-    if by_ext == by_mime or by_ext not in _MIME_TABLE_KINDS:
-        return False
-    return not (by_ext in _MIME_TEXT_KINDS and by_mime in _MIME_TEXT_KINDS)
-
-
-def kind_of(name: str, mime: str, is_folder: bool) -> str:
-    if is_folder:
-        return "folder"
-    ext = _effective_ext(name)
-    kind = _kind_from_ext(name)
-    if kind == "iwork" and ext == ".key" and mime not in ("", "application/vnd.apple.keynote"):
-        return "other"   # a .key that is not Keynote is a secret file, caught by item_rule first
-    by_mime = mime_kind(mime) if mime_decides_kind(name, mime) else None
-    if by_mime:
-        return by_mime
-    if kind:
-        return kind
-    if mime.startswith("image/"):
-        return "image"
-    if mime.startswith("audio/"):
-        return "audio"
-    if mime.startswith("video/"):
-        return "video"
-    return "other"
 
 
 def admission(kind: str) -> Admission:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence
 
-from .drive_index_params import OPEN_MAX_CHARS
+from .document_limits import OPEN_MAX_CHARS
 
 SEARCH_DRIVE = "search_drive"
 SEARCH_DELETED = "search_deleted_recordings_and_notes"

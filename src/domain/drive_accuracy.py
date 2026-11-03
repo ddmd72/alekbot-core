@@ -37,7 +37,7 @@ from typing import Mapping, Optional, Sequence, Tuple
 
 from .drive_capture import Capture
 from .drive_enrichment import Grade, GradedField, GradedValue, ProfileSource
-from .drive_extraction import READER
+from .document_extraction import READER
 from .drive_index import ACCURACY_VERSION as ACCURACY_VERSION, DriveIndexRecord, TriageVerdict
 from .drive_profile import _HasText, grade_brief
 
