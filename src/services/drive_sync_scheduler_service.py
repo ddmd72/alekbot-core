@@ -182,6 +182,9 @@ class DriveSyncSchedulerService:
         if state is not None and state.continuation_enqueued_at is not None \
                 and now - state.continuation_enqueued_at < _CONTINUATION_FRESH:
             summary["continuing"] += 1   # a continuation is already queued (§7.1)
+        elif state is not None and state.lease_owner and state.lease_until and state.lease_until > now:
+            # a tick is running: it clears the continuation marker at its start, so the marker no longer shows a chain
+            summary["continuing"] += 1
         else:
             await self._queue.enqueue_worker_task(DRIVE_SYNC_TASK, scope_payload(scope),
                                                   deadline_seconds=TICK_DEADLINE_S,

@@ -25,7 +25,8 @@ transcript store, the usage months and the initial builds are user-scoped.
 
 Search v2 (§25.13.1): stream reads project the lean fields only (RECORD_LEAN_FIELDS, CHUNK_LEAN_FIELDS,
 HINT_LEAN_FIELDS); a key list is cut at 30 values and a kind is one `==` (a family is the caller's post-filter); every
-document write goes in batches of at most RECORD_WRITE_BATCH documents and WRITE_BATCH_BYTES estimated bytes.
+document write goes in batches of at most RECORD_WRITE_BATCH documents and WRITE_BATCH_BYTES estimated bytes; every batch
+delete goes through `_delete_refs`, which halves a batch Firestore rejects as too big (InvalidArgument).
 
 Reference semantics: InMemoryDriveIndexRepository. The deliberate differences are Firestore's own:
     - `due_records` reads one query per priority class (0..4) and stops when the page is full, so every query
@@ -75,8 +76,8 @@ from enum import Enum
 from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, TypeVar, Union
 
 from google.api_core.exceptions import (
-    Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, NotFound, ResourceExhausted,
-    ServiceUnavailable,
+    Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, InvalidArgument, NotFound,
+    ResourceExhausted, ServiceUnavailable,
 )
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
@@ -117,7 +118,7 @@ from ..domain.drive_usage import (
     usage_expires_at,
 )
 from ..ports.drive_index_repository import DriveIndexRepository
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 CARD_VECTOR = "card_vector"
 HAS_CARD_VECTOR = "has_card_vector"
@@ -922,11 +923,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         await self._set_in_batches(writes, merge=True)   # by bytes too: a v2 record carries a profile and keys
 
     async def delete_records(self, scope: ConnectionScope, item_ids: Sequence[str]) -> None:
-        for chunk in _chunks(list(dict.fromkeys(item_ids))):
-            batch = self._db.batch()
-            for item_id in chunk:
-                batch.delete(self._ref(scope, item_id))
-            await batch.commit()
+        await self._delete_refs([self._ref(scope, item_id) for item_id in dict.fromkeys(item_ids)])
 
     async def due_records(self, scope: ConnectionScope, now: datetime, limit: int,
                           skip_classes: AbstractSet[int] = frozenset()) -> List[DriveIndexRecord]:
@@ -1140,11 +1137,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def delete_user_records(self, scope: ConnectionScope, limit: int) -> int:
         snaps = await self._conn_query(scope).select([FieldPath.document_id()]).limit(limit).get()
-        for chunk in _chunks(list(snaps)):
-            batch = self._db.batch()
-            for snap in chunk:
-                batch.delete(snap.reference)
-            await batch.commit()
+        await self._delete_refs([snap.reference for snap in snaps])
         return len(snaps)
 
     # -- search ------------------------------------------------------------------------------
@@ -1366,11 +1359,25 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             await batch.commit()
 
     async def _delete_refs(self, refs: Sequence[Any], size: int = RECORD_WRITE_BATCH) -> None:
+        """The one batch-delete path. Firestore counts a deleted document's index entries toward the commit size and
+        answers a too-big commit with InvalidArgument; a delete carries no byte estimate, so a rejected batch is halved
+        until it fits (deletes are idempotent: a half already committed is safe). A single ref that still fails is real."""
         for part in _chunks(refs, size):
-            batch = self._db.batch()
-            for ref in part:
-                batch.delete(ref)
+            await self._commit_deletes(part)
+
+    async def _commit_deletes(self, refs: Sequence[Any]) -> None:
+        batch = self._db.batch()
+        for ref in refs:
+            batch.delete(ref)
+        try:
             await batch.commit()
+        except InvalidArgument as exc:
+            if len(refs) <= 1:
+                logger.error(f"[DriveIndex] a single-document delete was rejected: {exc_brief(exc)}")
+                raise
+            mid = len(refs) // 2
+            await self._commit_deletes(refs[:mid])
+            await self._commit_deletes(refs[mid:])
 
     # -- Search v2: record streams and enrichment reads (§25.13.1) ---------------------------------------------------
 
