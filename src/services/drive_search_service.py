@@ -2027,6 +2027,8 @@ class DriveSearchService:
             if rec is None or not rec.is_folder:
                 return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
             await ancestry.load([rec])
+            if not self._connector_sees(rec, ancestry):     # outside connector access: no name, no "not indexed"
+                return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
             if rec.scope is Scope.INSIDE_OPAQUE or rec.state is RecordState.DELETING or ancestry.hidden_above(rec):
                 return _not_indexed(rec.name)
             chain = ancestry.chain(rec, require_card=False)
@@ -2038,6 +2040,9 @@ class DriveSearchService:
             return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
         anchored, descent_complete, hider = await self._descend(conn, ancestry.root_item_id, segments)
         if not anchored and hider is not None:
+            await ancestry.load([hider])
+            if not self._connector_sees(hider, ancestry):   # outside connector access: as if no such folder
+                return DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND)
             return _not_indexed(hider.name)   # the path runs into a folder whose contents are not indexed
         matches = await self._as_folders(anchored, ancestry)
         page_full = not descent_complete
@@ -2062,6 +2067,25 @@ class DriveSearchService:
                            conn.ref_tag)
                       for f in sorted(matches, key=lambda f: f.path)[:K])
         return DriveSearchResult(status=STATUS_AMBIGUOUS_FOLDER, cards=cards)
+
+    @staticmethod
+    def _connector_sees(rec: DriveIndexRecord, ancestry: _Ancestry) -> bool:
+        """Under the connector audience: the record lies inside connector access by its recorded ancestors (walked
+        through the loaded cache, a hiding ancestor included, an unrecorded one ending the chain), so a folder outside
+        it is never named, not even as "not indexed" (DRIVE_MCP_CONNECTOR_RFC §7.7). Always True with no audience."""
+        if CURRENT_DRIVE_AUDIENCE.get() is not DriveAudience.CONNECTOR or ancestry.admit is None:
+            return True
+        ancestors: List[str] = []
+        parent_id, seen = rec.parent_id, {rec.item_id}
+        while (parent_id and parent_id != ancestry.root_item_id and parent_id not in seen
+               and len(ancestors) < MAX_CHAIN_DEPTH):
+            parent = ancestry.cache.get(parent_id)
+            if parent is None:
+                break
+            seen.add(parent_id)
+            ancestors.append(parent_id)
+            parent_id = parent.parent_id
+        return ancestry.admit(rec, ("", tuple(ancestors)))
 
     async def _as_folders(self, recs: List[DriveIndexRecord], ancestry: _Ancestry) -> List[_Folder]:
         await ancestry.load(recs)
@@ -2232,7 +2256,8 @@ class DriveSearchService:
                 # the file's path is looked up only when the cut note will use it
                 cuts = open_needs_cut(stored, max_chars=OPEN_MAX_CHARS)
                 mirror_path = ""
-                if cuts:
+                # the connector never gets the mirror's path: it names a folder outside its access (§7.7)
+                if cuts and CURRENT_DRIVE_AUDIENCE.get() is not DriveAudience.CONNECTOR:
                     mirror_path = self._shown_folder(conn, await self._active_mirror_path(conn, rec.identity)) or ""
                 # the cut line names the record's real state (§29.10): asked only when the text is cut
                 extent = await self._extent_or_none(conn, item_id) if cuts else None

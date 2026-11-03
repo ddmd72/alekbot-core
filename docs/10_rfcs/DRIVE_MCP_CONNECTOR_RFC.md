@@ -420,6 +420,11 @@ One neutral code line that never says whether the item exists (proposed wording 
 - **An unreadable ancestor is not on the provider chain under the audience.** A parent that answers "not found" to an
   id read ends the walk and is left out of the chain, as the index admit never sees an unrecorded ancestor and a real
   provider names no parent the account cannot read; so a connector folder closed to the bot admits nothing below it.
+- **No folder named outside access.** Under the audience a folder lookup (by path or by ref) answers "no such folder"
+  for a folder outside connector access before any "contents not indexed" answer, and an opened transcript's cut note
+  never prints the mirror's path.
+- The search envelope's coverage counts (files the bot cannot open, not read yet) are drive-wide counts, no names;
+  accepted.
 - The `DRIVE_MCP_TOOLS_ENABLED` knob is gone: the tools are always registered, and every drive starts at "Nothing".
 
 ## 8. One-time download link (slice 4)
