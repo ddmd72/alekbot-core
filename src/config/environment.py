@@ -469,6 +469,14 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_note_erase_requests"
 
     @property
+    def drive_links_collection(self) -> str:
+        """
+        The drive connector's one-time download links, one document per link under the keyed digest of its id
+        (DRIVE_MCP_CONNECTOR_RFC §8); short-lived (a TTL policy on `purge_after`). Dev: development_drive_links
+        """
+        return f"{self.firestore_collection_prefix}drive_links"
+
+    @property
     def drive_connections_collection(self) -> str:
         """
         Drive connections, one document per mounted drive under `{user_id}:{connection_id}`; never deleted (a
