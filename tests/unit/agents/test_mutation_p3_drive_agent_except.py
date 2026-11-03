@@ -5,7 +5,6 @@ L305: a failing turn-cap alert is logged as a warning and never changes the answ
 import logging
 from unittest.mock import AsyncMock
 
-import pytest
 
 from src.agents import drive_agent as module
 from src.domain.agent import AgentStatus
