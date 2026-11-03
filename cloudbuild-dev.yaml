@@ -2,7 +2,8 @@
 # deploy-main -> main-public-iam. Only after that do the independent rest run in PARALLEL (queue -> indexer -> its IAM;
 # the research job; relay -> its IAM; the scheduler script after the queue it feeds), so a drive or relay failure can
 # never stop a bot hotfix: every one of them waits for main-public-iam, and none of them is a dependency of main.
-# The sandbox steps stay serial and wait for all four branches, exactly as before (after every drive step).
+# The sandbox steps (light family, then render family) stay serial and wait for all four branches, exactly as before
+# (after every drive step).
 steps:
   # Pull previous image to use as build cache (|| true so first deploy doesn't fail)
   - name: "gcr.io/cloud-builders/docker"
@@ -38,6 +39,7 @@ steps:
       - "--memory=2Gi"
       - "--cpu=2"
       - "--timeout=1800"
+      - "--execution-environment=gen2" # the parser child's limits were measured on gen2 (USER_FILE_PARSING_RFC §4.8)
       - "--port=8080" # Required for HTTP mode
       - "--allow-unauthenticated" # For dev testing
       - "--set-secrets=SLACK_BOT_TOKEN=SLACK_BOT_TOKEN_DEV:latest,SLACK_SIGNING_SECRET=SLACK_SIGNING_SECRET_DEV:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,XAI_API_KEY=XAI_API_KEY:latest,GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest,GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest,FIREBASE_WEB_API_KEY=FIREBASE_WEB_API_KEY:latest,OAUTH_SESSION_SECRET=OAUTH_SESSION_SECRET:latest,TELEGRAM_BOT_TOKEN=TELEGRAM_BOT_TOKEN_DEV:latest,TELEGRAM_WEBHOOK_SECRET=TELEGRAM_WEBHOOK_SECRET_DEV:latest,DOCS_OWNER_USER_ID=docs-owner-user-id:latest,OAUTH_CONNECT_REDIRECT_URI=OAUTH_CONNECT_REDIRECT_URI_DEV:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_URL=OPENAI_DEEP_RESEARCH_WEBHOOK_URL_DEV:latest,OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET=OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET_DEV:latest,GOOGLE_SEARCH_API_KEY=GOOGLE_SEARCH_API_KEY:latest,UNSPLASH_ACCESS_KEY=UNSPLASH_ACCESS_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,MICROSOFT_TASKS_WEBHOOK_SECRET=MICROSOFT_TASKS_WEBHOOK_SECRET:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,SLACK_APP_TOKEN=SLACK_APP_TOKEN:latest,GOOGLE_SEARCH_CX=GOOGLE_SEARCH_CX:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,LOGFIRE_TOKEN=LOGFIRE_TOKEN:latest,TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,TWILIO_VERIFY_SERVICE_SID=TWILIO_VERIFY_SERVICE_SID:latest,TWILIO_PHONE_NUMBER=TWILIO_PHONE_NUMBER:latest,CLOUDFLARE_SFU_APP_ID=CLOUDFLARE_SFU_APP_ID:latest,CLOUDFLARE_SFU_APP_SECRET=CLOUDFLARE_SFU_APP_SECRET:latest,GCS_WORKSPACE_BUCKET=GCS_WORKSPACE_BUCKET:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,VOICE_RELAY_SA_EMAIL=VOICE_RELAY_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest,KMS_CRYPTO_KEY=KMS_CRYPTO_KEY:latest,SECRET_DIGEST_KEY=SECRET_DIGEST_KEY:latest"
@@ -316,6 +318,57 @@ steps:
       - "PROJECT_ID=$PROJECT_ID"
       - "SERVICE_URL=$_SERVICE_URL"
 
+  # Untrusted-content sandbox, light (parse) family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12, §11). Same rules as the render
+  # family below: after every drive step, each step a no-op while _SANDBOX_LIGHT_SA is empty. The render steps stay the
+  # last four.
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-pull"
+    waitFor: ["indexer-public-iam", "deploy-research-job", "relay-public-iam", "scheduler-jobs"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "pull"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-build"
+    waitFor: ["sandbox-light-pull"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "build"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "sandbox-light-push"
+    waitFor: ["sandbox-light-build"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "push"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "sandbox-light-deploy"
+    waitFor: ["sandbox-light-push"]
+    entrypoint: "bash"
+    args: ["scripts/infrastructure/cloudbuild_sandbox_light.sh", "deploy"]
+    env:
+      - "PROJECT_ID=$PROJECT_ID"
+      - "SANDBOX_LIGHT_SA=$_SANDBOX_LIGHT_SA"
+      - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
+      - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
+      - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+
   # Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). After every drive step on purpose: a
   # failing sandbox step never blocks a hotfix of the bot. Each step is a no-op while _SANDBOX_RENDER_SA is empty (the
   # service identity does not exist yet), so these steps cannot break the main deploy. The script holds the logic (Cloud
@@ -391,3 +444,7 @@ substitutions:
   _SANDBOX_RENDER_URL: ""
   _SANDBOX_RENDER_SA: ""
   _SANDBOX_RENDER_CALLERS: ""
+  _SANDBOX_LIGHT_SA: ""
+  _SANDBOX_LIGHT_URL: ""
+  _SANDBOX_LIGHT_CALLERS_MAIN: ""
+  _SANDBOX_LIGHT_CALLERS_INDEXER: ""

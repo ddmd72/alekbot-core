@@ -28,6 +28,7 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_service_connections import ConnectionReads
 from tests.unit.domain.drive_excerpt_builders import LEASE, TOMS_PLAN, chunk, excerpt_file, result
+from tests.support.opened_file import opened_body
 
 CTX = {"user_id": "u1", "account_id": "a1"}
 QUESTION = "What does Tom's plan say happens after the first review?"
@@ -246,7 +247,7 @@ async def test_an_open_logs_the_ref_and_the_size_of_the_converted_text(caplog):
     item = DriveItem(item_id="item-1", name="Tom's plan.docx", path=TOMS_PLAN, is_folder=False, size_bytes=4096,
                      mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.resolve_content.return_value = "x" * 1234
+    conversion.open.return_value = opened_body("x" * 1234)
     search = AsyncMock(spec=DriveSearchService)
     search.archived_text.return_value = None
     ops = DriveOperations(conversion_service=conversion, drive_service=_drive_with(item), drive_search=search)

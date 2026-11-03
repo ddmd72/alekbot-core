@@ -8,9 +8,12 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.document_presentation import present_text
+from src.domain.document_read import ReadOutcome, ReadStatus
 from src.domain.document_limits import MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES
+from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.language import LanguageCode
-from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain, to_plain
 from src.domain.ui_messages import UIMessage
 from src.domain.user_drive import (
     DeleteOutcome,
@@ -32,6 +35,7 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_service_connections import seed_user, seeded_connections
+from tests.support.opened_file import opened_body, opened_native, opened_note
 
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False,
                  size_bytes=2048, mime_type="application/pdf")
@@ -145,15 +149,21 @@ class TestStoreGuards:
 
     async def test_open_file_is_lenient_with_drive_ref(self, agent, conversion, drive):
         drive.get_item.return_value = NOTE
-        conversion.resolve_content.return_value = "[File: Notes/todo.md]\nx\n[/File: Notes/todo.md]"
+        conversion.open.return_value = opened_body("[File: Notes/todo.md]\nx\n[/File: Notes/todo.md]")
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:n1"))
         assert resp.status == AgentStatus.SUCCESS
-        conversion.resolve_content.assert_awaited_once_with("drive:a1:n1", "u1")
+        conversion.open.assert_awaited_once()
+        assert conversion.open.await_args.args == ("drive:a1:n1", "u1", "a1")
 
-    async def test_open_file_from_drive_is_lenient_with_chat_ref(self, ops, conversion, drive):
-        conversion.resolve_content.return_value = "text"
+    async def test_open_file_from_drive_is_lenient_with_chat_ref(self, ops, conversion, drive, monkeypatch):
+        # a chat ref is served from storage and presented as a stored file: marked and cut (EXTERNAL_FILES_RFC P15, D20)
+        monkeypatch.setattr("src.infrastructure.drive_operations.secrets.token_hex", lambda n: "0123456789abcdef")
+        conversion.open.return_value = opened_body("text")
         out = await ops.open(CTX, "u1", "notes.txt")
-        assert out.success and out.text == "text"
+        assert out.success and out.text == present_text("text", store="chat", ref="notes.txt", label="notes.txt",
+                                                         nonce="0123456789abcdef",
+                                                         outcome=ReadOutcome(status=ReadStatus.TEXT))
+        assert conversion.open.await_args.args == ("notes.txt", "u1", "a1")
         drive.get_item.assert_not_called()
 
     async def test_unknown_intent_lists_no_search(self, agent):
@@ -164,41 +174,54 @@ class TestStoreGuards:
 class TestOpenCaps:
     # Above the declared cap the open goes the converter's way (EXTERNAL_FILES_RFC §4.3, U2), never a native download;
     # the converter refuses an oversized file on metadata before downloading it.
+    # Since U3 the service sizes the file on metadata before any download (EXTERNAL_FILES_RFC §4.2 step 2, P16;
+    # tests/unit/services/test_file_conversion_open.py::test_a_drive_file_over_the_cap_gives_the_size_line_before_download):
+    # here the open is asked once with the consumer's declaration, nothing is fetched as bytes, and its note is shown.
+    # The size note is a failed open (U3 seam fix: a note is never file content and never a success), like the drive
+    # wrapper's own DriveFileTooLargeError refusal; only §29's too-long refusal answers as success (L13).
     async def test_large_image_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = BIG_IMAGE
-        conversion.resolve_content.return_value = TOO_LARGE_AS_TEXT
+        conversion.open.return_value = opened_note(TOO_LARGE_AS_TEXT, ReadStatus.TOO_LARGE)
         out = await ops.open({**CTX, **NATIVE_AT_CAPS}, "u1", "drive:a1:i1")
-        assert out.success and TOO_LARGE_AS_TEXT in out.text and out.file_data is None
+        assert not out.success and out.cls is OutcomeClass.FAILED and not out.body and out.file_data is None
+        assert out.text.endswith(f"ref=drive:a1:i1]\n{TOO_LARGE_AS_TEXT}") and "<drive_document" not in out.text
         conversion.resolve_bytes.assert_not_called()
-        conversion.resolve_content.assert_awaited_once_with("drive:a1:i1", "u1")
+        conversion.open.assert_awaited_once()
+        assert conversion.open.await_args.args == ("drive:a1:i1", "u1", "a1")
+        assert conversion.open.await_args.kwargs["consumer"] == from_plain(NATIVE_AT_CAPS[NATIVE_FORMATS_KEY])
 
     async def test_large_pdf_refused_without_download(self, agent, conversion, drive):
+        # the service's side: test_file_conversion_open.py::test_a_drive_pdf_over_the_declared_pdf_cap_is_refused_before_download
         drive.get_item.return_value = BIG_PDF
-        conversion.resolve_content.return_value = TOO_LARGE_AS_TEXT
+        conversion.open.return_value = opened_note(TOO_LARGE_AS_TEXT, ReadStatus.TOO_LARGE)
         msg = _msg(Intent.OPEN_FILE, file_ref="drive:a1:p1")
         msg.context.update(NATIVE_AT_CAPS)
         resp = await agent.execute(msg)
-        assert resp.status == AgentStatus.SUCCESS and TOO_LARGE_AS_TEXT in resp.result
+        assert resp.status == AgentStatus.FAILED and resp.error.endswith(f"ref=drive:a1:p1]\n{TOO_LARGE_AS_TEXT}")
+        assert "<drive_document" not in resp.error and resp.result is None
         assert "file_data" not in resp.metadata
         conversion.resolve_bytes.assert_not_called()
-        conversion.resolve_content.assert_awaited_once_with("drive:a1:p1", "u1")
+        conversion.open.assert_awaited_once()
+        assert conversion.open.await_args.args == ("drive:a1:p1", "u1", "a1")
+        assert conversion.open.await_args.kwargs["consumer"] == from_plain(NATIVE_AT_CAPS[NATIVE_FORMATS_KEY])
 
     async def test_heic_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = HEIC
         out = await ops.open(CTX, "u1", "drive:a1:h1")
         assert out.success and "cannot be viewed yet" in out.text
         conversion.resolve_bytes.assert_not_called()
-        conversion.resolve_content.assert_not_called()
+        conversion.open.assert_not_called()
 
     async def test_small_image_is_attached_for_vision(self, agent, conversion, drive):
         drive.get_item.return_value = SMALL_PNG
-        conversion.resolve_bytes.return_value = b"\x89PNG"
+        conversion.open.return_value = opened_native("/tmp/a.png", "image/png")   # the service's NATIVE answer (P16)
         msg = _msg(Intent.OPEN_FILE, file_ref="drive:a1:i2")
         msg.context.update(NATIVE_AT_CAPS)
         resp = await agent.execute(msg)
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
         assert resp.history_context == {"drive_context": [{"path": "Drive/a.png", "ref": "drive:a1:i2", "op": "opened"}]}
+        assert conversion.open.await_args.kwargs["consumer"] == from_plain(NATIVE_AT_CAPS[NATIVE_FORMATS_KEY])
 
     async def test_folder_is_pointed_to_listing(self, ops, conversion, drive):
         drive.get_item.return_value = FOLDER
@@ -415,7 +438,7 @@ class TestErrors:
 
     async def test_conversion_not_wired_is_not_configured(self, agent, conversion, drive):
         drive.get_item.return_value = NOTE   # the open reads the item through the drive service, then the conversion
-        conversion.resolve_content.side_effect = FileNotFoundError("unavailable")
+        conversion.open.side_effect = FileNotFoundError("unavailable")
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:n1"))
         assert resp.status == AgentStatus.FAILED and resp.error == "The drive is not configured."
 

@@ -4,6 +4,10 @@
 **Status:** Accepted, with an owner-accepted residual risk and a named trigger (User Drive Step 2, Slice 2+4;
 adversarial review A, final review 3). Residual risk accepted by the owner on 2026-10-13 for the current whitelist;
 revisit before the whitelist admits anyone beyond the people the owner vouches for (see Trigger).
+**Status update (U3, EXTERNAL_FILES_RFC D14):** the same child also runs in the main service, under the same unprivileged
+identity (`DRIVE_PARSER_USER`, one slot, `MAIN_PARSER_MAX_CHILDREN`), for chat, workspace, delivered and drive opens. The
+trigger below applies there as well, and the residual risk is accepted in both runtimes until the sandbox's parse slices
+S3/S4 replace the child with an adapter behind the same port (UNTRUSTED_CONTENT_SANDBOX_RFC).
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §16 (Phase 0), §24.3,
 §24.14; `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`,
 `src/adapters/drive_parser/readers.py`, `src/utils/document_hardening.py`, `Dockerfile`, `indexer_main.py`.

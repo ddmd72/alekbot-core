@@ -107,6 +107,7 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_skill_repository.FirestoreSkillRepository": (_A + "test_skill_store_kit.py",),
     _STORE + "firestore_task_config_repository.FirestoreTaskConfigRepository": (_A + "test_task_config_store_kit.py",),
     _STORE + "firestore_task_search_index.FirestoreTaskSearchIndex": (_A + "test_task_search_index_store_kit.py",),
+    _STORE + "firestore_transcript_cache.FirestoreTranscriptCache": (_A + "test_firestore_transcript_cache.py",),
     # P11 GCS kits (tests/support/gcs_fake.py) and the Cloud Tasks kit (FailingTasksClient)
     _STORE + "gcs_file_storage_adapter.GcsFileStorageAdapter": (_A + "test_file_storage_store_kit.py",),
     _STORE + "gcs_media_adapter.GcsMediaAdapter": (_A + "test_media_store_kit.py",),

@@ -326,6 +326,7 @@ def _store(claimed=True):
 
 def _real_agent_worker(route_result=None, route_error=None):
     coordinator = MagicMock()
+    coordinator.prefetch_file_ref = AsyncMock()
     if route_error is not None:
         coordinator.route_message = AsyncMock(side_effect=route_error)
     else:

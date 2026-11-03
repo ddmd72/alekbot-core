@@ -107,14 +107,14 @@ ConversationHandler
         |       None --> system note in the attachment's slot (see 2.1.1), no file part
         |
         |-- FileConversionService present?
-        |       YES --> process_attachment()
+        |       YES --> process_attachment()      (label-only: the upload turn never parses a file)
         |               |-- Read bytes from local_path
         |               |-- Upload to GCS (sanitize + dedup)
         |               |-- Return reference-only MessagePart:
         |               |     text = [File: "report.docx" (45KB)]
         |               |     file_data = {ref, mime_type, size_bytes, path?}
         |               |-- Native binary: file_data includes "path" for current turn
-        |       NO  --> Legacy path (inline content)
+        |       NO  --> storage_unavailable_alert() in the attachment's slot (see 2.1.2); ERROR line
         v
 LLM adapters encode file_data.path for current turn if present
 ```
@@ -154,6 +154,15 @@ warning. Bounded since by `file_conversion.safe_temp_suffix()` — **in bytes**,
 character costs 2 and NAME_MAX is 255 bytes. The adapter still logs `logger.error`, which is what
 the ops alert policy watches.
 
+#### 2.1.2 Storage unavailable
+
+The legacy branch that converted an upload to text (or attached it natively) inside `ConversationHandler` is gone
+(EXTERNAL_FILES_RFC U3): the handler never parses. A handler built without a `FileConversionService` puts
+`file_conversion.storage_unavailable_alert()` in the attachment's slot: a `[System: ...]` note saying the file arrived
+but cannot be stored or read right now, that its content is NOT available, and that the agent must not guess it. It also
+logs an ERROR line (`No file service: attachment ...`), which the Errors-dev alert picks up. The branch exists so a
+mis-wired graph is loud, not silent.
+
 ### 2.2 Fetch Flow (orchestrator-driven)
 
 ```
@@ -162,12 +171,11 @@ Orchestrator (Smart/Quick)
         v
 AgentCoordinator --> FileManagementAgent
         |
-        |-- Infer MIME type from extension
-        |-- is_native_binary?
-        |       YES --> download from GCS --> temp file
-        |               Return file_data in metadata (LLM vision)
-        |       NO  --> resolve_content (download + convert)
-        |               Return full text (no truncation)
+        |-- DriveOperations.fetch_stored --> FileConversionService.open(ref, consumer=<native declaration>, deadline_at)
+        |       download from GCS --> DocumentService.read (kind from bytes, caps, native or pipeline)
+        |       native file --> file_data in metadata (LLM vision)
+        |       text --> marked and cut at 60 000 characters (one cut on every non-drive path)
+        |       failure --> a [System: ...] note
         v
 SmartAgent reads file_data from metadata --> attaches as MessagePart
 Tool response NOT saved to history (content is ephemeral)
@@ -181,8 +189,8 @@ returns an `ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `
 implementations are chained per kind by `EXTRACTOR_CHAINS`: `SubprocessContentExtractor` (`parser`) runs markitdown
 with the Phase 0 allowlist and the RTF, EML, ODF and VTT readers in a child process under memory, CPU and wall-clock
 limits, and `DriveReaderRunner` (`reader`) sends what the parser cannot read (scans, images, broken-font PDFs) to the
-document reader agent. Chat uploads, `open_file` and opened drive files keep the path above until Slice 3 moves
-them onto the port; until then, the same file can read differently in chat and in a search window.
+document reader agent. Chat uploads, `open_file` and opened drive files read through the same pieces since U3 (`FileConversionService.open` ->
+`DocumentService`, [file_conversion](../file_conversion/README.md)); the parse engines still differ per kind until U5.
 
 ### 2.3 Specialist File Injection
 
@@ -192,8 +200,8 @@ Orchestrator delegates: delegate_to_specialist(intent="create_pdf", context={fil
         v
 AgentCoordinator._resolve_file_refs()
         |-- Downloads file from GCS
-        |-- Converts to text via FileConversionService.resolve_content()
-        |-- Injects "file_content" into specialist params
+        |-- Reads the ref via FileConversionService.prefetch() (text only, marked, cut at 60 000)
+        |-- Injects "file_content" (or "file_note" when unreadable) into specialist params
         v
 Specialist receives pre-resolved text content
 Orchestrator never sees raw file content
@@ -345,9 +353,10 @@ verify ownership (§2.4).
 | Method | Purpose |
 |--------|---------|
 | `process_attachment(local_path, filename, mime_type, user_id)` | Upload to GCS, return reference-only MessagePart |
-| `resolve_content(ref, user_id)` | Download from GCS + convert to text |
+| `open(ref, user_id, account_id, consumer, deadline_at)` | Resolve + stage + read through the document service; text, note or native file (see [file_conversion](../file_conversion/README.md)) |
+| `prefetch(ref, ..., deadline_at)` | `open` as text only for a specialist |
 | `resolve_bytes(ref, user_id)` | Download raw bytes (for specialists needing original) |
-| `resolve_content` / `resolve_bytes` on `workspace:<path>` | Smart's workspace files through `WorkspaceStorePort` (AGENT_WORKSPACE_RFC §12): text kinds verbatim in `[File]` markers, binary converted; any folder, the requesting user's objects only |
+| `open` / `resolve_bytes` on `workspace:<path>` | Smart's workspace files through `WorkspaceStorePort` (AGENT_WORKSPACE_RFC §12): text kinds verbatim in `[File]` markers, binary read by the document service; any folder, the requesting user's objects only |
 
 **Reference-only MessagePart format:**
 

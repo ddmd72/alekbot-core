@@ -1,6 +1,9 @@
 """FileConversionService and DeepResearchDriveCopyService by connection (MULTI_DRIVE_RFC §9, §11.5, D7; slice 1b part D):
 a drive ref's tag is resolved to its connection's handle before any drive call, a ref of no live connection raises its
-code-built line, and the deep-research copy lands on the primary (none: "not connected", nothing written)."""
+code-built line, and the deep-research copy lands on the primary (none: "not connected", nothing written). A drive file
+opens through `open`, which replaced `resolve_content` (EXTERNAL_FILES_RFC §4.2), over the real document service."""
+import time
+
 from tests.support.drive_access_stub import allow_access
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -17,12 +20,14 @@ from src.ports.file_storage_port import FileStoragePort
 from src.ports.language_service_port import LanguageServicePort
 from src.ports.user_repository import UserRepository
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
+from src.services.document_service import DocumentService
 from src.services.file_conversion_service import FileConversionService
 from src.services.localization_service import LocalizationService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_connections import connection_service, seed
 from tests.support.fake_drive_adapter import FakeDriveAdapter
+from tests.unit.services.test_document_service_read import FakeExtractor, FakeSplitter
 
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
@@ -42,6 +47,7 @@ async def world():
     assert w.drive.plant(w.two.handle, "root", "two.txt", b"from two") == "item-1"   # the same item id on purpose (T-4)
     w.conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
                                          connections=w.connections, access=allow_access())
+    w.conversion.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
     return w
 
 
@@ -49,7 +55,8 @@ class TestConversionResolvesTheTag:
     async def test_bytes_and_metadata_come_from_the_tags_connection(self, world):
         assert await world.conversion.resolve_bytes("drive:b2:item-1", "usr-1") == b"from two"
         assert (await world.conversion.get_drive_item("ref=drive:a1:item-1]", "usr-1")).name == "one.txt"
-        assert "from two" in await world.conversion.resolve_content("drive:b2:item-1", "usr-1")
+        opened = await world.conversion.open("drive:b2:item-1", "usr-1", "acc-1", deadline_at=time.time() + 60)
+        assert "from two" in opened.body
 
     async def test_a_stale_ref_raises_its_line(self, world):
         with pytest.raises(DriveRefRefused) as refused:

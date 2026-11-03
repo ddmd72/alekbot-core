@@ -21,7 +21,14 @@ from src.agents.drive_agent import DriveAgent
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition.drive_specialist_build import build_drive_specialist
 from src.domain.agent import AgentConfig
+from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
+from src.composition.drive_reader_runner import DriveReaderRunner
+from src.composition.document_service_setup import MAIN_PARSER_MAX_CHILDREN
 from src.domain.drive_connection import DriveConnection
+from src.domain.drive_extraction import (
+    ExtractionOutcome, ExtractionRequest, DriveModelUnavailable)
+from src.ports.content_extractor_port import ContentExtractorPort
+from src.services.document_service import DocumentService
 from src.domain.drive_search import DriveSearchRequest, DriveSearchResult
 from src.domain.drive_search_line import SearchLine
 from src.infrastructure.agent_coordinator import AgentCoordinator
@@ -115,6 +122,43 @@ class _NoChatFiles:
         raise FileNotFoundError(filename)
 
 
+class _NoReader(ContentExtractorPort):
+    """The scan reader of a fixture without a model setup: every call is the model-unavailable outcome."""
+
+    @property
+    def extractor_id(self) -> str:
+        return "eval_no_reader"
+
+    @property
+    def version(self) -> int:
+        return 1
+
+    async def extract(self, request: ExtractionRequest) -> ExtractionOutcome:
+        raise DriveModelUnavailable("the eval fixture has no reader model")
+
+
+class _CaseUsers:
+    """The case user's one profile, for the production reader's provider lookup."""
+
+    def __init__(self, config: Any) -> None:
+        self._user = type("EvalUser", (), {"config": config})()
+
+    async def get_user(self, user_id: str) -> Any:
+        return self._user
+
+
+def _document_service(user_config: Any, prompt_builder: Any, context_builder: Any) -> DocumentService:
+    """`build_document_service`'s wiring: the real parser child (no sandbox user locally) as parser and splitter; the
+    production reader over the given model setup, else one that answers model-unavailable."""
+    parser = SubprocessContentExtractor(sandbox_user=None, max_children=MAIN_PARSER_MAX_CHILDREN)
+    if user_config is not None and prompt_builder is not None and context_builder is not None:
+        reader: ContentExtractorPort = DriveReaderRunner(context_builder, _CaseUsers(user_config), prompt_builder,
+                                                         parser)
+    else:
+        reader = _NoReader()
+    return DocumentService(parser, reader, parser)
+
+
 @dataclass
 class DriveFixture:
     engine: DelegationEngine          # dispatches into the fixture coordinator
@@ -138,6 +182,7 @@ def build_drive_fixture(user_id: str, drive: Any, search: Any, *, user_config: A
     connections = EvalDriveConnections(eval_connection(user_id))   # the case user's one connection (tag `ev`)
     service = UserDriveService(drive, connections)
     conversion = FileConversionService(storage=storage, drive=drive, connections=connections, access=service)
+    conversion.attach_documents(_document_service(user_config, prompt_builder, context_builder))
     operations = DriveOperations(conversion_service=conversion, drive_service=service, drive_search=as_user)
     files = FileManagementAgent(
         config=AgentConfig(agent_id=f"{FILE_MANAGEMENT.agent_id}_{user_id}", agent_type="file_management",

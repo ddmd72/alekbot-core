@@ -30,6 +30,7 @@ from ..infrastructure.agent_config import DOC_PLANNER
 from ..infrastructure.agent_manifest import Intent
 from ..ports.llm_port import AgentExecutionContext, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
+from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
@@ -102,10 +103,16 @@ class DocPlannerAgent(BaseAgent):
                 error="No query provided in payload",
             )
 
+        file_note = message.payload.get("file_note")
+        if file_note and not message.payload.get("file_content"):
+            # The prefetch could not read the file: the note is the user's answer, never document text.
+            logger.warning("[%s] file not readable, failing the task with the prefetch note", self.agent_id)
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=file_note)
+
         # Append any extra string fields from the payload (e.g. report_content spread by
         # AgentWorkerHandler from context["params"]) — skip "query" and "intent" which are
         # routing metadata, not content. Non-string values are silently ignored.
-        _excluded = {"query", "intent"}
+        _excluded = {"query", "intent", "file_note"}
         for key, val in message.payload.items():
             if key not in _excluded and isinstance(val, str) and val:
                 query = f"{query}\n\n{val}"

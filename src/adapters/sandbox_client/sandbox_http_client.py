@@ -10,23 +10,29 @@ Classification is by HTTP status FIRST, then the outcome header (Cloud Run's own
     401 / 403, any 404 / 405        SandboxMisconfigured + ERROR log, whatever the header says (the server adds an outcome
                                     to routing misses too); bad_request `unknown_op` / `bad_meta` likewise
     408                             the server's body timeout: our upload stalled, a transport loss (retry once)
-    429, 503 other than recycling,  SandboxUnavailable (systemic, nothing charged)
-    connect error / refused
-    503 `recycling`                 retried at once, up to 3 attempts, short jitter; still recycling -> Unavailable
+    429, 503 other than recycling   SandboxUnavailable(reason="busy"), no retry (systemic, nothing charged)
+    connect error / refused,        SandboxUnavailable(reason="unavailable"), no retry
+    not configured
+    503 `recycling`                 one retry at once (2 attempts, short jitter); still recycling -> Unavailable("busy")
     reset / 5xx WITHOUT a valid     one retry on a fresh instance, then outcome `error`, detail `sandbox_lost`
     outcome header, or a timeout
     413                             outcome `too_large` (the server's detail kept when it sent an outcome)
     anything else                   decided by the valid outcome header (a 500 `error` or 504 `timeout` is an engine
                                     verdict, not a transport loss); no valid header -> outcome `error`
-Timeout = the child's wall + 15 s. One log line per call: request_id, op, status, wall; nothing else.
+Timeout = the child's wall + 15 s. A retry starts only with time left before `deadline_at` (epoch seconds), its meta `wall_s` lowered to that time; none
+left -> outcome `timeout` / `deadline`, no request. A body is bytes, or a file (`body_path`) streamed from disk in 1 MiB
+chunks and reopened per attempt, so a large PDF is never held as one `bytes`.
+One log line per call: request_id, op, status, wall; nothing else. INFO for `ok`, WARNING for any other status
+(unavailable included), ERROR for `misconfigured`.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 import time
-from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional
+from dataclasses import dataclass, replace
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Sequence, Tuple, Union
 
 import httpx
 
@@ -50,9 +56,10 @@ from ...utils.logger import logger
 from .metadata_id_token_provider import normalise_audience
 
 TIMEOUT_MARGIN_S = 15.0
-MAX_RECYCLING_ATTEMPTS = 3
+MAX_RECYCLING_ATTEMPTS = 2
 MAX_LOST_ATTEMPTS = 2
 _CONNECT_TIMEOUT_S = 30.0
+_BODY_CHUNK_BYTES = 1 << 20
 _JITTER_S = (0.05, 0.25)
 # Details only sandbox_app.py's own validation produces (never an engine's bad_request): never the script's fault.
 SERVER_ONLY_BAD_REQUEST_DETAILS = frozenset({"unknown_op", "bad_meta"})
@@ -92,12 +99,18 @@ class SandboxHttpClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def call(self, op: SandboxOp, body: bytes, limits: SandboxLimits, *,
-                   kind: Optional[str] = None, ext: Optional[str] = None) -> SandboxReply:
+    async def call(self, op: SandboxOp, body: Optional[bytes], limits: SandboxLimits, *,
+                   kind: Optional[str] = None, ext: Optional[str] = None, body_path: Optional[str] = None,
+                   deadline_at: Optional[float] = None,
+                   windows: Optional[Sequence[Tuple[int, int]]] = None) -> SandboxReply:
+        """Exactly one of `body` (bytes) and `body_path` (a file streamed from disk) is given. `windows`: the
+        `(first_page, page_count)` plan of `parse.pdf_windows`, sent in the meta."""
+        if (body is None) == (body_path is None):
+            raise ValueError("exactly one of body and body_path is required")
         started = time.monotonic()
         state: dict = {"ids": [], "status": "error"}
         try:
-            reply = await self._call(op, body, limits, kind, ext, state)
+            reply = await self._call(op, body, body_path, limits, kind, ext, deadline_at, windows, state)
             state["status"] = reply.outcome.status.value
             return reply
         except SandboxUnavailable:
@@ -112,11 +125,15 @@ class SandboxHttpClient:
             raise
         finally:
             # One line per call, bounded: at most MAX_RECYCLING_ATTEMPTS + MAX_LOST_ATTEMPTS ids.
-            logger.info("[SandboxClient] request_id=%s op=%s status=%s wall_s=%.3f",
-                        ",".join(state["ids"]) or "-", op.value, state["status"], time.monotonic() - started)
+            status_text = state["status"]
+            log = (logger.info if status_text == SandboxStatus.OK.value
+                   else logger.error if status_text == "misconfigured" else logger.warning)
+            log("[SandboxClient] request_id=%s op=%s status=%s wall_s=%.3f",
+                ",".join(state["ids"]) or "-", op.value, status_text, time.monotonic() - started)
 
-    async def _call(self, op: SandboxOp, body: bytes, limits: SandboxLimits, kind: Optional[str],
-                    ext: Optional[str], state: dict) -> SandboxReply:
+    async def _call(self, op: SandboxOp, body: Optional[bytes], body_path: Optional[str], limits: SandboxLimits,
+                    kind: Optional[str], ext: Optional[str], deadline_at: Optional[float],
+                    windows: Optional[Sequence[Tuple[int, int]]], state: dict) -> SandboxReply:
         try:
             token = await self._token_provider()
         except (SandboxUnavailable, SandboxMisconfigured):
@@ -124,22 +141,36 @@ class SandboxHttpClient:
         except Exception as exc:
             logger.error("[SandboxClient] request_id=- op=%s no ID token: %s", op.value, type(exc).__name__)
             raise SandboxMisconfigured("could not obtain an ID token") from exc
-        total_s = limits.wall_s + TIMEOUT_MARGIN_S
-        timeout = httpx.Timeout(total_s, connect=min(total_s, _CONNECT_TIMEOUT_S))
+        planned = tuple((int(first), int(count)) for first, count in windows) if windows is not None else None
         recycling = 0
         lost = 0
         while True:
+            attempt_limits = limits
+            if state["ids"] and deadline_at is not None:
+                # A retry runs only in the time left, never past the caller's deadline.
+                left = deadline_at - time.time()
+                if left <= 0:
+                    logger.warning("[SandboxClient] op=%s no time left for a retry", op.value)
+                    return SandboxReply(SandboxOutcome(SandboxStatus.TIMEOUT, "deadline"), b"")
+                attempt_limits = replace(limits, wall_s=min(limits.wall_s, left))
+            total_s = attempt_limits.wall_s + TIMEOUT_MARGIN_S
+            timeout = httpx.Timeout(total_s, connect=min(total_s, _CONNECT_TIMEOUT_S))
             request_id = new_request_id()
             state["ids"].append(request_id)
             headers = {
                 "Authorization": f"Bearer {token}",
-                META_HEADER: encode_meta(SandboxMeta(request_id=request_id, limits=limits, kind=kind, ext=ext)),
+                META_HEADER: encode_meta(SandboxMeta(request_id=request_id, limits=attempt_limits, kind=kind,
+                                                     ext=ext, windows=planned)),
                 "Content-Type": "application/octet-stream",
                 "Accept-Encoding": "identity",
             }
+            content: Any = body
+            if body_path is not None:
+                headers["Content-Length"] = str((await asyncio.to_thread(os.stat, body_path)).st_size)
+                content = _file_chunks(body_path)
             try:
                 # httpx timeouts are per read; the deadline for the whole attempt is ours.
-                raw = await asyncio.wait_for(self._send(op, body, headers, timeout, request_id), timeout=total_s)
+                raw = await asyncio.wait_for(self._send(op, content, headers, timeout, request_id), timeout=total_s)
             except (_Lost, asyncio.TimeoutError):
                 lost += 1
                 if lost >= MAX_LOST_ATTEMPTS:
@@ -167,15 +198,15 @@ class SandboxHttpClient:
                              request_id, op.value, outcome.detail)
                 raise SandboxMisconfigured(f"sandbox refused the request: {outcome.detail}")
             if status == 429:
-                raise SandboxUnavailable("sandbox is busy (429)")
+                raise SandboxUnavailable("sandbox is busy (429)", reason="busy")
             if status == 503:
                 if outcome is not None and outcome.status == SandboxStatus.RECYCLING:
                     recycling += 1
                     if recycling >= MAX_RECYCLING_ATTEMPTS:
-                        raise SandboxUnavailable("sandbox kept recycling")
+                        raise SandboxUnavailable("sandbox kept recycling", reason="busy")
                     await self._sleep(random.uniform(*_JITTER_S))
                     continue
-                raise SandboxUnavailable("sandbox answered 503")
+                raise SandboxUnavailable("sandbox answered 503", reason="busy")
             if (outcome is None and status >= 500) or status == 408:
                 # A 5xx with no outcome (an encoded front-end 502/504 included) is a transport loss. So is a 408 (the
                 # server's body timeout): our own upload stalled, which is not the script's doing.
@@ -192,7 +223,7 @@ class SandboxHttpClient:
             if raw.encoded or outcome is None:
                 return SandboxReply(SandboxOutcome(SandboxStatus.ERROR, "malformed_envelope"), b"")
             if outcome.status == SandboxStatus.RECYCLING:
-                raise SandboxUnavailable("sandbox is recycling")
+                raise SandboxUnavailable("sandbox is recycling", reason="busy")
             if outcome.status == SandboxStatus.UNCONFIGURED:
                 raise SandboxUnavailable("sandbox is not configured")
             if outcome.status == SandboxStatus.OK:
@@ -203,7 +234,8 @@ class SandboxHttpClient:
                 return SandboxReply(outcome, raw.payload)
             return SandboxReply(outcome, raw.payload[:ERROR_TEXT_CAP_BYTES])
 
-    async def _send(self, op: SandboxOp, body: bytes, headers: dict, timeout: httpx.Timeout,
+    async def _send(self, op: SandboxOp, body: Union[bytes, AsyncIterator[bytes]], headers: dict,
+                    timeout: httpx.Timeout,
                     request_id: str) -> _Raw:
         """Raises _Lost for a transport loss, SandboxUnavailable / SandboxMisconfigured for the rest."""
         url = f"{self._base_url}/v1/{op.value}"
@@ -239,6 +271,19 @@ class SandboxHttpClient:
             # we cannot say the input caused it, so it is systemic and nothing is charged to the input.
             logger.error("[SandboxClient] request_id=%s op=%s unclassified transport error: %s", request_id, op.value, type(exc).__name__)
             raise SandboxUnavailable("sandbox call failed") from exc
+
+
+async def _file_chunks(path: str) -> AsyncIterator[bytes]:
+    """The file's bytes in 1 MiB chunks, read off the event loop; reopened by each call, so a retry sends it whole."""
+    handle = await asyncio.to_thread(open, path, "rb")
+    try:
+        while True:
+            chunk = await asyncio.to_thread(handle.read, _BODY_CHUNK_BYTES)
+            if not chunk:
+                return
+            yield chunk
+    finally:
+        await asyncio.to_thread(handle.close)
 
 
 def _read_outcome(header: Optional[str]) -> Optional[SandboxOutcome]:

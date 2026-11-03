@@ -70,7 +70,7 @@ async def test_open_transcribed_audio_returns_wrapped_transcript(agent, drive, c
     search.transcript_text.assert_awaited_once_with(CONN, "s1", path="Drive/Rec/call.m4a",
                                                    label=drive_label(shown, "a1"))
     conversion.resolve_bytes.assert_not_called()
-    conversion.resolve_content.assert_not_called()
+    conversion.open.assert_not_called()
 
 
 async def test_open_transcribed_video_never_sends_bytes(agent, drive, conversion, search, notifier):
@@ -88,7 +88,7 @@ async def test_original_true_returns_link_only(agent, drive, conversion, search,
     resp = await agent.open(CTX, "u1", item_ref(item, "a1"), original=True)
     assert resp.success and item.web_url in resp.text
     conversion.resolve_bytes.assert_not_called()
-    conversion.resolve_content.assert_not_called()
+    conversion.open.assert_not_called()
     notifier.notify_file_bytes.assert_not_called()
     search.transcript_text.assert_not_called()
 

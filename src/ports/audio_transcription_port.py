@@ -30,6 +30,11 @@ An earlier SpeechRecognitionAdapter (markitdown → Google Web Speech API, free)
 abandoned: ~50 requests/day without a key, English only (UnknownValueError on
 Russian/Ukrainian), and zero quality on Cloud Run.
 
+## Metered transcription (EXTERNAL_FILES_RFC §4.4, P21)
+
+`transcribe_metered` makes the same request as `transcribe` and also returns the provider's usage, so a transcribing
+open can bill the account per call. `transcribe` stays for the callers that bill nothing (voice messages).
+
 ## Supported formats (when adapter is present)
 
 audio/mpeg (mp3), audio/wav (wav), audio/mp4 (m4a), audio/x-m4a (m4a alt), audio/ogg (ogg)
@@ -37,6 +42,8 @@ audio/mpeg (mp3), audio/wav (wav), audio/mp4 (m4a), audio/x-m4a (m4a alt), audio
 
 from abc import ABC, abstractmethod
 from typing import Optional, Sequence
+
+from ..domain.audio_transcript import AudioTranscript
 
 
 class AudioTranscriptionPort(ABC):
@@ -65,4 +72,21 @@ class AudioTranscriptionPort(ABC):
 
         Raises:
             Exception: On transcription failure. Caller handles graceful degradation.
+        """
+
+    @abstractmethod
+    async def transcribe_metered(
+        self,
+        local_path: str,
+        mime_type: str,
+        languages: Optional[Sequence[str]] = None,
+    ) -> AudioTranscript:
+        """
+        Transcribe as `transcribe` does, and report the model and the provider's usage.
+
+        Usage comes back token-shaped (input/output tokens) or duration-shaped (seconds); what the
+        provider does not report is zero.
+
+        Raises:
+            Exception: On transcription failure, as `transcribe`.
         """

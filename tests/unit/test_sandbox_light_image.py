@@ -1,0 +1,144 @@
+"""Dockerfile.sandbox target `light` (plan P1): its COPY allowlist is the closure of the service plus the drive child's
+and the parse child entry's, it reaches no agent, service or cloud client, its pins equal requirements.txt, and it holds
+no node or media tool."""
+import re
+from pathlib import Path
+from typing import Dict, List, Set
+
+from src.adapters.sandbox_engine import child_launcher
+from tests.unit import sandbox_closure
+from tests.unit.sandbox_closure import ROOT, _imported_names, _module_file
+
+_DOCKERFILE = ROOT / "Dockerfile.sandbox"
+_LIGHT_ENTRIES = ["src/adapters/drive_parser/child.py", "src/adapters/sandbox_engine/parse_child.py"]
+_FORBIDDEN_SRC = ("src/agents/", "src/handlers/", "src/services/", "src/infrastructure/")
+_FORBIDDEN_EXTERNAL = ("google.cloud.firestore", "google.cloud.secretmanager", "google.cloud.storage", "anthropic",
+                       "openai", "google.genai", "slack_sdk", "google.cloud.bigquery")
+
+
+def _closure_from(entries: List[str]) -> Set[str]:
+    """Like sandbox_closure.closure(), from other entry points (that helper is shared and fixed to sandbox_main)."""
+    import ast
+
+    files: Dict[str, bool] = {}
+    stack = list(entries)
+    while stack:
+        path = stack.pop()
+        if path in files:
+            continue
+        files[path] = True
+        parent = Path(path).parent
+        while str(parent) != ".":
+            init = f"{parent}/__init__.py"
+            if (ROOT / init).is_file():
+                stack.append(init)
+            parent = parent.parent
+        for name in _imported_names(path, ast.parse((ROOT / path).read_text())):
+            if name.split(".")[0] == "src":
+                target = _module_file(name)
+                if target:
+                    stack.append(target)
+    return set(files)
+
+
+def _light_closure() -> Set[str]:
+    service, _ = sandbox_closure.closure()
+    return service | _closure_from(_LIGHT_ENTRIES)
+
+
+def _light_instructions() -> List[str]:
+    joined = re.sub(r"\\\n", " ", _DOCKERFILE.read_text())
+    lines = [ln.strip() for ln in joined.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    start = next(i for i, ln in enumerate(lines) if re.match(r"FROM .* AS light$", ln, re.I))
+    return lines[start:]
+
+
+def text_split(instructions):
+    return [" ".join(ins.split()) for ins in instructions]
+
+
+def _light_copies() -> Set[str]:
+    sources: Set[str] = set()
+    for ins in _light_instructions():
+        if ins.upper().startswith("COPY "):
+            sources.update(p for p in ins.split()[1:-1] if not p.startswith("--"))
+    return sources
+
+
+def test_the_light_stage_is_the_last_one_and_the_render_stage_is_before_it():
+    text = _DOCKERFILE.read_text()
+    assert text.index(" AS render") < text.index(" AS light")
+
+
+def test_light_copies_equal_the_light_closure():
+    copied = _light_copies() - {"requirements-sandbox-light.txt"}
+    closure = _light_closure()
+    assert copied == closure, {"missing": sorted(closure - copied), "extra": sorted(copied - closure)}
+
+
+def test_the_drive_child_and_the_parse_entry_are_in_the_closure():
+    closure = _light_closure()
+    assert set(_LIGHT_ENTRIES) <= closure and "sandbox_main.py" in closure
+
+
+def test_light_closure_reaches_no_agent_service_handler_infrastructure_or_firestore_repo():
+    bad = sorted(f for f in _light_closure() if f.startswith(_FORBIDDEN_SRC) or Path(f).name.startswith("firestore_"))
+    assert not bad, bad
+
+
+def test_light_closure_adapters_are_only_the_sandbox_engine_and_the_drive_parser():
+    bad = sorted(f for f in _light_closure() if f.startswith("src/adapters/")
+                 and not f.startswith(("src/adapters/sandbox_engine/", "src/adapters/drive_parser/")))
+    assert not bad, bad
+
+
+def test_light_closure_imports_no_cloud_client_or_model_sdk():
+    import ast
+
+    names: Set[str] = set()
+    for f in _light_closure():
+        names |= _imported_names(f, ast.parse((ROOT / f).read_text()))
+    bad = sorted(n for n in names for banned in _FORBIDDEN_EXTERNAL if n == banned or n.startswith(banned + "."))
+    assert not bad, bad
+
+
+def test_light_pins_equal_requirements_txt():
+    def parse(path):
+        out = {}
+        for line in (ROOT / path).read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line:
+                name = re.split(r"[=<>~]", line, maxsplit=1)[0]
+                out[name.strip().lower()] = line
+        return out
+
+    main, light = parse("requirements.txt"), parse("requirements-sandbox-light.txt")
+    drift = {n: (line, main[n]) for n, line in light.items() if n in main and line != main[n]}
+    assert not drift, drift
+    for library in ("pypdf", "pdfminer.six", "markitdown[all]", "openpyxl", "xlrd", "olefile", "beautifulsoup4",
+                    "defusedxml", "charset-normalizer", "markdownify", "striprtf"):
+        assert library in light and "==" in light[library], library
+    for server_line in parse("requirements-sandbox.txt").values():
+        assert server_line in light.values(), server_line
+
+
+def test_light_stage_has_no_node_npm_or_ffmpeg_and_sets_its_family():
+    text = " ".join(_light_instructions()).lower()
+    for banned in ("nodejs", "npm", "ffmpeg", "chromium", "playwright", "apt-get"):
+        assert banned not in text, banned
+    assert "ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 SANDBOX_SERVICE=light" in " ".join(text_split(_light_instructions()))
+    assert "requirements-sandbox-light.txt" in text
+
+
+def test_light_stage_keeps_the_render_stages_hardening():
+    text = " ".join(_light_instructions())
+    assert "chown root:root /tmp" in text and "chmod 0700 /tmp" in text and "chmod 711 /work" in text
+    assert "chown -R root:root /app" in text and "-perm -o+w" in text
+    assert text.rstrip().endswith('CMD ["python", "sandbox_main.py"]')
+    assert "useradd" in text and text.count("sandboxengine") == 1
+
+
+def test_env_allowlist_grew_by_exactly_the_four_parse_names():
+    assert tuple(child_launcher.ENV_ALLOWLIST) == (
+        "PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
+        "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")

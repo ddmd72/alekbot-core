@@ -19,14 +19,14 @@ Public interface:
     MAX_FILE_BYTES, MAX_CONVERTED_CHARS, MAX_TEXT_EXPORT_BYTES, MAX_DRIVE_DOWNLOAD_BYTES,
     MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES, OPEN_MAX_CHARS, MAX_VIDEO_ATTACH_BYTES
     parse_input_cap(store) -> int;  text_export_cap() -> int;  native_ceiling(kind) -> int
-    presentation_cap(store) -> Optional[int];  reader_text_budget(store) -> int;  action_cap() -> int
+    presentation_cap(store) -> int;  reader_text_budget(store) -> int;  action_cap() -> int
 """
 from __future__ import annotations
 
-from typing import FrozenSet, Optional
+from typing import FrozenSet
 
 MAX_FILE_BYTES = 5 * 1024 * 1024    # 5 MB — input to text parsing; the context window would explode beyond this
-MAX_CONVERTED_CHARS = 30_000         # ~7K tokens — hard truncation of chat and email text to protect context
+MAX_CONVERTED_CHARS = 60_000         # D20: the one presentation cut of parser text outside the drive (chat, email, …)
 # The largest text a drive may hand over for one file: a document export's cap (GOOGLE_DRIVE_RFC G1b). The 5 MiB
 # input cap applies to the text after its inline `data:` images are dropped.
 MAX_TEXT_EXPORT_BYTES = 10 * 1024 * 1024
@@ -42,9 +42,6 @@ OPEN_MAX_CHARS = 60_000
 # hard cap), so a real file almost never approaches this; it only makes an anomalous file degrade to a message
 # instead of a failed upload.
 MAX_VIDEO_ATTACH_BYTES = 45 * 1024 * 1024
-
-# D7: the reader's text budget, and its presentation cut, for every store but the drive.
-_READER_TEXT_BUDGET_CHARS = 30_000
 
 _DRIVE = "drive"
 _EMAIL = "email"
@@ -78,21 +75,19 @@ def native_ceiling(kind: str) -> int:
     return 0
 
 
-def presentation_cap(store: str) -> Optional[int]:
-    """Characters of parser text a store presents: the drive's §29 open bound, email's 30 000; none today for chat,
-    workspace and delivered text below the 5 MiB input (P19 not accepted)."""
+def presentation_cap(store: str) -> int:
+    """Characters of text a store presents (D20: one cut on every open path): the drive's §29 open bound, 60 000
+    (`MAX_CONVERTED_CHARS`) for every other store, email included."""
     _check(store)
     if store == _DRIVE:
         return OPEN_MAX_CHARS
-    if store == _EMAIL:
-        return MAX_CONVERTED_CHARS
-    return None
+    return MAX_CONVERTED_CHARS
 
 
 def reader_text_budget(store: str) -> int:
-    """Characters the document reader may return for one file: the drive's open bound (A4), 30 000 elsewhere (D7)."""
-    _check(store)
-    return OPEN_MAX_CHARS if store == _DRIVE else _READER_TEXT_BUDGET_CHARS
+    """Characters the document reader may return for one file (D7): the store's presentation cap, so a scan is read
+    only as far as it can be shown (A4/D17 for the drive, D20 elsewhere)."""
+    return presentation_cap(store)
 
 
 def action_cap() -> int:

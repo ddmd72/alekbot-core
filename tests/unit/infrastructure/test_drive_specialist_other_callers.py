@@ -3,6 +3,7 @@
 FileManagement never are, and Lelik reaches the drive only through Alek → Router → Smart."""
 from unittest.mock import AsyncMock
 
+from src.domain.document_open import Prefetched
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import (
     ALEK, ALL_DESCRIPTORS, DRIVE_SPECIALIST, FILE_MANAGEMENT, LELIK, PDF_GENERATOR, Intent)
@@ -16,21 +17,27 @@ def _coordinator(resolver) -> AgentCoordinator:
     return AgentCoordinator(registry=registry, file_ref_resolver=resolver)
 
 
+# The prefetch is `prefetch_file_ref` since P18 (EXTERNAL_FILES_RFC §4.2): the resolver takes the account and an
+# absolute keyword-only deadline and answers a Prefetched.
+CTX = {"user_id": "u1", "account_id": "a1"}
+DEADLINE = 1_900_000_000.0
+
+
 async def test_a_generator_still_gets_a_drive_ref_prefetched():
-    resolver = AsyncMock(return_value="lease text")
+    resolver = AsyncMock(return_value=Prefetched(content="lease text"))
     params = {"file_ref": "drive:AAA"}
-    await _coordinator(resolver)._maybe_resolve_file_refs(PDF_GENERATOR.agent_id, params, "u1")
-    resolver.assert_awaited_once_with("drive:AAA", "u1")
+    await _coordinator(resolver).prefetch_file_ref(PDF_GENERATOR.agent_id, params, CTX, deadline_at=DEADLINE)
+    resolver.assert_awaited_once_with("drive:AAA", "u1", "a1", deadline_at=DEADLINE)
     assert params["file_content"] == "lease text"
 
 
 async def test_the_specialist_and_file_management_read_refs_themselves():
-    resolver = AsyncMock(return_value="never")
+    resolver = AsyncMock(return_value=Prefetched(content="never"))
     coordinator = _coordinator(resolver)
     for agent_id in (DRIVE_SPECIALIST.agent_id, FILE_MANAGEMENT.agent_id):
         params = {"file_ref": "drive:AAA"}
-        await coordinator._maybe_resolve_file_refs(agent_id, params, "u1")
-        assert "file_content" not in params
+        await coordinator.prefetch_file_ref(agent_id, params, CTX, deadline_at=DEADLINE)
+        assert "file_content" not in params and "file_note" not in params
     resolver.assert_not_awaited()
 
 

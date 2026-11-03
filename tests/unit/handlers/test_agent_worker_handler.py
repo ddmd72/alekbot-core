@@ -61,6 +61,7 @@ _CONTEXT = {
 
 def _make_handler(*, with_notification: bool = True, with_doc_delivery: bool = True):
     coordinator = MagicMock()
+    coordinator.prefetch_file_ref = AsyncMock()
     coordinator.route_message = AsyncMock()
 
     notification = AsyncMock() if with_notification else None

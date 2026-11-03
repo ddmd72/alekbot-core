@@ -157,18 +157,23 @@ def test_sandbox_steps_come_after_every_other_step_and_stay_under_the_arg_limit(
     assert all(len(a) < 10_000 for s in steps for a in s.get("args", []))
 
 
-def test_exactly_one_service_account_flag_across_deploy_scripts_and_it_is_the_sandbox_deploy():
-    """The identity guard of test_cloudbuild_iam_step3 only sees step args; scripts run by a step are invisible to it."""
+def test_only_the_sandbox_deploys_pin_a_service_account_and_each_pins_its_own():
+    """The identity guard of test_cloudbuild_iam_step3 only sees step args; scripts run by a step are invisible to it.
+    Exactly two scripts pin an identity, the two sandbox services (render, light), each its own variable on its own deploy
+    line: the parse service runs under a second zero-role identity, never the render one (owner decision 2026-11-03)."""
+    render = "scripts/infrastructure/cloudbuild_sandbox_render.sh"
+    light = "scripts/infrastructure/cloudbuild_sandbox_light.sh"
     scripts = {a for s in _build()["steps"] for a in s.get("args", []) if a.startswith("scripts/infrastructure/") and a.endswith(".sh")}
-    assert "scripts/infrastructure/cloudbuild_sandbox_render.sh" in scripts
+    assert {render, light} <= scripts
     found = []
     for rel in sorted(scripts):
         code = "\n".join(ln for ln in re.sub(r"\\\n", " ", (_ROOT / rel).read_text()).splitlines()
                          if not ln.lstrip().startswith("#"))
         found += [(rel, m) for m in re.findall(r"(?<![\w-])--service-account=(\S+)", code)]
-    assert found == [("scripts/infrastructure/cloudbuild_sandbox_render.sh", '"$SANDBOX_RENDER_SA"')], found
-    block = next(ln for ln in re.sub(r"\\\n", " ", _SCRIPT.read_text()).splitlines() if "run deploy" in ln)
-    assert f'run deploy "$SERVICE"' in block and '--service-account="$SANDBOX_RENDER_SA"' in block
+    assert sorted(found) == [(light, '"$SANDBOX_LIGHT_SA"'), (render, '"$SANDBOX_RENDER_SA"')], found
+    for rel, var in ((render, "SANDBOX_RENDER_SA"), (light, "SANDBOX_LIGHT_SA")):
+        block = next(ln for ln in re.sub(r"\\\n", " ", (_ROOT / rel).read_text()).splitlines() if "run deploy" in ln)
+        assert f'run deploy "$SERVICE"' in block and f'--service-account="${var}"' in block, rel
 
 
 # ---- the main service passes the switch -----------------------------------------------------------------------------

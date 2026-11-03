@@ -33,6 +33,9 @@ ServiceContainer.google_tasks_provider  # by-design Google Tasks is frozen, Micr
 GcsMediaAdapter._sa_email  # by-design keyless V4 signing, the signer falls back to the credentials' own service_account_email (gcs_media_adapter.py:108)
 ConsolidationAgent.user_id  # by-design unused: user_id arrives per call in the payload and BaseAgent never reads self.user_id (consolidation_agent.py:173)
 EmailClassificationAgent._user_id  # by-design one shared system-level classifier, user_id arrives per call (service_container.py:303, email_classification_agent.py:288)
+app.agent_factory.file_conversion_service._documents._parser._temp_root  # by-design no temp_root: the child's work directory is the default TMPDIR, as on the indexer (subprocess_content_extractor.py:195, drive_model_setup.py)
+app.agent_factory.file_conversion_service._documents._reader._prompt_builder.repo  # by-design never reads facts, the reader builds its prompt with include_biographical=False (drive_model_call.py:230-231, document_service_setup.py:41)
+app.agent_factory.file_conversion_service._documents._reader._temp_root  # by-design no temp_root: the reader's work directory is the default TMPDIR, as on the indexer (drive_reader_runner.py:202)
 app.companion_extractor_runner._prompt_builder.repo  # by-design never reads facts, include_biographical=False (application_graph.py companion_prompt_builder comment)
 app.container.email_classifier._prompt_builder.repo  # by-design never reads facts, repo=None (service_container.py:300)
 app.notification_service._platform_rich_content['telegram']._storage_port  # by-design Telegram has no media storage: the graph builds Telegram's one RichContentService without storage_port (application_graph.py:971), the same instance the Telegram chat handler holds, documented (rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:122-125)
@@ -69,7 +72,6 @@ WebSearchLightAgent._agent_execution_context  # by-design STRATEGIES["web_search
 
 # ---- known defects, owner questions open (P9 design §6)
 app.telegram_adapter.conversation_handler._channel_binding  # by-design owner ruling 2026-10-23: channel binding is Slack-only; only slack_adapter_factory.py passes the service (slack_adapter_factory.py:66,129), so $agent on Telegram answers "not configured" (conversation_handler.py:1634)
-FileConversionService._audio_service  # defect:D3 owner 2026-10-23: deferred to EXTERNAL_FILES_RFC U3 (unmetered, uncached, bypasses the drive transcription cap if wired into the shared converter)
 EmailClassificationAgent._prompt_content_store  # defect:D2 usage content of the classifier is not captured (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent._quota_service  # defect:D2 usage of the classifier is not billed (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent.coordinator  # defect:D2 no coordinator injected into the classifier (service_container.py:303-312)

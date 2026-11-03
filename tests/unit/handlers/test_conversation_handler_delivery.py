@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import pytest
 
 from src.domain.agent import AgentResponse, AgentStatus, DeliveryItem
+from src.domain.llm import MessagePart
 from src.domain.messaging import FileAttachment, MessageContext, RichContent, SmartResponse
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import StatusType
@@ -98,6 +99,7 @@ def _make_handler(
     with_queue: bool = False,
     short_link_service=None,
     fallback_service=None,
+    file_conversion_service=None,
 ) -> ConversationHandler:
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
@@ -130,6 +132,7 @@ def _make_handler(
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         short_link_service=short_link_service,
         fallback_service=fallback_service,
+        file_conversion_service=file_conversion_service,
     )
 
 
@@ -775,16 +778,21 @@ class TestHandleMessageEdgeCases:
     # --- Lines 576-577, 581: History cleanup (file stubs) ---
 
     async def test_file_parts_with_path_skipped_from_history(self):
-        """MessagePart with file_data containing 'path' → excluded from clean_message_parts."""
+        """An upload's part carries the temp `path` for the current turn only: history keeps the ref, never the path.
+
+        Since U3 every upload goes through the file service (EXTERNAL_FILES_RFC §4.2 "Legacy upload branch"): the
+        path-only part of the retired branch no longer exists, so the part here is the one `process_attachment` makes."""
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            tmp_path = f.name
+        file_service = MagicMock()
+        file_service.process_attachment = AsyncMock(return_value=MessagePart(
+            text='[File: "img.png" (0B)]',
+            file_data={"ref": "img.png", "mime_type": "image/png", "size_bytes": 0, "path": tmp_path}))
         coord = _simple_coordinator(
             _make_success(SmartResponse(text="OK"))
         )
-        handler = _make_handler(coord)
+        handler = _make_handler(coord, file_conversion_service=file_service)
         channel = _make_channel()
-
-        # Create a temp file so os.remove succeeds
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            tmp_path = f.name
 
         attachment = FileAttachment(
             url="http://example.com/img.png",
@@ -794,62 +802,16 @@ class TestHandleMessageEdgeCases:
         ctx = _make_context(attachments=[attachment])
         channel.download_file = AsyncMock(return_value=tmp_path)
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch(
-                "src.handlers.conversation_handler.is_native_binary",
-                return_value=True,
-            ),
-        ):
-            await handler.handle_message(ctx, channel)
-
-        # History should have been saved (call happened)
-        session_store = handler.agent_factory.get_session_store()
-        session_store.append_messages_batch.assert_awaited_once()
-
-    async def test_converted_file_parts_replaced_with_stubs(self):
-        """Text-converted file parts → replaced with stub/full_text pair in history."""
-        coord = _simple_coordinator(
-            _make_success(SmartResponse(text="OK"))
-        )
-        handler = _make_handler(coord)
-        channel = _make_channel()
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
-            tmp_path = f.name
-
-        attachment = FileAttachment(
-            url="http://example.com/doc.txt",
-            mime_type="text/plain",
-            filename="doc.txt",
-        )
-        ctx = _make_context(attachments=[attachment])
-        channel.download_file = AsyncMock(return_value=tmp_path)
-
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=False),
-            patch(
-                "src.handlers.conversation_handler.convert_file_to_text",
-                new_callable=AsyncMock,
-                return_value="file content text",
-            ),
-            patch(
-                "src.handlers.conversation_handler.make_history_stub",
-                return_value="[stub: doc.txt]",
-            ),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
-        call_args = session_store.append_messages_batch.call_args
-        messages = call_args[0][1]
+        messages = session_store.append_messages_batch.call_args[0][1]
         user_msg = next(m for m in messages if m.role == "user")
-        # Check that at least one part has stub text
-        stubs = [p for p in user_msg.parts if p.text == "[stub: doc.txt]"]
-        assert stubs, "Expected stub part in history"
-        assert stubs[0].full_text == "file content text"
+        files = [p.file_data for p in user_msg.parts if p.file_data]
+        assert files == [{"ref": "img.png", "mime_type": "image/png", "size_bytes": 0}]
+        assert not os.path.exists(tmp_path)
 
     # --- Lines 591-598: Metadata context appending ---
 
@@ -968,8 +930,7 @@ class TestHandleMessageEdgeCases:
         channel = _make_channel()
         channel.download_file = AsyncMock(return_value=tmp)
 
-        with patch("src.handlers.conversation_handler.is_native_binary", return_value=True):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert not os.path.exists(tmp), "Temp file should have been removed"
 
@@ -985,9 +946,8 @@ class TestHandleMessageEdgeCases:
         channel = _make_channel()
         channel.download_file = AsyncMock(return_value="/nonexistent/path.tmp")
 
-        with patch("src.handlers.conversation_handler.is_native_binary", return_value=True):
-            # Should not raise even though os.remove will fail (file doesn't exist)
-            await handler.handle_message(ctx, channel)
+        # Should not raise even though os.remove will fail (file doesn't exist)
+        await handler.handle_message(ctx, channel)
 
     # --- Lines 373-391: No text + attachments (localization + hardcoded) ---
 
@@ -1010,10 +970,7 @@ class TestHandleMessageEdgeCases:
         attachment = FileAttachment(url="http://x.com/img.jpg", mime_type="image/jpeg", filename="img.jpg")
         ctx = _make_context(text="", attachments=[attachment])
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         localization.get_file_prompt.assert_called_once()
@@ -1038,10 +995,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_IMAGE
@@ -1064,10 +1018,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_PDF
@@ -1090,10 +1041,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_DOCUMENT
@@ -1116,10 +1064,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_VIDEO
@@ -1142,10 +1087,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=True),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_GENERIC
@@ -1168,16 +1110,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("src.handlers.conversation_handler.is_native_binary", return_value=False),
-            patch(
-                "src.handlers.conversation_handler.convert_file_to_text",
-                new_callable=AsyncMock,
-                return_value="csv data",
-            ),
-            patch("src.handlers.conversation_handler.make_history_stub", return_value="[stub]"),
-        ):
+        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_DOCUMENT

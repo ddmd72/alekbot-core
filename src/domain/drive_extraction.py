@@ -6,7 +6,7 @@ The chain table, the statuses and the text-or-scan router are source-neutral and
 
 Public interface:
     TRANSCRIBE_LINK
-    ExtractionRequest, ExtractionOutcome, PdfSplitFailed, TriageImage, TriageResult, TriageBatchOutcome,
+    ExtractionRequest, ExtractionOutcome, PdfSplitFailed, ParserBusy, TriageImage, TriageResult, TriageBatchOutcome,
     DriveModelUnavailable
 """
 from __future__ import annotations
@@ -32,6 +32,10 @@ class ExtractionRequest:
     account_id: str
     max_model_pages: int = 0     # pages the reader may still send this month (§24.7); 0: the reader is not called
     item_id: str = ""            # the drive item, for the extractors' log lines only (final review F4-6)
+    # The two request limits of an interactive open (EXTERNAL_FILES_RFC §4.4, C, D7). Both can only lower an
+    # adapter's own ceilings; the indexer sets neither and keeps today's behaviour.
+    deadline_at: Optional[float] = None   # absolute, epoch seconds (`time.time()`), as `PdfSplitterPort`'s
+    text_budget: Optional[int] = None     # characters the reader may return; it stops reading once it has them
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,12 @@ class ExtractionOutcome:
     capture_signals: Optional[CaptureSignals] = None
     capture: str = ""
     capture_source: str = ""
+    # D7 (EXTERNAL_FILES_RFC §4.4): what a reader run read. `pages_read` counts the pages whose text is in `text` in
+    # full; `skipped_pages` lists the 1-based pages refused or cut by the output limit; `cut_within_pages` the 1-based
+    # pages of the one window whose text is in part, filled only when the request set `text_budget`.
+    pages_read: int = 0
+    skipped_pages: Tuple[int, ...] = ()
+    cut_within_pages: Tuple[int, ...] = ()
 
     @property
     def read_by_fallback(self) -> bool:
@@ -69,12 +79,43 @@ class ExtractionOutcome:
 class PdfSplitFailed(Exception):
     """The sandboxed parser could not count or cut the PDF's pages: `status` is `encrypted`, `unsupported`,
     `timeout`, `memory`, `too_large` or `error`, and the reader returns it as its outcome (§24.3). The reader cuts
-    one page window at a time, on demand, so at most MODEL_IN_FLIGHT windows exist at once."""
+    window at a time (limited path) or all windows at once, so at most MODEL_IN_FLIGHT are read together."""
 
     def __init__(self, status: ExtractionStatus, detail: str = "") -> None:
         super().__init__(f"{status.value}: {detail}" if detail else status.value)
         self.status = status
         self.detail = detail
+
+
+class ParserBusy(PdfSplitFailed):
+    """The parser's slot did not come free before the request's deadline (EXTERNAL_FILES_RFC §4.4 "Parser slot"):
+    status `timeout`, detail `busy`. Raised by the parser adapter only when a deadline was given (a request's
+    `deadline_at` or a page op's) and it passed while waiting for the slot; it is systemic, not the file's (the
+    document service maps it to `PARSER_UNAVAILABLE(busy)`). A `PdfSplitFailed`, so the reader already handles it; the
+    indexer never sets a deadline, so it never sees it."""
+
+    def __init__(self) -> None:
+        super().__init__(ExtractionStatus.TIMEOUT, "busy")
+
+
+class ParserUnavailable(Exception):
+    """The sandboxed parser service cannot take the work now: `reason` is `busy`, `unavailable` or `misconfigured`
+    (the `PARSER_UNAVAILABLE` details of `document_read`). Systemic, never the file's: `charges_file` is False, so an
+    outage is not counted as an attempt of the file. Deliberately NOT a `PdfSplitFailed`: every `except PdfSplitFailed`
+    would turn it into the file's outcome. Raised by the sandbox adapter from either port; the document service maps
+    it to `PARSER_UNAVAILABLE(reason)`, the indexer ends its tick. Carries what the reader spent before it hit it
+    (shaped like `DriveModelUnavailable`), already billed."""
+
+    charges_file = False
+
+    def __init__(self, reason: str = "unavailable", *, pages_sent: int = 0, model_calls: int = 0,
+                 model_cost: float = 0.0, model_fallback_cost: float = 0.0) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.pages_sent = pages_sent
+        self.model_calls = model_calls
+        self.model_cost = model_cost
+        self.model_fallback_cost = model_fallback_cost
 
 
 class DriveModelUnavailable(Exception):

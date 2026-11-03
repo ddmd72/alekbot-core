@@ -31,6 +31,7 @@ from src.adapters.firestore_notification_state_adapter import FirestoreNotificat
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
+from src.adapters.firestore_transcript_cache import FirestoreTranscriptCache
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
 from src.adapters.gcp_log_sink import GcpLogSink
@@ -50,6 +51,7 @@ from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessa
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
+from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
 from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
@@ -59,6 +61,7 @@ from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition import cipher_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
+from src.composition.document_service_setup import build_document_service
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
 from src.composition.slack_adapter_factory import SlackAdapterFactory
@@ -269,6 +272,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
         logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
 
+    # Audio transcription (optional — voice messages stay an honest alert without it). Built before the quota
+    # service: the document service, attached right after the container, takes both (EXTERNAL_FILES_RFC P21).
+    audio_service = None
+    if config.get("OPENAI_API_KEY"):
+        audio_service = OpenAITranscriptionAdapter(
+            api_key=config["OPENAI_API_KEY"],
+            model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
+        )
+    else:
+        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
+
     logger.info("💳 Initializing Billing Agent...")
     quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
     billing_agent = BillingAgent(
@@ -348,6 +362,18 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         alert_webhook=_alert_webhook,
         cipher=cipher,
     )
+    # The document service (EXTERNAL_FILES_RFC §4.4): the parser child, the reader over the main context builder and
+    # the graph's one quota service, attached to the file conversion service as soon as the container has built it.
+    if container.file_conversion_service:
+        container.file_conversion_service.attach_documents(build_document_service(
+            context_builder=container.context_builder,
+            users=user_repo,
+            assembly_service=container.assembly_service,
+            quota=quota_service,
+            transcriber=audio_service,
+            transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
+            parser_user=os.environ.get(PARSER_USER_ENV),
+        ))
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
@@ -363,7 +389,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         registry=agent_registry,
         task_queue=agent_task_queue,
         file_ref_resolver=(
-            container.file_conversion_service.resolve_content if container.file_conversion_service else None
+            container.file_conversion_service.prefetch if container.file_conversion_service else None
         ),
         alert_sink=_alert_webhook,
     )
@@ -931,16 +957,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         logger.info("✅ HTML renderer (Playwright) enabled")
     else:
         logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
-    # Audio transcription (optional — voice messages stay an honest alert without it)
-    audio_service = None
-    if config.get("OPENAI_API_KEY"):
-        audio_service = OpenAITranscriptionAdapter(
-            api_key=config["OPENAI_API_KEY"],
-            model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
-        )
-    else:
-        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
 
     logger.info("🔌 Initializing Slack Adapter...")
 

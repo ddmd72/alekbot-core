@@ -137,6 +137,7 @@ After a big branch switch / rebase made while the server was down: `codegraph sy
 | Gmail indexing, daily email review | `docs/05_building_blocks/gmail_email_indexing/README.md`, `docs/07_deployment/SCHEDULERS.md` |
 | `/worker` task types, schedulers, queues, task dedup | `docs/07_deployment/SCHEDULERS.md`, `decisions/worker_task_dedup.md` |
 | Deploy units, `.env` deploy keys, standing levers, sandbox deploy | `docs/07_deployment/README.md` |
+| External files: refs, the open path, the document service, caps, untrusted marking | `docs/05_building_blocks/file_conversion/README.md`, `docs/10_rfcs/EXTERNAL_FILES_RFC.md` |
 | Long-running turns | `decisions/long_running_turns.md` |
 | Voice companion (Lelik): phone, web transport, providers | `docs/10_rfcs/VOICE_COMPANION_RFC.md`, `VOICE_WEB_TRANSPORT_RFC.md`, `VOICE_MULTI_PROVIDER_RFC.md` |
 | Remote MCP server | `docs/05_building_blocks/remote_mcp_server/README.md` |

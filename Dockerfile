@@ -35,20 +35,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 # whose version is whatever requirements.txt resolves (one source of truth, no second pin in this file).
 RUN python -m playwright install chromium --with-deps
 
-# The drive indexer's parser child runs as this unprivileged user (R3 F3-1, USER_DRIVE_INDEXING_RFC §9): another
-# uid cannot read the indexer's /proc/<pid>/environ (its API keys) or rewrite the app source it loads. Only the
-# indexer reads DRIVE_PARSER_USER (indexer_main.py); a named user missing from the image fails its start. No USER
-# directive: the services stay root, which switching the child to this user needs.
+# The drive parser child runs as this unprivileged user in both services (R3 F3-1, USER_DRIVE_INDEXING_RFC §9; the main
+# service reads DRIVE_PARSER_USER too, USER_FILE_PARSING_RFC §4.8): another uid cannot read the parent's
+# /proc/<pid>/environ (its API keys) or rewrite the app source and libraries it loads. A named user missing from the
+# image fails the start. No USER directive: the services stay root, which switching the child to this user needs.
 ENV DRIVE_PARSER_USER=driveparser
 RUN useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin driveparser
 
 COPY . .
 
-# Nothing the indexer loads may be writable by the parser user: fail the build on a world-writable file or directory
-# under /app (node_modules aside: never loaded by the indexer) or in site-packages.
-RUN if find /app /usr/local/lib/python3.11/site-packages -path '*/node_modules' -prune -o \
+# Nothing either service loads may be writable by the parser user: fail the build on a world-writable file or directory
+# under /app (node_modules included: the main service loads the DOCX and PDF runners' trees), in site-packages, or in
+# the Chromium trees (Playwright's browser directory for root; puppeteer's cache). The chmod is the fix for a tree that
+# ships a write bit for others; the check after it is the guard, with no exemption.
+RUN chmod -R o-w /app /usr/local/lib/python3.11/site-packages /root/.cache/ms-playwright /root/.cache/puppeteer
+RUN if find /app /usr/local/lib/python3.11/site-packages /root/.cache/ms-playwright /root/.cache/puppeteer \
         -perm -o+w ! -type l -print | grep -q .; then \
-      echo "world-writable files under /app or site-packages: the drive parser user could rewrite them" >&2; \
+      echo "world-writable files under /app, site-packages or the Chromium caches: the drive parser user could rewrite them" >&2; \
       exit 1; \
     fi
 

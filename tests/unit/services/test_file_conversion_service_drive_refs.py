@@ -1,6 +1,7 @@
-"""drive: refs in FileConversionService (docs/10_rfcs/USER_DRIVE_RFC.md §4.6)."""
-from tests.support.drive_access_stub import allow_access
-from unittest.mock import AsyncMock, patch
+"""drive: refs in FileConversionService (docs/10_rfcs/USER_DRIVE_RFC.md §4.6). `open` replaced `resolve_content`
+(EXTERNAL_FILES_RFC §4.2): the read goes through the attached document service."""
+import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,10 +13,39 @@ from src.domain.user_drive import (
 from src.domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.ports.user_drive_port import UserDrivePort
+from src.domain.document_read import ReadRequest
+from src.ports.document_read_port import DocumentReadPort
+from src.services.document_service import DocumentService
 from src.services.file_conversion_service import FileConversionService
 from src.utils.file_conversion import MAX_FILE_BYTES
+from tests.support.drive_access_stub import allow_access
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_connections import connection_service, seed
+from tests.unit.services.test_document_service_read import FakeExtractor, FakeSplitter
+
+
+class RecordingDocuments(DocumentReadPort):
+    """The real document service (text reads in process), recording each request."""
+    def __init__(self) -> None:
+        self.requests = []
+        self._inner = DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter())
+
+    async def read(self, request: ReadRequest):
+        self.requests.append(request)
+        return await self._inner.read(request)
+
+
+def _serve(drive, data: bytes) -> None:
+    """The drive's streamed download writes `data` (up to the cap) where it is asked to."""
+    async def download_to_file(handle, item_id, dest_path, max_bytes):
+        with open(dest_path, "wb") as fh:
+            fh.write(data[:max_bytes])
+        return len(data)
+    drive.download_to_file.side_effect = download_to_file
+
+
+async def _open(svc, ref):
+    return await svc.open(ref, "u1", "u1", deadline_at=time.time() + 60)
 
 
 def _item(size, name="notes.md", mime="text/markdown", folder=False):
@@ -36,30 +66,39 @@ async def connection():
 
 
 @pytest.fixture
-def svc(drive, connection):
-    return FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1], access=allow_access())
+def documents():
+    return RecordingDocuments()
+
+
+@pytest.fixture
+def svc(drive, connection, documents):
+    service = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1],
+                                    access=allow_access())
+    service.attach_documents(documents)
+    return service
 
 
 class TestDriveRefs:
-    async def test_text_uses_metadata_mime_and_path(self, svc, drive):
+    async def test_text_uses_metadata_mime_and_path(self, svc, drive, documents):
         drive.get_item.return_value = _item(20)
-        drive.download.return_value = b"# hello"
-        conv = AsyncMock(return_value="[File: Docs/notes.md]\n# hello\n[/File: Docs/notes.md]")
-        with patch("src.services.file_conversion_service.convert_file_to_text", new=conv):
-            out = await svc.resolve_content("drive:a1:i1", "u1")
-        assert "# hello" in out
-        assert conv.call_args.args[1:3] == ("Docs/notes.md", "text/markdown")
+        _serve(drive, b"# hello")
+        out = (await _open(svc, "drive:a1:i1")).body
+        assert "# hello" in out and out.startswith("[File: Docs/notes.md]")
+        (request,) = documents.requests
+        assert (request.name, request.declared_mime) == ("Docs/notes.md", "text/markdown")
 
     async def test_text_over_cap_refused_before_download(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
-        assert (await svc.resolve_content("drive:a1:i1", "u1")).startswith("[System:")
+        _serve(drive, b"x" * (MAX_FILE_BYTES + 1))
+        assert (await _open(svc, "drive:a1:i1")).note.startswith("[System:")
         drive.download.assert_not_called()
 
     async def test_folder_is_not_readable(self, svc, drive):
         drive.get_item.return_value = _item(0, name="Docs", mime="", folder=True)
-        out = await svc.resolve_content("drive:a1:i1", "u1")
+        out = (await _open(svc, "drive:a1:i1")).note
         assert "folder" in out and "List the folder to see what is inside." in out
         drive.download.assert_not_called()
+        drive.download_to_file.assert_not_called()
 
     async def test_bytes_over_cap_raise_before_download(self, svc, drive):
         drive.get_item.return_value = _item(MAX_DRIVE_DOWNLOAD_BYTES + 1, name="v.mp4", mime="video/mp4")
@@ -90,7 +129,9 @@ class TestDriveRefs:
 
     async def test_no_provider_name_in_alerts(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
-        out = await svc.resolve_content("drive:a1:i1", "u1")
+        _serve(drive, b"x" * (MAX_FILE_BYTES + 1))
+        out = (await _open(svc, "drive:a1:i1")).note
+        assert out.startswith("[System:")
         for word in ("onedrive", "microsoft", "google"):
             assert word not in out.lower()
 
@@ -111,5 +152,5 @@ class TestDriveRefs:
         key = "docs/u1/0f8e3b2a-1c2d-4e5f-8a9b-0c1d2e3f4a5b-drive:plan.pdf"
         assert await svc.resolve_bytes(key, "u1") == b"%PDF"
         media.fetch.assert_awaited_once_with(key)
-        assert "body" in await svc.resolve_content("skill:notes/drive:x.md", "u1")
+        assert "body" in (await _open(svc, "skill:notes/drive:x.md")).body
         drive.get_item.assert_not_called()

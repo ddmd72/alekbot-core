@@ -27,6 +27,7 @@ async def test_the_same_payload_delivered_twice_routes_the_same_turn_id():
         task_id="t", agent_id="smart", result=SmartResponse(text="Noted.", structured_data=None, link_list=[])))
     gateway.coordinator = smart
     worker_coordinator = MagicMock()
+    worker_coordinator.prefetch_file_ref = AsyncMock()
     worker_coordinator.route_message = AsyncMock(side_effect=gateway.execute)
     worker = AgentWorkerHandler(coordinator=worker_coordinator, notification_service=AsyncMock(),
                                 task_queue=AsyncMock(), doc_delivery_service=None)

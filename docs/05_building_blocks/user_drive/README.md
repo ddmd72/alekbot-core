@@ -236,8 +236,9 @@ is built, not only behind the Microsoft keys.
   folders" or "Use the whole drive", which there means everything the account can see, shared items included. Search
   index counters: three tiles (Searchable, Waiting = `pending` only, Can't read); `unresolved` is its own progress line
   ("Checking which files are in your folders"), never part of Waiting; "All counters" lists only labelled keys
-  (`profile_current` as Described, `passages_current` as Readable by content, `coverage_no_passages` as a problem
-  signal when non-zero); `chunks` and the other enrichment keys are not shown. The folder picker is a dialog with a
+  (`profile_current` as Described, `passages_current` as Readable by content); `coverage_no_passages` is not shown
+  (sheets, books and data files without passage hints by policy are no gap for the owner; search still reads the
+  counter), nor are `chunks` and the other enrichment keys. The folder picker is a dialog with a
   Save (n) button: closing with unsaved changes asks "Save N changes before closing?", and a refusal of the server
   (for instance a scope that would leave the write folder outside) is shown in the dialog, which stays open. Toggles,
   rename and the other settings still save on change.
@@ -1816,6 +1817,15 @@ returns up to 10 passages from N and a page line (next page, the end, past the e
 paged `read_passages` in the same specialist run is answered `ONE_PAGE` (code, `DriveToolRun`), and Smart asks for the next
 page in a new commission with the `next: from N` number its history line names (§29.16 B8). Smart's block shows a `pages read:` line per
 paged file and the reading lines `R_PAGED` / `R_TOO_LONG`. A failed extent lookup fails safe (one WARNING; the cut still holds).
+
+**Opens read through the document service (EXTERNAL_FILES_RFC U3).** Every drive open and every stored-file open from `DriveOperations`
+goes through `FileConversionService.open` (`docs/05_building_blocks/file_conversion/README.md`): kind from bytes, the caps table, native or
+pipeline, the parser child, the reader with a 60 000-character budget, all under the opener's deadline (`deadline_at`, 90 s by default).
+The §29 refusal (before download, from the index extent) and the cut line stay in `DriveOperations`, which takes the raw body and applies
+the drive wrapper and the §29 bound itself (it does not use the service's `present_text`, which the other stores use). After the wrapper it
+adds the reader's "what is shown" line when the read was page-wise (for example the first N of M pages of a scan), then the owner's note
+block. A video is still resent as a file by `DriveOperations`, not read. A recording keeps the transcript-first rule (§4.23): without a
+transcript the open gives today's audio note and never transcribes at open.
 
 **Logs.** `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` (counts, no
 text); `[DriveOperations] opened: <ref> chars=<n>`, `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…`, `opened vision: <ref> mime=… bytes=… pages=…`; `[DriveAgent] … refused: passages were read …`.

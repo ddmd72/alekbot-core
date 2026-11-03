@@ -1954,7 +1954,6 @@
           "drive.all_counters": "All counters",
           "drive.index_described": "Described",
           "drive.index_readable_content": "Readable by content",
-          "drive.index_coverage_gap": "Should be readable but isn't",
           "drive.spend_title": "AI model use this month",
           "drive.spent_of": "{spent} of {cap}",
           "drive.finished_spent": "Finished, {spent}",
@@ -2246,7 +2245,6 @@
           "drive.all_counters": "Усі лічильники",
           "drive.index_described": "Описані",
           "drive.index_readable_content": "Читаються за змістом",
-          "drive.index_coverage_gap": "Мали б читатися, але не читаються",
           "drive.spend_title": "Використання ШІ-моделей цього місяця",
           "drive.spent_of": "{spent} із {cap}",
           "drive.finished_spent": "Завершено, {spent}",
@@ -2538,7 +2536,6 @@
           "drive.all_counters": "Tous les compteurs",
           "drive.index_described": "Décrits",
           "drive.index_readable_content": "Lisibles par le contenu",
-          "drive.index_coverage_gap": "Devraient être lisibles mais ne le sont pas",
           "drive.spend_title": "Usage des modèles d'IA ce mois-ci",
           "drive.spent_of": "{spent} sur {cap}",
           "drive.finished_spent": "Terminé, {spent}",
@@ -2830,7 +2827,6 @@
           "drive.all_counters": "Todos los contadores",
           "drive.index_described": "Descritos",
           "drive.index_readable_content": "Legibles por contenido",
-          "drive.index_coverage_gap": "Deberían ser legibles pero no lo son",
           "drive.spend_title": "Uso de modelos de IA este mes",
           "drive.spent_of": "{spent} de {cap}",
           "drive.finished_spent": "Terminado, {spent}",
@@ -5495,7 +5491,6 @@
         deleting: "drive.index_deleting",
         profile_current: "drive.index_described",   // files with a current description
         passages_current: "drive.index_readable_content",   // files readable by their content
-        coverage_no_passages: "drive.index_coverage_gap",   // a problem signal: shown only when non-zero
       };
 
       let driveMirrorRoot = false;   // the user has a _Transcripts folder: the opt-out confirmation names it
@@ -5548,7 +5543,6 @@
             }
             lines.push(["profile_current", c.profile_current, false]);
             lines.push(["passages_current", c.passages_current, false]);
-            if (num(c.coverage_no_passages) > 0) lines.push(["coverage_no_passages", c.coverage_no_passages, true]);
             const labels = Object.assign({ chunks_readable: "drive.index_chunks" }, DRIVE_COUNTER_LABELS);
             more = `<details class="dv-more"><summary>${driveIcon("chevR", "sm")}${t("drive.all_counters")}</summary>
               <div class="dv-more-body"><dl class="dv-kv">${lines.map(([key, v, attn]) =>

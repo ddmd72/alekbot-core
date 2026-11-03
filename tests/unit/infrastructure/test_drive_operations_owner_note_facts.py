@@ -17,6 +17,7 @@ from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_service_fake import connection
+from tests.support.opened_file import opened_body
 
 CTX = {"user_id": "u1", "account_id": "a1"}
 CONN = connection("u1", ref_tag="a1", drive_identity="microsoft_onedrive:drv")   # the connection every ref here names
@@ -26,7 +27,7 @@ DOC = DriveItem(item_id="d1", name="bathroom-invoice.md", path="Home/bathroom-in
 
 def _ops(with_note: bool) -> DriveOperations:
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.resolve_content.return_value = "Line one of the file."
+    conversion.open.return_value = opened_body("Line one of the file.")
     drive = AsyncMock(spec=UserDriveService)
     drive.resolve_ref.side_effect = lambda user_id, ref: ResolvedDriveRef(connection=CONN,
                                                                           item_id=drive_ref.parse(ref).item_id)

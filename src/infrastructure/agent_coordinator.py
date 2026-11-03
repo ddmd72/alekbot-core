@@ -8,9 +8,13 @@ Central routing and coordination service for multi-agent architecture.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Dict, List, Optional, Any
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol
 from ..domain.agent import AgentMessage, AgentResponse, AgentIntent
+from ..domain.document_open import Prefetched
+from ..domain.document_open_texts import conversion_alert, open_failed_note
+from ..domain.document_read import INTERACTIVE_OPEN_S
 from ..domain.native_format import NATIVE_FORMATS_KEY
 from ..domain.user_drive import DriveNotConnectedError
 from ..utils.logger import logger
@@ -23,6 +27,12 @@ from ..ports.alert_sink import AlertSinkPort
 
 if TYPE_CHECKING:
     from ..agents.base_agent import BaseAgent
+
+
+class FileRefResolver(Protocol):
+    """The prefetch seam (FileConversionService.prefetch): `deadline_at` is keyword-only."""
+
+    async def __call__(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched: ...
 
 
 def _specialist_context(intent: str, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -59,7 +69,7 @@ class AgentCoordinator:
         self,
         registry: Optional[AgentRegistry] = None,
         task_queue: Optional[TaskQueue] = None,
-        file_ref_resolver: Optional[Any] = None,
+        file_ref_resolver: Optional[FileRefResolver] = None,
         agent_factory: Optional[AgentFactoryPort] = None,
         alert_sink: Optional[AlertSinkPort] = None,
     ):
@@ -71,9 +81,10 @@ class AgentCoordinator:
                       If None, handle_delegation() will always return failure.
             task_queue: TaskQueue port for async intent execution.
                         Required when any registered intent uses ExecutionMode.ASYNC.
-            file_ref_resolver: Optional async callable(ref, user_id, mime_type) -> str.
-                               Resolves GCS file references to text content before
-                               dispatching to specialist agents.
+            file_ref_resolver: Optional async callable(ref, user_id, account_id, deadline_at) -> Prefetched.
+                               Reads a file reference before the specialist runs (the specialist's prefetch,
+                               EXTERNAL_FILES_RFC P18): its text as `content`, or a `note` when the file could
+                               not be read. Never raises by contract; the coordinator also contains a raise.
             agent_factory: Optional factory port for lazy agent instantiation.
                            When set, non-eager agents are created on first delegation
                            instead of at session start.
@@ -531,7 +542,9 @@ class AgentCoordinator:
 
         # Resolve file_ref in context before dispatching to specialist.
         # Specialist receives resolved text content, never knows about GCS.
-        await self._maybe_resolve_file_refs(base_agent_id, extra_payload, user_id)
+        await self.prefetch_file_ref(
+            base_agent_id, extra_payload, context, deadline_at=time.time() + INTERACTIVE_OPEN_S,
+        )
 
         message = AgentMessage.create(
             sender="coordinator",
@@ -551,10 +564,8 @@ class AgentCoordinator:
         deadline_seconds: Optional[int] = None,
     ) -> AgentResponse:
         """Enqueue ASYNC intent to Cloud Tasks, return immediate ack."""
-        # Resolve file_ref before enqueue — content goes into the Cloud Task payload
-        extra_payload = context.get("params", {})
-        await self._maybe_resolve_file_refs(base_agent_id, extra_payload, context.get("user_id", ""))
-
+        # The file_ref rides the Cloud Task as it is: the worker opens it just before the specialist runs
+        # (P18); no file text goes into a task body.
         if self._task_queue is None:
             logger.error(
                 f"ASYNC intent '{intent}' requested but no TaskQueue configured"
@@ -583,19 +594,31 @@ class AgentCoordinator:
             },
         )
 
-    async def _maybe_resolve_file_refs(self, base_agent_id: str, params: Dict[str, Any], user_id: str) -> None:
-        """Pre-fetch file_ref unless the target agent opted out (AgentDescriptor.prefetch_file_ref)."""
+    async def prefetch_file_ref(
+        self,
+        base_agent_id: str,
+        params: Dict[str, Any],
+        context: Mapping[str, Any],
+        *,
+        deadline_at: float,
+    ) -> None:
+        """Prefetch params["file_ref"] into params["file_content"] (or params["file_note"]) unless the target agent
+        opted out (AgentDescriptor.prefetch_file_ref). Called by the SYNC path with the interactive deadline and by
+        the worker with the prefetch deadline, inside the request context. Never raises."""
         descriptor = self._registry.get_descriptor(base_agent_id) if self._registry else None
         if descriptor is not None and not descriptor.prefetch_file_ref:
             return
-        await self._resolve_file_refs(params, user_id)
+        await self._resolve_file_refs(
+            params, context.get("user_id", ""), context.get("account_id") or "", deadline_at,
+        )
 
-    async def _resolve_file_refs(self, params: Dict[str, Any], user_id: str) -> None:
-        """
-        Resolve file_ref in delegation params before dispatching to specialist.
+    async def _resolve_file_refs(
+        self, params: Dict[str, Any], user_id: str, account_id: str, deadline_at: float,
+    ) -> None:
+        """Resolve file_ref in delegation params before the specialist runs.
 
-        If params contains file_ref and a resolver is configured, downloads the file
-        from GCS and injects file_content into params. Specialist sees resolved text.
+        A readable file gives params["file_content"]; an unreadable one gives params["file_note"] (the specialist
+        reports it, never guesses the content). A resolver that raises is contained: the same note and an ERROR line.
         """
         if not self._file_ref_resolver:
             return
@@ -609,23 +632,31 @@ class AgentCoordinator:
             )
             return
         try:
-            content = await self._file_ref_resolver(file_ref, user_id)
-            params["file_content"] = content
-            logger.info(
-                "📎 [Coordinator] Resolved file_ref '%s' → %d chars",
-                file_ref, len(content),
-            )
+            got = await self._file_ref_resolver(file_ref, user_id, account_id, deadline_at=deadline_at)
         except DriveNotConnectedError as e:
             # An expected state (drive not connected / access expired), not a fault to page on.
             logger.warning(
                 "⚠️ [Coordinator] file_ref '%s' not resolved, drive not connected: %s",
                 file_ref, e,
             )
+            params["file_note"] = conversion_alert(str(file_ref))
+            return
         except Exception as e:
             logger.error(
                 "❌ [Coordinator] Failed to resolve file_ref '%s': %s",
                 file_ref, e, exc_info=True,
             )
+            params["file_note"] = open_failed_note(str(file_ref))
+            return
+        if got.content:
+            params["file_content"] = got.content
+            logger.info(
+                "📎 [Coordinator] Resolved file_ref '%s' → %d chars",
+                file_ref, len(got.content),
+            )
+        elif got.note:
+            params["file_note"] = got.note
+            logger.warning("⚠️ [Coordinator] file_ref '%s' not readable, the specialist gets a note", file_ref)
 
     def get_available_intents(self) -> List[Dict[str, str]]:
         """

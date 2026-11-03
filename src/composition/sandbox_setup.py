@@ -6,12 +6,17 @@ Public interface:
         every start-up refusal in one place: secret-like environment (T1), recycle policy, caller sets (T6),
         engine user. An empty service URL is not a refusal: the plan says `unconfigured` (G9, two-pass first deploy).
     build_engine_registry(plan) -> Mapping[SandboxOp, engine]
-        `render.docx` -> `DocxRenderEngine` over a `ChildLauncher`. Creates/validates the output root.
+        family `render`: `render.docx` -> `DocxRenderEngine`; family `light`: the three `parse.*` ops -> `ParseEngine`, one
+        instance per op, over one `ChildLauncher`. Creates/validates the output root.
+
+Service family (`SANDBOX_SERVICE`): `render` (default) or `light`; any other value refuses start. The family decides the
+caller groups the service accepts and the engines it builds. Render: group RENDER. Light: groups MAIN and INDEXER, both
+for `parse` ops (one service of its own; the render service's caller map is separate).
 
 It does not build the app: the blueprint, gate and recycler are `web/` objects and composition may not import `web/`
 (REQ-ARCH-11); `sandbox_main.build_app` assembles them from the plan. Plain data only. Imports nothing from
 `src.web`, `src.infrastructure`, `src.agents`, `src.handlers` or `src.services` (the sandbox image closure, §4.11).
-The G9 first pass still needs `SANDBOX_CALLERS_RENDER` set: an empty caller set on Cloud Run refuses start by design;
+The G9 first pass still needs a caller group set (`SANDBOX_CALLERS_RENDER`, or MAIN / INDEXER on the light family): an empty caller set on Cloud Run refuses start by design;
 only the empty SANDBOX_URL is tolerated. Config is read from the mapping passed in (`os.getenv` knobs, never `load_settings()`).
 
 Roots (one place, T5 reads them from the plan and passes the SAME `output_root` to the engine and the blueprint):
@@ -32,9 +37,16 @@ from ..domain.sandbox_startup_check import check_sandbox_environment
 from ..utils.logger import logger
 from .sandbox_callers import load_caller_sets
 
-# The gate's group -> op-prefix mapping. Group names match `SANDBOX_CALLERS_<GROUP>`; later slices add rows
-# (INDEXER -> drive, media; MAIN -> chat). S1 serves the render service only.
+# The gate's group -> op-prefix mapping of the render family. Group names match `SANDBOX_CALLERS_<GROUP>`.
 GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"RENDER": frozenset({"render"})}
+# The light family (parse ops; `media` joins with S5): the main service and the indexer each get the `parse` prefix.
+LIGHT_GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"MAIN": frozenset({"parse"}), "INDEXER": frozenset({"parse"})}
+
+FAMILY_RENDER = "render"
+FAMILY_LIGHT = "light"
+_FAMILY_GROUPS: Mapping[str, Mapping[str, FrozenSet[str]]] = {
+    FAMILY_RENDER: GROUP_PREFIXES, FAMILY_LIGHT: LIGHT_GROUP_PREFIXES,
+}
 
 RECYCLE_ALWAYS = "always"
 RECYCLE_NEVER = "never"
@@ -58,6 +70,7 @@ class StartupPlan:
     output_root: str
     engine_user: Optional[str]                     # child uid name (None only off root, locally)
     on_cloud_run: bool
+    family: str = FAMILY_RENDER                    # "render" | "light" (SANDBOX_SERVICE)
 
 
 def validate_startup(
@@ -77,17 +90,24 @@ def validate_startup(
         logger.error("[Sandbox] refusing to start: unusable SANDBOX_RECYCLE policy")
         raise SandboxStartupError("SANDBOX_RECYCLE must be 'always' ('never' is local only)")
 
+    family = env.get("SANDBOX_SERVICE", FAMILY_RENDER)
+    if family not in _FAMILY_GROUPS:
+        logger.error("[Sandbox] refusing to start: unknown SANDBOX_SERVICE family")
+        raise SandboxStartupError(f"SANDBOX_SERVICE must be one of {sorted(_FAMILY_GROUPS)}")
+    group_prefixes = _FAMILY_GROUPS[family]
+
     caller_sets: Dict[str, FrozenSet[str]] = load_caller_sets(env)   # raises on overlap / empty on Cloud Run
-    unknown = sorted(set(caller_sets) - set(GROUP_PREFIXES))
+    unknown = sorted(set(caller_sets) - set(group_prefixes))
     url = (env.get("SANDBOX_URL") or "").strip().rstrip("/")
     local_open = not on_cloud_run and not caller_sets and not url
     if local_open:
         # RFC §4.4: local development with nothing configured runs with the gate open (T6 builds it open).
         logger.warning("[Sandbox] no callers and no URL, not on Cloud Run: local, gate open")
-    elif unknown or "RENDER" not in caller_sets:
+    elif unknown or not set(caller_sets) & set(group_prefixes):
         logger.error(f"[Sandbox] refusing to start: caller groups {sorted(caller_sets)} do not match this service")
         raise SandboxStartupError(
-            f"caller groups must be exactly {sorted(GROUP_PREFIXES)}; got unknown: {unknown or 'none, RENDER missing'}"
+            f"caller groups for the {family} service must be from {sorted(group_prefixes)}, at least one; "
+            f"got unknown: {unknown or 'none, no known group'}"
         )
 
     if not url and not local_open:
@@ -100,18 +120,24 @@ def validate_startup(
 
     return StartupPlan(
         recycle=recycle, service_url=url, unconfigured=not url and not local_open, caller_sets=caller_sets,
-        group_prefixes=dict(GROUP_PREFIXES), work_root=work_root, output_root=output_root,
-        engine_user=engine_user, on_cloud_run=on_cloud_run,
+        group_prefixes=dict(group_prefixes), work_root=work_root, output_root=output_root,
+        engine_user=engine_user, on_cloud_run=on_cloud_run, family=family,
     )
 
 
 def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
     """Build the engines. Raises (never falls back) on a misconfigured engine user or output root."""
     from ..adapters.sandbox_engine.child_launcher import ChildLauncher
-    from ..adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
 
     output_root = _prepare_output_root(plan.output_root, plan.work_root)
     launcher = ChildLauncher(user=plan.engine_user)   # resolves/validates the user now (R6)
+    if plan.family == FAMILY_LIGHT:
+        from ..adapters.sandbox_engine.parse_engine import ParseEngine
+
+        ops = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS)
+        return {op: ParseEngine(launcher, op=op, output_root=output_root) for op in ops}
+    from ..adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
+
     return {SandboxOp.RENDER_DOCX: DocxRenderEngine(launcher, output_root=output_root)}
 
 

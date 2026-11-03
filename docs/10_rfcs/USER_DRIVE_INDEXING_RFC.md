@@ -1965,14 +1965,16 @@ this section wins; the text above was corrected where it was plainly false. Slic
   `SubprocessContentExtractor.VERSION` bump. The memory, CPU and wall limits (1 GiB, 90 s, 120 s) are placeholders until
   spike S1.
 - **Page windows.** One call cannot transcribe 200 pages, and a Haiku 5.5 prompt above 100k tokens costs five times
-  as much on input and output. The child process counts a routed PDF's pages, then cuts one window of
-  `MODEL_PAGES_PER_CALL` pages at a time, on demand, from the walked page tree, never from `/Count` (a temp PDF the
-  indexer process never parses, read into memory and removed before the call), so at most `MODEL_IN_FLIGHT` windows
-  exist on disk even when every page shares one large image; the windows run with at most `MODEL_IN_FLIGHT`
+  as much on input and output. The parser counts a routed PDF's pages, then cuts the windows of
+  `MODEL_PAGES_PER_CALL` pages from the walked page tree, never from `/Count`, in groups of `MODEL_IN_FLIGHT` windows:
+  one `cut_pdf_windows` request per group (one upload instead of one per window), and a group is requested only once the
+  previous one is read (and, for an interactive open, only while the deadline and the text budget allow), so at most
+  `MODEL_IN_FLIGHT` window files exist on disk even when every page shares one large image; a window's file (a temp PDF
+  the indexer process never parses) is removed when the window is finished; the windows run with at most `MODEL_IN_FLIGHT`
   concurrent calls and their texts are joined in page order. The parser's own status (`encrypted`, `timeout`,
   `memory`, …) when it cannot count or cut the PDF is the file's outcome.
 - **Halving rules** (`DriveReaderRunner._piece`):
-  - a window answered at the output limit is split in half (cut from the source) and read once more; a half or a
+  - a window answered at the output limit is split in half (cut from its own window file) and read once more; a half or a
     single page still at the limit adds no text and sets `truncated`;
   - a window whose call timed out is halved once; a half that times out again fails the file (`error`, a counted
     per-file retry — the model answers, these pages are too dense for it); a single-page window, never halved, that

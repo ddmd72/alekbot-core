@@ -44,7 +44,9 @@ _LIMITS_MODULE = "src.adapters.sandbox_engine.limits_exec"
 
 # The only names a child may see: the parent's values of these, plus what the caller passes explicitly (still only
 # these names). Everything else, every application secret included, is withheld. TMPDIR and HOME are the workdir.
-ENV_ALLOWLIST = ("PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP")
+# The last four are the parse engine's single-thread settings (parse_engine.CHILD_ENV).
+ENV_ALLOWLIST = ("PATH", "HOME", "NODE_PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
+                 "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "MALLOC_ARENA_MAX")
 _PARENT_ENV_KEYS = ("PATH", "LANG", "LC_ALL")
 
 # Reads of the child's stderr file are chunked; only length and hash survive.

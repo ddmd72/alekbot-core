@@ -36,6 +36,7 @@ from ..domain.drive_open_bound_text import BoundText
 from ..domain.drive_open_cut import stand_in_cut
 from ..domain.drive_open_texts import ROUTE_SPECIALIST
 from ..domain.drive_file_content_item import FileContentItem
+from ..domain.document_read import OPEN_MARGIN_S
 from ..domain.drive_op import DriveOp
 from ..domain.user_drive import DriveAccessRefused
 from ..domain.drive_outcome import DriveOutcome
@@ -228,8 +229,10 @@ class DriveToolRun:
             return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the file to open")
         if _is_bare_path(ref):
             return self._path_given(tc, DriveOp.OPEN, "file_ref", "the file to open")
+        # `left()` is on the (monotonic) tool clock: converted to epoch seconds here, never mixed (§4.4 "Deadline")
+        deadline_at = time.time() + self.left() - OPEN_MARGIN_S
         result = await self._run(DriveOp.OPEN, t.KIND_OPEN, lambda: self._ops.open(
-            self._context, self._user_id, ref), change=False)
+            self._context, self._user_id, ref, deadline_at=deadline_at), change=False)
         return self._seen(tc, result)
 
     async def _link(self, tc: ToolCall) -> ToolResult:

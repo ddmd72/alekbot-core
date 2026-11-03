@@ -316,7 +316,19 @@ class FixtureDrive(UserDrivePort):
         self._check(item_id)
         if item_id not in self._items:
             raise DriveItemNotFoundError(item_id)
-        return self._content.get(item_id, b"")
+        data = self._content.get(item_id)
+        return data if data is not None else self._stand_in(self._items[item_id].name)
+
+    @staticmethod
+    def _stand_in(name: str) -> bytes:
+        """What an open of an item the manifest gives no bytes reads: a minimal document of the name's kind, so the
+        document service (which sniffs the bytes, not the name) reads it as production reads a real file."""
+        lines = [name]
+        if name.lower().endswith(".docx"):
+            return fixture_texts_afc.docx_from_lines(lines)
+        if name.lower().endswith(".pdf"):
+            return text_pdf(lines)
+        return b""
 
     async def upload(self, handle: DriveHandle, parent_id: str, filename: str, data: bytes, content_type: str,
                      conflict: Literal["rename", "replace", "fail"] = "rename") -> DriveItem:

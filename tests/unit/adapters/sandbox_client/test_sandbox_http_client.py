@@ -120,18 +120,18 @@ async def test_base_url_normalised_without_trailing_slash():
 
 # --- failure mapping, one test per row of §4.9 -------------------------------------------------------------
 
-async def test_recycling_retried_up_to_three_times_uncharged():
-    transport = Scripted(reply(503, SandboxStatus.RECYCLING), reply(503, SandboxStatus.RECYCLING),
-                         reply(200, SandboxStatus.OK, b"ok"))
+async def test_recycling_retried_once_uncharged():
+    # RFC §4.9 (owner 2026-11-03): one retry on `recycling` (2 attempts), was up to three.
+    transport = Scripted(reply(503, SandboxStatus.RECYCLING), reply(200, SandboxStatus.OK, b"ok"))
     out = await client_for(transport).call(OP, b"b", LIMITS)
-    assert out.outcome.status == SandboxStatus.OK and len(transport.requests) == 3
+    assert out.outcome.status == SandboxStatus.OK and len(transport.requests) == 2
 
 
-async def test_recycling_three_times_then_unavailable():
+async def test_recycling_twice_then_unavailable():
     transport = Scripted(reply(503, SandboxStatus.RECYCLING))
     with pytest.raises(SandboxUnavailable):
         await client_for(transport).call(OP, b"b", LIMITS)
-    assert len(transport.requests) == 3
+    assert len(transport.requests) == 2
 
 
 async def test_429_is_unavailable():

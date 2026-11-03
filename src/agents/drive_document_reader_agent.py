@@ -28,6 +28,7 @@ import asyncio
 import base64
 import json
 from dataclasses import dataclass, replace
+from contextlib import AbstractContextManager
 from datetime import date, datetime, time, timezone
 from typing import Any, List, Optional, Tuple
 
@@ -39,6 +40,7 @@ from ..infrastructure.agent_config import DRIVE_READER
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
+from ..utils.telemetry import sdk_spans_suppressed
 from .base_agent import BaseAgent
 from ..infrastructure.drive_model_call import (
     CallCounter, DriveModelCallFailed, build_drive_prompt, classify_model_error, ledger_spend, with_usage,
@@ -121,6 +123,10 @@ class DriveDocumentReaderAgent(BaseAgent):
         # there; an account-level 4xx is not (§24.8).
         self._set_execution_context(execution_context)
 
+    def _provider_call_scope(self) -> AbstractContextManager[Any]:
+        """The SDK instrumentation would put the file's bytes on a span; our own `llm.call` span still exports."""
+        return sdk_spans_suppressed()
+
     async def can_handle(self, message: AgentMessage) -> bool:
         return False
 
@@ -158,7 +164,7 @@ class DriveDocumentReaderAgent(BaseAgent):
             file_part, MessagePart(text=_TASK_FIRST if first_window else _TASK_LATER)])]
         for attempt in range(DRIVE_READER.max_parse_retries + 1):
             counter.calls += 1
-            response = await self._call_llm(LLMRequest(
+            response = await self._call_llm_logged(LLMRequest(
                 model_name=self._model_name,
                 system_instruction=system,
                 messages=history,
@@ -184,6 +190,19 @@ class DriveDocumentReaderAgent(BaseAgent):
                 history.append(Message(role="model", parts=[MessagePart(text=raw)]))
                 history.append(Message(role="user", parts=[MessagePart(text=_CORRECTION.format(error=err))]))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _call_llm_logged(self, request: LLMRequest, *, turn: int) -> Any:
+        """`_call_llm`, with a structured WARNING on a provider failure: the suppressed SDK span carries none."""
+        try:
+            return await self._call_llm(request, turn=turn)
+        except Exception as exc:
+            ctx = self._agent_execution_context
+            logger.warning(
+                "llm_call_failed provider=%s error_type=%s window=reader",
+                (ctx.provider_name if ctx else "") or type(self._llm).__name__, type(exc).__name__,
+                extra={"event": "llm_call_failed", "agent_type": AGENT_TYPE, "window": "reader"},
+            )
+            raise
 
     async def _system_prompt(self) -> str:
         async with self._system_lock:

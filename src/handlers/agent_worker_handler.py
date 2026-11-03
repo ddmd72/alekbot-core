@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
+from ..domain.document_read import PREFETCH_OPEN_S
 from ..domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from ..domain.notification_kind import NotificationKind
 from ..domain.request_context import RequestContext
@@ -110,19 +112,23 @@ class AgentWorkerHandler:
         # Mirror _execute_sync: spread context["params"] into payload so agents
         # receive extra fields (e.g. report_content) via message.payload.
         extra_payload = context.get("params", {})
-        message = AgentMessage.create(
-            sender="worker",
-            recipient=resolved_agent_id,
-            intent=AgentIntent.DELEGATE,
-            payload={"query": query, "intent": intent, **extra_payload},
-            context={k: v for k, v in context.items() if k != "params"},
-        )
-
         try:
             # A Cloud Task carries no RequestContext, and multi-tenant reads (the Router's memory
             # search, Firestore repos) resolve user and account from it: without it a send_to_chat
             # errand ran with 0 memory facts (UAT 2026-09-29).
             async with RequestContext(user_id=user_id, account_id=context.get("account_id")):
+                # P18: the specialist's file_ref is opened here, just before it runs (it rode the task as a ref).
+                await self._coordinator.prefetch_file_ref(
+                    agent_id, extra_payload, context, deadline_at=time.time() + PREFETCH_OPEN_S,
+                )
+                # Built after the prefetch: the payload spreads extra_payload, which now holds file_content/file_note.
+                message = AgentMessage.create(
+                    sender="worker",
+                    recipient=resolved_agent_id,
+                    intent=AgentIntent.DELEGATE,
+                    payload={"query": query, "intent": intent, **extra_payload},
+                    context={k: v for k, v in context.items() if k != "params"},
+                )
                 response = await self._coordinator.route_message(message)
 
             if response.status == AgentStatus.SUCCESS:

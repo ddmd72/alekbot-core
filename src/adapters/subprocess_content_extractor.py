@@ -41,8 +41,8 @@ import time
 from typing import IO, Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_capture import signals_from_json
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, PdfSplitFailed
-from src.domain.document_extraction import PARSER, ExtractionStatus, text_digest
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed
+from src.domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus, text_digest
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort
@@ -83,7 +83,7 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
 
     # 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
     # parser-decided record (§25.4.8).
-    VERSION = 3
+    VERSION = PARSER_VERSION
 
     def __init__(self, *, memory_limit_bytes: int = EXTRACT_MEMORY_LIMIT_BYTES,
                  cpu_limit_s: int = EXTRACT_CPU_LIMIT_S, wall_timeout_s: float = EXTRACT_WALL_TIMEOUT_S,
@@ -122,7 +122,9 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
             return self._outcome(ExtractionStatus.ERROR, detail=f"stat: {type(exc).__name__}")
         if size > size_cap(request.kind):         # the sniffed kind may carry a smaller cap than the declared one
             return self._outcome(ExtractionStatus.TOO_LARGE, detail=f"{size} bytes for kind {request.kind}")
-        result, status, detail = await self._run({"op": "extract", "path": request.path, "kind": request.kind})
+        payload = {"op": "extract", "path": request.path, "kind": request.kind}
+        result, status, detail = await (self._run(payload) if request.deadline_at is None
+                                        else self._run(payload, request.deadline_at))
         if status is not None or result is None:
             return self._outcome(status or ExtractionStatus.ERROR, detail=detail)
         return self._from_result(result)
@@ -181,8 +183,10 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
                    ) -> Tuple[Optional[Dict[str, Any]], Optional[ExtractionStatus], str]:
         """(result, None, "") when the child wrote a result; (None, status, detail) when it was killed or failed.
         A `deadline_at` (epoch seconds) lowers the child's wall to the time left once a slot is free; with none left,
-        no child starts and the outcome is `timeout` / `deadline`."""
-        async with self._slots:
+        no child starts and the outcome is `timeout` / `deadline`. With a deadline the wait for the slot is bounded by
+        it: past it, `ParserBusy` is raised and no child starts; without one the wait is unbounded."""
+        await self._acquire_slot(payload, deadline_at)
+        try:
             wall: Optional[float] = None          # None: the adapter's own wall clock, today's path
             wall_detail = f"wall clock {self._wall:g}s"
             if deadline_at is not None:
@@ -222,6 +226,21 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
                 return result, None, ""
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
+        finally:
+            self._slots.release()
+
+    async def _acquire_slot(self, payload: Mapping[str, Any], deadline_at: Optional[float]) -> None:
+        """The parser's one-child slot. With a deadline the wait is bounded by the time left (§4.4 "Parser slot"):
+        past it, `ParserBusy` (the slot is taken and no time is left)."""
+        if deadline_at is None or not self._slots.locked():
+            await self._slots.acquire()   # a free slot is taken at once: a passed deadline then starts no child below
+            return
+        try:
+            await asyncio.wait_for(self._slots.acquire(), max(deadline_at - time.time(), 0.0))
+        except asyncio.TimeoutError:
+            logger.warning(f"[DriveExtract] {payload.get('op')}: the parser slot stayed busy until the deadline; "
+                           f"no child started")
+            raise ParserBusy() from None
 
     def _stage(self, payload: Mapping[str, Any], workdir: str
                ) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
