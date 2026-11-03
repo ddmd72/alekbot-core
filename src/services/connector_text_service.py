@@ -47,13 +47,13 @@ class ConnectorTextService:
 
     async def texts(self) -> ConnectorTexts:
         """The current texts. Raises ConnectorTextsUnavailable only while no load has ever succeeded."""
-        if self._is_fresh():
-            assert self._value is not None
-            return self._value
+        fresh = self._fresh()
+        if fresh is not None:
+            return fresh
         async with self._lock:
-            if self._is_fresh():
-                assert self._value is not None
-                return self._value
+            fresh = self._fresh()
+            if fresh is not None:
+                return fresh
             try:
                 self._value = await self._load()
                 self._loaded_at = self._clock()
@@ -70,8 +70,11 @@ class ConnectorTextService:
                 return self._value
             return self._value
 
-    def _is_fresh(self) -> bool:
-        return self._value is not None and self._clock() - self._loaded_at < self._ttl_s
+    def _fresh(self) -> Optional[ConnectorTexts]:
+        """The loaded texts while younger than ttl_s, else None."""
+        if self._value is not None and self._clock() - self._loaded_at < self._ttl_s:
+            return self._value
+        return None
 
     async def _load(self) -> ConnectorTexts:
         tool_token = await self._get(self._tool_token_id)
