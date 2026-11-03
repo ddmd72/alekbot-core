@@ -118,8 +118,13 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   deleted recordings from the mirror ledger, even with drive search off; a default search never returns an archived
   transcript. A ref to a file of the mirror opens from the pinned store entry, capped like any transcript. The Cabinet
   says that `_Transcripts` and its Archive stay on the drive after an indexing opt-out (wording to be reviewed by the owner).
-- **Drive MCP connector, proposed** ([DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md)): the
-  drive's read tools for an outside MCP client (claude.ai), read-only, limited per drive to the Cabinet's connector access.
+- **Drive MCP connector** ([DRIVE_MCP_CONNECTOR_RFC.md](../../10_rfcs/DRIVE_MCP_CONNECTOR_RFC.md), building block
+  [remote_mcp_server](../remote_mcp_server/README.md)): the drive is also reachable read-only from an outside MCP client
+  (claude.ai) through six tools (`search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`,
+  `get_note`) over the same `DriveOperations`, with no model of ours in the loop. Its open never runs the paid model
+  reader: a scan or thin-text PDF answers a line pointing to its passages, an image and an untranscribed recording
+  answer before any download. Today the tools are behind the deploy knob `DRIVE_MCP_TOOLS_ENABLED` (off by default);
+  per-drive Cabinet connector access, which limits what it can read, is slice 3.
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 
