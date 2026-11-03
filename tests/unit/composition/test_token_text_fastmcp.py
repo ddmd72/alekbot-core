@@ -29,7 +29,8 @@ AUTH_CONFIG = SimpleNamespace(mcp_resource_uri=f"{BASE}/mcp")
 TOKEN = "drive-token-u1"
 HEADERS = {"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {TOKEN}"}
 REQUIRED = {"search_drive": [], "find_passages": ["question"], "read_passages": ["file_ref", "passages"],
-            "open_drive_file": ["file_ref"], "list_folder": [], "get_note": []}
+            "open_drive_file": ["file_ref"], "list_folder": [], "get_note": [],
+            "get_download_link": ["file_ref"]}     # reviewer edit, drive MCP slice 4: the new tool (RFC §8)
 
 
 class Auth:

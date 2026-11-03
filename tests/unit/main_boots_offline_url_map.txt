@@ -43,6 +43,7 @@ GET /cabinet/call/manifest.webmanifest
 GET /cabinet/docs
 GET /cabinet/docs/
 GET /cabinet/docs/<path:filename>
+GET /d/<link_id>
 GET /f/<token>
 GET /f/<token>/raw
 GET /favicon.ico

@@ -314,11 +314,12 @@ async def test_of_concurrent_consumers_of_one_code_exactly_one_gets_it(store):
 # ------------------------------------------------------------------------------------------- refresh tokens
 
 async def test_save_refresh_token_stores_every_field_under_the_hash(store):
-    await store.repo.save_refresh_token(refresh())
+    # reviewer edit, drive MCP slice 4 (RFC §3.3.8, card DELTA 3): the grant id is a new stored field
+    await store.repo.save_refresh_token(refresh(grant_id="grant-a"))
     assert store.docs(REFRESH) == {sha("rt-a"): {
         "token_hash": sha("rt-a"), "client_id": "cli-a", "user_id": "usr-cli-a", "account_id": "acc-cli-a",
         "scopes": ["user_context"], "resource": "https://dev.example/mcp", "expires_at": NOW + timedelta(days=30),
-        "revoked_at": None,
+        "revoked_at": None, "grant_id": "grant-a",
     }}
 
 

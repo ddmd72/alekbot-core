@@ -49,6 +49,7 @@ class TestPortContract:
             "save_refresh_token",
             "get_refresh_token",
             "revoke_refresh_token",
+            "has_active_grant",     # reviewer edit, drive MCP slice 4: the link's grant check (RFC §3.3.8, §8)
         }
 
 
