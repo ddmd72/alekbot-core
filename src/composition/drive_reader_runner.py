@@ -4,12 +4,12 @@ DriveReaderRunner — the document reader agent as a ContentExtractorPort, on th
 
 Public interface:
     READER_VERSION = 2
-    PdfSplitter (Protocol): async pdf_page_count(path) -> int
-                            async cut_pdf_window(path, first_page, page_count, out_path) -> None
     DriveReaderRunner(context_builder, user_repo, prompt_builder, splitter, quota_service=None,
                       file_budget_s=MODEL_FILE_BUDGET_S, temp_root=None)
         extractor_id -> READER, version -> READER_VERSION
         async extract(request) -> ExtractionOutcome      raises DriveModelUnavailable only
+    `splitter` is a PdfSplitterPort (ports/pdf_splitter_port.py); the runner calls only pdf_page_count and
+    cut_pdf_window, without a deadline.
 
 Per file it reads the user's UserBotConfig, builds the agent through AgentContextBuilder (provider and tier are the
 user's configuration, D7), sets the quota service and bills every call to `request.account_id` — the
@@ -42,7 +42,7 @@ import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Protocol
+from typing import Any, List, Optional
 
 from ..agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReaderAgent, ReaderReply
 from ..infrastructure.drive_model_call import (
@@ -58,6 +58,7 @@ from ..domain.drive_index_params import (
     MODEL_EXTRACT_MAX_PAGES, MODEL_FILE_BUDGET_S, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
+from ..ports.pdf_splitter_port import PdfSplitterPort
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
@@ -68,14 +69,6 @@ READER_VERSION = 2   # 2: `capture`, no brief doc type (§26.3, Δ64)
 MAX_IMAGE_BYTES = MAX_VISION_IMAGE_BYTES
 
 S = ExtractionStatus
-
-
-class PdfSplitter(Protocol):
-    """The sandboxed parser's page-window ops (SubprocessContentExtractor); both raise PdfSplitFailed."""
-
-    async def pdf_page_count(self, path: str) -> int: ...
-
-    async def cut_pdf_window(self, path: str, first_page: int, page_count: int, out_path: str) -> None: ...
 
 
 @dataclass
@@ -108,7 +101,7 @@ class _FileRun:
 class DriveReaderRunner(ContentExtractorPort):
 
     def __init__(self, context_builder: Any, user_repo: UserRepository, prompt_builder: PromptBuilderPort,
-                 splitter: PdfSplitter, quota_service: Optional[QuotaService] = None,
+                 splitter: PdfSplitterPort, quota_service: Optional[QuotaService] = None,
                  file_budget_s: float = MODEL_FILE_BUDGET_S, temp_root: Optional[str] = None) -> None:
         self._context_builder = context_builder
         self._user_repo = user_repo

@@ -57,7 +57,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.composition.drive_model_setup import build_drive_model_registry
 from src.composition.drive_passage_runner import DrivePassageRunner
 from src.composition.drive_profiler_runner import DriveProfilerRunner
-from src.composition.drive_reader_runner import DriveReaderRunner, PdfSplitter
+from src.composition.drive_reader_runner import DriveReaderRunner
 from src.composition.drive_triage_runner import DriveTriageRunner
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
@@ -71,6 +71,7 @@ from src.domain.llm import LLMResponse
 from src.domain.user import UserBotConfig
 from src.infrastructure.agent_config import DRIVE_READER
 from src.ports.llm_port import LLMPort, LLMRequest
+from src.ports.pdf_splitter_port import PdfSplitterPort
 from src.ports.quota_service import QuotaService
 from src.services.agent_context_builder import AgentContextBuilder
 from src.services.prompt_builder import PromptBuilder
@@ -214,7 +215,7 @@ def _context_builder(registry: ProviderRegistry) -> AgentContextBuilder:
 
 
 async def check_read(folder: Path, providers: Sequence[str], *, registry: ProviderRegistry, assembly: Any,
-                     splitter: PdfSplitter, out_dir: Path) -> Dict[str, Any]:
+                     splitter: PdfSplitterPort, out_dir: Path) -> Dict[str, Any]:
     files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in _KINDS)
     summary: Dict[str, Any] = {}
     for provider in providers:
@@ -456,7 +457,7 @@ def _args(argv: Optional[List[str]]) -> argparse.Namespace:
 
 async def run(argv: Optional[List[str]] = None, *, keys: Optional[Mapping[str, Optional[str]]] = None,
               registry: Optional[ProviderRegistry] = None, assembly: Any = None,
-              splitter: Optional[PdfSplitter] = None, memory: Path = MEMORY) -> Path:
+              splitter: Optional[PdfSplitterPort] = None, memory: Path = MEMORY) -> Path:
     args = _args(argv)
     providers = [p.strip() for p in args.providers.split(",") if p.strip()]
     registry = registry or build_drive_model_registry(keys or os.environ)

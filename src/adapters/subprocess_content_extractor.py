@@ -38,7 +38,7 @@ import stat
 import sys
 import tempfile
 import time
-from typing import IO, Any, Dict, Mapping, Optional, Tuple
+from typing import IO, Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_capture import signals_from_json
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, PdfSplitFailed
@@ -46,6 +46,7 @@ from src.domain.document_extraction import PARSER, ExtractionStatus, text_digest
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort
+from src.ports.pdf_splitter_port import PdfSplitterPort
 from src.domain.memory_telemetry import SCOPE_SUBPROCESS
 from src.utils.logger import logger
 from src.utils.memory_scope import memory_scope
@@ -75,9 +76,10 @@ PARSER_USER_ENV = "DRIVE_PARSER_USER"
 _STDERR_TAIL = 400   # bytes of the child's stderr hashed into an `error` detail; the text itself is never logged
 
 
-class SubprocessContentExtractor(ContentExtractorPort):
+class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
     """The `parser` link of every extractor chain; also counts a routed PDF's pages and cuts its page windows for
-    the reader, one window per call (§24.3)."""
+    the reader, one child per window (§24.3). A page op's `deadline_at` (epoch seconds, EXTERNAL_FILES_RFC §4.4)
+    lowers the child's wall clock to the time left; with none left, no child starts."""
 
     # 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
     # parser-decided record (§25.4.8).
@@ -125,22 +127,23 @@ class SubprocessContentExtractor(ContentExtractorPort):
             return self._outcome(status or ExtractionStatus.ERROR, detail=detail)
         return self._from_result(result)
 
-    async def pdf_page_count(self, path: str) -> int:
+    async def pdf_page_count(self, path: str, *, deadline_at: Optional[float] = None) -> int:
         """Pages of the PDF, counted by the sandboxed child (§24.3). Raises PdfSplitFailed with the outcome status
         when the PDF cannot be read."""
-        result = await self._pdf_op({"op": "pdf_page_count", "path": path})
+        result = await self._pdf_op({"op": "pdf_page_count", "path": path}, deadline_at)
         pages = result.get("pages_total")
         if not isinstance(pages, int) or isinstance(pages, bool) or pages < 0:
             logger.warning("[DriveExtract] page count result has an invalid shape")
             raise PdfSplitFailed(ExtractionStatus.ERROR, "invalid page count")
         return pages
 
-    async def cut_pdf_window(self, path: str, first_page: int, page_count: int, out_path: str) -> None:
+    async def cut_pdf_window(self, path: str, first_page: int, page_count: int, out_path: str,
+                             *, deadline_at: Optional[float] = None) -> None:
         """One window PDF at `out_path` (pages [first_page, first_page + page_count), 0-based, clamped to the end),
         cut by the sandboxed child (§24.3). The caller owns `out_path` and removes it; cutting one window per model
         call keeps at most MODEL_IN_FLIGHT windows on disk. Raises PdfSplitFailed with the outcome status."""
         await self._pdf_op({"op": "cut_pdf_window", "path": path, "first_page": first_page,
-                            "page_count": page_count, "out_path": out_path})
+                            "page_count": page_count, "out_path": out_path}, deadline_at)
         try:
             regular = stat.S_ISREG(os.lstat(out_path).st_mode)   # lstat: a link is not the window
         except OSError:
@@ -151,12 +154,43 @@ class SubprocessContentExtractor(ContentExtractorPort):
                 os.unlink(out_path)
             raise PdfSplitFailed(ExtractionStatus.ERROR, "invalid window")
 
+    async def cut_pdf_windows(self, path: str, windows: Sequence[Tuple[int, int]], out_paths: Sequence[str],
+                              *, deadline_at: Optional[float] = None) -> None:
+        """Every `(first_page, page_count)` window at the matching out path, one child after another under the one
+        deadline. All or nothing: when a window fails (or the call is cancelled), every window file of the batch is
+        removed before the failure propagates."""
+        if len(windows) != len(out_paths):
+            logger.error(f"[DriveExtract] cut_pdf_windows: {len(windows)} windows for {len(out_paths)} out paths")
+            raise ValueError("windows and out_paths differ in length")
+        attempted: list[str] = []
+        try:
+            for (first_page, page_count), out_path in zip(windows, out_paths):
+                attempted.append(out_path)
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+        except BaseException as exc:
+            logger.warning(f"[DriveExtract] cut_pdf_windows: window {len(attempted)} of {len(windows)} failed "
+                           f"({type(exc).__name__}); removing the batch's window files")
+            for out_path in attempted:
+                with contextlib.suppress(OSError):
+                    os.unlink(out_path)
+            raise
+
     # -- child process ----------------------------------------------------------------------------------------------
 
-    async def _run(self, payload: Mapping[str, Any]
+    async def _run(self, payload: Mapping[str, Any], deadline_at: Optional[float] = None
                    ) -> Tuple[Optional[Dict[str, Any]], Optional[ExtractionStatus], str]:
-        """(result, None, "") when the child wrote a result; (None, status, detail) when it was killed or failed."""
+        """(result, None, "") when the child wrote a result; (None, status, detail) when it was killed or failed.
+        A `deadline_at` (epoch seconds) lowers the child's wall to the time left once a slot is free; with none left,
+        no child starts and the outcome is `timeout` / `deadline`."""
         async with self._slots:
+            wall, wall_detail = self._wall, f"wall clock {self._wall:g}s"
+            if deadline_at is not None:
+                remaining = deadline_at - time.time()
+                if remaining <= 0:
+                    logger.warning(f"[DriveExtract] {payload.get('op')}: the deadline passed, no child started")
+                    return None, ExtractionStatus.TIMEOUT, "deadline"
+                if remaining < wall:
+                    wall, wall_detail = remaining, "deadline"
             workdir = tempfile.mkdtemp(prefix="drive-extract-", dir=self._temp_root)
             started = time.monotonic()
             try:
@@ -167,8 +201,8 @@ class SubprocessContentExtractor(ContentExtractorPort):
                 if self._sandbox is not None:     # root ignores it and a dev user's own processes would count against it
                     request["nproc"] = EXTRACT_NPROC_LIMIT
                 with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
-                    returncode, timed_out = await self._spawn(request, workdir, errors)
-                    status, detail = self._exit_status(returncode, timed_out)
+                    returncode, timed_out = await self._spawn(request, workdir, errors, wall)
+                    status, detail = self._exit_status(returncode, timed_out, wall_detail)
                     if status is ExtractionStatus.ERROR:
                         # its length and a hash only: a parser's traceback can quote the document (R3 F3-5)
                         detail = f"{detail}; {_stderr_digest(errors)}"
@@ -213,11 +247,13 @@ class SubprocessContentExtractor(ContentExtractorPort):
             window = (staged["out_path"], str(payload["out_path"]))
         return staged, window
 
-    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
+    async def _spawn(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes], wall: float
+                     ) -> Tuple[int, bool]:
         with memory_scope(SCOPE_SUBPROCESS, "drive_parser"):
-            return await self._spawn_child(request, workdir, stderr)
+            return await self._spawn_child(request, workdir, stderr, wall)
 
-    async def _spawn_child(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes]) -> Tuple[int, bool]:
+    async def _spawn_child(self, request: Mapping[str, Any], workdir: str, stderr: IO[bytes], wall: float
+                           ) -> Tuple[int, bool]:
         identity: Dict[str, Any] = {}
         if self._sandbox is not None:   # no supplementary groups: root's would otherwise be inherited
             identity = {"user": self._sandbox[0], "group": self._sandbox[1], "extra_groups": []}
@@ -229,7 +265,7 @@ class SubprocessContentExtractor(ContentExtractorPort):
         )
         timed_out = False
         try:
-            await asyncio.wait_for(proc.communicate(json.dumps(request).encode("utf-8")), timeout=self._wall)
+            await asyncio.wait_for(proc.communicate(json.dumps(request).encode("utf-8")), timeout=wall)
         except asyncio.TimeoutError:
             timed_out = True
         finally:
@@ -238,9 +274,10 @@ class SubprocessContentExtractor(ContentExtractorPort):
                 await proc.wait()
         return int(proc.returncode if proc.returncode is not None else -signal.SIGKILL), timed_out
 
-    def _exit_status(self, returncode: int, timed_out: bool) -> Tuple[Optional[ExtractionStatus], str]:
+    def _exit_status(self, returncode: int, timed_out: bool, wall_detail: str
+                     ) -> Tuple[Optional[ExtractionStatus], str]:
         if timed_out:
-            return ExtractionStatus.TIMEOUT, f"wall clock {self._wall:g}s"
+            return ExtractionStatus.TIMEOUT, wall_detail
         if returncode == 0:
             return None, ""
         if returncode == EXIT_MEMORY:
@@ -285,9 +322,9 @@ class SubprocessContentExtractor(ContentExtractorPort):
                                  detail=str(result.get("detail", ""))[:300],
                                  script_rendered=is_text and script_rendered, capture_signals=signals)
 
-    async def _pdf_op(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    async def _pdf_op(self, payload: Mapping[str, Any], deadline_at: Optional[float]) -> Dict[str, Any]:
         """The child's result of a page-window op, or PdfSplitFailed with the outcome status."""
-        result, status, detail = await self._run(payload)
+        result, status, detail = await self._run(payload, deadline_at)
         if status is not None or result is None:
             raise PdfSplitFailed(status or ExtractionStatus.ERROR, detail)
         if result.get("status") != ExtractionStatus.TEXT.value:
