@@ -16,7 +16,9 @@ from src.domain import drive_answer_texts as chat
 from src.domain import drive_connector_contract as contract
 from src.domain.connector_texts import MAX_TOOL_DESCRIPTION_CHARS, ConnectorTexts, parse_keyed_sections
 from src.domain.drive_excerpt_render import PAGE_NEXT as CHAT_PAGE_NEXT
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_open_texts import ROUTE_SPECIALIST
+from src.domain.drive_tool_texts import OPEN_DRIVE_FILE
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "prompts_snapshot")
 TOOL_TOKEN = "MCP_DRIVE_TOOL_TEXTS"
@@ -113,6 +115,17 @@ def test_each_result_text_carries_exactly_the_contracts_placeholders():
 def test_no_tool_text_carries_a_placeholder():
     # descriptions are served as they are: nothing formats them
     assert {key: sorted(_placeholders(text)) for key, text in _texts(TOOL_TOKEN).items() if _placeholders(text)} == {}
+
+
+# The open bound as the texts state it ("a file over 60,000 characters"), formatted as the chat texts format it.
+_OPEN_BOUND = re.compile(r"over ([\d,]+) characters")
+
+
+def test_every_stated_open_bound_is_the_codes_bound():
+    texts = {**_texts(TOOL_TOKEN), **_texts(RESULT_TOKEN)}
+    stated = {key: _OPEN_BOUND.findall(text) for key, text in texts.items() if _OPEN_BOUND.search(text)}
+    assert {OPEN_DRIVE_FILE, "R_TOO_LONG"} <= set(stated)
+    assert {key: numbers for key, numbers in stated.items() if set(numbers) != {f"{OPEN_MAX_CHARS:,}"}} == {}
 
 
 def test_no_profile_or_blueprint_references_either_token():
