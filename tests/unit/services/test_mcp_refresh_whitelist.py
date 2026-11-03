@@ -11,7 +11,7 @@ from src.domain.mcp import MCPRefreshToken
 from src.services.mcp_authorization_service import MCPAuthorizationService, MCPInvalidGrant
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
-from tests.support.mcp_gate_fakes import ALLOWED_EMAIL, REMOVED_EMAIL, FakeUserRepo, FakeWhitelistRepo
+from tests.support.mcp_gate_fakes import ALLOWED_EMAIL, REMOVED_EMAIL, FakeUserRepo, FakeWhitelistRepo, SCOPE_OF
 
 FACTS = "https://mcp.example.test/mcp"
 DRIVE = "https://mcp.example.test/drive-mcp"
@@ -27,7 +27,7 @@ class World:
         self.whitelist = whitelist or FakeWhitelistRepo()
         self.service = MCPAuthorizationService(
             self.repo, jwt_secret="whitelist-jwt-secret-0123456789abcdef-xyz", mcp_resource_uri=FACTS,
-            drive_resource_uri=DRIVE, consent_base_url="https://mcp.example.test/mcp/consent",
+            drive_resource_uri=DRIVE, scope_of=SCOPE_OF, consent_base_url="https://mcp.example.test/mcp/consent",
             allowed_redirect_hosts=("claude.ai",), user_repo=self.users, whitelist_repo=self.whitelist)
 
     async def stored_token(self, value="refresh-1") -> str:
