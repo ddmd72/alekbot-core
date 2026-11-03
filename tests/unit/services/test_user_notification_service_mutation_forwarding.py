@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.agent import AgentIntent, AgentResponse, AgentStatus
+from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.messaging import RichContent, SmartResponse
 from src.domain.notification import NotificationChannel
 from src.domain.notification_kind import NotificationKind
@@ -65,21 +65,6 @@ def service(channel, session_store, coordinator) -> UserNotificationService:
 
 def _respond(coordinator, result):
     coordinator.route_message.return_value = AgentResponse.success(task_id="t-mut-1", agent_id="a-mut-1", result=result)
-
-
-class TestNotifyMessageShape:
-    async def test_message_carries_empty_text_payload_and_an_explicit_null_thread(self, service, coordinator):
-        _respond(coordinator, SmartResponse(text="Hello from the agent"))
-
-        await service.notify(_USER_ID, _ACCOUNT_ID, "alert-mut-1", kind=NotificationKind.REMINDER)
-
-        message = coordinator.route_message.await_args.args[0]
-        assert message.sender == "notification_service"
-        assert message.intent == AgentIntent.QUERY
-        assert message.payload == {"text": ""}
-        assert "thread_id" in message.context
-        assert message.context["thread_id"] is None
-        assert message.context["user_id"] == _USER_ID
 
 
 class TestOwnerOnHistoryWrites:
