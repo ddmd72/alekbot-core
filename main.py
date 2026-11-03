@@ -29,6 +29,19 @@ from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain.mcp_resource import DRIVE_PATH
 
 
+def _is_mcp_path(path: str) -> bool:
+    # The paths the facts app (authorization server + `/mcp`) serves. No docstring: a test reads this body's literals.
+    if path == "/mcp" or path == "/mcp/":
+        return True
+    if path in ("/authorize", "/token", "/register", "/revoke"):
+        return True
+    if path == "/.well-known/oauth-authorization-server":
+        return True
+    if path.startswith("/.well-known/oauth-protected-resource"):
+        return True
+    return False
+
+
 def mcp_owner(path: str) -> Optional[str]:
     """Which MCP app owns `path`: "drive", "facts", or None (the Quart app).
 
@@ -38,15 +51,7 @@ def mcp_owner(path: str) -> Optional[str]:
         return "drive"
     if path == "/.well-known/oauth-protected-resource" + DRIVE_PATH:
         return "drive"
-    if path == "/mcp" or path == "/mcp/":
-        return "facts"
-    if path in ("/authorize", "/token", "/register", "/revoke"):
-        return "facts"
-    if path == "/.well-known/oauth-authorization-server":
-        return "facts"
-    if path.startswith("/.well-known/oauth-protected-resource"):
-        return "facts"
-    return None
+    return "facts" if _is_mcp_path(path) else None
 
 
 async def main():
