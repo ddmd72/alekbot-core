@@ -1,10 +1,9 @@
-"""DocumentService's frozen core (EXTERNAL_FILES_RFC §4.4, P13/D18): it is the read port, its allowance is the reader's
-per-file ceiling for every store, and `read` answers an outcome (not built yet) instead of raising."""
+"""DocumentService's frozen core (EXTERNAL_FILES_RFC §4.4, P13/D18): it is the read port, and its allowance is the reader's
+per-file ceiling for every store. `read` itself: test_document_service_read.py."""
 from typing import Optional, Sequence, Tuple
 
 import pytest
 
-from src.domain.document_read import ReadOutcome, ReadRequest, ReadStatus
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
 from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES
@@ -62,12 +61,3 @@ def test_the_service_is_the_read_port(parts):
 def test_the_allowance_is_the_readers_ceiling_for_every_store(parts, store):
     assert DocumentService(*parts).allowance("ann", "ann", store) == MODEL_EXTRACT_MAX_PAGES == 200
 
-
-async def test_read_is_an_outcome_until_part_a(parts):
-    parser, reader, splitter = parts
-    request = ReadRequest(content=b"%PDF-1.7", name="scan_0012.pdf", declared_mime="application/pdf", store="chat",
-                          caller="open", native_formats=(), user_id="ann", account_id="ann", deadline_at=0.0,
-                          request_id="r1")
-    outcome = await DocumentService(parser, reader, splitter).read(request)
-    assert outcome == ReadOutcome(status=ReadStatus.ERROR, detail="not built")
-    assert parser.requests == reader.requests == [] and splitter.calls == 0

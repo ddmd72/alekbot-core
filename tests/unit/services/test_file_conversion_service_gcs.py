@@ -2,12 +2,17 @@
 Unit tests for FileConversionService (GCS upload + resolve pipeline).
 
 Separate from test_file_conversion_service.py which covers file_conversion utilities.
-Mocking: FileStoragePort, aiofiles, convert_file_to_text.
+Mocking: FileStoragePort, aiofiles, the document service (`open` replaced `resolve_content`, EXTERNAL_FILES_RFC §4.2).
 """
+
+import time
 
 from tests.support.drive_access_stub import allow_access
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from src.domain.document_read import ReadOutcome, ReadStatus
+from tests.unit.services.test_file_conversion_open import RecordingDocuments
 
 from src.domain.llm import MessagePart
 from src.ports.file_storage_port import FileStoragePort
@@ -216,48 +221,33 @@ class TestProcessAttachmentDedup:
 
 
 # ---------------------------------------------------------------------------
-# resolve_content
+# open (a chat upload)
 # ---------------------------------------------------------------------------
 
 class TestResolveContent:
 
     async def test_downloads_converts_and_returns_text(self, service, mock_storage):
         mock_storage.download = AsyncMock(return_value=b"raw file bytes")
+        documents = RecordingDocuments(ReadOutcome(status=ReadStatus.TEXT, kind="docx", text="Converted text content"))
+        service.attach_documents(documents)
 
-        with patch("src.services.file_conversion_service.aiofiles") as mock_aiofiles, \
-             patch("src.services.file_conversion_service.convert_file_to_text") as mock_convert, \
-             patch("src.services.file_conversion_service.tempfile") as mock_tempfile, \
-             patch("src.services.file_conversion_service.os") as mock_os:
-            mock_tempfile.mkstemp.return_value = (5, "/tmp/tmpXXX.docx")
-            mock_aio_ctx = AsyncMock()
-            mock_aiofiles.open.return_value.__aenter__ = AsyncMock(return_value=mock_aio_ctx)
-            mock_aiofiles.open.return_value.__aexit__ = AsyncMock()
-            mock_convert.return_value = "Converted text content"
+        opened = await service.open("report.docx", "user1", "user1", deadline_at=time.time() + 60)
 
-            result = await service.resolve_content("report.docx", "user1")
-
-        assert result == "Converted text content"
+        assert opened.body == "[File: report.docx]\nConverted text content\n[/File: report.docx]"
         mock_storage.download.assert_called_once_with("report.docx", "user1")
-        mock_convert.assert_called_once()
-        mock_os.remove.assert_called_once_with("/tmp/tmpXXX.docx")
+        (request,) = documents.requests
+        assert request.content == b"raw file bytes"
 
     async def test_temp_file_cleaned_on_error(self, service, mock_storage):
+        """A chat upload's bytes go to the read in memory: no temp file is made, so none can be left on an error."""
         mock_storage.download = AsyncMock(return_value=b"data")
+        service.attach_documents(RecordingDocuments(raises=RuntimeError("conversion error")))
 
-        with patch("src.services.file_conversion_service.aiofiles") as mock_aiofiles, \
-             patch("src.services.file_conversion_service.convert_file_to_text") as mock_convert, \
-             patch("src.services.file_conversion_service.tempfile") as mock_tempfile, \
-             patch("src.services.file_conversion_service.os") as mock_os:
-            mock_tempfile.mkstemp.return_value = (5, "/tmp/tmpXXX.txt")
-            mock_aio_ctx = AsyncMock()
-            mock_aiofiles.open.return_value.__aenter__ = AsyncMock(return_value=mock_aio_ctx)
-            mock_aiofiles.open.return_value.__aexit__ = AsyncMock()
-            mock_convert.side_effect = RuntimeError("conversion error")
-
+        with patch("src.services.file_conversion_service.tempfile") as mock_tempfile:
             with pytest.raises(RuntimeError, match="conversion error"):
-                await service.resolve_content("broken.txt", "user1")
+                await service.open("broken.txt", "user1", "user1", deadline_at=time.time() + 60)
 
-        mock_os.remove.assert_called_once_with("/tmp/tmpXXX.txt")
+        assert mock_tempfile.mock_calls == []
 
 
 # ---------------------------------------------------------------------------

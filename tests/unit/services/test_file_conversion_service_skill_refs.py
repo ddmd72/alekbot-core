@@ -3,8 +3,11 @@ Unit tests for FileConversionService's `skill:` ref handling (RFC §15.4).
 
 `skill:<name>/<path>` refs route straight to the injected SkillFileResolver — no mime
 guessing, no FileStoragePort/MediaStoragePort involvement. Bare uploads and delivered-
-document keys (docs/, email_review/, deep_research/, video_generation/) are unaffected.
+document keys (docs/, email_review/, deep_research/, video_generation/) are unaffected. `open` replaced
+`resolve_content` (EXTERNAL_FILES_RFC §4.2); a skill ref is the system's own text, never read or marked (§4.1).
 """
+
+import time
 
 from tests.support.drive_access_stub import allow_access
 import pytest
@@ -42,9 +45,9 @@ class TestResolveContentSkillRef:
         resolver.read.return_value = content
         svc = FileConversionService(storage=mock_storage, skill_files=resolver, access=allow_access())
 
-        out = await svc.resolve_content(ref, "u1")
+        opened = await svc.open(ref, "u1", "u1", deadline_at=time.time() + 60)
 
-        assert out == f"[File: {ref}]\n{content}\n[/File: {ref}]"
+        assert opened.body == f"[File: {ref}]\n{content}\n[/File: {ref}]"
         resolver.read.assert_awaited_once_with("u1", ref)
         mock_storage.download.assert_not_called()
 
@@ -68,7 +71,7 @@ class TestNoResolverConfigured:
         svc = FileConversionService(storage=mock_storage, skill_files=None, access=allow_access())
 
         with pytest.raises(FileNotFoundError):
-            await svc.resolve_content("skill:fs/r.md", "u1")
+            await svc.open("skill:fs/r.md", "u1", "u1", deadline_at=time.time() + 60)
 
         with pytest.raises(FileNotFoundError):
             await svc.resolve_bytes("skill:fs/r.md", "u1")

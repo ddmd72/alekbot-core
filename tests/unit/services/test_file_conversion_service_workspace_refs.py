@@ -1,27 +1,41 @@
 """FileConversionService reads `workspace:` refs through WorkspaceStorePort (AGENT_WORKSPACE_RFC §12): text verbatim in
 [File] markers (no mime guessing), binary through conversion, raw bytes for open_file vision / edit_image /
-save_file_to_drive / draft_skill from_file. Any folder; only the requesting user's objects."""
-from tests.support.drive_access_stub import allow_access
-from unittest.mock import AsyncMock, patch
+save_file_to_drive / draft_skill from_file. Any folder; only the requesting user's objects. `open` replaced
+`resolve_content` (EXTERNAL_FILES_RFC §4.2): a binary goes through the attached document service; `open` answers the
+raw `[File:]` body, and the store's presenter marks and cuts it (§4.6, D20), so the bodies here are unmarked."""
+import time
+from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domain.document_read import ReadOutcome, ReadStatus
 from src.domain.workspace import OPEN_FILE_MAX_TEXT_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService, _is_drive_ref
+from tests.support.drive_access_stub import allow_access
+from tests.unit.services.test_file_conversion_open import RecordingDocuments
 from tests.unit.services.workspace_fakes import InMemoryWorkspaceStore
 
 USER = "u1"
 
 
-def _service(store=None, storage=None):
-    return FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store, access=allow_access())
+def _service(store=None, storage=None, documents=None):
+    service = FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store,
+                                    access=allow_access())
+    service.attach_documents(documents or RecordingDocuments())
+    return service
+
+
+async def _open(service, ref):
+    return await service.open(ref, USER, USER, deadline_at=time.time() + 60)
 
 
 async def test_text_ref_is_returned_verbatim_in_markers():
     store = InMemoryWorkspaceStore()
     store.seed(USER, "scratch/sources.md", "# Sources\n- a")
-    text = await _service(store).resolve_content("workspace:scratch/sources.md", USER)
+    documents = RecordingDocuments()
+    text = (await _open(_service(store, documents=documents), "workspace:scratch/sources.md")).body
+    assert documents.requests == []
     assert text == "[File: workspace:scratch/sources.md]\n# Sources\n- a\n[/File: workspace:scratch/sources.md]"
     assert store.calls == [("read", "scratch/sources.md")]
 
@@ -29,11 +43,12 @@ async def test_text_ref_is_returned_verbatim_in_markers():
 async def test_binary_ref_goes_through_conversion():
     store = InMemoryWorkspaceStore()
     store.seed(USER, "binary_files/lease.pdf", b"%PDF-1.4")
-    with patch("src.services.file_conversion_service.convert_file_to_text",
-               AsyncMock(return_value="LEASE TEXT")) as convert:
-        text = await _service(store).resolve_content("workspace:binary_files/lease.pdf", USER)
-    assert text == "LEASE TEXT"
-    assert convert.await_args.args[1:3] == ("workspace:binary_files/lease.pdf", "application/pdf")
+    documents = RecordingDocuments(ReadOutcome(status=ReadStatus.TEXT, kind="pdf", text="LEASE TEXT"))
+    text = (await _open(_service(store, documents=documents), "workspace:binary_files/lease.pdf")).body
+    assert text == "[File: workspace:binary_files/lease.pdf]\nLEASE TEXT\n[/File: workspace:binary_files/lease.pdf]"
+    (request,) = documents.requests
+    assert (request.name, request.declared_mime) == ("binary_files/lease.pdf", "application/pdf")
+    assert (request.store, request.content) == ("workspace", b"%PDF-1.4")
 
 
 async def test_resolve_bytes():
@@ -51,7 +66,7 @@ async def test_only_the_requesting_users_objects():
 
 async def test_unavailable_without_the_store():
     with pytest.raises(FileNotFoundError):
-        await _service(None).resolve_content("workspace:scratch/a.md", USER)
+        await _open(_service(None), "workspace:scratch/a.md")
 
 
 async def test_invalid_path_is_not_found():
@@ -81,14 +96,14 @@ async def test_text_exactly_at_the_limit_is_returned_in_full():
     store = InMemoryWorkspaceStore()
     body = _text_of(OPEN_FILE_MAX_TEXT_BYTES)
     store.seed(USER, "projects/a.md", body)
-    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    text = (await _open(_service(store), "workspace:projects/a.md")).body
     assert text == f"[File: workspace:projects/a.md]\n{body}\n[/File: workspace:projects/a.md]"
 
 
 async def test_text_one_byte_over_the_limit_returns_a_view_note():
     store = InMemoryWorkspaceStore()
     store.seed(USER, "projects/a.md", _text_of(OPEN_FILE_MAX_TEXT_BYTES + 1))
-    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    text = (await _open(_service(store), "workspace:projects/a.md")).note
     assert text.startswith("[System: 'workspace:projects/a.md'")
     assert "view" in text
     assert "projects/a.md" in text
@@ -99,7 +114,9 @@ async def test_text_one_byte_over_the_limit_returns_a_view_note():
 async def test_over_the_limit_note_does_not_carry_the_content():
     store = InMemoryWorkspaceStore()
     store.seed(USER, "projects/a.md", "SECRETMARK" + _text_of(OPEN_FILE_MAX_TEXT_BYTES))
-    text = await _service(store).resolve_content("workspace:projects/a.md", USER)
+    opened = await _open(_service(store), "workspace:projects/a.md")
+    assert not opened.body
+    text = opened.note
     assert "SECRETMARK" not in text
     assert len(text) < 1000
 
@@ -108,7 +125,7 @@ async def test_text_between_half_the_limit_and_the_limit_is_read_normally():
     store = InMemoryWorkspaceStore()
     body = _text_of(OPEN_FILE_MAX_TEXT_BYTES // 2 + 1024)
     store.seed(USER, "projects/b.md", body)
-    text = await _service(store).resolve_content("workspace:projects/b.md", USER)
+    text = (await _open(_service(store), "workspace:projects/b.md")).body
     assert text == f"[File: workspace:projects/b.md]\n{body}\n[/File: workspace:projects/b.md]"
 
 

@@ -1,10 +1,13 @@
-"""G1b: a refusal names the limit that applied: 10 MB for a text export, 5 MB otherwise."""
+"""G1b: a refusal names the limit that applied: 10 MB for a text export, 5 MB otherwise. Drive files open through
+`open` (it replaced `resolve_content`, EXTERNAL_FILES_RFC §4.2) over the real document service."""
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.domain.drive_feed_scope import FeedScope
 from src.ports.file_storage_port import FileStoragePort
+from src.services.document_service import DocumentService
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.file_conversion_service import FileConversionService
 from src.utils.file_conversion import convert_file_to_text
@@ -12,6 +15,7 @@ from tests.support.drive_access_stub import allow_access
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_connections import seed
 from tests.support.fake_drive_adapter import FakeDriveAdapter
+from tests.unit.services.test_document_service_read import FakeExtractor, FakeSplitter
 
 MB = 1024 * 1024
 
@@ -27,12 +31,14 @@ async def world():
     w.service = FileConversionService(
         storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
         connections=DriveConnectionService(repo, None), access=allow_access())
+    w.service.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
     return w
 
 
 async def _read(w, name, data, mime):
     item = w.drive.plant(w.conn.handle, "root", name, data, mime=mime)
-    return await w.service.resolve_content(f"drive:b2:{item}", "usr-1")
+    opened = await w.service.open(f"drive:b2:{item}", "usr-1", "acc-1", deadline_at=time.time() + 60)
+    return opened.body or opened.note
 
 
 async def test_a_text_export_refused_above_the_export_cap_names_ten_megabytes(world):
