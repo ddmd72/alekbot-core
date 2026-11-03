@@ -558,8 +558,8 @@ async def main():
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
                     # The drive connector has its own build so a failure there (a missing or invalid connector-text
-                    # token with the tools knob on: its first load alerts and raises) never takes the facts connector
-                    # down; /drive-mcp then answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
+                    # token: its first load alerts and raises) never takes the facts connector down; /drive-mcp then
+                    # answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
                     try:
                         _assembly = app.container.assembly_service
                         drive_tools = await build_drive_connector_tools(
