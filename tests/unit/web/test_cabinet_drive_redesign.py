@@ -271,6 +271,8 @@ def test_files_without_passage_hints_by_policy_are_never_listed_as_a_problem():
     assert "T:drive.index_readable_content" in more
     assert "coverage" not in more and 'class="attn"' not in more and ">30<" not in more
     assert "coverage_no_passages" not in COUNTERS + INDEX
+    _, dicts = _dicts()
+    assert all("drive.index_coverage_gap" not in dicts[lang] for lang in LANGS)
 
 
 def test_there_is_no_raw_key_fallback_and_chunks_is_not_listed():
