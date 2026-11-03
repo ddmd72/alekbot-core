@@ -111,6 +111,7 @@ FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "_INDEXER_URL": Substitution("https://alek-bot-indexer-dev.test.example", "Makefile: INDEXER_URL_DEV, non-empty as `make deploy` requires"),
     "_DRIVE_TRANSCRIBE_USD_CAP": Substitution("", "Makefile: DRIVE_TRANSCRIBE_USD_CAP_DEV, empty = the $20 maximum"),
     "_SANDBOX_RENDER_URL": Substitution("", "Makefile: SANDBOX_RENDER_URL_DEV, empty while the sandbox is not deployed"),
+    "_SANDBOX_LIGHT_URL": Substitution("https://alek-sandbox-light.test.example", "Makefile: SANDBOX_LIGHT_URL_DEV, a fake, non-empty"),
 }
 
 

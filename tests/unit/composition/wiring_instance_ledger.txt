@@ -86,7 +86,6 @@ src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1 
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
 src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (application_graph.py:895), shared by the Slack RichContentService and the notification service's platform media
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
-src.adapters.subprocess_content_extractor.SubprocessContentExtractor 1  # by-design the main service's one parser child, parser and splitter of the document service (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:970), shared by the Telegram RichContentService and the notification service's platform media
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance

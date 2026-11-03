@@ -30,6 +30,7 @@ def wired(monkeypatch):
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
                        # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
+                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
                        "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid", "ANTHROPIC_API_KEY": "ak"}.items():
@@ -39,20 +40,6 @@ def wired(monkeypatch):
     monkeypatch.setattr(indexer_main, "build_place_lookup", lambda: (lambda lat, lon: None))
     monkeypatch.setattr(indexer_main, "DriveIndexingService", lambda *a, **kw: captured.update(kw) or MagicMock())
     return captured
-
-
-def test_without_the_variable_the_parser_is_unsandboxed(wired):
-    indexer_main.build_app()
-    assert wired["extractors"][PARSER]._sandbox is None
-
-
-def test_the_named_user_reaches_the_parser(wired, monkeypatch):
-    monkeypatch.setenv(PARSER_USER_ENV, "driveparser")
-    monkeypatch.setattr(extractor_module.pwd, "getpwnam",
-                        lambda name: MagicMock(pw_name=name, pw_uid=999, pw_gid=998))
-    monkeypatch.setattr(extractor_module, "_effective_uid", lambda: 0)
-    indexer_main.build_app()
-    assert wired["extractors"][PARSER]._sandbox == (999, 998)
 
 
 def test_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
