@@ -10,8 +10,7 @@ from typing import Any, List, Optional
 import httpx
 import pytest
 
-from src.composition.drive_connector_tools import (DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools,
-                                                   drive_mcp_tools_switch_on)
+from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.exceptions import ConnectorTextsUnavailable
@@ -105,7 +104,6 @@ class TestOff:
 
 class TestOn:
     async def test_on_loads_the_texts_once_and_lists_the_tools(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store = CountingStore()
         tools = await build(store)
         assert tools is not None and tools.notes is None
@@ -116,7 +114,6 @@ class TestOn:
         assert names == [n for n in c.TOOL_NAMES if n != "get_note"]   # no note service: no get_note
 
     async def test_a_missing_token_raises_and_alerts_once(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store, sink = TokenStore(), Sink()
         del store.tokens[RESULT_TOKEN]
         with pytest.raises(ConnectorTextsUnavailable):
@@ -124,7 +121,6 @@ class TestOn:
         assert len(sink.posts) == 1 and RESULT_TOKEN in sink.posts[0]
 
     async def test_a_token_missing_a_key_raises(self, monkeypatch):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         store = TokenStore()
         tool = store.tokens["MCP_DRIVE_TOOL_TEXTS"]
         store.tokens["MCP_DRIVE_TOOL_TEXTS"] = type(tool)(
@@ -135,7 +131,6 @@ class TestOn:
 
     @pytest.mark.parametrize("missing", ["conversion", "token_repo"])
     async def test_on_without_conversion_or_the_token_store_raises(self, monkeypatch, missing):
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
         with pytest.raises(RuntimeError):
             if missing == "conversion":
                 await build(TokenStore(), conversion=None)

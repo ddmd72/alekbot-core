@@ -19,7 +19,7 @@ import pytest
 
 from src.composition import drive_connector_tools as dct
 from src.composition import drive_mcp_setup
-from src.composition.drive_connector_tools import DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools
+from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.document_open import OpenedFile
@@ -239,7 +239,6 @@ def what_to_do(text: str) -> str:
 
 @pytest.fixture
 async def world(monkeypatch):
-    monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
     return await World().build()
 
 
@@ -333,7 +332,6 @@ class TestOpenWithholds:
             seen.update(kwargs)
             return real(**kwargs)
 
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "1")
         monkeypatch.setattr(dct, "DriveOperations", spy)
         await World().build()
         assert seen["notification"] is None and seen["localization"] is None and seen["language_service"] is None

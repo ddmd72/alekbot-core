@@ -59,7 +59,7 @@ class World:
         initial = await self.texts.texts()
         tools = DriveConnectorTools(texts=texts or self.texts, initial_texts=initial,
                                     operations=DriveReadOperations(DriveOperations(conversion_service=None)),  # type: ignore[arg-type]
-                                    notes=object())  # type: ignore[arg-type]
+                                    notes=object(), items=object())  # type: ignore[arg-type]
         self.app = build_drive_mcp_app(authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=tools)
         return self
 
