@@ -27,6 +27,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition.mcp_setup import build_mcp_components
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.mcp_gate_fakes import allowing_repos
 from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
 from src.domain.search import EnrichedContext, EnrichedFact
 from src.services.search_enrichment_service import SearchEnrichmentService
@@ -73,6 +74,8 @@ def components(enrichment_service):
         search_enrichment_service=enrichment_service,
         cipher=AesGcmTestCipher(),
         digest_key=bytes(range(32)),
+        user_repo=allowing_repos("u1")[0],
+        whitelist_repo=allowing_repos("u1")[1],
     )
 
 

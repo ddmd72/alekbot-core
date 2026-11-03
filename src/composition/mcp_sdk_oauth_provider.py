@@ -26,6 +26,7 @@ from mcp.server.auth.provider import (
     AccessToken as SDKAccessToken,
     AuthorizationCode as SDKAuthorizationCode,
     AuthorizationParams as SDKAuthorizationParams,
+    AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken as SDKRefreshToken,
     RegistrationError,
@@ -41,6 +42,8 @@ from ..services.mcp_authorization_service import (
     MCPAuthorizationService,
     MCPInvalidGrant,
     MCPInvalidRedirectURI,
+    MCPInvalidResource,
+    MCPInvalidScope,
 )
 from ..utils.logger import logger
 
@@ -176,6 +179,10 @@ class MCPSdkOAuthProvider(
             )
         except MCPInvalidRedirectURI as e:
             raise MCPAuthError(f"redirect_uri not allowed: {e}") from e
+        except MCPInvalidResource as e:
+            raise AuthorizeError(error="invalid_request", error_description=str(e)) from e
+        except MCPInvalidScope as e:
+            raise AuthorizeError(error="invalid_scope", error_description=str(e)) from e
 
     # -----------------------------------------------------------------
     # Authorization codes

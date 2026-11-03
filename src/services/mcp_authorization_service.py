@@ -17,14 +17,23 @@ arguments into plain call-sites here.
 
 import hashlib
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import jwt
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken, normalize_client_name
+from ..domain.mcp_resource import (
+    MCPResource,
+    ResourceRefused,
+    ScopeRefused,
+    bind_resource,
+    canonical_resource,
+)
 from ..ports.mcp_client_repository import MCPClientRepository
+from ..ports.user_repository import UserRepository
+from ..ports.whitelist_repository import WhitelistRepository
 from ..utils.logger import logger
 
 
@@ -98,6 +107,14 @@ class MCPInvalidRedirectURI(MCPAuthError):
     pass
 
 
+class MCPInvalidResource(MCPAuthError):
+    pass
+
+
+class MCPInvalidScope(MCPAuthError):
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -117,6 +134,10 @@ class MCPAuthorizationService:
         mcp_resource_uri: str,
         consent_base_url: str,
         allowed_redirect_hosts: Tuple[str, ...],
+        drive_resource_uri: str,
+        scope_of: Mapping[MCPResource, str],
+        user_repo: UserRepository,
+        whitelist_repo: WhitelistRepository,
         access_token_ttl: int = 3600,
         refresh_token_ttl: int = 2592000,
         auth_code_ttl: int = 600,
@@ -136,12 +157,25 @@ class MCPAuthorizationService:
                 "https://dev.alekbot.app/mcp/consent")
             allowed_redirect_hosts: tuple of allowed redirect-URI host
                 substrings (e.g. ("claude.ai", "claude.com", "localhost"))
+            drive_resource_uri: canonical URI of the drive connector
+                resource (the second audience this server mints)
+            scope_of: the one OAuth scope of each resource (injected: the strings live in composition)
+            user_repo / whitelist_repo: read at every refresh rotation
+                (required, no default: a missing reader must fail the
+                build, not open the gate)
             access_token_ttl / refresh_token_ttl / auth_code_ttl /
             consent_request_ttl: seconds
         """
         self._repo = repo
         self._secret = jwt_secret
         self._resource_uri = mcp_resource_uri
+        self._uris = {
+            MCPResource.FACTS: canonical_resource(mcp_resource_uri),
+            MCPResource.DRIVE: canonical_resource(drive_resource_uri),
+        }
+        self._scope_of = dict(scope_of)
+        self._user_repo = user_repo
+        self._whitelist_repo = whitelist_repo
         self._consent_base_url = consent_base_url
         self._allowed_hosts = tuple(allowed_redirect_hosts)
         self._access_token_ttl = access_token_ttl
@@ -192,6 +226,20 @@ class MCPAuthorizationService:
             raise MCPAuthError("code_challenge is required (PKCE mandatory)")
         if params.code_challenge_method != "S256":
             raise MCPAuthError("only S256 code_challenge_method is supported")
+
+        try:
+            _, uri, scopes = bind_resource(params.resource, params.scopes, self._uris, self._scope_of)
+        except ResourceRefused as e:
+            raise MCPInvalidResource(str(e)) from e
+        except ScopeRefused as e:
+            raise MCPInvalidScope(str(e)) from e
+        # The SDK checks requested scopes against the client's registered scope only when a scope was sent; a
+        # resource with no scope is bound to the resource's own scope here, so it is checked here too. A client
+        # stored without a scope is a pre-DCR-change one, which could only ever hold the facts scope.
+        registered = client.scope.split() or [self._scope_of[MCPResource.FACTS]]
+        if any(sc not in registered for sc in scopes):
+            raise MCPInvalidScope("scope not registered for this client")
+        params = replace(params, resource=uri, scopes=scopes)
 
         consent_jwt = self._mint_consent_jwt(client.client_id, params)
         # The consent page URL is a simple query-string — the caller
@@ -323,8 +371,17 @@ class MCPAuthorizationService:
         existing = await self.load_refresh_token(refresh_token_value)
         if existing is None:
             raise MCPInvalidGrant("refresh token not found or revoked")
+        try:
+            await self._require_allowed(existing.user_id)
+        except MCPInvalidGrant:
+            await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
+            raise
 
         final_scopes = list(requested_scopes) if requested_scopes else list(existing.scopes)
+        try:
+            bind_resource(existing.resource, final_scopes, self._uris, self._scope_of)
+        except (ResourceRefused, ScopeRefused) as e:
+            raise MCPInvalidGrant(f"refresh scope not allowed: {e}") from e
         now = datetime.now(timezone.utc)
 
         await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
@@ -359,16 +416,27 @@ class MCPAuthorizationService:
     # Bearer verification (SDK calls this on every MCP request)
     # -----------------------------------------------------------------
 
-    def verify_access_token(self, token_str: str) -> Optional[VerifiedAccessToken]:
+    def verify_access_token(
+        self, token_str: str, *, resource: Optional[str] = None
+    ) -> Optional[VerifiedAccessToken]:
         try:
+            # Audiences are compared in canonical form: tokens minted with the raw configured URI (legacy) and
+            # with the canonical one (bound at authorize) both verify against the same resource.
             payload = jwt.decode(
                 token_str,
                 self._secret,
                 algorithms=[_JWT_ALG],
-                audience=self._resource_uri,
+                options={"verify_aud": False},
             )
         except jwt.InvalidTokenError as e:
             logger.debug(f"MCP access token rejected: {e}")
+            return None
+
+        aud = payload.get("aud")
+        if not isinstance(aud, str) or canonical_resource(aud) != canonical_resource(
+            resource or self._resource_uri
+        ):
+            logger.debug("MCP access token rejected: audience does not match")
             return None
 
         if payload.get("type") != _ACCESS_TOKEN_TYPE:
@@ -392,6 +460,24 @@ class MCPAuthorizationService:
     # -----------------------------------------------------------------
     # Internals
     # -----------------------------------------------------------------
+
+    async def _require_allowed(self, user_id: str) -> None:
+        """Raise MCPInvalidGrant unless the grant's user exists, has an email and is whitelisted.
+
+        A repository error propagates (the SDK answers 500, no token is minted: fail closed). The log line
+        carries the reason, never the email.
+        """
+        user = await self._user_repo.get_user(user_id)
+        reason: Optional[str] = None
+        if user is None:
+            reason = "no_user"
+        elif not user.email:
+            reason = "no_email"
+        elif not (await self._whitelist_repo.get_whitelist()).is_allowed(user.email):
+            reason = "not_whitelisted"
+        if reason is not None:
+            logger.warning(f"MCP refresh refused: user={user_id[:8]} reason={reason}")
+            raise MCPInvalidGrant("grant no longer allowed")
 
     def _validate_redirect_host(self, uri: str) -> None:
         from urllib.parse import urlparse

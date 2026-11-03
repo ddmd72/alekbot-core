@@ -24,6 +24,7 @@ from urllib.parse import quote, urlencode
 
 from quart import Blueprint, Response, abort, make_response, redirect, request
 
+from ..domain.mcp_resource import is_drive_grant
 from ..services.mcp_authorization_service import (
     MCPAuthError,
     MCPAuthorizationService,
@@ -69,6 +70,7 @@ def build_mcp_consent_blueprint(
         req_jwt: str,
         client_name: str,
         scopes: list[str],
+        resource: str | None,
         error: str | None = None,
     ) -> str:
         # Every value is text: the client name comes from anonymous registration (RFC 7591).
@@ -78,11 +80,31 @@ def build_mcp_consent_blueprint(
         )
         client_name = escape(client_name)
         req_jwt = escape(req_jwt, quote=True)
+        if is_drive_grant(resource):
+            heading = "Authorize drive connector"
+            intro_block = (
+                f"<p><strong>{client_name}</strong> is asking to read your drives through alekbot. "
+                "It can search, open and quote files only in the folders you choose for it in the Cabinet "
+                "(Drives \u2192 Connector access); until you choose, it sees nothing. "
+                "It cannot change, move or delete anything.</p>"
+            )
+            closing_block = ""
+        else:
+            heading = "Authorize MCP connector"
+            intro_block = (
+                "<p>An external application is asking to access your alekbot\n"
+                "       memory via the Model Context Protocol.</p>\n"
+                f'    <div class="client"><strong>{client_name}</strong></div>'
+            )
+            closing_block = (
+                "<p>If you approve, this application will be able to retrieve your\n"
+                "       biographical facts and memories on your behalf.</p>"
+            )
         return f"""<!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <title>Authorize MCP connector · alekbot</title>
+    <title>{heading} · alekbot</title>
     <style>
         body {{ font-family: system-ui, -apple-system, sans-serif; max-width: 520px;
                margin: 60px auto; padding: 0 24px; color: #1a1a1a; }}
@@ -104,15 +126,12 @@ def build_mcp_consent_blueprint(
     </style>
 </head>
 <body>
-    <h1>Authorize MCP connector</h1>
+    <h1>{heading}</h1>
     {error_block}
-    <p>An external application is asking to access your alekbot
-       memory via the Model Context Protocol.</p>
-    <div class="client"><strong>{client_name}</strong></div>
+    {intro_block}
     <p>Requested scopes:</p>
     <ul>{scope_list}</ul>
-    <p>If you approve, this application will be able to retrieve your
-       biographical facts and memories on your behalf.</p>
+    {closing_block}
     <form method="POST" action="/mcp/consent">
         <input type="hidden" name="req" value="{req_jwt}" />
         <div class="actions">
@@ -146,6 +165,7 @@ def build_mcp_consent_blueprint(
             req_jwt=req_jwt,
             client_name=client_name,
             scopes=parsed.scopes,
+            resource=parsed.resource,
         )
         resp = await make_response(html)
         resp.headers["Content-Type"] = "text/html; charset=utf-8"

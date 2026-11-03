@@ -29,6 +29,7 @@ from src.services.mcp_authorization_service import (
 )
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from tests.support.firestore_eval import EvalDb
+from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.unit.web.gate_fakes import access_token, forged_token, session_service
 
@@ -50,7 +51,8 @@ class World:
     def __init__(self) -> None:
         self.db = EvalDb()
         self.components = build_mcp_components(db_client=self.db, env_config=ENV, auth_config=_auth_config(),
-                                               search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
+                                               search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
+                                               user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         self.service = self.components.authorization_service
         self.asgi = self.components.fastmcp.streamable_http_app()
 
@@ -133,7 +135,10 @@ class TestConsentPost:
     async def test_approve_when_the_code_issue_fails_is_400_and_redirects_nowhere(self):
         db = EvalDb()
         service = _CodeIssueFails(FirestoreMCPClientRepository(db, ENV, cipher=AesGcmTestCipher(), digest_key=bytes(range(32))), jwt_secret=SECRET, mcp_resource_uri=RESOURCE,
-                                  consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",))
+                                  consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",),
+                                  drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                  scope_of=SCOPE_OF,
+                                  user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         client = _consent_app(service)
         client.set_cookie("localhost", "access_token", access_token())
         resp = await client.post("/mcp/consent", form={"req": await _consent_req(service), "action": "approve"})
@@ -175,7 +180,8 @@ class TestMcpBearer:
         w = World()
         other = build_mcp_components(db_client=EvalDb(), env_config=ENV,
                                      auth_config=_auth_config("https://other.example.test/mcp"),
-                                     search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
+                                     search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
+                                     user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=other.fastmcp.streamable_http_app()),
                                      base_url="https://other.example.test") as other_http:
             # Same signing secret, so only the audience tells the two servers' tokens apart.
@@ -302,7 +308,10 @@ class TestRegister:
         w = World()
         provider = MCPSdkOAuthProvider(_Refuses(w.service._repo, jwt_secret=SECRET, mcp_resource_uri=RESOURCE,
                                                 consent_base_url=f"{BASE}/mcp/consent",
-                                                allowed_redirect_hosts=("claude.ai",)))
+                                                allowed_redirect_hosts=("claude.ai",),
+                                                drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                                scope_of=SCOPE_OF,
+                                                user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1]))
         info = OAuthClientMetadata(redirect_uris=[AnyUrl(REDIRECT)])
         with pytest.raises(RegistrationError) as raised:
             await provider.register_client(OAuthClientInformationFull(client_id="c9", **info.model_dump()))
@@ -337,4 +346,7 @@ def test_service_refuses_a_31_character_secret():
     # mcp_authorization_service.py:151-152.
     with pytest.raises(ValueError, match="at least 32"):
         MCPAuthorizationService(MagicMock(), jwt_secret="x" * 31, mcp_resource_uri=RESOURCE,
-                                consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",))
+                                consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",),
+                                drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                scope_of=SCOPE_OF,
+                                user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
