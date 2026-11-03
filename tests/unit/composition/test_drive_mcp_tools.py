@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition import drive_connector_tools as dct
 from src.composition import drive_mcp_setup
@@ -31,6 +32,7 @@ from src.domain.drive_search import STATUS_OK, DriveSearchCard, DriveSearchResul
 from src.domain.drive_text_extent import TextExtent
 from src.domain.drive_withheld import Withheld
 from src.domain.user_drive import DriveItem, DriveItemNotFoundError
+from src.infrastructure.drive_read_operations import DriveReadOperations
 from src.services.mcp_authorization_service import VerifiedAccessToken
 from tests.support.drive_connector_texts import TokenStore, marker
 from tests.support.drive_service_connections import ConnectionReads, ref
@@ -158,6 +160,7 @@ class Notes:
     def __init__(self) -> None:
         self.reads: List[str] = []
         self.fail: Optional[Exception] = None
+        self.views: Dict[str, NoteView] = {}   # a test's own notes, by ref
 
     async def note_for_item(self, user_id: str, identity: Any) -> None:
         return None
@@ -169,6 +172,8 @@ class Notes:
         self.reads.append(ref_ or whole_drive_name)
         if self.fail is not None:
             raise self.fail
+        if ref_ in self.views:
+            return self.views[ref_]
         if ref_ != ref(PLAN.item_id):
             return None
         return NoteView(note_id="n1", ref=ref_, note_ref="drive_note:n1", path=PLAN.path, version=2, state="active",
@@ -413,3 +418,37 @@ class TestAuth:
         resp = await world.post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"Accept": HEADERS["Accept"]})
         assert resp.status_code == 401
         assert world.search.queries == []
+
+
+class TestLastLines:
+    """The connector's own last-resort branches: an operation that raises, a request with no verified token, a tool
+    registered outside the contract, an archived note."""
+
+    async def test_an_operation_that_raises_answers_failed_and_logs_the_type_only(self, world, monkeypatch, caplog):
+        async def boom(self: Any, *a: Any, **kw: Any):
+            raise RuntimeError("invoice FA-0137 for Tom's plan")
+
+        monkeypatch.setattr(DriveReadOperations, "search", boom)
+        with caplog.at_level(logging.DEBUG):
+            text = text_of(await world.call("search_drive", query="Tom's plan"))
+        assert text.split("\n") == [marker(c.STATUS).format(status="failed"),
+                                    marker(c.WHAT_TO_DO).format(line="Drive operation failed: RuntimeError.")]
+        logged = "\n".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+        assert "RuntimeError" in logged and "FA-0137" not in logged
+
+    def test_a_request_without_a_verified_token_is_refused(self):
+        ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(user=None)))
+        with pytest.raises(ToolError):
+            drive_mcp_setup._token_user(ctx, "search_drive")   # type: ignore[arg-type]
+
+    async def test_a_tool_outside_the_contract_refuses_the_build(self, world, monkeypatch):
+        params = {k: v for k, v in c.TOOL_PARAMETERS.items() if k != "get_note"}
+        monkeypatch.setattr(drive_mcp_setup.contract, "TOOL_PARAMETERS", params)
+        with pytest.raises(RuntimeError, match="get_note"):
+            world.fresh_app()
+
+    async def test_an_archived_note_answers_the_neutral_refusal(self, world):
+        world.notes.views[ref("d1")] = NoteView(note_id="n1", ref=ref("d1"), note_ref="drive_note:n1", path=PLAN.path,
+                                                version=3, state="archived", text="Tom's plan for Acme Hamburg.")
+        text = text_of(await world.call("get_note", item_ref=ref("d1")))
+        assert text.split("\n") == NEUTRAL and "Acme Hamburg" not in text

@@ -182,3 +182,7 @@ class TestCap:
         text = "y\n" * (RESULT_MAX_CHARS // 2 + 10)
         out = cap_result(text, self.OVER)
         assert len(out) <= RESULT_MAX_CHARS == 100_000 and out.endswith(self.OVER)
+
+
+def test_a_limit_below_the_over_size_line_keeps_only_that_line_cut():
+    assert cap_result("x" * 50, "<OVER_SIZE>", limit=5) == "<OVER"

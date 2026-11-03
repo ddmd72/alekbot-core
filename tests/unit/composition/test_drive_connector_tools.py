@@ -4,6 +4,7 @@ load raises (with one ops alert) so the drive app is never built."""
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from typing import Any, List, Optional
 
@@ -141,3 +142,17 @@ class TestOn:
                 await build(TokenStore(), conversion=None)
             else:
                 await build(None)
+
+
+class BrokenSink:
+    async def post(self, text: str) -> None:
+        raise ConnectionError("webhook down")
+
+
+async def test_an_alert_that_cannot_be_delivered_never_hides_the_failed_load(monkeypatch, caplog):
+    monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
+    store = TokenStore()
+    del store.tokens[RESULT_TOKEN]
+    with caplog.at_level(logging.WARNING), pytest.raises(ConnectorTextsUnavailable):
+        await build(store, BrokenSink())  # type: ignore[arg-type]
+    assert any("alert not delivered (ConnectionError)" in r.getMessage() for r in caplog.records)
