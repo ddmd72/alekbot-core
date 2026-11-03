@@ -5,7 +5,7 @@ Only a file whose every page was refused is terminal: `too_large` when any page'
 `unsupported`. No outcome here is a retried `error`."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.exceptions import LLMClientError
 from tests.unit.composition.test_drive_reader_runner_halving import _answer, _request, _runner
 

@@ -11,7 +11,8 @@ import pytest
 from src.adapters.drive_parser.capture import exif_names_camera, pdf_capture_signals
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.domain.drive_capture import Capture, CaptureSignals, detect, signals_to_json
-from src.domain.drive_extraction import PARSER, ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import PARSER
 
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 

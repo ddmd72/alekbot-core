@@ -9,7 +9,8 @@ import pytest
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_enrichment import PhotoDescription
 from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageImage
+from src.domain.drive_extraction import ExtractionOutcome, TriageImage
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import TriageVerdict
 from src.ports.image_triage_port import ImageTriagePort
 

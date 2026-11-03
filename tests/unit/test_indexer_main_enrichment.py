@@ -9,7 +9,7 @@ import indexer_main
 from src.composition import drive_indexing_setup
 from src.composition.drive_passage_runner import DrivePassageRunner
 from src.composition.drive_profiler_runner import DriveProfilerRunner
-from src.domain.drive_extraction import READER
+from src.domain.document_extraction import READER
 from src.domain.place_lookup import Place, PlaceRow
 
 

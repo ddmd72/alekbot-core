@@ -2,16 +2,17 @@
 time."""
 import pytest
 
+from src.domain import document_kind
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import _KIND_LABEL
-from src.domain.drive_extraction import chain_for
+from src.domain.document_extraction import chain_for
 from src.domain.drive_index import ContentClass
 from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
 from src.domain.drive_index_policy import (
     SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS, TRIAGED_KINDS, Admission, admission, content_class_of, size_cap,
 )
 
-ALL_KINDS = sorted(set(policy._EXT_KIND.values()) | {"other", "folder"})
+ALL_KINDS = sorted(set(document_kind._EXT_KIND.values()) | {"other", "folder"})
 
 
 # What every kind gets after the flip (§5.1, §24.1), spelled out independently of the sets under test.

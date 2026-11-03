@@ -34,7 +34,7 @@ from src.composition.drive_note_setup import add_drive_note_deleted_source
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import DriveChange
 from src.domain.drive_keys import word_keys
 from src.domain.drive_mirror import KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot

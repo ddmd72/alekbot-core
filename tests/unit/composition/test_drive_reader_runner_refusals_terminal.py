@@ -9,7 +9,8 @@ import asyncio
 
 import pytest
 
-from src.domain.drive_extraction import ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_run import RunStep, outcome_step
 from src.domain.exceptions import LLMClientError
 from src.domain.llm import FinishReason

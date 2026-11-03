@@ -49,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .connection_scope import check_connection_id
 from .drive_index import DriveChange, DriveIndexRecord, RecordState
 from .drive_index_params import NOTE_KEYS_MAX   # §5.4: the note's key cap; defined beside the keyer's caps (S2 Core delta B1)
-from .drive_index_policy import kind_of
+from .document_kind import kind_of
 from .drive_keys import phrase_keys, token_spans
 from .drive_labels import DOC_TYPE_NAMES, DOC_TYPES, LIFE_DOMAIN_NAMES, LIFE_DOMAINS
 from .drive_profile import LIFE_DOMAINS_MAX

@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.connection_scope import ConnectionScope
-from src.domain import drive_extraction
+from src.domain import document_extraction
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash, card_text, collapsed_folder, repository_root
 from src.domain.drive_enrichment import DriveProfile
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import (
     ContentClass, DriveChange, DriveIndexRecord, EpochPhase, FolderProbe, Priority, Reason, RecordState, Scope,
 )
@@ -198,7 +199,7 @@ class TestExtractorStale:
         assert not extractor_stale(indexed_by("reader@1", "pdf", "scan.pdf"), self.VERSIONS)
 
     def test_a_link_no_longer_in_the_kinds_chain_is_stale(self, monkeypatch):
-        monkeypatch.setattr(drive_extraction, "EXTRACTOR_CHAINS", {"pdf": ("pdf_parser", "reader")})
+        monkeypatch.setattr(document_extraction, "EXTRACTOR_CHAINS", {"pdf": ("pdf_parser", "reader")})
         assert extractor_stale(indexed_by("parser@2", "pdf", "a.pdf"), self.VERSIONS)
         assert not extractor_stale(indexed_by("parser@2"), self.VERSIONS)   # Markdown keeps the parser
 

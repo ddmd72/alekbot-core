@@ -11,7 +11,7 @@ from scripts.validation.drive_eval import content_wiring
 from scripts.validation.drive_eval.metrics import bar_mismatch, make_bars, recall
 from src.composition import drive_model_setup
 from src.composition.drive_model_setup import build_drive_context_builder
-from src.domain.drive_extraction import READER
+from src.domain.document_extraction import READER
 from src.services.agent_context_builder import AgentContextBuilder
 
 

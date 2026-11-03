@@ -224,7 +224,7 @@ def test_cli_records_then_passes_with_the_production_wiring_faked(tmp_path, monk
         def __init__(self, api_key):
             super().__init__()
 
-    from src.domain.drive_extraction import PARSER, READER
+    from src.domain.document_extraction import PARSER, READER
     from ..services.drive_content_fakes import FakeExtractor, FakeTriage
 
     content_builds = []

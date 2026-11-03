@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from src.domain.drive_index_params import MAX_TEXT_CHARS
-from src.domain.text_data_uris import MAX_TEXT_EXPORT_BYTES, drop_data_uri_images
+from src.domain.text_data_uris import drop_data_uri_images
+from src.domain.document_limits import MAX_TEXT_EXPORT_BYTES
 
 _PROVIDER_RE = re.compile(r"(?<![a-z])(onedrive|graph|microsoft|google|gdrive|approot|quickxor|ctag|takendatetime)",
                           re.IGNORECASE)

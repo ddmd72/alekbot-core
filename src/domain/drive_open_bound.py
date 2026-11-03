@@ -14,7 +14,7 @@ Public interface:
 from __future__ import annotations
 
 from .drive_excerpt_context import quoted
-from .drive_index_params import OPEN_MAX_CHARS
+from .document_limits import OPEN_MAX_CHARS
 from .drive_open_bound_text import BoundText
 from .drive_open_cut import cut_line, head_at_paragraph, stand_in_cut  # noqa: F401  (public interface)
 from .drive_open_texts import REFUSAL, REFUSAL_TRUNCATED

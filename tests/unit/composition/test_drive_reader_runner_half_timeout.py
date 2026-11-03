@@ -2,7 +2,8 @@
 round-2 review T-M2b, superseding C-M2's "a half timing out again = outage"). The model answered the file's other
 windows, so it is up; the dense pages are this file's problem. As an outage the file was never counted and re-read
 (and re-billed) its finished windows on every backoff; as `error` it is a counted per-file retry (§8.2)."""
-from src.domain.drive_extraction import DriveModelUnavailable, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.exceptions import LLMTimeoutError
 
 from .test_drive_reader_runner_halving import _answer, _request, _runner

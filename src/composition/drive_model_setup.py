@@ -32,7 +32,7 @@ from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.gemini_batch_adapter import GeminiBatchAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..adapters.openai_adapter import OpenAIAdapter
-from ..domain.drive_extraction import PARSER, READER
+from ..domain.document_extraction import PARSER, READER
 from ..domain.user import PerformanceTier
 from ..ports.account_repository import AccountRepository
 from ..ports.prompt_v3.agent_profile_repository import AgentProfileRepository
@@ -44,6 +44,7 @@ from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.passage_hint_port import PassageHintPort
+from ..ports.pdf_splitter_port import PdfSplitterPort
 from ..ports.quota_service import QuotaService
 from ..ports.user_drive_port import UserDrivePort
 from ..ports.user_repository import UserRepository
@@ -57,7 +58,7 @@ from ..services.provider_registry import ProviderRegistry
 from ..utils.logger import logger
 from .drive_passage_runner import DrivePassageRunner
 from .drive_profiler_runner import DriveProfilerRunner
-from .drive_reader_runner import DriveReaderRunner, PdfSplitter
+from .drive_reader_runner import DriveReaderRunner
 from .drive_transcript_runner import DriveTranscriptRunner
 from .drive_triage_runner import DriveTriageRunner
 
@@ -116,12 +117,12 @@ class DriveModels:
 def build_drive_models(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
                        assembly_service: Any, keys: Mapping[str, Optional[str]],
                        alert_sink: Optional[AlertSinkPort] = None) -> DriveModels:
-    """The indexer's model runners. `parser` is the child-process parser (a ContentExtractorPort with
-    `pdf_page_count` and `cut_pdf_window`)."""
+    """The indexer's model runners. `parser` is the child-process parser (a ContentExtractorPort and a
+    PdfSplitterPort)."""
     context_builder = build_drive_context_builder(keys)
     prompt_builder = _DrivePromptBuilder(repo=None, assembly_service=assembly_service)
     quota = FirestoreQuotaService(account_repo, alert_sink=alert_sink)
-    splitter: PdfSplitter = parser
+    splitter: PdfSplitterPort = parser
     reader = DriveReaderRunner(context_builder, users, prompt_builder, splitter, quota_service=quota)
     return DriveModels(
         extractors={PARSER: parser, READER: reader},

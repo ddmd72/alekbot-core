@@ -29,7 +29,8 @@ from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.drive_ref import is_drive_ref
 from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..infrastructure.agent_manifest import Intent
-from ..infrastructure.drive_operations import MAX_VIDEO_ATTACH_BYTES, DriveOperations
+from ..infrastructure.drive_operations import DriveOperations
+from ..domain.document_limits import MAX_VIDEO_ATTACH_BYTES
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.logger import logger
 

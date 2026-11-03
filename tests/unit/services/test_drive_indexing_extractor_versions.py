@@ -2,8 +2,10 @@
 kind's chain, re-extracts exactly what that link decided, in class 3, with the old chunks serving meanwhile."""
 import pytest
 
-from src.domain import drive_extraction
-from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionStatus
+from src.domain import document_extraction
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import CURRENT_VERSIONS, Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.services.drive_indexing_service import DriveIndexingService
@@ -76,7 +78,7 @@ async def test_a_new_reader_version_re_reads_scans_and_images_only(w):
 
 async def test_a_new_link_for_one_kind_re_extracts_that_kind_only(w, monkeypatch):
     pdf_parser = HookedExtractor("pdf_parser", version=1)
-    monkeypatch.setattr(drive_extraction, "EXTRACTOR_CHAINS", {"pdf": ("pdf_parser", READER), "image": (READER,)})
+    monkeypatch.setattr(document_extraction, "EXTRACTOR_CHAINS", {"pdf": ("pdf_parser", READER), "image": (READER,)})
     rewire(w, pdf_parser=pdf_parser)
     pdf_parser.outcomes["scan.pdf"] = ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=2)
     await w.settle()

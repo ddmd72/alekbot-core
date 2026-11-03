@@ -1,6 +1,6 @@
 """G1b in the drive parser: a Markdown or text file's `data:` images never reach the indexed text."""
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 
 B64 = "A" * 5000
 

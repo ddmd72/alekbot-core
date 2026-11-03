@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from src.domain.drive_index_params import ABOUT_SHOWN, GROUP_LINES, RESULT_CHARS_MAX
 from src.domain.drive_match import MatchTier
 from src.domain.drive_search import (
-    DATE_FILE, DATE_TAKEN, DATE_WRITTEN, REFERENCE_REMINDER, STATUS_OK, DriveSearchCard, DriveSearchEnvelope,
-    DriveSearchRequest, DriveSearchResult, render_results,
+    DATE_FILE, DATE_TAKEN, DATE_WRITTEN, STATUS_OK, DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest,
+    DriveSearchResult, render_results,
 )
+from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_tier_render import group_lines
 from src.domain.drive_tier_result import CoverageFacts, GroupMember, TierBlock, TieredResult
 

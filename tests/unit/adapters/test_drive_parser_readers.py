@@ -9,7 +9,8 @@ from src.adapters.drive_parser import readers
 from src.adapters.drive_parser.readers import (
     MARKITDOWN_CONVERTERS, cut_pdf_window, decode_text, markdown_table, pdf_page_count, read_content, subtitle_cues,
 )
-from src.domain.drive_extraction import ExtractionStatus, PdfSplitFailed
+from src.domain.drive_extraction import PdfSplitFailed
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS
 from src.utils.document_hardening import build_markitdown
 from tests.unit.adapters.drive_extraction_fixtures import (

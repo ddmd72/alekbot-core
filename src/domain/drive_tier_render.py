@@ -18,9 +18,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .drive_index_params import CARD_RENDER_MAX, GROUP_LINES, RESULT_CHARS_MAX
 from .drive_match import MatchTier
 from .drive_search import (
-    ALSO_ON_LINE, REFERENCE_REMINDER, DriveSearchCard, DriveSearchResult, accuracy_line, capture_line, escape_text, index_line,
-    scene_line, stale_line, wrap_untrusted,
+    ALSO_ON_LINE, DriveSearchCard, DriveSearchResult, accuracy_line, capture_line, index_line, scene_line, stale_line,
 )
+from .file_ref import FileRefKind
+from .untrusted_text import REFERENCE_REMINDER, escape_text, wrap_untrusted
 from .drive_search_texts import (
     ABOUT_HEADING, ABSENT_IN_SCOPE_LINE, ABSENT_LINE, CONJUNCTION_TERM, COVERAGE_COMPLETE, COVERAGE_DRIVES_NOT_SEARCHED,
     COVERAGE_INACCESSIBLE, COVERAGE_INCOMPLETE,
@@ -288,16 +289,19 @@ def _render(result: DriveSearchResult, tiered: TieredResult, shown: Dict[MatchTi
                 out.append(RELATED_HEADING.format(count=len(cards)))
                 if tiered.related_small:
                     out.append(RELATED_SMALL_NOTE)
-                out.extend(wrap_untrusted(_related_body(c), nonce=c.nonce, ref=c.ref, path=c.path) for c in cards)
+                out.extend(wrap_untrusted(_related_body(c), nonce=c.nonce, store=FileRefKind.DRIVE, ref=c.ref,
+                                          label=c.path) for c in cards)
             continue
         block = tiered.block(tier)
         if block is None or block.total == 0:
             continue
         out.append(_heading(tier, tiered, block, len(cards)))
-        out.extend(wrap_untrusted(card_body(c), nonce=c.nonce, ref=c.ref, path=c.path) for c in cards)
+        out.extend(wrap_untrusted(card_body(c), nonce=c.nonce, store=FileRefKind.DRIVE, ref=c.ref, label=c.path)
+                   for c in cards)
         groups = group_lines(list(moved.get(tier, [])) + list(block.rest), tier)
         if groups and block_nonce(block, cards):
-            out.append(wrap_untrusted("\n".join(groups), nonce=block_nonce(block, cards), ref="", path=""))
+            out.append(wrap_untrusted("\n".join(groups), nonce=block_nonce(block, cards), store=FileRefKind.DRIVE,
+                                      ref="", label=""))
     if cut:
         out.append(_CUT_LINE)
     if tiered.expired:

@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.infrastructure.drive_connection_arg import resolve_connection  # noqa: E402
 from src.domain.connection_scope import ConnectionScope  # noqa: E402
-from src.domain.drive_extraction import READER, chain_for  # noqa: E402
+from src.domain.document_extraction import READER, chain_for  # noqa: E402
 from src.domain.drive_index import DriveIndexRecord, Reason, RecordState  # noqa: E402
 from src.domain.drive_index_planner import (  # noqa: E402
     FAILED_REASONS, content_due, content_reread, content_requeued, rereadable, triage_due,

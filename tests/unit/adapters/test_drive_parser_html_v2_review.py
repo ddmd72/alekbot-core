@@ -13,7 +13,7 @@ from src.adapters.drive_parser.html_text import (
     HTML_TAG_SHARE_MIN, SCRIPT_RENDERED_TEXT_MAX, html_page_text, tag_share, text_is_html, without_code,
 )
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 
 _BADGE_README = """<p align="center">
   <img src="https://raw.githubusercontent.com/acme/widget/main/docs/logo.png" alt="Widget logo" width="200">

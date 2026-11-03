@@ -17,7 +17,7 @@ from scripts.validation.drive_eval.runner import EvalClock, index_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveProfile, HintItem, PhotoDescription, ProfileDate, ProfileEntity
 from src.domain.drive_enrichment_calls import HintReply, ModelReplyStatus, ProfileReply, TriageReply, TriageResultV2
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import TriageVerdict
 from src.domain.place_lookup import Place
 

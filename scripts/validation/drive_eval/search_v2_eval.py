@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.composition.drive_reader_runner import READER_VERSION as _RUNNER_READER_VERSION
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchResult, render_results
 from scripts.validation.drive_eval.eval_connection import (

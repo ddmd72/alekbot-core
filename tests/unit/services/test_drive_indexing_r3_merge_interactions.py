@@ -12,7 +12,8 @@
   not be read, never as waiting."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import MAX_CHUNKS_PER_USER, RETRY_CAP
 from src.domain.drive_search import NOT_READ_YET_COUNTER, UNREAD_COUNTER

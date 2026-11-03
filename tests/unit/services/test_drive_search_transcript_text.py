@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_index import KEYS_VERSION, MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState, RecordState, Scope
-from src.domain.drive_search import REFERENCE_REMINDER
+from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
 from src.domain.drive_transcript_render import render_body
 from src.ports.drive_index_repository import DriveIndexRepository

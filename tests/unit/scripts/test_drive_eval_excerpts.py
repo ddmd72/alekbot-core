@@ -12,7 +12,9 @@ from scripts.validation.drive_eval.excerpts_eval import bars_mismatch, evaluate,
 from scripts.validation.drive_eval.lexical_embeddings import EMBEDDING_SPACE, LexicalEmbeddings
 from scripts.validation.drive_eval.runner import EvalError, gold_sha256, sha256_of
 
-from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import PARSER, READER
 
 from ..services.drive_content_fakes import FakeExtractor, FakeTriage
 from .drive_eval_samples import rome

@@ -10,7 +10,8 @@ import pytest
 from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
+from src.domain.drive_extraction import ExtractionOutcome, TriageResult
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DriveChange, EpochPhase, Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_index_planner import (
     PlanContext, capped, content_due, content_reread, demoted, generation_started, indexed, plan_observation,

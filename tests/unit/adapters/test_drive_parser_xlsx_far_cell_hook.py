@@ -8,7 +8,7 @@ import zipfile
 import pytest
 
 from src.adapters.drive_parser.readers import read_content
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 
 
 def _book(path, cells):

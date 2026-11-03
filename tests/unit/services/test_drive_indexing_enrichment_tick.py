@@ -11,7 +11,9 @@ import pytest
 from src.domain import drive_index as di
 from src.domain.drive_enrichment import InitialBuild, JobState, ModelUsageMonth, PhotoDescription, PhotoObject
 from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
-from src.domain.drive_extraction import READER, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import READER
 from src.domain.drive_index import KEYS_VERSION, MIGRATION_GATE_KEY, RecordState, Scope, TriageVerdict
 from src.domain.drive_index_params import (
     LEASE_MARGIN, MAX_ATTEMPTS, MODEL_BACKOFF_CAP_S, READER_PAGE_USD_ESTIMATE, TICK_DEADLINE_S, TICK_START_BUDGET,

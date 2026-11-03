@@ -2,7 +2,8 @@
 (USER_DRIVE_INDEXING_RFC §26.4, Δ60 on the brief path)."""
 from datetime import datetime, timezone
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DocumentBrief, DriveIndexRecord, Reason, RecordState, Scope
 from src.domain.drive_index_planner import demoted
 

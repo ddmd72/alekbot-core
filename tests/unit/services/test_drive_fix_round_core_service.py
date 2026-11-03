@@ -11,7 +11,8 @@ import pytest
 
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_enrichment import UsageClass
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import RecordState
 from src.domain.drive_index_params import READER_USD_PER_MONTH
 from src.domain.drive_search import INACCESSIBLE_COUNTER, render_results

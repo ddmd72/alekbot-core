@@ -26,7 +26,7 @@ from .drive_excerpt_folder_note import FolderNote
 from .drive_index import DriveIndexRecord
 from .drive_index_params import EXCERPT_DESCRIPTION_CHARS
 from .drive_profile import TemplateReason, template_profile
-from .drive_search import escape_text
+from .untrusted_text import escape_text
 
 # The one template what-it-is that is not a copy of the file's own text (drive_profile.template_profile).
 _MACHINE_TEXT_LABEL = template_profile(TemplateReason.MACHINE_TEXT, "", "").what_it_is

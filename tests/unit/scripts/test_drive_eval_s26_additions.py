@@ -19,7 +19,8 @@ from scripts.validation.drive_eval.smart_dry_run import G3Error, hard_failures, 
 from scripts.validation.drive_eval.v2_metrics import GoldError, case_pass, validate_gold_v2
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_enrichment import DriveProfile, ProfileDate
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, TriageImage
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import TriageVerdict
 from src.domain.user_drive import DriveItemNotFoundError
 

@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import ErrorCategory, Reason, RecordState
 from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from src.domain.user_drive import DriveThrottled

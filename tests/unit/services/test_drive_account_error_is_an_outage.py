@@ -7,7 +7,8 @@ with nothing retried until an edit. The adapter recognises it (LLMAccountError);
 model work is deferred for the user, no file is charged, the file stays pending. An ordinary 400 is still a refusal."""
 import pytest
 
-from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS
 from src.domain.exceptions import LLMAccountError, LLMClientError

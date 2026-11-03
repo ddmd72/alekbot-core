@@ -1,21 +1,70 @@
 """
-Kind from the downloaded head (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.1, §5.5 class 2, §8.1 step 4). Pure.
+A document's kind from its name, its declared mime type and its first bytes (docs/10_rfcs/EXTERNAL_FILES_RFC.md
+§4.5; the rules are docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §5.1, §5.5 class 2, §8.1 step 4 and GOOGLE_DRIVE_RFC §5).
+Pure and source-neutral: the drive indexer, the drive open path and the document service all read kinds here.
 
-Magic bytes win over the declared kind (the one `kind_of` gave from the name and mime type): a `.txt` that is a ZIP
-is an archive, and the caller sends the sniffed kind back through the policy. A container whose content cannot be
-told from the head (OOXML members past the head, an OLE2 directory sector elsewhere in the file) keeps the declared
-kind when that kind can live in the container, else it is `archive` (ZIP) or `other` (OLE2). Encrypted OOXML is an
-OLE2 file by the standard, so an OOXML kind stays: the parser reports it `encrypted`. A plain tar declared EPUB stays
-EPUB: an Apple Books package (`.epub.pkgf`), which the parser repacks as an EPUB ZIP.
+Name and mime (`kind_of`): the name's extension decides, unless G1's mime table names a document kind the extension
+does not (`mime_decides_kind`); an Apple Books package (`<name>.epub.pkgf`) reads as the extension it packs.
+
+Head (`sniff_kind`): magic bytes win over the declared kind (the one `kind_of` gave from the name and mime type): a
+`.txt` that is a ZIP is an archive, and the caller sends the sniffed kind back through the policy. A container whose
+content cannot be told from the head (OOXML members past the head, an OLE2 directory sector elsewhere in the file)
+keeps the declared kind when that kind can live in the container, else it is `archive` (ZIP) or `other` (OLE2).
+Encrypted OOXML is an OLE2 file by the standard, so an OOXML kind stays: the parser reports it `encrypted`. A plain
+tar declared EPUB stays EPUB: an Apple Books package (`.epub.pkgf`), which the parser repacks as an EPUB ZIP.
+
+`image_mime` names the four image formats every vision provider of the reader and triage takes, from the first bytes
+(a provider rendition's mime type does not describe it, spike S0f); anything else is "".
 
 Public interface:
     SNIFF_HEAD_BYTES
     sniff_kind(head, declared_kind) -> str
+    image_mime(head) -> str
+    kind_of(name, mime, is_folder) -> str
+    mime_kind(mime) -> Optional[str]
+    mime_decides_kind(name, mime) -> bool
 """
 from __future__ import annotations
 
+import os
 import struct
-from typing import FrozenSet, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
+
+_EXT_KIND: Dict[str, str] = {
+    ".pdf": "pdf", ".docx": "docx", ".doc": "doc", ".pptx": "pptx", ".ppt": "ppt", ".xlsx": "xlsx",
+    ".xls": "xls", ".odt": "odt", ".ods": "ods", ".odp": "odp", ".epub": "epub", ".html": "html",
+    ".htm": "html", ".xhtml": "html", ".mhtml": "mhtml", ".mht": "mhtml", ".md": "markdown",
+    ".markdown": "markdown", ".txt": "text", ".csv": "csv", ".json": "json", ".rtf": "rtf", ".msg": "msg",
+    ".eml": "eml", ".vtt": "subtitles", ".srt": "subtitles",
+    ".jpg": "image", ".jpeg": "image", ".png": "image", ".gif": "image", ".webp": "image", ".heic": "image",
+    ".heif": "image", ".tif": "image", ".tiff": "image", ".bmp": "image", ".svg": "image", ".raw": "image",
+    ".dng": "image", ".mp3": "audio", ".m4a": "audio", ".wav": "audio", ".flac": "audio", ".ogg": "audio",
+    ".opus": "audio", ".aac": "audio", ".mp4": "video", ".mov": "video", ".webm": "video", ".mkv": "video",
+    ".avi": "video", ".zip": "archive", ".7z": "archive", ".rar": "archive", ".tar": "archive", ".gz": "archive",
+    ".tgz": "archive", ".bz2": "archive", ".xz": "archive", ".py": "code", ".js": "code", ".ts": "code",
+    ".tsx": "code", ".jsx": "code", ".java": "code", ".kt": "code", ".go": "code", ".rs": "code", ".c": "code",
+    ".h": "code", ".cpp": "code", ".cs": "code", ".rb": "code", ".php": "code", ".swift": "code", ".sh": "code",
+    ".yaml": "code", ".yml": "code", ".toml": "code", ".ini": "code", ".xml": "code", ".css": "code",
+    ".ipynb": "code", ".log": "log", ".sql": "data_dump", ".har": "data_dump", ".jsonl": "data_dump",
+    ".ndjson": "data_dump", ".sqlite": "database", ".db": "database", ".mdb": "database", ".accdb": "database",
+    ".exe": "executable", ".dll": "executable", ".msi": "executable", ".dmg": "disk_image", ".iso": "disk_image",
+    ".img": "disk_image", ".vhd": "disk_image", ".pages": "iwork", ".numbers": "iwork", ".key": "iwork",
+}
+# An Apple Books package (`<name>.epub.pkgf`) is a tar of the EPUB folder; the parser repacks it (§5.1).
+_PACKAGE_EXT = ".pkgf"
+_PACKAGED_EXTS: FrozenSet[str] = frozenset({".epub"})
+# G1 (GOOGLE_DRIVE_RFC §5): the document mimes the parser reads. IANA names only, never a provider's own type.
+_MIME_KIND: Dict[str, str] = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/pdf": "pdf",
+    "text/markdown": "markdown",
+    "text/plain": "text",
+    "text/csv": "csv",
+}
+_MIME_TEXT_KINDS: FrozenSet[str] = frozenset({"markdown", "text", "csv"})
+_MIME_TABLE_KINDS: FrozenSet[str] = frozenset(_MIME_KIND.values())
 
 SNIFF_HEAD_BYTES = 8192     # what the caller reads from the temp file; local ZIP headers and OLE2 names fit often
 
@@ -172,3 +221,68 @@ def _html_or(head: bytes, declared_kind: str) -> str:
     if start.startswith((b"<!doctype html", b"<html")):
         return "html"
     return declared_kind
+
+
+def image_mime(head: bytes) -> str:
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(head) >= 12 and head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def mime_kind(mime: str) -> Optional[str]:
+    """The document kind `mime` names (parameters such as `; charset=utf-8` ignored, case-insensitive), else None."""
+    return _MIME_KIND.get(mime.split(";", 1)[0].strip().lower())
+
+
+def _effective_ext(name: str) -> str:
+    """The name's extension, lower-cased, with an Apple Books package unwrapped to the extension it packs."""
+    stem, ext = os.path.splitext(name.lower())
+    if ext == _PACKAGE_EXT and os.path.splitext(stem)[1] in _PACKAGED_EXTS:
+        ext = os.path.splitext(stem)[1]
+    return ext
+
+
+def _kind_from_ext(name: str) -> Optional[str]:
+    return _EXT_KIND.get(_effective_ext(name))
+
+
+def mime_decides_kind(name: str, mime: str) -> bool:
+    """True when `mime` decides the kind instead of the name's extension (G1, design Δ4): the mime names a table kind
+    and the extension gives no kind, or the extension's kind is another table kind and the two are not both text
+    kinds. An extension whose kind is outside the table (log, code, subtitles, json, …) always keeps its reading."""
+    by_mime = mime_kind(mime)
+    if by_mime is None:
+        return False
+    by_ext = _kind_from_ext(name)
+    if by_ext is None:
+        return True
+    if by_ext == by_mime or by_ext not in _MIME_TABLE_KINDS:
+        return False
+    return not (by_ext in _MIME_TEXT_KINDS and by_mime in _MIME_TEXT_KINDS)
+
+
+def kind_of(name: str, mime: str, is_folder: bool) -> str:
+    if is_folder:
+        return "folder"
+    ext = _effective_ext(name)
+    kind = _kind_from_ext(name)
+    if kind == "iwork" and ext == ".key" and mime not in ("", "application/vnd.apple.keynote"):
+        return "other"   # a .key that is not Keynote is a secret file, caught by item_rule first
+    by_mime = mime_kind(mime) if mime_decides_kind(name, mime) else None
+    if by_mime:
+        return by_mime
+    if kind:
+        return kind
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("audio/"):
+        return "audio"
+    if mime.startswith("video/"):
+        return "video"
+    return "other"

@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
 from ..domain.user_drive import (
     DEFAULT_INBOX_FOLDER,
     MAX_DRIVE_APPEND_FILE_BYTES,
-    MAX_DRIVE_DOWNLOAD_BYTES,
     MOVE_NEEDS_TARGET,
     DeleteOutcome,
     DriveAccessRefused,
@@ -56,6 +55,7 @@ from ..domain.user_drive import (
     sanitize_drive_filename,
     split_folder_path,
 )
+from ..domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 from ..domain.drive_access_op import AccessOp
 from ..domain.drive_access_policy import decide, in_scope, requires_ancestry
 from ..domain.drive_ancestry import Ancestry

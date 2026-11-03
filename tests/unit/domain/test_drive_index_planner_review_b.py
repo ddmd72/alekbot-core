@@ -4,7 +4,8 @@ from datetime import timedelta
 
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import MAX_ATTEMPTS, MODEL_EXTRACT_MAX_PAGES, MODEL_EXTRACT_PAGES_PER_MONTH
 from src.domain.drive_index_planner import (

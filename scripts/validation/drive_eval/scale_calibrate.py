@@ -35,7 +35,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.domain.drive_extraction import PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import PARSER
 from src.domain.drive_index_params import RELATED_MAX, Z_RELATED
 from src.domain.drive_search import DriveSearchRequest
 from src.domain.drive_tiers import size_band

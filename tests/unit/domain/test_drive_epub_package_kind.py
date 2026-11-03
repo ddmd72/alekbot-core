@@ -8,8 +8,8 @@ from src.domain.drive_index import (
     NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, Reason, RecordState, Scope,
 )
 from src.domain.drive_index_planner import change_from_record, classify, structure_stale
-from src.domain.drive_index_policy import Admission, admission, content_class_of, kind_of
-from src.domain.drive_sniff import sniff_kind
+from src.domain.drive_index_policy import Admission, admission, content_class_of
+from src.domain.document_kind import kind_of, sniff_kind
 
 
 def _tar_head(name: bytes = b"mimetype") -> bytes:

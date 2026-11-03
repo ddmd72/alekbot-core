@@ -29,7 +29,8 @@ from typing import Any, Dict, Optional, Sequence
 from src.domain.drive_enrichment_calls import (
     HintReply, HintRequest, ModelReplyStatus, ProfileReply, ProfileRequest, TriageReply, TriageResultV2,
 )
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, TriageImage
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import TriageVerdict
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.document_profiler_port import DocumentProfilerPort
@@ -89,7 +90,7 @@ class SyntheticReader(ContentExtractorPort):
 
     @property
     def extractor_id(self) -> str:
-        from src.domain.drive_extraction import READER
+        from src.domain.document_extraction import READER
         return READER
 
     @property
@@ -127,7 +128,7 @@ async def write_synthetic(snapshot_path: Path) -> int:
     from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
     from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
     from src.composition.drive_indexing_setup import build_place_lookup
-    from src.domain.drive_extraction import PARSER, READER
+    from src.domain.document_extraction import PARSER, READER
 
     from . import fixture_texts_v2
     from .enrichment_record import CostMeter, recording_ports

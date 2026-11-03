@@ -2,7 +2,8 @@
 demoted, and then as too large, not as "no text" (USER_DRIVE_INDEXING_RFC §24.5)."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import Reason, RecordState, TriageVerdict
 from src.domain.drive_index_params import READER_RENDITION_EDGE_PX, READER_RENDITION_STEPS, TRIAGE_THUMBNAIL_EDGE_PX
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES

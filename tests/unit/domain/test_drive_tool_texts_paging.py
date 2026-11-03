@@ -4,7 +4,7 @@ import re
 
 from src.domain import drive_tool_texts as tt
 from src.domain.drive_excerpt_request import range_request
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 
 
 def _declaration(name):

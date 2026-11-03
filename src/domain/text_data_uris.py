@@ -7,9 +7,6 @@ forward scan, no backtracking over the payload.
 import re
 from typing import Dict, List
 
-# The largest text a drive may hand over for one file: a document export's cap.
-MAX_TEXT_EXPORT_BYTES = 10 * 1024 * 1024
-
 _START = re.compile(r"!\[|<img[\s/]", re.IGNORECASE)
 _TARGET_END = re.compile(r"[\s)]")
 _ATTR = re.compile(r"""\s(src|alt)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)

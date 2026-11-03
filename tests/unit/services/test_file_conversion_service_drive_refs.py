@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.domain.user_drive import (
-    MAX_DRIVE_DOWNLOAD_BYTES,
     DriveFileTooLargeError,
     DriveItem,
     DrivePathError,
 )
+from src.domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 from src.ports.file_storage_port import FileStoragePort
 from src.ports.user_drive_port import UserDrivePort
 from src.services.file_conversion_service import FileConversionService

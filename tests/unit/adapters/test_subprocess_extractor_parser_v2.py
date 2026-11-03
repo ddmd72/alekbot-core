@@ -6,7 +6,9 @@ import sys
 from pathlib import Path
 
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
-from src.domain.drive_extraction import PARSER, ExtractionOutcome, ExtractionRequest, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest
+from src.domain.document_extraction import ExtractionStatus
+from src.domain.document_extraction import PARSER
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SCRIPT_PAGE = ("<html lang='en'><head><title>Planner</title><script>" + "var x=1;" * 5000 + "</script></head>"

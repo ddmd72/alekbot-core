@@ -9,7 +9,7 @@ from src.domain.drive_index import DriveChange, Reason, RecordState, Scope
 from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
 from src.domain.drive_index_planner import classify
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS, size_cap
-from src.domain.user_drive import MAX_DRIVE_DOWNLOAD_BYTES
+from src.domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 BETWEEN = (MAX_DRIVE_DOWNLOAD_BYTES + MAX_PDF_DOWNLOAD_BYTES) // 2   # over the chat cap, under the indexer's PDF cap

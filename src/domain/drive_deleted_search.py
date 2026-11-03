@@ -22,7 +22,8 @@ from typing import Collection, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .drive_keys import word_keys
 from .drive_match import Concept
-from .drive_search import wrap_untrusted
+from .file_ref import FileRefKind
+from .untrusted_text import wrap_untrusted
 from .drive_transcript import StoredTranscript
 from .drive_transcript_time import format_stamp
 from .user_drive import DriveItem
@@ -146,7 +147,7 @@ def render_deleted(hits: Sequence[DeletedHit], *, more: int = 0, connected: bool
     if not hits:
         lines.append(NONE_MATCHED_LINE)
     for hit in hits:
-        lines.append(wrap_untrusted(_entry(hit), nonce=hit.nonce, ref=hit.ref, path=hit.path))
+        lines.append(wrap_untrusted(_entry(hit), nonce=hit.nonce, store=FileRefKind.DRIVE, ref=hit.ref, label=hit.path))
     if more > 0:
         lines.append(f"{more} more archived transcripts matched.")
     lines.extend(line for line in coverage if line)

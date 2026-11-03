@@ -62,7 +62,8 @@ async def test_the_camera_prior_travels_with_each_thumbnail(w):
 
 
 async def test_a_text_verdict_sends_the_image_to_the_reader(w):
-    from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+    from src.domain.drive_extraction import ExtractionOutcome
+    from src.domain.document_extraction import ExtractionStatus
     receipt = w.add_image("IMG_2.jpg")
     w.triage.verdicts = {receipt: (TriageVerdict.TEXT, "")}
     w.reader.outcomes["IMG_2.jpg"] = ExtractionOutcome(status=ExtractionStatus.TEXT, text="Total 12.50 EUR",

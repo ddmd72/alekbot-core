@@ -13,11 +13,12 @@ import pytest
 
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
 from scripts.validation.drive_eval.make_fixtures import FIXTURES
-from src.domain.drive_extraction import garbage_share
+from src.domain.document_extraction import garbage_share
 from src.domain.drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 from src.domain.drive_index_policy import (
-    SLICE2_CONTENT_KINDS, is_dot_name, is_generated_dir, is_marker_child, item_rule, kind_of,
+    SLICE2_CONTENT_KINDS, is_dot_name, is_generated_dir, is_marker_child, item_rule,
 )
+from src.domain.document_kind import kind_of
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 _FILES = _DIR / "files"

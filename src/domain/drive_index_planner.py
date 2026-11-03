@@ -66,7 +66,8 @@ from .drive_card import (
     structurally_card_eligible,
 )
 from .drive_enrichment import DriveProfile, PhotoDescription
-from .drive_extraction import TRANSCRIBE_LINK, ExtractionOutcome, TriageResult, chain_for
+from .drive_extraction import TRANSCRIBE_LINK, ExtractionOutcome, TriageResult
+from .document_extraction import chain_for
 from .drive_index import (
     CARD_VERSION, EXTRACTION_VERSION, GEO_TABLE_VERSION, KEYS_VERSION, MIGRATION_GATE_KEY, NAME_KEYS_VERSION, POLICY_VERSION,
     STRUCTURE_POLICY_SINCE, TRIAGE_VERSION, ContentClass, DocumentBrief, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase, FolderProbe,
@@ -80,8 +81,9 @@ from .drive_index_params import (
 )
 from .drive_index_policy import (
     TRANSCRIBED_KINDS, Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
-    is_generated_dir, is_marker_child, is_readme_name, item_rule, kind_of, readme_readable, searchable, size_cap,
+    is_generated_dir, is_marker_child, is_readme_name, item_rule, readme_readable, searchable, size_cap,
 )
+from .document_kind import kind_of
 from .drive_keys import name_keys_v2
 from .drive_profile import brief_date_grade, issued_of, readme_excerpt
 from .connection_scope import ConnectionScope

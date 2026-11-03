@@ -20,7 +20,7 @@ from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fix
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.domain import drive_index_policy as policy
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.services.drive_search_service import DriveSearchService
 from tests.unit.services.drive_content_fakes import FakeExtractor, FakeTriage
 

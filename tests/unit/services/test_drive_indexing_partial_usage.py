@@ -6,7 +6,8 @@ import pytest
 
 from src.domain.drive_enrichment import PhotoDescription, UsageClass
 from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply, TriageResultV2
-from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import RecordState, TriageVerdict
 from src.domain.drive_index_params import MODEL_BACKOFF_BASE_S
 

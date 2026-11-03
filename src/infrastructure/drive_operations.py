@@ -66,16 +66,18 @@ from ..domain.drive_excerpt_request import excerpt_request, range_request
 from ..domain.drive_excerpt_result import ExcerptResult
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import CARD_ACCURACY_TRUST
-from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
+from ..domain.drive_index_policy import TRANSCRIBED_KINDS
+from ..domain.document_kind import kind_of
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
 from ..domain.drive_search import (
-    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED,
-    STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND, DriveSearchResult, render_results, request_from_fields, require_search_terms,
-    wrap_untrusted,
+    STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND,
+    DriveSearchResult, render_results, request_from_fields, require_search_terms,
 )
+from ..domain.file_ref import FileRefKind
+from ..domain.untrusted_text import REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, wrap_untrusted
 from ..domain.drive_capture import Capture, born_digital
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_state import ConnectionState
@@ -97,8 +99,6 @@ from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import (
-    MAX_DRIVE_VISION_IMAGE_BYTES,
-    MAX_DRIVE_VISION_PDF_BYTES,
     VISION_IMAGE_MIME_TYPES,
     DriveAccessRefused,
     DriveFileTooLargeError,
@@ -115,9 +115,11 @@ from ..domain.user_drive import (
     format_size,
     prepare_drive_text_file,
 )
+from ..domain.document_limits import (
+    MAX_DRIVE_VISION_IMAGE_BYTES, MAX_DRIVE_VISION_PDF_BYTES, MAX_VIDEO_ATTACH_BYTES, OPEN_MAX_CHARS,
+)
 from ..domain.workspace import BINARY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
 from ..utils.file_conversion import is_native_binary
-from ..domain.drive_index_params import OPEN_MAX_CHARS
 from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
 from ..domain.drive_open_bound_info import OpenBoundInfo
 from ..domain.drive_text_extent import ExtentState, TextExtent
@@ -141,10 +143,6 @@ NOT_CONFIGURED = "The drive is not configured."
 NO_SEARCH = "Drive search is not available on this deployment."
 STILL_RUNNING = ("The drive operation is still running and may complete. Check with a listing "
                  "before retrying; a notice follows for deletes and replaces.")
-# Safety margin under Telegram's 50MB bot-API document cap (Slack's own limit is far higher). video_generation/ files
-# are duration-capped (VIDEO_GENERATION_RFC.md §3.11 decision #10, 10s hard cap), so a real file almost never
-# approaches this; it only makes an anomalous file degrade to a message instead of a failed upload.
-MAX_VIDEO_ATTACH_BYTES = 45 * 1024 * 1024
 VIDEO_NOT_SENT = "Could not send the video: the upload to the chat failed. Nothing was delivered."
 
 _LATE_FAILURE_UI = {DriveOp.DELETE: UIMessage.DRIVE_DELETE_FAILED, DriveOp.REPLACE: UIMessage.DRIVE_REPLACE_FAILED}
@@ -1024,7 +1022,8 @@ class DriveOperations:
             # The recording itself comes as a drive link, never as bytes into chat (§27.11, Δ121).
             link = item.web_url or "(no link available)"
             body = wrap_untrusted(f"{drive_label(item, tag)}\nLink to the original recording: {link}",
-                                  nonce=secrets.token_hex(8), ref=drive_ref.format(tag, item.item_id), path=item.path)
+                                  nonce=secrets.token_hex(8), store=FileRefKind.DRIVE,
+                                  ref=drive_ref.format(tag, item.item_id), label=item.path)
             # the owner's note in its own block (§6.2): nothing inside a file's wrapper can pass for it
             return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{body}", item, note, tag), [item],
                        body=True, owner_note=bool(note), tag=tag)
@@ -1081,7 +1080,7 @@ class DriveOperations:
         # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
         cut = bound(content, extent)
         wrapped = wrap_untrusted(f"{drive_label(item, tag)}\n{cut.text}", nonce=secrets.token_hex(8),
-                                 ref=drive_ref.format(tag, item.item_id), path=item.path)
+                                 ref=drive_ref.format(tag, item.item_id), store=FileRefKind.DRIVE, label=item.path)
         if cut.cut is None:
             return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note, tag), [item],
                        body=True, owner_note=bool(note), tag=tag)
@@ -1116,7 +1115,8 @@ class DriveOperations:
         if not line:
             return text
         return text + "\n" + wrap_untrusted(f"{drive_label(item, tag)}\n{line}", nonce=secrets.token_hex(8),
-                                            ref=drive_ref.format(tag, item.item_id), path=item.path)
+                                            store=FileRefKind.DRIVE, ref=drive_ref.format(tag, item.item_id),
+                                            label=item.path)
 
     # ------------------------------------------------------------------
     # Writes and receipts

@@ -1,7 +1,8 @@
 """Counters and the tick summary for content (USER_DRIVE_INDEXING_RFC §12.1, §10.2 `unread`, §24.9)."""
 import pytest
 
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_search import UNREAD_COUNTER
 

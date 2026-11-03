@@ -16,7 +16,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain import drive_note_merge as merge_mod
 from src.domain.drive_card import card_hash, card_text
-from src.domain.drive_extraction import PARSER, READER
+from src.domain.document_extraction import PARSER, READER
 from src.domain.drive_index import MIGRATION_GATE_KEY, KEYS_VERSION, Nudge
 from src.domain.drive_index_params import (
     ENRICH_FILE_BUDGET_S, FILE_START_MARGIN_S, MIRROR_RESERVE_S, TICK_DEADLINE_S, TICK_START_BUDGET,

@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from src.domain import drive_accuracy as acc
 from src.domain.drive_enrich_plan import regraded
 from src.domain.drive_enrichment import DriveProfile, Grade, GradedField, GradedValue, ProfileSource
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import ACCURACY_VERSION, DriveIndexRecord, TriageVerdict
 from src.domain.drive_index_planner import demoted, indexed
 from src.domain.drive_index import Reason

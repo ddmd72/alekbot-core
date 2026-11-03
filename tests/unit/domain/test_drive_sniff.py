@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from src.domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
+from src.domain.document_kind import SNIFF_HEAD_BYTES, sniff_kind
 
 
 def _head(data: bytes) -> bytes:

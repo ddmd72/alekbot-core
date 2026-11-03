@@ -133,9 +133,9 @@ from ..domain.drive_enrichment_calls import (
 )
 from ..domain.drive_hints import chunk_text_hash, drop_if_far, ground, old_chunk, reuse_source
 from ..domain.drive_extraction import (
-    PARSER, READER, DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage,
-    TriageResult, chain_for, model_route,
+    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, TriageImage, TriageResult,
 )
+from ..domain.document_extraction import PARSER, READER, ExtractionStatus, chain_for, model_route
 from ..domain.drive_access import access_counts
 from ..domain.drive_index import (
     ACCURACY_VERSION, CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
@@ -187,9 +187,8 @@ from ..domain.drive_profile import (
     PROFILE_POLICY, ProfileOutput, TemplateReason, input_fingerprint, profile_input, record_policy, stored_text,
     template_profile, grade, GradeCounts,
 )
-from ..domain.drive_index_policy import (
-    Admission, admission, is_marker_child, kind_of, probe_from_children, size_cap,
-)
+from ..domain.drive_index_policy import Admission, admission, is_marker_child, probe_from_children, size_cap
+from ..domain.document_kind import SNIFF_HEAD_BYTES, kind_of, sniff_kind
 from ..domain.drive_index_run import (
     READER_IMAGE_MAX_BYTES, README_MAX_BYTES, RunStep, camera_prior, chunk_cap_refuses, chunk_released, file_suffix,
     gate_exempt, image_mime, no_rendition, original_fallback, outcome_step, reader_pages, readme_choice, releasable,
@@ -198,7 +197,6 @@ from ..domain.drive_index_run import (
 from ..domain.drive_search import (
     INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEPTH, NOT_READ_YET_COUNTER, UNREAD_COUNTER,
 )
-from ..domain.drive_sniff import SNIFF_HEAD_BYTES, sniff_kind
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, continuation_task_key, nudge_task_key, scope_payload
 from ..domain.drive_text_gate import is_machine_text
 from ..domain.drive_transcript_plan import (

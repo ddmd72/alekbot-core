@@ -5,7 +5,7 @@ from src.domain import drive_tool_texts as tools
 from src.domain.drive_answer import compose_answer
 from src.domain.drive_excerpt_page import PageSpan
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
-from src.domain.drive_index_params import OPEN_MAX_CHARS
+from src.domain.document_limits import OPEN_MAX_CHARS
 from src.domain.drive_op import DriveOp
 from src.domain.drive_open_bound import refusal_text
 from src.domain.drive_open_bound_info import OpenBoundInfo

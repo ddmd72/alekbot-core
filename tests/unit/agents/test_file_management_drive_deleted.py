@@ -68,7 +68,7 @@ async def test_filters_are_not_required_and_not_read_with_the_flag(search, drive
 
 
 async def test_the_result_carries_the_reference_reminder(search, drive_service):
-    from src.domain.drive_search import REFERENCE_REMINDER
+    from src.domain.untrusted_text import REFERENCE_REMINDER
     resp = await _agent(search, drive_service).search_deleted(CTX, "u1")
     assert resp.text.startswith(REFERENCE_REMINDER)
 

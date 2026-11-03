@@ -4,7 +4,7 @@ the file was NO_TEXT — a permanent demotion with 19 windows never read. Unread
 per-file transient (`error`); only a file whose every window was read and found blank is `no_text`."""
 import asyncio
 
-from src.domain.drive_extraction import ExtractionStatus
+from src.domain.document_extraction import ExtractionStatus
 from tests.unit.agents.drive_model_fakes import reply
 from tests.unit.composition.test_drive_reader_runner import _key, _request, _runner
 

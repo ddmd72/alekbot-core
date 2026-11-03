@@ -9,7 +9,8 @@ import pytest
 from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
-from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
+from src.domain.drive_extraction import ExtractionOutcome
+from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index import DriveChange, EpochPhase, Priority, Reason, RecordState
 from src.domain.drive_index_params import MAX_ATTEMPTS
 from src.domain.drive_index_planner import (
