@@ -69,6 +69,7 @@ class AlekRefreshToken(SDKRefreshToken):
 class AlekAccessToken(SDKAccessToken):
     user_id: str
     account_id: str
+    grant_id: Optional[str] = None  # the `gid` claim: the drive connector's one-time link stores it
 
 
 # ---------------------------------------------------------------------------

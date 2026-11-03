@@ -4,7 +4,9 @@ Firestore-backed storage for MCP OAuth entities (secrets at rest: SECRETS_AT_RES
 Three collections, env-prefixed via EnvironmentConfig:
 - {env}_mcp_clients            doc_id = client_id; client_secret = CipherPort ciphertext, AAD mcp_clients/{client_id}
 - {env}_mcp_auth_codes         doc_id = keyed_digest(digest_key, "mcp_code", code); no raw code in any field
-- {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key)
+- {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key);
+                               `grant_id` (the grant's stable id, not a secret) is a field, queried by
+                               has_active_grant with two equality filters (served by the automatic single-field indexes)
 
 Reads go by the presented value only (port contract): a code is found by digesting the code the caller presents, so a
 document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt or cipher failure propagates (I4).
@@ -12,6 +14,8 @@ document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt 
 
 from datetime import datetime, timezone
 from typing import Optional
+
+from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
@@ -186,6 +190,7 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             "resource": t.resource,
             "expires_at": t.expires_at,
             "revoked_at": t.revoked_at,
+            "grant_id": t.grant_id,
         }
 
     @staticmethod
@@ -200,6 +205,7 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             resource=data.get("resource"),
             expires_at=_to_utc(data["expires_at"]),
             revoked_at=_to_utc(revoked_raw) if revoked_raw else None,
+            grant_id=data.get("grant_id"),
         )
 
     async def save_refresh_token(self, token: MCPRefreshToken) -> None:
@@ -217,3 +223,14 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         if not doc.exists:
             return
         await ref.update({"revoked_at": datetime.now(timezone.utc)})
+
+    async def has_active_grant(self, grant_id: str, now: datetime) -> bool:
+        # One grant has one unrevoked token at a time (rotation revokes the old one); the limit only bounds a
+        # pathological case. A token stored with no revoked_at field never carries a grant_id (pre-slice-4).
+        query = (
+            self._refresh.where(filter=FieldFilter("grant_id", "==", grant_id))
+            .where(filter=FieldFilter("revoked_at", "==", None))
+            .limit(5)
+        )
+        docs = await query.get()
+        return any(_to_utc(doc.to_dict()["expires_at"]) > now for doc in docs)

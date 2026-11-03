@@ -9,6 +9,7 @@ MCP request.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Optional
 
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
@@ -96,4 +97,12 @@ class MCPClientRepository(ABC):
         Known defect: rotation needs one exchange per token, but get and revoke are separate calls and revoke does
             not say whether it revoked an active token, so two concurrent exchanges of one refresh token both get
             new tokens (mcp_authorization_service.py:309-332).
+        """
+
+    @abstractmethod
+    async def has_active_grant(self, grant_id: str, now: datetime) -> bool:
+        """True when some refresh token with that `grant_id` and `revoked_at` null has `expires_at` > now.
+
+        The one-time drive link re-checks its grant with this at fetch (DRIVE_MCP_CONNECTOR_RFC §3.3.8, §8).
+        A revoked or expired grant answers False; an unknown grant id answers False.
         """

@@ -99,6 +99,7 @@ class DriveTokenVerifier:
             resource=verified.resource,
             user_id=verified.user_id,
             account_id=verified.account_id,
+            grant_id=verified.grant_id,
         )
 
 
