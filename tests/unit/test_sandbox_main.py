@@ -52,7 +52,7 @@ class FakeEngine:
     def __init__(self, out_root: Path):
         self.out_root = out_root
 
-    async def run(self, body_path, workdir, limits):
+    async def run(self, body_path, workdir, limits, meta):
         out_dir = self.out_root / ("render_out_" + os.path.basename(workdir))
         out_dir.mkdir(parents=True)
         out = out_dir / "out.bin"

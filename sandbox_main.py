@@ -16,7 +16,9 @@ One file, two processes (like `indexer_main.py` it is the only place the layers 
                                       response, then the process exits.
 
 Environment (optional knobs, read with `os.getenv`-style mapping access, never `load_settings()`; the service holds no
-secret): SANDBOX_URL (own URL = OIDC audience; empty -> `unconfigured`, G9), SANDBOX_CALLERS_RENDER, SANDBOX_RECYCLE
+secret): SANDBOX_SERVICE (`render` default | `light`: the service family, which fixes the caller groups and the engines),
+SANDBOX_URL (own URL = OIDC audience; empty -> `unconfigured`, G9), SANDBOX_CALLERS_RENDER (render family) or
+SANDBOX_CALLERS_MAIN / SANDBOX_CALLERS_INDEXER (light family), SANDBOX_RECYCLE
 (`always` default | `never`, local only), SANDBOX_WORK_ROOT, SANDBOX_OUTPUT_ROOT, SANDBOX_ENGINE_USER, PORT, and the
 platform's K_SERVICE. The server child inherits the supervisor's environment unchanged plus `SANDBOX_RECYCLE_FD`:
 the gate must see K_SERVICE or it would be OPEN on Cloud Run.

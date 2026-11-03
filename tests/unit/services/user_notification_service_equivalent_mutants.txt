@@ -1,1 +1,3 @@
-# Mutants a reviewer ruled equivalent for src.services.user_notification_service: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.
+# Mutants a reviewer ruled equivalent for src.services.user_notification_service: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check).
+154631d7  # dropping payload 'text' of the notification message: every reader uses payload.get('text', '') and the router's presence check is False either way
+c5a3da61  # dropping context 'thread_id' (None): nothing reads that key from an AgentMessage context, and a missing key reads as None

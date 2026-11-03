@@ -12,7 +12,7 @@ from src.adapters.sandbox_engine import docx_render_engine
 from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
 from src.domain.docx_script_prelude import SAFE_ENV_KEYS
 from src.domain.sandbox_docx_frame import frame_body
-from src.domain.sandbox_contract import ERROR_TEXT_CAP_BYTES, SandboxEngine, SandboxLimits, SandboxStatus
+from src.domain.sandbox_contract import ERROR_TEXT_CAP_BYTES, SandboxEngine, SandboxLimits, SandboxMeta, SandboxStatus
 
 _ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 _HAS_NODE = shutil.which("node") is not None and os.path.isdir(
@@ -39,6 +39,10 @@ def _limits(**kw):
     return SandboxLimits(**values)
 
 
+def _meta():
+    return SandboxMeta(request_id="r" * 16, limits=_limits())
+
+
 def _engine(**kw):
     return DocxRenderEngine(ChildLauncher(nproc=4000, nofile=256), **kw)
 
@@ -52,7 +56,7 @@ def _body(tmp_path, script: bytes, spec: bytes = b'{"title": "Hello"}'):
 async def _run(tmp_path, script, spec=b'{"title": "Hello"}', **limit_kw):
     workdir = tmp_path / "work"
     workdir.mkdir()
-    return await _engine().run(_body(tmp_path, script, spec), str(workdir), _limits(**limit_kw))
+    return await _engine().run(_body(tmp_path, script, spec), str(workdir), _limits(**limit_kw), _meta())
 
 
 def test_satisfies_the_engine_protocol():
@@ -142,7 +146,7 @@ async def _fake_run(tmp_path, behaviour, **kw):
     root.mkdir(mode=0o700)
     engine = DocxRenderEngine(
         launcher, output_root=str(root), **{k: v for k, v in kw.items() if k == "response_cap_bytes"})
-    result = await engine.run(str(tmp_path / "body"), str(workdir), _limits())
+    result = await engine.run(str(tmp_path / "body"), str(workdir), _limits(), _meta())
     return result, launcher
 
 
@@ -308,7 +312,7 @@ async def test_workdir_that_is_a_symlink_is_refused(tmp_path):
     root = tmp_path / "out_root"
     root.mkdir(mode=0o700)
     engine = DocxRenderEngine(_FakeLauncher(lambda w: None), output_root=str(root))
-    result = await engine.run(str(tmp_path / "body"), str(link), _limits())
+    result = await engine.run(str(tmp_path / "body"), str(link), _limits(), _meta())
     assert result.status is SandboxStatus.ERROR and result.output_path is None
 
 

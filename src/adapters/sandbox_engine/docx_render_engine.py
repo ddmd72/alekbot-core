@@ -32,7 +32,7 @@ import time
 from typing import Optional, Tuple
 
 from ...domain.sandbox_contract import (
-    ERROR_TEXT_CAP_BYTES, RESPONSE_CAP_BYTES, SandboxEngineResult, SandboxLimits, SandboxStatus,
+    ERROR_TEXT_CAP_BYTES, RESPONSE_CAP_BYTES, SandboxEngineResult, SandboxLimits, SandboxMeta, SandboxStatus,
 )
 from ...utils.logger import logger
 from .child_launcher import ChildLauncher
@@ -52,7 +52,8 @@ class DocxRenderEngine:
         self._python = python
         self._response_cap = response_cap_bytes
 
-    async def run(self, body_path: str, workdir: str, limits: SandboxLimits) -> SandboxEngineResult:
+    async def run(self, body_path: str, workdir: str, limits: SandboxLimits, meta: SandboxMeta) -> SandboxEngineResult:
+        """`meta` is the contract's decoded request metadata; the render op needs none of it."""
         started = time.monotonic()
         child = await self._launcher.run(
             [self._python, "-B", "-I", _CHILD_SCRIPT, body_path, workdir],
