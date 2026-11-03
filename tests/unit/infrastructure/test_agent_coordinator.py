@@ -368,7 +368,7 @@ class TestGetStatus:
 
 class TestResolveFileRefs:
     # The prefetch reads through `prefetch_file_ref` (public since P18, EXTERNAL_FILES_RFC §4.2): the resolver takes
-    # (ref, user_id, account_id, deadline_at) and answers a Prefetched (content, or a note the specialist reports).
+    # (ref, user_id, account_id, *, deadline_at) and answers a Prefetched (content, or a note the specialist reports).
     # No registry: no descriptor opts the agent out.
 
     CTX = {"user_id": "user1", "account_id": "acct1"}
@@ -387,7 +387,7 @@ class TestResolveFileRefs:
 
         assert params["file_content"] == "resolved file text"
         assert "file_note" not in params
-        resolver.assert_called_once_with("report.docx", "user1", "acct1", self.DEADLINE)
+        resolver.assert_called_once_with("report.docx", "user1", "acct1", deadline_at=self.DEADLINE)
 
     async def test_no_file_ref_noop(self):
         resolver = AsyncMock()
