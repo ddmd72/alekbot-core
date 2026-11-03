@@ -1,146 +1,203 @@
-# File Conversion Service
+# File Conversion and the Open Path
 
 ## Purpose
 
-Converts file attachments to text **before** passing them to LLM adapters.
+Turns a file ref into what a model can read, before any LLM adapter sees it: text, a note, or a native file the
+consumer attaches. One path serves every interactive open (chat uploads, delivered documents, `workspace:` files, drive
+files) and the specialists' prefetch. Spec: [`docs/10_rfcs/EXTERNAL_FILES_RFC.md`](../../10_rfcs/EXTERNAL_FILES_RFC.md)
+(§4.2 the open path, §4.4 the document service, §4.5 caps, §4.6 marking; U3 built).
 
-Goal — LLM-agnosticism: convert once, works for Claude, Gemini, Grok without changes in adapters.
+Goal — LLM-agnosticism: read once, works for Claude, Gemini, Grok, OpenAI without changes in adapters.
 
 ---
 
 ## Place in Architecture
 
 ```
-Platform Adapter (Slack/Telegram)
-        │ FileAttachment(url, mime_type, filename)
-        ▼
-ConversationHandler
-        │
-        ├── FileConversionService present? (GCS path — preferred)
-        │       YES → process_attachment() → GCS upload → reference-only MessagePart
-        │             (no file content in history — see file_storage building block)
-        │
-        ├── is_native_binary(mime_type)? (legacy fallback)
-        │       YES → MessagePart(file_data) → adapters handle natively
-        │       NO  → convert_file_to_text() → MessagePart(text)
-        │
-        ▼
-AgentCoordinator → RouterAgent → Quick/Smart/WebSearch
-        │
-        ├── delegate with file_ref? → _resolve_file_refs() → download + convert → inject file_content
-        └── open_file intent? → FileManagementAgent → resolve_content/download
+upload turn:  ConversationHandler -> FileConversionService.process_attachment -> GCS + label-only MessagePart
+              (no parsing, no content in history; no file service -> storage_unavailable_alert, see file_storage §2.1)
+
+read turn:    opener (FileManagementAgent / DriveOperations, or the coordinator's prefetch)
+                 |  open(ref, user_id, account_id, consumer=<native declaration>, deadline_at)
+                 v
+              FileConversionService.open        resolve the ref in its store, size check on metadata, stage bytes
+                 |  ReadRequest(bytes, name, declared mime, store, caller, native formats, deadline_at)
+                 v
+              DocumentService.read              kind from bytes -> caps -> native or pipeline -> ReadOutcome
+                 |
+                 v
+              OpenedFile(body | note | native file)  ->  the opener's presenter marks and cuts (present_text)
 ```
 
-Layer: **`src/utils/`** — pure utility functions (no class, no port, no I/O).
+Layers: `FileConversionService` (`src/services/file_conversion_service.py`) resolves refs and stages bytes;
+`DocumentService` (`src/services/document_service.py`) reads bytes behind `DocumentReadPort`
+(`src/ports/document_read_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
+`document_open.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
+`src/utils/file_conversion.py` keeps the alert texts and the markitdown helpers that email attachments still use.
 
-> **See also:** [../file_storage/README.md](../file_storage/README.md) — GCS-backed file storage,
-> `FileConversionService`, and `FileManagementAgent`.
+> **See also:** [../file_storage/README.md](../file_storage/README.md) (GCS storage, the upload turn),
+> [../user_drive/README.md](../user_drive/README.md) (drive opens, §29 bound).
 
 ---
 
-## Files
+## The open path
 
-- `src/utils/file_conversion.py` — all conversion logic (moved from `src/services/file_conversion_service.py` in 2026-03-08 hexagonal audit)
-- `src/handlers/conversation_handler.py` — call site (lines 245–258)
+### `FileConversionService.open` / `prefetch`
+
+`open(ref, user_id, account_id, *, consumer=(), deadline_at, caller=CALLER_OPEN) -> OpenedFile`
+(`file_conversion_service.py:200`). It classifies the ref (`classify_ref`), resolves it in its store (delivered keys
+carry the ownership check), refuses an oversize file on metadata before any download, stages the bytes for this call
+only, reads them through the document service and answers exactly one of: `body` (today's `[File: <name>]` text, raw,
+unmarked and uncut), `note` (a `[System: ...]` line), or a native file (`native_path` + `native_mime`). `consumer` is
+the consuming model's native declaration (empty: text only). Store errors propagate; the callers map them. Folders,
+recordings, video and the drive's §29 decision stay with the caller (`DriveOperations`). `email:` refs are not opened
+here until U4.
+
+`prefetch(ref, ..., deadline_at) -> Prefetched` (`:295`) is `open` as text only for a specialist
+(DocPlanner, PdfGenerator, HtmlPageGenerator): the text as `content`, marked and cut at 60 000 characters, or a `note`
+the specialist reports ("do not guess"). It never raises and never transcribes. The coordinator injects `file_content`
+or `file_note` into the specialist's params (`agent_coordinator.py:609`).
+
+### `DocumentService.read`
+
+`read(ReadRequest) -> ReadOutcome` never raises; every failure path returns a status and logs one line (ERROR for the
+systemic `error`, `memory`, `model_unavailable`, `parser_unavailable`; WARNING for the file's or the clock's), with the
+request id, kind and a failure label, never text or a file name (`document_service.py`). In order:
+
+1. **Kind from bytes** (`sniff_kind` over the first bytes, against the declared kind); never trusted from the name alone.
+2. **Caps** (`domain/document_limits.py`, one table by store and kind): 5 MiB to parse as text; a text or text export up
+   to 10 MiB before its inline `data:` images are dropped, then the 5 MiB cap on what is left; native files at most
+   5 MiB (image) / 20 MiB (PDF), and never above the consumer's declaration.
+3. **Native decision.** An image within the declaration goes native; a PDF within the declared bytes goes native after
+   the page count (encrypted or too many pages goes to the pipeline). A text-only consumer always takes the pipeline.
+4. **Parser child.** Every parsed kind is read by `SubprocessContentExtractor`, a fresh child process with memory, CPU
+   and wall limits, under the image's unprivileged user (`DRIVE_PARSER_USER`; the same pieces as the drive indexer,
+   `decisions/drive_parser_sandbox_resource_isolation.md`). In the main service this in-process child is an interim step:
+   the untrusted-content sandbox's parse service is to replace it as an adapter behind the same port
+   (`UNTRUSTED_CONTENT_SANDBOX_RFC`).
+5. **Router.** `model_route` decides from the parser's outcome whether the text is enough or the file is a scan or
+   low-density, which goes to the reader.
+6. **Reader** (`DriveReaderRunner`, no tools): at most `MODEL_EXTRACT_MAX_PAGES` = 200 pages per file (the same for
+   every store; `DocumentService.allowance`), a 60 000-character text budget (`reader_text_budget`, the store's
+   presentation cap, so nothing is read past what can be shown), under the open's deadline. When the reader is
+   unavailable for a low-density file the parser's text is returned flagged incomplete.
+7. **Outcome** (`ReadOutcome`): status, raw text, pages total / read / skipped / `cut_within_pages`, links
+   (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
+
+Plain text kinds (`text`, `markdown`, `json`, `code`, `log`, and a `text/*` csv or html until U5) are read as UTF-8 in the
+service, not in the child (reading UTF-8 is not parsing).
+
+**Chat audio (P21).** Only a chat upload opened interactively is transcribed (`OpenAITranscriptionAdapter.
+transcribe_metered`); a prefetch never is, and drive recordings keep their own transcript-first rule. The call is
+metered: its model and usage (tokens or audio seconds) are priced (`domain/billing.py`) and booked to the account
+through the quota service. The transcript is cached per account for 90 days, the life of the upload
+(`<prefix>audio_transcripts`, doc id `<account_id>:<sha256 of the bytes>:<transcriber model>`;
+`firestore_transcript_cache.py`, `DATABASE_SCHEMA.md` §3.3), so a second open costs nothing.
+
+### Parser slot
+
+The parser child runs one at a time per adapter object (`MAIN_PARSER_MAX_CHILDREN = 1`,
+`composition/document_service_setup.py`), shared by the parser, the PDF splitter and the reader's window cuts, and by
+every user's opens. A wait for the slot is bounded by the open's deadline; past it `ParserBusy` raises, no child starts,
+and the open answers `PARSER_UNAVAILABLE` / `busy` ("converter busy" note).
+
+### Deadlines
+
+One absolute `deadline_at` (epoch seconds) from the open's start; every wait and the child's wall clock are lowered to
+the time left (`domain/document_read.py`).
+
+| Opener | Deadline |
+|---|---|
+| `open_file` (FileManagement) | the agent's timeout minus `OPEN_MARGIN_S` (30 s) = 90 s (`INTERACTIVE_OPEN_S`) |
+| Drive and stored opens through `DriveOperations` without an explicit deadline | `INTERACTIVE_OPEN_S` |
+| Specialist prefetch on the synchronous path | `INTERACTIVE_OPEN_S` |
+| Specialist prefetch in the async worker | `PREFETCH_OPEN_S` = 270 s, under Cloud Tasks' 600 s dispatch deadline |
+
+A read past it answers `TIMEOUT` / `deadline` and the "could not be read in time; try again" note. `STILL_WORKING`
+exists in the contract for a remote adapter and is never returned in-process.
 
 ---
 
-## Conversion Logic
+## Presentation
 
-### Binary formats (bypass the service)
+`document_presentation.py` builds what the model gets from an outcome; the opener calls it, the service does not.
 
-```python
-is_native_binary(mime_type: str) -> bool
-```
+- **Marking per store.** `present_text` wraps the text with `wrap_untrusted` under the store's tag (drive: the
+  reference reminder; every other store: the external reminder), then puts the cut note and the "what was shown" line
+  OUTSIDE the wrapper. Skill files are the system's own text and stay unmarked.
+- **The one cut.** 60 000 characters (`MAX_CONVERTED_CHARS`, D20) on every non-drive open path, email included; a drive
+  open keeps its own §29 bound (`OPEN_MAX_CHARS` = 60 000) and cut line in `DriveOperations`. The cut falls at a
+  paragraph.
+- **Notes by status** (`note_for`): every per-file failure (`no_text`, `unsupported`, `encrypted`, `error`, `memory`, a
+  timeout that is not the deadline) gives today's conversion alert, `too_large` today's size alert; the deadline,
+  `model_unavailable` and `parser_unavailable` (unavailable / misconfigured / busy) have their own; an image the
+  consumer cannot take gets the too-large or unreadable-format image note; an unsupported audio file today's audio note.
+- **Shown line (D7).** A page-wise read says what was shown ("first N of M pages", pages cut within, pages skipped).
 
-Returns `True` for `image/*` and `application/pdf`.
-These types are passed to adapters as `MessagePart(file_data=...)` — adapters know what to do with them.
+---
 
-### Text formats (fast path)
+## Untrusted input
 
-MIME `text/*` (txt, csv, md, html, …) — direct read as UTF-8, **without markitdown**.
-No external dependencies, no risks.
+Files are untrusted (chat uploads, drive files, workspace and delivered files). Markitdown's builtins are off; only
+local document converters are registered (`build_markitdown()` in `file_conversion.py`). Left out on purpose:
+`ZipConverter` (inflates every member in RAM), `AudioConverter` (uploads audio to Google), `ImageConverter` and the URL
+converters. `check_zip_container()` refuses a ZIP container declaring more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB)
+or `MAX_ZIP_MEMBERS` (10 000); both helpers live in `src/utils/document_hardening.py`, free of logger and telemetry
+imports because the parser child imports them for every file. Memory amplification inside a parser (a 5 KB XLSX
+measured near 1.75 GB) is bounded by the child's limits, not by these checks.
 
-### Binary convertible formats
+File contents never leave in telemetry: file parts of LLM calls are replaced by `file_omitted` in exported spans
+(`docs/07_deployment/LOGGING.md`).
 
-DOCX, XLSX, PPTX, PDF, EPUB, HTML, MSG, IPYNB, CSV — via `build_markitdown().convert(path)`.
-Lazy import inside the function — startup does not fail if the library is not installed.
+---
 
-**Files are untrusted input** (chat uploads, drive files, email attachments). `build_markitdown()`
-turns markitdown's builtins off and registers local document converters only. Left out on
-purpose: `ZipConverter` (inflates every archive member in RAM — a 5 MB zip bomb takes the single
-instance down), `AudioConverter` (uploads audio to Google's speech API), `ImageConverter` and the
-URL converters (exiftool, network). A plain `.zip` therefore gets the conversion alert.
-Before conversion, `check_zip_container()` reads a ZIP container's central directory (OOXML and
-EPUB are ZIPs) and refuses more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB) declared inflated or
-`MAX_ZIP_MEMBERS` (10 000) members — the refusal is the ordinary conversion alert.
-Both helpers live in `src/utils/document_hardening.py` (re-exported by `file_conversion`), free of
-the logger and telemetry imports, because the drive parser's child process imports them for every
-file (`USER_DRIVE_INDEXING_RFC` §9).
-Audio never reaches markitdown: every audio MIME type (and an untyped file with an audio extension)
-goes to the injected `AudioTranscriptionPort`.
+## Not built yet
 
-**Not covered — memory amplification inside parsers.** The ZIP check stops archive recursion and
-outright bombs, not parser blow-up: measured on markitdown 0.1.4, a 66 KB DOCX peaked at ~950 MiB
-RSS, a 5 KB XLSX at ~1.75 GB, an 8.7 KB legacy XLS (not a ZIP) at ~3 GB, a 408 KB PDF at
-~955 MiB. Conversion still runs in-process on the single 1 GiB instance. The fix is isolation — a
-child process with a memory rlimit and a timeout (`ContentExtractorPort`,
-`docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md` §9). The drive indexer has it
-(`SubprocessContentExtractor`, limits pending spike S1); the chat path moves to it in Slice 3.
+- **Email attachments (U4).** `email:` refs and `open_email_attachment`; email attachments still convert through
+  `convert_file_to_text` in `email_search_service.py`.
+- **One parse engine (U5).** Until then a `text/*` upload of csv or html is read raw as UTF-8 in the service (A3), and
+  markitdown's auto-detect path in `convert_file_to_text` still serves email attachments; U5 moves them to the child's
+  readers with the four fixes of RFC §7.
+- `resolve_file` (the shared resolver for actions) is deferred to U4.
 
-### Graceful degradation via LLM alerts
+---
 
-Any conversion error → **system alert as text** injected into the message, not an exception:
+## Alert texts (graceful degradation)
 
-```
-[System: User attempted to attach 'file.xyz' (application/octet-stream).
-The file could not be read or is not a supported text format.
-Supported formats: images, PDF, plain text, CSV, DOCX, XLSX.
-Ask the user to convert the file or paste the content directly.]
-```
+Any failure becomes a `[System: ...]` note in the conversation, not an exception: the model sees a directive and tells
+the user in natural language what happened and what to try. Technical detail (exception type, path) stays in logs. The
+rejected alternatives were an empty response, a bot-level error message and silent data loss.
 
-Technical details (exception type, path) — in logs only.
-
-#### Why this is the right pattern
-
-Failure becomes a **conversation prompt**, not a technical error.
-
-The LLM sees `[System: ...]` as a directive in the context and responds to the user in natural language — explains what happened, suggests alternatives. The user gets a helpful response instead of silence or a bare error message.
-
-Three failure scenarios, three distinct alerts:
-
-| Scenario | Alert | What the LLM will say |
+| Scenario | Text | What the model will say |
 |---|---|---|
-| File > 5 MB | `_size_alert()` | Will ask for a smaller file or to paste text directly |
-| Unsupported format / conversion error | `_conversion_alert()` | Will explain supported formats, suggest converting |
-| Audio file (transcription not configured) | inline alert | Will ask the user to send text instead of audio |
-| File truncated (> 30K chars) | truncation alert | Will inform that the file was too large for full analysis, suggest splitting |
-
-#### Alternatives that were rejected
-
-- **Exception / empty response** — the user gets nothing and does not understand why
-- **Bot-level error message** ("I cannot process this file") — breaks conversational flow, feels mechanical
-- **Silent data loss** (skip with warning in logs) — user assumes the file was processed
-
-LLM alert — least friction: user does not notice the technical failure, the conversation continues.
+| File over the parse cap | `size_alert` | Ask for a smaller file or pasted text |
+| Unsupported format / conversion error | `conversion_alert` | Explain supported formats |
+| Audio without a transcriber (or a prefetch) | `audio_unavailable_note` | Ask for text instead |
+| Text cut | `cut_note` | The file was too large for full analysis; suggest splitting |
+| Converter or reader unavailable, or busy | `parser_unavailable_note`, `model_unavailable_note` | Try again later |
+| Not read in time | `deadline_note` | Try again |
 
 ---
 
-## Limits
+## History Storage (tiered history)
 
-| Parameter | Value | Reason |
-|---|---|---|
-| `MAX_FILE_BYTES` | 5 MB | Context window protection |
-| `MAX_CONVERTED_CHARS` | 30 000 | ~7K tokens — hard truncation |
-| `HISTORY_PREVIEW_CHARS` | 1 000 | chars in stub for history |
+The upload turn stores only a label (`[File: "<ref>" (<size>)]`) plus `file_data` metadata; a file's content is never in
+session history, and the model reads it with `open_file` when it needs it. The tiered `full_text`/stub mechanism
+(`make_history_stub`, `BaseAgent._apply_history_tier`) remains for text that has both forms; a read file's text is the
+tool result of that turn, not history.
 
-Size exceeded → `_size_alert()` with instruction to send a smaller file.
-Text length exceeded → truncation to `MAX_CONVERTED_CHARS` + system alert for LLM:
-```
-[System: File 'report.docx' was truncated — only the first 30,000 characters were included
-(5,234 characters omitted). Inform the user that the file was too large for full analysis
-and suggest splitting it or pasting only the relevant section.]
-```
+---
+
+## Supported Formats
+
+| Kind | Path |
+|---|---|
+| `image/*` | native when the consumer declares it and the file is within the cap; else the reader |
+| `application/pdf` | native within the declared bytes and pages; else parser, router, reader |
+| text kinds | UTF-8 in the service |
+| docx, pptx, xlsx, xls, odt, ods, odp, epub, msg, rtf, eml, subtitles, html, csv | parser child |
+| `audio/*` | chat upload, interactive open only: transcribed, metered, cached; else the audio note |
+| anything else | `unsupported` -> conversion alert |
 
 ---
 
@@ -148,93 +205,13 @@ and suggest splitting it or pasting only the relevant section.]
 
 ```
 requirements.txt:
-markitdown[all]   # [all] required: onnxruntime (69MB) describes images inside DOCX/XLSX
-                  # without it, images in documents are ignored
+markitdown[all]   # [all] required: onnxruntime describes images inside DOCX/XLSX
 ```
-
-Includes: python-docx, openpyxl, onnxruntime (image description in docs), speechrecognition, youtube-transcript-api.
-The last two are not currently used (see AudioTranscriptionPort section below).
-
----
-
-## Output Format
-
-Successful conversion:
-```
-[File: filename.docx]
-{extracted text content}
-[/File: filename.docx]
-```
-
-The closing marker lets the LLM clearly see the file/prompt boundary.
-
----
-
-## History Storage (tiered history)
-
-Files are not stored in full in session history — that would be dead weight on every subsequent request.
-
-**Mechanism:** `ConversationHandler` saves `MessagePart` with two fields:
-
-```python
-MessagePart(
-    text=stub,          # 1 000 chars — always carried in history
-    full_text=full,     # 30 000 chars — used for the first 5 turns
-)
-```
-
-**`make_history_stub(full_output, filename)`** — creates a compact stub:
-- Keeps the first `HISTORY_PREVIEW_CHARS = 1 000` characters of content
-- Preserves `[File:] / [/File:]` markers
-- Short files (≤ 1 000 chars) — no truncation
-
-**`BaseAgent._apply_history_tier()`** decides what to pass to the LLM:
-- ≤ 5 most recent model turns: `full_text` (full content)
-- Older than 5 turns: `text` (stub — LLM knows the file existed, but does not carry it in full)
-
-Works for both agents (Quick and Smart) through the base class.
-
----
-
-## Supported Formats
-
-| Type | Path | Tool |
-|---|---|---|
-| `image/*` | native binary | adapter (Claude vision / Gemini) |
-| `application/pdf` | native binary | adapter (Claude / Gemini) |
-| `text/*` (txt, csv, md…) | fast path | stdlib read |
-| `application/vnd.openxmlformats…docx` | markitdown | python-docx |
-| `.xlsx` | markitdown | openpyxl |
-| `audio/*` (mp3, wav, m4a, ogg) | AudioTranscriptionPort | not connected — system alert |
-| Unsupported | graceful degradation | system alert |
-
----
-
-## Why ConversationHandler, not adapters
-
-The alternative — conversion inside each adapter (Claude, Gemini, Grok).
-Rejected: duplicated logic, diverging behavior for the same data, harder to test.
-
-Text output — the lowest common denominator, works everywhere.
-
----
-
-## AudioTranscriptionPort (not connected to `FileConversionService`)
-
-Audio files (`audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/x-m4a`, `audio/ogg`) are detected in `convert_file_to_text()` in a dedicated branch. Transcription is delegated behind a port — `AudioTranscriptionPort` (`src/ports/audio_transcription_port.py`).
-
-**Current state:** in production `FileConversionService` has no audio service (`audio_service=None`): an audio file answers "transcription unavailable, please send text". Voice messages are transcribed separately: `build_application_graph` builds one `OpenAITranscriptionAdapter` (when `OPENAI_API_KEY` is set) for the two platform `ConversationHandler`s, which transcribe a voice memo before the file path. Wiring a transcriber into the shared converter is deferred to the External Files RFC's U3 stage (`docs/10_rfcs/EXTERNAL_FILES_RFC.md`), by owner decision 2026-10-23: through the shared converter it would transcribe on every text path (chat, workspace, drive files up to 5 MB, coordinator prefetch), unmetered and uncached, and would bypass the drive transcription cap (RFC §27). The converter's own audio branch works with an injected transcriber (`tests/unit/services/test_file_conversion_service_audio.py`).
-
-**What was tried and why disabled:**
-- `SpeechRecognitionAdapter` (markitdown → Google Web Speech API, free): English-only, `UnknownValueError` on Russian/Ukrainian, ~50 requests/day
-
-**History:** the Google Web Speech adapter above was replaced by `OpenAITranscriptionAdapter` (`gpt-transcribe`, used for voice messages too). See the port's docstring for details.
 
 ---
 
 ## History
 
-Added: 2026-02-19
-Reason: Claude API returned HTTP 400 for unsupported MIME types (docx, xlsx, txt passed as `document`).
-The initial fix (skip with warning) was rejected — silent data loss.
-Chosen solution — graceful degradation with system alert.
+Added: 2026-02-19 (Claude API returned HTTP 400 for unsupported MIME types; graceful degradation with a system alert
+chosen over silent skip). Rebuilt around one open path with the document service in U3 (EXTERNAL_FILES_RFC); the legacy
+handler branch that parsed uploads in the conversation handler is gone.

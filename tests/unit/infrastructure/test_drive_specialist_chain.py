@@ -2,7 +2,7 @@
 coordinator, which builds the drive specialist lazily through the factory's own `create_agent_on_demand`; the
 specialist's DriveOperations sees the chat context (`interactive_delivery`, `session_id`, `turn_id`), a delete posts
 its receipt to the chat the turn came from, an opened PDF reaches Smart's next model request as a vision file, and a
-`drive:` ref from that answer reaches `create_pdf` through the coordinator's prefetch.
+`drive:` ref from that answer reaches `create_pdf`'s Cloud Task as the ref, for the worker's prefetch (P18).
 
 Fixture: the real registry and coordinator, the real factory methods on a stand-in factory object, the real
 DriveAgent and DriveOperations over a spy drive service and a spy notifier; Smart and the specialist are scripted
@@ -15,6 +15,7 @@ from src.agents.drive_agent import DriveAgent
 from src.composition.user_agent_factory import UserAgentFactory, _UserContext
 from src.domain import drive_tool_texts as tt
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse, Message, MessagePart, ToolCall
+from src.domain.document_open import Prefetched
 from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.domain.user import UserBotConfig
 from src.domain.drive_connection_status import DriveConnectionStatus
@@ -28,6 +29,7 @@ from src.ports.agent_factory_port import AgentFactoryPort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_service_connections import ConnectionReads, connection_of
+from tests.support.opened_file import opened_native
 from tests.support.scripted_llm import calls, script
 
 USER, ACCOUNT = "u1", "a1"
@@ -60,7 +62,7 @@ def _world(monkeypatch):
     registry = AgentRegistry()
     for descriptor in ALL_DESCRIPTORS:
         registry.register(descriptor)
-    resolver = AsyncMock(return_value="SCAN TEXT")
+    resolver = AsyncMock(return_value=Prefetched(content="SCAN TEXT"))
     queue = SimpleNamespace(enqueue_agent_task=AsyncMock(return_value="task-1"))
     coordinator = AgentCoordinator(registry=registry, file_ref_resolver=resolver, task_queue=queue)
 
@@ -74,6 +76,8 @@ def _world(monkeypatch):
     conversion = MagicMock(spec=FileConversionService)
     conversion.get_drive_item = AsyncMock(return_value=SCAN)
     conversion.resolve_bytes = AsyncMock(return_value=b"%PDF-1.4 scan")
+    # the document service's NATIVE answer to the declared PDF (EXTERNAL_FILES_RFC P16)
+    conversion.open = AsyncMock(return_value=opened_native("/tmp/Scan_0012.pdf", "application/pdf"))
     notifier = SimpleNamespace(notify_raw=AsyncMock(), notify_file_bytes=AsyncMock())
     localization = MagicMock()
     localization.get_ui_string.return_value = "Deleted {path}"
@@ -159,9 +163,14 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     answer = next(p.tool_response["response"]["result"] for m in smart_requests[1].messages for p in m.parts
                   if p.tool_response)
     assert answer.startswith("Drive result: ok")
-    # the card's drive: ref reached create_pdf through the coordinator's prefetch, before the enqueue
-    world.resolver.assert_awaited_once_with("drive:a1:scan", USER)
+    # the specialist's open asked the service with the declaration Smart's engine set (A5)
+    assert world.fake.file_conversion_service.open.await_args.kwargs["consumer"] == (
+        NativeFormat("application/pdf", 20 * 1024 * 1024, 100),)
+    # the card's drive: ref reached create_pdf's Cloud Task as the ref itself: the worker opens it before the
+    # generator runs (P18, tests/unit/handlers/test_seam_specialist_prefetch.py); no file text rides the task body
+    world.resolver.assert_not_awaited()
     enqueued = world.queue.enqueue_agent_task.await_args.kwargs
     assert enqueued["intent"] == Intent.CREATE_PDF
-    assert enqueued["context"]["params"]["file_content"] == "SCAN TEXT"
+    assert enqueued["context"]["params"]["file_ref"] == "drive:a1:scan"
+    assert "file_content" not in enqueued["context"]["params"]
     assert result.text.startswith("Done:")

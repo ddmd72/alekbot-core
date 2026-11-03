@@ -147,6 +147,11 @@ ConversationHandler → FileConversionService.process_attachment():
     4. Delete local temp in finally block (unchanged)
 ```
 
+> **U3 note (EXTERNAL_FILES_RFC):** the upload turn is label-only: `process_attachment` is the only branch, it never
+> parses, and step 3's `path` is still set for a native binary (`file_conversion_service.py`, `process_attachment`). The
+> legacy branch in `ConversationHandler` that converted an upload to text or attached it natively is retired; a handler
+> with no file service puts `storage_unavailable_alert()` in the attachment's slot and logs an ERROR.
+
 ### 2.5 File flow — history save
 
 ```

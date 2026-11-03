@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.document_limits import MAX_CONVERTED_CHARS
+from src.domain.document_open_texts import cut_note
+from src.domain.document_presentation import present_text
+from src.domain.document_read import ReadOutcome, ReadStatus
 from src.domain.drive_history import drive_history_lines
 from src.domain.drive_open_bound import refusal_text
 from src.domain.drive_open_texts import ROUTE_ORCHESTRATOR
@@ -15,6 +19,7 @@ from src.ports.file_storage_port import FileStoragePort
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_service_spec_mock import spec_drive_service
 from tests.unit.infrastructure.test_drive_operations_open_bound import FakeExtentSearch, long_text
+from tests.support.opened_file import opened_body
 from tests.unit.infrastructure.test_drive_operations_uncovered_paths import FakeConversion
 
 PATH = "Docs/Oak Street parking rules.md"
@@ -62,9 +67,12 @@ async def test_a_cut_open_is_still_a_success_with_its_body():
     assert ROUTE_ORCHESTRATOR not in resp.result
 
 
-async def test_a_chat_file_of_100000_characters_still_opens_whole():
+async def test_a_chat_file_of_100000_characters_is_cut_by_its_store_not_refused_by_the_drive_bound(monkeypatch):
+    """§29 stays the drive's: a chat file asks no extent and is never refused. Since D20 (EXTERNAL_FILES_RFC §4.5) every
+    open path cuts parser text once, at 60 000 characters, with a note naming the cut outside the wrapper."""
+    monkeypatch.setattr("src.infrastructure.drive_operations.secrets.token_hex", lambda n: "0123456789abcdef")
     conversion = AsyncMock()
-    conversion.resolve_content.return_value = "x" * 100_000
+    conversion.open.return_value = opened_body("x" * 100_000)
     drive = AsyncMock(spec=UserDriveService)
     search = FakeExtentSearch({})
     ops = DriveOperations(conversion_service=conversion, drive_service=drive, drive_search=search)
@@ -74,5 +82,10 @@ async def test_a_chat_file_of_100000_characters_still_opens_whole():
         conversion_service=conversion, storage=AsyncMock(spec=FileStoragePort), notification=AsyncMock(),
         drive_service=drive, drive_operations=ops)
     resp = await agent.execute(_msg("notes.txt"))
-    assert resp.status == AgentStatus.SUCCESS and len(resp.result) >= 100_000
+    assert resp.status == AgentStatus.SUCCESS and ROUTE_ORCHESTRATOR not in resp.result
+    assert resp.result == present_text("x" * 100_000, store="chat", ref="notes.txt", label="notes.txt",
+                                       nonce="0123456789abcdef", outcome=ReadOutcome(status=ReadStatus.TEXT))
+    closing = resp.result.index('</external_content nonce="0123456789abcdef">')
+    assert "x" * MAX_CONVERTED_CHARS in resp.result[:closing] and "x" * (MAX_CONVERTED_CHARS + 1) not in resp.result
+    assert cut_note("notes.txt", MAX_CONVERTED_CHARS, 100_000 - MAX_CONVERTED_CHARS) in resp.result[closing:]
     assert search.extent_asks == []

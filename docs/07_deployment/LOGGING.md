@@ -226,6 +226,14 @@ Enabled by `LOGFIRE_CAPTURE_CONTENT=true` + `TRACING_BACKEND=both|logfire`. Desi
 [`decisions/logfire_prompt_content_capture.md`](../04_solution_strategy/decisions/logfire_prompt_content_capture.md).
 **Gemini content is absent** (dependency conflict — see that record); Gemini turns stay in BigQuery.
 
+**File contents in spans.** A file part of an LLM call (an image or PDF sent natively) is replaced by
+`{"type": "file_omitted", "orig_type": ..., "mime_type": ...}` in the exported `gen_ai.*` attributes
+(`src/utils/logfire_redacting_exporter.py`); calls, tokens and text stay. The document reader's provider calls run with the
+SDK instrumentation suppressed, so the only span of a reader call is our `llm.call`; a failed reader call has no span
+content and leaves one structured line, `llm_call_failed provider=<p> error_type=<t> window=reader`
+(`drive_document_reader_agent.py`). Document-service failures log `[DocumentService] read <status>: kind=... store=...
+caller=... detail=... request=...` (ERROR for `error`, `memory`, `model_unavailable`, `parser_unavailable`; WARNING otherwise).
+
 ### Querying it from Claude Code (optional, local-only)
 
 Logfire exposes an MCP server, so an agent session can run SQL over the telemetry directly instead

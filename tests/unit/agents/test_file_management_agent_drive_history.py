@@ -15,6 +15,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
 from tests.support.drive_service_spec_mock import spec_drive_service
+from tests.support.opened_file import opened_body
 
 LAB = DriveItem(item_id="abc123", name="lab-report.pdf", path="Health/lab-report.pdf", is_folder=False,
                 size_bytes=2048, mime_type="application/pdf")
@@ -63,7 +64,7 @@ async def _lines(agent, ref):
 
 async def test_an_opened_text_file_is_opened_whole(agent, conversion, drive):
     drive.get_item.return_value = NOTES
-    conversion.resolve_content.return_value = "line one"
+    conversion.open.return_value = opened_body("line one")
     assert await _lines(agent, "drive:a1:txt01") == ["[Drive: Drive/Folder/a.txt ref=drive:a1:txt01 — opened whole]"]
 
 
@@ -80,6 +81,6 @@ async def test_an_open_that_shows_no_content_says_so(agent, conversion, drive):
 
 
 async def test_a_chat_store_open_touches_no_drive_item(agent, conversion):
-    conversion.resolve_content.return_value = "text"
+    conversion.open.return_value = opened_body("text")
     resp = await agent.execute(_msg("notes.txt"))
     assert resp.status == AgentStatus.SUCCESS and resp.history_context is None

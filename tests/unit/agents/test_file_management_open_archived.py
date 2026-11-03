@@ -24,6 +24,7 @@ from src.ports.drive_index_repository import DriveIndexRepository
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from tests.support.drive_service_spec_mock import connection_of, spec_drive_service
+from tests.support.opened_file import opened_body
 
 MIRROR_FILE = DriveItem(item_id="m1", name="call1.md", path="_Transcripts/Archive/2026-10-05/call1.md",
                         is_folder=False, size_bytes=900, mime_type="text/markdown")
@@ -117,14 +118,14 @@ async def test_archived_ref_opens_from_the_store_capped(agent, conversion, index
     assert resp.success
     assert resp.text.startswith(REFERENCE_REMINDER + "\n<drive_document nonce=\"nonce0001\" ref=\"drive:a1:m1\"")
     assert "[Transcript cut at" in resp.text and len(resp.text) < TRANSCRIPT_OPEN_MAX_CHARS + 600
-    conversion.resolve_content.assert_not_called()
+    conversion.open.assert_not_called()
     index.get_transcript.assert_awaited_once_with("u1", "k1")
 
 
 async def test_a_short_archived_transcript_opens_whole(agent, conversion):
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
     assert "[00:00] hello from the archive" in resp.text and "[Transcript cut" not in resp.text
-    conversion.resolve_content.assert_not_called()
+    conversion.open.assert_not_called()
 
 
 async def test_cut_note_points_at_the_mirror_path(agent, index):
@@ -135,10 +136,10 @@ async def test_cut_note_points_at_the_mirror_path(agent, index):
 
 async def test_archived_ref_without_store_downloads_and_caps(agent, conversion, index):
     index.get_transcript.return_value = None
-    conversion.resolve_content.return_value = "\n\n".join(["line of text " * 50] * 200)
+    conversion.open.return_value = opened_body("\n\n".join(["line of text " * 50] * 200))
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
     assert resp.success
-    conversion.resolve_content.assert_awaited_once()
+    conversion.open.assert_awaited_once()
     assert "[Transcript cut at" in resp.text and "The full text is in Drive/_Transcripts/Archive/2026-10-05/call1.md." in resp.text
     assert len(resp.text) < TRANSCRIPT_OPEN_MAX_CHARS + 600
     assert resp.text.startswith(REFERENCE_REMINDER)
@@ -146,7 +147,7 @@ async def test_archived_ref_without_store_downloads_and_caps(agent, conversion, 
 
 async def test_archived_ref_without_store_and_a_short_file_is_not_cut(agent, conversion, index):
     index.get_transcript.return_value = None
-    conversion.resolve_content.return_value = "# call\n\nshort text"
+    conversion.open.return_value = opened_body("# call\n\nshort text")
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
     assert "short text" in resp.text and "[Transcript cut" not in resp.text
 
@@ -160,15 +161,15 @@ async def test_speech_stays_inside_the_wrapper(agent, index):
 
 async def test_any_other_file_opens_as_before(agent, conversion, drive, index):
     drive.get_item.return_value = OTHER_FILE
-    conversion.resolve_content.return_value = "plain notes"
+    conversion.open.return_value = opened_body("plain notes")
     resp = await agent.open(CTX, "u1", "drive:a1:o1")
     assert resp.success and "plain notes" in resp.text
-    conversion.resolve_content.assert_awaited_once()
+    conversion.open.assert_awaited_once()
     index.get_transcript.assert_not_called()
 
 
 async def test_a_failing_lookup_keeps_the_plain_open(agent, conversion, search, mirror, monkeypatch):
-    conversion.resolve_content.return_value = "plain"
+    conversion.open.return_value = opened_body("plain")
     monkeypatch.setattr(mirror, "by_mirror_item", AsyncMock(side_effect=RuntimeError("boom")))
     resp = await agent.open(CTX, "u1", "drive:a1:m1")
     assert resp.success and "plain" in resp.text

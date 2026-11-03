@@ -14,11 +14,13 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_ref_refusal import disconnected_ref_line, stale_ref_line
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.file_storage_port import FileStoragePort
+from src.services.document_service import DocumentService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_connections import connection_service, seed
 from tests.support.fake_drive_adapter import FakeDriveAdapter
+from tests.unit.services.test_document_service_read import FakeExtractor, FakeSplitter
 
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 CTX = {"account_id": "acc-1"}
@@ -40,6 +42,8 @@ async def world():
     w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
                                        connections=connections, access=allow_access())
+    # the document service the application graph attaches: without it every open is a parser-unavailable note
+    conversion.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
 
@@ -56,7 +60,8 @@ def _recycled(world):
 class TestRefsActOnTheirConnection:
     async def test_open_reads_the_tags_connection_and_tags_the_label(self, world):
         out = await world.ops.open(CTX, "usr-1", "drive:b2:item-1")
-        assert out.success and "two" in out.text
+        # the body is conn-2's bytes (b"two"), never conn-1's (b"one") under the same item id
+        assert out.success and out.body and "\ntwo\n" in out.text and "\none\n" not in out.text
         assert "ref=drive:b2:item-1" in out.text
         assert out.drive_context() == [{"path": "Drive 2/on-two.txt", "ref": "drive:b2:item-1"}]
 

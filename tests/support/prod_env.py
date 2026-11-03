@@ -1,8 +1,8 @@
 """The production-shaped environment of the main service (P9 design §4).
 
 `seal()` empties `os.environ` down to a keep-list, so the Mac (`make` exports `.env`), CI and the cloud VM see the same
-process. `apply_deploy_env()` then sets what the `alek-bot-dev` step of `cloudbuild-dev.yaml` sets: its `--set-env-vars`
-literals, its `--set-secrets` names with shaped fakes, the Cloud Run variables and the build substitutions.
+process. `apply_deploy_env()` then sets the image's `ENV` lines (`Dockerfile`) and what the `alek-bot-dev` step of
+`cloudbuild-dev.yaml` sets: its `--set-env-vars` literals, its `--set-secrets` names with shaped fakes, the Cloud Run variables and the build substitutions.
 `prod_settings()` runs the real `load_settings()` with `load_dotenv` a no-op and `get_secret` recording, so a key that is
 absent in production shows up as a recorded Secret Manager fallback. The `.env` file is never read.
 
@@ -165,9 +165,24 @@ def secret_value(name: str) -> str:
     return SECRET_VALUES.get(name, f"fake-{name.lower().replace('_', '-')}")
 
 
+DOCKERFILE = ROOT / "Dockerfile"
+
+
+def image_env() -> Dict[str, str]:
+    """The image's `ENV KEY=VALUE` lines (`Dockerfile`): every service built from the image has them, under the deploy's."""
+    found = {}
+    for line in DOCKERFILE.read_text().splitlines():
+        match = re.match(r"^ENV\s+([A-Z_][A-Z0-9_]*)=(\S*)\s*$", line)
+        if match:
+            found[match.group(1)] = match.group(2)
+    return found
+
+
 def deploy_env() -> Dict[str, str]:
-    """Every variable the deployed container has: `--set-env-vars`, `--set-secrets` and Cloud Run's own."""
-    env = {key: _expand(template) for key, template in env_var_templates().items()}
+    """Every variable the deployed container has: the image's `ENV`, then `--set-env-vars`, `--set-secrets` and Cloud
+    Run's own (a deploy value overrides an image one)."""
+    env = image_env()
+    env.update({key: _expand(template) for key, template in env_var_templates().items()})
     env.update({name: secret_value(name) for name in secret_names()})
     env.update(CLOUD_RUN_ENV)
     return env
@@ -256,4 +271,27 @@ def install_offline_services(monkeypatch) -> OfflineServices:
 
     from src.adapters.platform.factory import PlatformAdapterFactory
     monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {})
+    install_parser_user(monkeypatch, env)
     return OfflineServices(db, env, fallbacks)
+
+
+PARSER_UID_GID = (10001, 10001)
+
+
+def install_parser_user(monkeypatch, env: Dict[str, str]) -> None:
+    """The container's OS boundary of the parser sandbox: the image's parser user exists (`useradd` in the Dockerfile)
+    and the service runs as root (no USER directive). The real `_resolve_sandbox` runs; no test starts a child."""
+    import pwd as real_pwd
+    from types import SimpleNamespace
+
+    from src.adapters import subprocess_content_extractor as extractor
+
+    image_user = env.get(extractor.PARSER_USER_ENV)
+
+    def getpwnam(name: str):
+        if name == image_user:
+            return SimpleNamespace(pw_name=name, pw_uid=PARSER_UID_GID[0], pw_gid=PARSER_UID_GID[1])
+        return real_pwd.getpwnam(name)
+
+    monkeypatch.setattr(extractor, "pwd", SimpleNamespace(getpwnam=getpwnam))
+    monkeypatch.setattr(extractor, "_effective_uid", lambda: 0)

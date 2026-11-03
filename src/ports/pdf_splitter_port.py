@@ -8,7 +8,9 @@ sandboxed parser (`SubprocessContentExtractor` today, the sandbox's parse engine
 Every method raises `drive_extraction.PdfSplitFailed` with the outcome status (`encrypted`, `unsupported`, `timeout`,
 `memory`, `too_large` or `error`). `deadline_at` is an absolute time in epoch seconds (`time.time()`), so it survives
 serialization; it can only lower the adapter's own wall clock, never raise it. A deadline already passed raises
-`PdfSplitFailed(TIMEOUT, detail="deadline")` and starts no work. Without it, the adapter's own wall applies alone.
+`PdfSplitFailed(TIMEOUT, detail="deadline")` and starts no work; one that passes while the call waits for the parser's
+slot raises its subclass `drive_extraction.ParserBusy` (TIMEOUT, detail "busy"). Without it, the adapter's own wall
+applies alone.
 """
 from abc import ABC, abstractmethod
 from typing import Optional, Sequence, Tuple

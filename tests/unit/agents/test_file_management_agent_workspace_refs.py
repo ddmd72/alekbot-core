@@ -6,10 +6,11 @@ import pytest
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain, to_plain
 from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
+from tests.support.opened_file import opened_body, opened_native
 
 
 def _message(intent, file_ref, **context):
@@ -44,23 +45,30 @@ def agent(conversion, storage):
 
 class TestOpen:
     async def test_a_pdf_copy_opens_for_vision(self, agent, conversion):
-        conversion.resolve_bytes.return_value = b"%PDF"
+        # native is the document service's answer to the declaration (EXTERNAL_FILES_RFC P16)
+        conversion.open.return_value = opened_native("/tmp/lease.pdf", "application/pdf")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "application/pdf"
-        conversion.resolve_bytes.assert_awaited_once_with("workspace:binary_files/lease.pdf", "user1")
+        conversion.open.assert_awaited_once()
+        assert conversion.open.await_args.args == ("workspace:binary_files/lease.pdf", "user1", "")
+        assert conversion.open.await_args.kwargs["consumer"] == from_plain(NATIVE_PDF[NATIVE_FORMATS_KEY])
 
     async def test_a_text_copy_opens_as_text(self, agent, conversion):
-        conversion.resolve_content.return_value = "[File: workspace:binary_files/notes.txt]\nhi\n[/File: workspace:binary_files/notes.txt]"
+        conversion.open.return_value = opened_body(
+            "[File: workspace:binary_files/notes.txt]\nhi\n[/File: workspace:binary_files/notes.txt]")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/notes.txt"))
         assert resp.status == AgentStatus.SUCCESS and "hi" in resp.result
-        conversion.resolve_content.assert_awaited_once_with("workspace:binary_files/notes.txt", "user1")
+        # a workspace copy is outside content (EXTERNAL_FILES_RFC P15): marked with the neutral tag
+        assert '<external_content nonce="' in resp.result
+        conversion.open.assert_awaited_once()
+        assert conversion.open.await_args.args == ("workspace:binary_files/notes.txt", "user1", "")
 
     async def test_a_note_outside_files_is_refused(self, agent, conversion):
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:projects/garden-shed.md"))
         assert resp.status == AgentStatus.FAILED
         assert "view it with the workspace tool" in resp.error
-        conversion.resolve_content.assert_not_called()
+        conversion.open.assert_not_called()
         conversion.resolve_bytes.assert_not_called()
 
     async def test_an_invalid_ref(self, agent):
@@ -68,13 +76,13 @@ class TestOpen:
         assert resp.status == AgentStatus.FAILED and "invalid workspace path" in resp.error
 
     async def test_a_missing_copy(self, agent, conversion):
-        conversion.resolve_bytes.side_effect = FileNotFoundError("binary_files/lease.pdf")
+        conversion.open.side_effect = FileNotFoundError("binary_files/lease.pdf")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED and "is not in your workspace" in resp.error
         assert "re-upload" not in resp.error
 
     async def test_a_store_error_has_its_own_message(self, agent, conversion):
-        conversion.resolve_bytes.side_effect = RuntimeError("gcs down")
+        conversion.open.side_effect = RuntimeError("gcs down")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED
         assert resp.error == "The workspace could not be read right now (RuntimeError); try again later."

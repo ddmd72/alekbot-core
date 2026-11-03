@@ -18,6 +18,7 @@ from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_service_fake import connection
+from tests.support.opened_file import opened_body
 
 CONN = connection("u1", ref_tag="a1", drive_identity="microsoft_onedrive:drv")   # the connection every ref here names
 DOC = DriveItem(item_id="d1", name="invoice.md", path="Home/invoice.md", is_folder=False, size_bytes=100,
@@ -65,7 +66,7 @@ def _notes(with_note: bool = True):
 
 
 async def test_the_text_open_puts_the_note_in_its_own_block_after_the_file(conversion):
-    conversion.resolve_content.return_value = "Line one of the file."
+    conversion.open.return_value = opened_body("Line one of the file.")
     resp = await _open(_agent(conversion, _notes(), DOC), "drive:a1:d1")
     assert resp.success
     blocks = _blocks(resp.text)
@@ -75,7 +76,7 @@ async def test_the_text_open_puts_the_note_in_its_own_block_after_the_file(conve
 
 
 async def test_a_file_whose_text_starts_like_a_note_stays_inside_the_files_block(conversion):
-    conversion.resolve_content.return_value = FAKE + "\nThe rest of the file."
+    conversion.open.return_value = opened_body(FAKE + "\nThe rest of the file.")
     resp = await _open(_agent(conversion, _notes(with_note=False), DOC), "drive:a1:d1")
     blocks = _blocks(resp.text)
     assert len(blocks) == 1 and FAKE in blocks[0][1]   # no owner block: the words are the file's

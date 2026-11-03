@@ -17,7 +17,7 @@ from src.domain.drive_open_bound_text import BoundText
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.untrusted_text import REFERENCE_REMINDER
 from src.domain.drive_text_extent import ExtentState, ExtentWhy, TextExtent
-from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain, to_plain
 from src.domain import drive_open_texts as T
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
@@ -165,7 +165,8 @@ async def test_a_short_not_indexed_text_opens_whole_without_a_line():
 
 @pytest.mark.parametrize("item", [SCAN, PHOTO])
 async def test_vision_opens_ignore_a_huge_pageable_extent(item, caplog):
-    conv = _conv(item)
+    # the document service answers NATIVE (EXTERNAL_FILES_RFC P16): the one read is `open`, with the declaration
+    conv = FakeConversion({f"drive:a1:{item.item_id}": item}, data=b"%PDF", native_mime=item.mime_type)
     # a consumer that reads the file natively, its pages included (EXTERNAL_FILES_RFC §4.3): without a declaration
     # the open is text and §29 refuses it
     native = to_plain([NativeFormat(item.mime_type, 5 * 1024 * 1024, 4000)])
@@ -173,10 +174,11 @@ async def test_vision_opens_ignore_a_huge_pageable_extent(item, caplog):
     with caplog.at_level(logging.INFO):
         out = await ops.open({**CTX, NATIVE_FORMATS_KEY: native}, "u1", f"drive:a1:{item.item_id}")
     assert out.cls is OutcomeClass.OK and out.file_data is not None
-    assert conv.byte_reads == [f"drive:a1:{item.item_id}"]
+    assert conv.text_reads == [f"drive:a1:{item.item_id}"] and conv.byte_reads == []
+    assert [kw["consumer"] for kw in conv.open_kwargs] == [from_plain(native)]
     lines = [r.getMessage() for r in caplog.records if "opened vision" in r.getMessage()]
-    assert lines == [f"[DriveOperations] opened vision: drive:a1:{item.item_id} mime={item.mime_type} bytes=4 "
-                     "pages=4000"]
+    # the bytes are the service's now: the line names the mime and the extent's pages
+    assert lines == [f"[DriveOperations] opened vision: drive:a1:{item.item_id} mime={item.mime_type} pages=4000"]
 
 
 async def test_a_recording_with_an_over_cap_pageable_extent_is_refused_before_its_transcript():

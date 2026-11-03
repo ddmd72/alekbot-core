@@ -39,6 +39,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentMessage, AgentResponse, AgentIntent, AgentStatus
+from src.domain.document_open import Prefetched
+from src.domain.document_open_texts import open_failed_note
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_registry import AgentRegistry, AgentDescriptor, ExecutionMode
 
@@ -365,23 +367,34 @@ class TestGetStatus:
 # ---------------------------------------------------------------------------
 
 class TestResolveFileRefs:
+    # The prefetch reads through `prefetch_file_ref` (public since P18, EXTERNAL_FILES_RFC §4.2): the resolver takes
+    # (ref, user_id, account_id, deadline_at) and answers a Prefetched (content, or a note the specialist reports).
+    # No registry: no descriptor opts the agent out.
+
+    CTX = {"user_id": "user1", "account_id": "acct1"}
+    DEADLINE = 1_900_000_000.0
+
+    async def _prefetch(self, coord, params, context=None):
+        await coord.prefetch_file_ref("some_agent", params, self.CTX if context is None else context,
+                                      deadline_at=self.DEADLINE)
 
     async def test_injects_file_content(self):
-        resolver = AsyncMock(return_value="resolved file text")
+        resolver = AsyncMock(return_value=Prefetched(content="resolved file text"))
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"file_ref": "report.docx", "query": "summarise"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         assert params["file_content"] == "resolved file text"
-        resolver.assert_called_once_with("report.docx", "user1")
+        assert "file_note" not in params
+        resolver.assert_called_once_with("report.docx", "user1", "acct1", self.DEADLINE)
 
     async def test_no_file_ref_noop(self):
         resolver = AsyncMock()
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"query": "hello"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         assert "file_content" not in params
         resolver.assert_not_called()
@@ -390,7 +403,7 @@ class TestResolveFileRefs:
         coord = AgentCoordinator(file_ref_resolver=None)
         params = {"file_ref": "report.docx"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         assert "file_content" not in params
 
@@ -399,16 +412,18 @@ class TestResolveFileRefs:
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"file_ref": "broken.docx"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         assert "file_content" not in params
+        # a crash is no format verdict: the generic "could not be opened" note (U3 seam fix 4); the specialist reports it (P18)
+        assert params["file_note"] == open_failed_note("broken.docx")
 
     async def test_no_user_id_noop(self):
         resolver = AsyncMock()
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"file_ref": "report.docx"}
 
-        await coord._resolve_file_refs(params, "")
+        await self._prefetch(coord, params, {"user_id": "", "account_id": "acct1"})
 
         resolver.assert_not_called()
 
@@ -417,7 +432,7 @@ class TestResolveFileRefs:
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"file_ref": "https://www.anthropic.com/glasswing"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         assert "file_content" not in params
         resolver.assert_not_called()
@@ -427,7 +442,7 @@ class TestResolveFileRefs:
         coord = AgentCoordinator(file_ref_resolver=resolver)
         params = {"file_ref": "http://example.com/page"}
 
-        await coord._resolve_file_refs(params, "user1")
+        await self._prefetch(coord, params)
 
         resolver.assert_not_called()
 

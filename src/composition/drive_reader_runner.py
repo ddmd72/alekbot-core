@@ -9,7 +9,10 @@ Public interface:
         extractor_id -> READER, version -> READER_VERSION
         async extract(request) -> ExtractionOutcome      raises DriveModelUnavailable only
     `splitter` is a PdfSplitterPort (ports/pdf_splitter_port.py); the runner calls only pdf_page_count and
-    cut_pdf_window, without a deadline.
+    cut_pdf_window, without a deadline unless the request carries `deadline_at`. A request with `deadline_at` or
+    `text_budget` (an interactive open, EXTERNAL_FILES_RFC §4.4) is read by `_read_pdf_limited`: one window at a time
+    in page order, stopping at the budget or the deadline, the finished prefix kept; the indexer sets neither and
+    reads as before.
 
 Per file it reads the user's UserBotConfig, builds the agent through AgentContextBuilder (provider and tier are the
 user's configuration, D7), sets the quota service and bills every call to `request.account_id` — the
@@ -39,8 +42,9 @@ import contextlib
 import math
 import os
 import tempfile
+import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -49,11 +53,14 @@ from ..infrastructure.drive_model_call import (
     DriveInputRefused, DriveInputTooLarge, DriveModelCallFailed, DriveModelTimedOut,
 )
 from ..domain.agent import AgentConfig
-from ..domain.drive_extraction import DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, PdfSplitFailed
+from ..domain.drive_extraction import (
+    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed,
+)
 from ..domain.document_extraction import READER, ExtractionStatus
 from ..domain.drive_image_mime import MAX_VISION_IMAGE_BYTES, VISION_MIME_TYPES
 from ..domain.document_kind import image_mime
 from ..domain.drive_index import DocumentBrief
+from ..domain.drive_open_cut import head_at_paragraph
 from ..domain.drive_index_params import (
     MODEL_EXTRACT_MAX_PAGES, MODEL_FILE_BUDGET_S, MODEL_IN_FLIGHT, MODEL_PAGES_PER_CALL,
 )
@@ -88,6 +95,7 @@ class _WindowRun:
     halves: int = 0
     refused: int = 0             # single pages the provider refused, skipped (R3-P1)
     refused_too_large: int = 0   # of them, refused as too large (413)
+    skipped: List[int] = field(default_factory=list)   # 1-based pages refused or cut by the output limit (D7)
 
 
 @dataclass
@@ -171,8 +179,21 @@ class DriveReaderRunner(ContentExtractorPort):
         if mime not in VISION_MIME_TYPES:
             return ExtractionOutcome(status=S.UNSUPPORTED, pages_total=1, detail=f"image type {mime or 'unknown'}")
         try:
-            reply = await agent.read(data=data, mime_type=mime, file_name="image", first_window=True,
-                                     account_id=request.account_id)
+            read = agent.read(data=data, mime_type=mime, file_name="image", first_window=True,
+                              account_id=request.account_id)
+            if request.deadline_at is None:
+                reply = await read
+            else:
+                # an interactive open (§4.4): the call runs only in the time left
+                remaining = request.deadline_at - time.time()
+                if remaining <= 0:
+                    read.close()
+                    logger.warning(f"[DriveReader] item={request.item_id}: the deadline passed, the image was not read")
+                    return ExtractionOutcome(status=S.TIMEOUT, pages_total=1, detail="deadline")
+                reply = await asyncio.wait_for(read, remaining)
+        except asyncio.TimeoutError:
+            logger.warning(f"[DriveReader] item={request.item_id}: the image read hit the deadline")
+            return ExtractionOutcome(status=S.TIMEOUT, pages_total=1, detail="deadline")
         except DriveModelCallFailed as exc:
             return ExtractionOutcome(status=_failed_status(exc), pages_total=1, model_calls=exc.model_calls,
                                      model_cost=exc.model_cost,
@@ -185,8 +206,10 @@ class DriveReaderRunner(ContentExtractorPort):
 
     async def _read_pdf(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest) -> ExtractionOutcome:
         cap = min(request.max_model_pages, MODEL_EXTRACT_MAX_PAGES)
+        limited = request.text_budget is not None or request.deadline_at is not None
         try:
-            pages_total = await self._splitter.pdf_page_count(request.path)
+            pages_total = await (self._splitter.pdf_page_count(request.path, deadline_at=request.deadline_at)
+                                 if request.deadline_at is not None else self._splitter.pdf_page_count(request.path))
         except PdfSplitFailed as exc:
             # the sandboxed parser's own verdict (encrypted, timeout, memory, ...) is the file's outcome (§24.3)
             logger.warning(f"[DriveReader] page count failed: {exc}")
@@ -199,6 +222,8 @@ class DriveReaderRunner(ContentExtractorPort):
         covered = min(pages_total, cap)
         run = _FileRun([_WindowRun(first_page=start, pages=min(MODEL_PAGES_PER_CALL, covered - start))
                         for start in range(0, covered, MODEL_PAGES_PER_CALL)])
+        if limited:
+            return await self._read_pdf_limited(agent, request, run, pages_total, covered)
         with tempfile.TemporaryDirectory(prefix="drive-reader-", dir=self._temp_root) as work:
             semaphore = asyncio.Semaphore(MODEL_IN_FLIGHT)
             tasks = [asyncio.create_task(self._window(agent, request, i, win, semaphore, work))
@@ -252,6 +277,99 @@ class DriveReaderRunner(ContentExtractorPort):
             capture=_dominant([_dominant(w.captures) for w in finished]),
             detail=f"windows={len(run.windows)} halves={run.total('halves')} cut={cut} refused={refused}")
 
+    async def _read_pdf_limited(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, run: _FileRun,
+                                pages_total: int, covered: int) -> ExtractionOutcome:
+        """The PDF read of an interactive open (`deadline_at` and/or `text_budget` set, EXTERNAL_FILES_RFC §4.4).
+        Window 1 alone, then one window at a time in page order (so the text read so far is one plain sum, no counter
+        shared across tasks); nothing is cut or called once the text reaches `text_budget` or the deadline passed.
+        At the deadline the window in flight is cancelled and the finished windows are kept. The joined text is
+        trimmed to the budget at a paragraph. An outage mid-file returns the finished prefix; with none, it raises."""
+        end = time.time() + self._file_budget_s
+        if request.deadline_at is not None:
+            end = min(end, request.deadline_at)
+        budget = request.text_budget
+        stop = ""          # "", "budget", "deadline", "unavailable"
+        unavailable: Optional[DriveModelUnavailable] = None
+        failure: Optional[BaseException] = None
+        with tempfile.TemporaryDirectory(prefix="drive-reader-", dir=self._temp_root) as work:
+            for i, win in enumerate(run.windows):
+                if budget is not None and _joined_len(run.windows) >= budget:
+                    stop = "budget"
+                    break
+                remaining = end - time.time()
+                if remaining <= 0:
+                    stop = "deadline"
+                    break
+                task = asyncio.create_task(self._window(agent, request, i, win, asyncio.Semaphore(1), work))
+                done, _ = await asyncio.wait({task}, timeout=remaining)
+                if not done:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    stop = "deadline"
+                    break
+                exc = None if task.cancelled() else task.exception()
+                if exc is None:
+                    continue
+                if isinstance(exc, DriveModelUnavailable):
+                    stop, unavailable = "unavailable", exc
+                elif isinstance(exc, ParserBusy) or (isinstance(exc, PdfSplitFailed) and exc.detail == "deadline"):
+                    stop = "deadline"
+                else:
+                    failure = exc
+                break
+        spend = dict(pages_sent=run.total("pages_sent"), model_calls=run.total("calls"),
+                     model_cost=run.total("cost"), model_fallback_cost=run.total("fallback_cost"))
+        finished = [w for w in run.windows if w.finished]
+        if stop == "unavailable" and not finished:
+            if unavailable is None:
+                raise RuntimeError("reader stopped as unavailable without the model error")
+            raise DriveModelUnavailable(str(unavailable), pages_sent=spend["pages_sent"],
+                                        model_calls=spend["model_calls"], model_cost=spend["model_cost"],
+                                        model_fallback_cost=spend["model_fallback_cost"],
+                                        charges_file=unavailable.charges_file) from unavailable
+        if failure is not None:
+            status, detail = S.ERROR, str(failure)
+            if isinstance(failure, PdfSplitFailed):
+                status, detail = failure.status, f"split failed: {failure.detail}"
+            elif isinstance(failure, DriveModelCallFailed):
+                status = _failed_status(failure)
+            else:
+                logger.error(f"[DriveReader] window failed unexpectedly: {type(failure).__name__}: {failure}",
+                             exc_info=failure)
+            return ExtractionOutcome(status=status, pages_total=pages_total, detail=detail, **spend)
+        unread = len(run.windows) - len(finished)
+        if stop == "deadline":
+            logger.warning(f"[DriveReader] item={request.item_id}: the deadline reached, {unread} of "
+                           f"{len(run.windows)} windows not read")
+        elif stop == "unavailable":
+            logger.error(f"[DriveReader] item={request.item_id}: the model became unavailable, {len(finished)} of "
+                         f"{len(run.windows)} windows kept")
+        refused = run.total("refused")
+        if refused and refused >= covered:
+            status = S.TOO_LARGE if run.total("refused_too_large") else S.UNSUPPORTED
+            return ExtractionOutcome(status=status, pages_total=pages_total, pages_refused=refused,
+                                     detail=f"every page refused ({refused})", **spend)
+        kept, trimmed_in, trimmed = finished, None, False
+        text = "\n\n".join(w.text for w in finished if w.text)
+        if budget is not None and len(text) > budget:
+            text, trimmed = head_at_paragraph(text, budget), True
+            kept, trimmed_in = _split_at(finished, len(text))
+        pages_read = sum(w.pages - len(w.skipped) for w in kept)
+        detail = (f"windows={len(run.windows)} read={len(finished)} stop={stop or 'end'} refused={refused}"
+                  if stop != "unavailable" else "model unavailable")
+        outcome = self._outcome(
+            text, run.windows[0].brief, pages_total=pages_total, pages_sent=spend["pages_sent"],
+            truncated=(pages_total > covered or bool(unread) or trimmed
+                       or any(w.truncated for w in run.windows)),
+            calls=spend["model_calls"], cost=spend["model_cost"], fallback_cost=spend["model_fallback_cost"],
+            timed_out=stop == "deadline" and not text, pages_refused=refused,
+            capture=_dominant([_dominant(w.captures) for w in kept]), detail=detail)
+        skipped = tuple(p for w in run.windows if w in kept for p in w.skipped)
+        cut_within = (tuple(range(trimmed_in.first_page + 1, trimmed_in.first_page + trimmed_in.pages + 1))
+                      if trimmed_in is not None else ())
+        return replace(outcome, pages_read=pages_read if outcome.status is S.TEXT else 0,
+                       skipped_pages=skipped, cut_within_pages=cut_within)
+
     async def _window(self, agent: DriveDocumentReaderAgent, request: ExtractionRequest, index: int,
                       win: _WindowRun, semaphore: asyncio.Semaphore, work: str) -> None:
         async with semaphore:
@@ -275,6 +393,7 @@ class DriveReaderRunner(ContentExtractorPort):
             if pages <= 1:
                 logger.warning(f"[DriveReader] window {index + 1} page {first_page + 1} refused ({exc}); skipped")
                 win.refused += 1
+                win.skipped.append(first_page + 1)
                 win.refused_too_large += isinstance(exc, DriveInputTooLarge)
                 win.truncated = True
                 return []
@@ -322,7 +441,11 @@ class DriveReaderRunner(ContentExtractorPort):
         """One window, cut on demand from the source and removed once read: the call holds it in memory only."""
         out = os.path.join(work, f"pages-{first_page + 1:04d}-{pages:03d}.pdf")
         try:
-            await self._splitter.cut_pdf_window(request.path, first_page, pages, out)
+            if request.deadline_at is None:
+                await self._splitter.cut_pdf_window(request.path, first_page, pages, out)
+            else:
+                await self._splitter.cut_pdf_window(request.path, first_page, pages, out,
+                                                    deadline_at=request.deadline_at)
             return await asyncio.to_thread(Path(out).read_bytes)
         finally:
             with contextlib.suppress(FileNotFoundError):
@@ -365,6 +488,29 @@ class DriveReaderRunner(ContentExtractorPort):
         return ExtractionOutcome(status=S.ERROR if timed_out else S.NO_TEXT, pages_total=pages_total,
                                  pages_sent=pages_sent, truncated=truncated, detail=detail, model_calls=calls,
                                  model_cost=cost, model_fallback_cost=fallback_cost, pages_refused=pages_refused)
+
+
+def _joined_len(windows: List[_WindowRun]) -> int:
+    return len("\n\n".join(w.text for w in windows if w.finished and w.text))
+
+
+def _split_at(finished: List[_WindowRun], room: int) -> "tuple[List[_WindowRun], Optional[_WindowRun]]":
+    """The finished windows whose text lies wholly in the first `room` characters of the joined text, and the one
+    window the cut falls inside (None when it falls between windows)."""
+    kept: List[_WindowRun] = []
+    offset = 0
+    for w in finished:
+        if not w.text:
+            kept.append(w)
+            continue
+        start = offset + (2 if offset else 0)
+        end = start + len(w.text)
+        if end <= room:
+            kept.append(w)
+            offset = end
+            continue
+        return kept, (w if room > start else None)
+    return kept, None
 
 
 def _dominant(captures: List[str]) -> str:

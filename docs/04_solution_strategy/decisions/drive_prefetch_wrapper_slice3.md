@@ -1,7 +1,7 @@
 # Decision: Drive files prefetched for other specialists get the untrusted wrapper in Slice 3
 
 **Date:** 2026-10-12
-**Status:** Accepted, deferred (User Drive Step 2; D2 scope)
+**Status:** Accepted, deferred (User Drive Step 2; D2 scope). **Closed by U3 (EXTERNAL_FILES_RFC):** the specialist prefetch goes through `FileConversionService.open` and its text is marked (`present_text`) and cut at 60 000 characters.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §10.4, owner decision D2 (§21),
 RFC Δ34, Δ35; `AgentCoordinator._resolve_file_refs` in `src/infrastructure/agent_coordinator.py`.
 

@@ -70,8 +70,7 @@ if TYPE_CHECKING:
     from ..services.drive_note_service import DriveNoteService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
-    convert_file_to_text, download_alert, is_native_binary, make_history_stub,
-    transcription_alert,
+    download_alert, storage_unavailable_alert, transcription_alert,
 )
 from ..utils.logger import logger
 from ..utils.retry import retry_store_write
@@ -732,7 +731,6 @@ class ConversationHandler(ConversationHandlerPort):
 
         message_parts: List[MessagePart] = []
         temp_files = []
-        file_part_stubs: dict[int, str] = {}  # id(part) → history stub for converted files
 
         # Fetch platform history BEFORE sending status message.
         # Status message goes to the channel and becomes raw[0] in Slack API response.
@@ -887,29 +885,29 @@ class ConversationHandler(ConversationHandlerPort):
                         temp_files.append(local_path)
                         if self._file_conversion_service:
                             # New path: upload to GCS, return reference-only MessagePart
-                            file_part = await self._file_conversion_service.process_attachment(
-                                local_path,
-                                attachment.filename or "unknown",
-                                attachment.mime_type,
-                                user_id=context.user_id,
-                            )
-                        elif is_native_binary(attachment.mime_type):
-                            # Legacy fallback: images and PDFs as binary
-                            file_part = MessagePart(file_data={
-                                "path": local_path,
-                                "mime_type": attachment.mime_type
-                            })
+                            try:
+                                file_part = await self._file_conversion_service.process_attachment(
+                                    local_path,
+                                    attachment.filename or "unknown",
+                                    attachment.mime_type,
+                                    user_id=context.user_id,
+                                )
+                            except Exception as exc:
+                                # Storage down (e.g. a 5xx): this attachment's slot carries the note, the turn goes on.
+                                logger.error("❌ Attachment upload failed (%s): the slot carries a storage note",
+                                             type(exc).__name__, exc_info=True)
+                                file_part = MessagePart(
+                                    text=storage_unavailable_alert(attachment.filename or "unknown")
+                                )
                         else:
-                            # Legacy fallback: convert to text inline
-                            text = await convert_file_to_text(
-                                local_path,
-                                attachment.filename or "unknown",
-                                attachment.mime_type,
-                                audio_service=self.audio_service,
+                            # No file service: the upload path never parses in the handler. The slot carries
+                            # a note and the failure is loud (ERROR line the Errors-dev alert picks up).
+                            logger.error(
+                                f"❌ No file service: attachment {attachment.filename} "
+                                f"({attachment.mime_type}) cannot be stored or read"
                             )
-                            file_part = MessagePart(text=text)
-                            file_part_stubs[id(file_part)] = make_history_stub(
-                                text, attachment.filename or "unknown"
+                            file_part = MessagePart(
+                                text=storage_unavailable_alert(attachment.filename or "unknown")
                             )
                         message_parts.append(file_part)
                         logger.info(f"📎 File prepared: {attachment.filename} ({attachment.mime_type})")
@@ -1006,7 +1004,7 @@ class ConversationHandler(ConversationHandlerPort):
                         response, long_turn = await self._run_agent_turn(
                             message, context, message_parts, agent_context, long_turns,
                             response_channel, status_message_id, stop_status_updates,
-                            file_part_stubs, turn_started_at=start_time,
+                            turn_started_at=start_time,
                         )
 
             if long_turn is not None:
@@ -1090,7 +1088,7 @@ class ConversationHandler(ConversationHandlerPort):
             )
 
             # Clean up temporary file paths before saving to history
-            clean_message_parts = self._clean_user_parts(message_parts, file_part_stubs)
+            clean_message_parts = self._clean_user_parts(message_parts)
 
             # Dispatch typed delivery items (e.g. grounding attribution widget from WebSearchAgent).
             for item in response.delivery_items:
@@ -1173,7 +1171,7 @@ class ConversationHandler(ConversationHandlerPort):
 
     async def _run_agent_turn(self, message, context, message_parts, agent_context, long_turns,
                               response_channel, status_message_id, stop_status_updates,
-                              file_part_stubs, turn_started_at: Optional[float] = None):
+                              turn_started_at: Optional[float] = None):
         """Run the agent; with long turns enabled, as a child task beside the 90 s watcher.
 
         Returns (response, long_turn): long_turn is set only when the turn passed the mark,
@@ -1200,8 +1198,7 @@ class ConversationHandler(ConversationHandlerPort):
         try:
             response = await self._await_agent_turn(lt, long_turns, message, context,
                                                     response_channel, status_message_id,
-                                                    stop_status_updates, message_parts,
-                                                    file_part_stubs)
+                                                    stop_status_updates, message_parts)
         except BaseException:
             self._live_turns.discard(lt.turn_id)
             raise
@@ -1210,13 +1207,12 @@ class ConversationHandler(ConversationHandlerPort):
         return response, (lt if lt.marked else None)
 
     async def _await_agent_turn(self, lt, long_turns, message, context, response_channel,
-                                status_message_id, stop_status_updates, message_parts,
-                                file_part_stubs):
+                                status_message_id, stop_status_updates, message_parts):
         """Await the agent beside its watcher; after the mark an error becomes a failure."""
         agent_task = lt.agent_task
         watcher = asyncio.create_task(self._watch_long_turn(
             lt, long_turns, context, response_channel, status_message_id,
-            stop_status_updates, message_parts, file_part_stubs,
+            stop_status_updates, message_parts,
         ))
         watcher.add_done_callback(self._log_watcher_exit)
         error: Optional[Exception] = None
@@ -1258,8 +1254,7 @@ class ConversationHandler(ConversationHandlerPort):
             logger.error("❌ [LongTurn] watcher failed: %s", exc, exc_info=exc)
 
     async def _watch_long_turn(self, lt, long_turns, context, response_channel,
-                               status_message_id, stop_status_updates, message_parts,
-                               file_part_stubs):
+                               status_message_id, stop_status_updates, message_parts):
         """The 90 s mark (RFC §5.3), then heartbeat + cancel poll every ~30 s (§5.4)."""
         await asyncio.sleep(long_turns.notice_after_s)
         async with lt.lock:
@@ -1280,7 +1275,7 @@ class ConversationHandler(ConversationHandlerPort):
                 await long_turns.mark(
                     turn_id=lt.turn_id, user_id=context.user_id, session_id=context.session_id,
                     title=context.text or "",
-                    user_parts=self._clean_user_parts(message_parts, file_part_stubs),
+                    user_parts=self._clean_user_parts(message_parts),
                     event_time=context.metadata.get("event_time") or time.time(),
                     notice_text=notice, clock=lt.clock, started_at=lt.started_at,
                 )
@@ -1470,33 +1465,18 @@ class ConversationHandler(ConversationHandlerPort):
 
         return history_text, response_text
 
-    def _clean_user_parts(
-        self, message_parts: List[MessagePart], file_part_stubs: dict,
-    ) -> List[MessagePart]:
-        """The user's parts as they are persisted: temp paths stripped, converted files stubbed.
+    def _clean_user_parts(self, message_parts: List[MessagePart]) -> List[MessagePart]:
+        """The user's parts as they are persisted: the temp path of a GCS-backed file is stripped.
 
-        Files with "path" are temporary and are deleted in handle_message's finally block;
-        the adapter already processed them during the request (uploaded to API or encoded).
+        Every upload part carries a "ref" (FileConversionService.process_attachment); a native
+        binary also carries a temporary "path", deleted in handle_message's finally block. The
+        adapter already processed it during the request, so history keeps the reference only.
         """
         clean_message_parts = []
         for part in message_parts:
-            if part.file_data and "ref" in part.file_data and "path" in part.file_data:
-                # GCS-backed file: strip temp path, keep reference
+            if part.file_data and "path" in part.file_data:
                 clean_file_data = {k: v for k, v in part.file_data.items() if k != "path"}
-                clean_message_parts.append(MessagePart(
-                    text=part.text,
-                    file_data=clean_file_data,
-                ))
-            elif part.file_data and "path" in part.file_data:
-                # Legacy: temporary file without GCS ref — skip entirely
-                logger.debug(f"Skipping temporary file from history: {part.file_data.get('path')}")
-                continue
-            elif id(part) in file_part_stubs:
-                # Legacy: converted text files — text=stub, full_text=full
-                clean_message_parts.append(MessagePart(
-                    text=file_part_stubs[id(part)],
-                    full_text=part.text,
-                ))
+                clean_message_parts.append(MessagePart(text=part.text, file_data=clean_file_data))
             else:
                 clean_message_parts.append(part)
         return clean_message_parts

@@ -31,7 +31,7 @@ COPY sandbox_main.py /app/
 COPY src/adapters/sandbox_engine/__init__.py src/adapters/sandbox_engine/child_launcher.py src/adapters/sandbox_engine/docx_render_engine.py src/adapters/sandbox_engine/limits_exec.py src/adapters/sandbox_engine/render_docx_child.py /app/src/adapters/sandbox_engine/
 COPY src/composition/__init__.py src/composition/sandbox_callers.py src/composition/sandbox_setup.py /app/src/composition/
 COPY src/domain/docx_script_prelude.py src/domain/memory_telemetry.py src/domain/sandbox_contract.py src/domain/sandbox_docx_frame.py src/domain/sandbox_startup_check.py /app/src/domain/
-COPY src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
+COPY src/utils/logfire_redacting_exporter.py src/utils/logger.py src/utils/logging_context.py src/utils/memory_scope.py src/utils/telemetry.py /app/src/utils/
 COPY src/web/sandbox_app.py src/web/sandbox_caller_gate.py src/web/sandbox_recycler.py src/web/sandbox_supervisor.py src/web/sandbox_unconfigured_app.py src/web/worker_oidc_verifier.py /app/src/web/
 
 # /work: the mount point of the size-limited in-memory volume (Cloud Run gen2); the server creates per-request
