@@ -57,3 +57,17 @@ async def test_a_resolver_crash_gets_the_could_not_be_opened_note(caplog):
     assert params["file_note"] == open_failed_note(CHAT_REF)
     assert "supported text format" not in params["file_note"]
     assert any(r.levelno == logging.ERROR and CHAT_REF in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("ref", [CHAT_REF, "workspace:binary_files/flat_viewing_uk.pdf"])
+@pytest.mark.parametrize("status, level", [(ReadStatus.MEMORY, logging.ERROR), (ReadStatus.ENCRYPTED, logging.WARNING)])
+async def test_a_stored_note_is_a_failed_open_unwrapped(ref, status, level, caplog):
+    note = f"[System: The file '{ref}' could not be read. Do not guess what it contains.]"
+    conversion = AsyncMock(spec=FileConversionService)
+    conversion.open.return_value = opened_note(note, status, detail="oom")
+    with caplog.at_level(logging.DEBUG):
+        out = await _ops(conversion).fetch_stored(CTX, "ann", ref, deadline_at=1.0)
+    assert not out.success and out.cls is OutcomeClass.FAILED and not out.body
+    assert out.text == note and "untrusted" not in out.text.lower()
+    records = [r for r in caplog.records if "open gave a note" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelno == level and status.value in records[0].getMessage()

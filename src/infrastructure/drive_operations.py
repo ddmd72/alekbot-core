@@ -739,8 +739,12 @@ class DriveOperations:
             outcome = opened.outcome or ReadOutcome(status=ReadStatus.TEXT)
             text = present_text(opened.body, store=store.value, ref=ref, label=ref, nonce=secrets.token_hex(8),
                                 outcome=outcome)
+        elif opened.note and not opened.body:
+            # The system's sentence, never file text and never a success (`_signal_note` has logged it). Like the
+            # other stored-file failures of this module the note stands as it is: it names the ref itself.
+            return _fail(DriveOp.OPEN, opened.note, OutcomeClass.FAILED)
         else:
-            text = opened.body or opened.note
+            text = opened.body
         return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=text, success=True, body=True)
 
     async def _fetch_video(self, context: Mapping[str, Any], ref: str, user_id: str) -> DriveOutcome:
