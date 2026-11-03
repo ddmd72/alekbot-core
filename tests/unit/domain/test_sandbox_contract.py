@@ -43,7 +43,8 @@ def _meta_obj(**extra: Any) -> Dict[str, Any]:
 
 def test_meta_field_set_is_pinned() -> None:
     # I3: adding a field to the contract must fail this test and force a review.
-    assert {f.name for f in dataclasses.fields(SandboxMeta)} == {"request_id", "limits", "kind", "ext"}
+    # `windows` (RFC §4.7, parse.pdf_windows): page numbers only, no identity.
+    assert {f.name for f in dataclasses.fields(SandboxMeta)} == {"request_id", "limits", "kind", "ext", "windows"}
     assert {f.name for f in dataclasses.fields(SandboxLimits)} == {
         "wall_s", "memory_bytes", "cpu_s", "file_bytes",
     }
@@ -118,10 +119,13 @@ def test_outcome_detail_bounded() -> None:
 
 def test_status_and_op_values() -> None:
     assert {s.value for s in SandboxStatus} == {
-        "ok", "script_error", "timeout", "empty_output", "too_large",
+        "ok", "script_error", "timeout", "empty_output", "too_large", "memory",
         "recycling", "unconfigured", "bad_request", "error",
     }
-    assert [o.value for o in SandboxOp] == ["render.docx"]
+    # RFC §4.7 (owner 2026-11-03): the parse family, no `parse.pdf_window` (one window is a batch of one).
+    assert [o.value for o in SandboxOp] == [
+        "render.docx", "parse.extract", "parse.pdf_page_count", "parse.pdf_windows",
+    ]
 
 
 def test_clamp_limits_never_exceeds_ceiling() -> None:
