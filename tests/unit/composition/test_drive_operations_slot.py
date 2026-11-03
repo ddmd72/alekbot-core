@@ -7,11 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition.user_agent_factory import UserAgentFactory, _UserContext
+from src.domain.document_presentation import present_text
+from src.domain.document_read import ReadOutcome, ReadStatus
 from src.domain.drive_search_line import SearchLine
 from src.domain.language import LanguageCode
 from src.domain.user_drive import DeleteOutcome, DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from tests.support.drive_service_spec_mock import spec_drive_service
+from tests.support.opened_file import opened_body
 
 
 def _ctx() -> _UserContext:
@@ -37,15 +40,16 @@ def test_the_drive_operations_are_built_once_per_user_context():
     assert UserAgentFactory._drive_operations(fake, ctx) is first
 
 
-async def test_every_shared_service_reaches_the_instance():
+async def test_every_shared_service_reaches_the_instance(monkeypatch):
     """DriveOperations keeps its services private: each one is observed through the call it makes."""
+    monkeypatch.setattr("src.infrastructure.drive_operations.secrets.token_hex", lambda n: "0123456789abcdef")
     # the drive service's own connection reads (mounts, resolve_ref): the ref resolves on a real mount table
     fake, ctx = _factory(user_drive_service=spec_drive_service("user-1")), _ctx()
     fake.user_drive_service.status.side_effect = RuntimeError("offline")
     fake.user_drive_service.delete.return_value = DeleteOutcome(
         item=DriveItem(item_id="item-1", name="a.txt", path="Inbox/a.txt", is_folder=False), file_count=1)
     fake.drive_search_service.search_state = AsyncMock(return_value=SearchLine.REBUILDING)
-    fake.file_conversion_service.resolve_content = AsyncMock(return_value="chat file text")
+    fake.file_conversion_service.open = AsyncMock(return_value=opened_body("chat file text"))
     fake.language_service.resolve_ui_language = AsyncMock(return_value=LanguageCode.EN)
     fake.localization.get_ui_string = MagicMock(return_value="Deleted {path}")
     fake.notification_service.notify_raw = AsyncMock()
@@ -55,7 +59,10 @@ async def test_every_shared_service_reaches_the_instance():
     assert preflight.search is SearchLine.REBUILDING
     fake.user_drive_service.status.assert_awaited_once_with("user-1")
     opened = await ops.fetch_stored({}, "user-1", "notes.txt")      # the conversion service
-    assert opened.text == "chat file text"
+    # a chat file comes marked (EXTERNAL_FILES_RFC P15): the conversion service's text inside the neutral wrapper
+    assert opened.text == present_text("chat file text", store="chat", ref="notes.txt", label="notes.txt",
+                                       nonce="0123456789abcdef", outcome=ReadOutcome(status=ReadStatus.TEXT))
+    assert fake.file_conversion_service.open.await_args.args == ("notes.txt", "user-1", "")
     await ops.delete({"account_id": "acc"}, "user-1", "drive:a1:item-1", wait_s=5)   # notification, localization, language
     fake.language_service.resolve_ui_language.assert_awaited_once_with("user-1")
     assert fake.notification_service.notify_raw.await_args.args[:3] == ("user-1", "acc", "Deleted Drive/Inbox/a.txt")

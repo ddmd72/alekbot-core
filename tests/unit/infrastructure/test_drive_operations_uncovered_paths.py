@@ -9,7 +9,9 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search import STATUS_AMBIGUOUS_FOLDER, DriveSearchResult
 from src.domain.user_drive import DriveItem, ListOutcome
 from src.infrastructure.drive_operations import MAX_VIDEO_ATTACH_BYTES, DriveOperations
-from tests.support.opened_file import opened_body
+from src.domain.document_presentation import present_text
+from src.domain.document_read import ReadOutcome, ReadStatus
+from tests.support.opened_file import opened_body, opened_native
 from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
@@ -38,10 +40,13 @@ class FakeDrive(ConnectionReads):
 
 
 class FakeConversion:
-    def __init__(self, items=None, data: bytes = b"bytes", text: str = "plain text") -> None:
-        self.items, self.data, self.text = items or {}, data, text
+    """`open` answers the text, or, with `native_mime`, the native file the document service would attach (P16)."""
+
+    def __init__(self, items=None, data: bytes = b"bytes", text: str = "plain text", native_mime: str = "") -> None:
+        self.items, self.data, self.text, self.native_mime = items or {}, data, text, native_mime
         self.byte_reads: list[str] = []
         self.text_reads: list[str] = []
+        self.open_kwargs: list[dict] = []
 
     async def get_drive_item(self, ref, user_id):
         return self.items[ref]
@@ -52,6 +57,9 @@ class FakeConversion:
 
     async def open(self, ref, user_id, account_id, **kw):
         self.text_reads.append(ref)
+        self.open_kwargs.append(kw)
+        if self.native_mime:
+            return opened_native("/tmp/opened-file", self.native_mime)
         return opened_body(self.text)
 
 
@@ -143,12 +151,16 @@ async def test_a_workspace_video_with_no_notification_is_a_failure():
     assert out.text == "File delivery is not configured — cannot resend the video as a file."
 
 
-async def test_a_workspace_file_of_an_other_kind_is_read_as_text():
+async def test_a_workspace_file_of_an_other_kind_is_read_as_text(monkeypatch):
+    # a workspace copy is outside content (EXTERNAL_FILES_RFC P15): its text comes marked with the neutral tag
+    monkeypatch.setattr("src.infrastructure.drive_operations.secrets.token_hex", lambda n: "0123456789abcdef")
     conv = FakeConversion(text="boiler warranty, 5 years")
     ops = _ops(conversion_service=conv, drive_service=FakeDrive())
     out = await ops.fetch_stored(CTX, "u1", "workspace:binary_files/boiler.warranty")
     assert out.cls is OutcomeClass.OK and out.body
-    assert out.text == "boiler warranty, 5 years"
+    ref = "workspace:binary_files/boiler.warranty"
+    assert out.text == present_text("boiler warranty, 5 years", store="workspace", ref=ref, label=ref,
+                                    nonce="0123456789abcdef", outcome=ReadOutcome(status=ReadStatus.TEXT))
     assert conv.text_reads == ["workspace:binary_files/boiler.warranty"] and conv.byte_reads == []
 
 
