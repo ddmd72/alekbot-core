@@ -598,6 +598,15 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}fact_review_messages"
 
     @property
+    def audio_transcripts_collection(self) -> str:
+        """
+        Transcripts of opened chat audio, doc id `<account_id>:<key>` (the key: content hash + transcriber model;
+        EXTERNAL_FILES_RFC §4.4 P21). Fields `text`, `account_id`, `written_at`, `purge_after`; the collection's TTL
+        policy is on `purge_after` (90 days, a chat upload's life). Dev: development_audio_transcripts
+        """
+        return f"{self.firestore_collection_prefix}audio_transcripts"
+
+    @property
     def fact_review_state_collection(self) -> str:
         """
         The memory review's state, one per account, doc id = account id (Facts S4 plan §2.2). No TTL policy and no field
