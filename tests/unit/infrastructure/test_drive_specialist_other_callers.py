@@ -18,7 +18,7 @@ def _coordinator(resolver) -> AgentCoordinator:
 
 
 # The prefetch is `prefetch_file_ref` since P18 (EXTERNAL_FILES_RFC §4.2): the resolver takes the account and an
-# absolute deadline and answers a Prefetched.
+# absolute keyword-only deadline and answers a Prefetched.
 CTX = {"user_id": "u1", "account_id": "a1"}
 DEADLINE = 1_900_000_000.0
 
@@ -27,7 +27,7 @@ async def test_a_generator_still_gets_a_drive_ref_prefetched():
     resolver = AsyncMock(return_value=Prefetched(content="lease text"))
     params = {"file_ref": "drive:AAA"}
     await _coordinator(resolver).prefetch_file_ref(PDF_GENERATOR.agent_id, params, CTX, deadline_at=DEADLINE)
-    resolver.assert_awaited_once_with("drive:AAA", "u1", "a1", DEADLINE)
+    resolver.assert_awaited_once_with("drive:AAA", "u1", "a1", deadline_at=DEADLINE)
     assert params["file_content"] == "lease text"
 
 
