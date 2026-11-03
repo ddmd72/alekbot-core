@@ -124,6 +124,21 @@ def download_alert(filename: str) -> str:
     )
 
 
+def storage_unavailable_alert(filename: str) -> str:
+    """System note for an attachment that arrived but cannot be stored or read: the service has no file service.
+
+    Public like `download_alert`: ConversationHandler builds this part itself, in the attachment slot, because the
+    upload path always goes through `FileConversionService.process_attachment` and never parses in the handler.
+    Same contract: the ordinary agent tells the user in its own voice instead of the failure being invisible.
+    """
+    return (
+        f"[System: User attached '{filename}' and it was received, but it cannot be stored or read "
+        f"right now, so its content is NOT available in this message. "
+        f"Do not guess what it contained. Tell the user the file could not be processed at the moment "
+        f"and ask them to try sending it again later.]"
+    )
+
+
 def transcription_alert(filename: str) -> str:
     """System note for a voice message that arrived but could not be transcribed.
 

@@ -70,8 +70,7 @@ if TYPE_CHECKING:
     from ..services.drive_note_service import DriveNoteService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
-    convert_file_to_text, download_alert, is_native_binary, make_history_stub,
-    transcription_alert,
+    download_alert, storage_unavailable_alert, transcription_alert,
 )
 from ..utils.logger import logger
 from ..utils.retry import retry_store_write
@@ -893,23 +892,15 @@ class ConversationHandler(ConversationHandlerPort):
                                 attachment.mime_type,
                                 user_id=context.user_id,
                             )
-                        elif is_native_binary(attachment.mime_type):
-                            # Legacy fallback: images and PDFs as binary
-                            file_part = MessagePart(file_data={
-                                "path": local_path,
-                                "mime_type": attachment.mime_type
-                            })
                         else:
-                            # Legacy fallback: convert to text inline
-                            text = await convert_file_to_text(
-                                local_path,
-                                attachment.filename or "unknown",
-                                attachment.mime_type,
-                                audio_service=self.audio_service,
+                            # No file service: the upload path never parses in the handler. The slot carries
+                            # a note and the failure is loud (ERROR line the Errors-dev alert picks up).
+                            logger.error(
+                                f"❌ No file service: attachment {attachment.filename} "
+                                f"({attachment.mime_type}) cannot be stored or read"
                             )
-                            file_part = MessagePart(text=text)
-                            file_part_stubs[id(file_part)] = make_history_stub(
-                                text, attachment.filename or "unknown"
+                            file_part = MessagePart(
+                                text=storage_unavailable_alert(attachment.filename or "unknown")
                             )
                         message_parts.append(file_part)
                         logger.info(f"📎 File prepared: {attachment.filename} ({attachment.mime_type})")
