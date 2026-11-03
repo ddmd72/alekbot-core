@@ -49,6 +49,7 @@ class TestPortContract:
             "save_refresh_token",
             "get_refresh_token",
             "revoke_refresh_token",
+            "has_active_grant",     # reviewer edit, drive MCP slice 4: the link's grant check (RFC §3.3.8, §8)
         }
 
 
@@ -93,6 +94,9 @@ class InMemoryMCPRepo(MCPClientRepository):
             self.refresh_tokens[token_hash] = existing.model_copy(
                 update={"revoked_at": datetime.now(timezone.utc)}
             )
+
+    async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
+        raise NotImplementedError
 
 
 @pytest.fixture

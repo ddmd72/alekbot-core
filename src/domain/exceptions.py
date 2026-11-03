@@ -342,3 +342,21 @@ class QuestionTransitionError(Exception):
 class ConnectorTextsUnavailable(Exception):
     """The drive connector's texts could not be loaded even once (a token is missing, flagged, or its keys or sizes
     are wrong). There is no inline default text, so the connector cannot answer; the message names the cause."""
+
+
+class DriveLinkRefused(Exception):
+    """A one-time drive link cannot be issued: the access token carries no grant id (minted before the grant id
+    existed). The connector answers its neutral refusal; the next refresh mints a token that carries one."""
+
+
+class DriveLinkFolder(Exception):
+    """A one-time drive link was asked for a folder; `path` is the folder as the client reads it (`<mount>/<path>`)."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__("a download link is for one file")
+
+
+class MediaStreamFailed(Exception):
+    """A file's bytes could not be streamed from its media source (a refused or failed upstream request, a broken
+    connection). The message never carries the source's url or headers (they are secrets)."""

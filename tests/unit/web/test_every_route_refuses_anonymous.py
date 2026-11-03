@@ -23,6 +23,7 @@ import httpx
 import pytest
 from quart import Quart
 
+from src.adapters.firestore_drive_link_store import FirestoreDriveLinkStore
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
@@ -30,10 +31,12 @@ from src.composition.mcp_setup import build_mcp_components
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from src.domain import sandbox_contract as sc
 from src.domain.sandbox_contract import SandboxLimits, SandboxOp
+from src.services.drive_link_service import DriveLinkService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
+from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, worker_oidc_gate
 from src.web.landing_app import create_landing_blueprint
@@ -132,6 +135,15 @@ def _short_link(p: Probe):
     return create_short_link_blueprint(short_links=ShortLinkService(repo, "https://app.example")), {}
 
 
+# reviewer edit, drive MCP slice 4: the one-time link route, a capability URL like /s/<code> (RFC §8): the real store on
+# the evaluating fake, everything past it a tripwire, so an unknown id is refused before any grant, drive or byte read.
+def _drive_link(p: Probe):
+    store = FirestoreDriveLinkStore(p.db(), SimpleNamespace(drive_links_collection="p7_drive_links"))
+    return create_drive_link_blueprint(DriveLinkService(
+        store, p.wire("drive_service"), p.wire("media_stream"), grant_allowed=p.wire("grant_check").allowed,
+        digest_key=b"k" * 32, base_url="https://app.example")), {}
+
+
 def _voice_control_plane(p: Probe):
     w = p.wire
     return create_voice_control_plane_blueprint(
@@ -216,6 +228,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_microsoft_tasks_webhook_blueprint": _ms_tasks,
     "create_file_access_blueprint": _file_access,
     "create_short_link_blueprint": _short_link,
+    "create_drive_link_blueprint": _drive_link,     # reviewer edit, drive MCP slice 4
     "create_voice_control_plane_blueprint": _voice_control_plane,
     "create_voice_webhook_blueprint": _voice_webhook,
     "create_voice_web_call_blueprint": _voice_web_call,
@@ -277,6 +290,8 @@ INPUT: Dict[Tuple[str, str], dict] = {
     ("GET", "/join"): {"query": {"code": "INV-123"}},
     ("POST", "/v1/<op>"): {"path": {"op": "render.docx"}, "data": b"payload"},
     ("GET", "/s/<code>"): {"path": {"code": "abcdefghij"}},
+    # reviewer edit, drive MCP slice 4: a well-formed id (22 URL-safe chars), so the store refuses it, not the format check
+    ("GET", "/d/<link_id>"): {"path": {"link_id": "AbCdEfGhIjKlMnOpQrSt_-"}},
     # A well-formed batch (Facts S4 T11b), so an anonymous one is refused by the gate, not by the body check.
     ("POST", "/api/user/facts/review-answers"): {"json": {"answers": [{"question_id": "q1", "answer": "still_true"}]}},
 }

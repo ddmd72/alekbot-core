@@ -119,3 +119,9 @@ The drive: ref of the file or folder, from a search result, a passages head line
 
 ### get_note.whole_drive_name
 Only for a note about an entire drive: its name as list_folder with folder "/" lists it. For a file or a folder, even a top-level one, pass item_ref.
+
+### get_download_link
+Get a one-time download link to one drive file, any kind (an image, a recording, a video, a PDF, a document). Each call issues one new link; it opens once, within five minutes, then stops working. Use it when the user wants the file itself rather than its text: give the link to the user, or fetch it once yourself. Never call it to read a file's text: search_drive, find_passages and open_drive_file do that.
+
+### get_download_link.file_ref
+The file's drive: ref (drive:<tag>:<id>), from a search result, a passages head line or a listing. One file, not a folder.

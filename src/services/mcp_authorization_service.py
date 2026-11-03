@@ -84,6 +84,7 @@ class VerifiedAccessToken:
     scopes: List[str]
     resource: Optional[str]
     expires_at: int  # unix seconds
+    grant_id: Optional[str] = None  # the `gid` claim; None on a token minted before the grant id existed
 
 
 # ---------------------------------------------------------------------------
@@ -320,12 +321,14 @@ class MCPAuthorizationService:
             raise MCPInvalidGrant("authorization code not found or already used")
 
         now = datetime.now(timezone.utc)
+        grant_id = self._new_grant_id()
         access_token = self._mint_access_token(
             user_id=code_obj.user_id,
             account_id=code_obj.account_id,
             client_id=code_obj.client_id,
             scopes=code_obj.scopes,
             resource=code_obj.resource,
+            grant_id=grant_id,
         )
         refresh_token_value = secrets.token_urlsafe(48)
         await self._repo.save_refresh_token(
@@ -337,6 +340,7 @@ class MCPAuthorizationService:
                 scopes=code_obj.scopes,
                 resource=code_obj.resource,
                 expires_at=now + timedelta(seconds=self._refresh_token_ttl),
+                grant_id=grant_id,
             )
         )
         return IssuedToken(
@@ -383,7 +387,11 @@ class MCPAuthorizationService:
         except (ResourceRefused, ScopeRefused) as e:
             raise MCPInvalidGrant(f"refresh scope not allowed: {e}") from e
         now = datetime.now(timezone.utc)
+        # A token stored before the grant id existed gets one at its first rotation and keeps it after.
+        grant_id = existing.grant_id or self._new_grant_id()
 
+        # Revoke first, then save: a save-first order would let a replayed old token mint again. A link fetch in
+        # the gap between the two sees no active token for the grant and is refused (the client asks again).
         await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
         new_refresh = secrets.token_urlsafe(48)
         await self._repo.save_refresh_token(
@@ -395,6 +403,7 @@ class MCPAuthorizationService:
                 scopes=final_scopes,
                 resource=existing.resource,
                 expires_at=now + timedelta(seconds=self._refresh_token_ttl),
+                grant_id=grant_id,
             )
         )
         access_token = self._mint_access_token(
@@ -403,6 +412,7 @@ class MCPAuthorizationService:
             client_id=existing.client_id,
             scopes=final_scopes,
             resource=existing.resource,
+            grant_id=grant_id,
         )
         return IssuedToken(
             access_token=access_token,
@@ -451,6 +461,7 @@ class MCPAuthorizationService:
             scopes=list(payload.get("scope", "").split()) if payload.get("scope") else [],
             resource=payload.get("aud"),
             expires_at=int(payload["exp"]),
+            grant_id=payload.get("gid"),
         )
 
     async def revoke_refresh_token_value(self, refresh_token_value: str) -> None:
@@ -458,8 +469,41 @@ class MCPAuthorizationService:
         await self._repo.revoke_refresh_token(self._hash_token(refresh_token_value))
 
     # -----------------------------------------------------------------
+    # Grant check (the one-time drive link re-checks it at fetch)
+    # -----------------------------------------------------------------
+
+    async def grant_allowed(self, user_id: str, grant_id: Optional[str]) -> bool:
+        """True when the grant still has an active refresh token and its user is still whitelisted.
+
+        No grant id (a link issued from a token minted before the grant id existed) → False. A repository
+        error propagates; the caller fails closed. The refusal log carries the reason, never the email.
+        """
+        reason: Optional[str]
+        if not grant_id:
+            reason = "no_grant"
+        elif not await self._repo.has_active_grant(user_id, grant_id, datetime.now(timezone.utc)):
+            reason = "grant_inactive"
+        else:
+            reason = await self._allow_reason(user_id)
+        if reason is not None:
+            logger.warning(f"MCP link grant refused: user={user_id[:8]} reason={reason}")
+            return False
+        return True
+
+    # -----------------------------------------------------------------
     # Internals
     # -----------------------------------------------------------------
+
+    async def _allow_reason(self, user_id: str) -> Optional[str]:
+        """None when the user exists, has an email and is whitelisted; otherwise the refusal reason."""
+        user = await self._user_repo.get_user(user_id)
+        if user is None:
+            return "no_user"
+        if not user.email:
+            return "no_email"
+        if not (await self._whitelist_repo.get_whitelist()).is_allowed(user.email):
+            return "not_whitelisted"
+        return None
 
     async def _require_allowed(self, user_id: str) -> None:
         """Raise MCPInvalidGrant unless the grant's user exists, has an email and is whitelisted.
@@ -467,17 +511,14 @@ class MCPAuthorizationService:
         A repository error propagates (the SDK answers 500, no token is minted: fail closed). The log line
         carries the reason, never the email.
         """
-        user = await self._user_repo.get_user(user_id)
-        reason: Optional[str] = None
-        if user is None:
-            reason = "no_user"
-        elif not user.email:
-            reason = "no_email"
-        elif not (await self._whitelist_repo.get_whitelist()).is_allowed(user.email):
-            reason = "not_whitelisted"
+        reason = await self._allow_reason(user_id)
         if reason is not None:
             logger.warning(f"MCP refresh refused: user={user_id[:8]} reason={reason}")
             raise MCPInvalidGrant("grant no longer allowed")
+
+    @staticmethod
+    def _new_grant_id() -> str:
+        return secrets.token_urlsafe(16)
 
     def _validate_redirect_host(self, uri: str) -> None:
         from urllib.parse import urlparse
@@ -516,10 +557,11 @@ class MCPAuthorizationService:
         client_id: str,
         scopes: List[str],
         resource: Optional[str],
+        grant_id: Optional[str] = None,
     ) -> str:
         now = datetime.now(timezone.utc)
         exp = now + timedelta(seconds=self._access_token_ttl)
-        payload = {
+        payload: Dict[str, Any] = {
             "sub": user_id,
             "account_id": account_id,
             "client_id": client_id,
@@ -529,6 +571,8 @@ class MCPAuthorizationService:
             "type": _ACCESS_TOKEN_TYPE,
             "aud": resource or self._resource_uri,
         }
+        if grant_id:
+            payload["gid"] = grant_id
         return jwt.encode(payload, self._secret, algorithm=_JWT_ALG)
 
     @staticmethod

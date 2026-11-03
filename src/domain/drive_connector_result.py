@@ -10,7 +10,10 @@
 - the call did not finish in time (`NOT_FINISHED`): UNFINISHED, no block;
 - no drive the connector sees, or one that needs reconnecting (`NOT_CONNECTED`): NOT_CONNECTED, no block (the chat's
   text would say the drive is not connected when the owner simply shared none with the connector, §7.4);
-- the open withheld the file (`DriveOutcome.withheld`): the `W_<code>` line; the block is the file's label;
+- the open withheld the file (`DriveOutcome.withheld`): the `W_<code>` line; the block is the file's label, followed,
+  when the call issued a one-time link (`link`), by the LINK line with it (RFC §6.2, §8);
+- a link issued with no withheld code (`get_download_link`, an `OK` outcome whose text is the file's label): the LINK
+  line; the block is the label; no reading lines;
 - the open was refused as too long (`facts.too_long`): ROUTE with the file's ref; the block is the refusal text;
 - any other refusal (`REFUSED`) but the index's "the bot cannot open this file" (`facts.inaccessible`), and an item
   that does not exist (`NOT_FOUND` on any call but a search or a passages result, whose text is the result): status
@@ -24,7 +27,7 @@ No "Specialist note", no `drive_context`, no delivery items: the client reads th
 hard size guard every tool's result passes (§6.1): cut at a line, then the OVER_SIZE line. Pure: no I/O.
 
 Public interface:
-    compose_connector_result(outcome, texts, *, nonce) -> str
+    compose_connector_result(outcome, texts, *, nonce, link) -> str
     cap_result(text, over_size, limit=RESULT_MAX_CHARS) -> str
     connector_status(outcome) -> DriveStatus         the status the result's first line prints
     RESULT_MAX_CHARS                                 100,000: the guard, and the size a client is told to accept
@@ -32,7 +35,7 @@ Public interface:
 from __future__ import annotations
 
 import secrets
-from typing import Callable, Dict, Mapping, Tuple
+from typing import Callable, Dict, Mapping, Optional, Tuple
 
 from . import drive_answer_texts as t
 from . import drive_connector_contract as c
@@ -93,16 +96,22 @@ def _neutral_refusal(outcome: DriveOutcome) -> bool:
 
 
 def compose_connector_result(outcome: DriveOutcome, texts: ConnectorTexts, *,
-                             nonce: Callable[[], str] = _default_nonce) -> str:
+                             nonce: Callable[[], str] = _default_nonce, link: Optional[str] = None) -> str:
     """One call's result text (the module docstring's shape and rules). `nonce` gives each passages file its wrapper's
-    nonce when a passages result is re-rendered. Raises KeyError when `texts` lacks a key: never a silent drop."""
+    nonce when a passages result is re-rendered; `link` is a one-time download link the call issued. Raises KeyError
+    when `texts` lacks a key: never a silent drop."""
     r = texts.results
+    if link and outcome.withheld is None and outcome.cls is OutcomeClass.OK:
+        return "\n".join((r[c.STATUS].format(status=connector_status(outcome).value),
+                          r[c.WHAT_TO_DO].format(line=r[c.LINK].format(link=link)), outcome.text))
     line, block = _line_and_block(outcome, r, nonce)
     out = [r[c.STATUS].format(status=connector_status(outcome).value), r[c.WHAT_TO_DO].format(line=line)]
     blocks = [CollectedResult(handle="r1", step=1, kind=_KIND.get(outcome.op, outcome.op.value), outcome=outcome)]
     out.extend(t.READING_PREFIX + text for text in reading_texts(reading_keys(blocks), r))
     if block:
         out.append(block)
+    if link and outcome.withheld is not None:
+        out.append(r[c.LINK].format(link=link))
     if _shows_passages(outcome):
         out.append(r[c.LANGUAGE])
     return "\n".join(out)

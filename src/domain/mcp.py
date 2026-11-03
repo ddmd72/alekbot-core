@@ -163,6 +163,11 @@ class MCPRefreshToken(BaseModel):
     Refresh token. Stored by sha256 hash of the opaque token value.
     Rotated on every /token exchange: the old token is marked revoked
     and a new one is issued.
+
+    `grant_id` is the grant's stable id: minted at code exchange and copied
+    through every rotation (and into the access token as `gid`). It is None
+    only on a token stored before the one-time drive link existed; such a
+    token gets one at its first rotation.
     """
     token_hash: str
     client_id: str
@@ -172,6 +177,7 @@ class MCPRefreshToken(BaseModel):
     resource: Optional[str] = None
     expires_at: datetime
     revoked_at: Optional[datetime] = None
+    grant_id: Optional[str] = None
 
     @property
     def is_active(self) -> bool:

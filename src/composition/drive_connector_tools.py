@@ -25,6 +25,7 @@ from ..infrastructure.drive_read_operations import DriveReadOperations
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.prompt_v3.token_repository import TokenRepository
 from ..services.connector_text_service import ConnectorTextService
+from ..services.drive_link_service import DriveLinkService
 from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
 from ..services.file_conversion_service import FileConversionService
@@ -41,12 +42,14 @@ RESULT_TEXTS_TOKEN = "MCP_DRIVE_RESULT_TEXTS"
 @dataclass(frozen=True)
 class DriveConnectorTools:
     """The connector's tool backends: the texts (with the boot-loaded value), the read facade, the note reader and the
-    item reads `get_note` checks access with (`get_note` is registered only when both are present)."""
+    item reads `get_note` checks access with (`get_note` is registered only when both are present), and the one-time
+    link service (required: `get_download_link` is always registered)."""
     texts: ConnectorTextService
     initial_texts: ConnectorTexts
     operations: DriveReadOperations
     notes: Optional[DriveNoteService]
     items: Optional[ConnectorItemReader]
+    links: DriveLinkService
 
 
 async def build_drive_connector_tools(*, conversion_service: Optional[FileConversionService],
@@ -54,7 +57,8 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
                                       drive_search: Optional[DriveSearchService],
                                       drive_notes: Optional[DriveNoteService],
                                       token_repo: Optional[TokenRepository],
-                                      alert_sink: Optional[AlertSinkPort]) -> DriveConnectorTools:
+                                      alert_sink: Optional[AlertSinkPort],
+                                      links: DriveLinkService) -> DriveConnectorTools:
     """Raises when the tools cannot run (see the module docstring)."""
     if conversion_service is None:
         raise RuntimeError("drive connector tools need file conversion, which this deployment does not have")
@@ -70,15 +74,16 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
     logger.info("[DriveMCP] tools built: texts loaded, notes %s",
                 "on" if drive_notes is not None and drive_service is not None else "off")
     return DriveConnectorTools(texts=texts, initial_texts=initial, operations=DriveReadOperations(operations),
-                               notes=drive_notes, items=drive_service)
+                               notes=drive_notes, items=drive_service, links=links)
 
 
 async def build_drive_connector_tools_from_container(container: "ServiceContainer", *,
-                                                    alert_sink: Optional[AlertSinkPort]) -> DriveConnectorTools:
+                                                    alert_sink: Optional[AlertSinkPort],
+                                                    links: DriveLinkService) -> DriveConnectorTools:
     """`build_drive_connector_tools` over the container's singletons (the prompt token store is the assembly
     service's; None when the assembly service did not initialize)."""
     assembly = container.assembly_service
     return await build_drive_connector_tools(
         conversion_service=container.file_conversion_service, drive_service=container.user_drive_service,
         drive_search=container.drive_search_service, drive_notes=container.drive_note_service,
-        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=alert_sink)
+        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=alert_sink, links=links)

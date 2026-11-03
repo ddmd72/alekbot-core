@@ -53,7 +53,8 @@ class Sink:
 
 async def build(store: Any, sink: Optional[Sink] = None, *, conversion: Any = "conversion"):
     return await build_drive_connector_tools(conversion_service=conversion, drive_service=None, drive_search=None,
-                                             drive_notes=None, token_repo=store, alert_sink=sink)
+                                             drive_notes=None, token_repo=store, alert_sink=sink,
+                                             links=object())  # type: ignore[arg-type]
 
 
 async def rpc(app, method: str, params: Optional[dict] = None, headers=HEADERS) -> httpx.Response:
@@ -146,11 +147,11 @@ class TestFromContainer:
     async def test_the_container_singletons_reach_the_tools(self, monkeypatch):
         notes = object()
         tools = await build_drive_connector_tools_from_container(container(TokenStore(), notes=notes),
-                                                                 alert_sink=None)  # type: ignore[arg-type]
+                                                                 alert_sink=None, links=object())  # type: ignore[arg-type]
         assert tools is not None and tools.notes is notes
         assert tools.initial_texts.tools[c.INSTRUCTIONS_KEY] == marker(c.INSTRUCTIONS_KEY)
 
     async def test_no_assembly_service_means_no_token_store(self, monkeypatch):
         with pytest.raises(RuntimeError, match="token store"):
             await build_drive_connector_tools_from_container(container(TokenStore(), assembly=False),
-                                                             alert_sink=None)  # type: ignore[arg-type]
+                                                             alert_sink=None, links=object())  # type: ignore[arg-type]

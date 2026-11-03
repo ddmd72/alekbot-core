@@ -166,7 +166,8 @@ class World:
         await self.index.open()
         self.tools = await build_drive_connector_tools(
             conversion_service=self.conversion, drive_service=self.drive, drive_search=self.index.service,
-            drive_notes=self.notes, token_repo=self.tokens, alert_sink=None)
+            drive_notes=self.notes, token_repo=self.tokens, alert_sink=None,
+            links=object())  # type: ignore[arg-type]
         return self
 
     async def connector(self, access: Optional[ConnectorAccess]) -> None:

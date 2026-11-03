@@ -29,7 +29,8 @@ AUTH_CONFIG = SimpleNamespace(mcp_resource_uri=f"{BASE}/mcp")
 TOKEN = "drive-token-u1"
 HEADERS = {"Accept": "application/json, text/event-stream", "Authorization": f"Bearer {TOKEN}"}
 REQUIRED = {"search_drive": [], "find_passages": ["question"], "read_passages": ["file_ref", "passages"],
-            "open_drive_file": ["file_ref"], "list_folder": [], "get_note": []}
+            "open_drive_file": ["file_ref"], "list_folder": [], "get_note": [],
+            "get_download_link": ["file_ref"]}     # reviewer edit, drive MCP slice 4: the new tool (RFC §8)
 
 
 class Auth:
@@ -60,7 +61,7 @@ class World:
         initial = await self.texts.texts()
         tools = DriveConnectorTools(texts=texts or self.texts, initial_texts=initial,
                                     operations=DriveReadOperations(DriveOperations(conversion_service=None)),  # type: ignore[arg-type]
-                                    notes=object(), items=object())  # type: ignore[arg-type]
+                                    notes=object(), items=object(), links=object())  # type: ignore[arg-type]
         self.app = build_drive_mcp_app(authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=tools)
         return self
 

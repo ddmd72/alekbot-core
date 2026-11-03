@@ -27,6 +27,8 @@ from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_app
+from src.composition.drive_link_setup import build_drive_link_service
+from src.web.drive_link_app import create_drive_link_blueprint
 from src.domain.mcp_resource import DRIVE_PATH
 
 
@@ -603,8 +605,16 @@ async def main():
                     # token: its first load alerts and raises) never takes the facts connector down; /drive-mcp then
                     # answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
                     try:
+                        drive_links = build_drive_link_service(
+                            db_client=db_client,
+                            env_config=env_config,
+                            drive_service=app.container.user_drive_service,
+                            authorization_service=mcp_components.authorization_service,
+                            digest_key=app.digest_key,
+                            auth_config=app.auth_config,
+                        )
                         drive_tools = await build_drive_connector_tools_from_container(
-                            app.container, alert_sink=app.alert_sink)
+                            app.container, alert_sink=app.alert_sink, links=drive_links)
                     except Exception as drive_err:
                         drive_mcp = None
                         logger.error(f"❌ Failed to initialize drive MCP connector tools: {drive_err}", exc_info=True)
@@ -612,6 +622,8 @@ async def main():
                     else:
                         drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
                                                             tools=drive_tools)
+                        if drive_mcp is not None:
+                            main_app.register_blueprint(create_drive_link_blueprint(drive_links))
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
@@ -630,6 +642,7 @@ async def main():
                     logger.info("   - /mcp/consent (OAuth consent UI)")
                     if drive_mcp is not None:
                         logger.info("   - /drive-mcp (drive connector)")
+                        logger.info("   - /d/<id> (one-time drive links)")
 
                 # Override start() to launch shared app instead of individual adapter
                 async def start_shared_app():
