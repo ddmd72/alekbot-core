@@ -27,9 +27,10 @@ import mimetypes
 import secrets
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, ContextManager, Optional, TypeVar
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Optional, TypeVar
 
 from ..domain import drive_ref
+from ..domain.drive_audience import connector_audience
 from ..domain.drive_link import (
     LINK_DIGEST_PURPOSE,
     LINK_MAX_READS,
@@ -71,14 +72,6 @@ def _utcnow() -> datetime:
 
 def _new_raw_id() -> str:
     return secrets.token_urlsafe(16)
-
-
-def _connector_audience() -> ContextManager[None]:
-    """The connector audience around a link fetch (RFC §7.2: the link route sets it), slice 3's
-    `drive_audience.connector_audience`."""
-    # TODO(slice 3): hoist to a top-level import once feat/drive-mcp-access is merged into this branch.
-    from ..domain.drive_audience import connector_audience  # type: ignore[import-not-found]
-    return connector_audience()
 
 
 class _Refused(Exception):
@@ -147,7 +140,7 @@ class DriveLinkService:
                 raise _Refused("unknown_or_spent")
             user = link.user_id
             target = await self._checked(link)
-            with RequestContext(user_id=link.user_id, account_id=link.account_id), _connector_audience():
+            with RequestContext(user_id=link.user_id, account_id=link.account_id), connector_audience():
                 item = await self._access(lambda: self._drive.get_item(target.handle, link.item_id))
             found = LinkFile(name=item.name, mime=_mime_of(item))
         except _Refused as refused:
@@ -169,7 +162,7 @@ class DriveLinkService:
                 raise _Refused("unknown_or_spent")
             user = link.user_id
             target = await self._checked(link)
-            with RequestContext(user_id=link.user_id, account_id=link.account_id), _connector_audience():
+            with RequestContext(user_id=link.user_id, account_id=link.account_id), connector_audience():
                 item, source = await self._access(lambda: self._drive.media_source(target.handle, link.item_id))
             chunks = await _primed(self._media.chunks(source))
             opened = OpenedLink(name=item.name, mime=_mime_of(item), chunks=chunks)
@@ -187,7 +180,7 @@ class DriveLinkService:
         visible to the connector."""
         if not await self._grant_allowed(link.user_id, link.grant_id):
             raise _Refused("grant")
-        with RequestContext(user_id=link.user_id, account_id=link.account_id), _connector_audience():
+        with RequestContext(user_id=link.user_id, account_id=link.account_id), connector_audience():
             try:
                 target = await self._drive.resolve_ref(link.user_id, drive_ref.format(link.ref_tag, link.item_id))
             except (DriveRefRefused, DriveNotConnectedError, DrivePathError):
