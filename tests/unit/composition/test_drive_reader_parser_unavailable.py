@@ -25,6 +25,12 @@ class _DownCutter(_Cutter):
             raise ParserUnavailable("unavailable")
         return self.pages_total
 
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        if self.down_from in [first for first, _ in windows]:
+            raise ParserUnavailable("misconfigured")
+        for (first, count), out in zip(windows, out_paths):
+            await super().cut_pdf_window(path, first, count, out)
+
     async def cut_pdf_window(self, path, first_page, page_count, out_path, *, deadline_at=None):
         if first_page == self.down_from:
             raise ParserUnavailable("misconfigured")
@@ -46,20 +52,29 @@ async def test_a_page_count_outage_is_raised_with_a_warning_not_an_error_outcome
     assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 
-async def test_a_window_cut_outage_in_the_indexer_path_is_raised_with_the_spend(tmp_path, caplog):
-    runner, llm = _runner(_DownCutter(25, down_from=10))
+async def test_a_group_cut_outage_in_the_indexer_path_is_raised_with_the_spend(tmp_path, caplog):
+    # 60 pages = 6 windows: the second group (pages 41+) fails after the first group was read
+    runner, llm = _runner(_DownCutter(60, down_from=40), pages_total=60)
     with caplog.at_level(logging.INFO), pytest.raises(ParserUnavailable) as raised:
         await runner.extract(_request(tmp_path))
     assert raised.value.reason == "misconfigured" and raised.value.charges_file is False
-    assert raised.value.model_calls == len(llm.requests)
+    assert raised.value.model_calls == len(llm.requests) == 4
     assert not any("window failed unexpectedly" in r.getMessage() for r in caplog.records)
 
 
-async def test_a_window_cut_outage_in_the_limited_path_is_raised_with_the_spend(tmp_path, caplog):
-    runner, llm = _runner(_DownCutter(25, down_from=10))
+async def test_a_group_cut_outage_in_the_limited_path_is_raised_with_the_spend(tmp_path, caplog):
+    # 60 pages = 6 windows = groups of 4 and 2: the second group's request (pages 41+) fails after group 1 was read
+    runner, llm = _runner(_DownCutter(60, down_from=40), pages_total=60)
     request = replace(_request(tmp_path), text_budget=10_000)
     with caplog.at_level(logging.INFO), pytest.raises(ParserUnavailable) as raised:
         await runner.extract(request)
     assert raised.value.reason == "misconfigured"
-    assert raised.value.model_calls == len(llm.requests) == 1 and raised.value.pages_sent == 10
+    assert raised.value.model_calls == len(llm.requests) == 4 and raised.value.pages_sent == 40
     assert not any("window failed unexpectedly" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_first_group_outage_in_the_limited_path_is_raised_with_no_spend(tmp_path):
+    runner, llm = _runner(_DownCutter(25, down_from=0))
+    with pytest.raises(ParserUnavailable) as raised:
+        await runner.extract(replace(_request(tmp_path), text_budget=10_000))
+    assert raised.value.model_calls == 0 and llm.requests == []

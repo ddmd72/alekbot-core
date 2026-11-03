@@ -37,6 +37,13 @@ class _Cutter:
     async def pdf_page_count(self, path):
         return 25
 
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        for (first_page, page_count), out_path in zip(windows, out_paths):
+            if deadline_at is None:
+                await self.cut_pdf_window(path, first_page, page_count, out_path)
+            else:
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+
     async def cut_pdf_window(self, path, first_page, page_count, out_path):
         Path(out_path).write_bytes(f"{Path(path).name}:{first_page}".encode())
 
