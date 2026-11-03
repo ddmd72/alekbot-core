@@ -39,7 +39,7 @@ from ..domain.document_read import (
     CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, TRANSCRIPT_CACHE_DAYS, ReadOutcome, ReadRequest, ReadStatus,
 )
 from ..domain.drive_extraction import (
-    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed,
+    DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable, PdfSplitFailed,
 )
 from ..domain.drive_index_params import MODEL_EXTRACT_MAX_PAGES
 from ..domain.native_format import NativeFormat
@@ -144,6 +144,8 @@ class DocumentService(DocumentReadPort):
                 pages = await self._splitter.pdf_page_count(path, deadline_at=request.deadline_at)
             except ParserBusy:
                 return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
+            except ParserUnavailable as exc:
+                return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail=exc.reason)
             except PdfSplitFailed as exc:
                 if exc.status is ExtractionStatus.ENCRYPTED:
                     pages = -1
@@ -187,6 +189,8 @@ class DocumentService(DocumentReadPort):
                     account_id=request.account_id, deadline_at=request.deadline_at))
             except ParserBusy:
                 return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
+            except ParserUnavailable as exc:
+                return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail=exc.reason)
             route = model_route(parsed, kind)
             if route is None:
                 return _from_extraction(parsed)
@@ -199,6 +203,9 @@ class DocumentService(DocumentReadPort):
                 text_budget=reader_text_budget(request.store)))
         except ParserBusy:
             return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
+        except ParserUnavailable as exc:   # the reader's page ops hit the sandbox; its spend so far is billed
+            return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail=exc.reason, model_calls=exc.model_calls,
+                               model_cost_usd=exc.model_cost)
         except DriveModelUnavailable as exc:
             if parsed is not None and parsed.status is ExtractionStatus.TEXT and route == "low_density":
                 logger.warning(f"[DocumentService] reader unavailable for a low-density read; the parser's text is "

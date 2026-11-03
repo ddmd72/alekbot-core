@@ -42,7 +42,7 @@ from typing import IO, Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_capture import signals_from_json
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed
-from src.domain.document_extraction import PARSER, ExtractionStatus, text_digest
+from src.domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus, text_digest
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort
@@ -83,7 +83,7 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
 
     # 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
     # parser-decided record (§25.4.8).
-    VERSION = 3
+    VERSION = PARSER_VERSION
 
     def __init__(self, *, memory_limit_bytes: int = EXTRACT_MEMORY_LIMIT_BYTES,
                  cpu_limit_s: int = EXTRACT_CPU_LIMIT_S, wall_timeout_s: float = EXTRACT_WALL_TIMEOUT_S,

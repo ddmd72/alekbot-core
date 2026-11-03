@@ -268,6 +268,15 @@ One route family, versioned: `POST /v1/{op}`.
 - **Ops are added by the slice that builds them** (`SandboxOp`, `src/domain/sandbox_contract.py:70-72`, today `render.docx` only). The outcome
   statuses as built are `ok`, `script_error`, `timeout`, `empty_output`, `too_large`, `recycling`, `unconfigured`, `bad_request`, `error` (`:75-84`); S3
   adds the parser's `ExtractionStatus` values to the `parse.*` outcomes.
+- **Status convention of the `parse.*` ops (P1, built, not deployed).** A header of `ok` means the child ran and wrote a result that passed
+  validation (`decode_parse_result`: closed keys, the op's status set, scalar types, a size bound). The parser's own status (`text`, `no_text`,
+  `unsupported`, `too_large`, `encrypted`, `error`) is the **header detail** of that `ok` answer and the `status` of the JSON body, so a `no_text` result
+  keeps its `pages_total` and `capture_signals` (the server streams a body only on `ok`). A run failure is a non-ok header: `timeout`, `memory`
+  (new: a killed child leaves no result), `error`, `bad_request`, `too_large`. Every non-ok answer is logged at WARNING. Ops built: `parse.extract`
+  (meta `kind` required, `ext` optional), `parse.pdf_page_count` and `parse.pdf_windows` (meta `windows`: 1..200 `[first_page, page_count]` pairs;
+  response `u32-be count | (u32-be length | bytes) x count`, all or nothing under one wall clock; a window whose result is not `text` answers `ok` with
+  that status and a `{status, detail}` body, no frame). There is no single-window op: one window is a batch of one. Caps: request = the 100 MiB PDF
+  cap plus 1 MiB, response the same figure (owner, 2026-11-03).
 - **No `chat.convert` (O13).** The main service reads through the same `parse.*` ops as the indexer. The family is named for what it does, not for its
   first caller: `drive.*` would misname the main service's chat and email reads (A1).
 - A binary result over the cap is `too_large`. Streaming is used for responses over a few MiB.
@@ -293,10 +302,10 @@ The statuses **do not change**. The sandbox returns the ones callers already kno
 | child killed on time or memory | `TIMEOUT` / `MEMORY` as today (counted per-file retries, never routed to the reader) | `drive_parser_sandbox_resource_isolation.md` |
 | `BUDGET_EXHAUSTED` | never from the sandbox | it is the reader's status |
 | request too large (413) | `TOO_LARGE` | |
-| 503 `recycling` | retried immediately (up to 3 times, short jitter), **never charged to the file** | §4.6 |
-| 429, other 503, connection refused, an instance not started | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
+| 503 `recycling` | retried once at once (2 attempts, short jitter); still recycling -> `SandboxUnavailable(reason=busy)`; **never charged to the file** | §4.6 |
+| 429, other 503 (`reason=busy`, no retry), connection refused, an instance not started (`reason=unavailable`, no retry) | new `SandboxUnavailable` (domain exception): **systemic**, work is deferred, nothing is charged to the file | the shape of `DriveModelUnavailable` (`src/domain/drive_extraction.py`), `charges_file=False` |
 | 401 / 403 | `SandboxMisconfigured`: ERROR log, systemic defer | a deployment mistake, not a file |
-| connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance; if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
+| connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance (a retry starts only with time left before the caller's deadline, its wall lowered to that time); if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
 | a malformed envelope | `ERROR` | |
 
 Details for parsers stay what they are: a failure type, a code position and a hash, never text (`failure_label`). The DOCX op is the exception **by purpose**: the
@@ -486,7 +495,14 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 ### S3. Drive parsers (C1) — after the document service (O12)
 - What it is: an adapter swap in the indexer under the document service's parse ports: `SubprocessContentExtractor` → `SandboxContentExtractor`
   (`ContentExtractorPort` and `PdfSplitterPort`: one object serves both, as today), at the indexer's composition line (`indexer_main.py:138`). No caller changes.
-- Build: the `parse.*` ops (`parse.extract`, `parse.pdf_page_count`, `parse.pdf_window`, `parse.pdf_windows`) on the light image (the `light` target);
+- **P1 (service side) built, not deployed:** the three `parse.*` ops (§4.7) on the `light` target (`SANDBOX_SERVICE=light`, groups MAIN and INDEXER), over
+  `drive_parser/child.py` unchanged; no client, no deploy step, no caller. The rest of this list is P2 and later.
+- **P2 (client side) built, not wired:** `SandboxContentExtractor` (`src/adapters/sandbox_client/`) behind both parse ports, `build_sandbox_parser(url)`
+  (`src/composition/sandbox_parse_setup.py`), and `SandboxHttpClient`'s file bodies, `windows` meta and deadline-capped retries. An outage of the service ends as
+  `drive_extraction.ParserUnavailable` (busy | unavailable | misconfigured), never as the file's outcome: the document service answers the converter note, the indexer
+  abandons the run uncounted and ends the tick. Nothing calls it (`SANDBOX_PARSE` and the indexer slots are P4). The reader cuts its windows in groups of `MODEL_IN_FLIGHT`, one
+  `cut_pdf_windows` (`parse.pdf_windows`) request per group, never all at once and never one request per window; a half is cut from its window's file.
+- Build: the `parse.*` ops (`parse.extract`, `parse.pdf_page_count`, `parse.pdf_windows`; one window is a batch of one) on the light image (the `light` target);
   `SandboxContentExtractor` (both ports, including `PdfSplitterPort`'s batch `cut_pdf_windows` → `parse.pdf_windows` and its deadline → `limits`);
   indexer wiring behind `SANDBOX_PARSE` (its own substitution key); indexer-side cap `SANDBOX_INDEXER_SLOTS`; the indexer's caller group: one
   `GROUP_PREFIXES` row (`src/composition/sandbox_setup.py:37`, today RENDER only; the RENDER-only start check `:87-91` widens with it) plus its identity.
@@ -579,7 +595,7 @@ Open (new in rev 4):
 | render: memory / cpu / concurrency / max-instances / timeout | 2 GiB / 2 / 1 / 3 / 300 s | Chromium; `node_timeout_s` 60 s, PDF similar |
 | child limits (parsers) | `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB | current values; S0-g re-measures |
 | media child (per §27.4) | `RLIMIT_CPU` 150 s, wall 240 s, `RLIMIT_FSIZE` 64 MiB, `RLIMIT_AS` 1 GiB | §27.4 |
-| request / response cap | request 104 MiB, response 64 MiB, streamed | the largest admitted kind, a 100 MiB PDF (`drive_index_params.py:57`), plus margin; the work volume is sized for it (S0-a) |
+| request / response cap | request 101 MiB (100 MiB + 1 MiB), response 101 MiB, streamed (built in P1) | the largest admitted kind, a 100 MiB PDF (`drive_index_params.py:57`), plus margin; the work volume is sized for it (S0-a) |
 | `meta` size | 8 KiB | |
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |

@@ -1,0 +1,38 @@
+# Python dependencies of the untrusted-content sandbox light image (Dockerfile.sandbox target `light`; UNTRUSTED_CONTENT_SANDBOX_RFC §4.3):
+# the server libraries of requirements-sandbox.txt, repeated here, then the parser libraries below.
+# Every line equals its line in requirements.txt (tests/unit/test_sandbox_import_closure.py compares them), so the two
+# images cannot drift. requests and pydantic are only transitive there; they are pinned exactly here.
+# What src.utils.logger imports at module load is here (plan G13); logfire, Firestore, Secret Manager, Storage, BigQuery
+# and every model SDK are deliberately absent.
+quart>=0.18.0
+hypercorn>=0.14.0
+h2==4.4.1  # serves hypercorn's HTTP/2 (h2c prior knowledge from Cloud Run); no httpx in this image
+google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
+requests==2.33.0  # google.auth.transport.requests (the verifier's public-key fetch, G21)
+pydantic==2.12.5  # mandated by the T9 brief; the import closure does not import it today
+google-cloud-logging
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-gcp-trace==1.14.0
+
+# --- the parser libraries of the drive child's import closure (Dockerfile.sandbox target `light`) ---
+# Each line equals its line in requirements.txt (tests/unit/test_sandbox_light_image.py compares them): the extraction a
+# record was indexed with must not drift with the image. The engines under markitdown's converters are pinned too, so the
+# resolution equals the main image's. Bumps are deliberate, with SubprocessContentExtractor.VERSION.
+pypdf==6.21.1
+pdfminer.six==20260107
+markitdown[all]==0.1.8
+openpyxl==3.1.5
+xlrd==2.0.2
+olefile==0.47
+beautifulsoup4==4.15.0
+defusedxml==0.7.1
+charset-normalizer==3.4.4
+markdownify==1.2.3
+striprtf==0.0.33
+pdfplumber==0.11.10
+mammoth==1.11.0
+python-pptx==1.0.2
+lxml==6.1.3
+magika==0.6.3
+Pillow==13.0.0

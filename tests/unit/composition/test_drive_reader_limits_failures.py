@@ -24,6 +24,13 @@ class _FailingCutter(_DeadlineCutter):
         self.fail_from = fail_from
         self.error = error
 
+    async def cut_pdf_windows(self, path, windows, out_paths, *, deadline_at=None):
+        for (first_page, page_count), out_path in zip(windows, out_paths):
+            if deadline_at is None:
+                await self.cut_pdf_window(path, first_page, page_count, out_path)
+            else:
+                await self.cut_pdf_window(path, first_page, page_count, out_path, deadline_at=deadline_at)
+
     async def cut_pdf_window(self, path, first_page, page_count, out_path, *, deadline_at=None):
         if first_page == self.fail_from:
             raise self.error
