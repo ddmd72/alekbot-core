@@ -1,5 +1,6 @@
 """open_file reads `workspace:` refs only under binary_files/ (AGENT_WORKSPACE_RFC §12)."""
 from src.domain.drive_outcome_class import OutcomeClass
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.infrastructure.drive_operations import DriveOperations
 
 CTX = {"user_id": "u1", "account_id": "a1"}
@@ -20,7 +21,9 @@ def _ops(conv):
 
 async def test_a_binary_files_ref_opens():
     conv = FakeConversion()
-    out = await _ops(conv).fetch_stored(CTX, "u1", "workspace:binary_files/lease.pdf")
+    # a consumer that reads PDFs natively: without a declaration the copy opens as text (EXTERNAL_FILES_RFC §4.3)
+    native = to_plain([NativeFormat("application/pdf", 20 * 1024 * 1024, 100)])
+    out = await _ops(conv).fetch_stored({**CTX, NATIVE_FORMATS_KEY: native}, "u1", "workspace:binary_files/lease.pdf")
     assert out.success and conv.byte_reads == ["workspace:binary_files/lease.pdf"]
 
 

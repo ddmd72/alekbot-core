@@ -15,6 +15,7 @@ from src.agents.drive_agent import DriveAgent
 from src.composition.user_agent_factory import UserAgentFactory, _UserContext
 from src.domain import drive_tool_texts as tt
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse, Message, MessagePart, ToolCall
+from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, to_plain
 from src.domain.user import UserBotConfig
 from src.domain.drive_connection_status import DriveConnectionStatus
 from src.domain.user_drive import DriveItem
@@ -132,7 +133,10 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     result = await DelegationEngine(coordinator=world.coordinator).execute(
         call_llm=smart_llm, base_request=LLMRequest(model_name="smart-model", messages=[
             Message(role="user", parts=[MessagePart(text="delete the old notes and show me the scan")])]),
-        context=dict(CHAT), max_turns=5, calling_agent_id=f"smart_response_agent_{USER}")
+        # Smart's runner sets its provider's declaration on the engine's context (EXTERNAL_FILES_RFC §4.3); the
+        # coordinator keeps it for work_with_drive_files and the specialist passes it on to the open (A5)
+        context={**CHAT, NATIVE_FORMATS_KEY: to_plain([NativeFormat("application/pdf", 20 * 1024 * 1024, 100)])},
+        max_turns=5, calling_agent_id=f"smart_response_agent_{USER}")
 
     # the coordinator built the specialist lazily, through the factory, on the user's shared DriveOperations
     agent = world.coordinator.get_agent(f"drive_agent_{USER}")
