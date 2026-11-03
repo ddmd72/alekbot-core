@@ -15,8 +15,11 @@ class Withheld(str, Enum):
     a recording with no stored transcript, which an open would otherwise download only to find it cannot be read.
     `IMAGE`: an image, which only the paid model reader can read (answered before any download). `SCAN`: a PDF the
     parser read and the router would hand to the paid model reader (a scan, a thin or garbled text layer); the reader
-    did not run (`document_read.CALLER_CONNECTOR`)."""
+    did not run (`document_read.CALLER_CONNECTOR`). `OUTSIDE_DRIVE`: a ref that is not a `drive:` ref (a chat upload, a
+    delivered document, `workspace:`, `skill:`), refused by the connector's facade before any call
+    (`DriveReadOperations.open`, class REFUSED)."""
     VIDEO = "video"
     RECORDING_UNTRANSCRIBED = "recording_untranscribed"
     IMAGE = "image"
     SCAN = "scan"
+    OUTSIDE_DRIVE = "outside_drive"

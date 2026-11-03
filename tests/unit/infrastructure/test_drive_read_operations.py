@@ -128,3 +128,27 @@ async def test_a_video_opened_through_the_facade_is_never_downloaded_or_posted()
     out = await DriveReadOperations(ops).open(CTX, "u1", ref("v1"))
     assert out.withheld is Withheld.VIDEO and out.text == ""
     assert conversion.downloads == [] and notification.files == []
+
+
+# -- open refuses every ref that is not a drive: ref (RFC §4.3, §12) --------------------------------------------------
+
+@pytest.mark.parametrize("not_drive", [
+    "invoice_FA-0137.pdf",                                    # a chat upload
+    "chat:invoice_FA-0137.pdf",
+    "workspace:binary_files/standup.mp4",
+    "skill:notes/SKILL.md",
+    "documents/u1/0f8fad5b-d9cb-469f-a165-70867728950e-Tom's plan.docx",   # a delivered document
+    "",
+])
+async def test_open_refuses_a_ref_that_is_not_a_drive_ref_before_any_call(not_drive):
+    rec = Recorder()
+    out = await DriveReadOperations(rec).open(CTX, "u1", not_drive, deadline_at=1_090.0)   # type: ignore[arg-type]
+    assert rec.calls == []
+    assert (out.op, out.cls, out.success, out.text, out.items) == (DriveOp.OPEN, OutcomeClass.REFUSED, False, "", ())
+    assert out.withheld is Withheld.OUTSIDE_DRIVE and out.withheld == "outside_drive"
+
+
+async def test_a_drive_ref_still_delegates():
+    rec = Recorder()
+    await DriveReadOperations(rec).open(CTX, "u1", ref("d1"))   # type: ignore[arg-type]
+    assert [c[0] for c in rec.calls] == ["open"] and rec.calls[0][1][2] == ref("d1")
