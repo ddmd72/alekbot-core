@@ -142,15 +142,15 @@ async def test_unknown_spent_expired_and_refused_links_answer_the_same_404(route
         assert status == 404
         assert body in (NOT_VALID.encode(), b"")
         assert headers["content-type"].startswith("text/plain")
-        assert {k: headers[k] for k in ("cache-control", "referrer-policy", "x-content-type-options")} == {
-            k: SAFETY[k] for k in ("cache-control", "referrer-policy", "x-content-type-options")}
+        assert {k: headers[k] for k in SAFETY} == SAFETY          # the 404 carries the 200's safety set, CSP included
     assert {a[2] for a in answers[:4]} == {NOT_VALID.encode()}
 
 
 @pytest.mark.parametrize("raw", ["short", "A" * 23, "A" * 21 + "!", "A" * 21 + "."])
 async def test_a_malformed_id_reads_no_store(route, raw):
-    status, _, body = await route.asgi("GET", raw)
+    status, headers, body = await route.asgi("GET", raw)
     assert (status, body) == (404, NOT_VALID.encode())
+    assert {k: headers[k] for k in SAFETY} == SAFETY
     assert route.world.store.reads == 0
 
 

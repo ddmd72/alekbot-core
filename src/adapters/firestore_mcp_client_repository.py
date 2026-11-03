@@ -6,7 +6,8 @@ Three collections, env-prefixed via EnvironmentConfig:
 - {env}_mcp_auth_codes         doc_id = keyed_digest(digest_key, "mcp_code", code); no raw code in any field
 - {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key);
                                `grant_id` (the grant's stable id, not a secret) is a field, queried by
-                               has_active_grant with two equality filters (served by the automatic single-field indexes)
+                               has_active_grant with three equality filters (user_id, grant_id, revoked_at null),
+                               served by the automatic single-field indexes
 
 Reads go by the presented value only (port contract): a code is found by digesting the code the caller presents, so a
 document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt or cipher failure propagates (I4).
@@ -224,11 +225,13 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             return
         await ref.update({"revoked_at": datetime.now(timezone.utc)})
 
-    async def has_active_grant(self, grant_id: str, now: datetime) -> bool:
+    async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
         # One grant has one unrevoked token at a time (rotation revokes the old one); the limit only bounds a
         # pathological case. A token stored with no revoked_at field never carries a grant_id (pre-slice-4).
+        # Equality filters only: served by merging the automatic single-field indexes, no composite index.
         query = (
-            self._refresh.where(filter=FieldFilter("grant_id", "==", grant_id))
+            self._refresh.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("grant_id", "==", grant_id))
             .where(filter=FieldFilter("revoked_at", "==", None))
             .limit(5)
         )

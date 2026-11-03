@@ -98,3 +98,10 @@ async def test_no_url_or_header_reaches_an_error_or_a_log(upstream, caplog):
         assert SECRET_PATH not in str(error) and "secret" not in repr(error)
         assert error.__cause__ is None
     assert "secret" not in caplog.text and SECRET_PATH not in caplog.text
+
+
+async def test_the_upstream_is_asked_for_identity_bytes(upstream):
+    """The session does not decompress: a gzip body would reach the client with no Content-Encoding."""
+    async for _ in HttpMediaStreamAdapter().chunks(MediaSource(url=upstream.url, headers={"Authorization": BEARER})):
+        pass
+    assert upstream.seen_headers[0]["Accept-Encoding"] == "identity"

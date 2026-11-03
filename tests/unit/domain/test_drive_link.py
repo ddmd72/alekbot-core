@@ -91,3 +91,15 @@ def test_the_base_url_is_the_resource_host():
     assert link_base_url("http://localhost:8080/mcp/") == "http://localhost:8080"
     with pytest.raises(ValueError):
         link_base_url("/mcp")
+
+
+@pytest.mark.parametrize("mime", ["text/plain,text/html", "text/plain\nX-Injected: 1", "image/png text/html",
+                                  "image/png\r", "application", "/pdf", "image/p ng", "IMAGE/PNG!"])
+def test_a_type_that_is_not_one_plain_type_subtype_is_an_octet_stream_attachment(mime):
+    headers = link_headers("FA-0137.pdf", mime)
+    assert headers["Content-Type"] == "application/octet-stream"
+    assert headers["Content-Disposition"].startswith("attachment; ")
+
+
+def test_a_plain_type_with_parameters_keeps_its_type():
+    assert link_headers("FA-0137.pdf", "Application/PDF; charset=binary")["Content-Type"] == "application/pdf"

@@ -100,8 +100,8 @@ class MCPClientRepository(ABC):
         """
 
     @abstractmethod
-    async def has_active_grant(self, grant_id: str, now: datetime) -> bool:
-        """True when some refresh token with that `grant_id` and `revoked_at` null has `expires_at` > now.
+    async def has_active_grant(self, user_id: str, grant_id: str, now: datetime) -> bool:
+        """True when some refresh token of `user_id` with that `grant_id` and `revoked_at` null has `expires_at` > now.
 
         The one-time drive link re-checks its grant with this at fetch (DRIVE_MCP_CONNECTOR_RFC §3.3.8, §8).
         A revoked or expired grant answers False; an unknown grant id answers False.

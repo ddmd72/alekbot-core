@@ -19,15 +19,11 @@ from ..domain.drive_link import LINK_ID_PATTERN, SAFETY_HEADERS, link_headers
 from ..services.drive_link_service import DriveLinkService
 
 NOT_VALID = "This link is not valid."
-_NOT_FOUND_HEADERS = {
-    "Cache-Control": SAFETY_HEADERS["Cache-Control"],
-    "Referrer-Policy": SAFETY_HEADERS["Referrer-Policy"],
-    "X-Content-Type-Options": SAFETY_HEADERS["X-Content-Type-Options"],
-}
 
 
 def _not_found() -> Response:
-    return Response(NOT_VALID, status=404, mimetype="text/plain", headers=_NOT_FOUND_HEADERS)
+    """The one 404: plain text with the same safety headers as a 200 (the CSP sandbox included)."""
+    return Response(NOT_VALID, status=404, mimetype="text/plain", headers=dict(SAFETY_HEADERS))
 
 
 async def _empty() -> AsyncIterator[bytes]:

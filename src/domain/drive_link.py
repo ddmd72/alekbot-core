@@ -47,6 +47,7 @@ SAFETY_HEADERS: Dict[str, str] = {
 }
 
 _ASCII_UNSAFE = re.compile(r'[^\x20-\x7e]|["\\%;]')
+_MIME_SHAPE = re.compile(r"^[a-z0-9.+-]+/[a-z0-9.+-]+$")
 
 
 @dataclass(frozen=True)
@@ -79,9 +80,10 @@ def link_base_url(resource_uri: str) -> str:
 
 
 def served_type(mime: str) -> str:
-    """The Content-Type the link serves: the file's own type, `application/octet-stream` for an active type."""
-    base = (mime or "").split(";", 1)[0].strip().lower()
-    if not base or base in ACTIVE_MIME_TYPES or base.endswith("+xml"):
+    """The Content-Type the link serves: the file's own type, `application/octet-stream` for an active type or for
+    anything that is not one plain `type/subtype` (a list, a newline, a stray character)."""
+    base = (mime or "").split(";", 1)[0].strip(" \t").lower()     # a CR or LF is never stripped: it fails the shape
+    if not _MIME_SHAPE.match(base) or base in ACTIVE_MIME_TYPES or base.endswith("+xml"):
         return OCTET_STREAM
     return base
 

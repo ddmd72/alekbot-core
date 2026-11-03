@@ -481,7 +481,7 @@ class MCPAuthorizationService:
         reason: Optional[str]
         if not grant_id:
             reason = "no_grant"
-        elif not await self._repo.has_active_grant(grant_id, datetime.now(timezone.utc)):
+        elif not await self._repo.has_active_grant(user_id, grant_id, datetime.now(timezone.utc)):
             reason = "grant_inactive"
         else:
             reason = await self._allow_reason(user_id)

@@ -37,7 +37,9 @@ class HttpMediaStreamAdapter(MediaStreamPort):
         connector = aiohttp.TCPConnector(ssl=self._ssl if self._ssl is not None else True)
         async with aiohttp.ClientSession(timeout=self._timeout, connector=connector, auto_decompress=False) as session:
             try:
-                async with session.get(source.url, headers=dict(source.headers),
+                # identity: the session does not decompress, so a compressed body would reach the client as bytes
+                # with no Content-Encoding (a corrupt download); the source's own headers come after it
+                async with session.get(source.url, headers={"Accept-Encoding": "identity", **source.headers},
                                        allow_redirects=source.header_free) as upstream:
                     status = upstream.status
                     if status in _GONE:

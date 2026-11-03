@@ -144,3 +144,14 @@ async def test_the_facts_token_verifies_as_before_and_carries_its_gid():
     assert verified is not None
     assert (verified.user_id, verified.account_id, verified.scopes) == ("u1", "acc1", ["user_context"])
     assert verified.grant_id == w.gid(issued.access_token, FACTS) == (await w.stored(issued.refresh_token)).grant_id
+
+
+async def test_an_active_grant_of_another_user_does_not_count():
+    w = World()
+    issued = await w.exchange()
+    grant_id = w.gid(issued.access_token)
+    assert await w.repo.has_active_grant("u1", grant_id, datetime.now(timezone.utc)) is True
+    assert await w.repo.has_active_grant("u2", grant_id, datetime.now(timezone.utc)) is False
+    users, whitelist = allowing_repos("u2")
+    w.users.users.update(users.users)
+    assert await w.service.grant_allowed("u2", grant_id) is False

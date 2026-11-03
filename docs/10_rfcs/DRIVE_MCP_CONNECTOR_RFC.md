@@ -125,9 +125,9 @@ connector runs as before; the AS fixes below live in the shared service, so a sw
 8. **Grant id (E13, slice 4).** A `grant_id` minted at code exchange (or at the first rotation of a refresh token stored
    without one), copied through every rotation and into the access token (`gid`); the link stores it and checks at
    fetch that the grant still has an active refresh token. Stored as a field of the refresh token
-   (`MCPRefreshToken.grant_id`); "an active refresh token" is `MCPClientRepository.has_active_grant(grant_id, now)`: some
-   refresh token with that `grant_id`, `revoked_at` null and `expires_at` > now (two equality filters, served by the
-   automatic single-field indexes). `MCPAuthorizationService.grant_allowed(user_id, grant_id)` adds the whitelist check.
+   (`MCPRefreshToken.grant_id`); "an active refresh token" is `MCPClientRepository.has_active_grant(user_id, grant_id, now)`:
+   some refresh token of that user with that `grant_id`, `revoked_at` null and `expires_at` > now (three equality
+   filters, served by the automatic single-field indexes). `MCPAuthorizationService.grant_allowed(user_id, grant_id)` adds the whitelist check.
    An access token minted before the grant id existed carries no `gid`: for at most its hour, `get_download_link`
    answers the neutral refusal and the withheld lines carry no link. Rotation revokes, then saves (a save-first order
    would let a replayed old token mint again), so a fetch in the milliseconds between the two is refused; the client
@@ -479,7 +479,8 @@ or path is never logged** (the drive rule: `src/agents/drive_agent.py:186-188`; 
 `drive_search_service.py:611-619`). The facts tool logs its query (`mcp_setup.py:318-323`); the drive tool does not copy
 that. `DriveOperations._call` already logs the op and the ref or folder label (`drive_operations.py:787`), as in chat; the
 connector adds nothing to it. An unexpected failure is logged by exception type only.
-Link issue, consume and refuse lines carry no path. There are no `prompt_content` rows: no LLM call.
+Link issue, consume and refuse lines carry no path. Cloud Run's request log records `/d/<id>`: a reader with log
+access could use a link not yet fetched within its 5 minutes; accepted. There are no `prompt_content` rows: no LLM call.
 
 **Money.** No model call of ours (D2, D8). Search and `find_passages` cost one query embedding each plus Firestore reads;
 open and list cost provider downloads and listings; `get_note` and `read_passages` are reads. The embedding adapter
