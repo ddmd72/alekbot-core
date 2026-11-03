@@ -169,6 +169,10 @@ Mirrors the `SearchEnrichmentService` RRF pattern for facts:
 
 No search — direct Gmail API call. The stored index provides `email_id`; the full body is fetched fresh at query time. This avoids storing full email bodies in Firestore (privacy + storage cost).
 
+### 6.4 Untrusted marking
+
+An email is someone else's text, so neither tool output lets it pass as an instruction (EXTERNAL_FILES_RFC §4.6, P14). `get_email_details` puts the body and the attachment names in one `<external_content nonce=… ref=<email id>>` block; the `search_emails` lines (sender, date, attachment names, the indexed fact sentence) go in one block around the list, while the count line and the follow-up hints stay outside. Both use `wrap_untrusted` from `src/domain/untrusted_text.py` with a fresh nonce per block and print `EXTERNAL_REMINDER` first; a forged closing tag in an email is escaped. The standing `untrusted` line of `PROTOCOL_AGENT_SELECTION` names email bodies and search results (shipped by the owner's prompt upload).
+
 ---
 
 ## 7. UserNotificationService
