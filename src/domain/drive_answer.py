@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Sequence, Tuple
 
 from . import drive_answer_texts as t
 from .agent import DeliveryItem
@@ -181,42 +181,54 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
 
 
 def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
-    """§7.3: each trigger adds exactly its lines, once, in a fixed order."""
-    lines: List[str] = []
+    """§7.3: each trigger adds exactly its lines, once, in a fixed order. The chat's texts for `reading_keys`."""
+    return reading_texts(reading_keys(blocks), t.CHAT_READING_TEXTS)
+
+
+def reading_texts(keys: Sequence[str], texts: Mapping[str, str]) -> List[str]:
+    """The text of each reading key from a surface's map (the chat's `CHAT_READING_TEXTS`, the connector's tokens), in
+    the keys' order. A key the map lacks raises `KeyError`: no line is dropped silently."""
+    return [texts[key] for key in keys]
+
+
+def reading_keys(blocks: Sequence[CollectedResult]) -> Tuple[str, ...]:
+    """§7.3: the reading lines' code names (the names of their constants in `drive_answer_texts`); each trigger adds
+    exactly its keys, once, in a fixed order. Pure trigger logic: which text a key stands for is the surface's map."""
+    keys: List[str] = []
 
     def add(*items: str) -> None:
-        lines.extend(item for item in items if item not in lines)
+        keys.extend(item for item in items if item not in keys)
 
     searches = [b.outcome for b in blocks if b.outcome.op is DriveOp.SEARCH]
     cards = sum(s.facts.cards for s in searches)
     if cards:
-        add(t.R_FIND, t.R_TIERS, t.R_TRUST, t.R_RELATED, t.R_COVERAGE, t.R_MANY, t.R_ALL)
+        add("R_FIND", "R_TIERS", "R_TRUST", "R_RELATED", "R_COVERAGE", "R_MANY", "R_ALL")
     if any(b.outcome.facts.excerpts and not b.outcome.facts.paged for b in blocks):
-        add(t.R_EXCERPTS)
+        add("R_EXCERPTS")
     if any(b.outcome.facts.paged for b in blocks):
-        add(t.R_PAGED)
+        add("R_PAGED")
     if any(b.outcome.facts.too_long or b.outcome.facts.cut for b in blocks):
-        add(t.R_TOO_LONG)
+        add("R_TOO_LONG")
     if any(s.facts.passage for s in searches):
-        add(t.R_PASSAGE)
+        add("R_PASSAGE")
     if any(s.facts.accuracy for s in searches):
-        add(t.R_ACCURACY, t.R_ACCURACY_FIND, t.R_ACCURACY_VALUE)
+        add("R_ACCURACY", "R_ACCURACY_FIND", "R_ACCURACY_VALUE")
     if any(s.facts.low_accuracy_image for s in searches):
-        add(t.R_ACCURACY_IMAGE)
+        add("R_ACCURACY_IMAGE")
     if any(b.outcome.facts.owner_note for b in blocks):
-        add(t.R_OWNER_NOTE)
+        add("R_OWNER_NOTE")
     if any(s.facts.scan for s in searches):
-        add(t.R_SCAN)
+        add("R_SCAN")
     if any(b.outcome.facts.inaccessible for b in blocks):
-        add(t.R_NO_ACCESS)
+        add("R_NO_ACCESS")
     if any(s.facts.image for s in searches):
-        add(t.R_PHOTOS)
+        add("R_PHOTOS")
     if cards >= 2:
-        add(t.R_VERSIONS)
+        add("R_VERSIONS")
     # the deleted-files search reads the ledger, not the index: its not-found gets no index lines (X7)
     if any(b.kind == t.KIND_SEARCH and (b.outcome.cls is OutcomeClass.NOT_FOUND or b.outcome.facts.coverage_incomplete
                                          or b.outcome.facts.building) for b in blocks if b.outcome.op is DriveOp.SEARCH):
-        add(t.R_BUILDING, t.R_NOT_SEARCHED, t.R_FOLDER_CARD)
+        add("R_BUILDING", "R_NOT_SEARCHED", "R_FOLDER_CARD")
     # Only a file's content opens the "numbers / document vs memory / not read" lines: a body or a vision file, not a
     # refusal or the line that a video was sent to the chat (M2).
     if any(b.outcome.op is DriveOp.OPEN and b.kind == t.KIND_OPEN and b.outcome.cls is OutcomeClass.OK
@@ -224,9 +236,9 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
         # a cut body is a file's head: no "open the file, then compute" (§29.6 L13)
         if not all(b.outcome.facts.cut for b in blocks if b.outcome.op is DriveOp.OPEN and b.kind == t.KIND_OPEN
                    and b.outcome.cls is OutcomeClass.OK and (b.outcome.body or b.outcome.file_data)):
-            add(t.R_NUMBERS)
-        add(t.R_DOC_VS_MEMORY, t.R_NOT_READ)
-    return lines
+            add("R_NUMBERS")
+        add("R_DOC_VS_MEMORY", "R_NOT_READ")
+    return tuple(keys)
 
 
 # Today's texts for a drive state no operation reported (§7.2 row 6); equal to DriveOperations' constants, which a

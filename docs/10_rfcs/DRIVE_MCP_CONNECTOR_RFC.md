@@ -2,6 +2,7 @@
 
 **Status:** Proposed (2026-11-03). The owner answered the three questions the re-verification raised (D8–D11, §2); no
 owner question is open.
+Slice 2 (the read tools, token-backed) is built (2026-11-03); the sections below state what it ships.
 **Owner:** AI Engineering
 **Milestone:** External interop. Extends the facts connector ([REMOTE_MCP_SERVER_RFC.md](REMOTE_MCP_SERVER_RFC.md),
 building block [`remote_mcp_server`](../05_building_blocks/remote_mcp_server/README.md)) with a second protected
@@ -136,7 +137,7 @@ connector runs as before; the AS fixes below live in the shared service, so a sw
 | `read_passages` | `.read_passages` (`:334`) | no "one page per request" rule |
 | `open_drive_file` | `.open` (`:440`) | `drive:` refs only; no native declaration; `withhold_media=True` (§6.2) |
 | `list_folder` | `.list_folder` (`:350`) | `/` lists only drives the connector sees, with their connector access (§7.4) |
-| `get_note` | `DriveNoteService.get` (`src/services/drive_note_service.py:191-207`) | access check added (§7.5) |
+| `get_note` | `read_note_for_connector` (`src/infrastructure/drive_note_tools.py`), over `DriveNoteService.get`; it reuses the chat's one-target rule, refusal map and error mapping | `drive:` refs only; the access check is added in slice 3 (§7.5) |
 | `get_download_link` (slice 4) | the one-time link (§8) | any file kind; there is no `get_recording_link` |
 
 **Not registered:** the seven write tools, the ten note writers, `report_to_orchestrator`,
@@ -162,7 +163,9 @@ Search, passages and page reads only read: every repository call of `src/service
   the branch still downloads the video before failing (`:1064`). → `withhold_media` answers a line before any
   download (§6.2).
 - **(b) A non-`drive:` ref opens chat uploads, delivered documents, `workspace:` and `skill:` files**
-  (`:445-446` → `fetch_stored`, `:655-695`): content outside the drive and any folder choice. → Refused before any call.
+  (`:445-446` → `fetch_stored`, `:655-695`): content outside the drive and any folder choice. → Refused before any call
+  with the neutral refusal line (§7.7); a missing ref gets the same line, so existence never leaks. No withheld code
+  exists for it.
 - **(c) A recording with no stored transcript** is downloaded and then refused as unsupported: the document service
   transcribes only chat uploads (`src/services/document_service.py:246-249`). → `withhold_media` answers "not
   transcribed yet" with no download. (The concept this RFC comes from expected a paid transcription here; that path is
@@ -171,7 +174,8 @@ Search, passages and page reads only read: every repository call of `src/service
   reader when its text layer is missing, thin or garbage, and an image goes straight to the reader
   (`src/domain/document_extraction.py:32`, `:101-116`; `document_service.py:180-225`), an LLM run billed to the ledger
   (`src/composition/document_service_setup.py:34`), up to 200 pages (`src/domain/drive_index_params.py:77`). → D8: the
-  connector's read request skips the reader link (as `CALLER_PREFETCH` already skips audio, `document_service.py:248`)
+  connector's read request skips the reader link, expressed as its own caller value `CALLER_CONNECTOR`
+  (`src/domain/document_read.py`; as `CALLER_PREFETCH` already skips audio, `document_service.py:248`)
   and answers a line pointing to the file's passages (the index read the scan once already) or, from slice 4, its
   download link; an image answers before any download.
 
@@ -195,7 +199,9 @@ specialist's per-run guards — the identical-search skip, the passages ledger, 
 
 Input is liberal, as the facts tool's (`src/composition/CLAUDE.md`,
 [mcp_tool_schema_liberal_input.md](../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md)): flat strings,
-defaults, normalising validators; an empty required ref is a correctable error line, not a protocol error.
+defaults, normalising validators; an empty required ref or any other correctable input error is a normal result with a
+guidance line (`isError` false), not a protocol error. `isError` is true only for a call with no verified token, no texts
+ever loaded, or an unexpected failure, which is logged by exception type only.
 
 ## 5. Token-backed wording
 
@@ -259,8 +265,9 @@ schema, fills `description` and every `properties[p].description` from `Connecto
 (shared across concurrent requests). On a cache miss in `tools/call` the low-level server refreshes its tool cache
 through the same handler (`mcp/server/lowlevel/server.py:476-490`), so a call also needs loaded texts — consistent with
 fail-loud. Server `instructions` come from `create_initialization_options` (`lowlevel/server.py:164-188`), which
-stateless mode calls per request (`mcp/server/streamable_http_manager.py:185-199`); overriding it on the low-level
-server makes them token-backed too.
+stateless mode calls per request (`mcp/server/streamable_http_manager.py:185-199`); that call is synchronous, so the
+override serves the texts last loaded (at boot, then refreshed by every `tools/list` and tool call), within the 60 s TTL
+of an upload. Tool and parameter descriptions are filled per `tools/list` from the cache.
 
 **`listChanged` is not declared (E9).** Declaring is one line (`NotificationOptions(tools_changed=True)`,
 `lowlevel/server.py:217`). Emitting is impossible: with `stateless_http=True` (needed on multi-instance Cloud Run) every
@@ -322,11 +329,13 @@ embedded PDFs are reported ignored by Anthropic clients, and `structuredContent`
   token line —
   an **image** answers "its description is in its search card or passages; the picture itself comes by
   `get_download_link`";
-  a **video** (`"video"`) answers a link line, never a post;
-  a **recording** returns its stored transcript (`_transcript_of`, `:958-968`) or, with none, `"recording_untranscribed"`
-  ("not transcribed yet");
-  a **scan PDF** gets no model read (D8): the read request skips the reader and the result is the "read its passages"
-  line.
+  a **recording** (audio, or any `video/*`: every video is a transcribed kind, so there is no video code) returns its
+  stored transcript (`_transcript_of`, `:958-968`) or, with none, `"recording_untranscribed"` ("not transcribed yet");
+  never a post to a chat;
+  a **scan PDF** gets no model read (D8): the read request skips the reader (`CALLER_CONNECTOR`) and the result is the
+  `"scan"` code, the "read its passages" line.
+  The codes are `recording_untranscribed`, `image` and `scan` (`src/domain/drive_withheld.py`); a non-drive ref carries
+  none (§4.3 b).
 - Until slice 4 the image/video/recording lines say the file itself cannot be fetched through the connector; slice 4
   swaps in the link.
 
@@ -417,7 +426,8 @@ GCS-only, long-lived, a JWT).
 (`src/utils/telemetry.py:281`), and one line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. **The query, question
 or path is never logged** (the drive rule: `src/agents/drive_agent.py:186-188`; `[DriveSearch]` logs counts only,
 `drive_search_service.py:611-619`). The facts tool logs its query (`mcp_setup.py:318-323`); the drive tool does not copy
-that. `DriveOperations._call` already logs the op and the ref or folder label (`drive_operations.py:787`), as in chat.
+that. `DriveOperations._call` already logs the op and the ref or folder label (`drive_operations.py:787`), as in chat; the
+connector adds nothing to it. An unexpected failure is logged by exception type only.
 Link issue, consume and refuse lines carry no path. There are no `prompt_content` rows: no LLM call.
 
 **Money.** No model call of ours (D2, D8). Search and `find_passages` cost one query embedding each plus Firestore reads;
@@ -461,7 +471,8 @@ Vertical, each deployable alone; the connector shows no drive content until slic
 2. **Read tools on whole drives, token-backed.** The facade, the handlers, `withhold_media`, `drive:`-only open, no
    native declaration and no reader, `ConnectorTextService`, both tokens drafted in `prompts_snapshot/`, the `list_tools`
    override, the `reading_keys` split, the `page_next` seam, the composer, span and log, size meta and guard; gated by a
-   deploy knob (the connector sees nothing unless set) until slice 3. *Done:* chat suites green with no test edited; an
+   deploy knob `DRIVE_MCP_TOOLS_ENABLED` (read with `os.getenv`, default off): off, the drive app registers no tool and
+   reads no token, while the auth seam still answers; the connector sees nothing unless set, until slice 3. *Done:* chat suites green with no test edited; an
    offline test shows the snapshot tokens cover every key; one live call per tool from claude.ai and from Claude Code; a
    token upload changes a description in a new conversation within 60 s with no deploy (this also measures claude.ai's
    list caching); a missing key leaves the app unbuilt and logs an ERROR.
@@ -491,7 +502,7 @@ Vertical, each deployable alone; the connector shows no drive content until slic
 - **E6** The facade exposes exactly five methods, a subset of `READ_METHODS`. *Why:* defence in depth; `preflight`
   carries specialist state lines and `fetch_stored` opens content outside the drive.
 - **E7** No native declaration instead of a vision switch; one keyword `withhold_media` on `open`, its outcomes coded
-  (`"video"`, `"recording_untranscribed"`, …) for the connector's token lines. *Why:* the open path already decides
+  (`"recording_untranscribed"`, `"image"`, `"scan"`) for the connector's token lines. *Why:* the open path already decides
   native from the consumer's declaration; withholding first avoids downloads whose result is a line.
 - **E8** A 120 s `wait_for` per call and `open(deadline_at=now + 120 − OPEN_MARGIN_S)`.
 - **E9** `listChanged` not declared: stateless HTTP cannot deliver it.

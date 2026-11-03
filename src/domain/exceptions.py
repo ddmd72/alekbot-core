@@ -337,3 +337,8 @@ class QuestionTransitionError(Exception):
     """A memory-review question cannot make that move from its present state (a closed question cannot be asked, a
     question not yet posted cannot be completed as asked). The store applies a transition inside its transaction and
     treats this as "not applied"; it decides conflicts, never whether a move is legal."""
+
+
+class ConnectorTextsUnavailable(Exception):
+    """The drive connector's texts could not be loaded even once (a token is missing, flagged, or its keys or sizes
+    are wrong). There is no inline default text, so the connector cannot answer; the message names the cause."""

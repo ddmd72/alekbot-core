@@ -16,7 +16,8 @@ Public interface (one call = one operation; `context` is the caller's message co
     async read_passages(context, user_id, *, file_ref, passages, shown_folders, described_files)
                                                          one file's passages by number (§28.3 A7)
     async list_folder(context, user_id, folder) -> DriveOutcome
-    async open(context, user_id, ref, *, original=False, deadline_at=None) -> DriveOutcome   drive ref, or a stored file (lenient)
+    async open(context, user_id, ref, *, original=False, deadline_at=None, withhold_media=False) -> DriveOutcome
+                                                         drive ref, or a stored file (lenient)
     async fetch_stored(context, user_id, ref, *, deadline_at=None) -> DriveOutcome   chat file, delivered key, skill:, workspace:
     async copy(context, user_id, source_ref, *, folder, file_name, wait_s) -> DriveOutcome
     async save_text(context, user_id, text, *, file_name, folder, wait_s) -> DriveOutcome
@@ -70,7 +71,9 @@ from ..domain.document_kind import kind_of
 from ..domain.document_open import OpenedFile
 from ..domain.document_open_texts import shown_line, storage_read_note
 from ..domain.document_presentation import present_text
-from ..domain.document_read import CALLER_OPEN, INTERACTIVE_OPEN_S, ReadOutcome, ReadStatus
+from ..domain.document_read import (
+    CALLER_CONNECTOR, CALLER_OPEN, INTERACTIVE_OPEN_S, ReadOutcome, ReadStatus, reader_skipped,
+)
 from ..domain.drive_op import DriveOp
 from ..domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain
 from ..domain.drive_outcome import DriveOutcome
@@ -128,6 +131,7 @@ from ..domain.workspace import BINARY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, p
 from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
 from ..domain.drive_open_bound_info import OpenBoundInfo
 from ..domain.drive_text_extent import ExtentState, TextExtent
+from ..domain.drive_withheld import Withheld
 from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
@@ -438,14 +442,20 @@ class DriveOperations:
                      for m, path, scope in zip(table.mounts, paths, scopes))
 
     async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False,
-                   deadline_at: Optional[float] = None) -> DriveOutcome:
+                   deadline_at: Optional[float] = None, withhold_media: bool = False) -> DriveOutcome:
         """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today). Every read goes
-        through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default)."""
+        through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default).
+        `withhold_media` (the drive connector; the chat never sets it): an image, or a recording (audio or video) with no
+        stored transcript is answered on its metadata before any download, with `DriveOutcome.withheld` set and no
+        text; a recording with a stored transcript still opens as it. Every other file is read with the paid model
+        reader off (`CALLER_CONNECTOR`): a PDF the router would hand to the reader answers `Withheld.SCAN`, one with a
+        good text layer its parser text, as without the flag."""
         async def run() -> DriveOutcome:
             if not drive_ref.is_drive_ref(ref or ""):
                 return await self.fetch_stored(context, user_id, ref, deadline_at=deadline_at)
             try:
-                return await self._open_drive_item(context, ref, user_id, original=original, deadline_at=deadline_at)
+                return await self._open_drive_item(context, ref, user_id, original=original, deadline_at=deadline_at,
+                                                   withhold_media=withhold_media)
             except DriveItemNotFoundError:
                 note = await self._access_note(user_id, ref=ref)
                 if note is None:
@@ -714,11 +724,12 @@ class DriveOperations:
         return await self._open_stored(context, ref, user_id, deadline_at)
 
     async def _open_opened(self, context: Mapping[str, Any], ref: str, user_id: str, deadline_at: Optional[float],
-                           consumer: Tuple[NativeFormat, ...]) -> OpenedFile:
-        """One read through the conversion service, under the opener's deadline (None: the interactive default)."""
+                           consumer: Tuple[NativeFormat, ...], caller: str = CALLER_OPEN) -> OpenedFile:
+        """One read through the conversion service, under the opener's deadline (None: the interactive default).
+        `caller` CALLER_CONNECTOR: the paid model reader never runs (`withhold_media`)."""
         opened: OpenedFile = await self._conversion_service.open(
             ref, user_id, context.get("account_id") or "", consumer=consumer,
-            deadline_at=time.time() + INTERACTIVE_OPEN_S if deadline_at is None else deadline_at, caller=CALLER_OPEN)
+            deadline_at=time.time() + INTERACTIVE_OPEN_S if deadline_at is None else deadline_at, caller=caller)
         _signal_note(ref, opened)
         return opened
 
@@ -968,7 +979,8 @@ class DriveOperations:
         return text or None
 
     async def _archived_transcript_of(self, context: Mapping[str, Any], target: ResolvedDriveRef, ref: str,
-                                      item: DriveItem, deadline_at: Optional[float]) -> Optional[str]:
+                                      item: DriveItem, deadline_at: Optional[float],
+                                      caller: str = CALLER_OPEN) -> Optional[str]:
         """A ref whose item is a file of the bot's `_Transcripts` folder opens from the pinned store entry, capped; with
         none, the downloaded file, capped the same way (§27.9.11). None for any other file, or when the lookup failed
         (the plain open then runs)."""
@@ -977,7 +989,7 @@ class DriveOperations:
         conn = target.connection
 
         async def downloaded() -> str:
-            opened = await self._open_opened(context, ref, conn.user_id, deadline_at, ())
+            opened = await self._open_opened(context, ref, conn.user_id, deadline_at, (), caller)
             return opened.body or opened.note
 
         try:
@@ -1005,14 +1017,16 @@ class DriveOperations:
             return TextExtent.UNKNOWN
 
     async def _open_drive_item(self, context: Mapping[str, Any], ref: str, user_id: str, *,
-                               original: bool, deadline_at: Optional[float] = None) -> DriveOutcome:
+                               original: bool, deadline_at: Optional[float] = None,
+                               withhold_media: bool = False) -> DriveOutcome:
         target = await self._svc().resolve_ref(user_id, ref)
         conn, tag = target.connection, target.connection.ref_tag
         item = self._shown(conn, await self._svc().get_item(target.handle, target.item_id))
         if item.is_folder:
             return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; list it instead.",
                          OutcomeClass.REQUEST_ERROR)
-        archived = await self._archived_transcript_of(context, target, ref, item, deadline_at)
+        archived = await self._archived_transcript_of(context, target, ref, item, deadline_at,
+                                                      CALLER_CONNECTOR if withhold_media else CALLER_OPEN)
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True, tag=tag)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
@@ -1032,6 +1046,9 @@ class DriveOperations:
                                 success=False, items=(item,), facts=ReadFacts(too_long=True),
                                 open_bound=OpenBoundInfo(extent), ref_tag=tag)
         note = await self._note_line_of(user_id, item)
+        if withhold_media and (mime.startswith("image/") or kind_of(item.name, item.mime_type or "", False) == "image"):
+            # only the paid model reader reads an image: withheld before any download
+            return _withheld(ref, item, tag, Withheld.IMAGE)
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
             return _ok(DriveOp.OPEN, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item],
@@ -1059,6 +1076,10 @@ class DriveOperations:
                                     open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
                                                              cut_state=extent.state) if cut else None,
                                     ref_tag=tag)
+        if withhold_media and recording:
+            # The media pre-check, before any download: a recording with no transcript, which no open can read. Every
+            # video is a recording to the kind classifier (TRANSCRIBED_KINDS), so no video reaches the post below.
+            return _withheld(ref, item, tag, Withheld.RECORDING_UNTRANSCRIBED)
         if mime.startswith("video/"):
             try:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
@@ -1079,7 +1100,11 @@ class DriveOperations:
             return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} has "
                                                      f"been sent to the user as a file.", item, note, tag), [item],
                        owner_note=bool(note), tag=tag)
-        opened = await self._open_opened(context, ref, user_id, deadline_at, from_plain(context.get(NATIVE_FORMATS_KEY)))
+        opened = await self._open_opened(context, ref, user_id, deadline_at, from_plain(context.get(NATIVE_FORMATS_KEY)),
+                                         CALLER_CONNECTOR if withhold_media else CALLER_OPEN)
+        if withhold_media and opened.outcome is not None and reader_skipped(opened.outcome):
+            # a PDF the router would hand to the paid reader (a scan, a thin or garbled text layer): no reader ran
+            return _withheld(ref, item, tag, Withheld.SCAN)
         if opened.native_path:
             logger.info("[DriveOperations] opened vision: %s mime=%s pages=%s", ref, opened.native_mime,
                         extent.pages_total or "-")
@@ -1238,6 +1263,15 @@ def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
     return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data,
                         body=body, facts=ReadFacts(owner_note=owner_note) if owner_note else ReadFacts(),
                         ref_tag=tag)
+
+
+def _withheld(ref: str, item: DriveItem, tag: str, why: Withheld) -> DriveOutcome:
+    """A file whose content the open withheld (`open(..., withhold_media=True)`): no text, the code says why. A success
+    of class OK, as the other answers decided without reading the file (an image format that cannot be viewed, a video
+    above the size cap)."""
+    logger.info("[DriveOperations] open withheld: %s %s", ref, why.value)
+    return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="", success=True, items=(item,), ref_tag=tag,
+                        withheld=why)
 
 
 def _item_tags(result: Union[DriveSearchResult, ExcerptResult]) -> Tuple[str, ...]:

@@ -16,7 +16,8 @@ Public interface:
     ReadRequest                    one file's bytes and how to read them
     ReadOutcome                    what the read gave, raw and unmarked (§4.6)
     OPEN_MARGIN_S, INTERACTIVE_OPEN_S, PREFETCH_OPEN_S     the deadlines (§4.4 "Long scans: Deadline")
-    CALLER_OPEN, CALLER_PREFETCH                           `ReadRequest.caller` values
+    CALLER_OPEN, CALLER_PREFETCH, CALLER_CONNECTOR         `ReadRequest.caller` values
+    READER_SKIPPED, reader_skipped(outcome) -> bool         a connector read the reader would have taken (no paid call)
     IN_PROCESS_TEXT_KINDS          the kinds with no converter, read as UTF-8 in the caller (sandbox S-Δ2, A3)
     PARSE_KINDS                    the child readers' kinds that are not in IN_PROCESS_TEXT_KINDS
     TRANSCRIPT_CACHE_DAYS          how long a chat upload's transcript is kept (P21)
@@ -39,6 +40,11 @@ PREFETCH_OPEN_S = 270.0
 
 CALLER_OPEN = "open"
 CALLER_PREFETCH = "prefetch"
+# The drive connector's open (an outside client): never runs the paid model reader. A file the router would hand to
+# the reader (a scan, a thin or garbled text layer, a parser error on a PDF; any image) answers NO_TEXT with a
+# `READER_SKIPPED` detail instead, and the parser's links. Chat and prefetch never pass it.
+CALLER_CONNECTOR = "connector"
+READER_SKIPPED = "reader_skipped"
 
 # A3: the kinds that have no converter; reading UTF-8 is not parsing, so the caller reads them in process.
 IN_PROCESS_TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown", "json", "code", "log"})
@@ -77,7 +83,8 @@ class ReadRequest:
     name: str                                  # for log lines and the sandbox's `ext`; never addresses anything
     declared_mime: str
     store: str                                 # a `FileRefKind` value: keys the caps (§4.5)
-    caller: str                                # CALLER_OPEN | CALLER_PREFETCH: keys the deadline and the presentation
+    caller: str                                # CALLER_OPEN | CALLER_PREFETCH | CALLER_CONNECTOR: keys the deadline,
+                                               # the presentation and whether the reader may run
     native_formats: Tuple[NativeFormat, ...]   # what the consumer reads natively (§4.3); empty: text only
     user_id: str                               # the reader bills and configures by these two
     account_id: str
@@ -102,3 +109,8 @@ class ReadOutcome:
     model_cost_usd: float = 0.0                # already billed to the account; reported, not booked
     detail: str = ""                           # a failure label, never document text
     cut_within_pages: Tuple[int, ...] = ()     # 1-based pages of the one window whose text is shown in part (D7)
+
+
+def reader_skipped(outcome: ReadOutcome) -> bool:
+    """A connector read the reader would have taken and did not (`CALLER_CONNECTOR`): NO_TEXT, `READER_SKIPPED` detail."""
+    return outcome.status is ReadStatus.NO_TEXT and outcome.detail.split(":", 1)[0] == READER_SKIPPED

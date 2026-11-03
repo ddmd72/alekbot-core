@@ -174,14 +174,6 @@ async def test_a_drive_401_points_to_the_drive_prm(world):
         assert f'resource_metadata="{BASE}/.well-known/oauth-protected-resource/drive-mcp"' in resp.headers["www-authenticate"]
 
 
-async def test_the_drive_app_lists_only_the_stub_tool_marked_read_only(world):
-    async with world.running():
-        tokens = await world.tokens(scope="drive_read")
-        tools = _tool_names(await world.list_tools(world.drive_http, "/drive-mcp", tokens["access_token"]))
-        assert [t["name"] for t in tools] == ["drive_connector_status"]
-        assert tools[0]["annotations"]["readOnlyHint"] is True
-
-
 async def test_a_drive_refresh_keeps_the_drive_audience_and_scope(world):
     async with world.running():
         tokens = await world.tokens(scope="drive_read", resource=DRIVE)
@@ -222,14 +214,3 @@ async def test_a_user_context_only_client_cannot_get_a_drive_token_by_sending_on
     assert world.db.collection("a").docs == {}
     ok = await world.authorize(client, resource=FACTS)
     assert "req=" in ok.headers["location"]
-
-
-async def test_the_stub_tool_answers_through_the_drive_endpoint(world):
-    tokens = await world.tokens(scope="drive_read")
-    async with world.running():
-        resp = await world.drive_http.post(
-            "/drive-mcp", headers={**_MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}"},
-            json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                  "params": {"name": "drive_connector_status", "arguments": {}}})
-    assert resp.status_code == 200
-    assert "Connected. No drive tools yet." in resp.text

@@ -36,7 +36,8 @@ from ..domain.document_limits import (
     MAX_FILE_BYTES, parse_input_cap, reader_text_budget, text_export_cap,
 )
 from ..domain.document_read import (
-    CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, TRANSCRIPT_CACHE_DAYS, ReadOutcome, ReadRequest, ReadStatus,
+    CALLER_CONNECTOR, CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, READER_SKIPPED, TRANSCRIPT_CACHE_DAYS,
+    ReadOutcome, ReadRequest, ReadStatus,
 )
 from ..domain.drive_extraction import (
     DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable, PdfSplitFailed,
@@ -196,6 +197,12 @@ class DocumentService(DocumentReadPort):
                 return _from_extraction(parsed)
             if _busy(parsed):
                 return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
+        if request.caller == CALLER_CONNECTOR:
+            # The drive connector never runs the paid reader: what the router would hand it answers NO_TEXT, with
+            # the parser's links and page count, and the route (or the reader-first kind) in the detail.
+            return ReadOutcome(status=ReadStatus.NO_TEXT, links=_links(parsed) if parsed is not None else (),
+                               pages_total=parsed.pages_total if parsed is not None else 0,
+                               detail=f"{READER_SKIPPED}: {route or kind}")
         try:
             read = await self._reader.extract(ExtractionRequest(
                 path=path, name=request.name, kind=kind, mime_type=mime, user_id=request.user_id,

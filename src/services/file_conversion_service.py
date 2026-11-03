@@ -204,8 +204,9 @@ class FileConversionService:
         read them through the document service with the consumer's native declaration and the one absolute
         `deadline_at` (epoch seconds), and answer an `OpenedFile`: today's `[File: <name>]` body (raw, unmarked,
         uncut; the store's presenter marks and cuts it), a `[System: …]` note, or a native file for the consumer to
-        attach. `consumer` empty means text only. `caller` is `CALLER_OPEN` or `CALLER_PREFETCH`. Store-specific
-        branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
+        attach. `consumer` empty means text only. `caller` is `CALLER_OPEN`, `CALLER_PREFETCH` or
+        `CALLER_CONNECTOR` (the drive connector: the paid reader never runs, `document_read.reader_skipped`).
+        Store-specific branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
         Store errors (FileNotFoundError, PermissionError, DriveRefRefused, DriveItemNotFoundError, WorkspaceRefused)
         propagate; the callers map them. Every failed read is logged at WARNING (the file's) or ERROR (the system's)."""
         return (await self._open(ref, user_id, account_id, consumer, deadline_at, caller)).opened

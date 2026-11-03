@@ -25,6 +25,7 @@ from src.web.deep_research_webhooks import create_deep_research_webhooks_bluepri
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
+from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain.mcp_resource import DRIVE_PATH
 
@@ -54,10 +55,11 @@ def mcp_owner(path: str) -> Optional[str]:
     return "facts" if _is_mcp_path(path) else None
 
 
-def build_drive_mcp_or_none(authorization_service, auth_config):
-    """The drive connector's app, or None when its build fails: the facts connector must keep running."""
+def build_drive_mcp_or_none(authorization_service, auth_config, tools=None):
+    """The drive connector's app, or None when its build fails: the facts connector must keep running. `tools` None:
+    the app lists no tool (the `DRIVE_MCP_TOOLS_ENABLED` knob off)."""
     try:
-        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config)
+        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools)
     except Exception as drive_err:
         logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
         logger.warning("🤖 Bot will continue without the drive connector")
@@ -597,9 +599,19 @@ async def main():
                     )
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
-                    # The drive connector has its own build so a failure there (e.g. a missing token, once the
-                    # connector texts are token-backed) never takes the facts connector down.
-                    drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config)
+                    # The drive connector has its own build so a failure there (a missing or invalid connector-text
+                    # token with the tools knob on: its first load alerts and raises) never takes the facts connector
+                    # down; /drive-mcp then answers 404 (DRIVE_MCP_CONNECTOR_RFC §5.3).
+                    try:
+                        drive_tools = await build_drive_connector_tools_from_container(
+                            app.container, alert_sink=app.alert_sink)
+                    except Exception as drive_err:
+                        drive_mcp = None
+                        logger.error(f"❌ Failed to initialize drive MCP connector tools: {drive_err}", exc_info=True)
+                        logger.warning("🤖 Bot will continue without the drive connector")
+                    else:
+                        drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
+                                                            tools=drive_tools)
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
