@@ -61,7 +61,7 @@ class FakeEngine:
         self.calls: List[tuple] = []
         self.started = asyncio.Event()
 
-    async def run(self, body_path, workdir, limits):
+    async def run(self, body_path, workdir, limits, meta):
         self.calls.append((body_path, workdir, limits, open(body_path, "rb").read()))
         self.started.set()
         if self.gate is not None:
@@ -408,10 +408,10 @@ async def test_workdir_mode_0700_and_body_0600(tmp_path):
     seen = {}
 
     class Spy(FakeEngine):
-        async def run(self, body_path, workdir, limits):
+        async def run(self, body_path, workdir, limits, meta):
             seen["dir"] = os.stat(workdir).st_mode & 0o777
             seen["body"] = os.stat(body_path).st_mode & 0o777
-            return await super().run(body_path, workdir, limits)
+            return await super().run(body_path, workdir, limits, meta)
 
     app, *_ = make_app(tmp_path, engine=Spy(tmp_path))
     await post(app)
@@ -646,7 +646,7 @@ async def test_bogus_output_path_is_never_removed_or_streamed(tmp_path):
     (precious / "out.bin").write_bytes(b"keep")
 
     class Bogus(FakeEngine):
-        async def run(self, body_path, workdir, limits):
+        async def run(self, body_path, workdir, limits, meta):
             return SandboxEngineResult(SandboxStatus.OK, str(precious / "out.bin"), "", 1, 0.1)
 
     app, _, rec, _ = make_app(tmp_path, engine=Bogus(tmp_path))
@@ -666,7 +666,7 @@ async def test_without_output_root_only_the_render_out_prefix_is_removable(tmp_p
     paths = iter([out_bad / "o", out_ok / "o"])
 
     class Pick(FakeEngine):
-        async def run(self, body_path, workdir, limits):
+        async def run(self, body_path, workdir, limits, meta):
             return SandboxEngineResult(SandboxStatus.OK, str(next(paths)), "", 1, 0.1)
 
     work_root = tmp_path / "work"

@@ -152,11 +152,13 @@ def test_engine_result_is_frozen() -> None:
 
 async def test_engine_protocol_is_satisfiable() -> None:
     class Fake:
-        async def run(self, body_path: str, workdir: str, limits: SandboxLimits) -> SandboxEngineResult:
+        async def run(
+            self, body_path: str, workdir: str, limits: SandboxLimits, meta: SandboxMeta,
+        ) -> SandboxEngineResult:
             return SandboxEngineResult(SandboxStatus.EMPTY_OUTPUT, None, "none", 0, 0.0)
 
     engine: SandboxEngine = Fake()
-    res = await engine.run("/b", "/w", CEILING)
+    res = await engine.run("/b", "/w", CEILING, SandboxMeta(request_id="r" * 16, limits=CEILING))
     assert res.status is SandboxStatus.EMPTY_OUTPUT and res.output_path is None
 
 
