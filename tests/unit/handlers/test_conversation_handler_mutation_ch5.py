@@ -51,7 +51,7 @@ async def _watch(env, *, heartbeat_cancels: bool = False):
     try:
         await asyncio.wait_for(
             env.handler._watch_long_turn(
-                lt, env.long_turns, _context(), env.channel, "status-1", env.stop, [], {},
+                lt, env.long_turns, _context(), env.channel, "status-1", env.stop, [],
             ),
             timeout=5,
         )
@@ -100,7 +100,7 @@ async def test_user_cancel_becomes_cancelled_by_user_failure(env):
     message = SimpleNamespace(task_id="task-1")
     awaiting = asyncio.create_task(env.handler._await_agent_turn(
         lt, env.long_turns, message, _context(), env.channel, "status-1",
-        env.stop, [], {},
+        env.stop, [],
     ))
     await asyncio.sleep(0)
     agent_task.cancel()
