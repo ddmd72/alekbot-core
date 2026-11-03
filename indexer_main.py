@@ -8,7 +8,7 @@ Builds only what the tick needs: Firestore (`us-production`), the user repositor
 reads the opt-in flag uncached), OAuth credentials + the drive adapter, the drive index repository,
 the Gemini embedding adapter, the place table, a task queue bound to the drive queue and to this
 service's own `/worker` (continuations and nudge re-queues come back here), and the content side of
-Slice 2+4 (§24.2): the child-process parser, the document reader and image triage agents over Claude
+Slice 2+4 (§24.2): the sandbox parse adapter (the light service), the document reader and image triage agents over Claude
 and OpenAI, the Firestore prompt builder and the quota service that bills their calls to the user's
 account (`src/composition/drive_model_setup.py`), and Search v2's profiler and passage-hint runners
 (§25.4.4) on the same wiring; with the transcription switch on, the transcript stage and the transcript mirror's
@@ -38,7 +38,9 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   DRIVE_TRANSCRIBE_USD_CAP      Optional: a positive number that LOWERS the $20 monthly transcription cap (never raises
                                 it; empty = $20). Deployed from DRIVE_TRANSCRIBE_USD_CAP_DEV in .env, on this service and
                                 on the main service (the Cabinet shows it).
-  DRIVE_PARSER_USER             The unprivileged user the parser and media children run as (Dockerfile).
+  SANDBOX_PARSE_URL             The sandbox light (parse) service URL, from _SANDBOX_LIGHT_URL. Required: empty refuses
+                                the start, locally too.
+  DRIVE_PARSER_USER             The unprivileged user the media children run as (Dockerfile).
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
@@ -71,7 +73,7 @@ from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.adapters.google.google_drive_adapter import GoogleDriveAdapter
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
+from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.composition.cipher_setup import build_cipher
 from src.composition.connector_registry import GOOGLE_DRIVE, MICROSOFT_ONEDRIVE, ConnectorRegistry
 from src.composition.drive_connection_setup import build_drive_connection_service
@@ -86,6 +88,7 @@ from src.composition.drive_note_setup import (
 )
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
+from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.config.environment import EnvironmentConfig
 from src.domain.drive_transcript_plan import effective_monthly_cap
 from src.services.drive_indexing_service import DriveIndexingService
@@ -112,6 +115,8 @@ def build_app() -> Quart:
     # The credential store's cipher (SECRETS_AT_REST_RFC §2.6, I6): the indexer has no load_settings(), so the key
     # name comes from its environment; an empty one refuses the start, before any client is built.
     cipher = build_cipher(os.environ.get("KMS_CRYPTO_KEY"))
+    # Every document is parsed by the sandbox's light service: no URL refuses the start, before any client is built.
+    parser = build_sandbox_parser(os.environ.get("SANDBOX_PARSE_URL") or "")
     env_config = EnvironmentConfig()
     db = firestore.AsyncClient(project=project, database=env_config.firestore_database_id)
 
@@ -134,8 +139,7 @@ def build_app() -> Quart:
     assembly_service, profile_repo = build_prompt_assembly_service(db, env_config)
     billing_webhook = (os.environ.get("BILLING_SLACK_WEBHOOK_URL") or "").strip()
     models = build_drive_models(
-        # the image's unprivileged user (Dockerfile); a named user missing from the container fails the start (R3 F3-1)
-        parser=SubprocessContentExtractor(sandbox_user=os.environ.get(PARSER_USER_ENV)),
+        parser=parser,
         users=users,
         account_repo=account_repo,
         assembly_service=assembly_service,

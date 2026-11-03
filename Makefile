@@ -81,7 +81,7 @@ _SANDBOX_RENDER_SA = $(SANDBOX_RENDER_SA_DEV)
 _SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
 
 # Untrusted-content sandbox, light (parse) family. Deploy-only keys (never a local key: the deploy-substitution trap);
-# the light steps skip while SANDBOX_LIGHT_SA_DEV is empty, and deploy refuses nothing yet. Keys and owner steps:
+# the light steps skip while SANDBOX_LIGHT_SA_DEV is empty; `make deploy` refuses an empty SANDBOX_LIGHT_URL_DEV. Keys and owner steps:
 # docs/07_deployment/README.md § Sandbox light (parse) service.
 _SANDBOX_LIGHT_SA = $(SANDBOX_LIGHT_SA_DEV)
 _SANDBOX_LIGHT_URL = $(SANDBOX_LIGHT_URL_DEV)
@@ -352,6 +352,9 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		exit 1; fi
 	@if [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "on" ] && [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "off" ]; then \
 		echo "❌ DRIVE_TRANSCRIBE_ENABLED_DEV must be exactly on or off in .env (a missing key would silently freeze in-flight transcription batches): docs/07_deployment/README.md § Transcripts switch and cap"; \
+		exit 1; fi
+	@if [ -z "$(SANDBOX_LIGHT_URL_DEV)" ]; then \
+		echo "❌ SANDBOX_LIGHT_URL_DEV is empty: both runtimes parse only through the sandbox light service and refuse to start without its URL (docs/07_deployment/README.md § Sandbox light)"; \
 		exit 1; fi
 	@echo "🎙  Transcription switch: _DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED), cap: _DRIVE_TRANSCRIBE_USD_CAP=$(if $(_DRIVE_TRANSCRIBE_USD_CAP),$(_DRIVE_TRANSCRIBE_USD_CAP),(empty = the \$$20 maximum))"
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"

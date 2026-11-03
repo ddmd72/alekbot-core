@@ -51,7 +51,6 @@ from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessa
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
 from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
@@ -62,6 +61,7 @@ from src.composition import cipher_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.document_service_setup import build_document_service
+from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
 from src.composition.slack_adapter_factory import SlackAdapterFactory
@@ -209,6 +209,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # build, whose errors main() swallows.
     cipher = cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY"))
     secret_digest_key = cipher_setup.digest_key(config.get("SECRET_DIGEST_KEY"))
+    # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
+    parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
 
     logger.info("� Initializing Account Repository...")
     account_repo = FirestoreAccountRepository(
@@ -362,7 +364,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         alert_webhook=_alert_webhook,
         cipher=cipher,
     )
-    # The document service (EXTERNAL_FILES_RFC §4.4): the parser child, the reader over the main context builder and
+    # The document service (EXTERNAL_FILES_RFC §4.4): the sandbox parse adapter, the reader over the main context builder and
     # the graph's one quota service, attached to the file conversion service as soon as the container has built it.
     if container.file_conversion_service:
         container.file_conversion_service.attach_documents(build_document_service(
@@ -372,7 +374,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             quota=quota_service,
             transcriber=audio_service,
             transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
-            parser_user=os.environ.get(PARSER_USER_ENV),
+            parser=parse_adapter,
         ))
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown

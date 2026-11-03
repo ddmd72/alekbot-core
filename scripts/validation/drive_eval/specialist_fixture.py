@@ -23,7 +23,6 @@ from src.composition.drive_specialist_build import build_drive_specialist
 from src.domain.agent import AgentConfig
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.composition.drive_reader_runner import DriveReaderRunner
-from src.composition.document_service_setup import MAIN_PARSER_MAX_CHILDREN
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_extraction import (
     ExtractionOutcome, ExtractionRequest, DriveModelUnavailable)
@@ -148,9 +147,10 @@ class _CaseUsers:
 
 
 def _document_service(user_config: Any, prompt_builder: Any, context_builder: Any) -> DocumentService:
-    """`build_document_service`'s wiring: the real parser child (no sandbox user locally) as parser and splitter; the
+    """`build_document_service`'s wiring: the eval parses in process, locally (one real parser child, no sandbox user; the
+    deployed main service parses through the sandbox) as parser and splitter; the
     production reader over the given model setup, else one that answers model-unavailable."""
-    parser = SubprocessContentExtractor(sandbox_user=None, max_children=MAIN_PARSER_MAX_CHILDREN)
+    parser = SubprocessContentExtractor(sandbox_user=None)
     if user_config is not None and prompt_builder is not None and context_builder is not None:
         reader: ContentExtractorPort = DriveReaderRunner(context_builder, _CaseUsers(user_config), prompt_builder,
                                                          parser)

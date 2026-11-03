@@ -1,6 +1,6 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** Proposed (rev 4). S1 (`render.docx`) is merged on `main` behind `SANDBOX_RENDER` (default `inprocess`): not
+**Status:** Proposed (rev 4). S1 (`render.docx`) is merged on `main` behind `SANDBOX_RENDER` (default `inprocess`): not P4 is built: both runtimes parse only through the light service, not deployed (O14).
 deployed, not accepted, and no S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`)
@@ -289,7 +289,7 @@ values (`RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB)
 (`MAX_TEXT_CHARS`), binary 32 MiB, DOCX/PDF/PNG as today. The service's own memory (2 GiB) is the outer wall: a child that reaches its rlimit is an outcome, an
 instance killed by the platform is a transport failure (§4.9).
 
-Capacity is shared: the main service's reads (interactive) and the indexer (background) call the same light service. Interactive requests are never queued behind indexing: the indexer is limited to a fraction of
+Capacity is shared: the main service's reads (interactive) and the indexer (background) call the same light service. *Superseded by O14 for the parse family: no knob, no slots, no soak.* Interactive requests are never queued behind indexing: the indexer is limited to a fraction of
 `max-instances` by its own client-side concurrency (`SANDBOX_INDEXER_SLOTS`), and a `recycling` or 429 answer to an interactive read is retried at once.
 
 ### 4.9 Failure semantics
@@ -342,6 +342,8 @@ the parsers) and carries no credentialed-runtime code (no handlers, no agents, n
 Chromium yet), and S3 adds `light`. The service has no database import to leak (image-contents test, §4.3). All of this is built in S1.
 
 ### 4.12 Composition and the switch (O9)
+
+**Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. The text below holds for the render and media families.
 
 Each caller family reads one knob with `os.getenv` at its composition line (optional knob, per CLAUDE.md, not `load_settings()`):
 
@@ -407,6 +409,7 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O11** | **The drive indexer is in the intended public-invoker set** (§8) as an accepted exception: internal ingress only, every caller's token verified in-app with a pinned audience; the per-runtime identity design relies on the same in-app check | owner (2026-10-20) |
 | **O12** | **Order:** EXTERNAL_FILES_RFC's document service first (U0–U4, then U5); S3 (indexer) and S4 (main) after it, as adapter swaps under `ContentExtractorPort` and `PdfSplitterPort`; the parser child is the accepted residual until then, Google full-drive grants included; S1/S2 an independent track (header, §7) | owner (2026-11-03) |
 | **O13** | **One parse engine in principle** (EXTERNAL_FILES D15): no `DocumentConverterPort` or `chat.convert`; one `parse.*` family for both runtimes; S4 = identity + knob; final go after that RFC's U0-b report on real files (header, §4.7) | owner (2026-11-03) |
+| **O14** | **The parse switch is one deploy (2026-11-03).** No `SANDBOX_PARSE` knob, no watch period, no soak, no client slot counter (`SANDBOX_INDEXER_SLOTS` is dropped). The main service and the indexer build `build_sandbox_parser(url)` from a required `SANDBOX_PARSE_URL` and refuse to start without it, locally too; neither composition has an in-process fallback or a `K_SERVICE` branch. One retry on `recycling`; concurrency 1, max-instances 5 as a cost guard. Rollback is a Cloud Run revision rollback of both callers. | owner |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller groups must not share an identity (§4.4). Met in configuration | author, folded into O8 |
 | P1 | A service, not a job (§4.1) | author |
 | P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
@@ -493,6 +496,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - Accept: widget render latency (cold) stated; PdfGenerator e2e.
 
 ### S3. Drive parsers (C1) — after the document service (O12)
+- Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob, slots and soak below for the parse family).
 - What it is: an adapter swap in the indexer under the document service's parse ports: `SubprocessContentExtractor` → `SandboxContentExtractor`
   (`ContentExtractorPort` and `PdfSplitterPort`: one object serves both, as today), at the indexer's composition line (`indexer_main.py:138`). No caller changes.
 - **P1 (service side) built, not deployed:** the three `parse.*` ops (§4.7) on the `light` target (`SANDBOX_SERVICE=light`, groups MAIN and INDEXER), over
@@ -513,6 +517,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `sandbox_lost`. Then `drive_parser_sandbox_resource_isolation.md` gets its status line (S-Δ8) and GOOGLE_DRIVE_RFC §10's residual ends for the indexer.
 
 ### S4. The main service's reads (C2) — after the document service, with one engine (O12, O13)
+- Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob and soak below).
 - What it is: the same swap in the main service's `build_document_service`, behind its `SANDBOX_PARSE` (its own substitution key). No caller changes:
   `PARSER_UNAVAILABLE` and its note already exist (EXTERNAL_FILES U3).
 - Build: admit the main service's identity to the `parse` prefix (its caller group's `GROUP_PREFIXES` row gains `parse`); the degraded-start behaviour of the main service (§4.12). Nothing
@@ -548,7 +553,7 @@ c. Doc updates: drive RFC §9/§24.14/§27, `drive_parser_sandbox_resource_isola
 5. **Set the caller groups and URL values** in `.env` (`SANDBOX_CALLERS_<GROUP>` per runtime, the service URLs) as substitutions; never in the repository.
 6. **Flip one knob per slice** after its acceptance; one soak window before S6.
 
-Rollback: set the family's knob back to `inprocess` and deploy the caller (a substitution, not a hand edit, §4.12). The sandbox services can stay up unused. To stop one op family reaching a sandbox that misbehaves,
+Rollback: for the parse family (O14) a Cloud Run revision rollback of the main service and the indexer, then a revert. For the other families: set the family's knob back to `inprocess` and deploy the caller (a substitution, not a hand edit, §4.12). The sandbox services can stay up unused. To stop one op family reaching a sandbox that misbehaves,
 change the caller map in the **sandbox's** environment and **redeploy the sandbox** (the map is its environment, not the callers').
 
 ## 9. What this unblocks: transcripts for a second user (USER_DRIVE_INDEXING §27.12, OQ-T3)
@@ -600,9 +605,9 @@ Open (new in rev 4):
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |
 | media URL host allowlist | name-suffix list in configuration, from the T0 measurement, extendable without code change | O7, §4.5 |
-| `SANDBOX_INDEXER_SLOTS` | 1 of the light service's instances at a time | keeps interactive reads free of indexer load |
+| `SANDBOX_INDEXER_SLOTS` | superseded by O14 (dropped) | none: no client slot counter |
 | engine child limits added | `RLIMIT_NPROC` 64, `RLIMIT_NOFILE` 64 (chosen in the S1 build; S0-f confirms) | fork bomb, descriptor exhaustion |
-| observation before removing in-process | 14 days per part | O9 |
+| observation before removing in-process | 14 days per part (superseded by O14 for the parse family) | O9 |
 
 ## 12. Where the current code disagrees with the design (so the plan does not assume otherwise)
 

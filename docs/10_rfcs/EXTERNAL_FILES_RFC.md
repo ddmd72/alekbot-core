@@ -641,7 +641,7 @@ finished prefix as truncated text with a note, and the spend. Without them the r
 indexer's handling of `DriveModelUnavailable` is unchanged. When the reader is unavailable for a low-density parse,
 the parser text comes back with `may_be_incomplete` and a note saying so.
 
-**Parser slot (G).** The child runs one at a time per adapter (`src/adapters/subprocess_content_extractor.py:101-102`, `max_children=1` at `:89`). In
+**Parser slot (G; superseded in the deployed runtimes by the light service, UNTRUSTED_CONTENT_SANDBOX_RFC O14: no slot, busy = 429/503).** The child runs one at a time per adapter (`src/adapters/subprocess_content_extractor.py:101-102`, `max_children=1` at `:89`). In
 the main service that slot is shared by every user's opens, page counts and window cuts. Every wait for it, the
 splitter's included (its `deadline_at`), is bounded by the remaining deadline; past it the outcome is
 `PARSER_UNAVAILABLE(busy)`, which is not a bomb. `max_children` for the

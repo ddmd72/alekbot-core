@@ -1057,8 +1057,9 @@ parse retries included, is billed to the user's account and appears in `billing_
 ### 4.14 Security: the parser sandbox, and document text is data
 
 **The deployment is multi-user** (one whitelist, many users' files on one indexer), so a file one user uploads is
-parsed in the same container that holds every user's index and the service's keys. The parser child
-(`SubprocessContentExtractor`) therefore runs as the unprivileged `driveparser` user the Dockerfile creates:
+parsed in the same container that holds every user's index and the service's keys. Once the light service is deployed
+(UNTRUSTED_CONTENT_SANDBOX_RFC O14) the indexer parses through it and runs no parser child; the in-process parser child
+(`SubprocessContentExtractor`) described here runs as the unprivileged `driveparser` user the Dockerfile creates:
 `indexer_main.py` passes `DRIVE_PARSER_USER` as `sandbox_user`, and a configured user that is missing, is root, or
 cannot be switched to fails the indexer's start (never a silent fallback). The child gets that uid and gid with no
 supplementary groups, a per-run directory it owns (its `TMPDIR` and `HOME`), a read-only link of the file, and

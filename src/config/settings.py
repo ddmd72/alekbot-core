@@ -81,6 +81,9 @@ def load_settings():
         # too (local dev uses the real key, §2.7).
         "KMS_CRYPTO_KEY": os.getenv("KMS_CRYPTO_KEY"),
         "SECRET_DIGEST_KEY": os.getenv("SECRET_DIGEST_KEY"),
+        # The sandbox light (parse) service URL: required configuration, every document is parsed through it. Empty
+        # refuses the start, locally too (UNTRUSTED_CONTENT_SANDBOX_RFC §4.10).
+        "SANDBOX_PARSE_URL": os.getenv("SANDBOX_PARSE_URL"),
         # Telegram secrets (Session 2026-02-09 Phase 3)
         "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
         "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),

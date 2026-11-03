@@ -29,7 +29,7 @@ The sandbox render and light (parse) services have their own image file (`Docker
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 | `alek-bot-sandbox-light-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 900s | min=0, max=5 | **none** (zero-role identity, no secret) | (see Sandbox light (parse) service) |
 
-The main service's execution environment is pinned to gen2 in `cloudbuild-dev.yaml` (`--execution-environment=gen2`); the document service's parser child needs no new knob (its slot count is a constant, `MAIN_PARSER_MAX_CHILDREN`, and `DRIVE_PARSER_USER` is set by the image).
+The main service's execution environment is pinned to gen2 in `cloudbuild-dev.yaml` (`--execution-environment=gen2`); the main service runs no parser child: the document service parses through the sandbox light service (`SANDBOX_PARSE_URL`, from `_SANDBOX_LIGHT_URL`).
 
 `cloudbuild-dev.yaml` deploys the main service first (pull, build, push, deploy, public-invoker binding; it depends on
 nothing drive- or relay-related). Only after that do the independent rest run in parallel (`id` + `waitFor`): the drive
@@ -98,7 +98,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
 | `SANDBOX_RENDER_DEV`, `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
-| `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | see Sandbox light (parse) service |
+| `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | `SANDBOX_LIGHT_URL_DEV` is required by the deploy target (it becomes `SANDBOX_PARSE_URL` on the main service and the indexer); see Sandbox light (parse) service |
 
 `DRIVE_FIRST_PASS=1` is a command-line flag for the indexer's first pass only; never put it in `.env`.
 
@@ -469,8 +469,10 @@ before step 1.
 allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU, concurrency 1, min 0, max 5 (a cost guard), timeout 900 s,
 `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
 response windows up to 101 MiB + one child file up to 64 MiB; fixed in `scripts/infrastructure/cloudbuild_sandbox_light.sh`,
-changed by editing that script). One request per instance (`SANDBOX_RECYCLE=always`), `SANDBOX_SERVICE=light`. No runtime
-calls it until the parse switch ships; the deploy steps only create the service.
+changed by editing that script). One request per instance (`SANDBOX_RECYCLE=always`), `SANDBOX_SERVICE=light`. Both runtimes parse only through it:
+the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without
+`SANDBOX_PARSE_URL` (set from `_SANDBOX_LIGHT_URL`), locally too. Deploy the service (steps below) before the first
+deploy that switches the callers.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
@@ -487,8 +489,10 @@ calls it until the parse switch ships; the deploy steps only create the service.
 2. **Let the deployer act as it:** `roles/iam.serviceAccountUser` on `<sandbox-light-sa>` (that account only) for the
    build's deployer identity.
 3. **Put the keys in `.env`:** `SANDBOX_LIGHT_SA_DEV=<sandbox-light-sa>`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV=<main-runtime-sa>`
-   and `SANDBOX_LIGHT_CALLERS_INDEXER_DEV=<indexer-runtime-sa>`. Leave `SANDBOX_LIGHT_URL_DEV` empty. The callers must be set
-   **before the first deploy**: an empty caller set on Cloud Run refuses the revision.
+   and `SANDBOX_LIGHT_CALLERS_INDEXER_DEV=<indexer-runtime-sa>`. The callers must be set **before the first deploy**: an
+   empty caller set on Cloud Run refuses the revision. `SANDBOX_LIGHT_URL_DEV` is required by the deploy target itself:
+   for pass one set it to the service's expected `https://` URL (Cloud Run derives it from the service name and project
+   number).
 4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
    op with `503 unconfigured`.
 5. **Read the URL back** and put it in `.env` as `SANDBOX_LIGHT_URL_DEV=<service URL>`:
@@ -500,8 +504,10 @@ calls it until the parse switch ships; the deploy steps only create the service.
    project nor the service policy contains them.
 7. **Pass two: `make deploy`.** The light service now knows its audience.
 
-While `SANDBOX_LIGHT_SA_DEV` is empty, `cloudbuild_sandbox_light.sh` exits 0 in every mode, so `make deploy` works before
-step 1.
+While `SANDBOX_LIGHT_SA_DEV` is empty, `cloudbuild_sandbox_light.sh` exits 0 in every mode.
+
+**Rollback of the parse switch.** Roll back both callers to their previous revision (`update-traffic --to-revisions=<prev>=100`
+on the main service and on the indexer), then revert the change. Traffic pinned to a revision needs `--to-latest` later.
 
 ---
 

@@ -117,8 +117,8 @@ class DriveModels:
 def build_drive_models(*, parser: Any, users: UserRepository, account_repo: AccountRepository,
                        assembly_service: Any, keys: Mapping[str, Optional[str]],
                        alert_sink: Optional[AlertSinkPort] = None) -> DriveModels:
-    """The indexer's model runners. `parser` is the child-process parser (a ContentExtractorPort and a
-    PdfSplitterPort)."""
+    """The indexer's model runners. `parser` is the parse adapter (a ContentExtractorPort and a PdfSplitterPort):
+    the sandbox's in the indexer."""
     context_builder = build_drive_context_builder(keys)
     prompt_builder = _DrivePromptBuilder(repo=None, assembly_service=assembly_service)
     quota = FirestoreQuotaService(account_repo, alert_sink=alert_sink)

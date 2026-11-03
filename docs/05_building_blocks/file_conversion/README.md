@@ -70,11 +70,9 @@ request id, kind and a failure label, never text or a file name (`document_servi
    5 MiB (image) / 20 MiB (PDF), and never above the consumer's declaration.
 3. **Native decision.** An image within the declaration goes native; a PDF within the declared bytes goes native after
    the page count (encrypted or too many pages goes to the pipeline). A text-only consumer always takes the pipeline.
-4. **Parser child.** Every parsed kind is read by `SubprocessContentExtractor`, a fresh child process with memory, CPU
-   and wall limits, under the image's unprivileged user (`DRIVE_PARSER_USER`; the same pieces as the drive indexer,
-   `decisions/drive_parser_sandbox_resource_isolation.md`). In the main service this in-process child is an interim step:
-   the untrusted-content sandbox's parse service is to replace it as an adapter behind the same port
-   (`UNTRUSTED_CONTENT_SANDBOX_RFC`).
+4. **Parser service.** Every parsed kind is read by the sandbox's light service through `SandboxContentExtractor`, one
+   request per call (`UNTRUSTED_CONTENT_SANDBOX_RFC`); the main service runs no parser child. An outage of the
+   service answers `PARSER_UNAVAILABLE`, never the file's outcome.
 5. **Router.** `model_route` decides from the parser's outcome whether the text is enough or the file is a scan or
    low-density, which goes to the reader.
 6. **Reader** (`DriveReaderRunner`, no tools): at most `MODEL_EXTRACT_MAX_PAGES` = 200 pages per file (the same for
@@ -94,12 +92,12 @@ through the quota service. The transcript is cached per account for 90 days, the
 (`<prefix>audio_transcripts`, doc id `<account_id>:<sha256 of the bytes>:<transcriber model>`;
 `firestore_transcript_cache.py`, `DATABASE_SCHEMA.md` §3.3), so a second open costs nothing.
 
-### Parser slot
+### Parser service
 
-The parser child runs one at a time per adapter object (`MAIN_PARSER_MAX_CHILDREN = 1`,
-`composition/document_service_setup.py`), shared by the parser, the PDF splitter and the reader's window cuts, and by
-every user's opens. A wait for the slot is bounded by the open's deadline; past it `ParserBusy` raises, no child starts,
-and the open answers `PARSER_UNAVAILABLE` / `busy` ("converter busy" note).
+There is no parser slot. The light service takes one request at a time per instance; when it is busy (HTTP 429 or 503)
+the open answers `PARSER_UNAVAILABLE` / `busy` (the "converter busy" note), and one retry follows a `recycling` answer
+(an instance replaced after a request). The same adapter object is the parser, the PDF splitter and the reader's window
+cutter.
 
 ### Deadlines
 
