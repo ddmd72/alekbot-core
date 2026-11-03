@@ -30,7 +30,7 @@ from mcp.types import Tool as MCPTool
 from mcp.types import ToolAnnotations
 
 from ..domain.connector_texts import ConnectorTexts
-from ..domain.drive_connector_contract import INSTRUCTIONS_KEY, parameter_key
+from ..domain.drive_connector_contract import INSTRUCTIONS_KEY, text_key_of_parameter
 from ..services.connector_text_service import ConnectorTextService
 
 
@@ -68,7 +68,7 @@ class TokenTextFastMCP(FastMCP):
 def _listed(info: RegisteredTool, texts: ConnectorTexts) -> MCPTool:
     schema = copy.deepcopy(info.parameters)
     for name, prop in schema.get("properties", {}).items():
-        prop["description"] = texts.tools[parameter_key(info.name, name)]
+        prop["description"] = texts.tools[text_key_of_parameter(info.name, name)]
     return MCPTool(
         name=info.name,
         title=info.title,

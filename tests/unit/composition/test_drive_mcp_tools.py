@@ -299,7 +299,7 @@ class TestOpenWithholds:
                                             (WEBM, Withheld.RECORDING_UNTRANSCRIBED), (SCAN, Withheld.SCAN)])
     async def test_media_answer_their_line_without_a_download_or_a_post(self, world, item, code):
         text = text_of(await world.call("open_drive_file", file_ref=ref(item.item_id)))
-        assert what_to_do(text) == marker(c.WHAT_TO_DO).format(line=marker(c.withheld_key(code)))
+        assert what_to_do(text) == marker(c.WHAT_TO_DO).format(line=marker(c.text_key_of_withheld(code)))
         assert world.conversion.downloads == []      # a video is posted only after its download
         assert world.conversion.reader_runs == 0
 

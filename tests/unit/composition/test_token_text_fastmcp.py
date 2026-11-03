@@ -79,7 +79,7 @@ async def test_every_description_comes_from_the_tool_texts(world):
         assert tool.description == marker(name)
         props = tool.inputSchema["properties"]
         assert list(props) == list(c.TOOL_PARAMETERS[name])
-        assert {p: v["description"] for p, v in props.items()} == {p: marker(c.parameter_key(name, p)) for p in props}
+        assert {p: v["description"] for p, v in props.items()} == {p: marker(c.text_key_of_parameter(name, p)) for p in props}
 
 
 async def test_an_upload_shows_after_the_ttl_without_a_restart(world):

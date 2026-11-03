@@ -113,7 +113,7 @@ class TestOpen:
     def test_a_withheld_file_answers_its_code_line_and_its_label(self, code):
         outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="", success=True, items=(VIDEO,),
                                ref_tag="a1", withheld=code)
-        assert compose(outcome) == [*head("ok", marker(c.withheld_key(code))), outcome.label_of(VIDEO)]
+        assert compose(outcome) == [*head("ok", marker(c.text_key_of_withheld(code))), outcome.label_of(VIDEO)]
 
     def test_a_ref_that_is_not_a_drive_ref_answers_the_neutral_refusal(self):
         outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text="", success=False)

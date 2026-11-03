@@ -124,7 +124,7 @@ def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable
         return r[c.UNFINISHED], ""
     if outcome.withheld is not None:
         label = outcome.label_of(outcome.items[0]) if outcome.items else ""
-        return r[c.withheld_key(outcome.withheld)], label
+        return r[c.text_key_of_withheld(outcome.withheld)], label
     if outcome.facts.too_long:
         ref = outcome.ref_of(outcome.items[0]) if outcome.items else ""
         return r[c.ROUTE].format(ref=ref), outcome.text

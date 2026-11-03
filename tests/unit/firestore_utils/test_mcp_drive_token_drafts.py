@@ -79,7 +79,7 @@ def test_the_drafts_cover_the_contract_exactly():
 
 def test_the_contract_holds_every_tool_parameter_and_reading_key():
     assert contract.REQUIRED_TOOL_KEYS == {contract.INSTRUCTIONS_KEY, *contract.TOOL_NAMES,
-                                           *(contract.parameter_key(tool, param)
+                                           *(contract.text_key_of_parameter(tool, param)
                                              for tool, params in contract.TOOL_PARAMETERS.items() for param in params)}
     assert set(contract.TOOL_PARAMETERS) == set(contract.TOOL_NAMES)
     assert set(chat.CHAT_READING_TEXTS) <= contract.REQUIRED_RESULT_KEYS

@@ -23,8 +23,8 @@ Pure: no I/O.
 
 Public interface:
     TOOL_NAMES, TOOL_PARAMETERS                     the tools, in their listing order, and each tool's parameter names
-    INSTRUCTIONS_KEY, parameter_key(tool, param)    the server-instructions key; a parameter text's key ("tool.param")
-    READING_KEYS, withheld_key(code), WITHHELD_KEYS the reading-line keys; a withheld code's key
+    INSTRUCTIONS_KEY, text_key_of_parameter(tool, param)    the server-instructions key; a parameter text's key ("tool.param")
+    READING_KEYS, text_key_of_withheld(code), WITHHELD_KEYS the reading-line keys; a withheld code's key
     REQUIRED_TOOL_KEYS, REQUIRED_RESULT_KEYS        the exact key sets of the two tokens
     RESULT_PLACEHOLDERS                             key -> the placeholder names code formats it with
 """
@@ -55,25 +55,25 @@ TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
 INSTRUCTIONS_KEY = "instructions"
 
 
-def parameter_key(tool: str, param: str) -> str:
+def text_key_of_parameter(tool: str, param: str) -> str:
     """The key of one parameter's text in `MCP_DRIVE_TOOL_TEXTS`: `search_drive.query`."""
     return f"{tool}.{param}"
 
 
 REQUIRED_TOOL_KEYS: FrozenSet[str] = frozenset(
     {INSTRUCTIONS_KEY, *TOOL_NAMES,
-     *(parameter_key(tool, param) for tool, params in TOOL_PARAMETERS.items() for param in params)})
+     *(text_key_of_parameter(tool, param) for tool, params in TOOL_PARAMETERS.items() for param in params)})
 
 # -- results ----------------------------------------------------------------------------------------------------------
 READING_KEYS: Tuple[str, ...] = tuple(CHAT_READING_TEXTS)
 
 
-def withheld_key(code: Withheld) -> str:
+def text_key_of_withheld(code: Withheld) -> str:
     """The key of the line an open withheld for `code` answers with: `W_IMAGE`, `W_RECORDING_UNTRANSCRIBED`, …"""
     return f"W_{code.name}"
 
 
-WITHHELD_KEYS: Tuple[str, ...] = tuple(withheld_key(code) for code in Withheld)
+WITHHELD_KEYS: Tuple[str, ...] = tuple(text_key_of_withheld(code) for code in Withheld)
 
 STATUS = "STATUS"                              # "Drive result: {status}"
 WHAT_TO_DO = "WHAT_TO_DO"                      # "What to do: {line}"
