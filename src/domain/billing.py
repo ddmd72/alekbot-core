@@ -2,6 +2,7 @@ from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from typing import Dict, List, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
+from .audio_transcript import AudioTranscript
 from datetime import date, datetime, timezone
 from uuid import uuid4
 from pydantic import BaseModel, Field
@@ -618,3 +619,45 @@ class TokenLedger:
         if not self.by_model:
             return None
         return max(self.by_model, key=lambda m: self.by_model[m].cost(m))
+
+
+# ---------------------------------------------------------------------------
+# Audio transcription of an opened file (EXTERNAL_FILES_RFC §4.4 P21)
+# ---------------------------------------------------------------------------
+
+# OpenAI's pricing page (developers.openai.com/api/docs/pricing), read 2026-11-03: `gpt-transcribe` lists no
+# per-token input or output price (both "-"), only an estimate of "$0.0045 / minute". So a duration-shaped usage is
+# priced exactly; a token-shaped usage has no published rate and is priced 0.0 (callers flag it with
+# `is_transcription_priced` / `transcription_cost_known`). Add "input"/"output" per-million rates here when OpenAI
+# publishes them; `transcription_cost` then prices the token legs first.
+_TRANSCRIPTION_PRICING: Dict[str, Dict[str, float]] = {
+    "gpt-transcribe": {"per_minute": 0.0045},
+}
+
+
+def is_transcription_priced(model: str) -> bool:
+    return model in _TRANSCRIPTION_PRICING
+
+
+def transcription_cost_known(t: AudioTranscript) -> bool:
+    """False when `transcription_cost` cannot price this usage (unknown model, or tokens with no published rate)."""
+    rates = _TRANSCRIPTION_PRICING.get(t.model)
+    if rates is None:
+        return False
+    if t.input_tokens or t.output_tokens:
+        return "input" in rates and "output" in rates
+    return True
+
+
+def transcription_cost(t: AudioTranscript) -> float:
+    """USD of one transcription: the token legs when the usage has them and the model has token rates, else the
+    seconds. Unknown model, or a usage with no priced leg, is 0.0 (fail-open, as `calculate_cost`); the domain cannot
+    log, so the service warns through `transcription_cost_known`."""
+    rates = _TRANSCRIPTION_PRICING.get(t.model)
+    if rates is None:
+        return 0.0
+    if (t.input_tokens or t.output_tokens) and "input" in rates and "output" in rates:
+        return round((t.input_tokens * rates["input"] + t.output_tokens * rates["output"]) / 1_000_000, 6)
+    if t.seconds and "per_minute" in rates:
+        return round(t.seconds / 60 * rates["per_minute"], 6)
+    return 0.0
