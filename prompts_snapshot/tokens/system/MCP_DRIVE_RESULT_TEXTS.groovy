@@ -52,11 +52,8 @@ Tell the user it is not available through this connector. The user chooses the f
 ### OVER_SIZE
 Cut at the connector's size limit: the rest of this result is not shown. Narrow the request (a folder, fewer files, a more specific question), or read a later part with read_passages.
 
-### W_VIDEO
-A video: this connector does not return videos. Answer from its search card (what it shows, its place and date; search_drive for it when you have no card). The video itself cannot be fetched through this connector.
-
 ### W_RECORDING_UNTRANSCRIBED
-A recording that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The recording itself cannot be fetched through this connector.
+A recording (audio or video) that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The recording itself cannot be fetched through this connector.
 
 ### W_IMAGE
 An image: this connector does not return images. Its description is in its search card and in its passages (find_passages with file_refs set to this file). The image itself cannot be fetched through this connector.

@@ -445,7 +445,7 @@ class DriveOperations:
                    deadline_at: Optional[float] = None, withhold_media: bool = False) -> DriveOutcome:
         """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today). Every read goes
         through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default).
-        `withhold_media` (the drive connector; the chat never sets it): a drive video, an image, or a recording with no
+        `withhold_media` (the drive connector; the chat never sets it): an image, or a recording (audio or video) with no
         stored transcript is answered on its metadata before any download, with `DriveOutcome.withheld` set and no
         text; a recording with a stored transcript still opens as it. Every other file is read with the paid model
         reader off (`CALLER_CONNECTOR`): a PDF the router would hand to the reader answers `Withheld.SCAN`, one with a
@@ -1076,14 +1076,10 @@ class DriveOperations:
                                     open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
                                                              cut_state=extent.state) if cut else None,
                                     ref_tag=tag)
-        if withhold_media:
-            # The media pre-check, before any download: each code stands for the branch below that would download for
-            # nothing here (a video posted to the chat; a recording with no transcript, which no open can read).
-            # a recording first: a .webm recording carries a video mime, and it is a recording with no transcript
-            why = (Withheld.RECORDING_UNTRANSCRIBED if recording
-                   else Withheld.VIDEO if mime.startswith("video/") else None)
-            if why is not None:
-                return _withheld(ref, item, tag, why)
+        if withhold_media and recording:
+            # The media pre-check, before any download: a recording with no transcript, which no open can read. Every
+            # video is a recording to the kind classifier (TRANSCRIBED_KINDS), so no video reaches the post below.
+            return _withheld(ref, item, tag, Withheld.RECORDING_UNTRANSCRIBED)
         if mime.startswith("video/"):
             try:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)

@@ -109,7 +109,7 @@ class TestOpen:
         assert compose(outcome) == [*head("refused", marker(c.ROUTE).format(ref="drive:a1:d1")),
                                     *reading("R_TOO_LONG"), "R&D/Tom's plan.docx is too long."]
 
-    @pytest.mark.parametrize("code", [Withheld.VIDEO, Withheld.RECORDING_UNTRANSCRIBED, Withheld.IMAGE, Withheld.SCAN])
+    @pytest.mark.parametrize("code", list(Withheld))
     def test_a_withheld_file_answers_its_code_line_and_its_label(self, code):
         outcome = DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="", success=True, items=(VIDEO,),
                                ref_tag="a1", withheld=code)

@@ -100,7 +100,7 @@ Open one drive file and return its text: a document's or a PDF's text, or a reco
 - a file's content is asked and the user refers to a recent edit, or its result is marked stale (an open reads the file as it is now);
 - a file has no indexed text, or its passages did not answer after the follow-ups.
 Never open to confirm a search result, for a find at any card accuracy, or many results one by one; never a file whose result says the bot cannot open it. Open only the files the answer needs.
-A text over 60,000 characters is never returned whole: when the file is indexed the open is refused and says how to read it; otherwise it is cut at its beginning. Images, videos, recordings with no transcript and scanned PDFs return a line saying where their content can be read instead.
+A text over 60,000 characters is never returned whole: when the file is indexed the open is refused and says how to read it; otherwise it is cut at its beginning. Images, recordings (audio or video) with no transcript and scanned PDFs return a line saying where their content can be read instead.
 
 ### open_drive_file.file_ref
 The file's drive: ref (drive:<tag>:<id>), from a search result, a passages head line or a listing. Only drive: refs open here.

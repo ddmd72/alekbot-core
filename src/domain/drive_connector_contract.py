@@ -11,7 +11,7 @@ specialist-only field.
 
 Result keys:
 - the reading lines by the names `drive_answer.reading_keys` emits (the keys of `CHAT_READING_TEXTS`);
-- one line per `Withheld` code (`W_VIDEO`, …), printed as is;
+- one line per `Withheld` code (`W_IMAGE`, …), printed as is;
 - the status and what-to-do lines, the unfinished line and the passages' language line (the chat's `STATUS_HEAD`,
   `WHAT_TO_DO`, `ANSWER_FROM_RESULTS`, `UNFINISHED_LINE`, `LANGUAGE_LINE` re-voiced);
 - `ROUTE` after an open refused as too long (in place of `ROUTE_SPECIALIST`), `PAGE_NEXT` (in place of the excerpt
@@ -69,7 +69,7 @@ READING_KEYS: Tuple[str, ...] = tuple(CHAT_READING_TEXTS)
 
 
 def withheld_key(code: Withheld) -> str:
-    """The key of the line an open withheld for `code` answers with: `W_VIDEO`, `W_RECORDING_UNTRANSCRIBED`, …"""
+    """The key of the line an open withheld for `code` answers with: `W_IMAGE`, `W_RECORDING_UNTRANSCRIBED`, …"""
     return f"W_{code.name}"
 
 
