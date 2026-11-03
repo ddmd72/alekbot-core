@@ -807,7 +807,8 @@ during a walk can be swept and is re-indexed by the next walk; on a disposable i
 3. **maintenance**: version upgrades and newly admitted kinds (§12.3), cap releases;
 4. **retries** with backoff.
 A tick works class 0 first, then 1, then 2, and gives classes 3–4 at most `MAINTENANCE_SHARE` of its start budget's
-time. When a class runs out of its budget, lower classes wait for the next tick (RFC Δ19). An edit or a bot write
+time. When a class runs out of its budget, lower classes wait for the next tick (RFC Δ19); the one exception is a
+class-1 page whose records all wait only for an item call, which the tick skips (MULTI_DRIVE_RFC E87). An edit or a bot write
 therefore never waits behind a cascade, onboarding or an upgrade once its round is complete; its worst-case freshness
 is about *(users with class-0 work) × tick budget*, and `STALE_ALERT_AFTER` stays above it.
 
