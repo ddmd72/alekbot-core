@@ -1,7 +1,8 @@
-"""The indexer runs the parser child as the unprivileged user its image names (R3 F3-1, USER_DRIVE_INDEXING_RFC §9,
-§24.14): indexer_main passes DRIVE_PARSER_USER to the parser; the Dockerfile creates that user and sets the variable,
-so the deployed indexer always sandboxes, and a user missing from the container fails the start. Without the variable
-(local development) the parser runs unsandboxed, with a WARNING. The main service never builds the parser."""
+"""The indexer runs its media children (transcription) as the unprivileged user its image names (R3 F3-1,
+USER_DRIVE_INDEXING_RFC §9, §24.14): indexer_main passes DRIVE_PARSER_USER to the media extractor; the Dockerfile creates
+that user and sets the variable, and with transcription on a user missing from the container fails the start. Document
+parsing no longer runs a child in the indexer: it goes through the sandbox light service (UNTRUSTED_CONTENT_SANDBOX_RFC
+O14), so with transcription off no parser user is looked up."""
 import re
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -42,9 +43,10 @@ def wired(monkeypatch):
     return captured
 
 
-def test_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
+def test_with_transcription_on_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
+    monkeypatch.setenv("DRIVE_TRANSCRIBE_ENABLED", "on")
     monkeypatch.setenv(PARSER_USER_ENV, "no-such-user-r3-f3-1")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="no-such-user-r3-f3-1"):
         indexer_main.build_app()
 
 
