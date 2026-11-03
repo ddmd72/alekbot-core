@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from src.domain import drive_ref
 from src.domain.drive_audience import connector_audience
+from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_excerpt_request import ExcerptRequest
@@ -114,3 +115,14 @@ async def test_access_note_outside_the_connector_is_none_under_the_audience():
     with connector_audience():
         assert await w.service.access_note(conn, item_id=w.invoice) is None
         assert await w.service.access_note(conn, item_id=w.plan) == ACCESS_NOTE_FILE
+
+
+async def test_the_area_default_scope_needs_no_scope_test_under_the_audience():
+    w = await world(connector="rd", whole=False)            # no folders chosen on an area feed: everything in scope
+
+    async def capabilities(handle):
+        return DriveCapabilities(max_path_chars=400)
+    w.service._drive.capabilities = capabilities
+    with connector_audience():
+        assert names(await w.find("", kind="docx")) == ["Tom's plan.docx"]
+        assert names(await w.find("", kind="pdf")) == []

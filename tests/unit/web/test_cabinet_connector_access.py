@@ -163,3 +163,9 @@ def test_folders_outside_the_scope_are_not_selectable_for_the_connector():
     assert "disabled" in rows["Invoices 2026"].split("<button")[0]
     assert "T:drive.pk_not_visible" in rows["Invoices 2026"]
     assert "T:drive.whole_title" not in out["side"]
+
+
+async def test_without_the_drive_service_the_route_says_501_and_stores_nothing():
+    w, conn, _, _ = await world()
+    status, _ = await call(w.app(user_drive_service=None), "put", access_url(conn), {"mode": "whole"})
+    assert status == 501 and await stored(w, conn) is None

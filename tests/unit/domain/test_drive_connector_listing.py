@@ -11,6 +11,7 @@ from src.domain.drive_connector_listing import (
 )
 from src.domain.drive_mount import Mount
 from src.domain.drive_mounts import MOUNT_LISTING_HEADING
+from src.domain.drive_search_line import SearchLine
 
 T0 = datetime(2026, 11, 3, tzinfo=timezone.utc)
 DRIVE = DriveConnection(connection_id="conn-1", user_id="usr-alex", account_id="acc-alex", credential_id="cred-1",
@@ -54,3 +55,10 @@ def test_the_listing_heading_and_the_tops_head():
                                       primary=True), None, note="", folder_paths=(), more=0)]
     assert render_connector_mount_listing(rows).split("\n")[0] == MOUNT_LISTING_HEADING
     assert CONNECTOR_TOPS_HEAD.format(drive="Drive") == "Folders shared with this connector on Drive:"
+
+
+def test_a_search_line_prints_after_the_drive_line():
+    row = connector_mount_row(Mount(connection=replace(DRIVE, connector_access=ConnectorAccess.whole_drive()),
+                                    primary=False), SearchLine.ON, note="", folder_paths=(), more=0)
+    assert render_connector_mount_listing([row]).split("\n")[1] == (
+        "- Drive: connected; search on; connector reads everything the bot sees on it; searched by default")

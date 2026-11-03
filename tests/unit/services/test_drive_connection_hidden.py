@@ -190,3 +190,14 @@ async def test_whole_access_never_strands():
     stored = await svc.set_scope(USER, "conn-1", folder_ids=[OAK], whole_drive=False, capabilities=AREA,
                                  write_folder_ancestry=None, folder_ancestries={OAK: OAK_CHAIN})
     assert stored.scope_folder_ids == (OAK,) and stored.connector_access == ConnectorAccess.whole_drive()
+
+
+async def test_a_connection_gone_before_the_write_is_not_connected():
+    repo, svc = setup()
+
+    async def vanished(user_id, connection_id, access):
+        return None
+    repo.update_connector_access = vanished          # deleted between the live check and the write
+    with pytest.raises(DriveNotConnectedError):
+        await svc.set_connector_access(USER, "conn-1", ConnectorAccess.whole_drive(), capabilities=AREA,
+                                       root_item_id=ROOT, folder_ancestries={})

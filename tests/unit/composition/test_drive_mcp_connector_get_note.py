@@ -2,8 +2,12 @@
 under the connector audience before the note store, so an item outside access, a missing item and a `drive_note:` ref
 answer one neutral line with no note read; a whole-drive note is readable only for a drive the connector sees. Over
 HTTP on the production drive services (`drive_mcp_access_world`)."""
+from src.domain import drive_connector_contract as c
+from src.domain import drive_note_tool_texts as nt
 from src.domain.drive_audience import CURRENT_DRIVE_AUDIENCE, DriveAudience
 from src.domain.drive_connector_access import ConnectorAccess
+
+from tests.support.drive_connector_texts import marker
 
 from .drive_mcp_access_world import DRIVE_NOTE, NEUTRAL, PLAN_NOTE, World
 
@@ -54,3 +58,15 @@ async def test_each_call_runs_under_the_connector_audience_and_leaves_it_unset()
     await w.call("get_note", item_ref=w.ref(w.plan))
     assert w.notes.audiences == [DriveAudience.CONNECTOR]
     assert CURRENT_DRIVE_AUDIENCE.get() is None
+
+
+async def test_an_unexpected_failure_of_the_item_read_is_a_failure_and_reads_no_note():
+    w = await rd_only()
+
+    async def broken(handle, item_id):
+        raise RuntimeError("provider down")
+    w.drive.get_item = broken
+    text = await w.call("get_note", item_ref=w.ref(w.plan))
+    assert text.split("\n")[0] == marker(c.STATUS).format(status="failed")
+    assert nt.UNEXPECTED in text and PLAN_NOTE not in text
+    assert w.notes.reads == []

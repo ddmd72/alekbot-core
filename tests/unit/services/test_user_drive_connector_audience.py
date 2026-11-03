@@ -189,3 +189,21 @@ async def test_whole_access_on_a_whole_scope_walks_no_chain():
         assert [i.name for i in await w.svc.search(w.handle, "FA-0137")] == ["FA-0137.pdf"]
         await w.svc.check_access(w.handle, AccessOp.READ, item_id=w.invoice)
     assert w.calls("get_change") == before
+
+
+async def test_whole_access_on_a_drive_whose_root_is_outside_the_scope_lists_the_scope_folders():
+    w = await world()
+    await w.scope(w.rd)
+    await w.connector(ConnectorAccess.whole_drive())
+    with connector_audience():
+        out = await w.svc.list_folder(w.handle, None)
+    assert out.scope_tops is True and out.connector_tops is False
+    assert [i.name for i in out.items] == ["R&D"]
+
+
+async def test_connector_folder_paths_skip_a_folder_that_is_gone_and_name_none_for_whole():
+    w = await world()
+    await w.connector(ConnectorAccess.folders((w.rd, "item-99", w.oak)))
+    assert await w.svc.connector_folder_paths(w.handle, limit=1) == (["12 Oak Street"], 1)
+    await w.connector(ConnectorAccess.whole_drive())
+    assert await w.svc.connector_folder_paths(w.handle) == ([], 0)
