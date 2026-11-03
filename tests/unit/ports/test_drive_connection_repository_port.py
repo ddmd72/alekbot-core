@@ -20,6 +20,8 @@ _SIGNATURES = {
     "update_settings": ["user_id", "connection_id", "searched_by_default", "write_folder_id", "scope_folder_ids",
                         "scope_whole_drive"],
     "rename": ["user_id", "connection_id", "at", "check"],
+    # drive MCP connector slice 3 (DRIVE_MCP_CONNECTOR_RFC §7.1): what the connector reads on this drive
+    "update_connector_access": ["user_id", "connection_id", "access"],
 }
 
 

@@ -22,6 +22,11 @@ root; `ancestry` walks an item's parent chain by `get_change` (E-3); `check_acce
 walking only when a rule needs a chain (the App Folder default walks none), and raises DriveAccessRefused with the
 policy's line. `write_folder_path`, `picker_folders` and `top_folder_names` serve the preflight and the Cabinet (the
 owner's own act: no policy).
+
+Connector audience (DRIVE_MCP_CONNECTOR_RFC §7.2-7.4): `check_access` reads `CURRENT_DRIVE_AUDIENCE` and hands it to the
+policy, so every read under the drive MCP connector needs the scope and the connector access on one chain and every
+write is refused; `list_folder` of a drive top outside connector access lists the connector folders; `search` keeps only
+results inside both. With no audience nothing changes.
 """
 from __future__ import annotations
 
@@ -57,8 +62,9 @@ from ..domain.user_drive import (
 )
 from ..domain.document_limits import MAX_DRIVE_DOWNLOAD_BYTES
 from ..domain.drive_access_op import AccessOp
-from ..domain.drive_access_policy import decide, in_scope, requires_ancestry
+from ..domain.drive_access_policy import decide, in_connector, in_scope, requires_ancestry
 from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_audience import CURRENT_DRIVE_AUDIENCE, DriveAudience
 from ..domain.drive_capabilities import DriveCapabilities
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_access import ConnectionAccess
@@ -83,6 +89,7 @@ if TYPE_CHECKING:
     from .drive_connection_service import DriveConnectionService
 
 LIST_LIMIT = 100
+_CLOSED = "\x00closed"       # `_walk` memo: the item answered "not found" to an id read (never a real id)
 SEARCH_LIMIT = 25
 COUNT_CAP = 10_000
 
@@ -181,6 +188,9 @@ class UserDriveService:
                                 memo if memo is not None else {})
 
     async def _walk(self, handle: DriveHandle, item_id: str, root_id: str, memo: Dict[str, str]) -> Ancestry:
+        """The chain of `item_id`. A parent closed to the bot ends it unreached; under the connector audience that
+        parent is left out too (DRIVE_MCP_CONNECTOR_RFC §7.3: an unknown ancestor never admits; the index admit does
+        not see an unrecorded ancestor either, and a real provider names no parent the account cannot read)."""
         ids = [item_id]
         current = item_id
         while current != root_id and len(ids) < MAX_CHAIN_DEPTH:
@@ -190,12 +200,15 @@ class UserDriveService:
                 except DriveItemNotFoundError:
                     if current == item_id:
                         raise
-                    memo[current] = ""       # a parent closed to the bot: the chain ends unreached
+                    memo[current] = _CLOSED       # a parent closed to the bot: the chain ends unreached
             parent = memo[current]
-            if not parent or parent in ids:
+            if not parent or parent == _CLOSED or parent in ids:
                 break
             ids.append(parent)
             current = parent
+        if (memo.get(current) == _CLOSED and current != item_id
+                and CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR):
+            ids.pop()
         return Ancestry(ids=tuple(ids), reached_root=current == root_id)
 
     async def check_access(self, handle: DriveHandle, op: AccessOp, *, item: Optional[DriveItem] = None,
@@ -209,8 +222,9 @@ class UserDriveService:
         DriveAccessRefused with the policy's line; DriveNotConnectedError for a connection that is gone. `policy` is the
         `access` pair an operation already read: one connection read per operation (E-13)."""
         access, capabilities = policy if policy is not None else await self.access(handle)
+        audience = CURRENT_DRIVE_AUDIENCE.get()
         target = item.item_id if item is not None else item_id
-        needed = requires_ancestry(op, access, capabilities)
+        needed = requires_ancestry(op, access, capabilities, audience=audience)
         memo: Dict[str, str] = {}
         if chain is None and needed and target:
             chain = await self._walk(handle, target, access.root_item_id, memo)
@@ -218,7 +232,8 @@ class UserDriveService:
             destination = await self._walk(handle, destination_item.item_id, access.root_item_id, memo)
         decision = decide(op, access, capabilities, item.access if item is not None else None, chain,
                           item_id=target, destination=destination,
-                          destination_access=destination_item.access if destination_item is not None else None)
+                          destination_access=destination_item.access if destination_item is not None else None,
+                          audience=audience)
         if not decision.allowed:
             logger.info(f"Drive access refused: op={op.value} connection={handle.connection_id[:8]}")
             raise DriveAccessRefused(decision.line)
@@ -362,7 +377,16 @@ class UserDriveService:
         if not split_folder_path(folder or ""):
             access, capabilities = await self.access(handle)
             root_chain = Ancestry(ids=(access.root_item_id,), reached_root=True)
-            if not in_scope(access, capabilities, root_chain):
+            if CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR:
+                if not (in_scope(access, capabilities, root_chain) and in_connector(access, root_chain)):
+                    connector = access.connector_access
+                    if connector is not None and connector.folder_ids:
+                        return await self._connector_tops(handle, (access, capabilities))
+                    if connector is None:       # a hidden drive: refused before any name is listed
+                        await self.check_access(handle, AccessOp.LIST, chain=root_chain,
+                                                item_id=access.root_item_id, policy=(access, capabilities))
+                    return await self._scope_tops(handle, access)
+            elif not in_scope(access, capabilities, root_chain):
                 return await self._scope_tops(handle, access)       # G11: the root is outside the scope
         resolution = await self.resolve_folder(handle, folder, create=False)
         children = await self._drive.list_children(handle, resolution.folder.item_id)
@@ -385,6 +409,24 @@ class UserDriveService:
                 continue
         return sorted(found, key=lambda i: i.name.casefold())
 
+    async def _connector_tops(self, handle: DriveHandle,
+                              policy: Tuple[ConnectionAccess, DriveCapabilities]) -> ListOutcome:
+        """The connector folders as the listing of a drive whose root lies outside connector access (§7.4): each one
+        that still exists and passes LIST under the audience (a folder moved out of the scope is not listed), by name."""
+        access, _ = policy
+        connector = access.connector_access
+        found: List[DriveItem] = []
+        for folder_id in (connector.folder_ids if connector is not None else ()):
+            try:
+                folder = await self._drive.get_item(handle, folder_id)
+                await self.check_access(handle, AccessOp.LIST, item=folder, policy=policy)
+            except (DriveItemNotFoundError, DriveAccessRefused):
+                continue
+            found.append(folder)
+        found.sort(key=lambda i: i.name.casefold())
+        return ListOutcome(folder=await self._drive.get_root(handle), items=found[:LIST_LIMIT],
+                           truncated=len(found) > LIST_LIMIT, connector_tops=True)
+
     async def scope_folder_paths(self, handle: DriveHandle, limit: int = 5) -> Tuple[List[str], int]:
         """The connection-relative paths of the chosen folders, sorted, at most `limit`, and how many more (the mount
         line's "indexes only"). None under "whole drive" or with no folder chosen (no provider call then); a chosen
@@ -394,6 +436,22 @@ class UserDriveService:
             return [], 0
         found: List[DriveItem] = []
         for folder_id in connection.scope_folder_ids:
+            try:
+                found.append(await self._drive.get_item(handle, folder_id))
+            except DriveItemNotFoundError:
+                continue
+        paths = sorted(f.path for f in found if f.path)
+        return paths[:limit], max(0, len(paths) - limit)
+
+    async def connector_folder_paths(self, handle: DriveHandle, limit: int = 5) -> Tuple[List[str], int]:
+        """The connection-relative paths of the connector folders, sorted, at most `limit`, and how many more (the
+        connector's `/` line). ([], 0) for nothing or the whole drive (no provider call then); a folder that is gone is
+        skipped."""
+        connector = (await self._connection(handle)).connector_access
+        if connector is None or not connector.folder_ids:
+            return [], 0
+        found: List[DriveItem] = []
+        for folder_id in connector.folder_ids:
             try:
                 found.append(await self._drive.get_item(handle, folder_id))
             except DriveItemNotFoundError:
@@ -414,16 +472,20 @@ class UserDriveService:
 
     async def search(self, handle: DriveHandle, query: str) -> List[DriveItem]:
         """Provider search, its results filtered to the scope (SEARCH). Nothing is filtered when the scope covers the
-        drive; folders chosen: each result's chain is walked (one memo for the call)."""
+        drive; folders chosen: each result's chain is walked (one memo for the call). Under the connector audience a
+        result is kept only when the connector access holds on the same chain too."""
         access, capabilities = await self.access(handle)
-        if not requires_ancestry(AccessOp.SEARCH, access, capabilities):
-            return (await self._drive.search(handle, query, SEARCH_LIMIT)
-                    if in_scope(access, capabilities, None) else [])
+        audience = CURRENT_DRIVE_AUDIENCE.get()
+        connector = audience is DriveAudience.CONNECTOR
+        if not requires_ancestry(AccessOp.SEARCH, access, capabilities, audience=audience):
+            admitted = in_scope(access, capabilities, None) and (not connector or in_connector(access, None))
+            return await self._drive.search(handle, query, SEARCH_LIMIT) if admitted else []
         found = await self._drive.search(handle, query, SEARCH_LIMIT)
         memo: Dict[str, str] = {}
         kept: List[DriveItem] = []
         for item in found:
-            if in_scope(access, capabilities, await self._walk(handle, item.item_id, access.root_item_id, memo)):
+            chain = await self._walk(handle, item.item_id, access.root_item_id, memo)
+            if in_scope(access, capabilities, chain) and (not connector or in_connector(access, chain)):
                 kept.append(item)
         return kept
 

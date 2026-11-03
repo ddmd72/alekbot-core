@@ -16,7 +16,9 @@ Result keys:
   `WHAT_TO_DO`, `ANSWER_FROM_RESULTS`, `UNFINISHED_LINE`, `LANGUAGE_LINE` re-voiced);
 - `ROUTE` after an open refused as too long (in place of `ROUTE_SPECIALIST`), `PAGE_NEXT` (in place of the excerpt
   renderer's `PAGE_NEXT`), `REFUSED` (the §13 refusal line) and `REFUSED_GUIDANCE` (its companion guidance, §5.2),
-  `OVER_SIZE` (the line the 100,000-character guard appends, §6.1), `LINK` (a one-time download link, §8).
+  `OVER_SIZE` (the line the 100,000-character guard appends, §6.1), `NOT_CONNECTED` (no drive is shared with the
+  connector, or it needs reconnecting: in place of the chat's "not connected" line, §7.4), `LINK` (a one-time download
+  link, §8).
 
 `RESULT_PLACEHOLDERS` names the `{placeholders}` code fills in a result text; a key it does not list is printed as is.
 Pure: no I/O.
@@ -89,9 +91,10 @@ REFUSED = "REFUSED"                            # outside the connector's folders
 REFUSED_GUIDANCE = "REFUSED_GUIDANCE"          # what to do after a refusal
 OVER_SIZE = "OVER_SIZE"                        # the result was cut at the connector's hard size guard
 LINK = "LINK"                                  # a one-time download link; {link} is its URL (RFC §8)
+NOT_CONNECTED = "NOT_CONNECTED"                # no drive shared with the connector, or one needs reconnecting
 
 LINE_KEYS: Tuple[str, ...] = (STATUS, WHAT_TO_DO, ANSWER_FROM_RESULTS, UNFINISHED, LANGUAGE, ROUTE, PAGE_NEXT,
-                              REFUSED, REFUSED_GUIDANCE, OVER_SIZE, LINK)
+                              REFUSED, REFUSED_GUIDANCE, OVER_SIZE, NOT_CONNECTED, LINK)
 
 REQUIRED_RESULT_KEYS: FrozenSet[str] = frozenset({*READING_KEYS, *WITHHELD_KEYS, *LINE_KEYS})
 

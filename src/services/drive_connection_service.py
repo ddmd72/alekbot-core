@@ -22,7 +22,12 @@ Rules (RFC §4.4):
 - Drives read reconnect state only from the connection; `flag_reconnect` keeps the credential's `needs_reconnect` in
   step (best effort: the connection is the source of truth), and a consent clears both (the connect service saves the
   credential with the flag down, `activate` moves the connection back to ACTIVE).
-- Every setting is a Cabinet action (D18); no chat path calls a setter.
+- Every setting is a Cabinet action (D18); no chat path calls a setter. `set_connector_access` (DRIVE_MCP_CONNECTOR_RFC
+  §7.6) stores what the drive MCP connector reads: nothing, the whole drive, or outermost folders inside the scope; a
+  scope change that would leave a connector folder outside the scope is refused (SCOPE_STRANDS_CONNECTOR_LINE).
+- Under the connector audience (`CURRENT_DRIVE_AUDIENCE`, §7.4, E12) a drive with no connector access is hidden from
+  the live list, the primary, the status, ref resolution, the mount table and the tag lookup; `get` is never filtered
+  (the access check refuses it, and the Cabinet and the indexer need it). With no audience every read is unchanged.
 
 Errors: `DriveNotConnectedError` (domain) for a connection that is absent, another user's, or DISCONNECTED where a live
 one is needed (ACTIVE for `set_primary`); `DriveSettingRefused` (domain) for a setting a rule refuses, with the line
@@ -44,8 +49,10 @@ Public interface:
     rename(user_id, connection_id, name, *, primary_top_folders=()) -> MountNameCheck
     set_searched_by_default(user_id, connection_id, enabled) -> DriveConnection
     set_scope(user_id, connection_id, *, folder_ids, whole_drive, capabilities, write_folder_ancestry,
-              folder_ancestries) -> DriveConnection
+              folder_ancestries, connector_ancestries={}) -> DriveConnection
     set_write_folder(user_id, connection_id, folder_id, *, capabilities, ancestry) -> DriveConnection
+    set_connector_access(user_id, connection_id, access, *, capabilities, root_item_id, folder_ancestries)
+        -> DriveConnection
     status(user_id) -> DriveConnectionStatus
     resolve_ref(user_id, text) -> ResolvedDriveRef | DriveRefRefusal | None
     mounts(user_id) -> MountTable
@@ -60,17 +67,21 @@ import asyncio
 import secrets
 from dataclasses import replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain import drive_ref
 from ..domain.drive_access_policy import (
-    SCOPE_BOTH_LINE, SCOPE_LEAVES_WRITE_FOLDER_LINE, WRITE_FOLDER_OUTSIDE_SCOPE_LINE, in_scope,
+    CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE, CONNECTOR_ROOT_LINE, SCOPE_BOTH_LINE, SCOPE_LEAVES_WRITE_FOLDER_LINE,
+    SCOPE_STRANDS_CONNECTOR_LINE, WRITE_FOLDER_OUTSIDE_SCOPE_LINE, in_scope,
 )
 from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_audience import CURRENT_DRIVE_AUDIENCE, DriveAudience
 from ..domain.drive_capabilities import DriveCapabilities
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_access import ConnectionAccess
 from ..domain.drive_connection_state import ConnectionState
+from ..domain.drive_connector_access import ConnectorAccess
 from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_handle import DriveHandle
@@ -111,6 +122,16 @@ def _random_id() -> str:
 def _random_tag() -> str:
     """A 2-character tag: a letter, then a letter or digit (936 values; a user has a handful of connections)."""
     return secrets.choice(drive_ref.TAG_FIRST_ALPHABET) + secrets.choice(drive_ref.TAG_ALPHABET)
+
+
+def _connector_reads() -> bool:
+    """The current read runs under the connector audience (DRIVE_MCP_CONNECTOR_RFC §7.2)."""
+    return CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR
+
+
+def _visible(connection: DriveConnection) -> bool:
+    """The connector sees the drive: it has some connector access (§7.4)."""
+    return connection.connector_access is not None
 
 
 def _outermost(ids: Sequence[str], chains: Mapping[str, Ancestry]) -> Tuple[str, ...]:
@@ -223,9 +244,15 @@ class DriveConnectionService:
         return await self._connections.get(user_id, connection_id)
 
     async def list_for_user(self, user_id: str, *, include_disconnected: bool = False) -> List[DriveConnection]:
-        """The user's connections, oldest first; DISCONNECTED ones only with `include_disconnected`."""
-        every = await self._connections.list_for_user(user_id)
+        """The user's connections, oldest first; DISCONNECTED ones only with `include_disconnected`. Under the
+        connector audience only the drives it sees."""
+        every = await self._visible_of(user_id)
         return every if include_disconnected else [c for c in every if c.state in _LIVE]
+
+    async def _visible_of(self, user_id: str) -> List[DriveConnection]:
+        """Every connection of the user, oldest first; under the connector audience only the drives it sees."""
+        every = await self._connections.list_for_user(user_id)
+        return [c for c in every if _visible(c)] if _connector_reads() else every
 
     async def handle_for(self, user_id: str, connection_id: str) -> DriveHandle:
         """The handle of a live (ACTIVE or NEEDS_RECONNECT) connection; DriveNotConnectedError otherwise."""
@@ -245,9 +272,14 @@ class DriveConnectionService:
         return await self._connections.get(user_id, settings.primary_connection_id)
 
     async def primary(self, user_id: str) -> Optional[DriveConnection]:
-        """The user's primary connection, read fresh; None when there is none or it is not ACTIVE."""
+        """The user's primary connection, read fresh; None when there is none or it is not ACTIVE. Under the connector
+        audience: the pointed one when ACTIVE and visible, else the oldest ACTIVE visible one, else None (§7.4)."""
         pointed = await self._pointed(user_id)
-        return pointed if pointed is not None and pointed.state is ConnectionState.ACTIVE else None
+        if not _connector_reads():
+            return pointed if pointed is not None and pointed.state is ConnectionState.ACTIVE else None
+        if pointed is not None and pointed.state is ConnectionState.ACTIVE and _visible(pointed):
+            return pointed
+        return next((c for c in await self._visible_of(user_id) if c.state is ConnectionState.ACTIVE), None)
 
     async def primary_handle(self, user_id: str) -> DriveHandle:
         """The primary's handle: the stage-1 way to address a path. DriveNotConnectedError when there is no primary."""
@@ -270,8 +302,11 @@ class DriveConnectionService:
     async def status(self, user_id: str) -> DriveConnectionStatus:
         """`DriveConnectionStatus.of(primary connection)` (the drive gate's and search's read). The
         pointed connection is read in any state (a primary that needs a reconnect reads "connected, needs reconnect");
-        without a live pointed one, the oldest live connection."""
+        without a live pointed one, the oldest live connection. Under the connector audience over the visible drives
+        only."""
         pointed = await self._pointed(user_id)
+        if pointed is not None and _connector_reads() and not _visible(pointed):
+            pointed = None
         if pointed is None or pointed.state not in _LIVE:
             live = await self.list_for_user(user_id)
             pointed = live[0] if live else None
@@ -282,13 +317,14 @@ class DriveConnectionService:
         - a tag of a live connection of the user -> ResolvedDriveRef;
         - an untagged ref, or a tag the user never had -> DriveRefRefusal(`stale_ref_line(ref)`);
         - the tag of a DISCONNECTED connection -> DriveRefRefusal(`disconnected_ref_line(ref)`);
-        - no drive ref in `text` -> None."""
+        - no drive ref in `text` -> None.
+        Under the connector audience a hidden drive's tag answers as a tag the user never had."""
         parsed = drive_ref.parse(text)
         if parsed is None:
             return None
         if not isinstance(parsed, drive_ref.DriveRef):
             return DriveRefRefusal(line=stale_ref_line(str(parsed)))
-        owner = next((c for c in await self._connections.list_for_user(user_id) if c.ref_tag == parsed.tag), None)
+        owner = next((c for c in await self._visible_of(user_id) if c.ref_tag == parsed.tag), None)
         if owner is None:
             return DriveRefRefusal(line=stale_ref_line(str(parsed)))
         if owner.state is ConnectionState.DISCONNECTED:
@@ -297,16 +333,21 @@ class DriveConnectionService:
 
     async def mounts(self, user_id: str) -> MountTable:
         """The user's mount tree, read fresh (RFC §11.1): the live connections, oldest first, with their held former
-        names, and the primary the pointer names (ACTIVE or NEEDS_RECONNECT)."""
-        every = await self._connections.list_for_user(user_id)
+        names, and the primary the pointer names (ACTIVE or NEEDS_RECONNECT). Under the connector audience only the
+        visible drives, the pointer moved to the first visible live one when it names a hidden drive (§7.4)."""
+        every = await self._visible_of(user_id)
         settings = await self._connections.get_settings(user_id)
         pointer = None if settings is None else settings.primary_connection_id
+        if _connector_reads():
+            live = [c.connection_id for c in every if c.state in _LIVE]
+            if pointer not in live:
+                pointer = live[0] if live else None
         return mount_table(every, pointer, self._clock())
 
     async def connection_of_tag(self, user_id: str, tag: str) -> Optional[DriveConnection]:
         """The user's connection whose ref tag is `tag`, in any state (DISCONNECTED included); None when the user never
-        had it."""
-        return next((c for c in await self._connections.list_for_user(user_id) if c.ref_tag == tag), None)
+        had it. Under the connector audience None for a hidden drive."""
+        return next((c for c in await self._visible_of(user_id) if c.ref_tag == tag), None)
 
     # ------------------------------------------------------------------ settings (Cabinet actions, D18)
 
@@ -365,7 +406,8 @@ class DriveConnectionService:
 
     async def set_scope(self, user_id: str, connection_id: str, *, folder_ids: Sequence[str], whole_drive: bool,
                         capabilities: DriveCapabilities, write_folder_ancestry: Optional[Ancestry],
-                        folder_ancestries: Mapping[str, Ancestry]) -> DriveConnection:
+                        folder_ancestries: Mapping[str, Ancestry],
+                        connector_ancestries: Mapping[str, Ancestry] = MappingProxyType({})) -> DriveConnection:
         """Set the folders to index or the whole drive (§11.3). The selection is normalised: de-duplicated, order kept,
         and a folder whose ancestor is also selected is dropped (nested scope folders: a delete inside the write folder
         could otherwise take a protected scope folder with its parent). `folder_ancestries` holds each selected
@@ -373,7 +415,10 @@ class DriveConnectionService:
         `UserDriveService.ancestry` (this service makes no provider call); a selected folder without its chain is a
         ValueError. DriveSettingRefused: SCOPE_BOTH_LINE for both; SCOPE_LEAVES_WRITE_FOLDER_LINE when the current
         write folder would lie outside the new scope (the root as the write folder is inside only a whole-drive scope
-        or an AREA feed's default scope). DriveNotConnectedError for an absent or DISCONNECTED connection."""
+        or an AREA feed's default scope); SCOPE_STRANDS_CONNECTOR_LINE when a connector folder would lie outside the new
+        scope (`connector_ancestries` holds each connector folder's chain, read by the caller; a missing one is a
+        ValueError; whole-drive connector access never strands). DriveNotConnectedError for an absent or DISCONNECTED
+        connection."""
         connection = await self._live(user_id, connection_id)
         ids = tuple(dict.fromkeys(folder_ids))
         if whole_drive and ids:
@@ -385,6 +430,16 @@ class DriveConnectionService:
                                      scope_whole_drive=whole_drive, write_folder_id=folder)
             if not self._admits(scope, capabilities, folder, write_folder_ancestry):
                 raise DriveSettingRefused(SCOPE_LEAVES_WRITE_FOLDER_LINE.format(drive=connection.mount_name))
+        connector = connection.connector_access
+        if connector is not None and connector.folder_ids:
+            scope = ConnectionAccess(drive_name=connection.mount_name, root_item_id="", scope_folder_ids=frozenset(ids),
+                                     scope_whole_drive=whole_drive, write_folder_id=None)
+            for connector_folder in connector.folder_ids:
+                chain = connector_ancestries.get(connector_folder)
+                if chain is None or chain.item_id != connector_folder:
+                    raise ValueError("set_scope needs each connector folder's own ancestry")
+                if not in_scope(scope, capabilities, chain):
+                    raise DriveSettingRefused(SCOPE_STRANDS_CONNECTOR_LINE)
         return await self._write_settings(connection, scope_folder_ids=ids, scope_whole_drive=whole_drive)
 
     async def set_write_folder(self, user_id: str, connection_id: str, folder_id: Optional[str], *,
@@ -406,6 +461,31 @@ class DriveConnectionService:
                 raise DriveSettingRefused(WRITE_FOLDER_OUTSIDE_SCOPE_LINE.format(drive=connection.mount_name))
         stored = await self._write_settings(connection, write_folder_id=folder_id)
         await self._ensure_primary(stored)
+        return stored
+
+    async def set_connector_access(self, user_id: str, connection_id: str, access: Optional[ConnectorAccess], *,
+                                   capabilities: DriveCapabilities, root_item_id: str,
+                                   folder_ancestries: Mapping[str, Ancestry]) -> DriveConnection:
+        """Set what the drive MCP connector reads on this drive (DRIVE_MCP_CONNECTOR_RFC §7.1, §7.6): None (nothing),
+        the whole drive, or folders. Folders are normalised to the outermost ones (`folder_ancestries` holds each
+        chain, read by the caller through `UserDriveService.ancestry`; a missing one is a ValueError) and each must lie
+        inside the scope; the drive's root (`root_item_id`) is refused. DriveSettingRefused: CONNECTOR_ROOT_LINE,
+        CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE. DriveNotConnectedError for an absent or DISCONNECTED connection."""
+        connection = await self._live(user_id, connection_id)
+        if access is not None and access.folder_ids:
+            ids = _outermost(access.folder_ids, folder_ancestries)
+            if root_item_id in ids:
+                raise DriveSettingRefused(CONNECTOR_ROOT_LINE)
+            scope = ConnectionAccess.of(connection, root_item_id)
+            for folder in ids:
+                if not in_scope(scope, capabilities, folder_ancestries[folder]):
+                    raise DriveSettingRefused(CONNECTOR_FOLDER_OUTSIDE_SCOPE_LINE.format(drive=connection.mount_name))
+            access = ConnectorAccess.folders(ids)
+        stored = await self._connections.update_connector_access(user_id, connection_id, access)
+        if stored is None:
+            raise DriveNotConnectedError("The drive connection is absent")
+        shown = "nothing" if access is None else "whole" if access.whole else f"{len(access.folder_ids)} folders"
+        logger.info(f"🔌 Drive connector access of connection {connection_id[:8]} (user={user_id[:8]}) → {shown}")
         return stored
 
     @staticmethod

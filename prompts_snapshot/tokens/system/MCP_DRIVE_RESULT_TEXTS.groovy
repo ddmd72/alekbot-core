@@ -50,6 +50,9 @@ Not available through this connector: it is outside the folders shared with it, 
 ### REFUSED_GUIDANCE
 Tell the user it is not available through this connector. The user chooses the folders it can read in the Cabinet (Drives, Connector access). Do not try the same item again with another ref or path.
 
+### NOT_CONNECTED
+No drive is shared with this connector, or the drive needs reconnecting. Tell the user to open the Cabinet (Drives, Connector access).
+
 ### OVER_SIZE
 Cut at the connector's size limit: the rest of this result is not shown. Narrow the request (a folder, fewer files, a more specific question), or read a later part with read_passages.
 

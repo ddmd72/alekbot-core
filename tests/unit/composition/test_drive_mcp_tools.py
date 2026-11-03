@@ -1,7 +1,8 @@
 """The drive connector's read tools end to end on the drive ASGI app (DRIVE_MCP_CONNECTOR_RFC §4, §6, §9, §11 slice 2).
 
-The app is built as `main()` builds it: `build_drive_connector_tools` (the knob on) over the production
-`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`), a fake search
+The app is built as `main()` builds it: `build_drive_connector_tools` over the production
+`DriveOperations` and `DriveReadOperations`, with a fake drive (one ACTIVE connection tagged `a1`, its whole drive
+shared with the connector: a drive with no connector access is hidden, §7.1), a fake search
 service, a fake conversion service and a fake note store; then `build_drive_mcp_app`. Bearer tokens are verified by a
 stand-in for the authorization service (the auth seam has its own tests). Results are read from `tools/call` over
 HTTP; texts are markers, never the tokens' wording. Invented items only.
@@ -11,19 +12,22 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import httpx
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition import drive_connector_tools as dct
 from src.composition import drive_mcp_setup
-from src.composition.drive_connector_tools import DRIVE_MCP_TOOLS_ENABLED_ENV, build_drive_connector_tools
+from src.composition.drive_connector_tools import build_drive_connector_tools
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.domain import drive_connector_contract as c
 from src.domain.document_open import OpenedFile
 from src.domain.document_read import CALLER_CONNECTOR, READER_SKIPPED, ReadOutcome, ReadStatus
+from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.drive_excerpt_page import PageSpan
 from src.domain.drive_excerpt_range_request import ExcerptRangeRequest
 from src.domain.drive_note_view import NoteView
@@ -31,9 +35,10 @@ from src.domain.drive_search import STATUS_OK, DriveSearchCard, DriveSearchResul
 from src.domain.drive_text_extent import TextExtent
 from src.domain.drive_withheld import Withheld
 from src.domain.user_drive import DriveItem, DriveItemNotFoundError
+from src.infrastructure.drive_read_operations import DriveReadOperations
 from src.services.mcp_authorization_service import VerifiedAccessToken
 from tests.support.drive_connector_texts import TokenStore, marker
-from tests.support.drive_service_connections import ConnectionReads, ref
+from tests.support.drive_service_connections import CONNECTION_ID, ConnectionReads, ref
 from tests.support.opened_file import opened_body
 from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
@@ -96,6 +101,13 @@ class Conversion:
 
 
 class Drive(ConnectionReads):
+    def _reads(self, user_id: str):
+        reads = super()._reads(user_id)
+        key = (user_id, CONNECTION_ID)    # the whole drive shared with the connector (default: nothing, §7.1)
+        conn = self._reads_repo.connections[key]
+        self._reads_repo.connections[key] = replace(conn, connector_access=ConnectorAccess.whole_drive())
+        return reads
+
     async def get_item(self, handle: Any, item_id: str) -> DriveItem:
         if item_id not in ITEMS:
             raise DriveItemNotFoundError(item_id)
@@ -158,6 +170,7 @@ class Notes:
     def __init__(self) -> None:
         self.reads: List[str] = []
         self.fail: Optional[Exception] = None
+        self.views: Dict[str, NoteView] = {}   # a test's own notes, by ref
 
     async def note_for_item(self, user_id: str, identity: Any) -> None:
         return None
@@ -169,6 +182,8 @@ class Notes:
         self.reads.append(ref_ or whole_drive_name)
         if self.fail is not None:
             raise self.fail
+        if ref_ in self.views:
+            return self.views[ref_]
         if ref_ != ref(PLAN.item_id):
             return None
         return NoteView(note_id="n1", ref=ref_, note_ref="drive_note:n1", path=PLAN.path, version=2, state="active",
@@ -240,17 +255,10 @@ def what_to_do(text: str) -> str:
 
 @pytest.fixture
 async def world(monkeypatch):
-    monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "on")
     return await World().build()
 
 
 class TestKnob:
-    async def test_knob_off_lists_no_tool(self, monkeypatch):
-        monkeypatch.delenv(DRIVE_MCP_TOOLS_ENABLED_ENV, raising=False)
-        built = await World().build()
-        assert built.tools is None
-        assert await built.list_tools() == []
-
     async def test_knob_on_lists_the_six_tools_each_read_only(self, world):
         tools = await world.list_tools()
         assert [t["name"] for t in tools] == list(c.TOOL_NAMES)
@@ -334,7 +342,6 @@ class TestOpenWithholds:
             seen.update(kwargs)
             return real(**kwargs)
 
-        monkeypatch.setenv(DRIVE_MCP_TOOLS_ENABLED_ENV, "1")
         monkeypatch.setattr(dct, "DriveOperations", spy)
         await World().build()
         assert seen["notification"] is None and seen["localization"] is None and seen["language_service"] is None
@@ -414,3 +421,37 @@ class TestAuth:
         resp = await world.post({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"Accept": HEADERS["Accept"]})
         assert resp.status_code == 401
         assert world.search.queries == []
+
+
+class TestLastLines:
+    """The connector's own last-resort branches: an operation that raises, a request with no verified token, a tool
+    registered outside the contract, an archived note."""
+
+    async def test_an_operation_that_raises_answers_failed_and_logs_the_type_only(self, world, monkeypatch, caplog):
+        async def boom(self: Any, *a: Any, **kw: Any):
+            raise RuntimeError("invoice FA-0137 for Tom's plan")
+
+        monkeypatch.setattr(DriveReadOperations, "search", boom)
+        with caplog.at_level(logging.DEBUG):
+            text = text_of(await world.call("search_drive", query="Tom's plan"))
+        assert text.split("\n") == [marker(c.STATUS).format(status="failed"),
+                                    marker(c.WHAT_TO_DO).format(line="Drive operation failed: RuntimeError.")]
+        logged = "\n".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+        assert "RuntimeError" in logged and "FA-0137" not in logged
+
+    def test_a_request_without_a_verified_token_is_refused(self):
+        ctx = SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(user=None)))
+        with pytest.raises(ToolError):
+            drive_mcp_setup._token_user(ctx, "search_drive")   # type: ignore[arg-type]
+
+    async def test_a_tool_outside_the_contract_refuses_the_build(self, world, monkeypatch):
+        params = {k: v for k, v in c.TOOL_PARAMETERS.items() if k != "get_note"}
+        monkeypatch.setattr(drive_mcp_setup.contract, "TOOL_PARAMETERS", params)
+        with pytest.raises(RuntimeError, match="get_note"):
+            world.fresh_app()
+
+    async def test_an_archived_note_answers_the_neutral_refusal(self, world):
+        world.notes.views[ref("d1")] = NoteView(note_id="n1", ref=ref("d1"), note_ref="drive_note:n1", path=PLAN.path,
+                                                version=3, state="archived", text="Tom's plan for Acme Hamburg.")
+        text = text_of(await world.call("get_note", item_ref=ref("d1")))
+        assert text.split("\n") == NEUTRAL and "Acme Hamburg" not in text

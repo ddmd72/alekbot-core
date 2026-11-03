@@ -5,17 +5,20 @@ Collections (env-prefixed): `{prefix}drive_connections`, doc id `{user_id}:{conn
 and `{prefix}drive_user_settings`, doc id `{user_id}`. Every field is plaintext: a connection holds no secret (the grant
 is the credential's). Stored fields: `connection_id, user_id, account_id, credential_id, kind, drive_identity, ref_tag,
 mount_name, name_history, indexing_enabled, transcribe_enabled, state, created_at, disconnected_at, updated_at,
-searched_by_default, write_folder_id, scope_folder_ids, scope_whole_drive` (`name_history`: a list of `{name, at}`,
+searched_by_default, write_folder_id, scope_folder_ids, scope_whole_drive, connector_access` (`name_history`: a list of `{name, at}`,
 oldest first; absent on a document stored before it, read as none. The four settings of slice 2b, absent on a document
 stored before them, read as the migrated connection's (MULTI_DRIVE_RFC §11.3): searched by default, the write folder at
-the root (`ROOT_FOLDER`; a stored null is read-only), the feed's default scope); settings:
+the root (`ROOT_FOLDER`; a stored null is read-only), the feed's default scope. `connector_access`
+(DRIVE_MCP_CONNECTOR_RFC §7.1): `{"mode": "whole"}`, `{"mode": "folders", "folder_ids": [...]}`, or null; absent or
+null reads as nothing, and a damaged value reads as nothing with an ERROR naming the connection only, never a raise,
+so chat's reads of the connection keep working while the connector fails closed); settings:
 `user_id, primary_connection_id, updated_at`.
 
 - Tenancy is structural: every read is addressed by the user, and a document whose stored `user_id` or
   `connection_id` contradicts its address is treated as absent and logged at ERROR (I3).
-- `create`, `update`, `update_settings` and `transition` are one transaction each on the one document: create never
-  overwrites, `update` writes only the fields given and `update_settings` the four settings, never `state` /
-  `disconnected_at`; `transition` applies `can_transition` to the state it read. `rename` is one transaction over the
+- `create`, `update`, `update_settings`, `update_connector_access` and `transition` are one transaction each on the one
+  document: create never overwrites, `update` writes only the fields given, `update_settings` the four settings and
+  `update_connector_access` the connector access, never `state` / `disconnected_at`; `transition` applies `can_transition` to the state it read. `rename` is one transaction over the
   user's documents (a query read inside it), so two renames cannot both take one name.
 - Connections are never deleted (a DISCONNECTED document keeps its tag reserved).
 - No composite index: `list_for_user` filters on `user_id` alone and `list_by_state` on `state` alone (one `in`); the
@@ -30,6 +33,7 @@ from google.cloud.firestore import FieldFilter
 from ..domain.connection_scope import ConnectionScope
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection, connection_doc_id
 from ..domain.drive_connection_state import ConnectionState, can_transition
+from ..domain.drive_connector_access import ConnectorAccess
 from ..domain.drive_mount_name_change import MountNameChange
 from ..domain.drive_mount_name_check import MountNameCheck
 from ..domain.drive_mounts import renamed_history
@@ -70,6 +74,7 @@ def _to_doc(connection: DriveConnection, now: datetime) -> Dict[str, Any]:
         **_account_fields(connection.provider_account),
         **_settings_fields(connection.searched_by_default, connection.write_folder_id, connection.scope_folder_ids,
                            connection.scope_whole_drive),
+        "connector_access": _connector_access_doc(connection.connector_access),
         "updated_at": now,
     }
 
@@ -83,6 +88,36 @@ def _settings_fields(searched_by_default: bool, write_folder_id: Optional[str], 
     """The stored form of the four Cabinet settings (a None write folder is stored as null: read-only)."""
     return {"searched_by_default": searched_by_default, "write_folder_id": write_folder_id,
             "scope_folder_ids": list(scope_folder_ids), "scope_whole_drive": scope_whole_drive}
+
+
+def _connector_access_doc(access: Optional[ConnectorAccess]) -> Optional[Dict[str, Any]]:
+    """The stored form of the connector access: null for nothing, else a `mode` map."""
+    if access is None:
+        return None
+    if access.whole:
+        return {"mode": "whole"}
+    return {"mode": "folders", "folder_ids": list(access.folder_ids)}
+
+
+def _connector_access(raw: Any, connection_id: str = "") -> Optional[ConnectorAccess]:
+    """The stored connector access: absent or null is nothing; a damaged value is nothing too, logged at ERROR with
+    the connection id only (never a raise: chat's reads of the connection must keep working; the connector fails
+    closed)."""
+    if raw is None:
+        return None
+    try:
+        if not isinstance(raw, dict):
+            raise ValueError("not a map")
+        mode = raw.get("mode")
+        if mode == "whole" and set(raw) == {"mode"}:
+            return ConnectorAccess.whole_drive()
+        ids = raw.get("folder_ids")
+        if mode == "folders" and set(raw) == {"mode", "folder_ids"} and isinstance(ids, list) and ids:
+            return ConnectorAccess.folders(ids)
+        raise ValueError("unknown form")
+    except ValueError:
+        logger.error(f"💥 Drive connection {connection_id[:8]} has a damaged connector_access; read as nothing")
+        return None
 
 
 def _account_fields(account: Optional[ProviderAccount]) -> Dict[str, Any]:
@@ -127,6 +162,7 @@ def _from_doc(data: Dict[str, Any]) -> DriveConnection:
         write_folder_id=data["write_folder_id"] if "write_folder_id" in data else ROOT_FOLDER,
         scope_folder_ids=tuple(data.get("scope_folder_ids") or ()),
         scope_whole_drive=bool(data.get("scope_whole_drive", False)),
+        connector_access=_connector_access(data.get("connector_access"), str(data.get("connection_id", ""))),
     )
 
 
@@ -244,6 +280,23 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
             if data is None:
                 return None
             stored = _from_doc({**data, **fields})      # the domain's rules first: nothing invalid is written
+            transaction.update(ref, {**fields, "updated_at": datetime.now(timezone.utc)})
+            return stored
+
+        updated: Optional[DriveConnection] = await _update(self._db.transaction())
+        return updated
+
+    async def update_connector_access(self, user_id: str, connection_id: str,
+                                      access: Optional[ConnectorAccess]) -> Optional[DriveConnection]:
+        fields = {"connector_access": _connector_access_doc(access)}
+        ref = self._ref(user_id, connection_id)
+
+        @firestore.async_transactional
+        async def _update(transaction: Any) -> Optional[DriveConnection]:
+            data = self._owned(await ref.get(transaction=transaction), user_id, connection_id)
+            if data is None:
+                return None
+            stored = _from_doc({**data, **fields})
             transaction.update(ref, {**fields, "updated_at": datetime.now(timezone.utc)})
             return stored
 

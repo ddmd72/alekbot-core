@@ -90,6 +90,10 @@ from ..domain.untrusted_text import (
 from ..domain.drive_capture import Capture, born_digital
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_state import ConnectionState
+from ..domain.drive_audience import CURRENT_DRIVE_AUDIENCE, DriveAudience
+from ..domain.drive_connector_listing import (
+    CONNECTOR_TOPS_HEAD, connector_mount_row, render_connector_mount_listing,
+)
 from ..domain.drive_mount import Mount
 from ..domain.drive_mount_line import MountLine
 from ..domain.drive_mount_table import MountTable
@@ -385,7 +389,12 @@ class DriveOperations:
             tag = conn.ref_tag
             shown_folder = self._shown(conn, out.folder)
             shown_items = [self._shown(conn, i) for i in out.items]
-            head = f"Folders indexed on {conn.mount_name}:" if out.scope_tops else drive_label(shown_folder, tag)
+            if out.connector_tops:
+                head = CONNECTOR_TOPS_HEAD.format(drive=conn.mount_name)
+            elif out.scope_tops:
+                head = f"Folders indexed on {conn.mount_name}:"
+            else:
+                head = drive_label(shown_folder, tag)
             lines = [head] + [f"  {drive_label(i, tag)}" for i in shown_items]
             if not out.items:
                 lines.append("  (empty)")
@@ -396,12 +405,43 @@ class DriveOperations:
 
     async def _mount_listing(self, user_id: str) -> DriveOutcome:
         """`/`: one line per live connection (a mount that needs a reconnect is still listed); a write folder below the root
-        is read for its path."""
+        is read for its path. Under the connector audience the visible drives only, each with its connector access
+        (DRIVE_MCP_CONNECTOR_RFC §7.4, E10b)."""
         table = await self._svc().mounts(user_id)
         if not table.mounts:
             raise DriveNotConnectedError("no drive connection")
+        if CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR:
+            return _ok(DriveOp.LIST, await self._connector_listing(user_id, table), [])
         text = render_mount_listing(list(await self._mount_lines(user_id, table, {})))
         return _ok(DriveOp.LIST, text, [])
+
+    async def _connector_listing(self, user_id: str, table: MountTable) -> str:
+        """The connector's `/`: one line per visible mount with its connector folders' paths (read in parallel; a
+        failed read leaves the paths out) and the owner's drive note (one query; a failure leaves the notes out)."""
+        drive_service = self._svc()
+
+        async def folders_of(mount: Mount) -> Tuple[List[str], int]:
+            try:
+                return await drive_service.connector_folder_paths(mount.connection.handle)
+            except Exception as exc:
+                logger.warning("[DriveOperations] connector folders read failed: %s", exc_brief(exc))
+                return [], 0
+
+        found, texts = await asyncio.gather(asyncio.gather(*(folders_of(m) for m in table.mounts)),
+                                            self._note_texts(user_id))
+        return render_connector_mount_listing([
+            connector_mount_row(m, None, note=texts.get(m.connection_id, ""), folder_paths=paths, more=more)
+            for m, (paths, more) in zip(table.mounts, found)])
+
+    async def _note_texts(self, user_id: str) -> Dict[str, str]:
+        """The owner's drive notes by connection id; a failure leaves them out."""
+        if self._drive_notes is None:
+            return {}
+        try:
+            return await self._drive_notes.drive_note_texts(user_id)
+        except Exception as exc:
+            logger.warning("[DriveOperations] drive notes read failed for %s: %s", user_id[:8], exc_brief(exc))
+            return {}
 
     async def _mount_lines(self, user_id: str, table: MountTable,
                            states: Mapping[str, SearchLine]) -> Tuple[MountLine, ...]:
@@ -425,18 +465,9 @@ class DriveOperations:
                 logger.warning("[DriveOperations] scope folders read failed: %s", exc_brief(exc))
                 return [], 0
 
-        async def notes() -> Dict[str, str]:
-            if self._drive_notes is None:
-                return {}
-            try:
-                return await self._drive_notes.drive_note_texts(user_id)
-            except Exception as exc:
-                logger.warning("[DriveOperations] drive notes read failed for %s: %s", user_id[:8], exc_brief(exc))
-                return {}
-
         paths, scopes, texts = await asyncio.gather(
             asyncio.gather(*(folder_path_of(m) for m in table.mounts)),
-            asyncio.gather(*(scope_of(m) for m in table.mounts)), notes())
+            asyncio.gather(*(scope_of(m) for m in table.mounts)), self._note_texts(user_id))
         return tuple(mount_line(m, states.get(m.connection_id), write_folder_path=path,
                                 note=texts.get(m.connection_id, ""), scope_paths=scope[0], scope_more=scope[1])
                      for m, path, scope in zip(table.mounts, paths, scopes))

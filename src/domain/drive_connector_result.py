@@ -8,6 +8,8 @@
 
 "What to do", by the first rule that holds:
 - the call did not finish in time (`NOT_FINISHED`): UNFINISHED, no block;
+- no drive the connector sees, or one that needs reconnecting (`NOT_CONNECTED`): NOT_CONNECTED, no block (the chat's
+  text would say the drive is not connected when the owner simply shared none with the connector, §7.4);
 - the open withheld the file (`DriveOutcome.withheld`): the `W_<code>` line; the block is the file's label, followed,
   when the call issued a one-time link (`link`), by the LINK line with it (RFC §6.2, §8);
 - a link issued with no withheld code (`get_download_link`, an `OK` outcome whose text is the file's label): the LINK
@@ -19,7 +21,7 @@
   "no such item", so a result is never an existence oracle; the chat's refusal lines never reach the connector (§7.7);
 - content (`OK`), or a search or passages call that found nothing (its text is the result): ANSWER_FROM_RESULTS; the
   block is the call's text;
-- every other outcome: its own text (a correctable request error, not connected, gone, a failure), no block.
+- every other outcome: its own text (a correctable request error, gone, a failure), no block.
 
 No "Specialist note", no `drive_context`, no delivery items: the client reads the result itself. `cap_result` is the
 hard size guard every tool's result passes (§6.1): cut at a line, then the OVER_SIZE line. Pure: no I/O.
@@ -131,6 +133,8 @@ def cap_result(text: str, over_size: str, limit: int = RESULT_MAX_CHARS) -> str:
 def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable[[], str]) -> Tuple[str, str]:
     if outcome.cls is OutcomeClass.NOT_FINISHED:
         return r[c.UNFINISHED], ""
+    if outcome.cls is OutcomeClass.NOT_CONNECTED:       # the chat's line would blame a drive merely not shared (§7.4)
+        return r[c.NOT_CONNECTED], ""
     if outcome.withheld is not None:
         label = outcome.label_of(outcome.items[0]) if outcome.items else ""
         return r[c.text_key_of_withheld(outcome.withheld)], label
