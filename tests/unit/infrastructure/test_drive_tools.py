@@ -18,6 +18,7 @@ from src.infrastructure.drive_tools import DriveToolRun
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_service_connections import ConnectionReads, connection_of
+from tests.support.opened_file import opened_body
 
 CTX = {"user_id": "u1", "account_id": "a1"}
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False, size_bytes=2048)
@@ -167,7 +168,7 @@ async def test_only_file_content_is_marked_as_a_body():
     ops = DriveOperations(conversion_service=conversion, drive_service=drive)
     drive.get_item.return_value = DriveItem(item_id="n1", name="todo.md", path="Notes/todo.md",
                                                        is_folder=False, size_bytes=10, mime_type="text/markdown")
-    conversion.resolve_content.return_value = "buy milk"
+    conversion.open.return_value = opened_body("buy milk")
     text = await ops.open(CTX, "u1", "drive:a1:n1")
     drive.get_item.return_value = DriveItem(item_id="h1", name="a.heic", path="a.heic", is_folder=False,
                                                        size_bytes=10, mime_type="image/heic")

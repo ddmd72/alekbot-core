@@ -17,6 +17,7 @@ today's AgentResponse, text for text; `delete_file` refuses a `drive:` ref (§4.
 """
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
 from ..agents.base_agent import BaseAgent
@@ -31,6 +32,7 @@ from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..infrastructure.agent_manifest import Intent
 from ..infrastructure.drive_operations import DriveOperations
 from ..domain.document_limits import MAX_VIDEO_ATTACH_BYTES
+from ..domain.document_read import INTERACTIVE_OPEN_S, OPEN_MARGIN_S
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.logger import logger
 
@@ -99,9 +101,13 @@ class FileManagementAgent(BaseAgent):
 
         if intent == Intent.OPEN_FILE:
             ref = payload.get("file_ref") or ""
+            # The open keeps this agent's timeout minus the margin for presentation (EXTERNAL_FILES_RFC §4.4); the
+            # open is not shielded (USER_DRIVE_RFC §4.13).
+            deadline_at = time.time() + self._open_budget_s()
             if is_drive_ref(ref):
-                return self._respond(message, await ops.open(context, user_id, ref))
-            return self._respond(message, await ops.fetch_stored(context, user_id, payload.get("file_ref")))
+                return self._respond(message, await ops.open(context, user_id, ref, deadline_at=deadline_at))
+            return self._respond(message, await ops.fetch_stored(context, user_id, payload.get("file_ref"),
+                                                                 deadline_at=deadline_at))
 
         if intent == Intent.DELETE_FILE:
             ref = payload.get("file_ref") or ""
@@ -120,6 +126,12 @@ class FileManagementAgent(BaseAgent):
                 f"Supported intents: open_file, delete_file."
             ),
         )
+
+    def _open_budget_s(self) -> float:
+        """Seconds an open may take: the agent timeout minus the presentation margin (no timeout configured: the
+        interactive default)."""
+        timeout_ms = self.config.timeout_ms
+        return INTERACTIVE_OPEN_S if not timeout_ms else timeout_ms / 1000 - OPEN_MARGIN_S
 
     def _respond(self, message: AgentMessage, outcome: DriveOutcome) -> AgentResponse:
         """Today's AgentResponse for an outcome: success with the text, the touched items' `drive_context` and the

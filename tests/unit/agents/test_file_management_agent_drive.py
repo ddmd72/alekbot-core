@@ -188,7 +188,7 @@ class TestOpenCaps:
         out = await ops.open(CTX, "u1", "drive:a1:h1")
         assert out.success and "cannot be viewed yet" in out.text
         conversion.resolve_bytes.assert_not_called()
-        conversion.resolve_content.assert_not_called()
+        conversion.open.assert_not_called()
 
     async def test_small_image_is_attached_for_vision(self, agent, conversion, drive):
         drive.get_item.return_value = SMALL_PNG
@@ -415,7 +415,7 @@ class TestErrors:
 
     async def test_conversion_not_wired_is_not_configured(self, agent, conversion, drive):
         drive.get_item.return_value = NOTE   # the open reads the item through the drive service, then the conversion
-        conversion.resolve_content.side_effect = FileNotFoundError("unavailable")
+        conversion.open.side_effect = FileNotFoundError("unavailable")
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:n1"))
         assert resp.status == AgentStatus.FAILED and resp.error == "The drive is not configured."
 

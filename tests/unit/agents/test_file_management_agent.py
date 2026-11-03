@@ -254,8 +254,7 @@ class TestFetchErrors:
         assert "required" in response.error
 
     async def test_file_not_found(self, agent, mock_conversion):
-        mock_conversion.resolve_content = AsyncMock(
-            side_effect=FileNotFoundError("not found")
+        mock_conversion.open = AsyncMock(side_effect=FileNotFoundError("not found")
         )
         msg = _make_message(Intent.OPEN_FILE, file_ref="gone.docx")
 
@@ -265,8 +264,7 @@ class TestFetchErrors:
         assert "not found" in response.error.lower() or "expired" in response.error.lower()
 
     async def test_conversion_error(self, agent, mock_conversion):
-        mock_conversion.resolve_content = AsyncMock(
-            side_effect=RuntimeError("conversion failed")
+        mock_conversion.open = AsyncMock(side_effect=RuntimeError("conversion failed")
         )
         msg = _make_message(Intent.OPEN_FILE, file_ref="broken.docx")
 

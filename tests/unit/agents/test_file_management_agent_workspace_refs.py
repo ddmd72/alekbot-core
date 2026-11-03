@@ -60,7 +60,7 @@ class TestOpen:
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:projects/garden-shed.md"))
         assert resp.status == AgentStatus.FAILED
         assert "view it with the workspace tool" in resp.error
-        conversion.resolve_content.assert_not_called()
+        conversion.open.assert_not_called()
         conversion.resolve_bytes.assert_not_called()
 
     async def test_an_invalid_ref(self, agent):
@@ -68,13 +68,13 @@ class TestOpen:
         assert resp.status == AgentStatus.FAILED and "invalid workspace path" in resp.error
 
     async def test_a_missing_copy(self, agent, conversion):
-        conversion.resolve_bytes.side_effect = FileNotFoundError("binary_files/lease.pdf")
+        conversion.open.side_effect = FileNotFoundError("binary_files/lease.pdf")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED and "is not in your workspace" in resp.error
         assert "re-upload" not in resp.error
 
     async def test_a_store_error_has_its_own_message(self, agent, conversion):
-        conversion.resolve_bytes.side_effect = RuntimeError("gcs down")
+        conversion.open.side_effect = RuntimeError("gcs down")
         resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:binary_files/lease.pdf", **NATIVE_PDF))
         assert resp.status == AgentStatus.FAILED
         assert resp.error == "The workspace could not be read right now (RuntimeError); try again later."
