@@ -17,12 +17,18 @@ that accepts no changes (`capabilities` only; the fake's writes keep working). T
 `outer_folders` (GOOGLE_DRIVE_RFC G8) answers the parentless folders in account-wide mode, by name, and [] otherwise.
 `plant(..., mime=…)` / `plant_parentless(..., mime=…)` plant the provider's mime, returned on items and changes (G1).
 Paths join names with `join_drive_path`, so a "/" inside a name prints escaped as a real adapter prints it (G4).
+
+Deferred change keys (GOOGLE_DRIVE_RFC GE-36): `plant(..., deferred=True)` plants an item whose key costs a read, as a
+Google native's head revision does. The feed lists it pending with `m:{modified time}`; `resolve_content_versions`
+gives it `r:rev-{version}` and records its id in `resolved`; id reads and listings give the final key at once. Its
+modified time starts at the fake's fixed time and moves only by `touch(handle, item_id, modified=…, edited=…)`, which
+also re-emits it in the feed (`edited` adds a version). Every other item behaves as before.
 """
 from __future__ import annotations
 
 import hashlib
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional, Sequence, Set, Tuple
 
@@ -56,6 +62,8 @@ class _Node:
     hashed: bool = True
     thumbnail: Optional[bytes] = None
     mime: str = ""
+    deferred: bool = False                               # GE-36: the feed lists its key pending
+    modified: datetime = _T0
 
 
 class _Tree:
@@ -107,6 +115,7 @@ class FakeDriveAdapter(UserDrivePort):
         self.token_cache: Dict[Tuple[str, str], str] = {}     # (user_id, credential_id) -> token
         self.forgotten: List[str] = []
         self.calls: List[Tuple[str, str]] = []                # (method, connection_id)
+        self.resolved: List[str] = []                         # item ids whose deferred key was read (GE-36)
 
     # -- provider-side scripting ----------------------------------------------------------------------------
 
@@ -118,10 +127,22 @@ class FakeDriveAdapter(UserDrivePort):
 
     def plant(self, handle: DriveHandle, parent_id: str, name: str, data: bytes = b"", *, folder: bool = False,
               media: Optional[DriveMediaFacts] = None, hashed: bool = True,
-              thumbnail: Optional[bytes] = None, mime: str = "") -> str:
+              thumbnail: Optional[bytes] = None, mime: str = "", deferred: bool = False) -> str:
         node = self.tree(handle).new(parent_id, name, folder, data)
         node.media, node.hashed, node.thumbnail, node.mime = media or DriveMediaFacts(), hashed, thumbnail, mime
+        node.deferred = deferred
         return node.item_id
+
+    def touch(self, handle: DriveHandle, item_id: str, *, modified: Optional[datetime] = None,
+              edited: bool = False) -> None:
+        """The provider re-emits the item in its feed: at `modified` when given, with a new version when `edited`."""
+        tree = self.tree(handle)
+        node = tree.nodes[item_id]
+        if modified is not None:
+            node.modified = modified
+        if edited:
+            node.version += 1
+        tree.log.append((len(tree.log) + 1, item_id, False))
 
     def plant_parentless(self, handle: DriveHandle, name: str, data: bytes = b"", *, folder: bool = False,
                          mime: str = "") -> str:
@@ -165,19 +186,27 @@ class FakeDriveAdapter(UserDrivePort):
     def _item(self, tree: _Tree, node: _Node) -> DriveItem:
         return DriveItem(
             item_id=node.item_id, name=node.name, path=tree.path(node), is_folder=node.is_folder,
-            size_bytes=len(node.data), mime_type=node.mime, modified_at=_T0, child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
+            size_bytes=len(node.data), mime_type=node.mime, modified_at=node.modified, child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
             identity=self._item_identity(tree, node.item_id), drive_identity=f"{self.id_space}:{tree.drive_id}",
-            content_version="" if node.is_folder else f"v{node.version}", content_identity=self._content_identity(node),
+            content_version=self._version(node), content_identity=self._content_identity(node),
             media=node.media, access=tree.access.get(node.item_id, ItemAccess()))
 
-    def _change(self, tree: _Tree, node: _Node) -> DriveChange:
+    @staticmethod
+    def _version(node: _Node) -> str:
+        if node.is_folder:
+            return ""
+        return f"r:rev-{node.version}" if node.deferred else f"v{node.version}"
+
+    def _change(self, tree: _Tree, node: _Node, *, feed: bool = False) -> DriveChange:
+        pending = feed and node.deferred and not node.is_folder
         return DriveChange(
             item_id=node.item_id, parent_id=node.parent_id or "", name=node.name, is_folder=node.is_folder,
-            size_bytes=len(node.data), mime_type=node.mime, content_version="" if node.is_folder else f"v{node.version}",
-            modified_at=_T0, fs_modified_at=_T0, created_at=_T0,
+            size_bytes=len(node.data), mime_type=node.mime,
+            content_version=f"m:{node.modified.isoformat()}" if pending else self._version(node),
+            modified_at=node.modified, fs_modified_at=_T0, created_at=_T0,
             child_count=len(tree.kids(node.item_id)) if node.is_folder else 0,
             identity=self._item_identity(tree, node.item_id), content_identity=self._content_identity(node),
-            media=node.media)
+            media=node.media, content_version_pending=pending)
 
     def _get(self, tree: _Tree, item_id: str) -> _Node:
         node = tree.nodes.get(item_id)
@@ -302,7 +331,8 @@ class FakeDriveAdapter(UserDrivePort):
         tree = self._enter("get_changes", handle)
         identity = f"{self.id_space}:{tree.drive_id}"
         if cursor is None:
-            rows = [self._change(tree, tree.root)] + [self._change(tree, n) for n in tree.nodes.values() if n is not tree.root]
+            rows = [self._change(tree, tree.root)] + [self._change(tree, n, feed=True) for n in tree.nodes.values()
+                                                      if n is not tree.root]
             return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, True, tree.root.item_id, identity)
         epoch, _, pos = cursor.partition(":")
         if int(epoch) != tree.epoch:
@@ -312,12 +342,21 @@ class FakeDriveAdapter(UserDrivePort):
             if p > int(pos):
                 latest[item_id] = deleted
         rows = [DriveChange(item_id=i, deleted=True, identity=self._item_identity(tree, i)) if gone or i not in tree.nodes
-                else self._change(tree, tree.nodes[i]) for i, gone in latest.items()]
+                else self._change(tree, tree.nodes[i], feed=True) for i, gone in latest.items()]
         return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, False, tree.root.item_id, identity)
 
     async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
-        self._enter("resolve_content_versions", handle)
-        return list(changes)
+        tree = self._enter("resolve_content_versions", handle)
+        out: List[DriveChange] = []
+        for change in changes:
+            node = tree.nodes.get(change.item_id)
+            if change.content_version_pending:
+                self.resolved.append(change.item_id)
+                final = self._version(node) if node is not None and change.item_id not in tree.closed else ""
+                change = replace(change, content_version=final or change.content_version,
+                                 content_version_pending=False)
+            out.append(change)
+        return out
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         tree = self._enter("get_change", handle)
