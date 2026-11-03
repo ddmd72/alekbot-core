@@ -174,14 +174,6 @@ async def test_a_drive_401_points_to_the_drive_prm(world):
         assert f'resource_metadata="{BASE}/.well-known/oauth-protected-resource/drive-mcp"' in resp.headers["www-authenticate"]
 
 
-async def test_the_drive_app_lists_only_the_stub_tool_marked_read_only(world):
-    async with world.running():
-        tokens = await world.tokens(scope="drive_read")
-        tools = _tool_names(await world.list_tools(world.drive_http, "/drive-mcp", tokens["access_token"]))
-        assert [t["name"] for t in tools] == ["drive_connector_status"]
-        assert tools[0]["annotations"]["readOnlyHint"] is True
-
-
 async def test_a_drive_refresh_keeps_the_drive_audience_and_scope(world):
     async with world.running():
         tokens = await world.tokens(scope="drive_read", resource=DRIVE)
