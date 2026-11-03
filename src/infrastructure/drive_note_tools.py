@@ -32,14 +32,16 @@ Public interface:
     DriveNoteSession                  one execution's write count and read set
     DriveNoteToolRun(run, service, ops, context, user_id, account_id, provenance, *, writes, session=None)
         .handlers -> Dict[str, LocalToolHandler]     get_note always; the ten writers only when `writes`
-    read_note_for_connector(service, user_id, item_ref, whole_drive_name) -> DriveOutcome   the drive connector's get_note
+    ConnectorItemReader               the two item reads the connector's get_note runs first (Protocol)
+    read_note_for_connector(service, items, user_id, item_ref, whole_drive_name) -> DriveOutcome   the connector's
+        get_note
 """
 from __future__ import annotations
 
 import asyncio
 import secrets
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 
 from ..domain import drive_answer_texts as t
 from ..domain import drive_note_tool_texts as nt
@@ -58,7 +60,12 @@ from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
+from ..domain.drive_handle import DriveHandle
 from ..domain.drive_ref import is_drive_ref
+from ..domain.drive_resolved_ref import ResolvedDriveRef
+from ..domain.user_drive import (
+    DriveAccessRefused, DriveItem, DriveItemNotFoundError, DriveNotConnectedError, DrivePathError, DriveRefRefused,
+)
 from ..domain.llm import ToolCall
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..utils.logger import logger
@@ -178,13 +185,28 @@ def _service_error(op: DriveOp, tool: str, user_id: str, exc: Exception) -> Driv
     return _failed(op, nt.UNEXPECTED, OutcomeClass.FAILED)
 
 
-async def read_note_for_connector(service: "DriveNoteService", user_id: str, item_ref: str, whole_drive_name: str,
+class ConnectorItemReader(Protocol):
+    """The two reads the connector's `get_note` runs before the note store (`UserDriveService` satisfies it; no write
+    method is reachable through it)."""
+
+    async def resolve_ref(self, user_id: str, ref: str) -> ResolvedDriveRef: ...
+
+    async def get_item(self, handle: DriveHandle, item_id: str) -> DriveItem: ...
+
+
+_ITEM_REFUSALS = (DriveRefRefused, DriveAccessRefused, DriveItemNotFoundError, DrivePathError, DriveNotConnectedError)
+
+
+async def read_note_for_connector(service: "DriveNoteService", items: ConnectorItemReader, user_id: str,
+                                  item_ref: str, whole_drive_name: str,
                                   *, new_nonce: Callable[[], str] = lambda: secrets.token_hex(8)) -> DriveOutcome:
     """`get_note` for the drive connector (DRIVE_MCP_CONNECTOR_RFC §4.1, §7.5): the chat's one-target rule (§11.10)
-    and its refusal classes and error mapping (`_REFUSAL_CLASS`, `_service_error`), with three connector rules: an
+    and its refusal classes and error mapping (`_REFUSAL_CLASS`, `_service_error`), with four connector rules: an
     `item_ref` that is not a `drive:` ref (a `drive_note:` ref included) is refused before any call with no text (the
-    connector prints its neutral line); a cleared note reads as no note; an archived note (its file is gone from the
-    drive, D7) is refused with no text. The connector access check of §7.5 is slice 3's."""
+    connector prints its neutral line); a `drive:` ref is resolved and its item read through `items` (the access check
+    under the connector audience) first, and any refusal, a missing item included, answers the same neutral refusal
+    with no note read; a cleared note reads as no note; an archived note (its file is gone from the drive, D7) is
+    refused with no text. A whole-drive name goes to the store, which sees only the drives the connector sees."""
     op, tool = DriveOp.NOTE_READ, nt.GET_NOTE
     ref, drive = item_ref.strip(), whole_drive_name.strip()
     if bool(ref) == bool(drive):                            # §11.10: exactly one target, never both, never none
@@ -193,6 +215,15 @@ async def read_note_for_connector(service: "DriveNoteService", user_id: str, ite
     if ref and (NOTE_REF_PREFIX in ref or not is_drive_ref(ref)):
         logger.info(f"[DriveNote] tool user={user_id[:8]} {tool} refused:not_a_drive_ref")
         return _failed(op, "", OutcomeClass.REFUSED)
+    if ref:
+        try:
+            target = await items.resolve_ref(user_id, ref)
+            await items.get_item(target.handle, target.item_id)
+        except _ITEM_REFUSALS as exc:
+            logger.info(f"[DriveNote] tool user={user_id[:8]} {tool} refused:item_{type(exc).__name__}")
+            return _failed(op, "", OutcomeClass.REFUSED)
+        except Exception as exc:
+            return _service_error(op, tool, user_id, exc)
     try:
         view = await service.get(user_id, ref, **_drive_kw(drive))
     except Exception as exc:

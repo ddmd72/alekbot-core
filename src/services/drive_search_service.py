@@ -99,8 +99,10 @@ from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, qu
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_line import SearchLine, search_line
 from ..domain.drive_search_merge import merge_excerpts, merge_results
-from ..domain.drive_access_policy import in_scope
+from ..domain.drive_access_policy import in_connector, in_scope
 from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_capabilities import DriveCapabilities
+from ..domain.drive_audience import CURRENT_DRIVE_AUDIENCE, DriveAudience
 from ..domain.drive_connection_access import ConnectionAccess
 from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_mount import Mount
@@ -470,7 +472,10 @@ class DriveSearchService:
     async def _scope_admit(self, conn: DriveConnection, root_item_id: str, warnings: List[str]
                            ) -> Optional[Callable[[DriveIndexRecord, Tuple[str, Tuple[str, ...]]], bool]]:
         """The scope test over the index's own chain (`in_scope`, no provider call for the chain), or None when the
-        connection's scope covers everything (the whole drive, or no folders chosen on an area feed)."""
+        connection's scope covers everything (the whole drive, or no folders chosen on an area feed). Under the
+        connector audience: `_connector_admit`."""
+        if CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR:
+            return await self._connector_admit(conn, root_item_id, warnings)
         if conn.scope_whole_drive:
             return None
         try:
@@ -484,6 +489,37 @@ class DriveSearchService:
 
         def admit(rec: DriveIndexRecord, chain: Tuple[str, Tuple[str, ...]]) -> bool:
             return in_scope(access, capabilities, Ancestry(ids=(rec.item_id, *chain[1]), reached_root=False))
+        return admit
+
+    async def _connector_admit(self, conn: DriveConnection, root_item_id: str, warnings: List[str]
+                               ) -> Optional[Callable[[DriveIndexRecord, Tuple[str, Tuple[str, ...]]], bool]]:
+        """The connector's index admit (DRIVE_MCP_CONNECTOR_RFC §7.3, E16): the scope test and the connector access on
+        the same index chain. No connector access admits nothing; a failed capabilities lookup when the scope test
+        needs one admits nothing (fail closed, unlike chat's); None only when both cover everything. An ancestor the
+        index has not recorded cuts the chain, so a connector folder above it is not seen and the record is refused."""
+        connector = conn.connector_access
+        if connector is None:
+            return lambda rec, chain: False
+        capabilities: Optional[DriveCapabilities] = None
+        if not conn.scope_whole_drive:
+            try:
+                capabilities = await self._drive.capabilities(conn.handle)
+            except Exception as exc:
+                warnings.append(f"[DriveSearch] capabilities of a connection failed, connector admits nothing: "
+                                f"{exc_brief(exc)}")
+                return lambda rec, chain: False
+            if not conn.scope_folder_ids and capabilities.feed_scope is FeedScope.AREA:
+                capabilities = None          # the area default covers everything: no scope test
+        if capabilities is None and connector.whole:
+            return None
+        access = ConnectionAccess.of(conn, root_item_id)
+        scope_caps = capabilities
+
+        def admit(rec: DriveIndexRecord, chain: Tuple[str, Tuple[str, ...]]) -> bool:
+            ancestry = Ancestry(ids=(rec.item_id, *chain[1]), reached_root=False)
+            if scope_caps is not None and not in_scope(access, scope_caps, ancestry):
+                return False
+            return in_connector(access, ancestry)
         return admit
 
     async def _live_connection(self, user_id: str, connection_id: str) -> Optional[DriveConnection]:
@@ -2156,7 +2192,8 @@ class DriveSearchService:
                           path: Optional[str] = None) -> Optional[str]:
         """The search card's sentence for an item the index knows the bot cannot open (§26.2, Δ55), by id or by folder
         path (resolved in the index as a search scope is), in `conn`'s index; None for an item the index does not know
-        or can read, so the caller keeps its own answer."""
+        or can read, so the caller keeps its own answer. Under the connector audience also None for an item outside
+        connector access (the index chain, fail closed), so the note never tells the client such an item exists."""
         rec: Optional[DriveIndexRecord] = None
         if item_id is not None:
             rec = (await self._repo.get_records(conn.scope, [item_id])).get(item_id)
@@ -2168,6 +2205,14 @@ class DriveSearchService:
             rec = found.record if isinstance(found, _Folder) else None
         if rec is None or not inaccessible(rec):
             return None
+        if CURRENT_DRIVE_AUDIENCE.get() is DriveAudience.CONNECTOR:
+            state = await self._repo.get_sync_state(conn.scope)
+            if state is None or not state.root_item_id:
+                return None
+            ancestry = await self._ancestry(conn, state.root_item_id)
+            await ancestry.load([rec])
+            if ancestry.chain(rec, require_card=False) is None:
+                return None
         return ACCESS_NOTE_FOLDER if rec.is_folder else ACCESS_NOTE_FILE
 
     async def transcript_text(self, conn: DriveConnection, item_id: str, *, path: str = "",
