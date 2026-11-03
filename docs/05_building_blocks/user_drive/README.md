@@ -387,6 +387,12 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   capped record also loses its readable chunks (an indexed one goes back to `pending`) and its content and triage
   wait until it is released, because search never shows content without a card (§4 step 2). **No path is stored**: paths are derived
   from the `parent_id` chain at read time, so a folder rename touches no descendant.
+- **Pending change keys (GOOGLE_DRIVE_RFC GE-36).** A record's `content_version` is always final. The change feed may
+  list an item whose key costs the provider an extra read (a Google native's head revision) as pending
+  (`DriveChange.content_version_pending`, carrying the fallback `m:` key). `DriveIndexingService._apply` resolves it before
+  planning, only for an item it plans as a live record and after the page's scope verdicts: the stored key when the
+  stored record has the change's modified time (`drive_index.with_stored_version`), otherwise one batched
+  `UserDrivePort.resolve_content_versions` call per page. The planner refuses a pending change; the flag is never stored.
 - **Content fields (Slice 2+4)** on the same record: `indexed_generation` (the readable chunk generation, or none),
   `index_generation` (the last generation a run started), `indexed_version` (the content version it was read at),
   `chunk_count`, `chunk_space` (the embedding space of its chunks), `extraction_version`, `extracted_by`
