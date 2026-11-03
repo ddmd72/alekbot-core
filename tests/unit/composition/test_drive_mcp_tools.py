@@ -192,7 +192,8 @@ class World:
     async def build(self):
         self.tools = await build_drive_connector_tools(
             conversion_service=self.conversion, drive_service=self.drive, drive_search=self.search,
-            drive_notes=self.notes, token_repo=self.tokens, alert_sink=self.sink)
+            drive_notes=self.notes, token_repo=self.tokens, alert_sink=self.sink,
+            links=object())  # type: ignore[arg-type]
         self.app = build_drive_mcp_app(authorization_service=Auth(), auth_config=AUTH_CONFIG, tools=self.tools)
         return self
 

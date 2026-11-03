@@ -53,7 +53,8 @@ class Sink:
 
 async def build(store: Any, sink: Optional[Sink] = None, *, conversion: Any = "conversion"):
     return await build_drive_connector_tools(conversion_service=conversion, drive_service=None, drive_search=None,
-                                             drive_notes=None, token_repo=store, alert_sink=sink)
+                                             drive_notes=None, token_repo=store, alert_sink=sink,
+                                             links=object())  # type: ignore[arg-type]
 
 
 async def rpc(app, method: str, params: Optional[dict] = None, headers=HEADERS) -> httpx.Response:
