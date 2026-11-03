@@ -1,1 +1,4 @@
-# Mutants a reviewer ruled equivalent for src.services.drive_note_service: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.
+# Mutants a reviewer ruled equivalent for src.services.drive_note_service: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check).
+3aef9598  # DriveNoteRefused item_id on the access-check not-found path: no reader of exc.detail on this path (tools render str(exc) and reason only)
+465677ee  # DriveNoteRefused item_id on the access-check refusal path: same, detail is never read
+7da295ce  # DriveNoteRefused item_id on the missing-item path: same, detail is never read
