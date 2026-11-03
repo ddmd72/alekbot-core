@@ -10,10 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import indexer_main
-from src.adapters import subprocess_content_extractor as extractor_module
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.composition import drive_indexing_setup
-from src.domain.document_extraction import PARSER
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 
