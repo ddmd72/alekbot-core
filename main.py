@@ -54,6 +54,47 @@ def mcp_owner(path: str) -> Optional[str]:
     return "facts" if _is_mcp_path(path) else None
 
 
+def build_drive_mcp_or_none(authorization_service, auth_config):
+    """The drive connector's app, or None when its build fails: the facts connector must keep running."""
+    try:
+        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config)
+    except Exception as drive_err:
+        logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
+        logger.warning("🤖 Bot will continue without the drive connector")
+        return None
+
+
+def build_mcp_parent_asgi(*, main_app, facts_mcp, drive_mcp, facts_asgi):
+    """The plain ASGI dispatcher: lifespan runs every MCP session manager; paths go by `mcp_owner`.
+
+    `drive_mcp` None (its build failed): `/drive-mcp` falls through to the Quart app (404).
+    """
+    drive_asgi = McpErrorLogger(drive_mcp.streamable_http_app()) if drive_mcp is not None else None
+
+    async def parent_asgi(scope, receive, send):
+        if scope["type"] == "lifespan":
+            async with contextlib.AsyncExitStack() as stack:
+                await stack.enter_async_context(facts_mcp.session_manager.run())
+                if drive_mcp is not None:
+                    await stack.enter_async_context(drive_mcp.session_manager.run())
+                while True:
+                    message = await receive()
+                    if message["type"] == "lifespan.startup":
+                        await send({"type": "lifespan.startup.complete"})
+                    elif message["type"] == "lifespan.shutdown":
+                        await send({"type": "lifespan.shutdown.complete"})
+                        return
+        owner = mcp_owner(scope.get("path", ""))
+        if owner == "facts":
+            await facts_asgi(scope, receive, send)
+        elif owner == "drive" and drive_asgi is not None:
+            await drive_asgi(scope, receive, send)
+        else:
+            await main_app(scope, receive, send)
+
+    return parent_asgi
+
+
 async def main():
     """Main function to start the bot with clean dependency injection."""
 
@@ -558,18 +599,7 @@ async def main():
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
                     # The drive connector has its own build so a failure there (e.g. a missing token, once the
                     # connector texts are token-backed) never takes the facts connector down.
-                    try:
-                        drive_mcp = build_drive_mcp_app(
-                            authorization_service=mcp_components.authorization_service,
-                            auth_config=app.auth_config,
-                        )
-                    except Exception as drive_err:
-                        drive_mcp = None
-                        logger.error(
-                            f"❌ Failed to initialize drive MCP connector: {drive_err}",
-                            exc_info=True,
-                        )
-                        logger.warning("🤖 Bot will continue without the drive connector")
+                    drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config)
                 except Exception as mcp_err:
                     logger.error(
                         f"❌ Failed to initialize MCP connector: {mcp_err}",
@@ -616,28 +646,9 @@ async def main():
                         _fastmcp = mcp_components.fastmcp
                         _mcp_asgi = McpErrorLogger(_fastmcp.streamable_http_app())
 
-                        _drive_asgi = McpErrorLogger(drive_mcp.streamable_http_app()) if drive_mcp is not None else None
-
-                        async def parent_asgi(scope, receive, send):
-                            if scope["type"] == "lifespan":
-                                async with contextlib.AsyncExitStack() as stack:
-                                    await stack.enter_async_context(_fastmcp.session_manager.run())
-                                    if drive_mcp is not None:
-                                        await stack.enter_async_context(drive_mcp.session_manager.run())
-                                    while True:
-                                        message = await receive()
-                                        if message["type"] == "lifespan.startup":
-                                            await send({"type": "lifespan.startup.complete"})
-                                        elif message["type"] == "lifespan.shutdown":
-                                            await send({"type": "lifespan.shutdown.complete"})
-                                            return
-                            owner = mcp_owner(scope.get("path", ""))
-                            if owner == "facts":
-                                await _mcp_asgi(scope, receive, send)
-                            elif owner == "drive" and _drive_asgi is not None:
-                                await _drive_asgi(scope, receive, send)
-                            else:
-                                await main_app(scope, receive, send)
+                        parent_asgi = build_mcp_parent_asgi(
+                            main_app=main_app, facts_mcp=_fastmcp, drive_mcp=drive_mcp, facts_asgi=_mcp_asgi
+                        )
 
                         await serve(parent_asgi, hypercorn_config)
                     else:
