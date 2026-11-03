@@ -16,8 +16,8 @@ Public interface (one call = one operation; `context` is the caller's message co
     async read_passages(context, user_id, *, file_ref, passages, shown_folders, described_files)
                                                          one file's passages by number (§28.3 A7)
     async list_folder(context, user_id, folder) -> DriveOutcome
-    async open(context, user_id, ref, *, original=False) -> DriveOutcome      drive ref, or a stored file (lenient)
-    async fetch_stored(context, user_id, ref) -> DriveOutcome                 chat file, delivered key, skill:, workspace:
+    async open(context, user_id, ref, *, original=False, deadline_at=None) -> DriveOutcome   drive ref, or a stored file (lenient)
+    async fetch_stored(context, user_id, ref, *, deadline_at=None) -> DriveOutcome   chat file, delivered key, skill:, workspace:
     async copy(context, user_id, source_ref, *, folder, file_name, wait_s) -> DriveOutcome
     async save_text(context, user_id, text, *, file_name, folder, wait_s) -> DriveOutcome
     async create_folder(context, user_id, folder, *, wait_s) -> DriveOutcome
@@ -50,13 +50,12 @@ import logging
 import mimetypes
 import os
 import secrets
-import tempfile
+import time
 from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union,
 )
 
-import aiofiles
 
 from ..domain import drive_ref
 from ..domain.agent import DeliveryItem
@@ -68,6 +67,10 @@ from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS
 from ..domain.document_kind import kind_of
+from ..domain.document_open import OpenedFile
+from ..domain.document_open_texts import shown_line
+from ..domain.document_presentation import present_text
+from ..domain.document_read import CALLER_OPEN, INTERACTIVE_OPEN_S, ReadOutcome, ReadStatus
 from ..domain.drive_op import DriveOp
 from ..domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain
 from ..domain.drive_outcome import DriveOutcome
@@ -77,8 +80,10 @@ from ..domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND,
     DriveSearchResult, render_results, request_from_fields, require_search_terms,
 )
-from ..domain.file_ref import FileRefKind
-from ..domain.untrusted_text import REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, wrap_untrusted
+from ..domain.file_ref import FileRefKind, classify_ref
+from ..domain.untrusted_text import (
+    REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, attached_reminder, wrap_untrusted,
+)
 from ..domain.drive_capture import Capture, born_digital
 from ..domain.drive_connection import ROOT_FOLDER, DriveConnection
 from ..domain.drive_connection_state import ConnectionState
@@ -432,13 +437,15 @@ class DriveOperations:
                                 note=texts.get(m.connection_id, ""), scope_paths=scope[0], scope_more=scope[1])
                      for m, path, scope in zip(table.mounts, paths, scopes))
 
-    async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False) -> DriveOutcome:
-        """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today)."""
+    async def open(self, context: Mapping[str, Any], user_id: str, ref: str, *, original: bool = False,
+                   deadline_at: Optional[float] = None) -> DriveOutcome:
+        """A `drive:` ref opens from the drive; any other ref is opened from storage (lenient, as today). Every read goes
+        through the conversion service's `open` under `deadline_at` (epoch seconds; None: the interactive default)."""
         async def run() -> DriveOutcome:
             if not drive_ref.is_drive_ref(ref or ""):
-                return await self.fetch_stored(context, user_id, ref)
+                return await self.fetch_stored(context, user_id, ref, deadline_at=deadline_at)
             try:
-                return await self._open_drive_item(context, ref, user_id, original=original)
+                return await self._open_drive_item(context, ref, user_id, original=original, deadline_at=deadline_at)
             except DriveItemNotFoundError:
                 note = await self._access_note(user_id, ref=ref)
                 if note is None:
@@ -645,7 +652,8 @@ class DriveOperations:
     # Stored files: chat uploads, delivered documents, skill: and workspace: refs (GCS)
     # ------------------------------------------------------------------
 
-    async def fetch_stored(self, context: Mapping[str, Any], user_id: str, ref: Any) -> DriveOutcome:
+    async def fetch_stored(self, context: Mapping[str, Any], user_id: str, ref: Any, *,
+                           deadline_at: Optional[float] = None) -> DriveOutcome:
         if not ref:
             return _fail(DriveOp.OPEN, (
                 "file_ref is required for open_file. "
@@ -655,18 +663,15 @@ class DriveOperations:
         logger.info("[DriveOperations] open_file: %s", ref)
         try:
             if ref.startswith(WORKSPACE_REF_PREFIX):
-                return await self._fetch_workspace(context, ref, user_id)
+                return await self._fetch_workspace(context, ref, user_id, deadline_at)
             # skill: refs are always text and never go through mime guessing (RFC §15.4): the ref's "path" segment
             # has its own extension, but the ref itself isn't a bare filename mimetypes can classify.
             if ref.startswith(SKILL_REF_PREFIX):
-                return await self._fetch_text(ref, user_id)
+                return await self._open_stored(context, ref, user_id, deadline_at)
             mime_type = mimetypes.guess_type(ref)[0] or "application/octet-stream"
-            native = _declared_format(context, mime_type)
-            if native is not None:
-                return await self._fetch_binary(ref, user_id, mime_type, native)
             if mime_type.startswith("video/"):
                 return await self._fetch_video(context, ref, user_id)
-            return await self._fetch_text(ref, user_id)
+            return await self._open_stored(context, ref, user_id, deadline_at)
         except FileNotFoundError as e:
             logger.warning("DriveOperations: file not found '%s'", ref)
             if ref.startswith(SKILL_REF_PREFIX):
@@ -693,7 +698,8 @@ class DriveOperations:
                 f"Ask the user to re-upload or paste the content directly."
             ), OutcomeClass.FAILED)
 
-    async def _fetch_workspace(self, context: Mapping[str, Any], ref: str, user_id: str) -> DriveOutcome:
+    async def _fetch_workspace(self, context: Mapping[str, Any], ref: str, user_id: str,
+                               deadline_at: Optional[float]) -> DriveOutcome:
         """`workspace:` refs open only under binary_files/ (AGENT_WORKSPACE_RFC §12): a note in another folder is read with
         the workspace tool, which shows it with its view header (writer, generation). One reader per kind of file."""
         try:
@@ -705,36 +711,41 @@ class DriveOperations:
                          f"'{ref}' is a workspace note; view it with the workspace tool (command view, path {path}).",
                          OutcomeClass.REFUSED)
         if workspace_kind(path) == "text":
-            return await self._fetch_text(ref, user_id)
+            return await self._open_stored(context, ref, user_id, deadline_at)
         mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        native = _declared_format(context, mime_type)
-        if native is not None:
-            return await self._fetch_binary(ref, user_id, mime_type, native)
         if mime_type.startswith("video/"):
             return await self._fetch_video(context, ref, user_id)
-        return await self._fetch_text(ref, user_id)
+        return await self._open_stored(context, ref, user_id, deadline_at)
 
-    async def _fetch_text(self, ref: str, user_id: str) -> DriveOutcome:
-        """Fetch and convert to text (docx, txt, csv, etc.)."""
-        content = await self._conversion_service.resolve_content(ref, user_id)
-        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=content, success=True, body=True)
+    async def _open_opened(self, context: Mapping[str, Any], ref: str, user_id: str, deadline_at: Optional[float],
+                           consumer: Tuple[NativeFormat, ...]) -> OpenedFile:
+        """One read through the conversion service, under the opener's deadline (None: the interactive default)."""
+        opened: OpenedFile = await self._conversion_service.open(
+            ref, user_id, context.get("account_id") or "", consumer=consumer,
+            deadline_at=time.time() + INTERACTIVE_OPEN_S if deadline_at is None else deadline_at, caller=CALLER_OPEN)
+        _signal_note(ref, opened)
+        return opened
 
-    async def _fetch_binary(self, ref: str, user_id: str, mime_type: str, native: NativeFormat) -> DriveOutcome:
-        """Native binary (image/PDF) as file_data for LLM vision, through the conversion service so delivered-document
-        keys (docs/…, deep_research/…) resolve via MediaStoragePort with the ownership check. A file above the declared
-        `max_bytes` goes the converter's way, as a file the model does not read natively (EXTERNAL_FILES_RFC §4.3); the
-        page count of a stored file is not known before the read, so only the bytes are checked."""
-        data = await self._conversion_service.resolve_bytes(ref, user_id)
-        if len(data) > native.max_bytes:
-            return await self._fetch_text(ref, user_id)
-        suffix = os.path.splitext(ref)[1] or ".bin"
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-        os.close(tmp_fd)
-        async with aiofiles.open(tmp_path, "wb") as f:
-            await f.write(data)
-        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True,
-                            text=f"File '{ref}' ({mime_type}) is attached. You can see and analyse it directly.",
-                            file_data={"path": tmp_path, "mime_type": mime_type})
+    async def _open_stored(self, context: Mapping[str, Any], ref: str, user_id: str,
+                           deadline_at: Optional[float]) -> DriveOutcome:
+        """A stored file (chat upload, delivered key, `skill:`, `workspace:`) as the service opens it: a native file
+        attaches with the neutral reminder, text is marked and cut to the store's cap (P15, D20; skill text is the
+        system's own and stays unmarked), a note is shown as it is."""
+        opened = await self._open_opened(context, ref, user_id, deadline_at,
+                                         from_plain(context.get(NATIVE_FORMATS_KEY)))
+        store = classify_ref(ref)
+        if opened.native_path:
+            return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, file_data={
+                "path": opened.native_path, "mime_type": opened.native_mime},
+                text=f"{attached_reminder(store.value)}\nFile '{ref}' ({opened.native_mime}) is attached. "
+                     "You can see and analyse it directly.")
+        if opened.body and store is not FileRefKind.SKILL:
+            outcome = opened.outcome or ReadOutcome(status=ReadStatus.TEXT)
+            text = present_text(opened.body, store=store.value, ref=ref, label=ref, nonce=secrets.token_hex(8),
+                                outcome=outcome)
+        else:
+            text = opened.body or opened.note
+        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text=text, success=True, body=True)
 
     async def _fetch_video(self, context: Mapping[str, Any], ref: str, user_id: str) -> DriveOutcome:
         """A delivered video is resent as a native file attachment: it cannot be converted to text and is not native
@@ -956,7 +967,8 @@ class DriveOperations:
             return None
         return text or None
 
-    async def _archived_transcript_of(self, target: ResolvedDriveRef, ref: str, item: DriveItem) -> Optional[str]:
+    async def _archived_transcript_of(self, context: Mapping[str, Any], target: ResolvedDriveRef, ref: str,
+                                      item: DriveItem, deadline_at: Optional[float]) -> Optional[str]:
         """A ref whose item is a file of the bot's `_Transcripts` folder opens from the pinned store entry, capped; with
         none, the downloaded file, capped the same way (§27.9.11). None for any other file, or when the lookup failed
         (the plain open then runs)."""
@@ -965,8 +977,8 @@ class DriveOperations:
         conn = target.connection
 
         async def downloaded() -> str:
-            text: str = await self._conversion_service.resolve_content(ref, conn.user_id)
-            return text
+            opened = await self._open_opened(context, ref, conn.user_id, deadline_at, ())
+            return opened.body or opened.note
 
         try:
             text = await self._drive_search.archived_text(conn, target.item_id, label=drive_label(item, conn.ref_tag),
@@ -993,14 +1005,14 @@ class DriveOperations:
             return TextExtent.UNKNOWN
 
     async def _open_drive_item(self, context: Mapping[str, Any], ref: str, user_id: str, *,
-                               original: bool) -> DriveOutcome:
+                               original: bool, deadline_at: Optional[float] = None) -> DriveOutcome:
         target = await self._svc().resolve_ref(user_id, ref)
         conn, tag = target.connection, target.connection.ref_tag
         item = self._shown(conn, await self._svc().get_item(target.handle, target.item_id))
         if item.is_folder:
             return _fail(DriveOp.OPEN, f"'{item.path or '/'}' is a folder; list it instead.",
                          OutcomeClass.REQUEST_ERROR)
-        archived = await self._archived_transcript_of(target, ref, item)
+        archived = await self._archived_transcript_of(context, target, ref, item, deadline_at)
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True, tag=tag)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
@@ -1047,44 +1059,39 @@ class DriveOperations:
                                     open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
                                                              cut_state=extent.state) if cut else None,
                                     ref_tag=tag)
-        try:
-            if is_native:
+        if mime.startswith("video/"):
+            try:
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
-                # The reported size can be 0 or stale: the bytes read decide too, as for a stored file.
-                if len(data) > native.max_bytes:
-                    is_native = False
-                if is_native:
-                    logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", ref, mime, len(data),
-                                extent.pages_total or "-")
-                    tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
-                    os.close(tmp_fd)
-                    async with aiofiles.open(tmp_path, "wb") as f:
-                        await f.write(data)
-                    # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                    return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} is "
-                                                             f"attached. You can see and analyse it directly.", item, note,
-                                                             tag),
-                               [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note), tag=tag)
-            if mime.startswith("video/"):
-                data = await self._conversion_service.resolve_bytes(ref, user_id)
-                if not self._notification:
-                    return _fail(DriveOp.OPEN, "File delivery is not configured — cannot send the video.",
-                                 OutcomeClass.FAILED)
-                sent = await self._notification.notify_file_bytes(
-                    user_id=user_id, account_id=context.get("account_id") or "",
-                    file_bytes=data, filename=item.name, title="Video",
-                    channel_id_override=context.get("origin_channel_id"),
-                    platform_override=context.get("origin_platform"),
-                )
-                if not sent:
-                    return _fail(DriveOp.OPEN, VIDEO_NOT_SENT, OutcomeClass.FAILED)
-                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} has "
-                                                         f"been sent to the user as a file.", item, note, tag), [item],
-                           owner_note=bool(note), tag=tag)
-        except DriveFileTooLargeError as e:
-            return _ok(DriveOp.OPEN, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
-                                     f"{format_size(e.limit_bytes)} cannot be opened yet.", [item], tag=tag)
-        content = await self._conversion_service.resolve_content(ref, user_id)
+            except DriveFileTooLargeError as e:
+                return _ok(DriveOp.OPEN, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
+                                         f"{format_size(e.limit_bytes)} cannot be opened yet.", [item], tag=tag)
+            if not self._notification:
+                return _fail(DriveOp.OPEN, "File delivery is not configured — cannot send the video.",
+                             OutcomeClass.FAILED)
+            sent = await self._notification.notify_file_bytes(
+                user_id=user_id, account_id=context.get("account_id") or "",
+                file_bytes=data, filename=item.name, title="Video",
+                channel_id_override=context.get("origin_channel_id"),
+                platform_override=context.get("origin_platform"),
+            )
+            if not sent:
+                return _fail(DriveOp.OPEN, VIDEO_NOT_SENT, OutcomeClass.FAILED)
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} has "
+                                                     f"been sent to the user as a file.", item, note, tag), [item],
+                       owner_note=bool(note), tag=tag)
+        opened = await self._open_opened(context, ref, user_id, deadline_at, from_plain(context.get(NATIVE_FORMATS_KEY)))
+        if opened.native_path:
+            logger.info("[DriveOperations] opened vision: %s mime=%s pages=%s", ref, opened.native_mime,
+                        extent.pages_total or "-")
+            # The model reads an attached PDF or image natively: the reminder travels with it (D2).
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item, tag)} is "
+                                                     f"attached. You can see and analyse it directly.", item, note,
+                                                     tag),
+                       [item], file_data={"path": opened.native_path, "mime_type": opened.native_mime},
+                       owner_note=bool(note), tag=tag)
+        content = opened.body or opened.note
+        # what a page-wise read shows (D7), outside the wrapper; "" for a read that was not page-wise
+        shown = shown_line(item.path, opened.outcome) if opened.outcome is not None else ""
         # §28.7's trigger for serving opens from stored chunks: how large the live opens are.
         logger.info("[DriveOperations] opened: %s chars=%d", ref, len(content))
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
@@ -1093,14 +1100,16 @@ class DriveOperations:
         wrapped = wrap_untrusted(f"{drive_label(item, tag)}\n{cut.text}", nonce=secrets.token_hex(8),
                                  ref=drive_ref.format(tag, item.item_id), store=FileRefKind.DRIVE, label=item.path)
         if cut.cut is None:
-            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note, tag), [item],
+            return _ok(DriveOp.OPEN, self._with_note("\n".join(p for p in (REFERENCE_REMINDER, wrapped, shown) if p),
+                                                     item, note, tag), [item],
                        body=True, owner_note=bool(note), tag=tag)
         logger.info("[DriveOperations] open cut: %s chars=%d kept=%d extent=%s", ref, cut.chars, cut.kept,
                     cut.cut.value)
         # the cut line is the system's, outside the file's wrapper and before the owner's note block
         line = cut_line(path_subject(item.path), cut, extent)
         return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, items=(item,), body=True,
-                            text=self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}\n{line}", item, note, tag),
+                            text=self._with_note("\n".join(p for p in (REFERENCE_REMINDER, wrapped, line, shown) if p),
+                                                 item, note, tag),
                             facts=ReadFacts(owner_note=bool(note), cut=True),
                             open_bound=OpenBoundInfo(extent, chars=cut.chars, kept=cut.kept, cut_state=cut.cut),
                             ref_tag=tag)
@@ -1199,6 +1208,24 @@ def _declared_format(context: Mapping[str, Any], mime: str) -> Optional[NativeFo
         if fmt.mime == mime:
             return fmt
     return None
+
+
+# Statuses that are not the file's own fault: a parser, memory or model problem is something to fix, so it is an ERROR
+# line (the Errors policy pages on severity>=ERROR, ALERTING.md). A file-specific outcome stays a WARNING.
+_SYSTEMIC = frozenset({ReadStatus.PARSER_UNAVAILABLE, ReadStatus.MODEL_UNAVAILABLE, ReadStatus.MEMORY,
+                       ReadStatus.ERROR})
+
+
+def _signal_note(ref: str, opened: OpenedFile) -> None:
+    """The visible signal for an open that answered a note instead of text: a log line, ERROR when the failure is
+    systemic, WARNING otherwise. The note itself is the user-facing sentence (document_open_texts)."""
+    if not opened.note:
+        return
+    status = opened.outcome.status if opened.outcome is not None else None
+    detail = opened.outcome.detail if opened.outcome is not None else ""
+    level = logging.ERROR if status in _SYSTEMIC else logging.WARNING
+    logger.log(level, "[DriveOperations] open gave a note: %s status=%s detail=%s", ref,
+               status.value if status is not None else "-", detail or "-")
 
 
 def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *, tag: str = "",
