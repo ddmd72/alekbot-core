@@ -44,15 +44,20 @@ class Route:
                  "root_path": "", "headers": [(b"host", b"mcp.example.test")], "client": ("127.0.0.1", 1),
                  "server": ("mcp.example.test", 443), "extensions": {}}
         messages = [{"type": "http.request", "body": b"", "more_body": False}]
+        done = asyncio.Event()
 
         async def receive() -> dict:
+            # as a server does: the request, then `http.disconnect` once the response is complete (Quart >= 0.23
+            # waits for its message reader in a TaskGroup, so a receive that never returns would hang the request)
             if messages:
                 return messages.pop()
-            await asyncio.sleep(3600)
+            await done.wait()
             return {"type": "http.disconnect"}
 
         async def send(message: dict) -> None:
             sent.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                done.set()
 
         await self.app(scope, receive, send)
         start = next(m for m in sent if m["type"] == "http.response.start")
