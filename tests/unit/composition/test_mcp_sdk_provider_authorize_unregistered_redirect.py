@@ -16,7 +16,7 @@ from src.domain.mcp import MCPClient
 from src.services.mcp_authorization_service import MCPAuthError, MCPAuthorizationService
 from tests.support.firestore_eval import EvalDb
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
-from tests.support.mcp_gate_fakes import allowing_repos
+from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 
 REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 
@@ -29,6 +29,7 @@ async def test_a_redirect_uri_the_client_never_registered_is_refused():
         jwt_secret="p7-mcp-jwt-secret-0123456789abcdef-xyz", mcp_resource_uri="https://mcp.example.test/mcp",
         consent_base_url="https://mcp.example.test/mcp/consent", allowed_redirect_hosts=("claude.ai",),
         drive_resource_uri="https://mcp.example.test/drive-mcp",
+        scope_of=SCOPE_OF,
         user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
     await service.save_client(MCPClient(client_id="c1", client_secret="s", redirect_uris=[REDIRECT],
                                         created_at=datetime.now(timezone.utc)))

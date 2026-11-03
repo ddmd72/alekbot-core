@@ -29,7 +29,7 @@ from src.services.mcp_authorization_service import (
 )
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from tests.support.firestore_eval import EvalDb
-from tests.support.mcp_gate_fakes import allowing_repos
+from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.unit.web.gate_fakes import access_token, forged_token, session_service
 
@@ -137,6 +137,7 @@ class TestConsentPost:
         service = _CodeIssueFails(FirestoreMCPClientRepository(db, ENV, cipher=AesGcmTestCipher(), digest_key=bytes(range(32))), jwt_secret=SECRET, mcp_resource_uri=RESOURCE,
                                   consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",),
                                   drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                  scope_of=SCOPE_OF,
                                   user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         client = _consent_app(service)
         client.set_cookie("localhost", "access_token", access_token())
@@ -309,6 +310,7 @@ class TestRegister:
                                                 consent_base_url=f"{BASE}/mcp/consent",
                                                 allowed_redirect_hosts=("claude.ai",),
                                                 drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                                scope_of=SCOPE_OF,
                                                 user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1]))
         info = OAuthClientMetadata(redirect_uris=[AnyUrl(REDIRECT)])
         with pytest.raises(RegistrationError) as raised:
@@ -346,4 +348,5 @@ def test_service_refuses_a_31_character_secret():
         MCPAuthorizationService(MagicMock(), jwt_secret="x" * 31, mcp_resource_uri=RESOURCE,
                                 consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",),
                                 drive_resource_uri="https://mcp.example.test/drive-mcp",
+                                scope_of=SCOPE_OF,
                                 user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])

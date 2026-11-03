@@ -12,7 +12,7 @@ from src.domain.mcp import CLIENT_NAME_MAX, MCPClient, normalize_client_name
 
 from .test_mcp_authorization_service import InMemoryMCPRepo, _TEST_ALLOWED_HOSTS, _TEST_RESOURCE_URI, _TEST_SECRET
 from src.services.mcp_authorization_service import MCPAuthorizationService
-from tests.support.mcp_gate_fakes import allowing_repos
+from tests.support.mcp_gate_fakes import allowing_repos, SCOPE_OF
 
 
 @pytest.mark.parametrize("raw, expected", [
@@ -38,6 +38,7 @@ async def test_save_client_stores_the_normalized_name():
         consent_base_url="https://dev.alekbot.app/mcp/consent", allowed_redirect_hosts=_TEST_ALLOWED_HOSTS,
         access_token_ttl=3600, refresh_token_ttl=2592000, auth_code_ttl=600, consent_request_ttl=600,
         drive_resource_uri="https://mcp.example.test/drive-mcp",
+        scope_of=SCOPE_OF,
         user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1],
     )
     await service.save_client(MCPClient(
