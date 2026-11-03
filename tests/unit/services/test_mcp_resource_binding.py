@@ -11,6 +11,7 @@ from src.domain.mcp import MCPClient, MCPRefreshToken
 from src.services.mcp_authorization_service import (
     AuthorizationParams,
     MCPAuthorizationService,
+    MCPInvalidGrant,
     MCPInvalidResource,
     MCPInvalidScope,
 )
@@ -35,7 +36,7 @@ class World:
             consent_base_url="https://mcp.example.test/mcp/consent", allowed_redirect_hosts=("claude.ai",),
             user_repo=users, whitelist_repo=whitelist)
         self.client = MCPClient(client_id="c1", client_secret="s", redirect_uris=[REDIRECT],
-                                created_at=datetime.now(timezone.utc))
+                                scope="user_context drive_read", created_at=datetime.now(timezone.utc))
 
     async def consent(self, resource, scopes) -> str:
         url = await self.service.build_consent_redirect(self.client, AuthorizationParams(
@@ -95,3 +96,53 @@ async def test_a_refresh_token_stored_without_a_resource_still_mints_the_facts_a
         scopes=["user_context"], resource=None, expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc)))
     issued = await w.service.rotate_refresh_token("legacy")
     assert jwt.decode(issued.access_token, SECRET, algorithms=["HS256"], audience=FACTS)["aud"] == FACTS
+
+
+async def test_a_user_context_only_client_asking_for_the_drive_resource_with_no_scope_is_invalid_scope():
+    w = World()
+    w.client = w.client.model_copy(update={"scope": "user_context"})
+    with pytest.raises(MCPInvalidScope):
+        await w.consent(DRIVE, [])
+    assert w.db.collection("a").docs == {}
+    assert w.service.verify_consent_request(await w.consent(FACTS, [])).scopes == ["user_context"]
+
+
+async def test_a_client_stored_without_a_scope_keeps_working_for_facts_only():
+    w = World()
+    w.client = w.client.model_copy(update={"scope": ""})
+    assert w.service.verify_consent_request(await w.consent(FACTS, [])).scopes == ["user_context"]
+    with pytest.raises(MCPInvalidScope):
+        await w.consent(DRIVE, ["drive_read"])
+
+
+async def test_a_service_built_with_a_non_canonical_facts_uri_mints_and_verifies_facts_tokens():
+    w = World()
+    users, whitelist = allowing_repos("u1")
+    w.service = MCPAuthorizationService(
+        w.repo, jwt_secret=SECRET, mcp_resource_uri="https://MCP.Example.test/mcp/", drive_resource_uri=DRIVE,
+        consent_base_url="https://mcp.example.test/mcp/consent", allowed_redirect_hosts=("claude.ai",),
+        user_repo=users, whitelist_repo=whitelist)
+    token = await w.token_for(None, [])
+    assert w.service.verify_access_token(token) is not None
+    assert w.service.verify_access_token(token, resource=DRIVE) is None
+
+
+async def test_a_legacy_token_with_the_raw_audience_still_verifies():
+    w = World()
+    legacy = jwt.encode({"type": "mcp_access", "sub": "u1", "account_id": "acc1", "client_id": "c1",
+                         "scope": "user_context", "aud": FACTS, "exp": 4102444800}, SECRET, algorithm="HS256")
+    assert w.service.verify_access_token(legacy) is not None
+    raw = jwt.encode({"type": "mcp_access", "sub": "u1", "account_id": "acc1", "client_id": "c1",
+                      "scope": "user_context", "aud": "https://MCP.Example.test/mcp/", "exp": 4102444800},
+                     SECRET, algorithm="HS256")
+    assert w.service.verify_access_token(raw) is not None
+
+
+async def test_a_drive_refresh_asking_for_the_facts_scope_is_refused_by_the_service():
+    w = World()
+    await w.repo.save_refresh_token(MCPRefreshToken(
+        token_hash=w.service._hash_token("rt"), client_id="c1", user_id="u1", account_id="acc1",
+        scopes=["drive_read"], resource=DRIVE, expires_at=datetime(2099, 1, 1, tzinfo=timezone.utc)))
+    with pytest.raises(MCPInvalidGrant):
+        await w.service.rotate_refresh_token("rt", requested_scopes=["user_context"])
+    assert (await w.service.rotate_refresh_token("rt", requested_scopes=["drive_read"])).scopes == ["drive_read"]

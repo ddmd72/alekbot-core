@@ -193,3 +193,32 @@ async def test_a_drive_refresh_keeps_the_drive_audience_and_scope(world):
         assert refreshed["scope"] == "drive_read"
         assert (await world.list_tools(world.drive_http, "/drive-mcp", refreshed["access_token"])).status_code == 200
         assert (await world.list_tools(world.facts_http, "/mcp", refreshed["access_token"])).status_code == 401
+
+
+async def test_a_drive_token_sent_to_the_facts_endpoint_is_refused(world):
+    tokens = await world.tokens(scope="drive_read", resource=DRIVE)
+    async with world.running():
+        resp = await world.list_tools(world.facts_http, "/mcp", tokens["access_token"])
+    assert resp.status_code in (401, 403)
+
+
+async def test_a_refresh_asking_for_a_wider_scope_is_refused(world):
+    tokens = await world.tokens(scope="drive_read", resource=DRIVE)
+    resp = await world.facts_http.post("/token", data={
+        "grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": world.client["client_id"],
+        "client_secret": world.client["client_secret"], "scope": "drive_read user_context"})
+    assert resp.status_code == 400
+    resp = await world.facts_http.post("/token", data={
+        "grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": world.client["client_id"],
+        "client_secret": world.client["client_secret"], "scope": "user_context"})
+    assert resp.status_code == 400
+
+
+async def test_a_user_context_only_client_cannot_get_a_drive_token_by_sending_only_the_resource(world):
+    client = (await world.register(scope="user_context")).json()
+    auth = await world.authorize(client, resource=DRIVE)
+    assert auth.status_code == 302
+    assert "error=invalid_scope" in auth.headers["location"] and "req=" not in auth.headers["location"]
+    assert world.db.collection("a").docs == {}
+    ok = await world.authorize(client, resource=FACTS)
+    assert "req=" in ok.headers["location"]
