@@ -29,7 +29,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from src.adapters.microsoft.onedrive_adapter import (
     content_identity_from_graph, media_facts_from_graph, onedrive_drive_identity, onedrive_item_identity,
@@ -275,6 +275,10 @@ class FixtureDrive(UserDrivePort):
         end = start + self.page_size >= len(self._order)
         return DriveChanges(page, _DELTA if end else f"{_FULL}{start + self.page_size}", end, True,
                             ROOT_ID, onedrive_drive_identity(DRIVE_ID))
+
+    async def resolve_content_versions(self, handle: DriveHandle, changes: Sequence[DriveChange]) -> List[DriveChange]:
+        """The changes unchanged: every key of this manifest is final (GOOGLE_DRIVE_RFC GE-36)."""
+        return list(changes)
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         if item_id == ROOT_ID:

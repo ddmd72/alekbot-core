@@ -1359,7 +1359,10 @@ class DriveIndexingService:
         live: List[int] = []
         batch: List[DriveChange] = []
         for i, change in enumerate(page):
-            looked = change if seen is None else (seen[i].change if seen[i] is not None else None)
+            looked: Optional[DriveChange] = change
+            if seen is not None:
+                entry = seen[i]
+                looked = entry.change if entry is not None else None
             if looked is not None and looked.content_version_pending and not looked.deleted:
                 live.append(i)
                 batch.append(looked)
