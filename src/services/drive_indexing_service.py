@@ -564,7 +564,9 @@ class _ScopeView:
     `loaded`; `parents`: item id -> parent id as read this tick (`get_change` or a stored record); `memo`: folder id ->
     the verdict taken for it this tick, so a chain is walked once per folder. `drained`: links of a False chain whose
     stored children the drain has gone through this tick (E87); `drain_after`: where a link's drain, cut by its bound,
-    goes on (the last child id read)."""
+    goes on (the last child id read). `folder_changed`: an `_apply` of this tick met a folder change (a folder created,
+    moved, renamed or re-emitted, or a stored folder's tombstone): the ancestry and the chains read before it may be
+    stale, so the tick drains nothing (E87)."""
     scope: IndexScope
     ancestors: Set[str] = field(default_factory=set)
     parents: Dict[str, str] = field(default_factory=dict)
@@ -572,6 +574,7 @@ class _ScopeView:
     loaded: bool = False
     drained: Set[str] = field(default_factory=set)
     drain_after: Dict[str, str] = field(default_factory=dict)
+    folder_changed: bool = False
 
     @property
     def filtered(self) -> bool:
@@ -1206,6 +1209,9 @@ class DriveIndexingService:
         page_parents = {c.item_id: c.parent_id for c in changes if not c.deleted}
         for change in changes:
             out_of_scope = False
+            stored = cache.get(change.item_id)
+            if view is not None and (change.is_folder or (stored is not None and stored.is_folder)):
+                view.folder_changed = True   # E87: no drain on a tick whose feed changed the tree's folders
             try:
                 if view is not None and not change.deleted and self._scope_applies(change, cache, ctx):
                     decided = await self._scope_verdict(handle, view, ctx, change, page_parents, cache, budget)
@@ -2473,8 +2479,8 @@ class DriveIndexingService:
                             budget: _Budget, summary: Optional[Dict[str, int]] = None) -> Optional[bool]:
         """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4). On a filtered scope
         a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan, and drains
-        the records stored under the links of that chain which are certainly out of scope too (`_drain_out_of_scope`,
-        MULTI_DRIVE_RFC E87).
+        the unresolved files stored directly under the links of that chain (`_drain_out_of_scope`, MULTI_DRIVE_RFC E87;
+        never a folder, never another state).
 
         True: the record moved (resolved, parked, removed, or backed off after a failed lookup). None: it waits for an
         item call, none being left this tick (RFC Δ9): the due loop tells this apart from any other stop (E87). The
@@ -2570,18 +2576,22 @@ class DriveIndexingService:
 
     async def _drain_out_of_scope(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext, rec: DriveIndexRecord,
                                   budget: _Budget, summary: Dict[str, int]) -> None:
-        """A False verdict proves every link of its chain out of scope (MULTI_DRIVE_RFC E87): the records stored under
-        those links go with the record, through the same removal, instead of waiting each for its own walk of the
-        chain. A link being out of scope does not make its subtree out of scope: a scope folder may sit below it. So a
-        child of a link stays when it is a scope folder, an ancestor of one (the scope's ancestry, complete only once
-        `loaded`: no drain before), a skeleton ancestor record, or a mirror root, and a link that is a mirror root is
-        not drained; a deleting child is already on its way. Every other child's own subtree holds no scope folder
-        (else the child would be an ancestor), so it is removed whole (a folder through the DELETING cascade).
+        """A False verdict shows every link of its chain out of scope as this tick read it (MULTI_DRIVE_RFC E87): the
+        UNRESOLVED files stored directly under those links go with the record, through the same removal (`unstored`),
+        instead of waiting each for its own walk of the chain. Nothing else is drained: never a folder (an
+        out-of-scope folder leaves through its own resolve step, as before; a drained folder would cascade over its
+        whole subtree, and a scope folder moved under it this tick would go with it), never a record in any other state
+        (pending, indexed, metadata only, carded or deleting). The chain is this tick's reads, so a link the drive moved
+        into the scope since then is drained on a stale chain: what that can cost is bounded to unpaid unresolved files,
+        which the drive's next change of them or the next enumeration observes again.
 
-        Bounded: at most `_DRAIN_PER_STEP` children read per step through the existing children query (no new index),
-        and the removals spend the cascade budget (stopping at 0); a link cut by the bound goes on, from where it
-        stopped, at the next False verdict of the tick, and a fully drained link is not read again this tick."""
-        if not view.loaded:
+        No drain before the scope's ancestry is `loaded`, nor in a tick whose `_apply` met a folder change
+        (`folder_changed`): the ancestry and chains are read once per tick and a moved folder makes them stale. A
+        link that is a mirror root is not drained. Bounded: at most `_DRAIN_PER_STEP` children read per step through
+        the existing children query (no new index), and the removals spend the cascade budget (stopping at 0); a
+        link cut by the bound goes on, from where it stopped, at the next False verdict of the tick, and a fully
+        drained link is not read again this tick."""
+        if not view.loaded or view.folder_changed:
             return
         keep = view.scope.folder_ids | view.ancestors | ctx.mirror_root_ids | ctx.scope_ancestor_ids
         left = _DRAIN_PER_STEP
@@ -2592,8 +2602,8 @@ class DriveIndexingService:
                 limit = min(left, budget.cascade_ops, RECORD_WRITE_BATCH)
                 kids = await self._repo.children(handle.scope, link, view.drain_after.get(link), limit)
                 left -= len(kids)
-                out = [k for k in kids if k.item_id != rec.item_id and k.item_id not in keep
-                       and k.reason is not Reason.SCOPE_ANCESTOR and k.state is not RecordState.DELETING]
+                out = [k for k in kids if not k.is_folder and k.state is RecordState.UNRESOLVED
+                       and k.item_id != rec.item_id and k.item_id not in keep and k.reason is not Reason.SCOPE_ANCESTOR]
                 if out:
                     await self._remove_out_of_scope(handle, out, ctx)
                     budget.cascade_ops -= len(out)

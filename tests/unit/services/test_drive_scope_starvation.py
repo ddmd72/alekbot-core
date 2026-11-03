@@ -322,6 +322,116 @@ async def test_no_drain_while_the_scope_ancestry_is_incomplete(w):
     assert w.rec(items[0]) is None and all(w.rec(i) is not None for i in items[1:])
 
 
+def _record(w: World, item_id: str, parent_id: str, name: str, state: RecordState, *, folder: bool = False,
+            **fields: Any) -> DriveIndexRecord:
+    scope = Scope.UNRESOLVED if state is RecordState.UNRESOLVED else Scope.NORMAL
+    return DriveIndexRecord(user_id=USER, connection_id=CONN, item_id=item_id, parent_id=parent_id, name=name,
+                            is_folder=folder, state=state, scope=scope, **fields)
+
+
+@pytest.mark.parametrize("feed", ["scope_folder_moved", "file_only"])
+async def test_no_drain_in_a_tick_whose_feed_moved_a_folder(w, feed):
+    """The review's U1 order: the same tick's feed moves a scope folder under a stored, parked out-of-scope folder W
+    (root/Z/W/S), then a False verdict under Z runs. Nothing under the scope folder goes, W is not touched, and nothing is
+    drained that tick: the parked sibling stays (only its own step, not due, could remove it). With a feed that changed
+    only a file the same sibling is drained."""
+    projects = w.plant(w.root, "Projects", True)
+    acme = w.plant(projects, "Acme", True)
+    work = w.plant(acme, "Acme work.md")
+    z = w.plant(w.root, "Springfield 0", True)
+    year = w.plant(z, "Year 1", True)
+    r, r2 = w.plant(z, "photo 0-0.jpg"), w.plant(z, "photo 0-1.jpg")
+    await w.scope(w.rd, acme)
+    await w.settle()
+    assert w.carded(work) and w.rec(z) is None and w.rec(year) is None
+    parked = [_record(w, year, z, "Year 1", RecordState.UNRESOLVED, folder=True),
+              _record(w, r2, z, "photo 0-1.jpg", RecordState.UNRESOLVED)]   # not due: no step of its own this tick
+    await w.repo.upsert_records(parked)
+    await w.hold(r, z, "photo 0-0.jpg")
+    if feed == "scope_folder_moved":
+        await w.drive.move(w.handle, acme, year)
+    else:
+        w.plant(w.rd, "Coimbra 2024 budget.md")
+    w.clock.advance(60)
+    result = await w.tick()
+    assert w.rec(r) is None   # its own step: removed as out of scope, as before E87
+    assert w.rec(acme) is not None and w.rec(acme).state is not RecordState.DELETING
+    assert w.rec(work) is not None and w.rec(work).state is RecordState.INDEXED
+    assert w.rec(year) is not None and w.rec(year).state is RecordState.UNRESOLVED
+    if feed == "scope_folder_moved":
+        assert w.rec(r2) is not None, "drained in a tick whose feed moved a folder"
+        assert result.summary.get("out_of_scope_removed") == 1
+    else:
+        assert w.rec(r2) is None
+        assert result.summary.get("out_of_scope_removed") == 2
+
+
+async def test_the_drain_takes_only_unresolved_files_also_on_a_stale_chain(w):
+    """The review's U2 shape, and the drain's rule: link L was moved into the scope on the drive after the tick read
+    its chain (its stored record still names the out-of-scope parent). A False verdict on a file under L drains only the
+    unresolved files under L: no folder (unresolved or deleting), and no pending, indexed (carded) or metadata-only
+    record is removed."""
+    projects = w.plant(w.root, "Projects", True)
+    acme = w.plant(projects, "Acme", True)
+    z = w.plant(w.root, "Springfield 0", True)
+    link = w.plant(z, "Year 1", True)
+    names = ["held.jpg", "other.jpg", "pending.md", "carded.md", "metadata.bin", "Sub", "Gone"]
+    ids = {n: w.plant(link, n, n in ("Sub", "Gone")) for n in names}
+    await w.scope(w.rd, acme)
+    await w.settle()
+    assert w.rec(link) is None and all(w.rec(i) is None for i in ids.values())
+    await w.repo.upsert_records([
+        _record(w, link, z, "Year 1", RecordState.UNRESOLVED, folder=True),
+        _record(w, ids["other.jpg"], link, "other.jpg", RecordState.UNRESOLVED),
+        _record(w, ids["pending.md"], link, "pending.md", RecordState.PENDING),
+        _record(w, ids["carded.md"], link, "carded.md", RecordState.INDEXED, has_card=True, indexed_generation=1),
+        _record(w, ids["metadata.bin"], link, "metadata.bin", RecordState.METADATA_ONLY),
+        _record(w, ids["Sub"], link, "Sub", RecordState.UNRESOLVED, folder=True),
+        _record(w, ids["Gone"], link, "Gone", RecordState.DELETING, folder=True),
+    ])
+    held = await w.hold(ids["held.jpg"], link, "held.jpg")
+    view, token, state, ctx, budget = await _step_world(w)
+    try:
+        view.parents[link] = z   # the tick read L's chain before the drive moved it
+        await w.drive.move(w.handle, link, acme)   # out of band: no feed of this tick names it
+        summary: Dict[str, int] = {}
+        assert await w.svc._resolve_step(w.handle, held, state, ctx, budget, summary) is True
+    finally:
+        _TICK_SCOPE.reset(token)
+    assert w.rec(ids["held.jpg"]) is None and w.rec(ids["other.jpg"]) is None
+    assert summary["out_of_scope_removed"] == 2
+    kept = {"pending.md": RecordState.PENDING, "carded.md": RecordState.INDEXED,
+            "metadata.bin": RecordState.METADATA_ONLY, "Sub": RecordState.UNRESOLVED, "Gone": RecordState.DELETING}
+    for name, kept_state in kept.items():
+        rec = w.rec(ids[name])
+        assert rec is not None and rec.state is kept_state, name
+    assert w.rec(ids["carded.md"]).has_card
+    assert w.rec(link) is not None and w.rec(link).state is RecordState.UNRESOLVED
+
+
+@pytest.mark.parametrize("shape", ["absent_parent", "deleting_parent", "unresolved_parent"])
+async def test_each_backlog_shape_drains_in_bounded_ticks(w, monkeypatch, shape):
+    """The live backlog's three shapes, with one item call per tick: unresolved files under an absent out-of-scope
+    folder, under a stored deleting folder, and under a stored unresolved folder whose own parent is absent."""
+    z = w.plant(w.root, "Springfield 0", True)
+    parent = z if shape == "absent_parent" else w.plant(z, "Year 1", True)
+    files = [w.plant(parent, f"photo 0-{j}.jpg") for j in range(12)]
+    await w.scope(w.rd)
+    await w.settle()
+    if shape == "deleting_parent":
+        await w.repo.upsert_records([schedule(_record(w, parent, z, "Year 1", RecordState.DELETING, folder=True),
+                                              w.clock(), first_seen=False)])
+    elif shape == "unresolved_parent":
+        await w.hold(parent, z, "Year 1", folder=True)
+    for j, item in enumerate(files):
+        await w.hold(item, parent, f"photo 0-{j}.jpg")
+    monkeypatch.setattr(svc_mod, "ITEM_CALLS_PER_TICK", 1)
+    w.clock.advance(60)
+    await w.settle(max_ticks=6)
+    assert w.unresolved() == []
+    assert {r.name for r in w.mine()} == {"R&D", "Tom's plan.md"}
+
+
 async def test_the_drain_of_one_step_is_bounded_and_the_next_step_goes_on(w, monkeypatch):
     monkeypatch.setattr(svc_mod, "_DRAIN_PER_STEP", 2)
     planted = _plant_backlog(w, parents=1, files=7)
