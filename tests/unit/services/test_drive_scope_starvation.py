@@ -366,6 +366,44 @@ async def test_no_drain_in_a_tick_whose_feed_moved_a_folder(w, feed):
         assert result.summary.get("out_of_scope_removed") == 2
 
 
+@pytest.mark.parametrize("feed", ["scope_folder_moved", "file_only"])
+async def test_a_folder_judged_false_waits_for_a_fresh_ancestry_when_the_feed_moved_a_folder(w, feed):
+    """The per-record U1 (on `main` before E87): the same tick's feed moves a scope folder S under a stored, due,
+    unresolved folder W (root/Z/W/S). W's own verdict, taken on the tick's stale ancestry, is False; W stays as it was
+    (due, not removed, not progress) and S's subtree is untouched. The next tick reads the ancestry again, finds W above
+    S, and keeps W. Control: with a feed that changed only a file, an out-of-scope unresolved folder leaves as before."""
+    projects = w.plant(w.root, "Projects", True)
+    acme = w.plant(projects, "Acme", True)
+    work = w.plant(acme, "Acme work.md")
+    z = w.plant(w.root, "Springfield 0", True)
+    year = w.plant(z, "Year 1", True)
+    await w.scope(w.rd, acme)
+    await w.settle()
+    assert w.carded(work) and w.rec(year) is None
+    held = await w.hold(year, z, "Year 1", folder=True)
+    if feed == "scope_folder_moved":
+        await w.drive.move(w.handle, acme, year)
+    else:
+        w.plant(w.rd, "Coimbra 2024 budget.md")
+    w.clock.advance(60)
+    result = await w.tick()
+    if feed == "file_only":
+        assert w.rec(year) is None or w.rec(year).state is RecordState.DELETING
+        assert result.summary.get("out_of_scope_removed") == 1
+        return
+    after = w.rec(year)
+    assert after is not None and after.state is RecordState.UNRESOLVED and after.due_at == held.due_at
+    assert "out_of_scope_removed" not in result.summary
+    assert w.rec(acme).state is not RecordState.DELETING and w.rec(acme).parent_id == year
+    assert w.carded(work)
+    assert w.queue.tasks and ":cont:" in (w.queue.tasks[-1]["key"] or "")   # W is still due: the next tick comes
+    w.clock.advance(60)
+    await w.settle()
+    kept = w.rec(year)
+    assert kept is not None and kept.state is not RecordState.DELETING
+    assert w.rec(acme) is not None and w.rec(acme).state is not RecordState.DELETING and w.carded(work)
+
+
 async def test_the_drain_takes_only_unresolved_files_also_on_a_stale_chain(w):
     """The review's U2 shape, and the drain's rule: link L was moved into the scope on the drive after the tick read
     its chain (its stored record still names the out-of-scope parent). A False verdict on a file under L drains only the

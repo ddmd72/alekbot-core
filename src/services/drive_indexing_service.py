@@ -449,8 +449,9 @@ class _CardSlots:
 class _ClassPass:
     """One pass of `_work_class` over a page of one due class. `progressed`: a record of the page moved.
     `waits_for_item_calls`: nothing moved, and every record the pass took up stopped only because no item call was left
-    this tick (a parent lookup or a density probe, RFC Δ9, of a record with no rescope pending); no other stop, a
-    cascade or rescope out of its budget included, was among them (MULTI_DRIVE_RFC E87)."""
+    this tick (a parent lookup or a density probe, RFC Δ9, of a record with no rescope pending), or is a folder whose
+    False scope verdict waits for the next tick's ancestry (`_resolve_step`); no other stop, a cascade or rescope out of
+    its budget included, was among them (MULTI_DRIVE_RFC E87)."""
     progressed: bool
     waits_for_item_calls: bool = False
 
@@ -2291,12 +2292,13 @@ class DriveIndexingService:
         what keeps a repository's files from being carded while its rescope is unfinished (RFC Δ15, Δ19 a); it holds
         for every stop on the cascade budget, and for any class-1 page in which one record stopped for a reason other
         than the item calls. One exception (MULTI_DRIVE_RFC E87): a class-1 page in which every record waits only for an
-        item call (parent lookups and density probes, RFC Δ9, none left this tick, of records with no rescope pending)
-        is skipped for the rest of the tick and the loop goes on with the next class. Such records carry no content and
-        hold their subtrees unresolved, so nothing below them can be carded early; a folder that also has a rescope
-        pending still has stored children to re-classify, so it keeps the stop. Without the skip a narrow scope's held
-        records kept content waiting for good. A skipped class still counts as the class the budget stopped at (the upgrade pass and the cap releases
-        wait, RFC Δ30). Search v2's order (§25.4.5): content classes 0-2 stop at their share of the start budget
+        item call (parent lookups and density probes, RFC Δ9, none left this tick, of records with no rescope pending;
+        or a folder whose False scope verdict waits for the next tick's ancestry) is skipped for the rest of the tick
+        and the loop goes on with the next class. Such records carry no content and hold their subtrees unresolved, so
+        nothing below them can be carded early; a folder that also has a rescope pending still has stored children to
+        re-classify, so it keeps the stop. Without the skip a narrow scope's held records kept content waiting for good.
+        A skipped class still counts as the class the budget stopped at (the upgrade pass and the cap releases wait,
+        RFC Δ30). Search v2's order (§25.4.5): content classes 0-2 stop at their share of the start budget
         (checked once work was done, so every tick progresses); the enrichment phase runs once, after them — before
         classes 3-4, or when the content share or the due work ends; classes 3-4 then have the maintenance share."""
         worked = False
@@ -2345,8 +2347,9 @@ class DriveIndexingService:
         """Content and triage come before the card of the same record, so a read file is carded once, with its
         lead text, brief or caption (§8.5); a card whose content cannot start now is embedded at once. Card headroom
         is decided before both: a record the cap would refuse a card is capped instead of read (§5.4; R3 F1-2).
-        A parent lookup or a density probe that waits for an item call is counted apart from any other stop, so the due
-        loop can tell a page that only waits for item calls (MULTI_DRIVE_RFC E87)."""
+        A parent lookup or a density probe that waits for an item call, and a folder whose False verdict waits for the
+        next tick's ancestry, are counted apart from any other stop, so the due loop can tell a page that only waits for
+        the next tick (MULTI_DRIVE_RFC E87)."""
         ctx = self._ctx(handle, state, now)
         cards: List[DriveIndexRecord] = []
         images: List[DriveIndexRecord] = []
@@ -2480,17 +2483,24 @@ class DriveIndexingService:
         """An unresolved record: its parent may be stored by now; else ask the provider once (§3.4). On a filtered scope
         a chain that reaches the root without a selected folder removes it as out of scope, not as an orphan, and drains
         the unresolved files stored directly under the links of that chain (`_drain_out_of_scope`, MULTI_DRIVE_RFC E87;
-        never a folder, never another state).
+        never a folder, never another state). A folder judged False in a tick whose feed changed a folder
+        (`folder_changed`) is not removed that tick: the scope's ancestry is read once per tick, and a scope folder the
+        same feed moved under it would make it an ancestor the stale ancestry does not know, so removing it would
+        cascade over the scope folder. It stays as it is, due, and the next tick judges it with its ancestry read
+        again. A file keeps the old behaviour (removing it takes nothing below it).
 
-        True: the record moved (resolved, parked, removed, or backed off after a failed lookup). None: it waits for an
-        item call, none being left this tick (RFC Δ9): the due loop tells this apart from any other stop (E87). The
-        moves are counted in `summary` (`resolved`, `parked`, `out_of_scope_removed`, `orphans_removed`): tick-summary
-        keys only, never the stored counters."""
+        True: the record moved (resolved, parked, removed, or backed off after a failed lookup). None: it waits for the
+        next tick, holding no content back: no item call is left this tick (RFC Δ9), or it is a folder whose False
+        verdict waits for a fresh ancestry. The due loop tells this apart from any other stop (E87); it is not
+        progress. The moves are counted in `summary` (`resolved`, `parked`, `out_of_scope_removed`, `orphans_removed`):
+        tick-summary keys only, never the stored counters."""
         out = summary if summary is not None else {}
         view = _TICK_SCOPE.get()
         if (view is not None and view.filtered and rec.item_id not in view.scope.folder_ids and rec.item_id not in ctx.mirror_root_ids
                 and rec.parent_id not in ctx.mirror_root_ids):
             decided = await self._scope_verdict(handle, view, ctx, change_from_record(rec), {}, {}, budget)
+            if decided is False and rec.is_folder and view.folder_changed:
+                return None   # E87: the ancestry may be stale this tick; the next tick judges it again
             if decided is False:
                 await self._remove_out_of_scope(handle, [rec], ctx)
                 _inc(out, "out_of_scope_removed")
@@ -2582,8 +2592,9 @@ class DriveIndexingService:
         out-of-scope folder leaves through its own resolve step, as before; a drained folder would cascade over its
         whole subtree, and a scope folder moved under it this tick would go with it), never a record in any other state
         (pending, indexed, metadata only, carded or deleting). The chain is this tick's reads, so a link the drive moved
-        into the scope since then is drained on a stale chain: what that can cost is bounded to unpaid unresolved files,
-        which the drive's next change of them or the next enumeration observes again.
+        into the scope since then is drained on a stale chain: what that can cost is bounded to unresolved files (no
+        fresh content outcome, or a held one: the scope hold keeps a moved file's content fields, §3.4), which the
+        drive's next change of them or the next enumeration observes again.
 
         No drain before the scope's ancestry is `loaded`, nor in a tick whose `_apply` met a folder change
         (`folder_changed`): the ancestry and chains are read once per tick and a moved folder makes them stale. A
