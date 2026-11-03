@@ -1,7 +1,7 @@
 # Decision: Untrusted-content sandbox, slice S1 — a separate zero-role service runs `render.docx`
 
 **Date:** 2026-10-20
-**Status:** Built on `feat/sandbox-s1`, behind `SANDBOX_RENDER` (default `inprocess`). **Not accepted**: acceptance needs the S0
+**Status:** Merged on `main`, behind `SANDBOX_RENDER` (default `inprocess`). **Not accepted**: acceptance needs the S0
 spike results, the owner steps and the owner's go. Not deployed.
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 (S1), §8, §11, §12;
 [worker_oidc_and_docx_sandbox.md](worker_oidc_and_docx_sandbox.md); deploy steps in
