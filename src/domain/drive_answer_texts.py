@@ -8,6 +8,9 @@ text.
 """
 from __future__ import annotations
 
+from types import MappingProxyType
+from typing import Mapping
+
 from .document_limits import OPEN_MAX_CHARS
 from .drive_search_texts import PROTOCOL_TIERS_LINE
 
@@ -136,3 +139,15 @@ R_DOC_VS_MEMORY = ("Document vs memory: a document is authoritative for its own 
                    "and cite the document's path and date.")
 R_NOT_READ = ("The drive assistant did not read this file; if it points to another file or a term to look for, "
               "commission again with what is needed, not how to get it.")
+
+# -- the chat's text for each reading key (`drive_answer.reading_keys`) ------------------------------------------------
+# A key is the name of its constant above. Another surface (the drive connector) passes its own map for the same keys.
+CHAT_READING_TEXTS: Mapping[str, str] = MappingProxyType({
+    "R_FIND": R_FIND, "R_TIERS": R_TIERS, "R_TRUST": R_TRUST, "R_RELATED": R_RELATED, "R_COVERAGE": R_COVERAGE,
+    "R_MANY": R_MANY, "R_ALL": R_ALL, "R_EXCERPTS": R_EXCERPTS, "R_PAGED": R_PAGED, "R_TOO_LONG": R_TOO_LONG,
+    "R_PASSAGE": R_PASSAGE, "R_ACCURACY": R_ACCURACY, "R_ACCURACY_FIND": R_ACCURACY_FIND,
+    "R_ACCURACY_VALUE": R_ACCURACY_VALUE, "R_ACCURACY_IMAGE": R_ACCURACY_IMAGE, "R_OWNER_NOTE": R_OWNER_NOTE,
+    "R_SCAN": R_SCAN, "R_NO_ACCESS": R_NO_ACCESS, "R_PHOTOS": R_PHOTOS, "R_VERSIONS": R_VERSIONS,
+    "R_BUILDING": R_BUILDING, "R_NOT_SEARCHED": R_NOT_SEARCHED, "R_FOLDER_CARD": R_FOLDER_CARD,
+    "R_NUMBERS": R_NUMBERS, "R_DOC_VS_MEMORY": R_DOC_VS_MEMORY, "R_NOT_READ": R_NOT_READ,
+})
