@@ -21,6 +21,7 @@ from typing import Optional
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.llm import Message, MessagePart
+from ..domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ..infrastructure.agent_config import DOMAIN_RESEARCHER
 from ..infrastructure.agent_manifest import DOMAIN_RESEARCHER as DOMAIN_RESEARCHER_DESCRIPTOR
 from ..infrastructure.delegation_engine import DelegationEngine
@@ -139,7 +140,10 @@ class DomainResearcherAgent(BaseAgent):
                 result = await engine.execute(
                     call_llm=self._call_llm,
                     base_request=base_request,
-                    context=message.context,
+                    context={
+                        **message.context,
+                        NATIVE_FORMATS_KEY: to_plain(self._llm.native_formats(self.model_name)),
+                    },
                     max_turns=DOMAIN_RESEARCHER.max_delegation_turns,
                     calling_agent_id=self.agent_id,
                 )
