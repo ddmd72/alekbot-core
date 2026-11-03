@@ -146,15 +146,23 @@ async def test_non_clean_risk_raises_naming_token(risk):
         await make_service(repo).texts()
 
 
-async def test_failed_refresh_keeps_last_good_value_and_logs_each_time(caplog):
+async def test_failed_refresh_keeps_last_good_value_and_backs_off_for_ttl(caplog):
     repo, clock, sink = good_repo(), FakeClock(), FakeAlertSink()
     service = make_service(repo, clock, sink)
     good = await service.texts()
     del repo.tokens[TOOL_ID]
     clock.now += 61
+    reads_before = len(repo.reads)
     with caplog.at_level(logging.ERROR):
         assert await service.texts() is good
+        reads_after_failure = len(repo.reads)
+        clock.now += 59
         assert await service.texts() is good
+        assert len(repo.reads) == reads_after_failure
+        assert reads_after_failure > reads_before
+        clock.now += 1
+        assert await service.texts() is good
+        assert len(repo.reads) > reads_after_failure
     errors = [r for r in caplog.records if r.levelno == logging.ERROR and TOOL_ID in r.getMessage()]
     assert len(errors) == 2
     assert not sink.posts
@@ -168,5 +176,6 @@ async def test_recovery_after_failed_refresh():
     clock.now += 61
     await service.texts()
     repo.tokens[RESULT_ID] = make_token(RESULT_ID, "### R_FIND\nFound 7 files.\n")
+    clock.now += 61
     assert (await service.texts()).results["R_FIND"] == "Found 7 files."
     assert saved is not None

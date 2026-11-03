@@ -65,7 +65,8 @@ class ConnectorTextService:
                     await self._alert(message)
                     raise ConnectorTextsUnavailable(message) from exc
                 logger.error(f"[ConnectorTexts] refresh failed, serving the last good texts: {reason}")
-                # Retry on the next call, not after a whole TTL of failing reads per caller.
+                # Stamp the failed attempt: the next reload happens after ttl_s, not on every call.
+                self._loaded_at = self._clock()
                 return self._value
             return self._value
 
