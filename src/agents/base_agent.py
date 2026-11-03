@@ -8,6 +8,7 @@ Provides abstract base class and utilities for all agents.
 import time
 import random
 import asyncio
+import contextlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from abc import ABC, abstractmethod
@@ -900,6 +901,14 @@ class BaseAgent(ABC):
         """
         self._agent_execution_context = context
 
+    def _provider_call_scope(self) -> "contextlib.AbstractContextManager[Any]":
+        """Context the provider calls of `_call_llm` run in. Default: none.
+
+        An agent whose requests carry file contents overrides it to keep the provider SDKs' own spans (which would
+        hold those contents) from being created. `_emit_llm_span` and the prompt-content record stay outside it.
+        """
+        return contextlib.nullcontext()
+
     async def _call_llm(
         self,
         request: "LLMRequest",
@@ -980,7 +989,8 @@ class BaseAgent(ABC):
                 # Short-circuit before primary call. Routes to fallback via the
                 # same except path as adapter-translated failures — uniform flow.
                 raise ProviderBreakerOpenError(primary_name)
-            response = await llm.generate_content(request=request)
+            with self._provider_call_scope():
+                response = await llm.generate_content(request=request)
             if resilience and primary_name:
                 resilience.record_success(primary_name)
         except failover_tuple as e:
@@ -1072,7 +1082,8 @@ class BaseAgent(ABC):
                             )
                             retry_request = request.model_copy(update={"timeout": retry_timeout})
                         try:
-                            response = await llm.generate_content(request=retry_request)
+                            with self._provider_call_scope():
+                                response = await llm.generate_content(request=retry_request)
                             if resilience and primary_name:
                                 resilience.record_success(primary_name)
                             retried_ok = True
@@ -1178,9 +1189,10 @@ class BaseAgent(ABC):
                     )
                 fallback_request = request.model_copy(update=fallback_update)
                 try:
-                    response = await fallback_provider.generate_content(
-                        request=fallback_request
-                    )
+                    with self._provider_call_scope():
+                        response = await fallback_provider.generate_content(
+                            request=fallback_request
+                        )
                     served_model = fallback_request.model_name
                     if isinstance(response, _LLMResponse):   # a copy: the provider's object is not ours to change
                         response = response.model_copy(update={"served_by_fallback": fallback_name or ""})

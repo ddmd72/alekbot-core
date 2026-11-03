@@ -1,3 +1,4 @@
+import contextlib
 import os
 import time
 from contextvars import ContextVar
@@ -8,6 +9,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.propagate import inject, extract
+
+from .logfire_redacting_exporter import RedactingExporter
 
 _TRACE_ID_CTX: ContextVar[Optional[str]] = ContextVar("trace_id", default=None)
 _SESSION_ID_CTX: ContextVar[Optional[str]] = ContextVar("session_id", default=None)
@@ -30,10 +33,14 @@ def _resolve_backend() -> str:
     return "cloud_trace" if os.getenv("APP_ENV", "development").lower() == "production" else "none"
 
 
-def _make_cloud_trace_processor():
-    """Build a BatchSpanProcessor → Cloud Trace, or None on failure (e.g. no auth)."""
+def _make_cloud_trace_processor(redact_files: bool = False):
+    """Build a BatchSpanProcessor → Cloud Trace, or None on failure (e.g. no auth).
+
+    `redact_files` wraps the exporter so file parts of LLM spans never reach Cloud Trace.
+    """
     try:
-        return BatchSpanProcessor(CloudTraceSpanExporter())
+        exporter = CloudTraceSpanExporter()
+        return BatchSpanProcessor(RedactingExporter(exporter) if redact_files else exporter)
     except Exception as e:
         print(f"⚠️ Failed to initialize Cloud Trace exporter: {e}")
         return None
@@ -46,6 +53,36 @@ def _content_capture_enabled() -> bool:
     reverts to metadata-only tracing without a code deploy.
     """
     return os.getenv("LOGFIRE_CAPTURE_CONTENT", "false").lower() == "true"
+
+
+def sdk_spans_suppressed():
+    """Context manager: provider-SDK spans started inside it are not created (no file bytes in a span).
+
+    A span our own code emits after the block still exports. A no-op when logfire is not importable.
+    """
+    try:
+        import logfire
+    except ImportError:
+        return contextlib.nullcontext()
+    return logfire.suppress_instrumentation()
+
+
+def _logfire_redacting_processor(token: str):
+    """A BatchSpanProcessor → Logfire's intake, behind the redacting exporter. Mirrors how logfire builds its own."""
+    from urllib.parse import urljoin
+
+    from logfire._internal.config import get_base_url_from_token
+    from opentelemetry.exporter.otlp.proto.http import Compression
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    import logfire as _logfire
+
+    exporter = OTLPSpanExporter(
+        endpoint=urljoin(get_base_url_from_token(token), "/v1/traces"),
+        headers={"User-Agent": f"logfire/{_logfire.VERSION}", "Authorization": token},
+        compression=Compression.Gzip,
+    )
+    return BatchSpanProcessor(RedactingExporter(exporter, drop_pending=True))
 
 
 def _instrument_llm_sdks(logfire) -> None:
@@ -117,9 +154,21 @@ def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:
         print("⚠️ logfire not installed — skipping Logfire backend.")
         return False
 
+    capture = _content_capture_enabled()
     extra = []
+    redacted_intake = False
+    if capture:
+        # File contents must never leave the process in a span: Logfire's own exporter is replaced by ours, wrapped
+        # in the redacting exporter (a span processor cannot edit attributes). Fail closed: when ours cannot be
+        # built, content capture is switched off rather than sent unredacted.
+        try:
+            extra.append(_logfire_redacting_processor(token))
+            redacted_intake = True
+        except Exception as e:
+            print(f"⚠️ Redacting Logfire exporter unavailable, content capture off: {e}")
+            capture = False
     if also_cloud_trace:
-        processor = _make_cloud_trace_processor()
+        processor = _make_cloud_trace_processor(redact_files=True) if capture else _make_cloud_trace_processor()
         if processor is not None:
             extra.append(processor)
 
@@ -129,11 +178,11 @@ def _init_logfire(service_name: str, also_cloud_trace: bool) -> bool:
         service_version=os.getenv("SERVICE_VERSION", "unknown"),
         environment=os.getenv("APP_ENV", "development"),
         console=False,
-        send_to_logfire=True,
+        send_to_logfire=not redacted_intake,
         additional_span_processors=extra or None,
     )
 
-    if _content_capture_enabled():
+    if capture:
         _instrument_llm_sdks(logfire)
 
     return True
