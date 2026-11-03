@@ -37,11 +37,15 @@ OUTCOME_HEADER = "X-Sandbox-Outcome"
 
 META_MAX_BYTES = 8192  # RFC §4.7 / §11: `meta` size 8 KiB
 
-# RFC §11 initial value (64 MiB each, streamed); revisit after S0-a (large bodies).
-# 100 MiB product cap pending owner delta D6: until then a PDF over 64 MiB gets a 413 `too_large`.
-REQUEST_CAP_BYTES = 64 * 1024 * 1024
-# RFC §11 initial value (64 MiB each, streamed); revisit after S0-a (large bodies).
-RESPONSE_CAP_BYTES = 64 * 1024 * 1024
+# The request is the raw file (no framing), so its cap is the PDF product cap (owner decision 2026-11-03; D6) plus a
+# margin. A mirror of `drive_index_params.MAX_PDF_DOWNLOAD_BYTES`, not an import: that would grow the render image's
+# closure. A test pins the two in step.
+PDF_PRODUCT_CAP_BYTES = 100 * 1024 * 1024
+REQUEST_MARGIN_BYTES = 1024 * 1024
+REQUEST_CAP_BYTES = PDF_PRODUCT_CAP_BYTES + REQUEST_MARGIN_BYTES
+# A parse result is bounded by the same figure: `parse.extract` by ~13 MB of JSON, `parse.pdf_windows` by a frame of
+# windows cut from a PDF of at most the product cap. Streamed, never held whole by the server.
+RESPONSE_CAP_BYTES = REQUEST_CAP_BYTES
 # The RFC gives no number for the failure text of a script (§4.9 only says it travels back for repair).
 # Initial value 16 KiB, chosen to hold a Node stack trace; revisit after S0-h (limits on the new host).
 ERROR_TEXT_CAP_BYTES = 16 * 1024
