@@ -139,11 +139,12 @@ async def test_no_pages_is_no_text(tmp_path):
 
 
 async def test_a_cut_failure_mid_file_is_the_outcome_and_keeps_the_usage(tmp_path):
-    cutter = FakeCutter(25, cut_error_at=20, cut_error=PdfSplitFailed(S.MEMORY, "killed"))
+    # windows are cut in groups of MODEL_IN_FLIGHT: mid-file is the second group (pages 41+), after the first is read
+    cutter = FakeCutter(60, cut_error_at=40, cut_error=PdfSplitFailed(S.MEMORY, "killed"))
     runner, _, _ = _runner(_text, cutter, tmp_path)
     out = await runner.extract(_request(tmp_path))
     assert out.status is S.MEMORY and "killed" in out.detail
-    assert out.pages_sent == 20 and out.model_calls == 2 and out.model_cost > 0
+    assert out.pages_sent == 40 and out.model_calls == MODEL_IN_FLIGHT == 4 and out.model_cost > 0
 
 
 async def test_an_output_limited_window_is_halved_from_its_window_file(tmp_path):
