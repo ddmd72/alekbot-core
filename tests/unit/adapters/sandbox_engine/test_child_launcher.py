@@ -395,3 +395,23 @@ async def test_the_stderr_file_is_closed_when_the_spawn_fails(tmp_path, monkeypa
             ["x"], workdir=str(tmp_path), env={}, limits=_limits(), stdin_path=str(tmp_path / "missing"),
             stdout_path=str(tmp_path / "o"))
     assert opened and all(f.closed for f in opened)
+
+
+async def test_pass_fds_reach_the_engine_through_limits_exec_and_nothing_else_does(tmp_path):
+    """S5: the media engine's two tunnel pipes are the only extra descriptors the child keeps, at the same numbers."""
+    passed_r, passed_w = os.pipe()
+    kept_r, kept_w = os.pipe()                       # not passed: closed in the child
+    try:
+        code = (f"import os; os.write({passed_w}, b'Kim\\'s plot')\n"
+                f"try:\n    os.fstat({kept_w}); print('leaked')\nexcept OSError:\n    print('closed')")
+        stdin = tmp_path / "in.bin"
+        stdin.write_bytes(b"")
+        out = tmp_path / "out.bin"
+        result = await _launcher().run([_PY, "-c", code], workdir=str(tmp_path), env={}, limits=_limits(), user=None,
+                                       stdin_path=str(stdin), stdout_path=str(out), pass_fds=(passed_w,))
+        assert result.returncode == 0
+        assert os.read(passed_r, 64) == b"Kim's plot"
+        assert out.read_text().strip() == "closed"
+    finally:
+        for fd in (passed_r, passed_w, kept_r, kept_w):
+            os.close(fd)
