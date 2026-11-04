@@ -167,7 +167,7 @@ async def test_ok_output_is_copied_outside_the_workdir(tmp_path):
     ("signal:SIGXFSZ", SandboxStatus.TOO_LARGE, "file_size_limit"),
     ("signal:SIGXCPU", SandboxStatus.TIMEOUT, "cpu_limit"),
     ("signal:SIGKILL", SandboxStatus.ERROR, "engine_killed"),
-    ("signal:SIGSEGV", SandboxStatus.ERROR, "engine_killed"),
+    ("signal:SIGUSR1", SandboxStatus.ERROR, "engine_killed"),   # any other signal; SIGSEGV would pop macOS crash reports
     ("empty", SandboxStatus.EMPTY_OUTPUT, "empty_output"),
     ("missing", SandboxStatus.EMPTY_OUTPUT, "empty_output"),
     ("symlink", SandboxStatus.ERROR, "output_not_regular"),
