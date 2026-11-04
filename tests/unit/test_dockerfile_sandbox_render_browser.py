@@ -20,20 +20,12 @@ def _render_instructions() -> str:
     return " ".join(ln.strip() for ln in render.splitlines() if ln.strip() and not ln.strip().startswith("#"))
 
 
-def test_installs_only_the_headless_shell_into_opt_puppeteer():
+def test_installs_only_the_headless_shell_the_installed_puppeteer_expects():
     ins = _render_instructions()
     assert "PUPPETEER_CACHE_DIR=/opt/puppeteer" in ins
-    assert re.search(r"@puppeteer/browsers install chrome-headless-shell@\d+\.\d+\.\d+\.\d+ --path /opt/puppeteer", ins)
-    assert "--install-deps" in ins
-    assert not re.search(r"browsers install chrome@|install chromium|chrome-for-testing", ins)
-
-
-def test_pinned_version_matches_what_puppeteer_expects():
-    revisions = ROOT / "pdf_generator" / "node_modules" / "puppeteer-core" / "lib" / "cjs" / "puppeteer" / "revisions.js"
-    if not revisions.is_file():
-        pytest.skip("pdf_generator/node_modules not installed")
-    pinned = re.search(r"chrome-headless-shell@(\S+)", _render_instructions()).group(1)
-    assert f"'chrome-headless-shell': '{pinned}'" in revisions.read_text()
+    assert "npx puppeteer browsers install chrome-headless-shell --install-deps" in ins
+    assert not re.search(r"chrome-headless-shell@|browsers install chrome\b(?!-)|install chromium|chrome-for-testing", ins)
+    assert not re.search(r"\b\d+\.\d+\.\d+\.\d+\b", ins), "a literal browser version would drift from puppeteer"
 
 
 def test_fonts_are_installed_and_no_playwright():
@@ -43,9 +35,10 @@ def test_fonts_are_installed_and_no_playwright():
     assert "xvfb" not in ins.lower() and "playwright" not in ins.lower()
 
 
-def test_puppeteer_dependencies_omit_dev():
-    assert "npm install --omit=dev" in _render_instructions()
-    assert "COPY pdf_generator/package.json" in _render_instructions()
+def test_puppeteer_is_installed_from_the_lockfile_without_dev():
+    ins = _render_instructions()
+    assert "npm ci --omit=dev" in ins
+    assert "COPY pdf_generator/package.json pdf_generator/package-lock.json" in ins
 
 
 def test_world_writable_gate_covers_opt_puppeteer():

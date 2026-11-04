@@ -29,16 +29,16 @@ RUN pip install --no-cache-dir -r requirements-sandbox.txt
 COPY docx_generator/package.json docx_generator/
 RUN cd docx_generator && npm install --omit=dev
 
-# The HTML render engine: puppeteer (the version package.json pins) drives chrome-headless-shell ONLY (no full Chrome).
-# The shell's version is the one puppeteer 24.39.1 expects (puppeteer-core revisions.js). `--install-deps` apt-installs
-# the Chromium runtime libraries. The browser lands in /opt/puppeteer, root-owned and closed to the engine user (below).
+# The HTML render engine: puppeteer (locked by package-lock.json, `npm ci`) drives chrome-headless-shell ONLY (no full
+# Chrome). `puppeteer browsers install` with no version installs the shell revision the INSTALLED puppeteer expects, into
+# PUPPETEER_CACHE_DIR, so the two agree by construction. `--install-deps` apt-installs the Chromium runtime libraries. The browser lands in /opt/puppeteer, root-owned and closed to the engine user (below).
 ENV PUPPETEER_CACHE_DIR=/opt/puppeteer \
     PUPPETEER_SKIP_DOWNLOAD=true
-COPY pdf_generator/package.json pdf_generator/
+COPY pdf_generator/package.json pdf_generator/package-lock.json pdf_generator/
 COPY pdf_generator/render_html.js pdf_generator/
-RUN cd pdf_generator && npm install --omit=dev \
+RUN cd pdf_generator && npm ci --omit=dev \
     && apt-get update \
-    && npx --yes @puppeteer/browsers install chrome-headless-shell@146.0.7680.76 --path /opt/puppeteer --install-deps \
+    && npx puppeteer browsers install chrome-headless-shell --install-deps \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Engine children run as this user (DEFAULT_ENGINE_USER in src/composition/sandbox_setup.py): system, no home, no shell.
