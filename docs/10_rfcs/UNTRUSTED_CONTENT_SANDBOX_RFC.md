@@ -617,7 +617,7 @@ change the caller map in the **sandbox's** environment and **redeploy the sandbo
 §27 holds transcription to the owner only, "until the zero-credential parser service exists" (Δ125; T1 live for the owner). The opt-in is per drive connection
 (`DriveConnection.transcribe_enabled`, `src/domain/drive_connection.py:64`), together with the global `DRIVE_TRANSCRIBE_ENABLED`
 (`src/web/user_cabinet_app.py:1506-1509`). When S5 (media) is accepted: the indexer no longer decodes media in-process; the decoder runs in a service that
-holds nothing and sees one recording; a URL or the recording's bytes are the only things handed in. The gate then changes from "owner only" to that existing
+holds nothing and sees one recording; only byte ranges of that one recording, requested through the tunnel, are handed in. The gate then changes from "owner only" to that existing
 **per-connection explicit opt-in**, no new mechanism. One guard ships with S5 so the gate means what it says: the in-process media path is deleted, so the only media path in a deployed indexer is the sandbox (there is no `SANDBOX_MEDIA` knob to leave on `inprocess`). **Owner decision O17 (2026-11-04): transcripts are enabled for a second user right after S5's acceptance.** The same argument lifts the parser residual in `drive_parser_sandbox_resource_isolation.md` once S3 is accepted, which is that record's stated trigger.
 
 ## 10. Questions: resolved by the owner (2026-10-20) and what remains
