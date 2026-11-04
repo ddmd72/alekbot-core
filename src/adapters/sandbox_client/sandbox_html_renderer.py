@@ -3,6 +3,7 @@ SandboxHtmlRenderer: HtmlRendererPort over the sandbox's `render.png` op (RFC §
 
 The body is `u32-be width | html` (`frame_png_body`); every sandbox outcome becomes an `HtmlRenderError`, the systemic
 `SandboxUnavailable` / `SandboxMisconfigured` included (the widget caller drops the widget on any error).
+Not wired: widgets render in-process (owner decision O16, latency); wire it when the render sandbox has a fast start.
 `start()` is a no-op (no local browser); `stop()` closes the client.
 """
 from __future__ import annotations
