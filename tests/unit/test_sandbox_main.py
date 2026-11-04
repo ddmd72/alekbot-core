@@ -319,3 +319,102 @@ def test_sandbox_main_import_closure_excludes_the_main_service_stack():
             "'src.handlers','google.cloud.firestore','src.adapters.firestore'))]; print(bad)")
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=120)
     assert out.stdout.strip().splitlines()[-1] == "[]", out.stdout + out.stderr
+
+
+# ---- S5: the tunnel route in front of Quart (light family) -----------------------------------------------------
+
+@pytest.fixture
+def light_env(tmp_path):
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "SANDBOX_SERVICE": "light",
+        "SANDBOX_RECYCLE": "abnormal",
+        "SANDBOX_URL": "https://sandbox-light.test",
+        "SANDBOX_CALLERS_MAIN": "main@example.com",
+        "SANDBOX_CALLERS_INDEXER": "indexer@example.com",
+        "SANDBOX_WORK_ROOT": str(tmp_path / "work"),
+        "SANDBOX_OUTPUT_ROOT": str(tmp_path / "out"),
+    }
+
+
+async def _asgi(app, method, path):
+    """One direct ASGI call; returns (status, outcome). Like Hypercorn, `http.disconnect` only after the final frame."""
+    import asyncio
+    sent = []
+    inbox = [{"type": "http.request", "body": b"", "more_body": False}]
+    closed = asyncio.Event()
+
+    async def receive():
+        if inbox:
+            return inbox.pop(0)
+        await closed.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+        if message["type"] == "http.response.body" and not message.get("more_body"):
+            closed.set()
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "2", "method": method, "scheme": "http",
+             "path": path, "raw_path": path.encode(), "query_string": b"", "root_path": "",
+             "headers": [(b"host", b"sandbox-light.test")], "client": ("127.0.0.1", 1), "server": ("127.0.0.1", 80)}
+    await asyncio.wait_for(app(scope, receive, send), timeout=10)   # hang guard
+    start = sent[0]
+    outcome = dict(start["headers"])[sc.OUTCOME_HEADER.lower().encode()].decode()
+    return start["status"], sc.decode_outcome(outcome)
+
+
+def _light_app(light_env, monkeypatch, seen):
+    monkeypatch.setattr(sandbox_main, "build_engine_registry", lambda plan: {SandboxOp.PARSE_EXTRACT: object()})
+    monkeypatch.setattr(sandbox_main, "build_tunnel_registry", lambda plan: {SandboxOp.MEDIA_PROBE: object()})
+    monkeypatch.setattr(sandbox_main, "SandboxCallerGate", AllowGate)
+    real_bp, real_tunnel = sandbox_main.create_sandbox_blueprint, sandbox_main.SandboxTunnelApp
+
+    def bp_spy(engines, gate, recycler, ceiling, config):
+        seen["bp"] = dict(config, gate=gate, recycler=recycler)
+        return real_bp(engines, gate, recycler, ceiling, config)
+
+    def tunnel_spy(engines, gate, recycler, config):
+        seen["tunnel"] = dict(config, gate=gate, recycler=recycler, engines=dict(engines))
+        return real_tunnel(engines, gate, recycler, config)
+
+    monkeypatch.setattr(sandbox_main, "create_sandbox_blueprint", bp_spy)
+    monkeypatch.setattr(sandbox_main, "SandboxTunnelApp", tunnel_spy)
+    return sandbox_main.build_app(light_env, FakeRecycler())
+
+
+async def test_light_app_routes_media_paths_to_the_tunnel_and_the_rest_to_quart(light_env, monkeypatch):
+    app = _light_app(light_env, monkeypatch, {})
+    status, outcome = await _asgi(app, "GET", "/v1/media.probe")
+    assert (status, outcome.detail) == (405, "method_not_allowed")        # the tunnel app's own answer
+    status, outcome = await _asgi(app, "GET", "/v1/parse.extract")
+    assert (status, outcome.detail) == (405, "http_405")                  # Quart's
+    assert (await app.test_client().get("/health")).status_code == 200
+
+
+async def test_both_routes_share_one_slot_gate_recycler_and_roots(light_env, monkeypatch):
+    seen = {}
+    app = _light_app(light_env, monkeypatch, seen)
+    bp, tunnel = seen["bp"], seen["tunnel"]
+    assert bp["slot"] is tunnel["slot"] and bp["gate"] is tunnel["gate"] and bp["recycler"] is tunnel["recycler"]
+    assert {k: bp[k] for k in ("work_root", "output_root", "recycle", "engine_user")} == {
+        k: tunnel[k] for k in ("work_root", "output_root", "recycle", "engine_user")}
+    assert set(tunnel["engines"]) == {SandboxOp.MEDIA_PROBE}
+    assert bp["slot"].try_acquire()                                       # a tunnel in flight holds the instance
+    reply = await app.test_client().post("/v1/parse.extract", data=b"x")
+    assert reply.status_code == 503
+    assert sc.decode_outcome(reply.headers[sc.OUTCOME_HEADER]).status == SandboxStatus.RECYCLING
+
+
+def test_render_family_mounts_no_tunnel(env, monkeypatch):
+    monkeypatch.setattr(sandbox_main, "build_engine_registry", lambda plan: {})
+    monkeypatch.setattr(sandbox_main, "SandboxTunnelApp", lambda *a, **k: pytest.fail("no tunnel on render"))
+    app = sandbox_main.build_app(env, FakeRecycler())
+    assert "asgi_app" not in vars(app)
+
+
+def test_unconfigured_light_mounts_no_tunnel(light_env, monkeypatch):
+    light_env["SANDBOX_URL"] = ""
+    monkeypatch.setattr(sandbox_main, "build_tunnel_registry", _no_engines)
+    app = sandbox_main.build_app(light_env, FakeRecycler())
+    assert "asgi_app" not in vars(app)
