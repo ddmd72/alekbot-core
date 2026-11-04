@@ -1,9 +1,10 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** Proposed (rev 4). S1 (`render.docx`) is merged on `main` behind `SANDBOX_RENDER` (default `inprocess`): not P4 is built: both runtimes parse only through the light service, not deployed (O14).
-deployed, not accepted, and no S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
+**Status:** Proposed (rev 4). The parse family is built and live in both runtimes (O14). S1 (`render.docx`) is deployed behind
+`SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped) and not accepted. S2 (`render.pdf`, `render.png`) is built
+on its branch, not deployed. No S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
-**Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`)
+**Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
 - **O1. One separate Cloud Run deploy unit** whose own service account holds **no IAM role** and which is given **no secret**.
 - **O2. It executes every piece of untrusted processing** the product does: document parsing for the drive, conversion of
@@ -73,8 +74,11 @@ process under an unprivileged uid**; the server process only moves the payload t
 | C2 | Chat-upload conversion; on-demand reads of chat, workspace, delivered and drive files; email attachments | a file attached in Slack/Telegram; a file opened by `open_file` or the drive specialist's `open_drive_file`; an email attachment | main service, **in process**, a thread (`src/utils/file_conversion.py:208`; five call sites in three modules: `src/services/file_conversion_service.py:205`, `:250` and `:366`, `src/services/email_search_service.py:251`, `src/handlers/conversation_handler.py:904`). EXTERNAL_FILES U3 moves all of them into the parser child, behind its document service | none today (a free function); after EXTERNAL_FILES U3 the same `ContentExtractorPort` and `PdfSplitterPort` as C1 (O13) |
 | C3 | Audio/video decoding for transcripts (`ffmpeg`, `ffprobe`) | a recording on a drive: a pre-authenticated URL (OneDrive) or a header-carrying source read through a loopback relay (Google, GOOGLE_DRIVE_RFC G2) | indexer, the parser child (`SubprocessMediaExtractor`, `src/adapters/drive_parser/media_extractor.py:68`; `LoopbackMediaRelay`, `media_relay.py:82`), behind `DRIVE_TRANSCRIBE_ENABLED` (`indexer_main.py:174`, `:232`); `ffprobe` on raw bytes also runs in the main service (`src/utils/video_probe.py:21`) | `MediaAudioPort` (`src/ports/media_audio_port.py`: `probe`, `extract_windows`); none for the probe |
 | C4 | DOCX generation | a Node script written by a model | main service, Node subprocess with a module hook and a withheld environment (`src/adapters/node_docx_runner.py:33-69`), or the sandbox's `render.docx` behind `SANDBOX_RENDER` (S1, built; `src/composition/sandbox_client_setup.py:48`, `:68`; wired through `docx_runner_factory`, `src/composition/user_agent_factory.py:20`, `:213`, `:772`) | `DocxRunnerPort.run(js_code, spec_json, timeout) -> bytes` (`src/ports/docx_runner_port.py`) |
-| C5 | HTML to PDF | HTML written by a model | main service, Node + Puppeteer subprocess, request filter in `pdf_generator/runner.js:18-51`, `:81-97` (`src/adapters/node_puppeteer_runner.py`) | `PuppeteerRunnerPort.run(html, timeout) -> bytes` |
-| C6 | HTML to PNG (rich-content widgets) | HTML written by a model | main service, one shared headless Chromium (`src/adapters/playwright_html_renderer.py:110-123`; wired `src/composition/application_graph.py:928-930`; used `src/services/rich_content_service.py:164`) | `HtmlRendererPort.render(html, width) -> bytes` plus `start`/`stop` |
+| C5 | HTML to PDF | HTML written by a model | main service, Node + Puppeteer subprocess, request filter in `pdf_generator/runner.js:18-51`, `:81-97` (`src/adapters/node_puppeteer_runner.py`), or the sandbox's `render.pdf` (S2, built on its branch; `SandboxPuppeteerRunner`) | `PuppeteerRunnerPort.run(html, timeout) -> bytes` |
+| C6 | HTML to PNG (rich-content widgets) | HTML written by a model | main service, one shared headless Chromium (`src/adapters/playwright_html_renderer.py:110-123`; wired `src/composition/application_graph.py:956-962`; used `src/services/rich_content_service.py:164`), or the sandbox's `render.png` (S2, built on its branch; `SandboxHtmlRenderer`) | `HtmlRendererPort.render(html, width) -> bytes` plus `start`/`stop` |
+
+Of the in-process runners, only C5 has a request filter (`runner.js`, which still lets public hosts through); C6 has none and runs with JavaScript on
+(`playwright_html_renderer.py`). The sandbox's engine is stricter than both (§4.5, S2 delta D3).
 
 The five converter call sites above are the full list found by grep (the e-mail attachment path is one of them); the markitdown builder
 (`src/utils/document_hardening.py:38`) has no other user (`file_conversion.py:273`), though the same module's ZIP checks also serve the drive
@@ -143,9 +147,14 @@ A Cloud Run **service** answering a synchronous request.
 | Service | Ops | Image content | Resources (initial) | Request timeout |
 |---------|-----|---------------|---------------------|-----------------|
 | **sandbox** (light) | C1, C2, C3 (incl. `ffprobe` of chat videos) | Python, the parser libraries, `ffmpeg`/`ffprobe`. No Node, no browser | 2 GiB, 2 vCPU (ffmpeg used ~1.07 CPU-s per audio minute, §27.2) | 900 s (backstop; the in-app wall is shorter) |
-| **sandbox-render** | C4, C5, C6 | Python shell, Node, Puppeteer, Playwright Chromium | 2 GiB, 2 vCPU | 300 s |
+| **sandbox-render** | C4, C5, C6 | Python shell, Node, the `docx` package, Puppeteer with **chrome-headless-shell only** (no full Chrome, **no Playwright**), the font set below | 2 GiB, 2 vCPU | 300 s |
 
-Why two: the render image carries ~0.5 GB of browser and runs code a model wrote, the light image carries decoders and runs bytes someone sent;
+One browser serves both HTML ops (author delta D1): Puppeteer's chrome-headless-shell, installed at build time by `puppeteer browsers install`
+(the revision the locked Puppeteer expects) into a root-owned cache the engine uid can read but not write. The fonts are the Debian set the in-process
+Playwright image renders with (Latin, Cyrillic, CJK, Thai, emoji). PNG equivalence with the in-process renderer is checked by width and validity, not
+pixel by pixel; the image size is not yet measured (acceptance).
+
+Why two: the render image carries the browser and runs code a model wrote, the light image carries decoders and runs bytes someone sent;
 they differ in size, cold start, and in what a compromise of either would be worth to the other. Why not three: a separate media service buys a
 different network policy only (§4.5), which the owner has accepted as is (O7).
 Cost of two: one more deploy unit for a solo developer. Both services are part of the plan; the slice order (§7) starts with the render service.
@@ -218,9 +227,15 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
   anything from a payload**. For each request it streams the body to a file in a per-request directory, then spawns a **fresh child** for the engine (parser, markitdown, ffmpeg, the
   Node script, Chromium) under a **separate unprivileged uid**, with no supplementary groups, as the drive parser already does (`subprocess_content_extractor.py:221-224`, `child.py`). S1 built the shared launcher
   (`src/adapters/sandbox_engine/child_launcher.py`, `limits_exec.py`).
-  Limits applied in the child before the engine loads: `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_CORE` 0, **`RLIMIT_NPROC`** and **`RLIMIT_NOFILE`**; the wall clock kills the whole
+  Limits applied in the child before the engine loads (the browser child differs, below): `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, `RLIMIT_CORE` 0, **`RLIMIT_NPROC`** and **`RLIMIT_NOFILE`**; the wall clock kills the whole
   process group. Different ops use different uids where cheap. The result goes back through a file the child writes, which the
   server reads and **validates as an envelope only** (§4.7); the server never interprets binary output.
+- **The browser child (S2, delta D2).** Chromium does not start under `RLIMIT_AS` 1 GiB (V8 and PartitionAlloc reserve tens of GiB of address space at
+  start), so the render family's HTML ops use their own launcher with **`RLIMIT_DATA`** in place of `RLIMIT_AS`, **`RLIMIT_NPROC` 512** (it counts threads per uid, and
+  Chromium starts with tens of them) and **`RLIMIT_NOFILE` 1024**; `RLIMIT_CPU` and `RLIMIT_FSIZE` are unchanged. The wall that bounds memory is the instance's 2 GiB
+  with one request per instance. The numbers are chosen in the build; S0-f confirms them. Chromium's **own** sandbox is off (`--no-sandbox`) behind a code constant
+  (`CHROMIUM_OWN_SANDBOX`, `src/adapters/sandbox_engine/html_render_engine.py`) until S0-f shows it starts on gen2; the claim is the uid boundary, the
+  zero-role identity and the closed network, not Chromium's sandbox. Per-request profile and shared-memory files go to the workdir (`--disable-dev-shm-usage`).
 - **`concurrency=1`, `max-instances=N`** (§11). One request per container at a time.
 - **Recycle (`SANDBOX_RECYCLE`, O5):** `always` (default; the render service): the instance serves **one** request and ends; `abnormal` (the light/parse service only, owner decision 2026-11-03): a
   normal request, any `ok` answer including a parser status such as `no_text` or `encrypted` inside it, keeps the instance warm, and a request that ends in anything else after payload bytes
@@ -265,12 +280,20 @@ One route family, versioned: `POST /v1/{op}`.
 | `media.probe` | download URL or bytes (OQ-S11; the `video_probe` case is bytes) | JSON `{duration_s, has_audio, container}` | a media child |
 | `media.audio_windows` | download URL or bytes (OQ-S11), window plan | Opus bytes, one window per response part or per call | media child, `ffmpeg` per §27.4 |
 | `render.docx` (built, S1) | body `u32-be script_length \| script \| spec`, `limits` | DOCX bytes; on a script error its text in the body, capped at 16 KiB | `DocxRenderEngine` (`src/adapters/sandbox_engine/docx_render_engine.py:47`), a new engine: `NodeDocxRunner` writes into the repo tree and sets no rlimits (`decisions/sandbox_render_service.md`) |
-| `render.pdf` | HTML | PDF bytes | `NodePuppeteerRunner`'s script in a child |
-| `render.png` | HTML, width | PNG bytes | a per-request Playwright page |
+| `render.pdf` (built, S2) | body = the HTML as UTF-8; `limits` | PDF bytes; **no engine text in a failure** (fixed detail code only) | `HtmlRenderEngine` (`src/adapters/sandbox_engine/html_render_engine.py`), child `render_html_child.py` -> fixed `pdf_generator/render_html.js` (Puppeteer, chrome-headless-shell) |
+| `render.png` (built, S2) | body `u32-be width \| html` (width 16..2048, `src/domain/sandbox_png_frame.py`); `limits` | PNG bytes; no engine text in a failure | the same engine and script, a per-request page |
 
-- **Ops are added by the slice that builds them** (`SandboxOp`, `src/domain/sandbox_contract.py:70-72`, today `render.docx` only). The outcome
-  statuses as built are `ok`, `script_error`, `timeout`, `empty_output`, `too_large`, `recycling`, `unconfigured`, `bad_request`, `error` (`:75-84`); S3
-  adds the parser's `ExtractionStatus` values to the `parse.*` outcomes.
+  The PNG width travels in the **body frame**, not in `meta` (delta D6: the meta field set is pinned, I3). The server never splits the frame; the engine child does.
+  Both HTML ops run with JavaScript off, every request other than `data:`, `about:` and `blob:` aborted (public hosts too), no host name resolving, a dead proxy as
+  a last layer and DevTools over a pipe (delta D3; the in-process PDF path lets public hosts through, the in-process PNG path has no filter). Their non-ok answers carry
+  a fixed detail code (`wall_clock`, `cpu_limit`, `file_size_limit`, `response_cap`, `bad_request`, `engine_exec_failed`, `browser_unavailable`, `render_failed`,
+  `engine_killed`, `engine_exit`, `empty_output`) and never the browser's or Node's stderr, which can echo attacker-chosen URLs (delta D4; `render.docx` keeps returning its error
+  text because a repair loop consumes it). The clients map statuses to fixed texts and turn the sandbox's errors into the ports' own errors (`PuppeteerRunnerError`,
+  `HtmlRenderError`), so no agent changes (delta D5; `src/adapters/sandbox_client/sandbox_render_outcome.py`).
+
+- **Ops are added by the slice that builds them** (`SandboxOp`, `src/domain/sandbox_contract.py:79-86`: the three `render.*` ops and the three `parse.*` ops, built). The outcome
+  statuses as built are `ok`, `script_error`, `timeout`, `empty_output`, `too_large`, `memory`, `recycling`, `unconfigured`, `bad_request`, `error` (`:89-99`); the parser's
+  `ExtractionStatus` values travel in the `parse.*` answers (below).
 - **Status convention of the `parse.*` ops (P1, built, not deployed).** A header of `ok` means the child ran and wrote a result that passed
   validation (`decode_parse_result`: closed keys, the op's status set, scalar types, a size bound). The parser's own status (`text`, `no_text`,
   `unsupported`, `too_large`, `encrypted`, `error`) is the **header detail** of that `ok` answer and the `status` of the JSON body, so a `no_text` result
@@ -288,7 +311,7 @@ One route family, versioned: `POST /v1/{op}`.
 ### 4.8 Limits (per op, enforced inside; the caller's `limits` may only lower them)
 
 Input size caps are the callers' existing ones (drive `size_cap(kind)`; the main service's reads: EXTERNAL_FILES_RFC §4.5's caps table, 5 MiB for parsing, `file_conversion.py:31`; media `TRANSCRIBE_MAX_BYTES`/`_SECONDS`, §27.4). Child limits keep their
-values (`RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB) until S1 re-measures them on the new host. Output caps: text 2,000,000 characters
+values (`RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB) until S1 re-measures them on the new host; the browser child's memory limit is `RLIMIT_DATA` (§4.6). Output caps: text 2,000,000 characters
 (`MAX_TEXT_CHARS`), binary 32 MiB, DOCX/PDF/PNG as today. The service's own memory (2 GiB) is the outer wall: a child that reaches its rlimit is an outcome, an
 instance killed by the platform is a transport failure (§4.9).
 
@@ -347,6 +370,8 @@ Chromium yet), and S3 adds `light`. The service has no database import to leak (
 
 ### 4.12 Composition and the switch (O9)
 
+**Superseded by O15 for the render family:** one knob, `SANDBOX_RENDER` / `SANDBOX_RENDER_URL`, selects DOCX, PDF and widget PNG together (`build_docx_runner`, `build_pdf_runner`, `build_html_renderer` in `src/composition/sandbox_client_setup.py`); no per-part switch for these three, no new key. Per-part acceptance and rollback of O9 therefore holds between families, not inside the render family.
+
 **Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. The text below holds for the render and media families.
 
 Each caller family reads one knob with `os.getenv` at its composition line (optional knob, per CLAUDE.md, not `load_settings()`):
@@ -355,7 +380,7 @@ Each caller family reads one knob with `os.getenv` at its composition line (opti
 |------|---------|--------|-------------------------------|
 | `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's (`indexer_main.py:138`, today `build_drive_models` with the parser aliased as splitter, `drive_model_setup.py:124`), the main service's `build_document_service` | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
 | `SANDBOX_MEDIA` | the indexer's media wiring | same | same |
-| `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py:48`, `:68`) | the main service | same | same |
+| `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py`; O15: DOCX, PDF and PNG) | the main service | same | same |
 
 One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another; one
 `SandboxContentExtractor` object implements both ports, as the in-process adapter does today (EXTERNAL_FILES §4.9).
@@ -414,6 +439,7 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O12** | **Order:** EXTERNAL_FILES_RFC's document service first (U0–U4, then U5); S3 (indexer) and S4 (main) after it, as adapter swaps under `ContentExtractorPort` and `PdfSplitterPort`; the parser child is the accepted residual until then, Google full-drive grants included; S1/S2 an independent track (header, §7) | owner (2026-11-03) |
 | **O13** | **One parse engine in principle** (EXTERNAL_FILES D15): no `DocumentConverterPort` or `chat.convert`; one `parse.*` family for both runtimes; S4 = identity + knob; final go after that RFC's U0-b report on real files (header, §4.7) | owner (2026-11-03) |
 | **O14** | **The parse switch is one deploy (2026-11-03).** No `SANDBOX_PARSE` knob, no watch period, no soak, no client slot counter (`SANDBOX_INDEXER_SLOTS` is dropped). The main service and the indexer build `build_sandbox_parser(url)` from a required `SANDBOX_PARSE_URL` and refuse to start without it, locally too; neither composition has an in-process fallback or a `K_SERVICE` branch. One retry on `recycling`; concurrency 1, max-instances 5 as a cost guard. Rollback is a Cloud Run revision rollback of both callers. | owner |
+| **O15** | **One knob for the render family (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner and the widget PNG renderer; no new env key, no new substitution. Replaces O9's per-part switch for this family. `sandbox` with an empty URL: ERROR + degraded feature on Cloud Run, startup error locally; never a fallback | owner |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller groups must not share an identity (§4.4). Met in configuration | author, folded into O8 |
 | P1 | A service, not a job (§4.1) | author |
 | P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
@@ -483,7 +509,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - Rationale: the model-written script is the least constrained input, and the skeleton (auth, contract, child launcher, recycle, deploy tests) is proved on
   a consumer with one op, bytes out, no large input.
 - Built (`decisions/sandbox_render_service.md`): `src/domain/sandbox_contract.py`; `sandbox_main.py`; `src/web/sandbox_app.py` and the caller gate;
-  `src/composition/sandbox_setup.py`; `Dockerfile.sandbox` (`render` target); the Cloud Build steps (`cloudbuild-dev.yaml:319-365`, a no-op while the
+  `src/composition/sandbox_setup.py`; `Dockerfile.sandbox` (`render` target); the Cloud Build steps (`cloudbuild-dev.yaml:372-418`, a no-op while the
   sandbox's identity value is empty); the child launcher (`src/adapters/sandbox_engine/`); `src/adapters/sandbox_client/` with `SandboxHttpClient` and
   `SandboxDocxRunner`; `SandboxUnavailable`/`SandboxMisconfigured` (`src/domain/sandbox_errors.py`); main wiring behind `SANDBOX_RENDER`.
 - Tests (built): contract suite (`inprocess` vs `sandbox` `DocxRunnerPort`: success bytes, script error text, timeout, empty output); the field set of a
@@ -493,11 +519,19 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   parse no binary output); wire tests at the HTTP boundary.
 - Accept: S0 b–f in hand; the owner steps (§8); DocGenerator e2e in `sandbox` mode; the engine child confirmed under its own uid.
 
-### S2. The other renderers (C5, C6) — after S1, independent of the parse track
-- Build: `render.pdf`, `render.png`; `SandboxPuppeteerRunner`, `SandboxHtmlRenderer`; Chromium in the `render` image, in a child under its own uid;
+### S2. The other renderers (C5, C6) — built on its branch, not deployed, not accepted
+- Build: `render.pdf`, `render.png`; `SandboxPuppeteerRunner`, `SandboxHtmlRenderer`; one browser (chrome-headless-shell) in the `render` image, in a child under its own uid;
   Chromium's own sandbox tested on gen2 (S0-f) and the result recorded; the child boundary is the claim either way.
-- Tests: contract suite per runner; no outbound connection from the render service; blocked-host test for the request filter; PNG width; HTML timeout.
-- Accept: widget render latency (cold) stated; PdfGenerator e2e.
+- Built (`decisions/sandbox_render_service.md` § S2): `HtmlRenderEngine` and `render_html_child.py` (`src/adapters/sandbox_engine/`), the fixed
+  `pdf_generator/render_html.js`, the browser launcher and the two registry entries in `src/composition/sandbox_setup.py` (`StartupPlan.browser_cache_dir`, from `PUPPETEER_CACHE_DIR`),
+  the two clients in `src/adapters/sandbox_client/`, the `render` target's browser and fonts. No new deploy key.
+- Author deltas recorded here (engineering, S-Δ style): **D1** one browser, no Playwright in the render image (§4.2); **D2** `RLIMIT_DATA`, NPROC 512, NOFILE 1024 for the
+  browser child (§4.6, §11); **D3** JavaScript off and every sub-resource blocked for PNG as well, PDF loses the in-process path's public hosts (§4.7); **D4** no engine text in
+  `render.pdf` / `render.png` failures (§4.7); **D5** the clients turn sandbox errors into the ports' errors (§4.7); **D6** the PNG width travels in a body frame, not in `meta` (§4.7).
+- Tests: contract suite per runner; no outbound connection from the render service; blocked-host test for the request filter; PNG width; HTML timeout; the image contains the
+  browser executable (a missing browser answers `error/browser_unavailable` at request time, not at construction).
+- Accept: widget render latency (cold) stated, measured at acceptance; PdfGenerator e2e; S0-f's Chromium-sandbox outcome recorded; image size recorded.
+- Main-service choice (O15): the same `SANDBOX_RENDER` knob as S1 selects `SandboxPuppeteerRunner` / `SandboxHtmlRenderer` or the in-process pair (`build_pdf_runner`, `build_html_renderer`); no new key.
 
 ### S3. Drive parsers (C1) — after the document service (O12)
 - Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob, slots and soak below for the parse family).
@@ -611,6 +645,8 @@ Open (new in rev 4):
 | media URL host allowlist | name-suffix list in configuration, from the T0 measurement, extendable without code change | O7, §4.5 |
 | `SANDBOX_INDEXER_SLOTS` | superseded by O14 (dropped) | none: no client slot counter |
 | engine child limits added | `RLIMIT_NPROC` 64, `RLIMIT_NOFILE` 64 (chosen in the S1 build; S0-f confirms) | fork bomb, descriptor exhaustion |
+| browser child (`render.pdf`, `render.png`) | `RLIMIT_DATA` in place of `RLIMIT_AS`; `RLIMIT_NPROC` 512, `RLIMIT_NOFILE` 1024 (chosen in the S2 build; S0-f confirms); `CHROMIUM_OWN_SANDBOX` off until S0-f | Chromium reserves tens of GiB of address space and starts tens of threads; the instance's 2 GiB is the real wall |
+| `render.png` width | 16..2048, in the body frame | `sandbox_png_frame.py` |
 | observation before removing in-process | 14 days per part (superseded by O14 for the parse family) | O9 |
 
 ## 12. Where the current code disagrees with the design (so the plan does not assume otherwise)
@@ -624,14 +660,14 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
 3. **`ExtractionRequest` carries identity** (`user_id`, `account_id`, `item_id`, `name`; `drive_extraction.py:50-59`); a naive serialization would break I3 (S-Δ3).
 4. **The PDF page ops are outside `ContentExtractorPort`**; the reader reaches them through a Protocol in `composition/` (`drive_reader_runner.py:73`;
    S-Δ4, EXTERNAL_FILES U1).
-5. **`HtmlRendererPort` has a warm-browser lifecycle** (`start`/`stop`, `html_renderer_port.py:36`, `:41`; stopped at `application_graph.py:197-198`); the
-   sandbox renders per request (S-Δ5).
+5. **`HtmlRendererPort` has a warm-browser lifecycle** (`start`/`stop`, `html_renderer_port.py:36`, `:41`; stopped at `application_graph.py:201-202`); the
+   sandbox renders per request (S-Δ5). Composition also holds the concrete `PlaywrightHtmlRenderer` type (`application_graph.py:181`, built `:959`), not the port.
 6. **One image serves every credentialed runtime.** Main, indexer, research job and relay run the same image (`cloudbuild-dev.yaml:16`, `:33`, `:158`,
-   `:213`, `:261`), built from `Dockerfile`, which installs ffmpeg, Node and two Chromium builds (`Dockerfile:13`, `:24`, `:36`). Only the sandbox has its own
+   `:213`, `:261`), built from `Dockerfile`, which installs ffmpeg, Node and two Chromium builds (`Dockerfile:13`, `:25-26`, `:36`). Only the sandbox has its own
    (`Dockerfile.sandbox`). Removing them requires a requirements split (S6-a).
 7. **`video_probe` is an unlisted consumer** in the main service (`video_probe.py:21`, used at `video_generation_agent.py:36`; S-Δ7).
-8. **`PuppeteerRunnerPort` still names a future Cloud Function** (`puppeteer_runner_port.py:6`, `:10`); `DocxRunnerPort` names the built `SandboxDocxRunner`
-   (`docx_runner_port.py:6-10`). Their timeout arguments become the request's `limits`.
+8. **`PuppeteerRunnerPort` named a future Cloud Function** (closed in S2: it now names `SandboxPuppeteerRunner`, `puppeteer_runner_port.py:6-10`); `DocxRunnerPort` names the built
+   `SandboxDocxRunner` (`docx_runner_port.py:6-10`). Their timeout arguments become the request's `limits`.
 9. **The main service's reads have five converter call sites** (§1, C2), the e-mail attachment path among them (`email_search_service.py:251`); EXTERNAL_FILES
    U3 replaces all five with its document service before S4.
 10. **Media decoding runs in the indexer today**, for the owner (T1), through `SubprocessMediaExtractor` and, for Google, a `LoopbackMediaRelay` inside the
@@ -643,3 +679,7 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
     updates it with `SandboxContentExtractor`.
 13. **`GROUP_PREFIXES`'s comment plans `drive`/`chat` prefixes** (`src/composition/sandbox_setup.py:35-36`: "INDEXER -> drive, media; MAIN -> chat");
     with O13 the rows are INDEXER -> `parse`, `media` and MAIN -> `parse`, `render`. S3 edits it with the row it adds.
+14. **The in-process HTML paths filter less than this RFC's first reading implied.** `runner.js` blocks private and metadata hosts but lets public hosts through;
+    `PlaywrightHtmlRenderer` has no request filter and runs JavaScript on. The widget and PDF prompts forbid scripts and remote loads; nothing enforces it in process. The sandbox engine
+    enforces it (S2 delta D3). Hardening the in-process renderer is a separate, optional change.
+15. **`Dockerfile.sandbox`'s header comment** named only the Node DOCX engine; it now names the browser and fonts of the `render` target.

@@ -79,6 +79,8 @@ class SandboxContractError(ValueError):
 class SandboxOp(str, Enum):
     """Ops are added by the slice that implements them, not pre-declared."""
     RENDER_DOCX = "render.docx"
+    RENDER_PDF = "render.pdf"
+    RENDER_PNG = "render.png"
     PARSE_EXTRACT = "parse.extract"
     PARSE_PDF_PAGE_COUNT = "parse.pdf_page_count"
     PARSE_PDF_WINDOWS = "parse.pdf_windows"

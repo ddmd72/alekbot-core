@@ -123,8 +123,9 @@ def test_status_and_op_values() -> None:
         "recycling", "unconfigured", "bad_request", "error",
     }
     # RFC §4.7 (owner 2026-11-03): the parse family, no `parse.pdf_window` (one window is a batch of one).
+    # RFC §7 S2: the HTML renderers `render.pdf`, `render.png` join the render family.
     assert [o.value for o in SandboxOp] == [
-        "render.docx", "parse.extract", "parse.pdf_page_count", "parse.pdf_windows",
+        "render.docx", "render.pdf", "render.png", "parse.extract", "parse.pdf_page_count", "parse.pdf_windows",
     ]
 
 

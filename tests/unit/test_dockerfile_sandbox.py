@@ -10,7 +10,9 @@ import pytest
 from tests.unit.sandbox_closure import ROOT, closure
 
 _DOCKERFILE = ROOT / "Dockerfile.sandbox"
-_NON_CODE_COPIES = {"requirements-sandbox.txt", "docx_generator/package.json"}
+# S2 (RFC §7): the HTML render engine's npm manifest, lockfile and Node script join the render target.
+_HTML_ENGINE_COPIES = {"pdf_generator/package.json", "pdf_generator/package-lock.json", "pdf_generator/render_html.js"}
+_NON_CODE_COPIES = {"requirements-sandbox.txt", "docx_generator/package.json", *_HTML_ENGINE_COPIES}
 
 
 def _text() -> str:
@@ -100,12 +102,17 @@ def test_every_copied_file_exists():
         assert (ROOT / src).is_file(), src
 
 
-def test_render_target_exists_and_has_no_chromium_or_puppeteer():
+def test_render_target_exists_and_has_only_the_headless_shell_browser():
+    """S1 banned any browser; S2 (RFC §7, design D1) admits puppeteer's chrome-headless-shell and nothing more: no
+    Playwright, no Chromium package, no full Chrome download, no ffmpeg (S5), and of pdf_generator/ only the HTML engine."""
     text = _text()
     assert re.search(r"^FROM .* AS render\s*$", text, re.M | re.I)
     lowered = " ".join(_instructions()).lower()
-    for banned in ("chromium", "puppeteer", "playwright", "pdf_generator", "ffmpeg"):
+    for banned in ("chromium", "playwright", "ffmpeg"):
         assert banned not in lowered, banned
+    assert "puppeteer_skip_download=true" in lowered            # npm's postinstall never fetches full Chrome
+    assert not re.search(r"browsers install chrome(?!-headless-shell)", lowered)
+    assert {s for s in _copy_sources() if s.startswith("pdf_generator/")} == _HTML_ENGINE_COPIES
 
 
 def test_installs_from_requirements_sandbox_not_the_main_file():

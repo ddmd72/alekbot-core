@@ -416,18 +416,27 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
 
 ### Sandbox render service
 
-`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) for the main service
-([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1, §8;
+`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) and, from slice S2, `render.pdf` and
+`render.png` (model-written HTML) for the main service
+([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1-S2, §8;
 [decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
 (`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
 concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (size
 fixed in `scripts/infrastructure/cloudbuild_sandbox_render.sh`; changed by editing that script, not through `.env`). One
-request per instance (`SANDBOX_RECYCLE=always`, unchanged). The main service uses it only when `SANDBOX_RENDER=sandbox`; the default
-is `inprocess`.
+request per instance (`SANDBOX_RECYCLE=always`, unchanged).
+
+**Image contents (`render` target):** Python, Node, the `docx` package, Puppeteer (locked by `pdf_generator/package-lock.json`) with
+**chrome-headless-shell only**, installed at build time into a root-owned `PUPPETEER_CACHE_DIR` (`/opt/puppeteer`) that the engine user
+cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
+libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
+serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
+limits (RFC §4.6); Chromium's own sandbox stays off until the gen2 check (RFC §7 S0-f). S2 is not deployed yet. **One knob for the whole render family** (owner decision O15, 2026-11-04): `SANDBOX_RENDER=sandbox` makes the main service
+send DOCX, PDF and widget PNG to this service; the default `inprocess` keeps all three in the main process. There is no per-format switch and no
+fallback between the two.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
-| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the switch on the **main** service: `inprocess` (default when empty) or `sandbox` |
+| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the one switch on the **main** service for DOCX, PDF and widget PNG: `inprocess` (default when empty) or `sandbox` |
 | `SANDBOX_RENDER_URL_DEV` | `_SANDBOX_RENDER_URL` | the render service's own `https://` URL: the main service's target and the service's token audience (`SANDBOX_URL`) |
 | `SANDBOX_RENDER_SA_DEV` | `_SANDBOX_RENDER_SA` | the render service's runtime identity; **empty skips every sandbox build step** |
 | `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER_CALLERS` | emails admitted to `render.*` (`:`-separated; a comma is refused) |
@@ -455,7 +464,7 @@ is `inprocess`.
    still `inprocess`.
 8. **Flip the switch** only on the owner's go:
    `SANDBOX_RENDER_DEV=sandbox` in `.env`, then `make deploy`. With `sandbox` and an empty URL on Cloud Run the main service
-   still starts (ERROR logged) and DOCX creation reports the sandbox unavailable; locally it is a startup error.
+   still starts (ERROR logged) and DOCX, PDF and widget PNG report the sandbox unavailable; locally it is a startup error.
 
 While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works
 before step 1.

@@ -3,11 +3,11 @@ PuppeteerRunnerPort
 ===================
 
 Port for rendering HTML to PDF via a Puppeteer subprocess.
-System boundary: local Node.js subprocess (current) or Cloud Function (future).
+System boundary: local Node.js subprocess or the render sandbox over HTTP.
 
 Implementations:
   NodePuppeteerRunner — asyncio subprocess calling pdf_generator/runner.js.
-  (future)            — Cloud Function HTTP call.
+  SandboxPuppeteerRunner — HTTP call to the sandbox's `render.pdf` op.
 """
 
 from abc import ABC, abstractmethod

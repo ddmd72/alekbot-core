@@ -61,6 +61,7 @@ from src.composition import cipher_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.document_service_setup import build_document_service
+from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
@@ -84,6 +85,7 @@ from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.interactive_message_router import InteractiveMessageRouter
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.ports.cipher_port import CipherPort
+from src.ports.html_renderer_port import HtmlRendererPort
 from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
@@ -178,7 +180,7 @@ class ApplicationGraph:
     agent_task_queue: Optional[GcpTaskQueue]
     billing_agent: BillingAgent
     logger_agent: LoggerAgent
-    html_renderer: Optional[PlaywrightHtmlRenderer]
+    html_renderer: Optional[HtmlRendererPort]
 
     async def start(self) -> None:
         """Create the agent-task queue if there is one, then start the billing and logger agents and the agent factory."""
@@ -954,10 +956,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
 
     # HTML renderer (optional — lazy-starts Chromium on first widget request)
-    html_renderer = None
-    if config.get("ENABLE_HTML_RENDERER"):
-        html_renderer = PlaywrightHtmlRenderer()
-        logger.info("✅ HTML renderer (Playwright) enabled")
+    html_renderer = build_html_renderer(
+        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
+    if html_renderer is not None:
+        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
     else:
         logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
 

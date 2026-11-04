@@ -79,7 +79,8 @@ def test_light_registry_maps_the_three_parse_ops_and_no_render_op(tmp_path):
     assert {op: engine._op for op, engine in registry.items()} == {op: op for op in registry}
 
 
-def test_render_registry_is_unchanged(tmp_path):
+def test_render_registry_holds_the_render_ops_and_no_parse_op(tmp_path):
+    """The family selector leaves the render registry to the render ops (S1 docx + S2 pdf/png, RFC §7 S2)."""
     plan = validate_startup({"SANDBOX_CALLERS_RENDER": "r@example.com", "SANDBOX_WORK_ROOT": str(tmp_path / "w"),
                              "SANDBOX_OUTPUT_ROOT": str(tmp_path / "o")}, on_cloud_run=False)
-    assert set(build_engine_registry(plan)) == {SandboxOp.RENDER_DOCX}
+    assert set(build_engine_registry(plan)) == {SandboxOp.RENDER_DOCX, SandboxOp.RENDER_PDF, SandboxOp.RENDER_PNG}
