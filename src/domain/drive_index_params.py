@@ -140,6 +140,13 @@ TRANSLATED_SHOWN = 6
 LABELLED_SHOWN = 8
 CARD_RENDER_MAX = 700
 RESULT_CHARS_MAX = 16_000
+# DRIVE_MCP_CONNECTOR_RFC §14.2: a connector search asked `wide` (`drive_search_caps.SearchCaps.WIDE`); Related stays
+# RELATED_MAX (by meaning only, unverified: more is noise)
+ABOUT_SHOWN_WIDE = 20
+MENTIONED_SHOWN_WIDE = 12
+TRANSLATED_SHOWN_WIDE = 12
+LABELLED_SHOWN_WIDE = 16
+RESULT_CHARS_MAX_WIDE = 40_000
 WINDOW_PAD = 300
 WINDOW_MAX = 900
 WINDOW_CHARS_TOTAL_V2 = 5_000               # the v1 12 000 is gone (§25.5.6)
@@ -274,6 +281,10 @@ NOTE_KEYS_MAX = 320
 EXCERPTS_K = 10                             # new chunks per find
 EXCERPTS_CHARS_MAX = 24_000                 # characters per call: passages are content, not RESULT_CHARS_MAX
 EXCERPTS_PER_FILE_MAX = 8                   # leaves room for a second file's best chunk
+# DRIVE_MCP_CONNECTOR_RFC §14.2: a connector find asked `wide` (`drive_excerpt_caps.ExcerptCaps.WIDE`); the two caps bind
+# together (a chunk is up to CHUNK_CHARS), the per-file cap stays EXCERPTS_PER_FILE_MAX
+EXCERPTS_K_WIDE = 20
+EXCERPTS_CHARS_MAX_WIDE = 45_000
 EXCERPTS_LEXICAL_WINDOW = 30                # the vector-nearest chunks whose word keys vote (A4)
 EXCERPTS_RRF_K = 60                         # the k of src/domain/rrf.py; fractional ranks, so computed apart (D-P3)
 EXCERPT_RANGE_MAX = 10                      # chunks per read_passages

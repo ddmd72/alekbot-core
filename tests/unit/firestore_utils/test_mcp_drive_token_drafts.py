@@ -135,3 +135,28 @@ def test_no_profile_or_blueprint_references_either_token():
             text = _read(folder, file)
             hits.extend(f"{folder}/{file}: {name}" for name in TOKENS if name in text)
     assert hits == []
+
+
+# -- DRIVE_MCP_CONNECTOR_RFC §14.4: wide and batch ---------------------------------------------------------------------
+
+WIDE_BATCH_TOOL_KEYS = ("search_drive.wide", "find_passages.wide", "find_passages.batch")
+
+
+def test_the_drafts_carry_the_wide_and_batch_keys():
+    tools, results = _texts(TOOL_TOKEN), _texts(RESULT_TOKEN)
+    assert set(WIDE_BATCH_TOOL_KEYS) <= set(tools)
+    assert set(contract.PAGING_KEYS) <= set(results)
+    assert 'wide "yes"' in tools[contract.INSTRUCTIONS_KEY]   # the method-by-need list names the wide case
+
+
+def test_the_wide_and_batch_texts_state_no_cap_number():
+    # E21: "about twice as many", never the numbers: the caps live in code, the words in the token
+    from src.domain.drive_excerpt_caps import ExcerptCaps
+    from src.domain.drive_search_caps import SearchCaps
+    numbers = {ExcerptCaps.WIDE.k, ExcerptCaps.WIDE.chars, ExcerptCaps.DEFAULT.k, ExcerptCaps.DEFAULT.chars,
+               SearchCaps.WIDE.about, SearchCaps.WIDE.result_chars, SearchCaps.DEFAULT.about}
+    tools, results = _texts(TOOL_TOKEN), _texts(RESULT_TOKEN)
+    texts = {**{k: tools[k] for k in WIDE_BATCH_TOOL_KEYS}, **{k: results[k] for k in contract.PAGING_KEYS}}
+    stated = {key: re.findall(r"\d[\d,]*", text) for key, text in texts.items()}
+    assert {key: found for key, found in stated.items()
+            if {int(n.replace(",", "")) for n in found} & numbers} == {}

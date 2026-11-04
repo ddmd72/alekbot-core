@@ -8,7 +8,9 @@ the context plan the render returns: noted folders before their first file, then
 note outside the wrapper; the file's description first inside it.
 
 Public interface:
-    render_excerpts(result, *, nonce, shown_folders, described_files, page_next) -> RenderedExcerpts   one call's tool result
+    render_excerpts(result, *, nonce, shown_folders, described_files, page_next, nothing_new) -> RenderedExcerpts
+                                                        one call's tool result
+    excerpt_plan(result, *, shown_folders, described_files) -> ContextPlan   the plan that render returns, no text
     render_block(files, context, *, nonce, pages, matched) -> str   the consolidated block the ledger builds for the orchestrator
     searched_line(results) -> str                       A12: what a passages run did, from the collector
     head_line(file, run) -> str                         one run's `[id <ref>:<i>-<j> · <path> · passages i–j of N]`
@@ -188,18 +190,33 @@ def _ids(result: ExcerptResult) -> str:
 
 
 def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str] = frozenset(),
-                    described_files: FrozenSet[str] = frozenset(), page_next: str = PAGE_NEXT) -> RenderedExcerpts:
+                    described_files: FrozenSet[str] = frozenset(), page_next: str = PAGE_NEXT,
+                    nothing_new: Optional[str] = None) -> RenderedExcerpts:
     """One call's tool result; a former drive name's RENAME_NOTICE is its first line. `page_next` is the template of
-    a page's "next page" line (`page_line`): a consumer other than the chat (the drive connector) words it its own way."""
+    a page's "next page" line (`page_line`): a consumer other than the chat (the drive connector) words it its own way.
+    `nothing_new` (the drive connector's batches, DRIVE_MCP_CONNECTOR_RFC §14.4): given, the REPEATED line is left out
+    (a batch's earlier batches are not "shown earlier" to a client with no ledger) and, when a find selected nothing
+    new but matched chunks shown before, this line is printed where NO_PASSAGES would be; None keeps the chat's text."""
     rendered = _render_excerpts(result, nonce=nonce, shown_folders=shown_folders, described_files=described_files,
-                                page_next=page_next)
+                                page_next=page_next, nothing_new=nothing_new)
     if not result.notice or result.status == STATUS_DRIVE_REFUSED:
         return rendered
     return RenderedExcerpts(text=f"{result.notice}\n{rendered.text}", plan=rendered.plan)
 
 
+def excerpt_plan(result: ExcerptResult, *, shown_folders: FrozenSet[str] = frozenset(),
+                 described_files: FrozenSet[str] = frozenset()) -> ContextPlan:
+    """The context plan `render_excerpts` returns for `result`, without rendering any text: what a ledger records of a
+    result nobody reads (the connector's earlier batches, DRIVE_MCP_CONNECTOR_RFC §14.3)."""
+    if (_gate_text(result) is not None or result.status == STATUS_AMBIGUOUS_FOLDER
+            or result.folder_not_indexed):
+        return ContextPlan.EMPTY
+    return _planned(result.files, result.context, shown_folders=shown_folders, described_files=described_files)[1]
+
+
 def _render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str],
-                     described_files: FrozenSet[str], page_next: str) -> RenderedExcerpts:
+                     described_files: FrozenSet[str], page_next: str,
+                     nothing_new: Optional[str] = None) -> RenderedExcerpts:
     gate = _gate_text(result)
     if gate is not None:
         return RenderedExcerpts(text=gate, plan=ContextPlan.EMPTY)
@@ -220,13 +237,15 @@ def _render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_f
         return RenderedExcerpts(text="\n".join(out), plan=ContextPlan.EMPTY)
     if result.no_text:
         out.append(NO_TEXT.format(count=result.no_text, paths=", ".join(quoted(p) for p in result.no_text_paths)))
-    if result.repeated:
+    if result.repeated and nothing_new is None:
         out.append(REPEATED.format(ids=_ids(result)))
     dropped, plan, by_id = _planned(result.files, result.context, shown_folders=shown_folders,
                                     described_files=described_files)
     blocks = _files(result.files, nonce, plan, by_id)
     if not blocks and not result.repeated:
         out.append(page_past_end(result.page) if result.page is not None and result.page.past_end else NO_PASSAGES)
+    elif not blocks and nothing_new is not None:
+        out.append(nothing_new)
     out.extend(dropped)
     out.extend(blocks)
     if result.page is not None:

@@ -86,19 +86,19 @@ def test_a_missing_key_is_named():
         ConnectorTexts.from_bodies("### search_drive\nSearch.", RESULT_BODY, TOOL_KEYS, RESULT_KEYS)
 
 
-def test_an_unknown_key_is_named():
+def test_an_unknown_key_is_named_apart_and_left_out_of_the_texts():
     body = RESULT_BODY + "### R_PAGED\nPages.\n"
-    with pytest.raises(ValueError, match="result texts: unknown keys R_PAGED$"):
-        ConnectorTexts.from_bodies(TOOL_BODY, body, TOOL_KEYS, RESULT_KEYS)
+    texts, unknown = ConnectorTexts.parse_bodies(TOOL_BODY, body, TOOL_KEYS, RESULT_KEYS)
+    assert unknown == frozenset({"results:R_PAGED"})
+    assert texts == ConnectorTexts.from_bodies(TOOL_BODY, RESULT_BODY, TOOL_KEYS, RESULT_KEYS)
 
 
-def test_every_missing_and_unknown_key_of_both_bodies_is_named_together():
+def test_every_missing_key_of_both_bodies_is_named_together_and_no_unknown_key_is():
     tool_body = "### search_drive\nSearch.\n### open_file\nOpen."
     result_body = "### R_FIND\nFind.\n### R_PAGED\nPages.\n### R_SCAN\nScan."
     with pytest.raises(ValueError) as caught:
         ConnectorTexts.from_bodies(tool_body, result_body, TOOL_KEYS, RESULT_KEYS)
-    assert str(caught.value) == ("tool texts: missing keys search_drive.query; tool texts: unknown keys open_file; "
-                                 "result texts: missing keys R_EXCERPTS; result texts: unknown keys R_PAGED, R_SCAN")
+    assert str(caught.value) == "tool texts: missing keys search_drive.query; result texts: missing keys R_EXCERPTS"
 
 
 def test_a_malformed_body_raises_before_the_key_check():

@@ -11,7 +11,9 @@ from .drive_index_lean import ChunkId
 class Selection:
     """`chunks`: the new chunks, in rank order, each a keeper's (identical copies mapped onto it); `repeated`: chunks
     shown earlier in the run that ranked again; `also_at`: keeper item id -> the item ids of its identical copies,
-    in rank order."""
+    in rank order; `left`: a ranked chunk (mapped onto its keeper) is neither shown earlier nor chosen now, so a later
+    call could still select it (DRIVE_MCP_CONNECTOR_RFC §14.4 `more`)."""
     chunks: Tuple[ChunkId, ...] = ()
     repeated: Tuple[ChunkId, ...] = ()
     also_at: Mapping[str, Tuple[str, ...]] = field(default_factory=dict)
+    left: bool = False

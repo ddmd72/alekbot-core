@@ -5,10 +5,13 @@ verbatim contract §25.13.6). Pure; `drive_search.render_results` calls it for e
 Layout: the reference reminder, the envelope lines, the searched line, the coverage line, the
 tiers in order (About, Mentioned in, By translation, Labelled, Related), and the footers. A tier shows at most its
 shown count of cards; the rest are "showing n of N" and up to GROUP_LINES group lines (top folder × kind × months) in
-one wrapper. Past RESULT_CHARS_MAX the lowest tiers' shown cards are cut first, and the result says so.
+one wrapper. Past RESULT_CHARS_MAX (or the caller's `chars_max`, DRIVE_MCP_CONNECTOR_RFC §14.2) the lowest tiers' shown
+cards are cut first, and the result says so.
 
 Public interface:
-    render_tiered(result) -> str
+    render_tiered(result, *, chars_max=RESULT_CHARS_MAX) -> str
+    tiered_text(result, *, chars_max=RESULT_CHARS_MAX) -> (str, bool)   the text and whether a tier shows fewer files
+                                                                        than it matched (§14.4, Related aside)
     group_lines(members, tier) -> (str, ...)
 """
 from __future__ import annotations
@@ -326,9 +329,15 @@ def block_nonce(block: TierBlock, cards: Sequence[DriveSearchCard]) -> str:
     return f"{cards[0].nonce}g" if cards else ""
 
 
-def render_tiered(result: DriveSearchResult) -> str:
-    """The query result Smart reads (§25.13.6). Cards past RESULT_CHARS_MAX are cut from the lowest tier first and
-    join its group lines (Related ones are dropped); the result then says it was shortened."""
+def render_tiered(result: DriveSearchResult, *, chars_max: int = RESULT_CHARS_MAX) -> str:
+    """The query result Smart reads (§25.13.6). Cards past `chars_max` (RESULT_CHARS_MAX for the chat) are cut from
+    the lowest tier first and join its group lines (Related ones are dropped); the result then says it was shortened."""
+    return tiered_text(result, chars_max=chars_max)[0]
+
+
+def tiered_text(result: DriveSearchResult, *, chars_max: int = RESULT_CHARS_MAX) -> Tuple[str, bool]:
+    """`render_tiered`'s text, and whether one of the shown tiers (About, Mentioned in, By translation, Labelled)
+    shows fewer files than it matched: members past its shown count, or cards the cut moved into its group lines."""
     tiered = result.tiered
     if tiered is None:
         raise ValueError("render_tiered needs a result with tiers")
@@ -336,13 +345,14 @@ def render_tiered(result: DriveSearchResult) -> str:
                                                      for t in TIER_ORDER}
     moved: Dict[MatchTier, List[GroupMember]] = {t: [] for t in TIER_ORDER}
     cut = False
+    past_shown = any(block.rest for block in tiered.blocks if block.tier is not MatchTier.RELATED)
     while True:
         text = _render(result, tiered, shown, moved, cut)
-        if len(text) <= RESULT_CHARS_MAX:
-            return text
+        if len(text) <= chars_max:
+            return text, past_shown or any(moved.values())
         tier: Optional[MatchTier] = next((t for t in reversed(TIER_ORDER) if shown[t]), None)
         if tier is None:
-            return text
+            return text, past_shown or any(moved.values())
         card = shown[tier].pop()
         if tier is not MatchTier.RELATED:
             moved[tier].insert(0, member_of(card))

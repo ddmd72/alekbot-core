@@ -18,8 +18,10 @@ Each call: the user and account from the verified access token (as the facts too
 connector audience (`drive_audience.connector_audience`, §7.2) around the whole call, outside the `wait_for` so its task
 inherits it; a `CALL_TIMEOUT_S` `wait_for`, an open's `deadline_at` that much minus `OPEN_MARGIN_S` (E8); one result composed by
 `compose_connector_result`, cut by `cap_result`, in `content[].text` only (no structured content, §6.2); one span
-`mcp.drive.<tool>` and one log line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. The query and question are
-never logged; the ref or folder label is logged as `DriveOperations._call` logs it in chat (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
+`mcp.drive.<tool>` and one log line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`, which on `search_drive` and
+`find_passages` also carry `wide` (0/1), `batch`, `shown` (cards or passages shown) and `more` (0/1) (§14.7). Both
+tools take `wide`, `find_passages` also `batch` (§14.2), and both declare `maxResultSizeChars` as open does (§14.5,
+E17); their arguments go to the result's paging lines (`ConnectorPaging`). The query and question are never logged; the ref or folder label is logged as `DriveOperations._call` logs it in chat (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
 validators; an empty required ref is a correctable line, not a protocol error.
 
 `get_note` (`read_note_for_connector`, the chat's rules and refusal classes): `drive:` refs only, any other ref answers
@@ -52,6 +54,7 @@ from ..domain import drive_note_tool_texts as nt
 from ..domain.document_read import OPEN_MARGIN_S
 from ..domain.drive_audience import connector_audience
 from ..domain.drive_connector_call import ConnectorCall
+from ..domain.drive_connector_paging import ConnectorPaging
 from ..domain.drive_connector_result import RESULT_MAX_CHARS, cap_result, compose_connector_result, connector_status
 from ..domain.drive_excerpt_request import FILE_REF_REQUIRED
 from ..domain.drive_link import FOLDER_LINK_LINE
@@ -59,6 +62,7 @@ from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_tool_texts import FIND_PASSAGES, LIST_FOLDER, OPEN_DRIVE_FILE, READ_PASSAGES, SEARCH_DRIVE
+from ..domain.drive_wide_batch import parse_batch, parse_wide
 from ..domain.drive_withheld import Withheld
 from ..domain.exceptions import ConnectorTextsUnavailable, DriveLinkFolder, DriveLinkRefused
 from ..domain.mcp import normalize_phrase
@@ -163,17 +167,24 @@ def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
     ops = tools.operations
     call = _Caller(app)
 
-    @app.tool(name=SEARCH_DRIVE)
+    @app.tool(name=SEARCH_DRIVE, meta={MAX_RESULT_SIZE_META_KEY: RESULT_MAX_CHARS})
     async def search_drive(ctx: Context, query: _Text = "", folder: _Text = "", drives: _Joined = "",
-                           kind: _Text = "", date_from: _Text = "", date_to: _Text = "") -> CallToolResult:
+                           kind: _Text = "", date_from: _Text = "", date_to: _Text = "",
+                           wide: _Text = "") -> CallToolResult:
+        paging = ConnectorPaging(wide=parse_wide(wide))
         return await call.run(SEARCH_DRIVE, DriveOp.SEARCH, ctx, lambda c, u, _: ops.search(
-            c, u, query=query, folder=folder, kind=kind, date_from=date_from, date_to=date_to, drives=drives))
+            c, u, query=query, folder=folder, kind=kind, date_from=date_from, date_to=date_to, drives=drives,
+            wide=wide), paging=paging)
 
-    @app.tool(name=FIND_PASSAGES)
+    @app.tool(name=FIND_PASSAGES, meta={MAX_RESULT_SIZE_META_KEY: RESULT_MAX_CHARS})
     async def find_passages(ctx: Context, question: _Text, folder: _Text = "", drives: _Joined = "",
-                            file_refs: _Joined = "") -> CallToolResult:
+                            file_refs: _Joined = "", wide: _Text = "", batch: _Text = "") -> CallToolResult:
+        paging = ConnectorPaging(wide=parse_wide(wide), batch=_batch_or_first(batch),
+                                 arguments=(("question", question), ("folder", folder), ("drives", drives),
+                                            ("file_refs", file_refs)))
         return await call.run(FIND_PASSAGES, DriveOp.PASSAGES, ctx, lambda c, u, _: ops.find_passages(
-            c, u, question=question, folder=folder, drives=drives, file_refs=file_refs))
+            c, u, question=question, folder=folder, drives=drives, file_refs=file_refs, wide=wide, batch=batch),
+            paging=paging)
 
     @app.tool(name=READ_PASSAGES)
     async def read_passages(ctx: Context, file_ref: _Text, passages: _Text) -> CallToolResult:
@@ -237,7 +248,10 @@ class _Caller:
     def __init__(self, app: TokenTextFastMCP) -> None:
         self._app = app
 
-    async def run(self, tool: str, op: DriveOp, ctx: Context, run: _Run) -> CallToolResult:
+    async def run(self, tool: str, op: DriveOp, ctx: Context, run: _Run, *,
+                  paging: Optional[ConnectorPaging] = None) -> CallToolResult:
+        """`paging`: a search's or a find's `wide`, batch and arguments, for the result's paging lines and the
+        span's and log line's paging fields (§14.7)."""
         started = time.monotonic()
         user_id, account_id, _ = _token_user(ctx, tool)
         with start_span(f"mcp.drive.{tool}", {"tool": tool}) as span:
@@ -251,14 +265,35 @@ class _Caller:
             with RequestContext(user_id=user_id, account_id=account_id), connector_audience():
                 answered = await _outcome(tool, op, run, context, user_id, account_id)
             outcome, link = (answered.outcome, answered.link) if isinstance(answered, ConnectorCall) else (answered, None)
-            text = cap_result(compose_connector_result(outcome, texts, link=link), texts.results[contract.OVER_SIZE],
-                              limit=RESULT_MAX_CHARS)
+            text = cap_result(compose_connector_result(outcome, texts, link=link, paging=paging),
+                              texts.results[contract.OVER_SIZE], limit=RESULT_MAX_CHARS)
             status = _status(outcome)
             ms = int((time.monotonic() - started) * 1000)
-            for key, value in (("status", status), ("chars", len(text)), ("ms", ms)):
+            fields = _paging_fields(outcome, paging)
+            for key, value in (("status", status), ("chars", len(text)), ("ms", ms), *fields):
                 span.set_attribute(key, value)
-        logger.info(f"[DriveMCP] tool={tool} user={user_id[:8]} status={status} chars={len(text)} ms={ms}")
+        extra = "".join(f" {key}={value}" for key, value in fields)
+        logger.info(f"[DriveMCP] tool={tool} user={user_id[:8]} status={status} chars={len(text)} ms={ms}{extra}")
         return CallToolResult(content=[TextContent(type="text", text=text)], isError=False)
+
+
+def _paging_fields(outcome: DriveOutcome, paging: Optional[ConnectorPaging]) -> Tuple[Tuple[str, int], ...]:
+    """`wide` (0/1), `batch`, `shown` (search cards, or passages) and `more` (0/1) of a search or a find (§14.7); none
+    for another tool. Counts only: never the query or the question."""
+    if paging is None:
+        return ()
+    excerpts = outcome.excerpts
+    shown = sum(len(f.chunks) for f in excerpts.files) if excerpts is not None else len(outcome.items)
+    return (("wide", int(paging.wide)), ("batch", paging.batch), ("shown", shown), ("more", int(outcome.more)))
+
+
+def _batch_or_first(value: str) -> int:
+    """The batch a find asked for, for its paging line; a value the operation refuses as a request error is 1 (that
+    result carries no paging line)."""
+    try:
+        return parse_batch(value)
+    except ValueError:
+        return 1
 
 
 async def _outcome(tool: str, op: DriveOp, run: _Run, context: Dict[str, Any], user_id: str,

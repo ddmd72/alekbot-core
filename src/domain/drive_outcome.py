@@ -64,6 +64,9 @@ class DriveOutcome:
     # An open that withheld a media file before any download (`open(..., withhold_media=True)`, the drive connector's
     # pre-check): the code says why, the text stays empty. None on every other outcome, every chat outcome included.
     withheld: Optional[Withheld] = None
+    # A search or passages read that left matches out (DRIVE_MCP_CONNECTOR_RFC §14.4): a search tier showed fewer files
+    # than it matched; a passages find's `ExcerptResult.more`. Read by the drive connector's lines and log only.
+    more: bool = False
 
     def __post_init__(self) -> None:
         if self.item_tags:

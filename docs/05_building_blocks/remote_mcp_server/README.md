@@ -14,7 +14,7 @@ One authorization server fronts two protected resources (resource-server apps, o
 | Resource | Path | Server name | Scope | Tools |
 |---|---|---|---|---|
 | facts | `/mcp` | `alekbot` | `user_context` | `get_user_context` |
-| drive (read-only) | `/drive-mcp` | `alekbot-drive` | `drive_read` | `search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`, `get_note`, `get_download_link` (seven), always registered; each call sees only each drive's Connector access (Cabinet, default nothing); texts from the tokens `MCP_DRIVE_TOOL_TEXTS` / `MCP_DRIVE_RESULT_TEXTS` |
+| drive (read-only) | `/drive-mcp` | `alekbot-drive` | `drive_read` | `search_drive`, `find_passages`, `read_passages`, `open_drive_file`, `list_folder`, `get_note`, `get_download_link` (seven), always registered; each call sees only each drive's Connector access (Cabinet, default nothing); texts from the tokens `MCP_DRIVE_TOOL_TEXTS` / `MCP_DRIVE_RESULT_TEXTS` (a missing key fails the load, an unknown one is warned); `wide` on search and passages, `batch` on passages (RFC §14) |
 
 The drive connector's one-time download link is served on the main Quart app at `GET|HEAD /d/<id>` (anonymous: the
 128-bit id is the capability; the grant, the connection and the access are re-checked at every fetch; the bytes always

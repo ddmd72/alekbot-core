@@ -16,13 +16,15 @@ is the caller's (the service that loads the tokens).
 Public interface:
     parse_keyed_sections(body) -> dict[str, str]                 raises ValueError on a malformed body
     ConnectorTexts.from_bodies(tool_body, result_body, required_tool_keys, required_result_keys) -> ConnectorTexts
+    ConnectorTexts.parse_bodies(tool_body, result_body, required_tool_keys, required_result_keys)
+        -> (ConnectorTexts, unknown keys)       the same, with the keys no surface requires returned apart
     MAX_TOOL_DESCRIPTION_CHARS                                   the bound on every tool text
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import AbstractSet, Dict, List, Mapping
+from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Tuple
 
 # The longest tool or parameter description a client is known to take whole (Claude Code; concept §4.3).
 MAX_TOOL_DESCRIPTION_CHARS = 4096
@@ -77,14 +79,8 @@ def parse_keyed_sections(body: str) -> dict[str, str]:
 
 
 def _key_problems(name: str, found: AbstractSet[str], required: AbstractSet[str]) -> List[str]:
-    problems: List[str] = []
     missing = sorted(required - found)
-    unknown = sorted(found - required)
-    if missing:
-        problems.append(f"{name}: missing keys {', '.join(missing)}")
-    if unknown:
-        problems.append(f"{name}: unknown keys {', '.join(unknown)}")
-    return problems
+    return [f"{name}: missing keys {', '.join(missing)}"] if missing else []
 
 
 @dataclass(frozen=True)
@@ -101,16 +97,29 @@ class ConnectorTexts:
     @classmethod
     def from_bodies(cls, tool_body: str, result_body: str, required_tool_keys: AbstractSet[str],
                     required_result_keys: AbstractSet[str]) -> ConnectorTexts:
-        """Parse both bodies; each key set must EQUAL its required set. Raises ValueError naming every missing and
-        every unknown key of both bodies at once, then every tool text over `MAX_TOOL_DESCRIPTION_CHARS`."""
+        """`parse_bodies`' texts; its unknown keys are dropped."""
+        return cls.parse_bodies(tool_body, result_body, required_tool_keys, required_result_keys)[0]
+
+    @classmethod
+    def parse_bodies(cls, tool_body: str, result_body: str, required_tool_keys: AbstractSet[str],
+                     required_result_keys: AbstractSet[str]) -> Tuple[ConnectorTexts, FrozenSet[str]]:
+        """Parse both bodies; each must hold every key of its required set. Raises ValueError naming every missing
+        key of both bodies at once, then every tool text over `MAX_TOOL_DESCRIPTION_CHARS`. A key no required set
+        names is not an error (DRIVE_MCP_CONNECTOR_RFC §14.8: a token may run ahead of the revision that reads it): it
+        is left out of the texts and returned apart, as `tools:<key>` / `results:<key>`, for the caller to warn about
+        (a misspelled key still fails, as the missing one)."""
         tools = parse_keyed_sections(tool_body)
         results = parse_keyed_sections(result_body)
         problems = (_key_problems("tool texts", set(tools), set(required_tool_keys))
                     + _key_problems("result texts", set(results), set(required_result_keys)))
         if problems:
             raise ValueError("; ".join(problems))
+        unknown = frozenset({*(f"tools:{key}" for key in tools if key not in required_tool_keys),
+                             *(f"results:{key}" for key in results if key not in required_result_keys)})
+        tools = {key: text for key, text in tools.items() if key in required_tool_keys}
+        results = {key: text for key, text in results.items() if key in required_result_keys}
         too_long = [f"{key} ({len(text)} chars)" for key, text in tools.items()
                     if len(text) > MAX_TOOL_DESCRIPTION_CHARS]
         if too_long:
             raise ValueError(f"tool texts over {MAX_TOOL_DESCRIPTION_CHARS} characters: {', '.join(too_long)}")
-        return cls(tools=tools, results=results)
+        return cls(tools=tools, results=results), unknown

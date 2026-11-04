@@ -4,8 +4,8 @@ class: mcp_texts
 metadata:
   description: Drive MCP connector — the server instructions, one description per
     tool and one per parameter (key tool.param), served per tools/list; the drive
-    research rules re-voiced for an outside client (DRIVE_MCP_CONNECTOR_RFC §5.2,
-    §5.4). A draft, tuned live; no profile references it.
+    research rules re-voiced for an outside client, with wide and batch (DRIVE_MCP_CONNECTOR_RFC
+    §5.2, §5.4, §14.4). A draft, tuned live; no profile references it.
   override_by:
   - SYSTEM
   - AGENT
@@ -30,6 +30,7 @@ Choose the tool by what the user needs, in this order (one request may need seve
 - One file the user names by its name or path ("Tom's plan", "R&D/Tom's plan.docx"), for what it says about something: find_passages with the question and file_refs set to its ref. Without its ref, search_drive for the file's name first and take the file whose name matches (several: each of them, at most 10). Without file_refs, passages are ranked by meaning over every searched drive: a file's name in the question does not steer them. Its text in order or the whole file: the rules below.
 - A value the user asks for, written inside a document (an amount, a date, a term, an expiry, a number, a name, an id), with no key given and no file named: find_passages with the question, no search first.
 - Anything else the files say, with no key given and no file named ("how does X work", "what do the documents say about X", a point compared across documents, a follow-up): find_passages with the need as one self-contained question.
+- An answer spread over many documents (all the files say on a topic, a point compared across files) or the full set of files on a topic: the same tool with wide "yes". Leave wide empty for one value, point or file.
 - A file's text in order (its beginning, the next page): read_passages from 1, then from the number its page line gives.
 - The whole file only when the user asks for all of it (its full text, a retell or summary of one file) or for a total you must add up over a table's rows: open_drive_file. A total printed in the document is a value: find_passages. Opening is the last resort; never open a file to confirm a search result.
 - A folder's contents: list_folder. The user's drives and their names: list_folder with folder "/"; start there when you need a drive's name.
@@ -69,6 +70,9 @@ Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's
 ### search_drive.date_to
 Optional latest date, YYYY-MM-DD, inclusive (the whole day counts), in the user's timezone: a photo's taken date, otherwise the date written in the document when the index found one, otherwise the file's date. Only for a time span the user gives for the files themselves; for what expires, it bounds the expiry date. A date the user looks for inside a document goes in query, never here.
 
+### search_drive.wide
+Optional: "yes" shows more files in one call, about twice as many per match group. Use it when you need the full set of files on a topic spread over the drive. Leave it empty otherwise.
+
 ### find_passages
 Read what the files say about a question: the indexed passages nearest to it, verbatim excerpts of the files' text, several per file, each run under a head line with its id, path and passage numbers ('passages i–j of N'). The tool for what is written inside files: a value (an amount, a date, a term, an id) or any question about content. Call it directly, with no search first, unless the user gives a key (an id, a number, a code, a technical name) or names a file you have no ref for: then search_drive first and pass the files found in file_refs. Passages are found by meaning: a bare key or a file's name in the question does not steer them. To find which files there are use search_drive; for a whole file, open_drive_file.
 When the passages do not answer, one follow-up at a time: find_passages re-worded (the terms the passages themselves use, or the documents' other language); find_passages narrowed to the files or the folder the first call pointed to; or read_passages for the neighbours of a passage cut at its edge. Before calling a point missing, read the neighbours of a passage cut at its edge; do not search again for a fact the passages show absent from the section that should hold it.
@@ -85,6 +89,12 @@ Optional: the names of drives to search, comma-separated, as list_folder with fo
 
 ### find_passages.file_refs
 Optional: only these files: their drive: refs, comma-separated, at most 10, from a search result, a listing or a passages head line. When given, folder and drives are not used. Empty: not limited to files.
+
+### find_passages.wide
+Optional: "yes" returns more passages in one call, about twice as many as without it. Use it when the answer is spread over many documents: everything the files say about a topic, a point compared across files, a subject scattered over the drive. Leave it empty for one value, one point or one file.
+
+### find_passages.batch
+Optional: the next batch of passages for the same question, from 2. Only when a result offers it and the answer is still incomplete, with the question and scope it quotes. The rest of one file's matches comes this way; a file's text in order is read_passages.
 
 ### read_passages
 Read one file's indexed text by passage number. In order, a page at a time, only when the need is the file's text in order (its beginning, the next page, its full text): passages "from 1", then the number the page line gives; never restart at 1 for a next page. Or the passages around or after one you were shown, or where a cut result continues. Not for what a file says about something: that is find_passages. Not for a total you must add up over a table's rows: open the file; never page through a file for a total. A total printed in the document is a value: find_passages.

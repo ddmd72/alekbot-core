@@ -2,12 +2,15 @@
 tokens must carry (DRIVE_MCP_CONNECTOR_RFC §4.1, §5.2, §5.5, §6.2, §7.7).
 
 The words live in the tokens `MCP_DRIVE_TOOL_TEXTS` and `MCP_DRIVE_RESULT_TEXTS`; this module only fixes their key
-sets, which `ConnectorTexts.from_bodies` checks for equality (a missing or unknown key is an error).
+sets, which `ConnectorTexts.from_bodies` checks: a missing key is an error, an unknown one is returned apart and
+logged as a warning by the loader (RFC §14.8: a token may run ahead of the revision that reads its new keys).
 
 The tool names are the chat tools' names on purpose: result texts reused as they are name them (the passages cut line
 "read_passages from passage N continues", the open bound's route), so one name serves both surfaces. The parameters
-mirror the chat tools' parameters; none is dropped, since the chat's read tools take no `file_contents` item and no
-specialist-only field.
+mirror the chat tools' parameters (none is dropped, since the chat's read tools take no `file_contents` item and no
+specialist-only field), plus the connector's own (RFC §14.2, §14.6): `wide` on `search_drive` and `find_passages`,
+`batch` on `find_passages`. With those the connector's parameters are no longer a pure mirror of the chat tools'; the
+chat's specialist has its ledger and takes neither.
 
 Result keys:
 - the reading lines by the names `drive_answer.reading_keys` emits (the keys of `CHAT_READING_TEXTS`);
@@ -18,7 +21,11 @@ Result keys:
   renderer's `PAGE_NEXT`), `REFUSED` (the §13 refusal line) and `REFUSED_GUIDANCE` (its companion guidance, §5.2),
   `OVER_SIZE` (the line the 100,000-character guard appends, §6.1), `NOT_CONNECTED` (no drive is shared with the
   connector, or it needs reconnecting: in place of the chat's "not connected" line, §7.4), `LINK` (a one-time download
-  link, §8).
+  link, §8);
+- the paging lines (§14.4): `BATCH_NEXT` (a find left ranked passages out: batch k+1 with the arguments to resend),
+  `BATCH_NEXT_WIDE` (its half saying `wide` returns about twice as many, after a call that was not wide), `BATCH_END`
+  (a batch that selected nothing new), `SEARCH_MORE` / `SEARCH_MORE_WIDE` (a search tier showed fewer files than it
+  matched; the wide form keeps only the folder half).
 
 `RESULT_PLACEHOLDERS` names the `{placeholders}` code fills in a result text; a key it does not list is printed as is.
 Pure: no I/O.
@@ -47,8 +54,8 @@ TOOL_NAMES: Tuple[str, ...] = (SEARCH_DRIVE, FIND_PASSAGES, READ_PASSAGES, OPEN_
                                GET_DOWNLOAD_LINK)
 
 TOOL_PARAMETERS: Mapping[str, Tuple[str, ...]] = MappingProxyType({
-    SEARCH_DRIVE: ("query", "folder", "drives", "kind", "date_from", "date_to"),
-    FIND_PASSAGES: ("question", "folder", "drives", "file_refs"),
+    SEARCH_DRIVE: ("query", "folder", "drives", "kind", "date_from", "date_to", "wide"),
+    FIND_PASSAGES: ("question", "folder", "drives", "file_refs", "wide", "batch"),
     READ_PASSAGES: ("file_ref", "passages"),
     OPEN_DRIVE_FILE: ("file_ref",),
     LIST_FOLDER: ("folder",),
@@ -92,11 +99,17 @@ REFUSED_GUIDANCE = "REFUSED_GUIDANCE"          # what to do after a refusal
 OVER_SIZE = "OVER_SIZE"                        # the result was cut at the connector's hard size guard
 LINK = "LINK"                                  # a one-time download link; {link} is its URL (RFC §8)
 NOT_CONNECTED = "NOT_CONNECTED"                # no drive shared with the connector, or one needs reconnecting
+BATCH_NEXT = "BATCH_NEXT"                      # a find left ranked passages out; {batch} the next, {arguments} to resend
+BATCH_NEXT_WIDE = "BATCH_NEXT_WIDE"            # after BATCH_NEXT on a call that was not wide: `wide` gives ~twice as many
+BATCH_END = "BATCH_END"                        # a batch that selected nothing new: no further passages here
+SEARCH_MORE = "SEARCH_MORE"                    # a search tier showed fewer than it matched: `wide`, or a group's folder
+SEARCH_MORE_WIDE = "SEARCH_MORE_WIDE"          # the same after a wide search: a group's folder only
 
 LINE_KEYS: Tuple[str, ...] = (STATUS, WHAT_TO_DO, ANSWER_FROM_RESULTS, UNFINISHED, LANGUAGE, ROUTE, PAGE_NEXT,
                               REFUSED, REFUSED_GUIDANCE, OVER_SIZE, NOT_CONNECTED, LINK)
+PAGING_KEYS: Tuple[str, ...] = (BATCH_NEXT, BATCH_NEXT_WIDE, BATCH_END, SEARCH_MORE, SEARCH_MORE_WIDE)
 
-REQUIRED_RESULT_KEYS: FrozenSet[str] = frozenset({*READING_KEYS, *WITHHELD_KEYS, *LINE_KEYS})
+REQUIRED_RESULT_KEYS: FrozenSet[str] = frozenset({*READING_KEYS, *WITHHELD_KEYS, *LINE_KEYS, *PAGING_KEYS})
 
 # The same placeholder names as the chat constants these texts replace, so code formats either with one call.
 RESULT_PLACEHOLDERS: Mapping[str, FrozenSet[str]] = MappingProxyType({
@@ -105,4 +118,5 @@ RESULT_PLACEHOLDERS: Mapping[str, FrozenSet[str]] = MappingProxyType({
     ROUTE: frozenset({"ref"}),
     LINK: frozenset({"link"}),
     PAGE_NEXT: frozenset({"first", "last", "total", "path", "version", "next"}),
+    BATCH_NEXT: frozenset({"batch", "arguments"}),
 })

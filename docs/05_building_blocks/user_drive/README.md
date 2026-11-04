@@ -126,7 +126,11 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   answer before any download. What it reads is each drive's Cabinet **Connector access**
   (`DriveConnection.connector_access`: nothing by default, the whole scope, or folders inside it), checked under the
   connector audience (`domain/drive_audience.py`) at `UserDriveService.check_access`, the search's index admit (fail
-  closed) and the connection reads (a drive with nothing shared is hidden).
+  closed) and the connection reads (a drive with nothing shared is hidden). The client chooses how much a call
+  returns: `wide` on `search_drive` / `find_passages` doubles the per-call caps (`ExcerptCaps` / `SearchCaps`, chat
+  passes the defaults), and `batch` on `find_passages` returns the k-th batch by replaying the chat's passages ledger
+  inside one call (`DriveSearchService.excerpts(batch=…)`); results say when lower-ranked passages or unshown files
+  remain (RFC §14).
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
 

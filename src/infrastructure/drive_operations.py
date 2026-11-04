@@ -61,6 +61,7 @@ from typing import (
 from ..domain import drive_ref
 from ..domain.agent import DeliveryItem
 from ..domain.drive_card import owner_note_line
+from ..domain.drive_excerpt_caps import ExcerptCaps
 from ..domain.drive_excerpt_render import render_excerpts
 from ..domain.drive_excerpt_request import excerpt_request, range_request
 from ..domain.drive_excerpt_result import ExcerptResult
@@ -81,8 +82,10 @@ from ..domain.drive_outcome_class import OutcomeClass
 from ..domain.drive_read_facts import ReadFacts
 from ..domain.drive_search import (
     STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_DISCONNECTED, STATUS_DRIVE_REFUSED, STATUS_FOLDER_NOT_FOUND,
-    DriveSearchResult, render_results, request_from_fields, require_search_terms,
+    DriveSearchResult, rendered_results, request_from_fields, require_search_terms,
 )
+from ..domain.drive_search_caps import SearchCaps
+from ..domain.drive_wide_batch import parse_batch, parse_wide
 from ..domain.file_ref import FileRefKind, classify_ref
 from ..domain.untrusted_text import (
     REFERENCE_REMINDER, REFERENCE_REMINDER_ATTACHED, attached_reminder, wrap_untrusted,
@@ -285,9 +288,10 @@ class DriveOperations:
 
     async def search(self, context: Mapping[str, Any], user_id: str, *, query: Any = None, folder: Any = None,
                      kind: Any = None, date_from: Any = None, date_to: Any = None,
-                     drives: Any = None) -> DriveOutcome:
+                     drives: Any = None, wide: Any = None) -> DriveOutcome:
         """Search the drive index (USER_DRIVE_INDEXING_RFC §10). Returned refs go into drive_context, so "open the
-        second one" works on the next turn (§10.4 History)."""
+        second one" works on the next turn (§10.4 History). `wide` (the drive connector's, DRIVE_MCP_CONNECTOR_RFC
+        §14.2): "yes" selects `SearchCaps.WIDE`, anything else the chat's caps; the chat passes none."""
         async def run() -> DriveOutcome:
             if self._drive_search is None:
                 return _fail(DriveOp.SEARCH, "Drive search is not available on this deployment.", OutcomeClass.FAILED)
@@ -296,13 +300,15 @@ class DriveOperations:
                 require_search_terms(request)
             except ValueError as e:
                 return _fail(DriveOp.SEARCH, str(e), OutcomeClass.REQUEST_ERROR)
-            result = await self._drive_search.search(user_id, request, **_drives_kwargs(drives))
+            caps = SearchCaps.WIDE if parse_wide(wide) else SearchCaps.DEFAULT
+            result = await self._drive_search.search(user_id, request, **_drives_kwargs(drives), **_caps_kwargs(caps))
             if result.status == STATUS_DRIVE_REFUSED:
                 return _fail(DriveOp.SEARCH, str(result.refusal), OutcomeClass.REQUEST_ERROR)
-            return DriveOutcome(op=DriveOp.SEARCH, cls=_search_class(result), text=render_results(result),
+            text, more = rendered_results(result, caps=caps)
+            return DriveOutcome(op=DriveOp.SEARCH, cls=_search_class(result), text=text,
                                 success=True, items=tuple(card.drive_item() for card in result.cards),
                                 facts=_search_facts(result), request_text=request.query or "",
-                                ref_tag=result.ref_tag, item_tags=_item_tags(result))
+                                ref_tag=result.ref_tag, item_tags=_item_tags(result), more=more)
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def search_deleted(self, context: Mapping[str, Any], user_id: str, query: Any = None) -> DriveOutcome:
@@ -321,19 +327,25 @@ class DriveOperations:
     async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,
                             drives: Any = None, file_refs: Any = None, shown: FrozenSet[Tuple[str, ChunkId]] = frozenset(),
                             shown_folders: FrozenSet[str] = frozenset(),
-                            described_files: FrozenSet[str] = frozenset()) -> DriveOutcome:
+                            described_files: FrozenSet[str] = frozenset(), wide: Any = None,
+                            batch: Any = None) -> DriveOutcome:
         """The indexed passages nearest `question` (USER_DRIVE_INDEXING_RFC §28.3 A4-A6): within `file_refs`, else
         `folder`, else the whole drive; only chunks not in `shown` (the run's ledger), the ones that ranked again listed
         by id. `shown_folders` / `described_files` are the context the reader has already seen (A18). The result
-        carries its typed passages for the run's ledger (A11)."""
+        carries its typed passages for the run's ledger (A11). `wide` and `batch` are the drive connector's
+        (DRIVE_MCP_CONNECTOR_RFC §14.2, §14.3): "yes" selects `ExcerptCaps.WIDE`; batch k replays k identical calls
+        (a value that is not a positive integer is a request error with its correction); the chat passes neither."""
         async def run() -> DriveOutcome:
             if self._drive_search is None:
                 return _fail(DriveOp.PASSAGES, NO_SEARCH, OutcomeClass.FAILED)
             try:
                 request = excerpt_request(question, folder, file_refs)
+                number = parse_batch(batch)
             except ValueError as e:
                 return _fail(DriveOp.PASSAGES, str(e), OutcomeClass.REQUEST_ERROR)
-            result = await self._drive_search.excerpts(user_id, request, shown=shown, **_drives_kwargs(drives))
+            caps = ExcerptCaps.WIDE if parse_wide(wide) else ExcerptCaps.DEFAULT
+            result = await self._drive_search.excerpts(user_id, request, shown=shown, **_drives_kwargs(drives),
+                                                       **_batch_kwargs(caps, number))
             if result.status == STATUS_DRIVE_REFUSED:
                 return _fail(DriveOp.PASSAGES, str(result.refusal), OutcomeClass.REQUEST_ERROR)
             return _passages(result, shown_folders, described_files, request_text=request.question)
@@ -1329,6 +1341,22 @@ def _drives_kwargs(drives: Any) -> Dict[str, str]:
     return {"drives": value} if value else {}
 
 
+def _caps_kwargs(caps: SearchCaps) -> Dict[str, SearchCaps]:
+    """`caps` goes to the search service only when not the chat's, so a call without `wide` is today's call."""
+    return {} if caps == SearchCaps.DEFAULT else {"caps": caps}
+
+
+def _batch_kwargs(caps: ExcerptCaps, batch: int) -> Dict[str, Any]:
+    """`caps` and `batch` go to the passages service only when not the chat's (default caps, batch 1), so a call
+    without them is today's call."""
+    out: Dict[str, Any] = {}
+    if caps != ExcerptCaps.DEFAULT:
+        out["caps"] = caps
+    if batch != 1:
+        out["batch"] = batch
+    return out
+
+
 def _fail(op: DriveOp, text: str, cls: OutcomeClass, *, inaccessible: bool = False) -> DriveOutcome:
     return DriveOutcome(op=op, cls=cls, text=text, success=False, facts=ReadFacts(inaccessible=inaccessible))
 
@@ -1342,15 +1370,16 @@ def _passages(result: ExcerptResult, shown_folders: FrozenSet[str], described_fi
               request_text: str) -> DriveOutcome:
     """A passages call's outcome (§28.3 A10, A11): the rendered text the reader sees, the typed result and the context
     plan for the run's ledger, the files for `drive_context`, the facts the reading lines are chosen from."""
-    rendered = render_excerpts(result, nonce=lambda: secrets.token_hex(8), shown_folders=shown_folders,
-                               described_files=described_files)
+    rendered = render_excerpts(result, nonce=lambda: secrets.token_hex(8),
+                               shown_folders=shown_folders | result.seen_folders,
+                               described_files=described_files | result.seen_files)
     return DriveOutcome(op=DriveOp.PASSAGES, cls=_excerpt_class(result), text=rendered.text, success=True,
                         items=tuple(f.drive_item() for f in result.files),
                         facts=ReadFacts(excerpts=bool(result.files), owner_note=rendered.plan.has_owner_line,
                                         paged=result.page is not None,
                                         building=result.building or result.awaiting_rebuild),   # as search's
                         excerpts=result, excerpt_plan=rendered.plan, request_text=request_text,
-                        ref_tag=result.ref_tag, item_tags=_item_tags(result))
+                        ref_tag=result.ref_tag, item_tags=_item_tags(result), more=result.more)
 
 
 def _excerpt_class(result: ExcerptResult) -> OutcomeClass:

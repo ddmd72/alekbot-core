@@ -127,15 +127,20 @@ async def test_failed_first_load_is_retried_and_alerts_each_time():
     assert len(sink.posts) == 1
 
 
-@pytest.mark.parametrize("body, needle", [
-    ("### find_files\nFind files.\n", "find_files.query"),
-    (TOOL_BODY + "### extra\nNo.\n", "extra"),
-])
-async def test_missing_or_unknown_key_raises(body, needle):
+async def test_missing_key_raises():
     repo = good_repo()
-    repo.tokens[TOOL_ID] = make_token(TOOL_ID, body)
-    with pytest.raises(ConnectorTextsUnavailable, match=needle):
+    repo.tokens[TOOL_ID] = make_token(TOOL_ID, "### find_files\nFind files.\n")
+    with pytest.raises(ConnectorTextsUnavailable, match="find_files.query"):
         await make_service(repo).texts()
+
+
+async def test_unknown_key_loads_without_it_and_is_warned(caplog):
+    repo = good_repo()
+    repo.tokens[TOOL_ID] = make_token(TOOL_ID, TOOL_BODY + "### extra\nNo.\n")
+    with caplog.at_level(logging.WARNING):
+        texts = await make_service(repo).texts()
+    assert set(texts.tools) == TOOL_KEYS and "extra" not in texts.tools
+    assert any("tools:extra" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
 
 
 @pytest.mark.parametrize("risk", ["medium", None])

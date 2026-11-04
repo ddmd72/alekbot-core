@@ -21,10 +21,12 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, connections, *, embedding_space, clock, nonce, monotonic,
                        transcribe_cap_usd, mirror, transcribe_switch_on)
-    await search(user_id, request, *, drives="") -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
+    await search(user_id, request, *, drives="", caps=SearchCaps.DEFAULT) -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
     await search_state(user_id) -> SearchLine                  # the specialist's preflight line (§5.3)
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
-    await excerpts(user_id, request, *, shown=frozenset(), drives="") -> ExcerptResult   # shown: (ref tag, chunk id); find_passages (§28.3 A4-A8, A18)
+    await excerpts(user_id, request, *, shown=frozenset(), drives="", caps=ExcerptCaps.DEFAULT, batch=1) -> ExcerptResult
+                                                               # shown: (ref tag, chunk id); find_passages (§28.3 A4-A8, A18);
+                                                               # batch: the connector's replay (DRIVE_MCP_CONNECTOR_RFC §14.3)
     await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
     await indexing_status(user_id, *, connection_id=None) -> DriveIndexingStatus     # Cabinet (§6)
     await has_mirror_root(user_id) -> bool
@@ -64,7 +66,9 @@ from ..domain.drive_usage import closed_initial, new_initial_build
 from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
 from ..domain.drive_excerpt_context import ExcerptContext, file_description
 from ..domain.drive_excerpt_file import ExcerptFile
-from ..domain.drive_excerpt_render import context_key
+from ..domain.drive_excerpt_caps import ExcerptCaps
+from ..domain.drive_excerpt_ledger import ExcerptLedger
+from ..domain.drive_excerpt_render import context_key, excerpt_plan
 from ..domain.drive_excerpt_file_context import FileContext
 from ..domain.drive_excerpt_page import PageSpan
 from ..domain.drive_excerpt_folder_note import FolderNote
@@ -84,10 +88,10 @@ from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.drive_index_params import (
-    EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW, ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH,
+    EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW, ABOUT_FETCH, CARD_FETCH, CHUNK_FETCH,
     FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS, ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH,
-    INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
-    NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN,
+    INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, MAX_CARD_RECORDS_PER_USER, NAME_FETCH,
+    NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL,
     WINDOW_CHARS_TOTAL_V2, CABINET_UNREADABLE_MAX, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.document_limits import OPEN_MAX_CHARS
@@ -98,6 +102,7 @@ from ..domain.drive_unreadable_file import UnreadableFile, unreadable_reason
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_line import SearchLine, search_line
+from ..domain.drive_search_caps import SearchCaps
 from ..domain.drive_search_merge import merge_excerpts, merge_results
 from ..domain.drive_access_policy import in_connector, in_scope
 from ..domain.drive_ancestry import Ancestry
@@ -153,8 +158,6 @@ _CHILD_PAGE = 200
 _WALK_PARALLEL = 16   # folders listed at once, per level of a subtree walk
 _READ_PARALLEL = 16   # files whose chunk text or hint items are read at once
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
-_SHOWN: Mapping[MatchTier, int] = {MatchTier.ABOUT: ABOUT_SHOWN, MatchTier.MENTIONED: MENTIONED_SHOWN,
-                                   MatchTier.TRANSLATED: TRANSLATED_SHOWN, MatchTier.LABELLED: LABELLED_SHOWN}
 _TIERS: Tuple[MatchTier, ...] = (MatchTier.ABOUT, MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED)
 # Cards that show a passage when the match came from a chunk or a grounded keyword (P6 review m3: Labelled too)
 _PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier.LABELLED})
@@ -388,6 +391,20 @@ class _ExcerptPool:
         self.chains[rec.item_id] = chain
 
 
+@dataclass
+class _ExcerptRanked:
+    """One connection's passages pool, ranked once per call (DRIVE_MCP_CONNECTOR_RFC §14.3): every round of a batched
+    call selects from it. `texts`: the chunk texts read so far in this call, reused only as reads (never as a round's
+    starting sizes); a read that returned no text is not kept, so a later round reads it again."""
+    pool: _ExcerptPool
+    ranked: List[ChunkId]
+    hashes: Dict[str, Optional[str]]
+    noted: FrozenSet[str]
+    building: bool
+    ancestry: "_Ancestry"
+    texts: Dict[ChunkId, DriveChunk] = field(default_factory=dict)
+
+
 def _readable(rec: DriveIndexRecord) -> bool:
     return not rec.is_folder and rec.indexed_generation is not None and rec.chunk_count > 0
 
@@ -615,7 +632,8 @@ class DriveSearchService:
     # Search
     # ------------------------------------------------------------------------------------------
 
-    async def search(self, user_id: str, request: DriveSearchRequest, *, drives: str = "") -> DriveSearchResult:
+    async def search(self, user_id: str, request: DriveSearchRequest, *, drives: str = "",
+                     caps: SearchCaps = SearchCaps.DEFAULT) -> DriveSearchResult:
         """One query per searched connection, merged (2b, E9): the drives `drives` names, else (empty) every drive
         searched by default; a folder whose first segment names a drive is read on that drive only, an unprefixed
         folder on the primary (or on each drive `drives` names). A `drive:` folder ref searches the folder's own
@@ -623,13 +641,14 @@ class DriveSearchService:
         matched as the connection knows it (mount prefix removed); the result keeps the request as the model wrote it,
         prints canonical paths, and names the live drives it did not read. A part that cannot be searched (indexing
         off, disconnected, no such folder) is named as not searched while the others answer. A refused `drives` value
-        (unknown name, a folder on another drive) answers STATUS_DRIVE_REFUSED with its line."""
+        (unknown name, a folder on another drive) answers STATUS_DRIVE_REFUSED with its line. `caps`: the files shown
+        per tier and the result's characters (DRIVE_MCP_CONNECTOR_RFC §14.2), the chat's by default."""
         started = self._monotonic()
         placed = await self._place(user_id, request.folder or "", drives)
         if isinstance(placed, str):
             return DriveSearchResult(status=STATUS_DRIVE_REFUSED, request=request, refusal=placed)
         all_stats = [_Stats(mode="filter" if request.filter_only else "query") for _ in placed]
-        results = await asyncio.gather(*(self._search_part(user_id, p, request, st)
+        results = await asyncio.gather(*(self._search_part(user_id, p, request, st, caps)
                                          for p, st in zip(placed, all_stats)))
         if len(placed) == 1 and placed[0].mount is None:
             result = results[0]
@@ -640,7 +659,7 @@ class DriveSearchService:
         stats = all_stats[0]
         stats.returned = len(result.cards)
         if result.tiered is not None:
-            stats.chars = len(render_results(result))
+            stats.chars = len(render_results(result, caps=caps))
         ms = round((self._monotonic() - started) * 1000)
         tiers = " ".join(f"{t.value}={stats.tiers.get(t.value, 0)}" for t in _TIERS)
         logger.info(
@@ -660,10 +679,10 @@ class DriveSearchService:
         return result
 
     async def _search_part(self, user_id: str, part: _Placed, request: DriveSearchRequest,
-                           stats: _Stats) -> DriveSearchResult:
+                           stats: _Stats, caps: SearchCaps = SearchCaps.DEFAULT) -> DriveSearchResult:
         """One connection's search: its own gate (E9), its folder, its folder path printed canonical."""
         conn = part.conn
-        found = await self._search(user_id, conn, replace(request, folder=part.folder), stats)
+        found = await self._search(user_id, conn, replace(request, folder=part.folder), stats, caps=caps)
         return replace(found, folder_path=self._shown_folder(conn, found.folder_path))
 
     async def search_states(self, user_id: str) -> Dict[str, SearchLine]:
@@ -691,7 +710,8 @@ class DriveSearchService:
         return search_line(bool(conn is not None and conn.indexing_enabled), state, conn, self._clock())
 
     async def _search(self, user_id: str, conn: Optional[DriveConnection], request: DriveSearchRequest,
-                      stats: _Stats, not_searched: Tuple[str, ...] = ()) -> DriveSearchResult:
+                      stats: _Stats, not_searched: Tuple[str, ...] = (), *,
+                      caps: SearchCaps = SearchCaps.DEFAULT) -> DriveSearchResult:
         # §10.1 step 0: the connection (its switch and status) and its sync state, read now.
         state = await self._repo.get_sync_state(conn.scope) if conn is not None else None
         enabled = bool(conn is not None and conn.indexing_enabled)
@@ -716,7 +736,7 @@ class DriveSearchService:
                                      matched_total=0 if request.filter_only else None)
         use_cards = state.cards_in_space(self._space)
         envelope, result = await asyncio.gather(self._envelope(conn, state, gate.reconnect_needed, use_cards),
-                                                self._body(conn, request, state, use_cards, stats))
+                                                self._body(conn, request, state, use_cards, stats, caps))
         envelope = replace(envelope, not_searched_drives=not_searched)
         result = replace(result, envelope=envelope, ref_tag=conn.ref_tag)
         if result.tiered is not None:
@@ -729,7 +749,7 @@ class DriveSearchService:
         return result
 
     async def _body(self, conn: DriveConnection, request: DriveSearchRequest, state: DriveSyncState, use_cards: bool,
-                    stats: _Stats) -> DriveSearchResult:
+                    stats: _Stats, caps: SearchCaps = SearchCaps.DEFAULT) -> DriveSearchResult:
         kinds = kinds_for(request.kind)
         ancestry = await self._ancestry(conn, state.root_item_id, stats)
         folder: Optional[_Folder] = None
@@ -752,12 +772,12 @@ class DriveSearchService:
                 stats.scope = "folder-wide"
         if request.filter_only and request.name_words and not _filters(request):
             return await self._query(conn, request, state, kinds, folder, subtree, ancestry, use_cards, stats,
-                                     names_only=True)
+                                     names_only=True, caps=caps)
         if request.filter_only:
             if subtree is not None:
                 return await self._filter_in_memory(request, kinds, folder, subtree, ancestry, stats, conn)
             return await self._filter_only(conn, request, kinds, folder, ancestry, stats)
-        return await self._query(conn, request, state, kinds, folder, subtree, ancestry, use_cards, stats)
+        return await self._query(conn, request, state, kinds, folder, subtree, ancestry, use_cards, stats, caps=caps)
 
     # ------------------------------------------------------------------------------------------
     # Query (Search v2, §25.5)
@@ -765,7 +785,8 @@ class DriveSearchService:
 
     async def _query(self, conn: DriveConnection, request: DriveSearchRequest, state: DriveSyncState, kinds: FrozenSet[str],
                      folder: Optional[_Folder], subtree: Optional[List[DriveIndexRecord]], ancestry: _Ancestry,
-                     use_cards: bool, stats: _Stats, names_only: bool = False) -> DriveSearchResult:
+                     use_cards: bool, stats: _Stats, names_only: bool = False, *,
+                     caps: SearchCaps = SearchCaps.DEFAULT) -> DriveSearchResult:
         """One query (§25.5). `names_only`: the request held only generic words ("todo", "files"), searched as name
         words by the name stream alone (P6 review m6), never by content and never with a D29 line."""
         if names_only:
@@ -825,14 +846,15 @@ class DriveSearchService:
         meaning = self._meaning(pool, scope, stats)
         today = self._clock().date()
         tiered_ids, blocks, expired = self._tiers(matches, pool, scope, meaning, page_full, today,
-                                                  count_expired=request.date_from is None, mount=conn.mount_name)
+                                                  count_expired=request.date_from is None, mount=conn.mount_name,
+                                                  caps=caps)
         name_keys = tuple(dict.fromkeys(k for c in concepts for k in (*sorted(name_query_keys(c)),
                                                                          *concept_trigrams(c))))
         related, related_small = self._related(name_keys, pool, scope, meaning, kinds, carded, tiered_ids,
                                                set(matches))
-        shown_ids = [i for tier in _TIERS for i in tiered_ids.get(tier, [])[:_SHOWN[tier]]]
+        shown_ids = [i for tier in _TIERS for i in tiered_ids.get(tier, [])[:caps.shown(tier)]]
         await self._load_full(conn, pool, shown_ids + [i for i, _ in related])
-        cards, also_at = self._collapse(tiered_ids, pool, scope)
+        cards, also_at = self._collapse(tiered_ids, pool, scope, caps)
         built = await self._build_cards(conn, cards, matches, pool, scope, also_at)
         built += tuple(self._related_card(pool, scope, item, similar, conn) for item, similar in related)
         stats.tiers = {t.value: b.total for t, b in blocks.items()}
@@ -1330,7 +1352,8 @@ class DriveSearchService:
                               no_chunk_score=excluded)
 
     def _tiers(self, matches: Mapping[str, FileMatch], pool: _Pool, scope: _Scope, meaning: Mapping[str, float],
-               page_full: bool, today: date, *, count_expired: bool = True, mount: str = ""
+               page_full: bool, today: date, *, count_expired: bool = True, mount: str = "",
+               caps: SearchCaps = SearchCaps.DEFAULT
                ) -> Tuple[Dict[MatchTier, List[str]], Dict[MatchTier, TierBlock], int]:
         """Each match in its tier, ordered (validity matches soonest first, expired ones counted, §25.5.4), with its
         totals; the members past the shown count become group members."""
@@ -1352,7 +1375,7 @@ class DriveSearchService:
             items.sort(key=lambda i: (0 if i in validity else 1, validity.get(i, _EPOCH).timestamp(),
                                       *tier_order_key(len(matches[i].missed), meaning.get(i),
                                                       pool.leans[i].effective_date, i)))
-            rest = tuple(self._member(pool, scope, i, mount) for i in items[_SHOWN[tier]:])
+            rest = tuple(self._member(pool, scope, i, mount) for i in items[caps.shown(tier):])
             blocks[tier] = TierBlock(tier, len(items), at_least=page_full, rest=rest, nonce=self._nonce())
         return by_tier, blocks, expired
 
@@ -1395,12 +1418,12 @@ class DriveSearchService:
 
     # -- cards ----------------------------------------------------------------------------------
 
-    def _collapse(self, tiered: Mapping[MatchTier, List[str]], pool: _Pool,
-                  scope: _Scope) -> Tuple[List[Tuple[MatchTier, str]], Dict[str, List[str]]]:
+    def _collapse(self, tiered: Mapping[MatchTier, List[str]], pool: _Pool, scope: _Scope,
+                  caps: SearchCaps = SearchCaps.DEFAULT) -> Tuple[List[Tuple[MatchTier, str]], Dict[str, List[str]]]:
         """The shown files in tier order, identical copies (same content hash, not empty) collapsed into one shown
         copy's `also_at`: the first noted copy when any copy carries the owner's note (decided on the lean
         `owner_note_id`, DRIVE_FILE_NOTES_RFC §6.1, review I7), else the first shown one."""
-        candidates = [(tier, item) for tier in _TIERS for item in tiered.get(tier, [])[:_SHOWN[tier]]]
+        candidates = [(tier, item) for tier in _TIERS for item in tiered.get(tier, [])[:caps.shown(tier)]]
 
         def collapsible(item: str) -> Optional[str]:
             digest = content_key_of(pool.leans[item].content_identity)
@@ -1478,7 +1501,8 @@ class DriveSearchService:
     # ------------------------------------------------------------------------------------------
 
     async def excerpts(self, user_id: str, request: ExcerptRequest, *,
-                       shown: FrozenSet[Tuple[str, ChunkId]] = frozenset(), drives: str = "") -> ExcerptResult:
+                       shown: FrozenSet[Tuple[str, ChunkId]] = frozenset(), drives: str = "",
+                       caps: ExcerptCaps = ExcerptCaps.DEFAULT, batch: int = 1) -> ExcerptResult:
         """The indexed passages nearest the question (A4), in scope (A5: `file_refs`, else `folder`, else the whole
         drive), selected new-only against `shown` (A6: the run's ledger keys, (ref tag, chunk id); each connection
         reads the ones of its own tag), with the "where it comes from" context (A18). The search's gate first; vectors
@@ -1486,7 +1510,15 @@ class DriveSearchService:
         merged by best chunk distance with the per-call caps applied after the merge (2b, E9; `merge_excerpts`).
         `file_refs` name their connection (a ref that resolves to none raises DriveRefRefused with its line, section 9,
         D13); `drives` and the folder's mount prefix select the drives as for `search` (design section 2 P-C). A
-        refused `drives` value answers STATUS_DRIVE_REFUSED with its line."""
+        refused `drives` value answers STATUS_DRIVE_REFUSED with its line.
+
+        `caps` (DRIVE_MCP_CONNECTOR_RFC §14.2): the per-call caps of the selection and the merge, the chat's by
+        default. `batch` (§14.3): the answer of the batch-th of identical calls whose results feed one
+        `ExcerptLedger`. Each connection's pool and ranking run once; then rounds of select (each connection against
+        the ledger's keys of its tag) and merge, each round's merged result recorded by the ledger, so a chunk the
+        merge dropped or whose text read failed stays selectable. A round that selects nothing new ends the loop and
+        is the answer (past the end). The answer carries `more` and the context the earlier rounds showed
+        (`seen_folders`, `seen_files`). `batch=1` is the chat's call: one round, no ledger."""
         started = self._monotonic()
         notice = ""
         if request.file_refs:
@@ -1505,29 +1537,60 @@ class DriveSearchService:
             self._log_excerpts(user_id, result, _ExcerptStats(), started)
             return result
         all_stats = [_ExcerptStats() for _ in placed]
-        parts = await asyncio.gather(*(self._excerpts_part(p, request, shown, st) for p, st in zip(placed, all_stats)))
-        if len(parts) == 1:
-            result = replace(parts[0], request=request, notice=notice, not_searched_drives=placed[0].not_searched)
-        else:
-            merged = merge_excerpts([(p.mount, r, st.distances) for p, r, st in zip(placed, parts, all_stats)],
-                                    request=request, not_searched=placed[0].not_searched,
-                                    no_text_listed=_NO_TEXT_LISTED)
-            result = replace(merged, notice=notice)
+        prepared = await asyncio.gather(*(self._excerpts_prepare(p, request, st) for p, st in zip(placed, all_stats)))
+        ledger = ExcerptLedger()
+        seen = shown
+        for round_number in range(1, max(batch, 1) + 1):
+            result = await self._excerpts_round(placed, prepared, all_stats, request, seen, caps, notice)
+            if round_number >= batch or not any(f.chunks for f in result.files):
+                break
+            ledger.add(result, excerpt_plan(result, shown_folders=ledger.folders_shown(),
+                                            described_files=ledger.files_described()))
+            seen = shown | ledger.keys()
+        if ledger:
+            result = replace(result, seen_folders=ledger.folders_shown(), seen_files=ledger.files_described())
         self._log_excerpts(user_id, result, all_stats[0], started)
         for st in all_stats:
             for line in st.warnings:
                 logger.warning(line)
         return result
 
-    async def _excerpts_part(self, part: _Placed, request: ExcerptRequest, shown: FrozenSet[Tuple[str, ChunkId]],
-                             stats: _ExcerptStats) -> ExcerptResult:
-        """One connection's passages: its folder, the ledger keys of its own tag, its tag on the result."""
+    async def _excerpts_round(self, placed: Sequence[_Placed], prepared: Sequence[Union[ExcerptResult, _ExcerptRanked]],
+                              all_stats: Sequence[_ExcerptStats], request: ExcerptRequest,
+                              shown: FrozenSet[Tuple[str, ChunkId]], caps: ExcerptCaps, notice: str) -> ExcerptResult:
+        """One round: every connection selects against `shown`, then the merge (one connection: its result)."""
+        parts = await asyncio.gather(*(self._excerpts_part(p, request, ready, shown, st, caps)
+                                       for p, ready, st in zip(placed, prepared, all_stats)))
+        if len(parts) == 1:
+            return replace(parts[0], request=request, notice=notice, not_searched_drives=placed[0].not_searched)
+        merged = merge_excerpts([(p.mount, r, st.distances) for p, r, st in zip(placed, parts, all_stats)],
+                                request=request, not_searched=placed[0].not_searched,
+                                no_text_listed=_NO_TEXT_LISTED, caps=caps)
+        return replace(merged, notice=notice)
+
+    async def _excerpts_prepare(self, part: _Placed, request: ExcerptRequest,
+                                stats: _ExcerptStats) -> Union[ExcerptResult, _ExcerptRanked]:
+        """One connection's pool and ranking, once per call: its folder; an answer with no pool (the gate, a folder
+        state) as a result."""
         conn = part.conn
         if conn is None:
             raise RuntimeError("a part without a connection is answered by `excerpts` before any part is read")
         scoped = replace(request, folder=part.folder or "") if not request.file_refs else request
-        own = frozenset(key for tag, key in shown if tag == conn.ref_tag)
-        found = await self._excerpts(conn, scoped, own, stats)
+        return await self._excerpt_pool(conn, scoped, stats)
+
+    async def _excerpts_part(self, part: _Placed, request: ExcerptRequest,
+                             prepared: Union[ExcerptResult, _ExcerptRanked], shown: FrozenSet[Tuple[str, ChunkId]],
+                             stats: _ExcerptStats, caps: ExcerptCaps) -> ExcerptResult:
+        """One connection's passages of one round: the ledger keys of its own tag, its tag on the result."""
+        conn = part.conn
+        if conn is None:
+            raise RuntimeError("a part without a connection is answered by `excerpts` before any part is read")
+        scoped = replace(request, folder=part.folder or "") if not request.file_refs else request
+        if isinstance(prepared, ExcerptResult):
+            found = prepared
+        else:
+            own = frozenset(key for tag, key in shown if tag == conn.ref_tag)
+            found = await self._excerpts_selected(conn, scoped, prepared, own, stats, caps)
         return replace(found, request=request, ref_tag=conn.ref_tag,
                        repeated_tags=(conn.ref_tag,) * len(found.repeated),
                        folder_path=self._shown_folder(conn, found.folder_path) or "")
@@ -1619,8 +1682,9 @@ class DriveSearchService:
             return ExcerptResult(status=STATUS_OK, request=request, building=True, awaiting_rebuild=True)
         return state
 
-    async def _excerpts(self, conn: DriveConnection, request: ExcerptRequest, shown: FrozenSet[ChunkId],
-                        stats: _ExcerptStats) -> ExcerptResult:
+    async def _excerpt_pool(self, conn: DriveConnection, request: ExcerptRequest,
+                            stats: _ExcerptStats) -> Union[ExcerptResult, _ExcerptRanked]:
+        """The gate, the scope's pool (A5) and its A4 ranking; a result when the gate or the scope answers alone."""
         gated = await self._excerpt_gate(conn, request)
         if isinstance(gated, ExcerptResult):
             stats.scope = "gate"
@@ -1638,11 +1702,25 @@ class DriveSearchService:
         stats.candidates = len(pool.knn)
         for (item_id, _, _), distance in pool.knn:
             stats.distances[item_id] = min(distance, stats.distances.get(item_id, distance))
-        files, selection = await self._excerpt_files(conn, request.question, pool, shown, stats)
+        concepts = query_concepts(request.question).concepts
+        nearest = [cid for cid, _ in sorted(pool.knn, key=lambda hit: hit[1])][:EXCERPTS_LEXICAL_WINDOW]
+        keys = await self._repo.get_chunk_keys(conn.scope, nearest) if nearest and concepts else {}
+        stats.keyed = len(nearest) if concepts else 0
+        return _ExcerptRanked(
+            pool=pool, ranked=rank_excerpts(pool.knn, keys, concepts),
+            hashes={item_id: _copy_hash(rec) for item_id, rec in pool.records.items()},
+            noted=frozenset(item_id for item_id, rec in pool.records.items() if rec.owner_note_id),
+            building=building, ancestry=ancestry)
+
+    async def _excerpts_selected(self, conn: DriveConnection, request: ExcerptRequest, ready: _ExcerptRanked,
+                                 shown: FrozenSet[ChunkId], stats: _ExcerptStats, caps: ExcerptCaps) -> ExcerptResult:
+        pool = ready.pool
+        files, selection = await self._excerpt_files(conn, ready, shown, stats, caps)
         return ExcerptResult(
             status=STATUS_OK, request=request, files=files, repeated=selection.repeated,
-            no_text=len(pool.no_text), no_text_paths=tuple(pool.no_text[:_NO_TEXT_LISTED]), building=building,
-            folder_path=pool.folder_path, context=self._excerpt_context(conn, files, pool.records, pool.chains, ancestry))
+            no_text=len(pool.no_text), no_text_paths=tuple(pool.no_text[:_NO_TEXT_LISTED]), building=ready.building,
+            folder_path=pool.folder_path,
+            context=self._excerpt_context(conn, files, pool.records, pool.chains, ready.ancestry), more=selection.left)
 
     async def _excerpt_scope(self, conn: DriveConnection, request: ExcerptRequest, ancestry: _Ancestry,
                              stats: _ExcerptStats) -> Union[ExcerptResult, _ExcerptPool]:
@@ -1767,27 +1845,25 @@ class DriveSearchService:
             if entry is not None and _fenced(entry[0], chunk.generation):
                 pool.add(chunk, distance, *entry)
 
-    async def _excerpt_files(self, conn: DriveConnection, question: str, pool: _ExcerptPool, shown: FrozenSet[ChunkId],
-                             stats: _ExcerptStats) -> Tuple[Tuple[ExcerptFile, ...], Selection]:
-        """A4 rank, A6 select, texts by one `get_chunks` per file generation. Selection runs on span sizes first;
-        a read text longer than its span (a continued table's header) re-runs it, at most _SELECT_ROUNDS times."""
-        concepts = query_concepts(question).concepts
-        nearest = [cid for cid, _ in sorted(pool.knn, key=lambda hit: hit[1])][:EXCERPTS_LEXICAL_WINDOW]
-        keys = await self._repo.get_chunk_keys(conn.scope, nearest) if nearest and concepts else {}
-        stats.keyed = len(nearest) if concepts else 0
-        ranked = rank_excerpts(pool.knn, keys, concepts)
-        hashes = {item_id: _copy_hash(rec) for item_id, rec in pool.records.items()}
-        noted = frozenset(item_id for item_id, rec in pool.records.items() if rec.owner_note_id)
+    async def _excerpt_files(self, conn: DriveConnection, ready: _ExcerptRanked, shown: FrozenSet[ChunkId],
+                             stats: _ExcerptStats,
+                             caps: ExcerptCaps) -> Tuple[Tuple[ExcerptFile, ...], Selection]:
+        """A6 select over the ranked pool, texts by one `get_chunks` per file generation. Selection runs on span sizes
+        first; a read text longer than its span (a continued table's header) re-runs it, at most _SELECT_ROUNDS
+        times. Texts an earlier round of the call read are taken from `ready.texts` instead of read again."""
+        pool = ready.pool
+        ranked = list(ready.ranked)
         sizes = dict(pool.spans)
         texts: Dict[ChunkId, DriveChunk] = {}
         absent: Set[ChunkId] = set()
         selection = Selection()
         for _ in range(_SELECT_ROUNDS):
-            selection = select_excerpts(ranked, sizes, shown=shown, hashes=hashes, noted=noted)
+            selection = select_excerpts(ranked, sizes, shown=shown, hashes=ready.hashes, noted=ready.noted,
+                                        caps=caps)
             missing = [key for key in selection.chunks if key not in texts]
             if not missing:
                 break
-            read = await self._excerpt_texts(conn, missing, stats)
+            read = await self._call_texts(conn, missing, ready.texts, stats)
             texts.update(read)
             absent.update(key for key in missing if key not in read)
             keeper_of = {copy: keeper for keeper, copies in selection.also_at.items() for copy in copies}
@@ -1806,6 +1882,17 @@ class DriveSearchService:
                                           if c in pool.chains])
                       for item_id, chunks in by_file.items())
         return files, selection
+
+    async def _call_texts(self, conn: DriveConnection, keys: Sequence[ChunkId], cache: Dict[ChunkId, DriveChunk],
+                          stats: _ExcerptStats) -> Dict[ChunkId, DriveChunk]:
+        """`_excerpt_texts` for the keys `cache` (this call's earlier reads) lacks; what it read joins `cache`."""
+        out = {key: cache[key] for key in keys if key in cache}
+        need = [key for key in keys if key not in cache]
+        if need:
+            read = await self._excerpt_texts(conn, need, stats)
+            cache.update(read)
+            out.update(read)
+        return out
 
     async def _excerpt_texts(self, conn: DriveConnection, keys: Sequence[ChunkId],
                              stats: _ExcerptStats) -> Dict[ChunkId, DriveChunk]:
