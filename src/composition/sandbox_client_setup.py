@@ -18,10 +18,11 @@ never an automatic fallback to the in-process runner (§4.12).
 runner (HTTP client, token cache) or the degraded runner is built once and shared by every user. `inprocess` keeps
 one `NodeDocxRunner` per build, as before.
 
-One knob for the whole render family (owner decision O15): the same `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also
-select the PDF runner (`SandboxPuppeteerRunner` / `NodePuppeteerRunner`) and the widget PNG renderer
-(`SandboxHtmlRenderer` / the in-process factory's object). Same rules: bad value or local empty URL is a ValueError,
+One knob for DOCX and PDF (owner decision O15): the same `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also select the PDF
+runner (`SandboxPuppeteerRunner` / `NodePuppeteerRunner`). Same rules: bad value or local empty URL is a ValueError,
 Cloud Run with an empty URL degrades that feature (ERROR logged once), never a fallback between the two.
+Widget PNGs are not on the knob (owner decision O16): `build_html_renderer` always builds the in-process renderer
+when enabled; `SandboxHtmlRenderer` stays built but unwired.
 """
 from __future__ import annotations
 
@@ -32,12 +33,11 @@ from ..adapters.node_docx_runner import NodeDocxRunner
 from ..adapters.node_puppeteer_runner import NodePuppeteerRunner
 from ..adapters.sandbox_client.metadata_id_token_provider import MetadataIdTokenProvider, normalise_audience
 from ..adapters.sandbox_client.sandbox_docx_runner import SandboxDocxRunner
-from ..adapters.sandbox_client.sandbox_html_renderer import SandboxHtmlRenderer
 from ..adapters.sandbox_client.sandbox_http_client import SandboxHttpClient
 from ..adapters.sandbox_client.sandbox_puppeteer_runner import SandboxPuppeteerRunner
 from ..domain.sandbox_errors import SandboxUnavailable
 from ..ports.docx_runner_port import DocxRunnerPort
-from ..ports.html_renderer_port import HtmlRenderError, HtmlRendererPort
+from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.puppeteer_runner_port import PuppeteerRunnerError, PuppeteerRunnerPort
 from ..utils.cloud_run import on_cloud_run as is_on_cloud_run
 from ..utils.logger import logger
@@ -92,19 +92,6 @@ class _UnavailablePuppeteerRunner(PuppeteerRunnerPort):
         raise PuppeteerRunnerError("PDF rendering is unavailable (SandboxUnavailable); try again later")
 
 
-class _UnavailableHtmlRenderer(HtmlRendererPort):
-    """Stands in for the sandbox PNG renderer when `sandbox` was asked for but no URL was configured."""
-
-    async def render(self, html: str, width: int = 480) -> bytes:
-        raise HtmlRenderError("PNG rendering is unavailable (SandboxUnavailable); try again later")
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-
 def _sandbox_client_or_none(
     feature: str, getenv: Callable[..., Optional[str]], on_cloud_run: Optional[bool],
 ) -> Optional[SandboxHttpClient]:
@@ -153,10 +140,9 @@ def build_html_renderer(
     enabled: bool, inprocess_factory: Callable[[], HtmlRendererPort],
     getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
 ) -> Optional[HtmlRendererPort]:
-    """None when the widget renderer is disabled (in every mode); otherwise the object the knob selects."""
+    """None when the widget renderer is disabled; otherwise the in-process renderer, whatever `SANDBOX_RENDER` says
+    (owner decision O16: widgets render in-process; `SandboxHtmlRenderer` is built but not wired). `getenv` and
+    `on_cloud_run` are accepted for call-site compatibility and unused."""
     if not enabled:
         return None
-    if _mode(getenv) == MODE_INPROCESS:
-        return inprocess_factory()
-    client = _sandbox_client_or_none("PNG", getenv, on_cloud_run)
-    return _UnavailableHtmlRenderer() if client is None else SandboxHtmlRenderer(client)
+    return inprocess_factory()

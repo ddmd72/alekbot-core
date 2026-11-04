@@ -431,12 +431,12 @@ cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwrigh
 libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
 serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
 limits (RFC §4.6); Chromium's own sandbox stays off until the gen2 check (RFC §7 S0-f). S2 is not deployed yet. **One knob for the whole render family** (owner decision O15, 2026-11-04): `SANDBOX_RENDER=sandbox` makes the main service
-send DOCX, PDF and widget PNG to this service; the default `inprocess` keeps all three in the main process. There is no per-format switch and no
+send DOCX and PDF to this service; the default `inprocess` keeps both in the main process. Widget PNGs always render in the main process (owner decision O16). There is no per-format switch and no
 fallback between the two.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
-| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the one switch on the **main** service for DOCX, PDF and widget PNG: `inprocess` (default when empty) or `sandbox` |
+| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the one switch on the **main** service for DOCX and PDF: `inprocess` (default when empty) or `sandbox` |
 | `SANDBOX_RENDER_URL_DEV` | `_SANDBOX_RENDER_URL` | the render service's own `https://` URL: the main service's target and the service's token audience (`SANDBOX_URL`) |
 | `SANDBOX_RENDER_SA_DEV` | `_SANDBOX_RENDER_SA` | the render service's runtime identity; **empty skips every sandbox build step** |
 | `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER_CALLERS` | emails admitted to `render.*` (`:`-separated; a comma is refused) |
@@ -464,7 +464,7 @@ fallback between the two.
    still `inprocess`.
 8. **Flip the switch** only on the owner's go:
    `SANDBOX_RENDER_DEV=sandbox` in `.env`, then `make deploy`. With `sandbox` and an empty URL on Cloud Run the main service
-   still starts (ERROR logged) and DOCX, PDF and widget PNG report the sandbox unavailable; locally it is a startup error.
+   still starts (ERROR logged) and DOCX and PDF report the sandbox unavailable; locally it is a startup error.
 
 While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works
 before step 1.

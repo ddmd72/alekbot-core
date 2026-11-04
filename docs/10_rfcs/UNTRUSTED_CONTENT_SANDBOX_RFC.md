@@ -2,7 +2,7 @@
 
 **Status:** Proposed (rev 4). The parse family is built and live in both runtimes (O14). S1 (`render.docx`) is deployed behind
 `SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped) and not accepted. S2 (`render.pdf`, `render.png`) is built
-on its branch, not deployed. No S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
+on its branch, not deployed; widgets render in-process (O16), only `render.pdf` is wired. No S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -370,7 +370,7 @@ Chromium yet), and S3 adds `light`. The service has no database import to leak (
 
 ### 4.12 Composition and the switch (O9)
 
-**Superseded by O15 for the render family:** one knob, `SANDBOX_RENDER` / `SANDBOX_RENDER_URL`, selects DOCX, PDF and widget PNG together (`build_docx_runner`, `build_pdf_runner`, `build_html_renderer` in `src/composition/sandbox_client_setup.py`); no per-part switch for these three, no new key. Per-part acceptance and rollback of O9 therefore holds between families, not inside the render family.
+**Superseded by O15 for DOCX and PDF:** one knob, `SANDBOX_RENDER` / `SANDBOX_RENDER_URL`, selects both together (`build_docx_runner`, `build_pdf_runner` in `src/composition/sandbox_client_setup.py`); no per-part switch, no new key. Widget PNGs are off the knob (O16). Per-part acceptance and rollback of O9 therefore holds between families, not inside the render family.
 
 **Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. The text below holds for the render and media families.
 
@@ -380,7 +380,7 @@ Each caller family reads one knob with `os.getenv` at its composition line (opti
 |------|---------|--------|-------------------------------|
 | `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's (`indexer_main.py:138`, today `build_drive_models` with the parser aliased as splitter, `drive_model_setup.py:124`), the main service's `build_document_service` | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
 | `SANDBOX_MEDIA` | the indexer's media wiring | same | same |
-| `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py`; O15: DOCX, PDF and PNG) | the main service | same | same |
+| `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py`; O15: DOCX and PDF) | the main service | same | same |
 
 One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another; one
 `SandboxContentExtractor` object implements both ports, as the in-process adapter does today (EXTERNAL_FILES §4.9).
@@ -439,7 +439,8 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O12** | **Order:** EXTERNAL_FILES_RFC's document service first (U0–U4, then U5); S3 (indexer) and S4 (main) after it, as adapter swaps under `ContentExtractorPort` and `PdfSplitterPort`; the parser child is the accepted residual until then, Google full-drive grants included; S1/S2 an independent track (header, §7) | owner (2026-11-03) |
 | **O13** | **One parse engine in principle** (EXTERNAL_FILES D15): no `DocumentConverterPort` or `chat.convert`; one `parse.*` family for both runtimes; S4 = identity + knob; final go after that RFC's U0-b report on real files (header, §4.7) | owner (2026-11-03) |
 | **O14** | **The parse switch is one deploy (2026-11-03).** No `SANDBOX_PARSE` knob, no watch period, no soak, no client slot counter (`SANDBOX_INDEXER_SLOTS` is dropped). The main service and the indexer build `build_sandbox_parser(url)` from a required `SANDBOX_PARSE_URL` and refuse to start without it, locally too; neither composition has an in-process fallback or a `K_SERVICE` branch. One retry on `recycling`; concurrency 1, max-instances 5 as a cost guard. Rollback is a Cloud Run revision rollback of both callers. | owner |
-| **O15** | **One knob for the render family (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner and the widget PNG renderer; no new env key, no new substitution. Replaces O9's per-part switch for this family. `sandbox` with an empty URL: ERROR + degraded feature on Cloud Run, startup error locally; never a fallback | owner |
+| **O15** | **One knob for DOCX and PDF (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner; no new env key, no new substitution. Replaces O9's per-part switch for these two (widget PNG: see O16). `sandbox` with an empty URL: ERROR + degraded feature on Cloud Run, startup error locally; never a fallback | owner |
+| **O16** | **Widget PNGs render in-process (2026-11-04).** In the main service, whatever `SANDBOX_RENDER` says (measured cold start in the one-shot render sandbox too slow for widgets). The in-process renderer runs with JavaScript off and no outbound requests. `render.png` and `SandboxHtmlRenderer` stay built, not wired; wire them when the render sandbox has a fast start | owner |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller groups must not share an identity (§4.4). Met in configuration | author, folded into O8 |
 | P1 | A service, not a job (§4.1) | author |
 | P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
@@ -531,7 +532,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - Tests: contract suite per runner; no outbound connection from the render service; blocked-host test for the request filter; PNG width; HTML timeout; the image contains the
   browser executable (a missing browser answers `error/browser_unavailable` at request time, not at construction).
 - Accept: widget render latency (cold) stated, measured at acceptance; PdfGenerator e2e; S0-f's Chromium-sandbox outcome recorded; image size recorded.
-- Main-service choice (O15): the same `SANDBOX_RENDER` knob as S1 selects `SandboxPuppeteerRunner` / `SandboxHtmlRenderer` or the in-process pair (`build_pdf_runner`, `build_html_renderer`); no new key.
+- Main-service choice (O15, O16): the same `SANDBOX_RENDER` knob as S1 selects `SandboxPuppeteerRunner` or `NodePuppeteerRunner` (`build_pdf_runner`); no new key. Widgets always use the in-process renderer (`build_html_renderer`); `SandboxHtmlRenderer` and `render.png` stay built, not wired.
 
 ### S3. Drive parsers (C1) — after the document service (O12)
 - Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob, slots and soak below for the parse family).
