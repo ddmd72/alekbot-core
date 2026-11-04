@@ -3,6 +3,7 @@
 **Status:** Proposed (2026-11-03). The owner answered the three questions the re-verification raised (D8–D11, §2); no
 owner question is open.
 Slice 2 (the read tools, token-backed) is built (2026-11-03); the sections below state what it ships.
+§14 (wide results and passage batches, D12) is proposed (2026-11-04).
 **Owner:** AI Engineering
 **Milestone:** External interop. Extends the facts connector ([REMOTE_MCP_SERVER_RFC.md](REMOTE_MCP_SERVER_RFC.md),
 building block [`remote_mcp_server`](../05_building_blocks/remote_mcp_server/README.md)) with a second protected
@@ -63,6 +64,7 @@ A connector call costs no model call of ours (D8).
 | D9 | 2026-11-03 | The 30-day grant is sliding, as today, for both connectors: each refresh re-arms 30 days; the grant ends after 30 days unused, on whitelist removal or on client revoke. No monthly re-consent. |
 | D10 | 2026-11-03 | No "connected apps" list in the Cabinet in v1: "Connector access: Nothing" on each drive is the owner's revoke lever. |
 | D11 | 2026-11-03 | The user-visible wording of §13 (consent page, Cabinet block, server name `alekbot-drive`, refusal line) is approved as written. |
+| D12 | 2026-11-04 | The client chooses how much a call returns: an optional `wide` on `search_drive` and `find_passages` (about twice as many results in one call), and `batch` on `find_passages` for the passages after the first batch. Without them a call returns what it returns today. Results say when more exists; descriptions say what `wide` changes and when to use it (§14). |
 
 If a less capable client is ever connected, a "delegate to the drive specialist" tool can be added; nothing here
 blocks it.
@@ -139,8 +141,8 @@ connector runs as before; the AS fixes below live in the shared service, so a sw
 
 | Tool | Calls | Connector-specific |
 |---|---|---|
-| `search_drive` | `DriveOperations.search` (`src/infrastructure/drive_operations.py:278`) | drive names come from `list_folder("/")`, not the specialist's `drive_state` |
-| `find_passages` | `.find_passages` (`:313`) | no cross-call ledger: each call prints its passages (`shown` empty) |
+| `search_drive` | `DriveOperations.search` (`src/infrastructure/drive_operations.py:278`) | drive names come from `list_folder("/")`, not the specialist's `drive_state`; `wide` (§14) |
+| `find_passages` | `.find_passages` (`:313`) | no cross-call ledger: batch 1 is selected with `shown` empty, batch k replays batches 1..k−1 in the call (§14); `wide` |
 | `read_passages` | `.read_passages` (`:334`) | no "one page per request" rule |
 | `open_drive_file` | `.open` (`:440`) | `drive:` refs only; no native declaration; `withhold_media=True` (§6.2) |
 | `list_folder` | `.list_folder` (`:350`) | `/` lists only drives the connector sees, with their connector access (§7.4) |
@@ -249,8 +251,8 @@ tokens only through profiles, in an assembled prompt cached 24 h per instance
 ### 5.3 Loading, failure, freshness
 
 A new `ConnectorTextService` (`src/services/connector_text_service.py`, over the `TokenRepository` port) reads both
-tokens into a domain `ConnectorTexts` value and checks: the key set equals the code's required set (a missing or
-unknown key is an error); each tool description ≤ 4,096 characters (Claude Code's limit); the token's
+tokens into a domain `ConnectorTexts` value and checks: every key the code requires is present (a missing key is an
+error; an unknown key is logged as a warning and ignored, so a token may run ahead of a revision, §14.8); each tool description ≤ 4,096 characters (Claude Code's limit); the token's
 `validation.risk_level` is `safe` or `low` — `medium` is refused, because that level is sanitized silently on read,
 which closes the silent-sanitize trap. In-process cache, **60 s TTL**, refreshed under an `asyncio.Lock`.
 
@@ -320,7 +322,7 @@ reading lines is about 65,000 characters, on open. So `open_drive_file` carries 
 to disk unless the tool declares its own limit; every tool has a hard 100,000-character guard that cuts at a line and
 appends a coded "how to continue" line (it should never fire; claude.ai's documented maximum is about 150,000). Known
 degradation: 60,000 Cyrillic characters can pass Claude Code's 25,000-token default, and the client then gets a file
-path. Acceptable.
+path. Acceptable. A `wide` call has its own bounds and declares the same limit (§14.5).
 
 ### 6.2 Binaries and media
 
@@ -474,7 +476,8 @@ GCS-only, long-lived, a JWT).
 ## 9. Observability, money, injection
 
 **Observability.** One span per call, `start_span("mcp.drive.<tool>", {tool, status, chars, ms})`
-(`src/utils/telemetry.py:281`), and one line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`. **The query, question
+(`src/utils/telemetry.py:281`), and one line `[DriveMCP] tool=… user=<8> status=… chars=… ms=…`; search and passages
+calls add `wide`, `batch`, `shown` and `more` (§14.7). **The query, question
 or path is never logged** (the drive rule: `src/agents/drive_agent.py:186-188`; `[DriveSearch]` logs counts only,
 `drive_search_service.py:611-619`). The facts tool logs its query (`mcp_setup.py:318-323`); the drive tool does not copy
 that. `DriveOperations._call` already logs the op and the ref or folder label (`drive_operations.py:787`), as in chat; the
@@ -501,7 +504,7 @@ pairing this connector with sending tools in one client project.
 3. Six read tools (+ `get_download_link` last); no write, note-write, report or deleted-search tool registered.
 4. A read-only facade over a connector `DriveOperations` with no notifier; open takes `drive:` refs only, no native
    declaration, `withhold_media=True`, no model reader (D8).
-5. Tokens `MCP_DRIVE_TOOL_TEXTS` + `MCP_DRIVE_RESULT_TEXTS`: key set and risk level checked, 60 s cache.
+5. Tokens `MCP_DRIVE_TOOL_TEXTS` + `MCP_DRIVE_RESULT_TEXTS`: required keys and risk level checked, 60 s cache.
 6. Per-request `tools/list` from tokens through an overridden `list_tools`; token-backed `instructions`; no `listChanged`.
 7. Chat byte-identical: the `reading_keys` split, a `page_next` argument, the connector's own route line.
 8. One result per call in `content[].text`; `readOnlyHint`; `maxResultSizeChars` on open; a 100k guard.
@@ -569,14 +572,29 @@ Vertical, each deployable alone; the connector shows no drive content until slic
   a future grant list.
 - **E14** Tools call `DriveOperations` directly, not `DriveToolRun` (its collector, stand-ins and gates are
   specialist-shaped); the specialist's per-run guards are not reproduced.
-- **E15** `MCP_` token prefix, `### key` body, key set and risk level (`safe`/`low`) checked at load; 60 s cache; a
+- **E15** `MCP_` token prefix, `### key` body, required keys (unknown ones warned, §14.8) and risk level (`safe`/`low`) checked at load; 60 s cache; a
   failed refresh keeps the last Firestore text and backs off one TTL; nothing ever loaded → no app / `isError`; descriptions filled per request by a
   `list_tools` override, never by mutating shared tool objects; per-result rules in result lines.
 - **E16** The connector's index admit fails closed; chat's stays fail-open.
-- **E17** `maxResultSizeChars` on open only; a 100k hard guard on every tool.
+- **E17** `maxResultSizeChars` on open, `find_passages` and `search_drive` (the last two since §14: a `wide` result can
+  pass 50,000 characters); a 100k hard guard on every tool.
 - **E18** The link is an opaque id with server state, stored as its keyed digest; GET consumes, HEAD runs the checks
   and consumes nothing; the folder is checked at fetch; the bytes always stream through the main service (no
   redirect); N reads is one constant, 1 until a client's pre-fetch is measured.
+- **E19** `batch` replays the chat's ledger inside one call (§14.3). *Why:* batch k is what the k-th identical call
+  returns in chat, through the existing `shown` path and `ExcerptLedger`, with no server state and nothing for the
+  client to carry but a number. *Rejected:* a rank offset (the per-file and character caps skip ranked chunks, so an
+  offset repeats or loses them); an opaque cursor of shown ids (long, and a client may mangle it); a server-side ledger
+  (stateless HTTP, E9). Named `batch`, not `page`: "page" is `read_passages`' reading in order (`PAGE_NEXT`,
+  `page_line`), and one word with two meanings sends a client to the wrong tool.
+- **E20** One optional switch `wide`, not a level enum and not a second tool. *Why:* the tool choice is already an
+  ordered rule list, and a second near-identical tool adds a fork to it; the default is the absence. *Rejected:* a third
+  level (no case for one; adding it later changes the contract).
+- **E21** Descriptions and result lines say "about twice as many", never the numbers; the next-batch line is a
+  condition ("if the answer is still incomplete"), never an instruction, because `more` holds on almost every call. *Why:* the caps live in code and
+  the texts in a token; numbers in both drift apart silently.
+- **E22** The caps travel as one domain value per surface, chat's defaults when absent. *Why:* chat stays byte-identical
+  (D3) with no branch on the caller in the selection code.
 - Out of scope: DCR's deprecation in favour of client ID metadata documents in the 2026-07-28 MCP spec; both connectors
   use DCR today.
 
@@ -595,3 +613,123 @@ Cabinet "connected apps" list with Revoke in v1 (about one more slice; the grant
   bot sees: change the connector access first."
 - Server name `alekbot-drive`; suggested connector name in claude.ai "alekbot drive"; URL `https://<host>/drive-mcp`.
 - Refusal line — "Not available through this connector: it is outside the folders shared with it, or it does not exist."
+
+## 14. Wide results and passage batches (D12, proposed 2026-11-04)
+
+### 14.1 The problem
+
+Every per-call cap of search and passages (§6.1) was sized for Smart's context and the specialist's loop, which keeps
+a ledger: its second identical `find_passages` returns the next new passages. The connector has no ledger (§4.1), so
+the same question always returns the same first passages, and nothing in the result says that more ranked passages
+exist: `select_excerpts` (`src/domain/drive_excerpts.py:100`) stops at its caps silently. A client can neither reach
+the eleventh passage of a question nor learn that there is one; its only way on is opening whole files, the
+connector's last resort. The two passage caps bind together: a chunk is up to `CHUNK_CHARS` (2,400,
+`drive_index_params.py:63`), so ten chunks fill the 24,000 characters; raising one alone changes nothing.
+
+### 14.2 Shape
+
+- **`wide`** on `search_drive` and `find_passages`: an optional string. `"yes"` (also `true`, `1`, any case) selects the
+  wide caps below; empty or any other value selects the default caps, which are chat's caps today. An unknown value is
+  not an error (liberal input).
+- **`batch`** on `find_passages` only: an optional positive integer as a string, default 1. Batch k is what the k-th
+  identical call would return with the chat's ledger (§14.3). A value that is not a positive integer is a correctable
+  request error with its guidance line.
+- `search_drive` has no batch: files past a tier's shown count are already summarised in group lines whose folder
+  narrows a new search, and `wide` doubles the shown count.
+
+| Cap | Default (chat and connector) | `wide` (connector only) |
+|---|---|---|
+| passages per call (`EXCERPTS_K`) | 10 | 20 |
+| passage characters per call (`EXCERPTS_CHARS_MAX`) | 24,000 | 45,000 |
+| passages per file per call (`EXCERPTS_PER_FILE_MAX`) | 8 | 8 |
+| search: shown per tier, About / Mentioned in / By translation / Labelled | 10 / 6 / 6 / 8 | 20 / 12 / 12 / 16 |
+| search: Related | 3 | 3 (by meaning only, unverified: more is noise) |
+| search: result characters (`RESULT_CHARS_MAX`) | 16,000 | 40,000 |
+
+The candidate fetch caps (`ABOUT_FETCH`, `WORD_FETCH`, `HINT_FETCH`, `CHUNK_FETCH`, …) and every calibrated threshold
+stay: they bound Firestore reads and precision, not what a client reads. `wide` changes nothing for one file: its
+per-file cap stays 8, so the rest of one file's matches comes by batch.
+
+### 14.3 Batches by replay
+
+- **Split.** Today the pool (gate, embedding, kNN), the ranking (`get_chunk_keys`, `rank_excerpts`) and the selection
+  sit in one `_excerpts` → `_excerpt_files` chain per connection (`src/services/drive_search_service.py:1622`, `:1770`),
+  and the merge one level up (`:1508-1515`). The pool and the ranking move out into a per-connection step that runs
+  once per call; a loop then runs select → merge per round. Chat runs the loop once.
+- **What a round adds to `shown`.** Exactly what the chat's ledger would record for the round's merged result: the
+  loop feeds each merged `ExcerptResult` into an `ExcerptLedger` and takes its `keys()`
+  (`src/domain/drive_excerpt_ledger.py`). A chunk a connection selected but the merge's caps dropped, and a chosen chunk
+  whose text read failed, are not shown and stay selectable. The ledger's shown folders and described files feed the
+  render of batch k, as in chat (`src/infrastructure/drive_tools.py:251`), so folder notes are not repeated per batch.
+- **Sizes.** Each round sizes and refines as `_excerpt_files` does today, from the spans and within `_SELECT_ROUNDS`;
+  chunk texts already read are reused as reads only, never as a round's starting sizes, so a round selects what the
+  chat's call would.
+- **Stop.** The loop stops early when a round selects nothing new: a batch past the end costs the pool and the rounds
+  up to the end, then answers the end line, not an error.
+- **Same call, same answer.** The replay uses the current call's `question`, scope, `file_refs`, `drives` and `wide`.
+  Batch k asked with any of them changed replays other rounds and may repeat or skip passages; the next-batch line
+  therefore quotes the exact question and scope to resend (echoing them to the client is allowed; logging them is not,
+  §9). The pool is deterministic for an unchanged index; a file indexed between two calls can shift ranks, so a batch
+  may repeat or skip a passage at its edge. Accepted: the chat's ledger is exact only because it lives in one run.
+
+### 14.4 What the results and descriptions say
+
+- **`more`.** The merged `ExcerptResult` gains `more`: after the batch, some ranked chunk (keeper-mapped) is neither
+  shown nor chosen in a connection's pool, or the merge's caps dropped a chunk. On a large drive it is true on almost
+  every call (the kNN pool is always full and has no distance floor), so it carries the fact, not advice.
+- **The next-batch line** is conditional, never an instruction: "If the answer is still incomplete, batch k+1 holds
+  lower-ranked passages: the same question «…» in the same scope, with batch k+1." When the call was not `wide`, it adds
+  that `wide` returns about twice as many in one call. Shown only when `more` holds. The server instructions tell the
+  client to follow result lines; this line is written so that following it means asking only when the answer is
+  incomplete.
+- **The end line.** A batch that selected nothing new says there are no further passages for this question in this
+  scope. The chat's "already shown earlier in this request" line (`REPEATED`, `src/domain/drive_excerpt_render.py:58`)
+  does not reach the connector: on batch k it would list every earlier batch's chunk, and it suppresses the end line
+  today (`:223-229`). The connector's render drops it and keys the end line on "nothing new".
+- **Search.** When a tier shows fewer files than it matched and the call was not `wide`, a line says that `wide` shows
+  about twice as many and that a group's folder narrows the search; a `wide` call keeps only the folder half.
+- **Descriptions** say what `wide` changes and when to use it, never the numbers (E21). The drafts:
+  - `find_passages.wide` — Optional: "yes" returns more passages in one call, about twice as many as without it. Use
+    it when the answer is spread over many documents: everything the files say about a topic, a point compared across
+    files, a subject scattered over the drive. Leave it empty for one value, one point or one file.
+  - `search_drive.wide` — Optional: "yes" shows more files in one call, about twice as many per match group. Use it
+    when you need the full set of files on a topic spread over the drive. Leave it empty otherwise.
+  - `find_passages.batch` — Optional: the next batch of passages for the same question, from 2. Only when a result
+    offers it and the answer is still incomplete, with the question and scope it quotes. The rest of one file's matches
+    comes this way; a file's text in order is `read_passages`.
+- The server instructions gain the `wide` case in their method-by-need list.
+- New keys in `MCP_DRIVE_TOOL_TEXTS`: `find_passages.wide`, `find_passages.batch`, `search_drive.wide`. In
+  `MCP_DRIVE_RESULT_TEXTS`: the next-batch line, its `wide` half, the end line, the search line and its `wide` form.
+
+### 14.5 Size
+
+A `wide` passages result is up to 45,000 characters of passages, 4,000 of folder notes
+(`EXCERPT_FOLDER_NOTES_CHARS_MAX`, `drive_index_params.py:284`) and the result lines: about 50,000, the size above
+which Claude Code files a result to disk unless the tool declares its own limit. `find_passages` and `search_drive`
+therefore declare `maxResultSizeChars` 100,000, as open does (E17). In tokens, Cyrillic text may reach Claude Code's
+25,000-token default (*inference* from §6.1: 60,000 characters pass it); the client then gets a file path, as for open.
+claude.ai's limit (about 150,000 characters) is not reached.
+
+### 14.6 Chat stays byte-identical
+
+The caps travel as one domain value per surface, chat's defaults when absent (E22); chat callers pass nothing. The
+passages value reaches `select_excerpts` and `merge_excerpts`' `_capped`; the search value reaches the three `_SHOWN`
+reads of `drive_search_service.py` and `render_tiered`'s `RESULT_CHARS_MAX` cut through `DriveOperations.search`, the
+connector facade (E6) and `render_results` (`src/domain/drive_search.py`), since the search text is rendered inside
+`DriveOperations.search` and the connector forwards it as is. The specialist keeps its ledger and gets neither
+parameter; its prompt and tool texts do not change (D3). `TOOL_PARAMETERS` gains `wide` and `batch` for
+`find_passages` and `wide` for `search_drive`: the connector's parameters stop being a pure mirror of the chat tools',
+and `drive_connector_contract.py` says so.
+
+### 14.7 Observability
+
+The span and the log line of `search_drive` and `find_passages` gain `wide` (0/1), `batch`, `shown` (passages or cards
+shown) and `more` (0/1: §14.4 for passages; a tier showed fewer than it matched for search). The question and query are
+still never logged (§9). This is what shows whether clients choose `wide` and ask for batches where they should.
+
+### 14.8 Token and code in either order
+
+The loader refused unknown keys until this delta; then a token uploaded ahead of a deploy broke every cold start of the
+running revision and any rollback (the first load fails, the connector app is not built). Now an unknown key is a
+warning (§5.3): a misspelled key still fails as the missing one. The order stays token first: the new revision requires
+the new keys, and a running revision ignores them.
