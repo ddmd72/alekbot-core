@@ -4,7 +4,10 @@ MediaAudioPort — audio-only Opus windows of a drive recording (docs/10_rfcs/US
 The input is a `MediaSource` (its url and headers are secrets), not a file; the implementation reads it through a
 sandboxed decoder, so the caller's process never decodes a byte of media. The implementation decides how the sandbox
 reaches the bytes and never gives it a header. An unreadable file raises `MediaUnreadable` (a per-file transient); a
-run cut by the wall or the memory limit is an outcome, mirroring `ExtractionStatus.TIMEOUT` / `MEMORY`.
+run cut by the wall or the memory limit is an outcome, mirroring `ExtractionStatus.TIMEOUT` / `MEMORY`. A decoder that
+cannot take the work (the sandbox busy, unreachable, misconfigured, or lost with no time left to retry) raises
+`ParserUnavailable`: systemic, never the file's, so the step is not charged and the tick ends (UNTRUSTED_CONTENT_SANDBOX_RFC
+§7 S5, Δ8).
 
 Public interface:
     MediaAudioPort.probe(source) -> MediaProbeOutcome
@@ -21,7 +24,7 @@ class MediaAudioPort(ABC):
     @abstractmethod
     async def probe(self, source: MediaSource) -> MediaProbeOutcome:
         """Duration (`duration_known` False when the container has none), audio-stream presence and container.
-        Raises MediaUnreadable."""
+        Raises MediaUnreadable, or ParserUnavailable when the decoder cannot take the work."""
 
     @abstractmethod
     async def extract_windows(self, source: MediaSource, windows: Sequence[WindowSpec], out_dir: str, *, wall_s: float,
@@ -32,4 +35,4 @@ class MediaAudioPort(ABC):
         slice (at most `MEDIA_PASS_MAX_WINDOWS`) of the standard plan; one remote read of the span, the windows cut from
         it locally, the duration read from the result (`eof`). A slice that is too long or not contiguous raises ValueError
         (a caller bug). Raises MediaUnreadable for an unreadable file, a dropped connection that kept dropping, or a
-        limit hit before the first window finished."""
+        limit hit before the first window finished; ParserUnavailable when the decoder cannot take the work."""

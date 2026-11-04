@@ -5,11 +5,9 @@ import logging
 import pytest
 
 from src.adapters import subprocess_content_extractor as content
-from src.adapters.drive_parser import media_launch as media
 
 
-@pytest.fixture(params=[("media", media.resolve_sandbox), ("content", content._resolve_sandbox)],
-                ids=["media", "content"])
+@pytest.fixture(params=[("content", content._resolve_sandbox)], ids=["content"])
 def resolver(request):
     return request.param[1]
 
@@ -37,7 +35,7 @@ def test_a_configured_user_is_unchanged_on_cloud_run(resolver, monkeypatch):
         resolver("no-such-parser-user-xyz")
 
 
-@pytest.mark.parametrize("module", [media, content], ids=["media", "content"])
+@pytest.mark.parametrize("module", [content], ids=["content"])
 def test_a_configured_user_resolves_to_its_ids_on_cloud_run(module, monkeypatch):
     monkeypatch.setenv("K_SERVICE", "alek-indexer")
     entry = type("Entry", (), {"pw_uid": 1234, "pw_gid": 5678})()
