@@ -10,7 +10,7 @@ from src.domain import drive_index_params as params
 from src.domain.sandbox_contract import SandboxOp, SandboxStatus
 from src.domain.sandbox_tunnel import (
     BODY_FRAMES, DATA_MAX, FRAME_HEADER_BYTES, MAX_OPEN_STREAMS, MAX_OPENS, MEDIA_CEILING, MEDIA_MAX_SECONDS,
-    MEDIA_MAX_WINDOWS, MEDIA_PASS_MAX_WINDOWS, RESPONSE_FRAMES, RESULT_MAX_BYTES, SOURCE_MAX_BYTES, START_MAX_BYTES,
+    MEDIA_MAX_WINDOWS, MEDIA_PASS_MAX_WINDOWS, OPEN_SLACK_BYTES, RESPONSE_FRAMES, RESULT_MAX_BYTES, SOURCE_MAX_BYTES, START_MAX_BYTES,
     WINDOW_MAX_BYTES, Frame, FrameReader, FrameType, SandboxTunnelEngine, TunnelEngineResult, TunnelLedger,
     TunnelResult, TunnelViolation, TunnelWindow, TunnelWindows, encode_frame, encode_frame_header, tunnel_budget,
 )
@@ -184,15 +184,23 @@ def test_ledger_caps_opens_per_call() -> None:
 
 
 def test_ledger_budget_counts_every_byte_including_dropped() -> None:
-    ledger = TunnelLedger(source_bytes=10 * DATA_MAX, budget_bytes=3 * DATA_MAX)
+    # Δ13 amended (14e701f7): the allowance is `budget_bytes` + OPEN_SLACK_BYTES per OPEN so far (`allowed_bytes`).
+    budget = 3 * DATA_MAX
+    ledger = TunnelLedger(source_bytes=budget + 2 * OPEN_SLACK_BYTES, budget_bytes=budget)
     ledger.open(1, 0)
     ledger.data(1, 0, DATA_MAX)
     ledger.close(1)
     ledger.data(1, DATA_MAX, DATA_MAX)                        # dropped, still counted
     ledger.open(2, 0)
-    ledger.data(2, 0, DATA_MAX)
-    with pytest.raises(TunnelViolation):
-        ledger.data(2, DATA_MAX, 1)
+    assert ledger.allowed_bytes == budget + 2 * OPEN_SLACK_BYTES
+    offset = 0
+    while ledger.bytes_in < ledger.allowed_bytes:             # stream 2 alone gets the allowance minus the 2 above
+        chunk = min(DATA_MAX, ledger.allowed_bytes - ledger.bytes_in)
+        ledger.data(2, offset, chunk)
+        offset += chunk
+    assert offset == ledger.allowed_bytes - 2 * DATA_MAX
+    with pytest.raises(TunnelViolation, match="budget"):
+        ledger.data(2, offset, 1)
     with pytest.raises(TunnelViolation):
         TunnelLedger(source_bytes=1000, budget_bytes=tunnel_budget(1000) + 1)
 

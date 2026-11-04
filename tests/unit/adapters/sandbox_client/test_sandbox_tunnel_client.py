@@ -20,6 +20,7 @@ from src.domain.sandbox_tunnel import (
     END_UPSTREAM_ERROR,
     IDLE_S,
     MAX_OPENS,
+    OPEN_SLACK_BYTES,
     SEND_STALL_S,
     FrameType,
     TunnelStart,
@@ -344,17 +345,26 @@ class TestHostileServer:
         assert not peer.client_ended.is_set()              # never a clean END_STREAM after a breach
 
     async def test_bytes_over_the_budget_are_a_breach(self):
-        size = 64 * 1024
-        start = probe_start(size=size, budget=100 * 1024)
+        # Δ13 amended (14e701f7): the allowance is the budget plus OPEN_SLACK_BYTES per OPEN, so one read of a source
+        # larger than budget + 1 x slack is the breach (one OPEN keeps the transfer to ~8 MiB, the fast gate's size).
+        budget = 100 * 1024
+        allowed = budget + OPEN_SLACK_BYTES
+        size = allowed + 2 * DATA_MAX
+        start = probe_start(size=size, budget=budget)
 
-        async def reread(peer, start):
-            await peer.serve_stream(1, 0, size)
-            await peer.frame(FrameType.OPEN, 2, 0)          # a second full read crosses the 100 KiB budget
+        async def read_past_the_allowance(peer, start):
+            await peer.frame(FrameType.OPEN, 1, 0)          # one full read crosses budget + 1 x slack
+            got = 0                                         # the lag is timed from just before the breach
+            while got < allowed - DATA_MAX:
+                frame = await peer.next_frame()
+                if frame.kind is FrameType.DATA:
+                    got += len(frame.payload)
 
-        error, peer, lag = await _violating(reread, start, MemoryRange(SOURCE[:size]))
+        source = (SOURCE * (size // len(SOURCE) + 1))[:size]
+        error, peer, lag = await _violating(read_past_the_allowance, start, MemoryRange(source, chunk=DATA_MAX))
         assert "budget" in str(error) and peer.client_reset == CANCEL and lag <= 1.0
         sent = sum(len(f.payload) for f in peer.body_frames if f.kind is FrameType.DATA)
-        assert sent <= 100 * 1024
+        assert budget < sent <= allowed
 
     async def test_a_200_without_the_tunnel_outcome_is_a_breach(self):
         async def script(peer: Peer) -> None:

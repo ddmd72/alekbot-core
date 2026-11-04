@@ -1,6 +1,6 @@
 """Dockerfile.sandbox target `light` (plan P1): its COPY allowlist is the closure of the service plus the drive child's
 and the parse child entry's, it reaches no agent, service or cloud client, its pins equal requirements.txt, and it holds
-no node or media tool."""
+no node tool and no system package but ffmpeg (S5, the media.* ops)."""
 import re
 from pathlib import Path
 from typing import Dict, List, Set
@@ -122,10 +122,20 @@ def test_light_pins_equal_requirements_txt():
         assert server_line in light.values(), server_line
 
 
-def test_light_stage_has_no_node_npm_or_ffmpeg_and_sets_its_family():
+def test_light_stage_has_no_node_npm_or_browser_installs_only_ffmpeg_and_sets_its_family():
+    """S5 (owner decision, design Δ11): ffmpeg enters the light image for the media.* ops. It is the stage's only
+    system package: one apt-get RUN, `ffmpeg` alone with --no-install-recommends, the apt list dropped in that layer."""
     text = " ".join(_light_instructions()).lower()
-    for banned in ("nodejs", "npm", "ffmpeg", "chromium", "playwright", "apt-get"):
+    for banned in ("nodejs", "npm", "chromium", "playwright"):
         assert banned not in text, banned
+    apt_runs = [" ".join(ins.split()) for ins in _light_instructions() if "apt-get" in ins]
+    assert len(apt_runs) == 1, apt_runs
+    installs = re.findall(r"apt-get install ((?:\S+ )*?)(?:&&|$)", apt_runs[0] + " ")
+    assert len(installs) == 1, apt_runs[0]
+    packages = [w for w in installs[0].split() if not w.startswith("-")]
+    assert packages == ["ffmpeg"], packages
+    assert "--no-install-recommends" in installs[0].split()
+    assert "rm -rf /var/lib/apt/lists/*" in apt_runs[0]
     assert "ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 SANDBOX_SERVICE=light" in " ".join(text_split(_light_instructions()))
     assert "requirements-sandbox-light.txt" in text
 

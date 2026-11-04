@@ -52,6 +52,19 @@ def test_no_env_or_key_file_is_copied():
         assert not (name.endswith(".json") and src not in _NON_CODE_COPIES), src
 
 
+def _instructions_by_stage():
+    """Logical instructions per build stage (`FROM ... AS <name>`), the FROM line excluded."""
+    stages, current = {}, None
+    for ins in _instructions():
+        match = re.match(r"FROM \S+ AS (\S+)$", ins, re.I)
+        if match:
+            current = match.group(1).lower()
+            stages[current] = []
+        elif current is not None:
+            stages[current].append(ins)
+    return stages
+
+
 def _copy_sources_by_stage():
     """COPY sources per build stage (`FROM ... AS <name>`)."""
     stages, current = {}, None
@@ -104,12 +117,16 @@ def test_every_copied_file_exists():
 
 def test_render_target_exists_and_has_only_the_headless_shell_browser():
     """S1 banned any browser; S2 (RFC §7, design D1) admits puppeteer's chrome-headless-shell and nothing more: no
-    Playwright, no Chromium package, no full Chrome download, no ffmpeg (S5), and of pdf_generator/ only the HTML engine."""
+    Playwright, no Chromium package, no full Chrome download, no ffmpeg, and of pdf_generator/ only the HTML engine.
+    S5 (owner decision): ffmpeg is installed in the `light` target only, so its ban is scoped to the render stage."""
     text = _text()
     assert re.search(r"^FROM .* AS render\s*$", text, re.M | re.I)
     lowered = " ".join(_instructions()).lower()
-    for banned in ("chromium", "playwright", "ffmpeg"):
+    for banned in ("chromium", "playwright"):
         assert banned not in lowered, banned
+    render = " ".join(_instructions_by_stage()["render"]).lower()
+    assert "apt-get install" in render                           # the render stage is really the one scanned
+    assert "ffmpeg" not in render
     assert "puppeteer_skip_download=true" in lowered            # npm's postinstall never fetches full Chrome
     assert not re.search(r"browsers install chrome(?!-headless-shell)", lowered)
     assert {s for s in _copy_sources() if s.startswith("pdf_generator/")} == _HTML_ENGINE_COPIES

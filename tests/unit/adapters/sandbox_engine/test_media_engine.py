@@ -15,8 +15,8 @@ from src.adapters.sandbox_engine.child_launcher import ChildLauncher
 from src.adapters.sandbox_engine.media_engine import MediaEngine
 from src.domain.sandbox_contract import SandboxLimits, SandboxOp, SandboxStatus
 from src.domain.sandbox_tunnel import (
-    END_EOF, Frame, FrameType, SandboxTunnelEngine, TunnelProbe, TunnelStart, TunnelViolation, TunnelWindow,
-    TunnelWindows, tunnel_budget,
+    DATA_MAX, END_EOF, OPEN_SLACK_BYTES, Frame, FrameType, SandboxTunnelEngine, TunnelProbe, TunnelStart,
+    TunnelViolation, TunnelWindow, TunnelWindows, tunnel_budget,
 )
 
 pytestmark = pytest.mark.skipif(os.geteuid() == 0 or sys.platform not in ("linux", "darwin"),
@@ -27,8 +27,8 @@ _SIZE = 10_000
 _LIMITS = SandboxLimits(wall_s=20.0, memory_bytes=1 << 30, cpu_s=20.0, file_bytes=64 * 1024 * 1024)
 
 
-def _probe_start(budget=None):
-    return TunnelStart(op=SandboxOp.MEDIA_PROBE, source_bytes=_SIZE, budget_bytes=budget or tunnel_budget(_SIZE),
+def _probe_start(budget=None, size=_SIZE):
+    return TunnelStart(op=SandboxOp.MEDIA_PROBE, source_bytes=size, budget_bytes=budget or tunnel_budget(size),
                        wall_s=20.0)
 
 
@@ -147,16 +147,23 @@ async def test_a_child_that_breaks_a_bound_is_killed_and_the_run_is_tunnel_bound
 
 
 async def test_caller_bytes_over_the_budget_kill_the_child(tmp_path):
-    rig = Rig(tmp_path, "open_and_wait")
-    run = await rig.start(_probe_start(budget=1_000))
-    assert await run.link.receive() == Frame(FrameType.OPEN, 1, 0)
-    await run.link.send(Frame(FrameType.DATA, 1, 0, b"g" * 600))
+    # Δ13 amended (14e701f7): the allowance is the budget plus OPEN_SLACK_BYTES per OPEN, so the caller must stream
+    # past 1 000 + 8 MiB on the one stream the child opened (the echo child drains them) before one more byte breaks it.
+    allowed = 1_000 + OPEN_SLACK_BYTES
+    rig = Rig(tmp_path, "echo")
+    run = await rig.start(_probe_start(budget=1_000, size=allowed + DATA_MAX))
+    assert await run.link.receive() == Frame(FrameType.OPEN, 1, 2)
+    offset, sent = 2, 0
+    while sent < allowed:
+        chunk = min(DATA_MAX, allowed - sent)
+        await run.link.send(Frame(FrameType.DATA, 1, offset, b"g" * chunk))
+        offset, sent = offset + chunk, sent + chunk
     with pytest.raises(TunnelViolation):
-        await run.link.send(Frame(FrameType.DATA, 1, 600, b"g" * 600))
+        await run.link.send(Frame(FrameType.DATA, 1, offset, b"g"))
     done = await run.wait()
     assert done.result.status is SandboxStatus.ERROR and done.result.detail == "tunnel_bounds"
-    assert done.bytes_in == 1_200
-    await run.link.send(Frame(FrameType.DATA, 1, 1200, b"g"))      # after the end: dropped, not raised
+    assert done.bytes_in == allowed + 1
+    await run.link.send(Frame(FrameType.DATA, 1, offset + 1, b"g"))      # after the end: dropped, not raised
     assert await run.link.receive() is None
 
 
