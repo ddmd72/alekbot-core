@@ -13,8 +13,10 @@ One file, two processes (like `indexer_main.py` it is the only place the layers 
                                       Hypercorn and the app modules (engines are imported only by the server).
     python sandbox_main.py --serve    SERVER. Quart on Hypercorn (HTTP/2 prior knowledge, which is what Cloud Run
                                       speaks to a `--use-http2` service, and HTTP/1.1). Assembles the blueprint, the
-                                      caller gate and the pipe recycler. SIGTERM: Hypercorn finishes the in-flight
-                                      response, then the process exits.
+                                      caller gate and the pipe recycler; on the light family also the raw ASGI tunnel
+                                      route (`/v1/media.*`, S5) in front of Quart, sharing the gate, the recycler and
+                                      the one request slot. SIGTERM: Hypercorn finishes the in-flight response, then
+                                      the process exits.
 
 Environment (optional knobs, read with `os.getenv`-style mapping access, never `load_settings()`; the service holds no
 secret): SANDBOX_SERVICE (`render` default | `light`: the service family, which fixes the caller groups and the engines),
@@ -48,6 +50,7 @@ from src.composition.sandbox_setup import (
     SandboxStartupError,
     StartupPlan,
     build_engine_registry,
+    build_tunnel_registry,
     close_shared_temp_dirs,
     validate_startup,
 )
@@ -62,7 +65,9 @@ from src.utils.logger import logger
 from src.web.sandbox_app import create_sandbox_blueprint
 from src.web.sandbox_caller_gate import SandboxCallerGate
 from src.web.sandbox_recycler import PipeRecycler
+from src.web.sandbox_slot import SandboxSlot
 from src.web.sandbox_supervisor import SandboxSupervisor
+from src.web.sandbox_tunnel_app import SandboxTunnelApp, dispatch_tunnel
 from src.web.sandbox_unconfigured_app import create_unconfigured_blueprint
 
 RECYCLE_FD_ENV = "SANDBOX_RECYCLE_FD"
@@ -98,17 +103,23 @@ def build_app(env: Mapping[str, str], recycler: Optional[Any]) -> Quart:
         logger.error("[Sandbox] refusing to start: policy always without the supervisor's pipe")
         raise SandboxStartupError("--serve under policy 'always' or 'abnormal' must be started by the supervisor")
     engines = build_engine_registry(plan)
+    tunnel_engines = build_tunnel_registry(plan)
     gate = SandboxCallerGate(plan.caller_sets, plan.group_prefixes, plan.service_url)
-    app.register_blueprint(create_sandbox_blueprint(
-        engines, gate, recycler if recycler is not None else PipeRecycler(None), _CEILING,
-        {
-            "work_root": plan.work_root,
-            "engine_user": plan.engine_user,
-            "recycle": plan.recycle,
-            # the SAME root the engine registry resolved (it uses the real path)
-            "output_root": os.path.realpath(plan.output_root),
-        },
-    ))
+    served = recycler if recycler is not None else PipeRecycler(None)
+    config = {
+        "work_root": plan.work_root,
+        "engine_user": plan.engine_user,
+        "recycle": plan.recycle,
+        # the SAME root the engine registry resolved (it uses the real path)
+        "output_root": os.path.realpath(plan.output_root),
+        # one request per instance across both routes
+        "slot": SandboxSlot(),
+    }
+    app.register_blueprint(create_sandbox_blueprint(engines, gate, served, _CEILING, config))
+    if tunnel_engines:
+        # Raw ASGI in front of Quart: Quart would buffer the open-ended tunnel body and cap it (S5 design §2.5).
+        tunnel = SandboxTunnelApp(tunnel_engines, gate, served, config)
+        app.asgi_app = dispatch_tunnel(app.asgi_app, tunnel)  # type: ignore[method-assign]
     logger.info("[Sandbox] ready (recycle=%s, cloud_run=%s)", plan.recycle, plan.on_cloud_run)
     return app
 

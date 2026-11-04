@@ -8,6 +8,9 @@ Public interface:
     build_engine_registry(plan) -> Mapping[SandboxOp, engine]
         family `render`: `render.docx` -> `DocxRenderEngine`; family `light`: the three `parse.*` ops -> `ParseEngine`, one
         instance per op, over one `ChildLauncher`. Creates/validates the output root.
+    build_tunnel_registry(plan) -> Mapping[SandboxOp, tunnel engine]
+        the tunnel ops (S5, `sandbox_tunnel.TUNNEL_OPS`): family `light` -> `MediaEngine`, one per op, over a launcher of
+        their own (the media ceiling is not the parse one); family `render` -> none. Same output root.
     close_shared_temp_dirs(paths=SHARED_TEMP_DIRS, *, on_cloud_run, fchmod=os.fchmod) -> None
         the supervisor, before the server starts: `/tmp` and `/dev/shm` become root-only (0700, owned by this process)
         and are re-checked. Cloud Run gen2 mounts its own world-writable tmpfs over both, whatever the image set, which
@@ -18,7 +21,8 @@ Public interface:
 
 Service family (`SANDBOX_SERVICE`): `render` (default) or `light`; any other value refuses start. The family decides the
 caller groups the service accepts and the engines it builds. Render: group RENDER. Light: groups MAIN and INDEXER, both
-for `parse` ops (one service of its own; the render service's caller map is separate).
+for `parse` ops, and INDEXER also for the `media` tunnel ops (one service of its own; the render service's caller map is
+separate).
 
 It does not build the app: the blueprint, gate and recycler are `web/` objects and composition may not import `web/`
 (REQ-ARCH-11); `sandbox_main.build_app` assembles them from the plan. Plain data only. Imports nothing from
@@ -40,14 +44,18 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Tuple
 
 from ..domain.sandbox_contract import SandboxOp
+from ..domain.sandbox_tunnel import TUNNEL_OPS
 from ..domain.sandbox_startup_check import check_sandbox_environment
 from ..utils.logger import logger
 from .sandbox_callers import load_caller_sets
 
 # The gate's group -> op-prefix mapping of the render family. Group names match `SANDBOX_CALLERS_<GROUP>`.
 GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"RENDER": frozenset({"render"})}
-# The light family (parse ops; `media` joins with S5): the main service and the indexer each get the `parse` prefix.
-LIGHT_GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"MAIN": frozenset({"parse"}), "INDEXER": frozenset({"parse"})}
+# The light family: the main service and the indexer each get the `parse` prefix; the indexer also `media` (S5: drive
+# recordings over the tunnel). MAIN gains `media` only with S5b (video_probe).
+LIGHT_GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {
+    "MAIN": frozenset({"parse"}), "INDEXER": frozenset({"parse", "media"}),
+}
 
 FAMILY_RENDER = "render"
 FAMILY_LIGHT = "light"
@@ -167,6 +175,20 @@ def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
     for op in (SandboxOp.RENDER_PDF, SandboxOp.RENDER_PNG):
         registry[op] = HtmlRenderEngine(browser_launcher, op=op, output_root=output_root, browser_cache_dir=cache_dir)
     return registry
+
+
+def build_tunnel_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
+    """The tunnel engines (`SandboxTunnelEngine`) of the plan's family. Raises (never falls back) like
+    `build_engine_registry`."""
+    if plan.family != FAMILY_LIGHT:
+        return {}
+    from ..adapters.sandbox_engine.child_launcher import ChildLauncher
+    from ..adapters.sandbox_engine.media_engine import MediaEngine
+
+    output_root = _prepare_output_root(plan.output_root, plan.work_root)
+    media_launcher = ChildLauncher(user=plan.engine_user)
+    return {op: MediaEngine(media_launcher, op=op, output_root=output_root)
+            for op in sorted(TUNNEL_OPS, key=lambda o: o.value)}
 
 
 def _prepare_output_root(output_root: str, work_root: str) -> str:
