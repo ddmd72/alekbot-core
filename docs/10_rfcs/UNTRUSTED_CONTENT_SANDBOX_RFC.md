@@ -4,7 +4,7 @@
 `SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped) and not accepted. S2 (`render.pdf`, `render.png`) is built
 on its branch, not deployed. No S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
-**Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04)
+**Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
 - **O1. One separate Cloud Run deploy unit** whose own service account holds **no IAM role** and which is given **no secret**.
 - **O2. It executes every piece of untrusted processing** the product does: document parsing for the drive, conversion of
@@ -197,29 +197,24 @@ Cost of two: one more deploy unit for a solo developer. Both services are part o
 - **Fail closed** on Cloud Run when the caller map or the service URL is empty; open only when `K_SERVICE` is unset and nothing is configured
   (`src/web/sandbox_caller_gate.py`; `worker_oidc_gate` precedent, `src/web/indexer_worker_app.py:42-64`).
 
-### 4.5 Network egress (O7)
+### 4.5 Network egress (O18)
+
+Built shape (S5, OQ-S11 closed, delta list in §7 S5): **no op family needs the network.** A recording never travels as a URL, a header or a byte
+payload in a request: the caller opens a reverse tunnel (§4.7) and the sandbox asks for byte ranges through it.
 
 | Op family | Needs the network? |
 |-----------|--------------------|
 | `parse.*`, `render.*` (input travels in the request) | no |
-| `media.*` with a pre-authenticated download URL (OneDrive, §27.4) | yes, to the storage host named in the URL |
-| `media.*` for a header-carrying source (Google) | no: the caller sends the bytes (OQ-S11) |
+| `media.*` (every source, OneDrive and Google alike) | no: ranges come back over the caller's own tunnel stream |
 
-- **A source that needs a header has no URL to hand in.** Google answers no header-free URL for a file's content (GOOGLE_DRIVE_RFC G2, [PROBE P-g]); in the
-  indexer a `LoopbackMediaRelay` holds the bearer and serves the child one file for one run (`src/adapters/drive_parser/media_relay.py:82`). That relay is
-  the in-indexer path only and never moves into the sandbox: by §1's rule the caller sends such bytes. How the bytes of a long recording reach `media.*`
-  within the request caps is open (OQ-S11).
-- **v1: the platform's default egress.** For every op except `media.*` the service makes no outbound call, and a test asserts its code opens none.
-- **The media op reads through a loopback range proxy inside the sandbox, not through ffmpeg's own network stack.** The URL comes from the drive provider through a trusted caller (not
-  from the file), but ffmpeg is a large surface and should not open sockets. A small **Python fetcher** (a helper under its own unprivileged uid, never the engine child) takes the
-  URL and serves ranges on `127.0.0.1` only: `https` only; the host must match a suffix allowlist at a **dot boundary** (`.example.com`, never `example.com.evil`); **no IP literals**;
-  **no redirects**; DNS resolved **per request** and **never pinned by address** (provider addresses may change; the allowlist is by name suffix only, O7); a size and rate cap. ffmpeg reads only `http://127.0.0.1:<port>/…` with
-  `-protocol_whitelist http,tcp`, `-format_whitelist` (the demuxers of §27.4), `-codec_whitelist` (audio decoders only), `-max_alloc`, `-threads 1`, `-fs`, `-nostdin`, `-vn -sn -dn`, `-map 0:a:0`.
-  **The URL is redacted from every log line** and never stored; the request log shows host class and byte counts only.
-- **Why that is acceptable first:** the service holds no credential and sees one request's data (I1, I2), so egress lets an attacker send out *the document it
-  already sent in*. The residual that matters is reaching other services by their public addresses; those are public by design and authenticate by themselves.
-- **Hardening, not v1 (S6; earlier for non-media ops if S0-c requires it):** deploy with Direct VPC egress on all traffic, a subnet with no NAT and a deny-all egress rule, so `parse.*`/`render.*`
-  have **no route** out (Google APIs reach through Private Google Access, which they do not use). `media.*` then needs its own service with NAT and a name allowlist (not planned; the owner accepted the media op's egress through the in-sandbox proxy, O7). Effort: about half a day of network setup, no running cost without NAT. Recommended **after** S3 lands, as it changes nothing in the contract.
+- **The credential never leaves the caller.** The indexer holds the bearer or the pre-authenticated URL and answers the sandbox's range requests; the
+  sandbox sees ranges of one recording and nothing else. The in-indexer `LoopbackMediaRelay` path is deleted in the same deploy (S5 card F).
+- **Range proxy dropped, O7's host allowlist superseded.** The earlier design (a host-suffix allowlist, IP-literal and redirect rules, a fetcher under
+  its own uid) is not built: with no outbound call there is nothing to allowlist. A test asserts the light service's code opens no socket outward;
+  the S6 lock-down (no egress at all) covers the whole light service.
+- **ffmpeg reads a loopback range server inside the media child**, not a server-side helper and not the network: the child serves `127.0.0.1` with a
+  nonce path, GET/HEAD and single Range only, header caps, a handful of connections, and turns each read into a tunnel OPEN. The server parses only
+  fixed-size records from the child.
 
 ### 4.6 Every engine in a child under its own uid; one request, one instance
 
@@ -277,8 +272,8 @@ One route family, versioned: `POST /v1/{op}`.
 | `parse.pdf_page_count` | PDF bytes | JSON `{pages_total}` | same |
 | `parse.pdf_window` | PDF bytes, first page, count | PDF bytes | same |
 | `parse.pdf_windows` | PDF bytes, window plan | the windows, streamed one after another (one upload instead of one per window) | same |
-| `media.probe` | download URL or bytes (OQ-S11; the `video_probe` case is bytes) | JSON `{duration_s, has_audio, container}` | a media child |
-| `media.audio_windows` | download URL or bytes (OQ-S11), window plan | Opus bytes, one window per response part or per call | media child, `ffmpeg` per §27.4 |
+| `media.probe` (built, S5; tunnel) | START body frame: source size, window plan, limits; ranges via the tunnel | RESULT frame: JSON `{duration_s, has_audio, container}` | `MediaEngine` + `media_child` (`src/adapters/sandbox_engine/media_engine.py`) |
+| `media.audio_windows` (built, S5; tunnel) | START body frame: source size, window plan, limits; ranges via the tunnel | RESULT frame (windows, eof, `no_audio`, `too_long`) and Opus window bytes as DATA frames | same; `ffmpeg` per §27.4 |
 | `render.docx` (built, S1) | body `u32-be script_length \| script \| spec`, `limits` | DOCX bytes; on a script error its text in the body, capped at 16 KiB | `DocxRenderEngine` (`src/adapters/sandbox_engine/docx_render_engine.py:47`), a new engine: `NodeDocxRunner` writes into the repo tree and sets no rlimits (`decisions/sandbox_render_service.md`) |
 | `render.pdf` (built, S2) | body = the HTML as UTF-8; `limits` | PDF bytes; **no engine text in a failure** (fixed detail code only) | `HtmlRenderEngine` (`src/adapters/sandbox_engine/html_render_engine.py`), child `render_html_child.py` -> fixed `pdf_generator/render_html.js` (Puppeteer, chrome-headless-shell) |
 | `render.png` (built, S2) | body `u32-be width \| html` (width 16..2048, `src/domain/sandbox_png_frame.py`); `limits` | PNG bytes; no engine text in a failure | the same engine and script, a per-request page |
@@ -308,6 +303,16 @@ One route family, versioned: `POST /v1/{op}`.
 - A binary result over the cap is `too_large`. Streaming is used for responses over a few MiB.
 - Idempotent and pure: every op is a function of its input, so any call may be repeated.
 
+**Media ops are tunnel ops (S5; `src/domain/sandbox_tunnel.py`, `src/web/sandbox_tunnel_app.py`).** `POST /v1/media.<op>` is a full-duplex HTTP/2
+stream, routed by a raw ASGI app in front of Quart (Quart buffers bodies without backpressure). The request is one START body frame (a closed key set; no
+url, name, id or path), not new meta keys (the pinned meta set is unchanged). Both directions carry length-prefixed frames: the sandbox sends OPEN(offset,
+length) and window DATA, the caller answers range DATA, and a terminal RESULT frame ends the stream. **The response header only means "stream opened";
+the RESULT frame decides the outcome.** Bounds: at most 256 opens, 2 concurrent open streams, a byte budget per call of `min(8 GiB, 2 x size + 64 MiB)`,
+256 KiB per DATA frame, a 5 s heartbeat and 30 s idle limit; a breach kills the child and returns `error/tunnel_bounds`. The call ceiling is the media
+one (240 s call, 150 s soft), separate from the parse ceiling. No token refresh between ranges: one call is shorter than the source's token life, and an
+expired source is refused. A systemic outage surfaces to the stage as `ParserUnavailable` (the job is left uncharged, the tick ends); a violation
+of the tunnel protocol is `MediaUnreadable("tunnel_violation")` and is charged to the file, since only the file can steer the decoder that far.
+
 ### 4.8 Limits (per op, enforced inside; the caller's `limits` may only lower them)
 
 Input size caps are the callers' existing ones (drive `size_cap(kind)`; the main service's reads: EXTERNAL_FILES_RFC §4.5's caps table, 5 MiB for parsing, `file_conversion.py:31`; media `TRANSCRIBE_MAX_BYTES`/`_SECONDS`, §27.4). Child limits keep their
@@ -334,6 +339,7 @@ The statuses **do not change**. The sandbox returns the ones callers already kno
 | 401 / 403 | `SandboxMisconfigured`: ERROR log, systemic defer | a deployment mistake, not a file |
 | connection reset or 5xx mid-request, or a timeout | one immediate retry on a fresh instance (a retry starts only with time left before the caller's deadline, its wall lowered to that time); if it repeats: `ExtractionStatus.ERROR`, detail `sandbox_lost`, **charged to the file** (counts toward `MAX_ATTEMPTS`) | an instance killed by the platform is indistinguishable from a poison file; two losses mean the file. Same reasoning as `DriveModelUnavailable.charges_file` |
 | a malformed envelope | `ERROR` | |
+| `media.*` (tunnel ops, S5): the stream ends with RESULT `error`/`tunnel_bounds`, or the tunnel link drops, or the instance is lost mid-call | the response header only means "stream opened"; the terminal RESULT frame decides (§4.7). A systemic outage (`SandboxUnavailable`, `SandboxMisconfigured`, lost instance) is raised to the media stage as `ParserUnavailable`: the job is left uncharged and the tick ends. `MediaUnreadable("tunnel_violation")` is **charged to the file**; `no_audio` and `too_long` keep their stubs; a call past `MEDIA_CEILING` returns the windows done so far as a `timeout` RESULT and the next step resumes | O18; only the file can steer the decoder into a violation |
 
 Details for parsers stay what they are: a failure type, a code position and a hash, never text (`failure_label`). The DOCX op is the exception **by purpose**: the
 generating agent feeds the script's error back to the model to repair it (`doc_generator_agent.py`), so `render.docx` returns the error text, which is the model's
@@ -372,14 +378,13 @@ Chromium yet), and S3 adds `light`. The service has no database import to leak (
 
 **Superseded by O15 for the render family:** one knob, `SANDBOX_RENDER` / `SANDBOX_RENDER_URL`, selects DOCX, PDF and widget PNG together (`build_docx_runner`, `build_pdf_runner`, `build_html_renderer` in `src/composition/sandbox_client_setup.py`); no per-part switch for these three, no new key. Per-part acceptance and rollback of O9 therefore holds between families, not inside the render family.
 
-**Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. The text below holds for the render and media families.
+**Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. **Superseded by O18 for the media family:** no `SANDBOX_MEDIA` knob. The indexer builds `SandboxMediaAdapter` from the same required `SANDBOX_PARSE_URL` (one light service), refuses to start without it, and has no in-process media fallback; rollback is a revision rollback of the indexer. The text below holds for the remaining per-part switches.
 
 Each caller family reads one knob with `os.getenv` at its composition line (optional knob, per CLAUDE.md, not `load_settings()`):
 
 | Knob | Read by | Values | Default during the transition |
 |------|---------|--------|-------------------------------|
 | `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's (`indexer_main.py:138`, today `build_drive_models` with the parser aliased as splitter, `drive_model_setup.py:124`), the main service's `build_document_service` | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
-| `SANDBOX_MEDIA` | the indexer's media wiring | same | same |
 | `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py`; O15: DOCX, PDF and PNG) | the main service | same | same |
 
 One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another; one
@@ -431,7 +436,7 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | O4 | Transcripts for a second user wait for the media part (S5) | owner |
 | **O5** | **Every request runs on a fresh instance (`recycle=always`) for all ops, chat uploads and PNG widgets included; +1-3 s accepted; real latency measured after deploy** (§4.6). **Amended 2026-11-03: the light (parse) service uses `abnormal` (fresh instance only after an abnormal request); the render service keeps `always`** | owner (2026-10-20, 2026-11-03) |
 | **O6** | **No egress for pulling large files.** HTTP/2 end to end is tried for bodies above 32 MiB; if it fails, 32 MiB stays a known limitation for parsed files, with no signed-URL fallback (§4.7) | owner (2026-10-20) |
-| **O7** | **The media op may have egress, only through the in-sandbox loopback proxy:** host allowlist by name suffix (never address pinning; raw-IP URLs refused; DNS per request); no redirects; the allowlist is configuration built from the real download-URL hosts seen in the transcripts measurement (drive RFC §27 T0), extendable without a code change (§4.5) | owner (2026-10-20) |
+| **O7** (superseded by O18: no egress, no allowlist) | **The media op may have egress, only through the in-sandbox loopback proxy:** host allowlist by name suffix (never address pinning; raw-IP URLs refused; DNS per request); no redirects; the allowlist is configuration built from the real download-URL hosts seen in the transcripts measurement (drive RFC §27 T0), extendable without a code change (§4.5) | owner (2026-10-20) |
 | **O8** | **Slice order and prerequisite:** `render.docx`, then the other renderers, then drive parsers, then chat uploads, then media; each part is enabled only after its caller's own service account exists (§7, §4.4). The parse slices' place is amended by O12 | owner (2026-10-20) |
 | **O9** | **Per-part switch; two weeks of observation each; then the in-process path is removed.** The assistant flips each switch after deploy and reports; the owner can roll back with one command (§4.12, §8) | owner (2026-10-20) |
 | **O10** | **Two services:** light (parsers, chat conversion, media audio, `ffprobe` of chat videos) and render (Chromium and Node: DOCX, PDF, PNG). `video_probe` moves to the light service; Gmail HTML cleaning stays in the main service by decision, a pure-Python parser (§4.2) | owner (2026-10-20) |
@@ -440,6 +445,8 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O13** | **One parse engine in principle** (EXTERNAL_FILES D15): no `DocumentConverterPort` or `chat.convert`; one `parse.*` family for both runtimes; S4 = identity + knob; final go after that RFC's U0-b report on real files (header, §4.7) | owner (2026-11-03) |
 | **O14** | **The parse switch is one deploy (2026-11-03).** No `SANDBOX_PARSE` knob, no watch period, no soak, no client slot counter (`SANDBOX_INDEXER_SLOTS` is dropped). The main service and the indexer build `build_sandbox_parser(url)` from a required `SANDBOX_PARSE_URL` and refuse to start without it, locally too; neither composition has an in-process fallback or a `K_SERVICE` branch. One retry on `recycling`; concurrency 1, max-instances 5 as a cost guard. Rollback is a Cloud Run revision rollback of both callers. | owner |
 | **O15** | **One knob for the render family (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner and the widget PNG renderer; no new env key, no new substitution. Replaces O9's per-part switch for this family. `sandbox` with an empty URL: ERROR + degraded feature on Cloud Run, startup error locally; never a fallback | owner |
+| **O17** | **Second user's transcripts (2026-11-04): enabled right after S5's acceptance**, through the per-connection opt-in (§9) | owner |
+| **O18** | **OQ-S11 resolved (2026-11-04): media reaches the sandbox through a reverse tunnel opened by the indexer, for every source** (OneDrive included); the owner approved the spike and the build. No range proxy, no host allowlist, no egress for the light service (§4.5). Media is one deploy with no `SANDBOX_MEDIA` knob (the O14 pattern); the in-process media reader and its relay are deleted in the same deploy | owner |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller groups must not share an identity (§4.4). Met in configuration | author, folded into O8 |
 | P1 | A service, not a job (§4.1) | author |
 | P4 | Platform IAM, in-app signature verification with pinned audience, per-op caller sets; not `--ingress=internal` (§4.4) | author |
@@ -567,19 +574,30 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `parse.pdf_windows`, reached through `PdfSplitterPort.cut_pdf_windows` (EXTERNAL_FILES §4.4); Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
 ### S5. Media for transcripts (C3)
-- What it is: an adapter swap in the indexer under `MediaAudioPort` (built): `SubprocessMediaExtractor` → `SandboxMediaAdapter`. Transcription runs in
-  the indexer's child today (T1 live for the owner, USER_DRIVE_INDEXING_RFC §27); S5 moves the decoder out before a second user is admitted (§9).
-- Build: `SandboxMediaAdapter`; the media ops; for URL inputs the range proxy and the ffmpeg argument set (§4.5); for header-carrying sources the input
-  OQ-S11 settles; `video_probe` onto `media.probe` over bytes. Documentation delta to §27.4/§27.12 (S-Δ6).
-- Tests: proxy rules (scheme, host suffix at a dot boundary, IP literal, redirect, DNS per request and no address pinning, size/rate cap); URL absent
-  from logs; ffmpeg arguments pinned; window plan -> Opus bytes under the cap; `no_audio`, `too_long`, `too_large` stubs; 4-hour/8 GiB caps;
-  `SandboxUnavailable` defers the job step; a header-carrying source never puts its token in a request to the sandbox.
-- Accept: measurement on the reference recording: bytes read, wall, CPU, in `sandbox` against in-process; one Google recording transcribed.
-
-### S6. Close-out (after a soak)
-a. Remove the in-process path from deployed callers (knobs deleted); split requirements so the credentialed runtimes' image drops the parser libraries, Chromium and Node (a build test lists what each image may import).
-b. Network lock-down (§4.5) for both services.
-c. Doc updates: drive RFC §9/§24.14/§27, `drive_parser_sandbox_resource_isolation.md`, `CLAUDE.md`, the deployment README, a decision record for the final shape.
+- Status: **built, not deployed.** Built shape and deltas against rev 4 (design record: the S5 design, owner decisions O18, O17 below):
+  1. OQ-S11 closed with the **reverse tunnel for every source**, OneDrive included (owner approval 2026-11-04, after a spike proved the route).
+  2. §4.5's range proxy and O7's host allowlist dropped; the light service needs no egress.
+  3. No `SANDBOX_MEDIA` knob; the O14 pattern (a required URL; rollback is a revision rollback); the §4.12 table row and §9 guard 2 are gone.
+  4. A loopback range server inside the media child, not a server-side helper.
+  5. The request is a START body frame, not new meta keys.
+  6. Tunnel ops: the response header means "stream opened", the terminal RESULT frame decides (§4.7).
+  7. The media ceiling (240/150 s) is separate from the parse ceiling (120/90 s).
+  8. A systemic outage is raised as `ParserUnavailable` (not `SandboxUnavailable`); same effect, no stage change.
+  9. `video_probe` -> `media.probe` is split to S5b (the main service gains the `media` prefix with an in-memory range source).
+  10. The in-process media path (`media_extractor.py`, `media_launch.py`, `media_relay.py`) is deleted in the same deploy; O9's two-week keep does not apply.
+  11. ffmpeg enters the light image, so the parse cold start may grow (measured in acceptance).
+  12. `MediaUnreadable("tunnel_violation")` is charged to the file.
+  13. Byte budget per call `min(8 GiB, 2 x size + 64 MiB)` and at most 256 opens (the old relay had 8 GiB per run and no open cap).
+  14. No token refresh between ranges.
+- What it is: an adapter swap in the indexer under `MediaAudioPort`: `SubprocessMediaExtractor` -> `SandboxMediaAdapter`. The indexer holds the source and
+  answers range requests over the tunnel; the sandbox decodes.
+- Image: the light target adds ffmpeg (`apt-get install --no-install-recommends`), `media_engine.py`, `media_child.py` and the tunnel closure
+  (`sandbox_tunnel.py`, `sandbox_slot.py`, `sandbox_tunnel_app.py`; the render target copies the tunnel closure too, since `sandbox_main.py` is shared). The
+  indexer's caller group gains the `media` prefix (MAIN keeps `parse` only until S5b). The deploy script is unchanged: timeout 900 s covers the 240 s ceiling
+  and the 320 MiB volume is enough (nothing is written but window files).
+- Tests: the tunnel codec and bounds; the engine with a scripted child; the child's loopback server; the `@slow` contract suite (real server, real
+  ffmpeg, a local HTTPS Range upstream) asserting outcomes equal the old in-process extractor on the same files.
+- Accept: acceptance in the cloud on one OneDrive and one Google recording, wall and bytes read against the old path, and the light cold start before and after ffmpeg.
 
 ## 8. Owner steps (placeholders; nothing here names a real resource)
 
@@ -599,17 +617,15 @@ change the caller map in the **sandbox's** environment and **redeploy the sandbo
 §27 holds transcription to the owner only, "until the zero-credential parser service exists" (Δ125; T1 live for the owner). The opt-in is per drive connection
 (`DriveConnection.transcribe_enabled`, `src/domain/drive_connection.py:64`), together with the global `DRIVE_TRANSCRIBE_ENABLED`
 (`src/web/user_cabinet_app.py:1506-1509`). When S5 (media) is accepted: the indexer no longer decodes media in-process; the decoder runs in a service that
-holds nothing and sees one recording; a URL or the recording's bytes are the only things handed in. The gate then changes from "owner only" to that existing
-**per-connection explicit opt-in**, no new mechanism. Two guards ship with S5 so the gate means what it says: (1) the in-process media
-adapter refuses to run on Cloud Run (a start-time error), so the only media path in a deployed indexer is the sandbox; (2) `DRIVE_TRANSCRIBE_ENABLED` (the global switch) cannot be on while `SANDBOX_MEDIA` is
-`inprocess` on Cloud Run. The same argument lifts the parser residual in `drive_parser_sandbox_resource_isolation.md` once S3 is accepted, which is that record's stated trigger.
+holds nothing and sees one recording; only byte ranges of that one recording, requested through the tunnel, are handed in. The gate then changes from "owner only" to that existing
+**per-connection explicit opt-in**, no new mechanism. One guard ships with S5 so the gate means what it says: the in-process media path is deleted, so the only media path in a deployed indexer is the sandbox (there is no `SANDBOX_MEDIA` knob to leave on `inprocess`). **Owner decision O17 (2026-11-04): transcripts are enabled for a second user right after S5's acceptance.** The same argument lifts the parser residual in `drive_parser_sandbox_resource_isolation.md` once S3 is accepted, which is that record's stated trigger.
 
 ## 10. Questions: resolved by the owner (2026-10-20) and what remains
 
 Resolved (see §5):
 - **OQ-S1 cold start per request:** accepted for all ops (O5).
 - **OQ-S2 large bodies:** try HTTP/2; otherwise 32 MiB stays a known limit; no signed-URL fallback (O6).
-- **OQ-S3 media egress:** allowed through the loopback proxy, name-suffix allowlist as configuration (O7).
+- **OQ-S3 media egress:** none: the reverse tunnel (O18) supersedes the proxy and O7.
 - **OQ-S4 one service or two:** two (O10).
 - **OQ-S5 `video_probe`:** moves to the light service (O10).
 - **OQ-S7 soak and who flips:** two weeks per part; the assistant flips and reports; the owner can roll back with one command (O9).
@@ -621,13 +637,7 @@ Remaining engineering points (no owner input needed; the author's call, stated f
 - **OQ-S8. Per-request signed grants** instead of caller-level invoker: no; the invoker binding plus the verified per-op set is enough while callers are two runtimes.
 
 Open (new in rev 4):
-- **OQ-S11. How a header-carrying recording reaches `media.*`.** Google gives no header-free URL (GOOGLE_DRIVE_RFC G2), so the indexer must send the bytes,
-  but a recording may reach 8 GiB (`TRANSCRIBE_MAX_BYTES`) against a 64 MiB request cap, an in-memory work volume, and ffmpeg's need to seek. Candidates:
-  (a) the caller streams the whole file in one request to a disk-backed work volume (needs S0-a beyond 64 MiB and a volume type the sandbox may not have);
-  (b) the caller sends successive byte ranges and the sandbox demuxes per window (only for containers whose index sits at the head); (c) a one-use pull URL
-  served by the caller, reached through the sandbox's loopback proxy (the sandbox then fetches from a credentialed runtime, which O6 and §1's rule were
-  written to avoid, so it needs the owner). Not decided: S5 decides after S0-a, and (c) goes to the owner. Until then Google recordings are transcribed only
-  in-process, for the owner (§9).
+- **OQ-S11. Resolved (2026-11-04): the reverse tunnel, for every source** (§4.5, §4.7, §7 S5; O18). A spike proved the route. Candidates (a) one long upload, (b) per-window byte ranges sent by the caller and (c) a pull URL served by the caller were not taken.
 
 ## 11. Parameters (initial)
 
@@ -639,10 +649,11 @@ Open (new in rev 4):
 | child limits (parsers) | `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB | current values; S0-g re-measures |
 | media child (per §27.4) | `RLIMIT_CPU` 150 s, wall 240 s, `RLIMIT_FSIZE` 64 MiB, `RLIMIT_AS` 1 GiB | §27.4 |
 | request / response cap | request 101 MiB (100 MiB + 1 MiB), response 101 MiB, streamed (built in P1) | the largest admitted kind, a 100 MiB PDF (`drive_index_params.py:57`), plus margin; the work volume is sized for it (S0-a) |
+| media tunnel (`src/domain/sandbox_tunnel.py`) | `MEDIA_CEILING` (call wall and soft deadline, separate from the parse ceiling), `MAX_OPENS`, `MAX_OPEN_STREAMS`, `DATA_MAX`, `BEAT_S`, `IDLE_S`, byte budget per call `tunnel_budget(size)` = `min(8 GiB, 2 x size + 64 MiB)`; mirrors of the media limits pinned to `drive_index_params` | O18, §4.7; values live in code, a test pins them |
 | `meta` size | 8 KiB | |
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |
-| media URL host allowlist | name-suffix list in configuration, from the T0 measurement, extendable without code change | O7, §4.5 |
+| media URL host allowlist | none (superseded by the reverse tunnel) | O18, §4.5 |
 | `SANDBOX_INDEXER_SLOTS` | superseded by O14 (dropped) | none: no client slot counter |
 | engine child limits added | `RLIMIT_NPROC` 64, `RLIMIT_NOFILE` 64 (chosen in the S1 build; S0-f confirms) | fork bomb, descriptor exhaustion |
 | browser child (`render.pdf`, `render.png`) | `RLIMIT_DATA` in place of `RLIMIT_AS`; `RLIMIT_NPROC` 512, `RLIMIT_NOFILE` 1024 (chosen in the S2 build; S0-f confirms); `CHROMIUM_OWN_SANDBOX` off until S0-f | Chromium reserves tens of GiB of address space and starts tens of threads; the instance's 2 GiB is the real wall |
@@ -670,11 +681,11 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
    `SandboxDocxRunner` (`docx_runner_port.py:6-10`). Their timeout arguments become the request's `limits`.
 9. **The main service's reads have five converter call sites** (§1, C2), the e-mail attachment path among them (`email_search_service.py:251`); EXTERNAL_FILES
    U3 replaces all five with its document service before S4.
-10. **Media decoding runs in the indexer today**, for the owner (T1), through `SubprocessMediaExtractor` and, for Google, a `LoopbackMediaRelay` inside the
-    token-holding process (`media_extractor.py:68`, `media_relay.py:82`); the media launcher duplicates the parser's (`media_launch.py`). S5 assumes this
-    code, not a future one (S-Δ6).
-11. **The media op's URL premise holds for OneDrive only.** A Google source needs the `Authorization` header (GOOGLE_DRIVE_RFC G2), so §4.5's proxy cannot
-    serve it (OQ-S11).
+10. **Media decoding ran in the indexer (T1) through `SubprocessMediaExtractor` and, for Google, a `LoopbackMediaRelay`** inside the token-holding process
+    (`media_extractor.py`, `media_relay.py`, `media_launch.py`). S5 (built, not deployed) replaces it with `SandboxMediaAdapter` and deletes those modules in
+    the same deploy (S-Δ6, O18).
+11. **The media op's URL premise held for OneDrive only** (a Google source needs the `Authorization` header, GOOGLE_DRIVE_RFC G2). Resolved by the reverse
+    tunnel for every source (O18): no URL and no header reaches the sandbox.
 12. **`ContentExtractorPort`'s docstring names no separate-service adapter** (`src/ports/content_extractor_port.py:1-6`), unlike the two runner ports; S3
     updates it with `SandboxContentExtractor`.
 13. **`GROUP_PREFIXES`'s comment plans `drive`/`chat` prefixes** (`src/composition/sandbox_setup.py:35-36`: "INDEXER -> drive, media; MAIN -> chat");

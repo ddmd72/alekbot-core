@@ -333,10 +333,9 @@ the `Authorization` header (403 without it), and `webContentLink` is a browser l
    `http://` URL only when it is its own open relay's. `FORMAT_WHITELIST` admits only self-contained demuxers
    (`media.py:36-41`), so a crafted file cannot make ffmpeg open a second resource.
 
-**The relay is the in-indexer path only.** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](UNTRUSTED_CONTENT_SANDBOX_RFC.md)'s media
-op assumes a pre-authenticated URL (its §4.5), which Google does not provide. When media moves to that service, the
-caller sends the bytes to it, by that RFC's rule that the sandbox never fetches on a user's behalf; the relay does not
-move there.
+**The relay is the in-indexer path only; it is superseded.** With the sandbox's media op (UNTRUSTED_CONTENT_SANDBOX_RFC.md §7 S5, O18, built, not deployed)
+Google media reaches the sandbox through a reverse tunnel the indexer opens: the sandbox asks for byte ranges, the indexer fetches them with the header
+and answers. No URL and no header enter the sandbox, and the relay and the extractor branch are deleted in the same deploy.
 
 **What the sandbox can reach, and for how long** (security review 2026-11-02 folded in):
 
