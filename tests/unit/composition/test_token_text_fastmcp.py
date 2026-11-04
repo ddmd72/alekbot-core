@@ -1,7 +1,7 @@
 """TokenTextFastMCP on the drive app (DRIVE_MCP_CONNECTOR_RFC §5.3, §5.4, §6.1, E9, E15, E17): every tool and parameter
 text and the server instructions come from the tokens at request time; a token upload shows within the cache TTL
-without a restart; the SDK-built schema keeps its types and required list; every tool is read-only; only the open
-declares its result size. Marker texts only."""
+without a restart; the SDK-built schema keeps its types and required list; every tool is read-only; only the open,
+`search_drive` and `find_passages` declare their result size (§14.5). Marker texts only."""
 from __future__ import annotations
 
 import copy
@@ -107,12 +107,13 @@ async def test_the_schema_keeps_its_types_and_required_and_the_registered_tools_
     assert {info.name: info.parameters for info in world.app._tool_manager.list_tools()} == registered
 
 
-async def test_every_tool_is_read_only_and_only_the_open_declares_its_result_size(world):
+async def test_every_tool_is_read_only_and_only_open_search_and_passages_declare_their_result_size(world):
     listed = await world.listed()
     assert all(tool.annotations.readOnlyHint is True for tool in listed.values())
     metas = {name: tool.meta for name, tool in listed.items()}
-    assert metas.pop("open_drive_file") == {"anthropic/maxResultSizeChars": 100_000}
-    assert set(metas.values()) == {None}
+    for name in ("open_drive_file", "search_drive", "find_passages"):
+        assert metas.pop(name) == {"anthropic/maxResultSizeChars": 100_000}, name
+    assert metas and all(meta is None for meta in metas.values())
 
 
 async def test_the_instructions_come_from_the_tokens_and_follow_an_upload(world):
