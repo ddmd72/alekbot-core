@@ -18,15 +18,15 @@ from .drive_index_params import (
 
 _DOCUMENT_KINDS: FrozenSet[str] = frozenset({
     "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "mhtml",
-    "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork",
+    "markdown", "text", "config", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork",
 })
 _MEDIA_KINDS: FrozenSet[str] = frozenset({"image", "audio", "video"})
 
 # The Slice 2+4 admission (§5.1, §24.1), taken with the POLICY_VERSION 2 bump. Each content kind has a named
 # extractor; doc, ppt, mhtml and iwork have none and stay out.
 SLICE2_CONTENT_KINDS: FrozenSet[str] = frozenset({
-    "pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv", "json",
-    "rtf", "msg", "eml", "subtitles",
+    "pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "config", "csv",
+    "json", "rtf", "msg", "eml", "subtitles",
 })
 SLICE2_TRIAGED_KINDS: FrozenSet[str] = frozenset({"image"})
 

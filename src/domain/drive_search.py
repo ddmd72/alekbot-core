@@ -77,7 +77,7 @@ MAX_CHAIN_DEPTH = 64
 # Every kind the policy assigns (document_kind.kind_of), plus "other" and "folder".
 KIND_NAMES: FrozenSet[str] = frozenset({
     "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "mhtml",
-    "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork", "image", "audio", "video",
+    "markdown", "text", "config", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork", "image", "audio", "video",
     "archive", "code", "log", "data_dump", "database", "executable", "disk_image", "other", "folder",
 })
 # Words a user means as several kinds (RFC Δ20). "all my spreadsheets" is the RFC's own example (§10.1).

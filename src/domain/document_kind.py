@@ -44,7 +44,7 @@ _EXT_KIND: Dict[str, str] = {
     ".tgz": "archive", ".bz2": "archive", ".xz": "archive", ".py": "code", ".js": "code", ".ts": "code",
     ".tsx": "code", ".jsx": "code", ".java": "code", ".kt": "code", ".go": "code", ".rs": "code", ".c": "code",
     ".h": "code", ".cpp": "code", ".cs": "code", ".rb": "code", ".php": "code", ".swift": "code", ".sh": "code",
-    ".yaml": "code", ".yml": "code", ".toml": "code", ".ini": "code", ".xml": "code", ".css": "code",
+    ".yaml": "config", ".yml": "config", ".toml": "config", ".ini": "config", ".xml": "code", ".css": "code",
     ".ipynb": "code", ".log": "log", ".sql": "data_dump", ".har": "data_dump", ".jsonl": "data_dump",
     ".ndjson": "data_dump", ".sqlite": "database", ".db": "database", ".mdb": "database", ".accdb": "database",
     ".exe": "executable", ".dll": "executable", ".msi": "executable", ".dmg": "disk_image", ".iso": "disk_image",
@@ -72,7 +72,7 @@ _OOXML_KINDS: FrozenSet[str] = frozenset({"docx", "xlsx", "pptx"})
 _ODF_KINDS: FrozenSet[str] = frozenset({"epub", "odt", "ods", "odp"})     # a `mimetype` member names the kind
 _OLE_KINDS: FrozenSet[str] = frozenset({"xls", "msg", "doc", "ppt"}) | _OOXML_KINDS   # OOXML: encrypted package
 _TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown", "csv", "json", "subtitles", "html", "eml", "code",
-                                         "log", "data_dump", "mhtml"})
+                                         "config", "log", "data_dump", "mhtml"})
 
 _ODF_MIME = {
     b"application/epub+zip": "epub",

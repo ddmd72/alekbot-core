@@ -99,7 +99,7 @@ _SHEETS = KindPolicy(InputRule.SHEETS, ProfileOutput.NO_KEY_VALUES, False)
 _EMAIL = KindPolicy(InputRule.EMAIL, ProfileOutput.FULL, True)
 
 PROFILE_POLICY: Mapping[str, KindPolicy] = {
-    **{kind: _DOC for kind in ("pdf", "docx", "doc", "odt", "rtf", "html", "mhtml", "markdown", "text")},
+    **{kind: _DOC for kind in ("pdf", "docx", "doc", "odt", "rtf", "html", "mhtml", "markdown", "text", "config")},
     **{kind: _SLIDES for kind in ("pptx", "ppt", "odp")},
     **{kind: _SHEETS for kind in ("xlsx", "xls", "ods", "csv")},
     "json": KindPolicy(InputRule.JSON, ProfileOutput.NO_KEY_VALUES, False),
@@ -120,7 +120,7 @@ TITLE_MAX_CHARS = 200
 WHAT_IT_IS_MAX_CHARS = 300
 _TEMPLATE_MACHINE_TEXT = "machine-generated text"
 _README_NAMES_MARK = "\n\n<<folder contents>>\n"
-_NOTE_KINDS = frozenset({"markdown", "text"})
+_NOTE_KINDS = frozenset({"markdown", "text", "config"})
 LIFE_DOMAINS_MAX = 3            # "one to three life areas" (§25.4.1)
 _README_TAIL_MARK = "\n\n<<…>>\n\n"
 
@@ -246,7 +246,7 @@ def template_profile(reason: TemplateReason, kind: str, text: str) -> DriveProfi
         return DriveProfile(title="", what_it_is="", language="", doc_type="web_page")
     if reason is TemplateReason.MACHINE_TEXT:
         return DriveProfile(title="", what_it_is=_TEMPLATE_MACHINE_TEXT, language="", doc_type="other")
-    note = kind in ("markdown", "text")
+    note = kind in _NOTE_KINDS
     return DriveProfile(title="", what_it_is=" ".join(text.split())[:WHAT_IT_IS_MAX_CHARS], language="",
                         doc_type="notes" if note else "other")
 
