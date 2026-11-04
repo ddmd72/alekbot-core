@@ -60,7 +60,7 @@ Cut at the connector's size limit: the rest of this result is not shown. Narrow 
 Download link (opens once, within five minutes): {link}
 
 ### BATCH_NEXT
-If the answer is still incomplete, batch {batch} holds lower-ranked passages: the same question in the same scope, with batch {batch}. Call find_passages with exactly these arguments: {arguments}
+If the answer is still incomplete, batch {batch} holds lower-ranked passages: the same question in the same scope, with batch {batch}. To get it, call find_passages with exactly these arguments: {arguments}
 
 ### BATCH_NEXT_WIDE
 Asked again from batch 1 with wide "yes", the same question returns about twice as many passages in one call.
