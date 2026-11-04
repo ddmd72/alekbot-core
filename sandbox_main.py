@@ -4,7 +4,8 @@ Sandbox service entrypoint (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §4.6,
 One file, two processes (like `indexer_main.py` it is the only place the layers meet, REQ-ARCH-11):
 
     python sandbox_main.py            SUPERVISOR (the container's PID 1). Validates the environment, creates the work
-                                      root, starts `python sandbox_main.py --serve` as a child in its own process
+                                      root, on Cloud Run closes `/tmp` and `/dev/shm` to everyone but root (refusing
+                                      start when that does not hold), starts `python sandbox_main.py --serve` as a child in its own process
                                       group with the write end of a pipe, and waits. After the one request of the
                                       instance (policy `always`) it SIGTERMs the child, kills what is left of the
                                       child's group and exits 0 so the platform replaces the instance. The supervisor
@@ -43,9 +44,11 @@ from src.composition.sandbox_callers import SandboxCallersError
 from src.composition.sandbox_setup import (
     RECYCLE_ABNORMAL,
     RECYCLE_ALWAYS,
+    SHARED_TEMP_DIRS,
     SandboxStartupError,
     StartupPlan,
     build_engine_registry,
+    close_shared_temp_dirs,
     validate_startup,
 )
 from src.domain.sandbox_contract import (
@@ -209,6 +212,8 @@ def supervise(env: Mapping[str, str], *, install_signals: bool = True) -> int:
     try:
         plan = validate_startup(env, on_cloud_run=bool(env.get("K_SERVICE")), allowed_env=IMAGE_ENV_ALLOWLIST)
         prepare_work_root(plan)
+        # Before the server exists: Cloud Run's own tmpfs mounts leave /tmp and /dev/shm world-writable.
+        close_shared_temp_dirs(SHARED_TEMP_DIRS, on_cloud_run=plan.on_cloud_run)
     except (SandboxStartupError, SandboxCallersError) as exc:
         logger.error("[Sandbox] refusing to start: %s", exc)
         return _EXIT_REFUSED
