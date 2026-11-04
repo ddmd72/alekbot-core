@@ -30,6 +30,9 @@ leaves the instance warm for the next one; a request that ends in any other outc
 child's process group): it is killed and the instance ends. A client disconnect while an `ok` body streams does not
 recycle: nothing is left behind.
 
+Busy and draining live in the instance's `SandboxSlot` (`config["slot"]`), shared with the raw ASGI tunnel route
+(`sandbox_tunnel_app`), which also reuses `kill_uid_processes`, `resolve_engine_ids` and `removable_output_dir`.
+
 Three tiny Protocols live here by design (R2: gate decision, gate, recycler), next to the one blueprint factory.
 """
 from __future__ import annotations
@@ -68,6 +71,7 @@ from ..domain.sandbox_contract import (
     encode_outcome,
 )
 from ..utils.logger import logger
+from .sandbox_slot import SandboxSlot
 
 RECYCLE_ALWAYS = "always"
 RECYCLE_NEVER = "never"
@@ -116,7 +120,8 @@ def create_sandbox_blueprint(
     config: Mapping[str, Any],
 ) -> Blueprint:
     """`config`: `work_root` (str), `engine_user` (name or None), `recycle` ("always" | "abnormal" | "never"), and optionally
-    `output_root` (the engines' server-only output root; without it only `render_out_*` directories are removable).
+    `output_root` (the engines' server-only output root; without it only `render_out_*` directories are removable) and
+    `slot` (the instance's `SandboxSlot`, shared with the tunnel route; a new one when absent).
 
     Raises ValueError for an unknown policy, or when the effective uid is 0 and the engine user is missing."""
     work_root = str(config["work_root"])
@@ -124,11 +129,11 @@ def create_sandbox_blueprint(
     policy = str(config.get("recycle", RECYCLE_ALWAYS))
     if policy not in (RECYCLE_ALWAYS, RECYCLE_NEVER, RECYCLE_ABNORMAL):
         raise ValueError(f"unknown recycle policy {policy!r}")
-    engine_ids = _resolve_engine_ids(config.get("engine_user"))
+    engine_ids = resolve_engine_ids(config.get("engine_user"))
     body_deadline_s = max(CEILING_WALL_S, limits_ceiling.wall_s) + TIMEOUT_MARGIN_S
 
     bp = Blueprint("sandbox", __name__)
-    state = {"busy": False, "draining": False}
+    slot: SandboxSlot = config.get("slot") or SandboxSlot()
 
     @bp.record_once
     def _register(setup_state: Any) -> None:
@@ -177,9 +182,8 @@ def create_sandbox_blueprint(
             return _refuse(ctx, 404, SandboxStatus.BAD_REQUEST, "unknown_op")
         ctx.op = op
 
-        if state["busy"] or state["draining"]:
+        if not slot.try_acquire():
             return _refuse(ctx, 503, SandboxStatus.RECYCLING, "recycling", close=True)
-        state["busy"] = True
         handed_off = False
         try:
             declared = request.content_length
@@ -207,7 +211,7 @@ def create_sandbox_blueprint(
             ctx.wrote = True
             ctx.recycles = policy == RECYCLE_ALWAYS
             if ctx.recycles:
-                state["draining"] = True
+                slot.drain()
             try:
                 _chown(body_path, engine_ids)
                 outcome_of_copy = await _copy_body(fd, ctx)
@@ -236,7 +240,7 @@ def create_sandbox_blueprint(
                 logger.error("[Sandbox] a process survived the engine child (op=%s): recycling the instance", ctx.op)
                 _mark_abnormal(ctx)
             if result.output_path:
-                if _removable_output_dir(result.output_path, output_root, work_root):
+                if removable_output_dir(result.output_path, output_root, work_root):
                     ctx.output_dir = os.path.dirname(result.output_path)
                 else:
                     logger.error("[Sandbox] engine output outside its root, ignored (op=%s)", ctx.op)
@@ -309,7 +313,7 @@ def create_sandbox_blueprint(
         """Policy `abnormal`: this request did not end `ok`, so the instance ends with it (I2)."""
         if policy == RECYCLE_ABNORMAL and ctx.wrote:
             ctx.recycles = True
-            state["draining"] = True
+            slot.drain()
 
     def _register_finish(ctx: "_RequestState") -> None:
         """Finish the request when the ASGI handler task ends: after the final frame, and also on a cancel
@@ -331,7 +335,7 @@ def create_sandbox_blueprint(
         ctx.finished = True
         ctx.close_handle()
         if not ctx.recycles:
-            state["busy"] = False
+            slot.release()
         elif not ctx.recycled:
             ctx.recycled = True
             try:
@@ -431,7 +435,7 @@ def _engine_for(engines: Mapping[SandboxOp, SandboxEngine], op: str) -> Optional
         return None
 
 
-def _kill_uid_processes(uid: int) -> int:
+def kill_uid_processes(uid: int) -> int:
     """SIGKILL every process whose real uid is `uid` (the engine uid) and return how many there were. Run after the
     engine child ended, so any hit is a leftover (a fork that left the child's process group). Linux `/proc` only;
     a process that vanishes meanwhile is not counted."""
@@ -453,7 +457,13 @@ def _kill_uid_processes(uid: int) -> int:
     return found
 
 
-def _resolve_engine_ids(engine_user: Optional[str]) -> Optional[Tuple[int, int]]:
+# The blueprint calls the function through this module-level name (tests replace it).
+_kill_uid_processes = kill_uid_processes
+
+
+def resolve_engine_ids(engine_user: Optional[str]) -> Optional[Tuple[int, int]]:
+    """(uid, gid) of the engine user when the server runs as root; None otherwise. Raises ValueError when root has no
+    usable engine user."""
     if os.geteuid() != 0:
         return None
     if not engine_user:
@@ -536,7 +546,7 @@ def _log(ctx: "_RequestState", status: Optional[SandboxStatus]) -> None:
     )
 
 
-def _removable_output_dir(output_path: str, output_root: Optional[str], work_root: str) -> bool:
+def removable_output_dir(output_path: str, output_root: Optional[str], work_root: str) -> bool:
     """The engine's output directory is removed by us, so it must be one of the engine's own: a direct child of
     the configured output root, or (no root configured) a `render_out_*` directory outside the workdir root.
     Anything else is refused and never touched."""
