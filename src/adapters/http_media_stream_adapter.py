@@ -3,8 +3,9 @@
 One `ClientSession` per stream, closed when the generator closes (a client disconnect included); 64 KiB chunks; a
 connect timeout and a read-stall timeout, no total timeout (a long download is capped by the Cloud Run request
 timeout). A source that carries headers (a provider bearer) never follows a redirect, so the headers never reach
-another host; a header-free (pre-signed) source may. The precedent is `drive_parser/media_relay.py`. The url and the
-headers never reach a log line or an error.
+another host; a header-free (pre-signed) source may. The precedent was the indexer's loopback media relay (deleted in
+S5; `sandbox_client/media_range_source.py` now follows no redirect at all). The url and the headers never reach a log
+line or an error.
 """
 from __future__ import annotations
 

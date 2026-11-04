@@ -1,51 +1,13 @@
-"""The indexer runs its media children (transcription) as the unprivileged user its image names (R3 F3-1,
-USER_DRIVE_INDEXING_RFC §9, §24.14): indexer_main passes DRIVE_PARSER_USER to the media extractor; the Dockerfile creates
-that user and sets the variable, and with transcription on a user missing from the container fails the start. Document
-parsing no longer runs a child in the indexer: it goes through the sandbox light service (UNTRUSTED_CONTENT_SANDBOX_RFC
-O14), so with transcription off no parser user is looked up."""
+"""The image's unprivileged parser user (R3 F3-1, USER_DRIVE_INDEXING_RFC §9, §24.14): the Dockerfile creates the user
+it names in DRIVE_PARSER_USER and refuses world-writable app or library files. The indexer itself runs no parser or
+media child any more: documents and recordings go through the sandbox light service (UNTRUSTED_CONTENT_SANDBOX_RFC O14,
+§7 S5), so it looks up no parser user; the image keeps the user until S6-a (one image serves every runtime, §12.6)."""
 import re
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
-
-import indexer_main
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
-from src.composition import drive_indexing_setup
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
-
-
-class _Queue:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-
-@pytest.fixture
-def wired(monkeypatch):
-    captured = {}
-    monkeypatch.delenv("K_SERVICE", raising=False)
-    monkeypatch.delenv(PARSER_USER_ENV, raising=False)
-    for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
-                       "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
-                       # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
-                       "SANDBOX_PARSE_URL": "https://alek-sandbox-light.test.example",
-                       "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
-                       "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
-                       "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid", "ANTHROPIC_API_KEY": "ak"}.items():
-        monkeypatch.setenv(key, value)
-    monkeypatch.setattr(indexer_main.firestore, "AsyncClient", MagicMock())
-    monkeypatch.setattr(drive_indexing_setup, "GcpTaskQueue", _Queue)
-    monkeypatch.setattr(indexer_main, "build_place_lookup", lambda: (lambda lat, lon: None))
-    monkeypatch.setattr(indexer_main, "DriveIndexingService", lambda *a, **kw: captured.update(kw) or MagicMock())
-    return captured
-
-
-def test_with_transcription_on_a_named_user_missing_from_the_container_fails_the_start(wired, monkeypatch):
-    monkeypatch.setenv("DRIVE_TRANSCRIBE_ENABLED", "on")
-    monkeypatch.setenv(PARSER_USER_ENV, "no-such-user-r3-f3-1")
-    with pytest.raises(RuntimeError, match="no-such-user-r3-f3-1"):
-        indexer_main.build_app()
 
 
 def test_the_image_creates_the_user_it_names():

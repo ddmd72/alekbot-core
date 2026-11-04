@@ -1,13 +1,9 @@
 """The ffprobe / ffmpeg argv of the media child (USER_DRIVE_INDEXING_RFC §27.4, Δ99, Δ134; plan G14): every hardening
 flag is pinned, so a refactor cannot drop one silently."""
-import logging
 
 import pytest
 
-from src.domain.drive_media_source import MediaSource
 from src.adapters.drive_parser import media
-from src.adapters.drive_parser.media_extractor import SubprocessMediaExtractor
-from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG
 
 URL = "https://download.example.invalid/f?tempauth=SECRET-TOKEN-123"
 CA = "/etc/test/ca.pem"
@@ -114,25 +110,3 @@ def test_an_empty_or_invalid_container_is_refused():
             media.build_window_argv(URL, CA, bad, 0, 10, "/w/x")
         with pytest.raises(ValueError):
             media.build_pass_argv(URL, CA, bad, 0, 10, "/w/x")
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg")
-async def test_url_not_in_parent_logs(tmp_path, monkeypatch, caplog):
-    """The URL is on the child's stdin and in the grandchild's argv; this process's own argv and logs never hold it."""
-    from src.adapters.drive_parser import media_launch
-    spawned = []
-    real = media_launch.asyncio.create_subprocess_exec
-
-    async def record(*args, **kwargs):
-        spawned.append(args)
-        return await real(*args, **kwargs)
-
-    monkeypatch.setattr(media_launch.asyncio, "create_subprocess_exec", record)
-    extractor = SubprocessMediaExtractor(temp_root=str(tmp_path), ca_file=CA)
-    with caplog.at_level(logging.DEBUG):
-        with pytest.raises(Exception):                        # nothing listens there: MediaUnreadable
-            await extractor.probe(MediaSource(url="https://localhost:1/path?tempauth=SECRET-TOKEN-123"))
-    assert spawned and all("SECRET-TOKEN-123" not in " ".join(args) for args in spawned)
-    assert "[DriveMedia]" in caplog.text                      # the capture works: the run did log
-    assert "SECRET-TOKEN-123" not in caplog.text and "tempauth" not in caplog.text
