@@ -444,6 +444,7 @@ async def test_windows_are_streamed_as_window_frames_before_the_result(rig):
     assert (w0.kind, w0.id, w0.payload) == (FrameType.WINDOW, 0, bytes([7]) * 300_000)
     assert (w1.kind, w1.id, w1.payload) == (FrameType.WINDOW, 1, bytes([8]) * 70_000)
     assert decode_result(result.payload, WINDOWS).media.windows == WINDOWS.windows
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     await r.settled()
     assert not (r.out / "media_out_test").exists()                    # the route removes the engine's copies
@@ -461,6 +462,7 @@ async def test_an_engine_raising_mid_stream_still_gets_result_error_and_end_stre
     assert (await client.next_frame()).kind is FrameType.OPEN
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE) == TunnelResult(status=SandboxStatus.ERROR, detail="engine_failure")
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     assert not client.reset.is_set()
     await r.settled()
@@ -498,6 +500,7 @@ async def test_an_engine_start_failure_is_a_result_error_on_the_opened_stream(ri
     assert client.status == 200
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE).status is SandboxStatus.ERROR
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     await r.settled()
     assert r.recycler.calls == 1
@@ -510,6 +513,7 @@ async def test_a_frame_violation_kills_the_child_and_ends_with_tunnel_bounds(rig
     await client.send(start_frame())                                # a second START: outside the contract
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE) == TunnelResult(status=SandboxStatus.ERROR, detail="tunnel_bounds")
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     await r.settled()
     assert r.engine.runs[0].killed and r.recycler.calls == 1
@@ -527,6 +531,7 @@ async def test_a_frame_the_engines_ledger_refuses_ends_with_tunnel_bounds(rig):
     await client.send(body_frame(FrameType.DATA, first.id, 999, b"x"))   # an offset the ledger does not expect
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE).detail == "tunnel_bounds"
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     await r.settled()
     assert r.engine.runs[0].killed
@@ -561,6 +566,7 @@ async def test_beats_flow_while_the_child_works_silently(rig):
         assert frame.kind is FrameType.BEAT
         beats += 1
     assert beats >= 3                                                  # every 0.05 s here, BEAT_S in production
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
 
 
@@ -612,6 +618,7 @@ async def test_a_body_silent_while_the_child_waits_for_bytes_is_tunnel_idle(rig)
     assert (await client.next_frame()).kind is FrameType.OPEN
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE).detail == "tunnel_idle"
+    client.end_body()                                                 # the caller closes first, on RESULT
     await asyncio.wait_for(client.ended.wait(), GUARD_S)
     await r.settled()
     assert r.engine.runs[0].killed
@@ -640,6 +647,7 @@ async def test_a_process_left_under_the_engine_uid_recycles_even_after_ok(rig, m
         await client.next_frame()
     result = await client.next_frame()
     assert decode_result(result.payload, PROBE) == PROBE_OK
+    client.end_body()                                                 # the caller closes first, on RESULT
     await r.settled()
     assert killed == [os.getuid()] and r.recycler.calls == 1
 

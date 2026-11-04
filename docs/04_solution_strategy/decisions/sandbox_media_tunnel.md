@@ -1,7 +1,7 @@
 # Decision: media reaches the sandbox through a reverse tunnel opened by the indexer (S5, O18)
 
 **Date:** 2026-11-04
-**Status:** built on its branch, not deployed, not accepted.
+**Status:** deployed 2026-11-04 (PR #273). Acceptance: OneDrive passed; a long Google recording found the close-order defect below.
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4.5, §4.7, §7 S5, OQ-S11;
 [GOOGLE_DRIVE_RFC.md](../../10_rfcs/GOOGLE_DRIVE_RFC.md) G2; [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27.4.
 
@@ -11,6 +11,12 @@
 serves byte ranges of the recording; the media child's loopback range server turns ffmpeg's reads into OPEN frames; a terminal RESULT frame decides the
 outcome. The same path serves OneDrive and Google. The light service needs no egress and receives no URL, credential or whole file. A spike proved the
 route on Cloud Run before the build. No `SANDBOX_MEDIA` knob; the in-process reader and its relay are deleted in the same deploy (O14 pattern).
+
+**The caller closes first (2026-11-04, after acceptance).** On RESULT the indexer ends its request half and sends nothing more; the
+route ends the response only after that end, bounded by the run's deadline. The first build ended the response while the request half was still
+open. Cloud Run's front end then closes that half itself (spike S4d), and with a 2 h 27 min recording's 26 MB of windows not yet delivered it
+aborted the stream with RST_STREAM INTERNAL_ERROR, twice in a row, while the sandbox and Cloud Run's request log both recorded success. The spike
+had sent only small frames in that direction.
 
 ## Rejected alternatives
 
