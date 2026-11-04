@@ -54,6 +54,7 @@ RECYCLE_ABNORMAL = "abnormal"   # light (parse) service only: a normal request k
 # The unprivileged uid the engine child runs as on Cloud Run; the image (T9) creates this user.
 DEFAULT_ENGINE_USER = "sandboxengine"
 _CLOUD_RUN_WORK_ROOT = "/work"
+_DEFAULT_BROWSER_CACHE_DIR = os.path.join("~", ".cache", "puppeteer")   # puppeteer's own default, expanded below
 
 
 class SandboxStartupError(Exception):
@@ -71,6 +72,7 @@ class StartupPlan:
     output_root: str
     engine_user: Optional[str]                     # child uid name (None only off root, locally)
     on_cloud_run: bool
+    browser_cache_dir: Optional[str] = None        # where Puppeteer finds chrome-headless-shell (render family)
     family: str = FAMILY_RENDER                    # "render" | "light" (SANDBOX_SERVICE)
 
 
@@ -126,6 +128,7 @@ def validate_startup(
         recycle=recycle, service_url=url, unconfigured=not url and not local_open, caller_sets=caller_sets,
         group_prefixes=dict(group_prefixes), work_root=work_root, output_root=output_root,
         engine_user=engine_user, on_cloud_run=on_cloud_run, family=family,
+        browser_cache_dir=env.get("PUPPETEER_CACHE_DIR") or _DEFAULT_BROWSER_CACHE_DIR,
     )
 
 
@@ -141,8 +144,19 @@ def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
         ops = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS)
         return {op: ParseEngine(launcher, op=op, output_root=output_root) for op in ops}
     from ..adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
+    from ..adapters.sandbox_engine.html_render_engine import (
+        BROWSER_MEMORY_MODE, BROWSER_NOFILE, BROWSER_NPROC, HtmlRenderEngine,
+    )
 
-    return {SandboxOp.RENDER_DOCX: DocxRenderEngine(launcher, output_root=output_root)}
+    # The browser cannot live under RLIMIT_AS (it reserves tens of GiB of address space): its own launcher.
+    browser_launcher = ChildLauncher(
+        user=plan.engine_user, memory_mode=BROWSER_MEMORY_MODE, nproc=BROWSER_NPROC, nofile=BROWSER_NOFILE,
+    )
+    cache_dir = os.path.expanduser(plan.browser_cache_dir or _DEFAULT_BROWSER_CACHE_DIR)
+    registry: Dict[SandboxOp, Any] = {SandboxOp.RENDER_DOCX: DocxRenderEngine(launcher, output_root=output_root)}
+    for op in (SandboxOp.RENDER_PDF, SandboxOp.RENDER_PNG):
+        registry[op] = HtmlRenderEngine(browser_launcher, op=op, output_root=output_root, browser_cache_dir=cache_dir)
+    return registry
 
 
 def _prepare_output_root(output_root: str, work_root: str) -> str:
