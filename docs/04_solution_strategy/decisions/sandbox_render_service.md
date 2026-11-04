@@ -14,9 +14,9 @@ The script a model wrote for a DOCX (the least constrained input the product run
 service** whose runtime identity holds **no IAM role** and which is given **no secret**. The main service keeps
 `DocxRunnerPort`; `SandboxDocxRunner` (`src/adapters/sandbox_client/`) is a second implementation next to
 `NodeDocxRunner`, chosen once at startup by `SANDBOX_RENDER` (`inprocess` | `sandbox`). Owner decision O15 (2026-11-04): this one knob
-covers the whole render family; `SANDBOX_RENDER=sandbox` also selects `SandboxPuppeteerRunner` (PDF) and `SandboxHtmlRenderer` (widget PNG)
+covers the whole render family; `SANDBOX_RENDER=sandbox` also selects `SandboxPuppeteerRunner` (PDF); widget PNGs are not on the knob (owner decision O16, 2026-11-04: they render in-process, the cold start in the one-shot sandbox is too slow for widgets; `SandboxHtmlRenderer` and `render.png` stay built, not wired)
 in place of `NodePuppeteerRunner` / `PlaywrightHtmlRenderer`, wired in `src/composition/sandbox_client_setup.py`; no new key or substitution. There is **never an automatic
-fallback** to the in-process runner: a sandbox that is down degrades the render features (DOCX, PDF, widget PNG), nothing else.
+fallback** to the in-process runner: a sandbox that is down degrades the render features (DOCX, PDF), nothing else.
 
 Shape of the service (`sandbox_main.py`, `Dockerfile.sandbox` target `render`):
 
@@ -102,7 +102,7 @@ Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.
   `meta` field set stays pinned).
 - **Not yet measured:** the `render` image size, the cold-start latency of a widget (a fresh instance plus a browser start; measured at
   acceptance, the owner decides if it is too slow), the Chromium-sandbox outcome, the work volume size against a large page.
-- **Not in this slice:** which implementation the main service uses for these two ports.
+- **Main-service choice:** PDF follows the `SANDBOX_RENDER` knob; widget PNG is always in-process (O16: the measured cold start of the one-shot render sandbox is too slow for widgets). `render.png` stays built, not wired.
 
 ## Accepted residuals
 
