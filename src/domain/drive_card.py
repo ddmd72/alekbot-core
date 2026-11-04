@@ -28,7 +28,7 @@ _KIND_LABEL = {
     "pdf": "PDF document", "docx": "Word document", "doc": "Word document", "pptx": "presentation",
     "ppt": "presentation", "xlsx": "spreadsheet", "xls": "spreadsheet", "ods": "spreadsheet", "csv": "table (CSV)",
     "odt": "text document", "odp": "presentation", "epub": "e-book", "html": "web page", "mhtml": "saved web page",
-    "markdown": "note (Markdown)", "text": "text file", "json": "data (JSON)", "rtf": "text document",
+    "markdown": "note (Markdown)", "text": "text file", "config": "structured text (YAML, TOML, INI)", "json": "data (JSON)", "rtf": "text document",
     "msg": "email message", "eml": "email message", "subtitles": "transcript / subtitles", "iwork": "Apple iWork file",
     "image": "image", "audio": "audio", "video": "video", "archive": "archive", "code": "source code",
     "log": "log file", "data_dump": "data dump", "database": "database", "executable": "program",

@@ -61,7 +61,7 @@ Optional: search within this folder and its subfolders: a folder path such as 'C
 Optional: the names of drives to search, comma-separated, as list_folder with folder "/" lists them. Empty searches every drive searched by default. Name drives only when the user names them or uses a phrase that fits only them; never guess. For 'everywhere' / 'all drives', list every drive's name (one search). A folder that starts with a drive's name is searched on that drive.
 
 ### search_drive.kind
-Optional file type. A family covers every format of its kind: spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused.
+Optional file type. A family covers every format of its kind: spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, config, image, video, audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused.
 
 ### search_drive.date_from
 Optional earliest date, YYYY-MM-DD, inclusive, in the user's timezone: a photo's taken date, otherwise the date written in the document when the index found one, otherwise the file's date. Only for a time span the user gives for the files themselves ('photos from March', 'files from last year'); for what expires, it bounds the expiry date. A date the user looks for inside a document goes in query, never here: the filter would drop the very files that hold it.

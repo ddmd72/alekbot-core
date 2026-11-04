@@ -65,10 +65,10 @@ def test_the_callers_and_the_cache_life():
 
 
 def test_in_process_kinds_are_never_parse_kinds():
-    assert IN_PROCESS_TEXT_KINDS == {"text", "markdown", "json", "code", "log"}
+    assert IN_PROCESS_TEXT_KINDS == {"text", "markdown", "json", "code", "config", "log"}   # config: policy 5 (Δ248)
     assert not IN_PROCESS_TEXT_KINDS & PARSE_KINDS
 
 
 def test_parse_kinds_are_the_child_readers_without_the_in_process_ones():
     """A reader added to (or removed from) the child must be placed on one side or the other."""
-    assert PARSE_KINDS | {"text", "markdown", "json"} == set(readers._READERS)
+    assert PARSE_KINDS | {"text", "markdown", "json", "config"} == set(readers._READERS)

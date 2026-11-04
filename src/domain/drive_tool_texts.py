@@ -44,7 +44,7 @@ SEARCH_FOLDER = f"Optional: search within this folder and its subfolders: {_FOLD
 KIND = (
     "Optional file type. A family covers every format of its kind: spreadsheet (xlsx, xls, ods, csv), document "
     "(docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), presentation (pptx, ppt, odp), photo (any image). "
-    "Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, audio, archive, code, folder, or a file "
+    "Or one kind: pdf, docx, xlsx, markdown, text, csv, config, image, video, audio, archive, code, folder, or a file "
     "extension such as 'jpg'. Other words are refused."
 )
 DRIVES = ("Optional: the names of drives to search, comma-separated, as drive_state lists them. Empty searches every "

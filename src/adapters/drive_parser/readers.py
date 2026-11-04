@@ -544,6 +544,7 @@ _READERS: Dict[str, Callable[[str, str], Union[_Read, _PageRead]]] = {
     "pdf": _read_pdf, "docx": _read_converter, "pptx": _read_converter, "epub": _read_converter,
     "msg": _read_converter, "xlsx": _read_xlsx, "xls": _read_xls, "odt": _read_odf, "ods": _read_odf,
     "odp": _read_odf, "html": _read_html, "text": _read_text, "markdown": _read_text, "json": _read_text,
+    "config": _read_text,
     "csv": _read_csv, "subtitles": _read_subtitles, "rtf": _read_rtf, "eml": _read_eml,
 }
 

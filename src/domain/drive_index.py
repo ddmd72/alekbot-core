@@ -17,14 +17,15 @@ from .drive_enrichment import DriveProfile, PhotoObject
 from .drive_media_facts import DriveMediaFacts
 from .drive_note_check import NoteCheck
 
-POLICY_VERSION = 4                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
+POLICY_VERSION = 5                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
                                               # for transcription (§27.3); re-plans EVERY record (113/113 for the owner), not only media: structure
                                               # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed; 4: an
-                                              # `.epub.pkgf` package is an epub (§5.1), re-planned as one
+                                              # `.epub.pkgf` package is an epub (§5.1), re-planned as one;
+                                              # 5: config (YAML, TOML, INI) admitted
 # The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
 # A bump that only changes media admission must not re-decide structure for every user, so these checks compare
 # against this, not POLICY_VERSION. Raise it only when a bump changes how folders are classified.
-STRUCTURE_POLICY_SINCE = 2
+STRUCTURE_POLICY_SINCE = 5   # 5 also re-decides structure: config files changed the density probe's class
 CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
                                               # photo fields, no lead text but for machine text (§25.2.7); 4: the
                                               # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)

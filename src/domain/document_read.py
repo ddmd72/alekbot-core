@@ -47,9 +47,9 @@ CALLER_CONNECTOR = "connector"
 READER_SKIPPED = "reader_skipped"
 
 # A3: the kinds that have no converter; reading UTF-8 is not parsing, so the caller reads them in process.
-IN_PROCESS_TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown", "json", "code", "log"})
+IN_PROCESS_TEXT_KINDS: FrozenSet[str] = frozenset({"text", "markdown", "json", "code", "config", "log"})
 # The parser child's reader keys (src/adapters/drive_parser/readers.py `_READERS`) without the in-process kinds. A test
-# ties the two: PARSE_KINDS | {"text", "markdown", "json"} == the child's keys.
+# ties the two: PARSE_KINDS | {"text", "markdown", "json", "config"} == the child's keys.
 PARSE_KINDS: FrozenSet[str] = frozenset({
     "pdf", "docx", "pptx", "epub", "msg", "xlsx", "xls", "odt", "ods", "odp", "html", "csv", "subtitles", "rtf",
     "eml",

@@ -26,7 +26,7 @@ def test_admission_reads_sets_at_call_time(monkeypatch):
     assert admission("video") is Admission.NONE
 
 
-def test_policy_is_four_and_card_version_is_untouched():
-    # 3 admitted audio and video (§27.3); 4 reads `.epub.pkgf` packages as epub (§5.1)
-    assert POLICY_VERSION == 4 and CURRENT_VERSIONS["policy"] == 4
+def test_policy_is_five_and_card_version_is_untouched():
+    # 3 admitted audio and video (§27.3); 4 reads `.epub.pkgf` packages as epub (§5.1); 5 admits config (Δ248)
+    assert POLICY_VERSION == 5 and CURRENT_VERSIONS["policy"] == 5
     assert "render" not in CURRENT_VERSIONS and "summary" not in CURRENT_VERSIONS

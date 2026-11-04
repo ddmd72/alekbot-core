@@ -454,10 +454,12 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (RFC Δ18).
 - **Policy (§5).** Since `POLICY_VERSION` 2 the §5.1 document kinds are admitted for content (`admission()` →
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
-  subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
+  subtitles (and, since 5, config files). Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
   (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
   Since `POLICY_VERSION` 4 an Apple Books package (`<name>.epub.pkgf`, a plain tar of the EPUB folder) is kind `epub`:
   the parser child repacks it as an EPUB ZIP in memory under the EPUB ZIP bounds (RFC §5.1).
+  Since `POLICY_VERSION` 5 config files (`.yaml .yml .toml .ini`, kind `config`) are admitted and read as plain text
+  (RFC Δ248); source code and `.xml` stay `code`.
   Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
   (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
   download cap (`size_cap`: 100 MiB for a PDF, 10 MiB for XLSX/XLS, 45 MiB for the rest; indexer only, chat/open keeps 45 MiB,
@@ -628,7 +630,7 @@ A file arrives in a delta page (or, for the bot's own write, in a nudge read wit
   `unresolved`. That is a **scope hold, not a content outcome**: the file keeps the outcome that stands, its `reason`
   holding it (a failure reason, a content demotion, or none for an indexed file, whose readable generation and
   content fields stay as they are), so when the parent resolves `_outcome_state` gives the outcome back and the file
-  is not read again. A dense folder of more than 500 children is probed again on every `POLICY_VERSION` bump, so its
+  is not read again. A dense folder of more than 500 children is probed again when `STRUCTURE_POLICY_SINCE` is raised (as policy 5 does), so its
   children pass through `unresolved` then; without the hold each would be re-read (and scans re-billed). A new
   content version that arrives while the file is held restarts its attempts and charged outages, like any edit.
 
