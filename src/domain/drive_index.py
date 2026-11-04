@@ -25,7 +25,7 @@ POLICY_VERSION = 5                            # 2: the Slice 2+4 kinds admitted 
 # The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
 # A bump that only changes media admission must not re-decide structure for every user, so these checks compare
 # against this, not POLICY_VERSION. Raise it only when a bump changes how folders are classified.
-STRUCTURE_POLICY_SINCE = 2
+STRUCTURE_POLICY_SINCE = 5   # 5 also re-decides structure: config files changed the density probe's class
 CARD_VERSION = 4                              # 2: brief, caption and lead text in the card (§24.4); 3: profile and
                                               # photo fields, no lead text but for machine text (§25.2.7); 4: the
                                               # capture segment, no brief doc type (§26.3, Δ64); S6 (unreleased)

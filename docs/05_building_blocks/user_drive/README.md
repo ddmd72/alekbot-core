@@ -630,7 +630,7 @@ A file arrives in a delta page (or, for the bot's own write, in a nudge read wit
   `unresolved`. That is a **scope hold, not a content outcome**: the file keeps the outcome that stands, its `reason`
   holding it (a failure reason, a content demotion, or none for an indexed file, whose readable generation and
   content fields stay as they are), so when the parent resolves `_outcome_state` gives the outcome back and the file
-  is not read again. A dense folder of more than 500 children is probed again on every `POLICY_VERSION` bump, so its
+  is not read again. A dense folder of more than 500 children is probed again when `STRUCTURE_POLICY_SINCE` is raised (as policy 5 does), so its
   children pass through `unresolved` then; without the hold each would be re-read (and scans re-billed). A new
   content version that arrives while the file is held restarts its attempts and charged outages, like any edit.
 

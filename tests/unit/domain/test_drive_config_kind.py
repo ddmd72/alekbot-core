@@ -113,3 +113,32 @@ def test_a_team_roster_yaml_is_not_machine_text():
             f"  manager: {_MANAGERS[(i // 9) % 3]}\n  note: The {team} group number {i} {note}, as the {_TEAMS[(i // 80 + 3) % 8]} asked."
         )
     assert not is_machine_text("\n".join(entries))
+
+
+# -- structure: a kind changed class, so folder decisions taken under policy 4 are taken again ----------------------
+
+def test_a_dense_folder_decided_under_policy_4_is_probed_again():
+    from src.domain.drive_index import DriveChange
+    from src.domain.drive_index_params import DENSE_FOLDER_CHILDREN
+    from src.domain.drive_index_planner import needs_probe
+    count = DENSE_FOLDER_CHILDREN + 100
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="f", parent_id="root", name="Acme Settings",
+                           size_bytes=0, kind="folder", scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY,
+                           reason=Reason.DENSE_TREE, policy_version=4, name_keys_version=NAME_KEYS_VERSION,
+                           child_count=count, probed_child_count=count)
+    change = DriveChange(item_id="f", name="Acme Settings", parent_id="root", size_bytes=0, is_folder=True,
+                         child_count=count)
+    assert needs_probe(change, Scope.NORMAL, rec) is True
+    assert needs_probe(change, Scope.NORMAL, replace(rec, policy_version=POLICY_VERSION)) is False
+
+
+def test_a_folder_of_yaml_files_is_not_dense():
+    from src.domain.drive_index import DriveChange
+    from src.domain.drive_index_params import DENSE_FOLDER_CHILDREN
+    from src.domain.drive_index_policy import is_dense, probe_from_children
+    count = DENSE_FOLDER_CHILDREN + 100
+    children = [DriveChange(item_id=f"c{i}", name=f"office_{i}.yaml", parent_id="f", size_bytes=10)
+                for i in range(count)]
+    assert not is_dense(count, probe_from_children(children))
+    sources = [replace(c, name=f"office_{i}.xml") for i, c in enumerate(children)]
+    assert is_dense(count, probe_from_children(sources))   # contrast: code-class files still make a folder dense
