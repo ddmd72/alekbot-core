@@ -62,7 +62,7 @@ def test_a_package_stored_under_policy_3_is_re_planned_as_an_epub():
                            kind="other", scope=Scope.NORMAL, state=RecordState.METADATA_ONLY,
                            reason=Reason.KIND_NOT_ADMITTED, policy_version=3,
                            name_keys_version=NAME_KEYS_VERSION)
-    assert POLICY_VERSION == 4
+    assert POLICY_VERSION == 5   # 4 added the epub package; 5 (config, Δ248) keeps a policy-3 record stale
     assert structure_stale(rec, embedding_space=None)
     assert not structure_stale(replace(rec, policy_version=POLICY_VERSION), embedding_space=None)
     cls = classify(change_from_record(rec), Scope.NORMAL, None, rec)

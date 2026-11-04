@@ -1,11 +1,13 @@
-"""Policy 3 changes media admission only: structure decisions made under policy 2 stand (STRUCTURE_POLICY_SINCE, Ruling
-T-R5); a policy-1 record is still re-decided. Also: a pending media record is never "unread" while transcription is
-off (§27.3)."""
+"""A POLICY_VERSION bump that changes media admission only (policy 3, §27.3) leaves structure decisions made at or after
+STRUCTURE_POLICY_SINCE standing (Ruling T-R5); a record older than the floor is re-decided. The floor is policy 5 since
+config files changed the density probe's class (Δ248), so a policy-2 record is now re-decided too. Also: a pending
+media record is never "unread" while transcription is off (§27.3)."""
 from datetime import datetime, timezone
 
 import pytest
 
 from src.domain.connection_scope import ConnectionScope
+from src.domain import drive_index_planner as planner
 from src.domain import drive_index_policy as pol
 from src.domain.drive_index import (
     POLICY_VERSION, STRUCTURE_POLICY_SINCE, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, Reason,
@@ -31,13 +33,22 @@ def folder(policy, scope=Scope.OPAQUE_ROOT, reason=Reason.DENSE_TREE, **kw):
     return DriveIndexRecord(**base)
 
 
-def test_structure_floor_is_below_the_current_policy():
-    assert STRUCTURE_POLICY_SINCE == 2 and POLICY_VERSION > STRUCTURE_POLICY_SINCE
+@pytest.fixture
+def later_bump(monkeypatch):
+    """A later, media-only POLICY_VERSION bump: the planner's current policy is one above the structure floor, so a
+    record stored at the floor is behind the current policy (as a policy-2 record was under policy 4)."""
+    monkeypatch.setattr(planner, "POLICY_VERSION", STRUCTURE_POLICY_SINCE + 1)
+    return STRUCTURE_POLICY_SINCE
 
 
-def test_policy_2_collapsed_folder_readme_not_re_read(monkeypatch):
+def test_structure_floor_is_policy_5_and_not_above_the_current_policy():
+    # 5 raised the floor from 2: config (YAML, TOML, INI) became a document in the density probe (Δ248)
+    assert STRUCTURE_POLICY_SINCE == 5 and POLICY_VERSION >= STRUCTURE_POLICY_SINCE
+
+
+def test_floor_collapsed_folder_readme_not_re_read_after_a_media_only_bump(monkeypatch, later_bump):
     monkeypatch.setattr(pol, "ADMITTED_KINDS", SLICE2_CONTENT_KINDS)
-    rec = folder(2, name=".config", reason=Reason.DOT_NAME, probed_child_count=0, readme_excerpt="Lead.", readme_version="c1", readme_item_id="r1")
+    rec = folder(later_bump, name=".config", reason=Reason.DOT_NAME, probed_child_count=0, readme_excerpt="Lead.", readme_version="c1", readme_item_id="r1")
     again = plan_observation(change_from_record(rec), rec, None, None, ctx()).upsert
     assert not again.readme_pending and again.readme_excerpt == "Lead."
 
@@ -53,16 +64,16 @@ def _grown(rec, count):
     return DriveChange(item_id=rec.item_id, name=rec.name, parent_id="root", is_folder=True, child_count=count)
 
 
-def test_policy_2_dense_folder_is_not_re_probed():
-    assert needs_probe(_grown(folder(2), 700), Scope.NORMAL, folder(2)) is False
+def test_floor_dense_folder_is_not_re_probed_after_a_media_only_bump(later_bump):
+    assert needs_probe(_grown(folder(later_bump), 700), Scope.NORMAL, folder(later_bump)) is False
 
 
 def test_policy_1_dense_folder_is_re_probed():
     assert needs_probe(_grown(folder(1), 700), Scope.NORMAL, folder(1)) is True
 
 
-def test_policy_2_marker_opaque_folder_is_not_re_planned():
-    marker = folder(2, reason=Reason.OPAQUE_ROOT, probed_child_count=0, child_count=5000)
+def test_floor_marker_opaque_folder_is_not_re_planned_after_a_media_only_bump(later_bump):
+    marker = folder(later_bump, reason=Reason.OPAQUE_ROOT, probed_child_count=0, child_count=5000)
     assert needs_probe(_grown(marker, 5000), Scope.NORMAL, marker) is False
 
 

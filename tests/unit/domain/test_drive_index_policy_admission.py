@@ -16,8 +16,8 @@ ALL_KINDS = sorted(set(document_kind._EXT_KIND.values()) | {"other", "folder"})
 
 
 # What every kind gets after the flip (§5.1, §24.1), spelled out independently of the sets under test.
-_CONTENT = {"pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "csv",
-            "json", "rtf", "msg", "eml", "subtitles"}
+_CONTENT = {"pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "markdown", "text", "config",
+            "csv", "json", "rtf", "msg", "eml", "subtitles"}   # config: policy 5 (Δ248); code stays NONE
 _TRANSCRIBED = {"audio", "video"}   # policy 3 (§27.3): transcribed by their own stage, never parsed
 
 
@@ -49,7 +49,8 @@ class TestAdmission:
 class TestFlipValues:
     def test_content_kinds_are_the_named_extractor_kinds(self):
         assert SLICE2_CONTENT_KINDS == {"pdf", "docx", "pptx", "xlsx", "xls", "odt", "ods", "odp", "epub", "html",
-                                        "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles"}
+                                        "markdown", "text", "config", "csv", "json", "rtf", "msg", "eml",
+                                        "subtitles"}
 
     @pytest.mark.parametrize("kind", ["doc", "ppt", "mhtml", "iwork"])
     def test_kinds_without_an_extractor_stay_out(self, kind):
