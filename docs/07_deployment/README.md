@@ -483,6 +483,12 @@ changed by editing that script). The instance stays warm after a normal request 
 the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without
 `SANDBOX_PARSE_URL` (set from `_SANDBOX_LIGHT_URL`), locally too. Deploy the service (steps below) before the first
 deploy that switches the callers.
+
+The `light` image also carries `ffmpeg` (apt, no recommends; the `render` target does not) for the `media.*` ops (RFC §7 S5, built, not deployed). Those ops
+are tunnel ops on the route `POST /v1/media.<op>` (a raw ASGI app in front of Quart; the indexer opens a full-duplex HTTP/2 stream and serves byte ranges
+of the recording, so the service needs no egress and receives no URL or credential). The caller map gives the **indexer** the prefixes `parse` and `media`,
+the main service `parse` only. The deploy script is unchanged: the 900 s timeout covers the 240 s media ceiling, the 320 Mi volume holds the window files.
+The indexer needs no new env key: it already has `SANDBOX_PARSE_URL`, and the media adapter targets the same service (no `SANDBOX_MEDIA` knob).
 Like the render service, on Cloud Run its supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up (gen2 mounts both world-writable) and refuses start when that does not hold (`decisions/sandbox_render_service.md`).
 
 | `.env` key | Substitution | Meaning |

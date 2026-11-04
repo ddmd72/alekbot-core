@@ -1,11 +1,13 @@
 """
 ChildLauncher: starts one engine child for one request (RFC §4.6, §4.8, §4.14).
 
-    ChildLauncher.run(argv, *, workdir, env, limits, user, stdin_path, stdout_path) -> ChildResult
+    ChildLauncher.run(argv, *, workdir, env, limits, user, stdin_path, stdout_path, op, pass_fds) -> ChildResult
 
 The server never touches the payload; this launcher starts a fresh child under a separate unprivileged uid with no
 supplementary groups, in its own session, with a fixed environment allowlist, stdin and stdout wired to files in the
-request's directory, and the limits applied by `limits_exec` before the engine loads. The wall clock kills the whole
+request's directory, and the limits applied by `limits_exec` before the engine loads. `pass_fds` (the media engine's
+two tunnel pipes, S5) are the only other descriptors the child keeps: inheritable at the same numbers, through
+`limits_exec`'s exec; every other descriptor of this process is closed in the child. The wall clock kills the whole
 process group. The child's stderr is never returned or logged: only its length and SHA-256 (the log channel is
 untrusted, §4.14). The stderr file is an unlinked temp file in the server's tmp (in-memory on Cloud Run), bounded by
 the child's RLIMIT_FSIZE; it counts against the instance memory, not against the child's RLIMIT_AS.
@@ -98,6 +100,7 @@ class ChildLauncher:
         stdin_path: str,
         stdout_path: str,
         op: str = "child",
+        pass_fds: Sequence[int] = (),
     ) -> ChildResult:
         identity = self._identity if user is _CONSTRUCTOR_USER else _resolve_user(user)
         child_env = _child_env(workdir, env)
@@ -110,15 +113,19 @@ class ChildLauncher:
             "--", *argv,
         ]
         with memory_scope(SCOPE_SUBPROCESS, f"sandbox_{op}"):
-            return await self._spawn(wrapped, child_env, limits, identity, stdin_path, stdout_path, op)
+            return await self._spawn(wrapped, child_env, limits, identity, stdin_path, stdout_path, op,
+                                     tuple(pass_fds))
 
     async def _spawn(
         self, wrapped: Sequence[str], env: Dict[str, str], limits: SandboxLimits,
         identity: Optional[Tuple[str, int]], stdin_path: str, stdout_path: str, op: str,
+        pass_fds: Tuple[int, ...] = (),
     ) -> ChildResult:
         kwargs: Dict[str, object] = {}
         if identity is not None:   # no supplementary groups: root's would otherwise be inherited
             kwargs = {"user": identity[0], "group": identity[1], "extra_groups": []}
+        if pass_fds:
+            kwargs["pass_fds"] = pass_fds
         # stderr goes to an unlinked file, not a pipe: asyncio's wait() also waits for pipe EOF, which a surviving
         # grandchild would withhold. The file is bounded by the child's RLIMIT_FSIZE and read back as length + hash.
         stderr_file = tempfile.TemporaryFile()

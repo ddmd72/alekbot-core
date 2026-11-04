@@ -70,16 +70,3 @@ def test_no_in_process_parser_child_is_built(wired, monkeypatch):
     monkeypatch.setattr(SubprocessContentExtractor, "__init__", fail)
     indexer_main.build_app()
 
-
-def test_the_media_extractor_still_gets_the_parser_user(wired, monkeypatch):
-    seen = {}
-    monkeypatch.setenv("DRIVE_TRANSCRIBE_ENABLED", "on")
-    monkeypatch.setenv(PARSER_USER_ENV, "driveparser")
-
-    def spy(**kwargs):
-        seen.update(kwargs)
-        return None          # switch on but no stage: only the user handed to the media wiring is observed
-
-    monkeypatch.setattr(indexer_main, "build_drive_transcription", spy)
-    indexer_main.build_app()
-    assert seen["parser_user"] == "driveparser"

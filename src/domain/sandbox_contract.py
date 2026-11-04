@@ -84,6 +84,9 @@ class SandboxOp(str, Enum):
     PARSE_EXTRACT = "parse.extract"
     PARSE_PDF_PAGE_COUNT = "parse.pdf_page_count"
     PARSE_PDF_WINDOWS = "parse.pdf_windows"
+    # S5 tunnel ops: the request is a START frame in the body, not meta keys; codecs in `sandbox_tunnel`.
+    MEDIA_PROBE = "media.probe"
+    MEDIA_AUDIO_WINDOWS = "media.audio_windows"
 
 
 class SandboxStatus(str, Enum):

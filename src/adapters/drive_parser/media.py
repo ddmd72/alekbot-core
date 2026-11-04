@@ -33,7 +33,6 @@ from src.domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_MAX
 
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
-PROTOCOL_WHITELIST = "https,tls,tcp"      # no allowlisted demuxer needs `crypto` (encrypted HLS segments only)
 # G14: a short name admits the demuxer whose name lists it ("mov" -> "mov,mp4,m4a,3gp,3g2,mj2"); copied to nested inputs.
 # avi, asf (wma/wmv), aiff, amr, flv: the self-contained demuxers of the other admitted audio/video kinds (T-R32); none
 # opens a second resource (no playlist, no concat).
@@ -68,14 +67,11 @@ RELAY_PROTOCOL_WHITELIST = "http,tcp"          # plain http to the relay: no tls
 
 
 def _transport_flags(url: str, ca_file: str) -> List[str]:
-    """Protocol allowlist and TLS flags by URL scheme: the relay's loopback URL gets `http,tcp` and no TLS flags; an
-    `https://` URL keeps TLS verification (ffmpeg verifies nothing by default); any other URL is refused."""
+    """Protocol allowlist and TLS flags by URL scheme: the relay's loopback URL gets `http,tcp` and no TLS flags; any
+    other URL is refused (S5: the sandbox reads only from its loopback range server)."""
     if url.startswith(RELAY_URL_PREFIX):
         return ["-protocol_whitelist", RELAY_PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST]
-    if url.startswith("https://"):
-        return ["-protocol_whitelist", PROTOCOL_WHITELIST, "-format_whitelist", FORMAT_WHITELIST,
-                "-tls_verify", "1", "-ca_file", ca_file]
-    raise ValueError("the media url must be https:// or the loopback relay")
+    raise ValueError("the media url must be the loopback relay")
 
 
 def _input_guard(url: str, ca_file: str, container: str) -> List[str]:
