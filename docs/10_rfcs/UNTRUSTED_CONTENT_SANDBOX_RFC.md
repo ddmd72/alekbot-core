@@ -649,7 +649,7 @@ Open (new in rev 4):
 | child limits (parsers) | `RLIMIT_AS` 1 GiB, `RLIMIT_CPU` 90 s, wall 120 s, `RLIMIT_FSIZE` 64 MiB | current values; S0-g re-measures |
 | media child (per §27.4) | `RLIMIT_CPU` 150 s, wall 240 s, `RLIMIT_FSIZE` 64 MiB, `RLIMIT_AS` 1 GiB | §27.4 |
 | request / response cap | request 101 MiB (100 MiB + 1 MiB), response 101 MiB, streamed (built in P1) | the largest admitted kind, a 100 MiB PDF (`drive_index_params.py:57`), plus margin; the work volume is sized for it (S0-a) |
-| media tunnel (`src/domain/sandbox_tunnel.py`) | `MEDIA_CEILING` (call wall and soft deadline, separate from the parse ceiling), `MAX_OPENS`, `MAX_OPEN_STREAMS`, `DATA_MAX`, `BEAT_S`, `IDLE_S`, byte budget per call `tunnel_budget(size)` = `min(8 GiB, 2 x size + 64 MiB)`; mirrors of the media limits pinned to `drive_index_params` | O18, §4.7; values live in code, a test pins them |
+| media tunnel (`src/domain/sandbox_tunnel.py`) | `MEDIA_CEILING` (call wall and soft deadline, separate from the parse ceiling), `MAX_OPENS`, `MAX_OPEN_STREAMS`, `DATA_MAX`, `BEAT_S`, `IDLE_S`, byte budget per call `tunnel_budget(size)` = `min(8 GiB, 2 x size + 64 MiB)` plus `OPEN_SLACK_BYTES` per open (bytes in flight past a window when ffmpeg closes an open-ended range; bounded by `MAX_OPENS`); mirrors of the media limits pinned to `drive_index_params` | O18, §4.7; values live in code, a test pins them |
 | `meta` size | 8 KiB | |
 | client timeout | child wall + 15 s | |
 | retry | one immediate retry on a lost connection or 5xx; none on 4xx | §4.9 |
