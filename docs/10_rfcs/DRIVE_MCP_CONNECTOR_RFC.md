@@ -3,7 +3,7 @@
 **Status:** Proposed (2026-11-03). The owner answered the three questions the re-verification raised (D8–D11, §2); no
 owner question is open.
 Slice 2 (the read tools, token-backed) is built (2026-11-03); the sections below state what it ships.
-§14 (wide results and passage batches, D12) is proposed (2026-11-04).
+§14 (wide results and passage batches, D12) is built (2026-11-04).
 **Owner:** AI Engineering
 **Milestone:** External interop. Extends the facts connector ([REMOTE_MCP_SERVER_RFC.md](REMOTE_MCP_SERVER_RFC.md),
 building block [`remote_mcp_server`](../05_building_blocks/remote_mcp_server/README.md)) with a second protected
@@ -614,7 +614,7 @@ Cabinet "connected apps" list with Revoke in v1 (about one more slice; the grant
 - Server name `alekbot-drive`; suggested connector name in claude.ai "alekbot drive"; URL `https://<host>/drive-mcp`.
 - Refusal line — "Not available through this connector: it is outside the folders shared with it, or it does not exist."
 
-## 14. Wide results and passage batches (D12, proposed 2026-11-04)
+## 14. Wide results and passage batches (D12, built 2026-11-04)
 
 ### 14.1 The problem
 
@@ -685,7 +685,10 @@ per-file cap stays 8, so the rest of one file's matches comes by batch.
 - **The end line.** A batch that selected nothing new says there are no further passages for this question in this
   scope. The chat's "already shown earlier in this request" line (`REPEATED`, `src/domain/drive_excerpt_render.py:58`)
   does not reach the connector: on batch k it would list every earlier batch's chunk, and it suppresses the end line
-  today (`:223-229`). The connector's render drops it and keys the end line on "nothing new".
+  today (`:223-229`). The connector's render drops it and keys the end line on "nothing new" when earlier batches
+  showed this question's passages; a scope with no passage at all keeps the no-passage line. A past-end batch keeps
+  chat's outcome class (`not_found`). The next-batch line names its arguments as code-built `name="value"` pairs
+  (JSON-quoted values, `wide` kept), so the question resent is the one asked.
 - **Search.** When a tier shows fewer files than it matched and the call was not `wide`, a line says that `wide` shows
   about twice as many and that a group's folder narrows the search; a `wide` call keeps only the folder half.
 - **Descriptions** say what `wide` changes and when to use it, never the numbers (E21). The drafts:
@@ -732,4 +735,5 @@ still never logged (§9). This is what shows whether clients choose `wide` and a
 The loader refused unknown keys until this delta; then a token uploaded ahead of a deploy broke every cold start of the
 running revision and any rollback (the first load fails, the connector app is not built). Now an unknown key is a
 warning (§5.3): a misspelled key still fails as the missing one. The order stays token first: the new revision requires
-the new keys, and a running revision ignores them.
+the new keys, and a running revision with this change ignores them; a revision from before it still refuses them on a
+cold start, so the first rollout uploads the token right before the deploy.
