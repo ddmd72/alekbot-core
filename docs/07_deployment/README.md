@@ -416,13 +416,21 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
 
 ### Sandbox render service
 
-`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) for the main service
-([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1, §8;
+`alek-bot-sandbox-render-dev` runs `render.docx` (the Node script a model wrote for a DOCX) and, from slice S2, `render.pdf` and
+`render.png` (model-written HTML) for the main service
+([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 S1-S2, §8;
 [decision](../04_solution_strategy/decisions/sandbox_render_service.md)). It is `sandbox_main.py` in its own image
 (`Dockerfile.sandbox`, target `render`; an explicit COPY allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU,
 concurrency 1, max 3, timeout 300 s, `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (size
 fixed in `scripts/infrastructure/cloudbuild_sandbox_render.sh`; changed by editing that script, not through `.env`). One
-request per instance (`SANDBOX_RECYCLE=always`, unchanged). The main service uses it only when `SANDBOX_RENDER=sandbox`; the default
+request per instance (`SANDBOX_RECYCLE=always`, unchanged).
+
+**Image contents (`render` target):** Python, Node, the `docx` package, Puppeteer (locked by `pdf_generator/package-lock.json`) with
+**chrome-headless-shell only**, installed at build time into a root-owned `PUPPETEER_CACHE_DIR` (`/opt/puppeteer`) that the engine user
+cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
+libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
+serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
+limits (RFC §4.6); Chromium's own sandbox stays off until the gen2 check (RFC §7 S0-f). S2 is not deployed yet. The main service uses it only when `SANDBOX_RENDER=sandbox`; the default
 is `inprocess`.
 
 | `.env` key | Substitution | Meaning |

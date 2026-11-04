@@ -1,8 +1,9 @@
 # Decision: Untrusted-content sandbox, slice S1 — a separate zero-role service runs `render.docx`
 
 **Date:** 2026-10-20
-**Status:** Merged on `main`, behind `SANDBOX_RENDER` (default `inprocess`). **Not accepted**: acceptance needs the S0
-spike results, the owner steps and the owner's go. Not deployed.
+**Status:** S1 (`render.docx`): merged on `main`, deployed behind `SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped),
+**not accepted**: acceptance needs the S0 spike results, the owner steps and the owner's go. S2 (`render.pdf`, `render.png`): built on
+its branch, not deployed, not accepted (section "Slice S2" below).
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 (S1), §8, §11, §12;
 [worker_oidc_and_docx_sandbox.md](worker_oidc_and_docx_sandbox.md); deploy steps in
 [`../../07_deployment/README.md`](../../07_deployment/README.md) § Sandbox render service.
@@ -63,12 +64,38 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
   `RLIMIT_AS`). `/tmp` is root-only (0700) in the image; `/dev/shm` is the platform's and must be measured.
 - **Post-response drain (S0-b):** the service deploys with `--no-cpu-throttling` so the recycle sequence (which runs after
   the response) is not stalled by request-based CPU throttling. Measure the drain time with these exact flags and size the
-  client's recycling retry window to it; otherwise a call arriving during the drain can exhaust the 3 retries.
+  client's recycling retry window to it; the client makes one retry (`MAX_RECYCLING_ATTEMPTS` = 2 attempts,
+  `src/adapters/sandbox_client/sandbox_http_client.py`), so a call arriving during a longer drain ends as unavailable.
 - **Work volume size** (256Mi placeholder) against the real 64 MiB file ceilings.
 - **Real Cloud Run status for an instance killed mid-request** (OOM or crash): a bare 503 would make a poison input look
   like a systemic outage and be retried; the client's 5xx rule depends on the recorded answer.
 - Also unproven without a cloud: the image has never been built (apt `nodejs`/`npm`, the world-writable gate), the zero-role
   checks (S0-c), HTTP/2 end to end (S0-a).
+
+## Slice S2: `render.pdf` and `render.png` (built on its branch, not deployed)
+
+Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.6, §4.7, §7 S2; author deltas D1-D6 are recorded there).
+
+- **One browser.** Puppeteer drives chrome-headless-shell for both ops; the render image has no Playwright. The shell revision is
+  the one the locked Puppeteer expects (`npm ci`, then `puppeteer browsers install`), in a root-owned cache. Alternative rejected:
+  a second runtime (Playwright) for PNG would add roughly 300 MB and a second set of flags for no isolation gain; PNG equivalence is
+  checked by width and validity, not pixels.
+- **`RLIMIT_DATA`, not `RLIMIT_AS`, for the browser child** (NPROC 512, NOFILE 1024): Chromium reserves tens of GiB of address space at
+  start and starts tens of threads. The browser has its own launcher; the DOCX and parse children keep theirs. The instance's 2 GiB
+  with one request per instance is the real memory wall. The numbers are initial; S0-f confirms them.
+- **Chromium's own sandbox is off** (`--no-sandbox`) behind a code constant, `CHROMIUM_OWN_SANDBOX`
+  (`src/adapters/sandbox_engine/html_render_engine.py`), not an env knob (no new deploy key). It is turned on only after S0-f shows it
+  starts on gen2; until then the claim is the separate uid, the zero-role identity and the closed network. Outcome of that check: not yet run.
+- **No outbound fetch.** JavaScript off; request interception aborts everything except `data:`, `about:`, `blob:` (public hosts too);
+  no host name resolves; a dead proxy; DevTools over a pipe. Each layer alone stops a plain page.
+- **Fonts.** The Debian set the in-process Playwright image renders with (Latin, Cyrillic, CJK, Thai, emoji), so widgets and PDFs look alike.
+- **No engine text in failures.** A non-ok answer carries a fixed detail code; the browser's stderr is never returned (it can echo
+  attacker-chosen URLs) and no repair loop needs it. The clients map statuses to fixed texts and raise the ports' own errors.
+- **Framing.** `render.pdf` body is the HTML; `render.png` body is `u32-be width | html` (width in the body, not in `meta`, so the
+  `meta` field set stays pinned).
+- **Not yet measured:** the `render` image size, the cold-start latency of a widget (a fresh instance plus a browser start; measured at
+  acceptance, the owner decides if it is too slow), the Chromium-sandbox outcome, the work volume size against a large page.
+- **Not in this slice:** which implementation the main service uses for these two ports.
 
 ## Accepted residuals
 
