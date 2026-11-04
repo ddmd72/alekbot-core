@@ -4,8 +4,8 @@ Sandbox service entrypoint (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §4.6,
 One file, two processes (like `indexer_main.py` it is the only place the layers meet, REQ-ARCH-11):
 
     python sandbox_main.py            SUPERVISOR (the container's PID 1). Validates the environment, creates the work
-                                      root, closes `/tmp` and `/dev/shm` to everyone but root (refusing start on
-                                      Cloud Run when that does not hold), starts `python sandbox_main.py --serve` as a child in its own process
+                                      root, on Cloud Run closes `/tmp` and `/dev/shm` to everyone but root (refusing
+                                      start when that does not hold), starts `python sandbox_main.py --serve` as a child in its own process
                                       group with the write end of a pipe, and waits. After the one request of the
                                       instance (policy `always`) it SIGTERMs the child, kills what is left of the
                                       child's group and exits 0 so the platform replaces the instance. The supervisor

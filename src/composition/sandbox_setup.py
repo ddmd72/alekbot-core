@@ -11,10 +11,10 @@ Public interface:
     close_shared_temp_dirs(paths=SHARED_TEMP_DIRS, *, on_cloud_run, fchmod=os.fchmod) -> None
         the supervisor, before the server starts: `/tmp` and `/dev/shm` become root-only (0700, owned by this process)
         and are re-checked. Cloud Run gen2 mounts its own world-writable tmpfs over both, whatever the image set, which
-        would give the engine uid writable memory outside its rlimits and its work volume. On Cloud Run a directory that
-        is missing, a symlink, or still open after the chmod refuses start; off Cloud Run it is logged and left as is
-        (macOS: `/tmp` is a symlink and there is no `/dev/shm`; a non-root developer cannot chmod either). No engine
-        child needs them: each gets TMPDIR and HOME = its own workdir (`child_launcher._child_env`).
+        would give the engine uid writable memory outside its rlimits and its work volume. Cloud Run only: a directory
+        that is missing, a symlink, or still open after the chmod refuses start. Off Cloud Run nothing is touched (one
+        INFO line): a developer running the sandbox as root on a Linux host must never get the machine's /tmp closed.
+        No engine child needs them: each gets TMPDIR and HOME = its own workdir (`child_launcher._child_env`).
 
 Service family (`SANDBOX_SERVICE`): `render` (default) or `light`; any other value refuses start. The family decides the
 caller groups the service accepts and the engines it builds. Render: group RENDER. Light: groups MAIN and INDEXER, both
@@ -179,17 +179,17 @@ def close_shared_temp_dirs(
     paths: Sequence[str] = SHARED_TEMP_DIRS, *, on_cloud_run: bool,
     fchmod: Callable[[int, int], None] = os.fchmod,
 ) -> None:
-    """Make each shared temp dir root-only and verify it (see the module docstring). Raises SandboxStartupError on
-    Cloud Run when one does not hold; off Cloud Run logs a warning and continues. `fchmod` is a test seam."""
+    """On Cloud Run: make each shared temp dir root-only and verify it (see the module docstring); raises
+    SandboxStartupError when one does not hold. Off Cloud Run: touches nothing. `fchmod` is a test seam."""
+    if not on_cloud_run:
+        logger.info(f"[Sandbox] not on Cloud Run: shared temp dirs {', '.join(paths)} left as they are")
+        return
     for path in paths:
         problem = _close_dir(path, fchmod)
-        if problem is None:
-            logger.info(f"[Sandbox] shared temp dir {path} closed to the engine user")
-            continue
-        if on_cloud_run:
+        if problem is not None:
             logger.error(f"[Sandbox] refusing to start: shared temp dir {path} not closed ({problem})")
             raise SandboxStartupError(f"shared temp dir {path} could not be closed to the engine user: {problem}")
-        logger.warning(f"[Sandbox] not on Cloud Run: shared temp dir {path} left as it is ({problem})")
+        logger.info(f"[Sandbox] shared temp dir {path} closed to the engine user")
 
 
 def _close_dir(path: str, fchmod: Callable[[int, int], None]) -> Optional[str]:
