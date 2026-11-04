@@ -30,7 +30,7 @@ Public interface:
     TunnelLedger                                             open/close/data/end bounds, both sides
     TunnelEngineResult, TunnelLink, TunnelRun, SandboxTunnelEngine   engine <-> server route
     TunnelViolation                                          any breach of the above
-    MEDIA_CEILING, MAX_OPENS, MAX_OPEN_STREAMS, DATA_MAX, BEAT_S, IDLE_S, ...   constants
+    MEDIA_CEILING, MAX_OPENS, MAX_OPEN_STREAMS, DATA_MAX, OPEN_SLACK_BYTES, BEAT_S, IDLE_S, ...   constants
 """
 from __future__ import annotations
 
@@ -63,6 +63,9 @@ WINDOW_MAX_BYTES = CEILING_FILE_BYTES           # one WINDOW: the child's RLIMIT
 MAX_OPENS = 256                                 # OPENs per call (ffmpeg's seeks and reconnects)
 MAX_OPEN_STREAMS = 2                            # ffmpeg's seek opens the new connection before closing the old
 BUDGET_MARGIN_BYTES = 64 * 1024 * 1024
+# Bytes in flight past a window when ffmpeg closes an open-ended range (h2 flow-control windows + pipe buffers): the
+# ledger allows this much more per OPEN, so many short windows are not refused; bounded by MAX_OPENS x 8 MiB.
+OPEN_SLACK_BYTES = 8 * 1024 * 1024
 END_EOF = 0
 END_UPSTREAM_ERROR = 1
 
@@ -268,7 +271,8 @@ class TunnelLedger:
     - `open(id, offset)`: a new id (never reused), 0 <= offset < source_bytes, at most MAX_OPENS per call and
       MAX_OPEN_STREAMS open at once.
     - `close(id)`: an open id. The id stays used.
-    - `data(id, offset, length)`: counted against `budget_bytes` whatever happens to it; True = deliver, False = drop
+    - `data(id, offset, length)`: counted against `budget_bytes` plus OPEN_SLACK_BYTES per OPEN so far (`allowed_bytes`)
+      whatever happens to it; True = deliver, False = drop
       (the id is closed: bytes in flight). Never-opened id, DATA after END, an offset other than the stream's position,
       a chunk past the source's end or over DATA_MAX: violation.
     - `end(id)`: True = deliver, False = drop (closed id). Never-opened id or a second END: violation.
@@ -293,6 +297,11 @@ class TunnelLedger:
     @property
     def bytes_in(self) -> int:
         return self._bytes
+
+    @property
+    def allowed_bytes(self) -> int:
+        """The budget so far: START's `budget_bytes` plus OPEN_SLACK_BYTES for every OPEN."""
+        return self._budget + self._opens * OPEN_SLACK_BYTES
 
     @property
     def newest(self) -> Optional[int]:
@@ -326,7 +335,7 @@ class TunnelLedger:
         if not 1 <= length <= DATA_MAX:
             raise TunnelViolation("DATA length out of range")
         self._bytes += length
-        if self._bytes > self._budget:
+        if self._bytes > self.allowed_bytes:
             raise TunnelViolation("byte budget exceeded")
         if stream_id in self._closed:
             return False
