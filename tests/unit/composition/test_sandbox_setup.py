@@ -101,11 +101,15 @@ def test_validate_startup_engine_user_default_cloud_run_and_local():
 
 def test_build_engine_registry_maps_render_docx_to_the_child_engine(tmp_path):
     from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
+    from src.adapters.sandbox_engine.html_render_engine import HtmlRenderEngine
     out = tmp_path / "out"
     plan = _plan({"SANDBOX_OUTPUT_ROOT": str(out), "SANDBOX_WORK_ROOT": str(tmp_path / "w")})
     registry = build_engine_registry(plan)
-    assert set(registry) == {SandboxOp.RENDER_DOCX}
+    # RFC §7 S2: render.pdf / render.png join render.docx, each on the HTML child engine.
+    assert set(registry) == {SandboxOp.RENDER_DOCX, SandboxOp.RENDER_PDF, SandboxOp.RENDER_PNG}
     assert isinstance(registry[SandboxOp.RENDER_DOCX], DocxRenderEngine)
+    assert isinstance(registry[SandboxOp.RENDER_PDF], HtmlRenderEngine)
+    assert isinstance(registry[SandboxOp.RENDER_PNG], HtmlRenderEngine)
     assert out.is_dir() and (out.stat().st_mode & 0o077) == 0
 
 
