@@ -483,6 +483,7 @@ changed by editing that script). The instance stays warm after a normal request 
 the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without
 `SANDBOX_PARSE_URL` (set from `_SANDBOX_LIGHT_URL`), locally too. Deploy the service (steps below) before the first
 deploy that switches the callers.
+Like the render service, on Cloud Run its supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up (gen2 mounts both world-writable) and refuses start when that does not hold (`decisions/sandbox_render_service.md`).
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|

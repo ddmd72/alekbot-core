@@ -62,8 +62,13 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 - **Flush barrier (G7 / S0-b):** that the response is fully flushed before the supervisor stops the instance is unproven.
 - **`RLIMIT_AS` vs Node's `DATA` mapping (G6 / S0-f):** whether 1 GiB address space suits `node` on gen2.
 - **NPROC / NOFILE 64 / 64** may be low for Node; confirm on gen2 (S0-f).
-- **`/dev/shm` writability (S0-f):** whether the engine uid can write to `/dev/shm` on gen2 (instance memory outside
-  `RLIMIT_AS`). `/tmp` is root-only (0700) in the image; `/dev/shm` is the platform's and must be measured.
+- **`/tmp` and `/dev/shm` (S0-f) — measured, closed at start-up.** On gen2 the engine uid could write both: the platform
+  mounts its own world-writable tmpfs over them, so the image's `chmod 0700 /tmp` does not survive (memory outside
+  `RLIMIT_AS` and the work volume, shared with the server's own temp files). The supervisor now makes both root-only
+  (0700, owned by root) and re-checks them before it starts the server (`close_shared_temp_dirs` in
+  `src/composition/sandbox_setup.py`); a directory it cannot close refuses start. Off Cloud Run it touches neither (a
+  developer's host `/tmp` is never closed); the image's own `chmod 0700 /tmp` still covers a local docker run. Both families: no engine child needs either (TMPDIR and HOME are the request's workdir, for node too); the
+  server keeps writing there as root (its stderr temp files are unlinked and 0600).
 - **Post-response drain (S0-b):** the service deploys with `--no-cpu-throttling` so the recycle sequence (which runs after
   the response) is not stalled by request-based CPU throttling. Measure the drain time with these exact flags and size the
   client's recycling retry window to it; the client makes one retry (`MAX_RECYCLING_ATTEMPTS` = 2 attempts,
