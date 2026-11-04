@@ -8,6 +8,13 @@ Public interface:
     build_engine_registry(plan) -> Mapping[SandboxOp, engine]
         family `render`: `render.docx` -> `DocxRenderEngine`; family `light`: the three `parse.*` ops -> `ParseEngine`, one
         instance per op, over one `ChildLauncher`. Creates/validates the output root.
+    close_shared_temp_dirs(paths=SHARED_TEMP_DIRS, *, on_cloud_run, fchmod=os.fchmod) -> None
+        the supervisor, before the server starts: `/tmp` and `/dev/shm` become root-only (0700, owned by this process)
+        and are re-checked. Cloud Run gen2 mounts its own world-writable tmpfs over both, whatever the image set, which
+        would give the engine uid writable memory outside its rlimits and its work volume. On Cloud Run a directory that
+        is missing, a symlink, or still open after the chmod refuses start; off Cloud Run it is logged and left as is
+        (macOS: `/tmp` is a symlink and there is no `/dev/shm`; a non-root developer cannot chmod either). No engine
+        child needs them: each gets TMPDIR and HOME = its own workdir (`child_launcher._child_env`).
 
 Service family (`SANDBOX_SERVICE`): `render` (default) or `light`; any other value refuses start. The family decides the
 caller groups the service accepts and the engines it builds. Render: group RENDER. Light: groups MAIN and INDEXER, both
@@ -30,7 +37,7 @@ import os
 import stat
 import tempfile
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Mapping, Optional
+from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Tuple
 
 from ..domain.sandbox_contract import SandboxOp
 from ..domain.sandbox_startup_check import check_sandbox_environment
@@ -54,6 +61,9 @@ RECYCLE_ABNORMAL = "abnormal"   # light (parse) service only: a normal request k
 # The unprivileged uid the engine child runs as on Cloud Run; the image (T9) creates this user.
 DEFAULT_ENGINE_USER = "sandboxengine"
 _CLOUD_RUN_WORK_ROOT = "/work"
+# The platform's shared temp areas: closed to everyone but the root supervisor/server before any request.
+SHARED_TEMP_DIRS: Tuple[str, ...] = ("/tmp", "/dev/shm")
+_SHARED_TEMP_MODE = 0o700
 
 
 class SandboxStartupError(Exception):
@@ -163,3 +173,44 @@ def _prepare_output_root(output_root: str, work_root: str) -> str:
         logger.error("[Sandbox] output root is foreign-owned or writable by group/other")
         raise SandboxStartupError("output root must be owned by this process and closed to group/other")
     return out
+
+
+def close_shared_temp_dirs(
+    paths: Sequence[str] = SHARED_TEMP_DIRS, *, on_cloud_run: bool,
+    fchmod: Callable[[int, int], None] = os.fchmod,
+) -> None:
+    """Make each shared temp dir root-only and verify it (see the module docstring). Raises SandboxStartupError on
+    Cloud Run when one does not hold; off Cloud Run logs a warning and continues. `fchmod` is a test seam."""
+    for path in paths:
+        problem = _close_dir(path, fchmod)
+        if problem is None:
+            logger.info(f"[Sandbox] shared temp dir {path} closed to the engine user")
+            continue
+        if on_cloud_run:
+            logger.error(f"[Sandbox] refusing to start: shared temp dir {path} not closed ({problem})")
+            raise SandboxStartupError(f"shared temp dir {path} could not be closed to the engine user: {problem}")
+        logger.warning(f"[Sandbox] not on Cloud Run: shared temp dir {path} left as it is ({problem})")
+
+
+def _close_dir(path: str, fchmod: Callable[[int, int], None]) -> Optional[str]:
+    """None when `path` is now a real directory owned by this process with no group/other bits; else the reason.
+    Works on a descriptor opened without following links, so the checked inode is the one changed."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return "missing"
+    except OSError as exc:   # a symlink (ELOOP) or not a directory (ENOTDIR)
+        return f"not a real directory ({type(exc).__name__})"
+    try:
+        uid = os.geteuid()
+        if os.fstat(fd).st_uid != uid:
+            os.fchown(fd, uid, -1)
+        fchmod(fd, _SHARED_TEMP_MODE)
+        info = os.fstat(fd)
+    except OSError as exc:
+        return f"chown/chmod refused ({type(exc).__name__})"
+    finally:
+        os.close(fd)
+    if info.st_uid != uid or stat.S_IMODE(info.st_mode) & 0o077:
+        return "still open to group/other after the chmod"
+    return None
