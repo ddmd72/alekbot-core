@@ -111,7 +111,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the connection's own flag
   (`DriveConnection.transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
-  transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3).
+  transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3). Decoding of recordings (S5, built, not deployed) runs in the sandbox light service over a reverse tunnel, never in the indexer (`UNTRUSTED_CONTENT_SANDBOX_RFC.md` §7 S5).
 - **T2 read side (live since 2026-10-21 with T2; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
   The deleted-files search (the specialist's `search_deleted_recordings_and_notes`) searches the transcripts of
