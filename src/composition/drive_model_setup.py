@@ -26,8 +26,6 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.file_localization_adapter import FileLocalizationAdapter
 from ..adapters.firestore_quota_service import FirestoreQuotaService
-from ..adapters.drive_parser.media_relay import relay_child_url
-from ..adapters.drive_parser.media_extractor import SubprocessMediaExtractor
 from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.gemini_batch_adapter import GeminiBatchAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -43,6 +41,7 @@ from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.image_triage_port import ImageTriagePort
 from ..ports.language_service_port import LanguageServicePort
+from ..ports.media_audio_port import MediaAudioPort
 from ..ports.passage_hint_port import PassageHintPort
 from ..ports.pdf_splitter_port import PdfSplitterPort
 from ..ports.quota_service import QuotaService
@@ -133,14 +132,15 @@ def build_drive_models(*, parser: Any, users: UserRepository, account_repo: Acco
 
 
 def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, drive: UserDrivePort, models: DriveModels,
-                              keys: Mapping[str, Optional[str]], parser_user: Optional[str],
+                              keys: Mapping[str, Optional[str]], media: MediaAudioPort,
                               monthly_cap_usd: float,
                               mirror: Optional[DriveMirrorRepository] = None) -> Optional[DriveTranscriptStage]:
     """The transcript stage (USER_DRIVE_INDEXING_RFC §27; plan Task 14B). Built ONLY while the kill switch
     (`DRIVE_TRANSCRIBE_ENABLED`) is on, so a deploy with it off leaves the indexer's object graph as it was; without
     GEMINI_API_KEY it is not built either (logged ERROR: the switch is on and nothing can transcribe). The batch adapter
-    runs the BALANCED Gemini model (G26, never flash-lite, D44); the media extractor runs its children as the image's
-    unprivileged parser user. `monthly_cap_usd` is `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided once by
+    runs the BALANCED Gemini model (G26, never flash-lite, D44). `media` is the recordings' decoder: the sandbox light
+    service's media tunnel (`build_sandbox_media`, UNTRUSTED_CONTENT_SANDBOX_RFC §7 S5), so no recording is decoded in
+    the indexer and no drive URL or token leaves it; there is no in-process alternative. `monthly_cap_usd` is `effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, decided once by
     the caller and shared with DriveIndexingService. `mirror` is the transcript mirror's ledger, whose pins the stage's
     orphan sweep keeps (§27.9.6, Δ186)."""
     if not enabled:
@@ -154,8 +154,7 @@ def build_drive_transcription(*, enabled: bool, repo: DriveIndexRepository, driv
         return None
     batch = GeminiBatchAdapter(api_key=gemini_key, model=GeminiAdapter.MODEL_TIERS[PerformanceTier.BALANCED])
     runner = DriveTranscriptRunner(batch, models.prompt_builder, quota_service=models.quota)
-    return DriveTranscriptStage(repo, drive, SubprocessMediaExtractor(sandbox_user=parser_user, child_url=relay_child_url), batch, runner,
-                                monthly_cap_usd=monthly_cap_usd, mirror=mirror)
+    return DriveTranscriptStage(repo, drive, media, batch, runner, monthly_cap_usd=monthly_cap_usd, mirror=mirror)
 
 
 @dataclass(frozen=True)

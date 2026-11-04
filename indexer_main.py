@@ -12,7 +12,8 @@ Slice 2+4 (§24.2): the sandbox parse adapter (the light service), the document 
 and OpenAI, the Firestore prompt builder and the quota service that bills their calls to the user's
 account (`src/composition/drive_model_setup.py`), and Search v2's profiler and passage-hint runners
 (§25.4.4) on the same wiring; with the transcription switch on, the transcript stage and the transcript mirror's
-step, whose files are localized (the localization service and the UI-language resolution; §27.9.1), while the
+step, whose files are localized (the localization service and the UI-language resolution; §27.9.1), with the
+recordings decoded by the same light service over its media tunnel (UNTRUSTED_CONTENT_SANDBOX_RFC §7 S5), while the
 mirror's ledger is wired whatever the switch (§27.9.2). No `ServiceContainer`: it would build every agent,
 LLM adapter and chat surface for a process that uses none of them. No `load_settings()`: it would
 chase every key this service does not have into Secret Manager on each cold start.
@@ -38,9 +39,8 @@ Environment variables (set at deploy time in cloudbuild-dev.yaml):
   DRIVE_TRANSCRIBE_USD_CAP      Optional: a positive number that LOWERS the $20 monthly transcription cap (never raises
                                 it; empty = $20). Deployed from DRIVE_TRANSCRIBE_USD_CAP_DEV in .env, on this service and
                                 on the main service (the Cabinet shows it).
-  SANDBOX_PARSE_URL             The sandbox light (parse) service URL, from _SANDBOX_LIGHT_URL. Required: empty refuses
-                                the start, locally too.
-  DRIVE_PARSER_USER             The unprivileged user the media children run as (Dockerfile).
+  SANDBOX_PARSE_URL             The sandbox light service URL, from _SANDBOX_LIGHT_URL: document parsing and, over its
+                                media tunnel, the recordings' decoding. Required: empty refuses the start, locally too.
   MICROSOFT_TODO_CLIENT_ID      Secret: the drive app registration (token refresh).
   MICROSOFT_TODO_CLIENT_SECRET  Secret: same.
   SERVICE_ACCOUNT_EMAIL         Secret: the /worker OIDC gate and the OIDC identity of the tasks this
@@ -73,7 +73,6 @@ from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.adapters.google.google_drive_adapter import GoogleDriveAdapter
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.adapters.subprocess_content_extractor import PARSER_USER_ENV
 from src.composition.cipher_setup import build_cipher
 from src.composition.connector_registry import GOOGLE_DRIVE, MICROSOFT_ONEDRIVE, ConnectorRegistry
 from src.composition.drive_connection_setup import build_drive_connection_service
@@ -88,6 +87,7 @@ from src.composition.drive_note_setup import (
 )
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
+from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.config.environment import EnvironmentConfig
 from src.domain.drive_transcript_plan import effective_monthly_cap
@@ -115,8 +115,11 @@ def build_app() -> Quart:
     # The credential store's cipher (SECRETS_AT_REST_RFC §2.6, I6): the indexer has no load_settings(), so the key
     # name comes from its environment; an empty one refuses the start, before any client is built.
     cipher = build_cipher(os.environ.get("KMS_CRYPTO_KEY"))
-    # Every document is parsed by the sandbox's light service: no URL refuses the start, before any client is built.
-    parser = build_sandbox_parser(os.environ.get("SANDBOX_PARSE_URL") or "")
+    # Every document is parsed and every recording decoded by the sandbox's light service (one required URL, no in-process
+    # path, no knob: rollback is a revision rollback): no URL refuses the start, before any client is built.
+    light_url = os.environ.get("SANDBOX_PARSE_URL") or ""
+    parser = build_sandbox_parser(light_url)
+    media = build_sandbox_media(light_url)
     env_config = EnvironmentConfig()
     db = firestore.AsyncClient(project=project, database=env_config.firestore_database_id)
 
@@ -179,7 +182,7 @@ def build_app() -> Quart:
     transcribe_cap = effective_monthly_cap(os.environ.get("DRIVE_TRANSCRIBE_USD_CAP"))
     transcripts = build_drive_transcription(
         enabled=transcribe_on, repo=index_repo, drive=drive, models=models,
-        keys={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY")}, parser_user=os.environ.get(PARSER_USER_ENV),
+        keys={"GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY")}, media=media,
         monthly_cap_usd=transcribe_cap, mirror=mirror_repo,
     )
     # The mirror step (§27.9.5) with its localization (the read-me and the file headers in the user's UI language),
