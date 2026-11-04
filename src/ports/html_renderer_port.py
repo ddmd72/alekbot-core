@@ -3,6 +3,8 @@ HtmlRendererPort — abstract interface for rendering HTML to PNG bytes.
 
 Implementations:
   PlaywrightHtmlRenderer — headless Chromium via Playwright
+  SandboxHtmlRenderer    — HTTP call to the sandbox's `render.png` op (start/stop are no-ops there:
+                           no local browser; stop closes the client)
   MockHtmlRenderer       — returns fixed bytes for tests
 """
 from abc import ABC, abstractmethod
