@@ -38,6 +38,7 @@ from .drive_keys import name_word_concepts, query_concepts
 from .drive_profile import issued_of
 from .drive_capture import CAPTURE_LABELS
 from .drive_labels import scene_label_text
+from .drive_search_caps import SearchCaps
 from .drive_search_texts import (
     ACCESS_LINE_FILE, ACCESS_LINE_FOLDER, CAPTURE_LINE, CARD_ACCURACY_LINE, ENVELOPE_INACCESSIBLE,
     NOT_SEARCHED_DRIVES_LINE, REBUILDING_LINE, SCENE_LINE, STALE_INACCESSIBLE, VALID_UNTIL_LINE,
@@ -611,25 +612,37 @@ def _scope_line(result: DriveSearchResult) -> Optional[str]:
     return "Searched only within the requested folder and its subfolders."
 
 
-def render_results(result: DriveSearchResult) -> str:
+def render_results(result: DriveSearchResult, *, caps: SearchCaps = SearchCaps.DEFAULT) -> str:
     """The text Smart reads: per-result facts only. Standing guidance on how to use them (open a stale or recent
     file before quoting, never say "does not exist" while building, name what was not searched) is in Smart's
     protocol token (§10.4, §24.10). A query result with tiers is rendered by `drive_tier_render` (Search v2,
-    §25.13.6); filter-only listings, folder outcomes and the gate keep this layout. A refused `drives` value is its
-    line alone; a former drive name's RENAME_NOTICE is the first line of anything else."""
+    §25.13.6), cut at `caps.result_chars` (DRIVE_MCP_CONNECTOR_RFC §14.2; the chat's RESULT_CHARS_MAX by default);
+    filter-only listings, folder outcomes and the gate keep this layout. A refused `drives` value is its line alone; a
+    former drive name's RENAME_NOTICE is the first line of anything else."""
+    return rendered_results(result, caps=caps)[0]
+
+
+def rendered_results(result: DriveSearchResult, *,
+                     caps: SearchCaps = SearchCaps.DEFAULT) -> Tuple[str, bool]:
+    """`render_results`' text, and whether a tier showed fewer files than it matched (`drive_tier_render.tiered_text`;
+    False for a result with no tiers): the search's `more` (DRIVE_MCP_CONNECTOR_RFC §14.4)."""
     if result.status == STATUS_DRIVE_REFUSED:
-        return result.refusal
-    text = _render_results(result)
-    return f"{result.notice}\n{text}" if result.notice else text
+        return result.refusal, False
+    text, more = _render_results(result, caps)
+    return (f"{result.notice}\n{text}" if result.notice else text), more
 
 
-def _render_results(result: DriveSearchResult) -> str:
+def _render_results(result: DriveSearchResult, caps: SearchCaps) -> Tuple[str, bool]:
     if result.awaiting_rebuild and result.status == STATUS_OK:
         # D30: nothing was searched, so nothing — no count, no "no matching files" — is stated (XC-1)
-        return "\n".join([REFERENCE_REMINDER, *_envelope_lines(result), REBUILDING_LINE])
+        return "\n".join([REFERENCE_REMINDER, *_envelope_lines(result), REBUILDING_LINE]), False
     if result.tiered is not None and result.status == STATUS_OK and not result.folder_not_indexed:
-        from .drive_tier_render import render_tiered   # it imports this module: imported at call time
-        return render_tiered(result)
+        from .drive_tier_render import tiered_text   # it imports this module: imported at call time
+        return tiered_text(result, chars_max=caps.result_chars)
+    return _render_plain(result), False
+
+
+def _render_plain(result: DriveSearchResult) -> str:
     if result.status == STATUS_DISABLED:
         return DISABLED_TEXT
     if result.status == STATUS_DISCONNECTED and result.other_drive:

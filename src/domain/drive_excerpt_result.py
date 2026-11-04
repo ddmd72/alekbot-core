@@ -6,7 +6,7 @@ Statuses are the search's (`drive_search.STATUS_*`). `other_drive` mirrors `Driv
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import FrozenSet, Optional, Tuple, Union
 
 from .drive_excerpt_context import ExcerptContext
 from .drive_excerpt_file import ExcerptFile
@@ -42,3 +42,9 @@ class ExcerptResult:
     refusal: str = ""                      # STATUS_DRIVE_REFUSED: the code-built line, rendered verbatim
     notice: str = ""                       # RENAME_NOTICE when a former drive name was used: the first line of the render
     not_searched_drives: Tuple[str, ...] = ()   # current names of the live drives this call did not read (2a, §3)
+    # DRIVE_MCP_CONNECTOR_RFC §14.3-§14.4: a ranked chunk is still neither shown nor chosen in some connection's pool,
+    # or the merge's caps dropped one (a later batch can return it); and the context the earlier batches of one
+    # call showed (folder ids, file keys as `ContextPlan` holds them), which this batch's render treats as seen.
+    more: bool = False
+    seen_folders: FrozenSet[str] = frozenset()
+    seen_files: FrozenSet[str] = frozenset()

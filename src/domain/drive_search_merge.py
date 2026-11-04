@@ -13,7 +13,7 @@ Mount order: the primary first, then the other mounts by name.
 
 Public interface:
     merge_results(parts, *, not_searched) -> DriveSearchResult
-    merge_excerpts(parts, *, request, not_searched, no_text_listed) -> ExcerptResult
+    merge_excerpts(parts, *, request, not_searched, no_text_listed, caps) -> ExcerptResult
 """
 from __future__ import annotations
 
@@ -21,12 +21,13 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .drive_excerpt_caps import ExcerptCaps
 from .drive_excerpt_chunk import ExcerptChunk
 from .drive_excerpt_file import ExcerptFile
 from .drive_excerpt_request import ExcerptRequest
 from .drive_excerpt_result import ExcerptResult
 from .drive_index_lean import ChunkId
-from .drive_index_params import EXCERPTS_CHARS_MAX, EXCERPTS_K, EXCERPTS_PER_FILE_MAX, RELATED_MAX
+from .drive_index_params import RELATED_MAX
 from .drive_match import MatchTier
 from .drive_mount import Mount
 from .drive_mount_name_change import mount_name_key
@@ -204,12 +205,13 @@ def _merge_tiered(ok: Sequence[SearchPart], shifts: Mapping[str, int], not_searc
 # ---------------------------------------------------------------------------------------------- passages
 
 def merge_excerpts(parts: Sequence[ExcerptPart], *, request: ExcerptRequest, not_searched: Tuple[str, ...],
-                   no_text_listed: int) -> ExcerptResult:
+                   no_text_listed: int, caps: ExcerptCaps = ExcerptCaps.DEFAULT) -> ExcerptResult:
     """The merged passages of `parts`: (mount, its result, the best chunk distance of each of its files by item id).
     Files are ordered by best distance (ties: mount order); identical content on two connections is one file (the
-    primary's, else the first mount's) whose `also_at` names the other copies; the per-call caps (EXCERPTS_K chunks,
-    EXCERPTS_CHARS_MAX characters, EXCERPTS_PER_FILE_MAX per file) are applied after the merge. A part that could not
-    be read adds its mount name to `not_searched_drives`; when none could, the first part's result stands."""
+    primary's, else the first mount's) whose `also_at` names the other copies; the per-call caps (`caps`: chunks,
+    characters, per file; the chat's by default) are applied after the merge. `more` (DRIVE_MCP_CONNECTOR_RFC §14.4):
+    a read part has `more`, or the caps dropped a chunk. A part that could not be read adds its mount name to
+    `not_searched_drives`; when none could, the first part's result stands."""
     ordered = sorted(parts, key=lambda p: _mount_order(p[0]))
     def readable(part: ExcerptPart) -> bool:
         return part[1].status == STATUS_OK and not (part[1].awaiting_rebuild or part[1].wrong_space)
@@ -218,7 +220,7 @@ def merge_excerpts(parts: Sequence[ExcerptPart], *, request: ExcerptRequest, not
     if not ok:
         return ordered[0][1]
     missing = _union(not_searched, (p[0].name for p in ordered if not readable(p)))
-    files = _merge_files(ok)
+    files, dropped = _merge_files(ok, caps)
     repeated, repeated_tags = _merge_repeated(ok)
     tags = {f.ref_tag for f in files}
     tag = next(iter(tags)) if len(tags) == 1 else ""
@@ -234,10 +236,10 @@ def merge_excerpts(parts: Sequence[ExcerptPart], *, request: ExcerptRequest, not
         folder_candidates=tuple(c for r in results for c in r.folder_candidates),
         folder_lookup_truncated=any(r.folder_lookup_truncated for r in results),
         folder_not_indexed=all(r.folder_not_indexed for r in results), context=context, ref_tag=tag,
-        not_searched_drives=missing)
+        not_searched_drives=missing, more=dropped or any(r.more for r in results))
 
 
-def _merge_files(ok: Sequence[ExcerptPart]) -> Tuple[ExcerptFile, ...]:
+def _merge_files(ok: Sequence[ExcerptPart], caps: ExcerptCaps) -> Tuple[Tuple[ExcerptFile, ...], bool]:
     entries: List[Tuple[float, int, ExcerptFile]] = []
     for m_index, (_, result, distances) in enumerate(ok):
         entries.extend((distances.get(f.item_id, _FAR), m_index, f) for f in result.files)
@@ -262,7 +264,7 @@ def _merge_files(ok: Sequence[ExcerptPart]) -> Tuple[ExcerptFile, ...]:
                 file = _absorb(file, other[2])
         merged.append((min(e[0] for e in copies), keeper[1], file))
     merged.sort(key=lambda e: (e[0], e[1]))
-    return _capped([e[2] for e in merged])
+    return _capped([e[2] for e in merged], caps)
 
 
 def _absorb(keeper: ExcerptFile, copy: ExcerptFile) -> ExcerptFile:
@@ -274,22 +276,25 @@ def _absorb(keeper: ExcerptFile, copy: ExcerptFile) -> ExcerptFile:
     return replace(keeper, chunks=chunks, also_at=_union(keeper.also_at, (copy.path,), copy.also_at))
 
 
-def _capped(files: Sequence[ExcerptFile]) -> Tuple[ExcerptFile, ...]:
-    """The per-call caps over the merged files, in file order (a chunk that does not fit is skipped)."""
+def _capped(files: Sequence[ExcerptFile], caps: ExcerptCaps) -> Tuple[Tuple[ExcerptFile, ...], bool]:
+    """The per-call caps over the merged files, in file order (a chunk that does not fit is skipped), and whether
+    any chunk was dropped."""
     out: List[ExcerptFile] = []
     count = 0
     chars = 0
+    dropped = False
     for file in files:
         kept: List[ExcerptChunk] = []
         for chunk in file.chunks:
-            if count >= EXCERPTS_K or len(kept) >= EXCERPTS_PER_FILE_MAX or chars + len(chunk.text) > EXCERPTS_CHARS_MAX:
+            if count >= caps.k or len(kept) >= caps.per_file or chars + len(chunk.text) > caps.chars:
+                dropped = True
                 continue
             kept.append(chunk)
             count += 1
             chars += len(chunk.text)
         if kept:
             out.append(replace(file, chunks=tuple(kept)))
-    return tuple(out)
+    return tuple(out), dropped
 
 
 def _merge_repeated(ok: Sequence[ExcerptPart]) -> Tuple[Tuple[ChunkId, ...], Tuple[str, ...]]:

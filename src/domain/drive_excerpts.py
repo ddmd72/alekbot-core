@@ -4,7 +4,7 @@ A9). Pure: the service reads, this module decides.
 
 Public interface:
     rank_excerpts(knn, keys, concepts) -> [ChunkId]        A4: RRF of the vector rank and a lexical rank
-    select_excerpts(ranked, sizes, *, shown, hashes, noted) -> Selection     A6
+    select_excerpts(ranked, sizes, *, shown, hashes, noted, caps) -> Selection     A6
     merge_runs(chunks) -> [ExcerptRun]                     A7: adjacent chunks merged, overlap removed
     display_text(text, kind) -> str                        A9: markdown escapes undone for MARKDOWN_ESCAPED_KINDS
     MARKDOWN_ESCAPED_KINDS                                 the kinds markitdown converts (plan D-P5)
@@ -14,13 +14,12 @@ from __future__ import annotations
 import re
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .drive_excerpt_caps import ExcerptCaps
 from .drive_excerpt_chunk import ExcerptChunk, display_number
 from .drive_excerpt_run import ExcerptRun
 from .drive_excerpt_selection import Selection
 from .drive_index_lean import ChunkId
-from .drive_index_params import (
-    EXCERPTS_CHARS_MAX, EXCERPTS_K, EXCERPTS_LEXICAL_WINDOW, EXCERPTS_PER_FILE_MAX, EXCERPTS_RRF_K,
-)
+from .drive_index_params import EXCERPTS_LEXICAL_WINDOW, EXCERPTS_RRF_K
 from .drive_match import Concept
 
 # The keys of `adapters/drive_parser/readers.MARKITDOWN_CONVERTERS`; a unit test keeps the two equal (plan D-P5).
@@ -98,11 +97,14 @@ def _keepers(ranked: Sequence[ChunkId], hashes: Mapping[str, Optional[str]],
 
 
 def select_excerpts(ranked: Sequence[ChunkId], sizes: Mapping[ChunkId, int], *, shown: FrozenSet[ChunkId],
-                    hashes: Mapping[str, Optional[str]], noted: FrozenSet[str] = frozenset()) -> Selection:
-    """In rank order, whole new chunks: at most EXCERPTS_K, EXCERPTS_CHARS_MAX characters (a chunk that does not fit
-    is skipped, a later one may fit) and EXCERPTS_PER_FILE_MAX per file. Identical copies (same non-empty
-    `content_hash`) are one file: a copy's chunk is its keeper's chunk of the same index. `noted`: item ids carrying
-    the owner's note (preferred as keeper, as search does). `sizes` holds every ranked chunk's character count."""
+                    hashes: Mapping[str, Optional[str]], noted: FrozenSet[str] = frozenset(),
+                    caps: ExcerptCaps = ExcerptCaps.DEFAULT) -> Selection:
+    """In rank order, whole new chunks: at most `caps.k`, `caps.chars` characters (a chunk that does not fit is
+    skipped, a later one may fit) and `caps.per_file` per file (the chat's caps by default: EXCERPTS_K,
+    EXCERPTS_CHARS_MAX, EXCERPTS_PER_FILE_MAX). Identical copies (same non-empty `content_hash`) are one file: a
+    copy's chunk is its keeper's chunk of the same index. `noted`: item ids carrying the owner's note (preferred as
+    keeper, as search does). `sizes` holds every ranked chunk's character count. `left`: some ranked chunk, mapped
+    onto its keeper, is neither in `shown` nor chosen (past the k cap, or skipped by the character or per-file cap)."""
     keepers = _keepers(ranked, hashes, noted)
     chosen: List[ChunkId] = []
     taken: Set[ChunkId] = set()
@@ -111,7 +113,7 @@ def select_excerpts(ranked: Sequence[ChunkId], sizes: Mapping[ChunkId, int], *, 
     also_at: Dict[str, List[str]] = {}
     chars = 0
     for cid in ranked:
-        if len(chosen) >= EXCERPTS_K:
+        if len(chosen) >= caps.k:
             break
         item_id, generation, index = cid
         keeper_id, keeper_gen = keepers.get(item_id, (item_id, generation))
@@ -122,17 +124,22 @@ def select_excerpts(ranked: Sequence[ChunkId], sizes: Mapping[ChunkId, int], *, 
             if key not in repeated:
                 repeated.append(key)
             continue
-        if key in taken or per_file.get(keeper_id, 0) >= EXCERPTS_PER_FILE_MAX:
+        if key in taken or per_file.get(keeper_id, 0) >= caps.per_file:
             continue
         size = sizes[cid]
-        if chars + size > EXCERPTS_CHARS_MAX:
+        if chars + size > caps.chars:
             continue
         chosen.append(key)
         taken.add(key)
         per_file[keeper_id] = per_file.get(keeper_id, 0) + 1
         chars += size
+    def keyed(cid: ChunkId) -> ChunkId:
+        keeper_id, keeper_gen = keepers.get(cid[0], (cid[0], cid[1]))
+        return keeper_id, keeper_gen, cid[2]
+
+    left = any(keyed(cid) not in shown and keyed(cid) not in taken for cid in ranked)
     return Selection(chunks=tuple(chosen), repeated=tuple(repeated),
-                     also_at={k: tuple(v) for k, v in also_at.items()})
+                     also_at={k: tuple(v) for k, v in also_at.items()}, left=left)
 
 
 # -- A7 merging ---------------------------------------------------------------------------------------------------
