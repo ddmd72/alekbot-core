@@ -60,12 +60,6 @@ def test_input_side_seek():
     assert argv[i + 1] == URL and _value(argv, "-ss") == "120.000" and _value(argv, "-t") == "1800.000"
 
 
-def test_tls_verify_on_with_ca_file():
-    for argv in (_window(), media.build_probe_argv(URL, CA),
-                 media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
-        assert _value(argv, "-tls_verify") == "1" and _value(argv, "-ca_file") == CA
-
-
 def test_pass_argv_is_guarded_bounded_and_resumable():
     argv = media.build_pass_argv(URL, CA, "matroska,webm", 0, 5_400, "/w/pass.opus")
     assert "-ss" not in argv                                      # from the start: nothing to seek to

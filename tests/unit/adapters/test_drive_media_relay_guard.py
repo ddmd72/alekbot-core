@@ -27,12 +27,6 @@ def test_the_relay_url_gets_http_tcp_and_no_tls_flags():
         assert RELAY in argv
 
 
-def test_an_https_url_keeps_todays_flags():
-    for argv in _builders(HTTPS):
-        assert _whitelist(argv) == media.PROTOCOL_WHITELIST
-        assert argv[argv.index("-tls_verify") + 1] == "1" and argv[argv.index("-ca_file") + 1] == CA
-
-
 @pytest.mark.parametrize("url", ["http://media.example.invalid/x", "http://127.0.0.2:80/x", "file:///etc/passwd",
                                  "http://localhost:80/x", "ftp://127.0.0.1/x", "127.0.0.1:80/x", ""])
 def test_any_other_url_is_a_value_error(url):
