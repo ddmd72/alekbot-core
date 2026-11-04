@@ -3,7 +3,7 @@ a test asserts which line was chosen and in which order, never a sentence of the
 live, D4).
 
 - `marker(key)`: the marker text of a key (`<R_FIND>`); the formatted keys carry their placeholders
-  (`<STATUS {status}>`, `<WHAT_TO_DO {line}>`, `<ROUTE {ref}>`, the page line's six).
+  (`<STATUS {status}>`, `<WHAT_TO_DO {line}>`, `<ROUTE {ref}>`, the page line's six, the next-batch line's two).
 - `marker_bodies(**overrides)`: the two token bodies (`### key` sections); `overrides` replaces a key's text.
 - `marker_texts(**overrides)`: the parsed `ConnectorTexts` of those bodies.
 - `TokenStore`: an in-memory stand-in for `TokenRepository.get` holding the two tokens (risk level `safe`), whose
@@ -25,6 +25,7 @@ _FORMATTED = {
     c.WHAT_TO_DO: "<WHAT_TO_DO {line}>",
     c.ROUTE: "<ROUTE {ref}>",
     c.PAGE_NEXT: "<PAGE_NEXT {first}-{last} of {total} {path} v{version} next {next}>",
+    c.BATCH_NEXT: "<BATCH_NEXT {batch} {arguments}>",
 }
 
 
