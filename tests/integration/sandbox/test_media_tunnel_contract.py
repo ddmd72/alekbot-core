@@ -4,6 +4,9 @@ it (the real caller gate, the tunnel route in front of Quart, the media engines)
 -> the real media child -> real ffprobe / ffmpeg, on tiny recordings ffmpeg makes at test time. The recordings sit on a
 local fake drive (HTTPS with the fixtures' throwaway CA, Range like the providers): a Google-style `alt=media` source
 that needs its bearer, and a OneDrive-style pre-authenticated download URL. Only the indexer side talks to the drive.
+The transport cases live here too: a drive connection that drops once (ffmpeg reopens through a new OPEN) or keeps
+dropping, an untrusted drive certificate and an empty recording (both refused before the sandbox). The media runner's
+own cases run at the engine level in `tests/unit/adapters/sandbox_engine/test_media_engine_runner_cases.py`.
 
 Replaced, and only these: the OIDC check of the caller's ID token (no Google offline) and the child launcher's per-uid
 process and file limits (RLIMIT_NPROC counts every process of the uid: a developer's own uid runs far more than the
@@ -53,6 +56,7 @@ INDEXER_TOKEN = "tok-indexer-oidc"
 GOOGLE_BEARER = "tok-garden-drive"
 ONEDRIVE_TEMPAUTH = "tok-memo-download"
 MP4_FAMILY = "mov,mp4,m4a,3gp,3g2,mj2"
+WEBM = "matroska,webm"
 WALL_S = 60.0
 
 
@@ -61,12 +65,16 @@ WALL_S = 60.0
 class FakeDrive:
     """HTTPS on localhost (the fixtures' throwaway CA) serving recordings with Range. `files` maps a request path (query
     included) to (bytes, the bearer it requires, or None for a pre-authenticated download URL). Every request is
-    recorded as (path, Range, Authorization)."""
+    recorded as (path, Range, Authorization). `drop_at` (an absolute byte offset) cuts a streamed body there and closes
+    the connection, the first stream only with `drop_first_only`: a drive connection that dies mid-recording."""
 
     def __init__(self, directory: Path) -> None:
         self.ca_pem, cert, key = make_ca_and_server_cert(directory)
         self.files: Dict[str, Tuple[bytes, Optional[str]]] = {}
         self.requests: List[Tuple[str, Optional[str], Optional[str]]] = []
+        self.drop_at: Optional[int] = None
+        self.drop_first_only = False
+        self._streams = 0
         owner = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -94,14 +102,24 @@ class FakeDrive:
                 start = int(match.group(1))
                 end = min(int(match.group(2)) if match.group(2) else len(data) - 1, len(data) - 1)
                 body = data[start:end + 1]
+                cut = False
+                if not match.group(2) and owner.drop_at is not None:          # a stream, not the size probe
+                    cut = not owner.drop_first_only or owner._streams == 0
+                    owner._streams += 1
                 self.send_response(206)
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 try:
+                    if cut:
+                        self.wfile.write(body[:max(0, owner.drop_at - start)])
+                        self.wfile.flush()
+                        self.close_connection = True
+                        self.connection.shutdown(socket.SHUT_RDWR)
+                        return
                     self.wfile.write(body)
-                except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                except (BrokenPipeError, ConnectionResetError, ssl.SSLError, OSError):
                     pass           # the indexer closed a stream the sandbox no longer reads (CLOSE)
 
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -194,9 +212,11 @@ async def light(tmp_path, monkeypatch):
         task.cancel()
 
 
-def media_port(light: Light, drive: FakeDrive, token: str = INDEXER_TOKEN) -> SandboxMediaAdapter:
-    """The indexer's port as `build_sandbox_media` builds it, with the ID token and the drive's CA supplied here."""
-    trusted = ssl.create_default_context(cafile=drive.ca_pem)
+def media_port(light: Light, drive: FakeDrive, token: str = INDEXER_TOKEN,
+               ca_pem: Optional[str] = None) -> SandboxMediaAdapter:
+    """The indexer's port as `build_sandbox_media` builds it, with the ID token and the drive's CA supplied here
+    (`ca_pem` trusts another CA instead)."""
+    trusted = ssl.create_default_context(cafile=ca_pem or drive.ca_pem)
     # The fixtures' throwaway CA carries no Authority Key Identifier, which Python 3.13's strict mode requires;
     # verification itself (chain, host name) stays on.
     trusted.verify_flags &= ~ssl.VERIFY_X509_STRICT
@@ -379,3 +399,67 @@ async def test_a_caller_outside_the_indexer_group_cannot_open_a_tunnel(tmp_path,
         await media_port(light, drive, token="tok-main-oidc").probe(source)
     assert [rng for _, rng, _ in drive.requests] == ["bytes=0-0"]
     assert light.recycler.calls == 0
+
+
+# ---- the transport: a drive connection that drops, an untrusted or empty source -----------------------------------
+
+async def test_a_dropped_drive_connection_is_reopened_and_the_pass_reads_the_whole_file(tmp_path, light, drive):
+    """The drive connection dies at 30 %: the indexer ends that stream (END error), the child's loopback server closes
+    ffmpeg's socket, ffmpeg reconnects with a Range read (a new OPEN), so the pass sees the real end (N1)."""
+    data = make_cueless_webm(300)
+    source = drive.onedrive("fid-memo-0007", data)
+    drive.drop_at, drive.drop_first_only = int(len(data) * 0.3), True
+    out = tmp_path / "windows"
+    cut = await media_port(light, drive).extract_windows(source, plan_windows(14_400)[:3], str(out), wall_s=WALL_S,
+                                                         container=WEBM, duration_known=False)
+    assert cut.status is MediaStatus.OK and cut.eof and abs(cut.duration_s - 300.0) < 2.0
+    streams = [rng for _, rng, _ in drive.requests if rng and rng.endswith("-") and rng != "bytes=0-"]
+    assert streams, drive.requests                                   # reopened past the start
+    _assert_windows(cut, out)
+
+
+async def test_a_drive_connection_that_keeps_dropping_is_an_error_never_an_eof(tmp_path, light, drive):
+    data = make_cueless_webm(300)
+    source = drive.onedrive("fid-memo-0008", data)
+    drive.drop_at = int(len(data) * 0.3)
+    out = tmp_path / "windows"
+    with pytest.raises(MediaUnreadable):
+        await media_port(light, drive).extract_windows(source, plan_windows(14_400)[:3], str(out), wall_s=WALL_S,
+                                                       container=WEBM, duration_known=False)
+    assert not out.exists() or not list(out.glob("window_*"))
+
+
+async def test_a_known_duration_window_cut_short_by_a_drop_is_not_reported_at_its_planned_length(tmp_path, light,
+                                                                                                drive):
+    """Per-window runs rely on `-xerror` and measure the produced window against the plan (N1)."""
+    local = tmp_path / "Coimbra weekend voice memo.webm"
+    _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=100", "-c:a", "libopus", str(local))   # Duration + Cues
+    data = local.read_bytes()
+    source = drive.onedrive("fid-memo-0009", data)
+    drive.drop_at = int(len(data) * 0.5)
+    out = tmp_path / "windows"
+    with pytest.raises(MediaUnreadable):
+        await media_port(light, drive).extract_windows(source, [WindowSpec(0, 0.0, 90.0)], str(out), wall_s=WALL_S,
+                                                       container=WEBM)
+    assert not out.exists() or not list(out.glob("window_*"))
+
+
+async def test_a_drive_whose_certificate_is_not_trusted_is_refused_before_the_sandbox(tmp_path, light, drive):
+    """TLS to the drive is the indexer's now (the sandbox reads loopback http only): a server whose CA is not the
+    trusted one is refused at the size read, and the sandbox is never called."""
+    (tmp_path / "other-ca").mkdir()
+    other = FakeDrive(tmp_path / "other-ca")
+    try:
+        source = drive.onedrive("fid-memo-0010", make_cueless_webm(2))
+        with pytest.raises(MediaUnreadable):
+            await media_port(light, drive, ca_pem=other.ca_pem).probe(source)
+    finally:
+        other.close()
+    assert drive.requests == [] and light.recycler.calls == 0
+
+
+async def test_an_empty_recording_is_refused_before_the_sandbox(tmp_path, light, drive):
+    source = drive.onedrive("fid-memo-0011", b"")
+    with pytest.raises(MediaUnreadable):
+        await media_port(light, drive).probe(source)
+    assert [rng for _, rng, _ in drive.requests] == ["bytes=0-0"] and light.recycler.calls == 0
