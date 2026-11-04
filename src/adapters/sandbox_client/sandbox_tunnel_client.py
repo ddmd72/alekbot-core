@@ -11,7 +11,9 @@ SPIKE-H2 client, hardened. One `run` = one connection, one stream:
 - the response: OPEN asks for the recording from an offset (one `open_range(offset)` upstream read per OPEN), CLOSE ends
   that stream, BEAT keeps the call alive, WINDOW carries one Opus window, RESULT is the verdict;
 - the body: DATA frames of the newest open stream only (an older one starves until CLOSE), END at the source's end
-  (`END_EOF`) or when the upstream failed (`END_UPSTREAM_ERROR`).
+  (`END_EOF`) or when the upstream failed (`END_UPSTREAM_ERROR`). On RESULT the body ends (END_STREAM) at once and
+  nothing more is sent: the caller closes first, and the sandbox ends the response only then (a response ended while the
+  request half is open made Cloud Run's front end abort a 26 MB answer with RST_STREAM INTERNAL_ERROR).
 
 The bounds are enforced here authoritatively (`TunnelLedger` over START's size and budget; a WINDOW only of a requested
 index, once, within the response cap; one RESULT whose windows are exactly the WINDOW frames received; nothing after
@@ -241,6 +243,8 @@ class _Call:
         self.streaming = False
         self.succeeded = False
         self.peer_reset = False
+        self.body_ended = False             # END_STREAM sent on the request: nothing more goes out
+        self.end_body_due = False           # RESULT arrived: the body ends once the current read is handled
         self.failure: Optional[BaseException] = None
         self.done = asyncio.Event()
         self.changed = asyncio.Event()      # an OPEN or CLOSE: the sender looks again
@@ -336,6 +340,8 @@ class _Call:
                     self._on_event(event)
                     if self.done.is_set():
                         break
+                if self.end_body_due and not self.done.is_set():
+                    self._end_body()
                 self._write()
         except (OSError, EOFError) as exc:
             self._lost(f"connection error {type(exc).__name__}")
@@ -434,6 +440,7 @@ class _Call:
                 if sorted(reported) != sorted(self.windows):
                     raise TunnelViolation("RESULT's windows differ from the WINDOW frames")
                 self.result = result
+                self.end_body_due = True     # ended after this read's events: a breach in the same read still resets
         except TunnelViolation as exc:
             self._violation(str(exc))
 
@@ -452,7 +459,7 @@ class _Call:
         """Streams the newest open stream's bytes as DATA frames, re-checking which stream is newest between frames."""
         size = self.start.source_bytes
         try:
-            while not self.done.is_set():
+            while not self.done.is_set() and not self.body_ended:
                 while self.retired:
                     await self._close_upstream(self.retired.pop())
                 newest = self.ledger.newest
@@ -507,12 +514,12 @@ class _Call:
 
     async def _send_body(self, data: bytes) -> None:
         """Writes `data` on the request body within the flow window; a window stuck at 0 for the send-stall deadline is
-        a loss. Raises _Stop once the call has ended."""
+        a loss. Raises _Stop once the call has ended or the body has (RESULT arrived)."""
         if self.conn is None or self.writer is None:
             raise RuntimeError("the tunnel body was sent before the connection")
         view = memoryview(data)
         while view:
-            if self.done.is_set():
+            if self.done.is_set() or self.body_ended:
                 raise _Stop()
             room = min(self.conn.local_flow_control_window(self.sid), self.conn.max_outbound_frame_size, len(view))
             if room <= 0:
@@ -541,6 +548,9 @@ class _Call:
             self.writer.write(data)
 
     def _end_body(self) -> None:
+        if self.body_ended:
+            return
+        self.body_ended = True
         if self.conn is not None:
             with contextlib.suppress(h2.exceptions.H2Error):
                 self.conn.end_stream(self.sid)

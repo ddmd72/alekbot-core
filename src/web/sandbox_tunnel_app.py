@@ -13,7 +13,8 @@ op (404) -> the shared `SandboxSlot` (503 `recycling`) -> `X-Sandbox-Meta` (400 
 Those are ordinary HTTP answers with the outcome header. Then the workdir is made, the response starts (200, outcome
 `ok`/`tunnel`: "stream opened" only) and the engine runs. Three tasks feed it: body frames (DATA, END) to the engine's
 link, the link's OPEN/CLOSE to the response, and a BEAT every BEAT_S. After the run: one WINDOW per window file, the
-RESULT frame (the verdict), the end of the response.
+RESULT frame (the verdict), then the end of the response once the caller has ended its body (the caller closes first,
+on RESULT; bounded by the run's deadline: `_await_body_end`).
 
 Every path after the response started ends the response itself, RESULT first: Hypercorn drops a stream silently when
 the app raises after the response started (spike S4b), and the caller would wait for its own deadline. A violation
@@ -184,6 +185,8 @@ class _TunnelCall:
         self.result_sent = False
         self.ended = False
         self.client_lost = False                 # a send stalled past SEND_STALL_S: nothing more is sent
+        self.body_ended = False                  # the caller ended its request half (END_STREAM)
+        self.deadline: Optional[float] = None    # the run's deadline (loop time), RESULT and the end included
         self.frame_broken = False                # a WINDOW ended short: no RESULT may follow
         self.start: Optional[TunnelStart] = None
         self.workdir: Optional[str] = None
@@ -303,6 +306,7 @@ class _TunnelCall:
             try:
                 frames = reader.feed(body)
                 if not message.get("more_body", False):
+                    self.body_ended = True
                     reader.end()
                     if not frames:
                         raise TunnelViolation("the body ended before START")
@@ -335,6 +339,7 @@ class _TunnelCall:
                    reader: FrameReader, leftover: List[Frame]) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + min(limits.wall_s, start.wall_s) + self.app.collect_margin_s
+        self.deadline = deadline
         try:
             run = await asyncio.wait_for(engine.start(workdir, limits, start), max(deadline - loop.time(), 0.001))
         except asyncio.TimeoutError:
@@ -432,6 +437,7 @@ class _TunnelCall:
             for frame in reader.feed(body):
                 await self._forward(frame, link)
             if not message.get("more_body", False):
+                self.body_ended = True
                 reader.end()
                 body_open = False
 
@@ -544,7 +550,33 @@ class _TunnelCall:
             return
         await self._emit(encode_frame(Frame(FrameType.RESULT, payload=data)))
         self.result_sent = True
+        await self._await_body_end()
         await self._end()
+
+    async def _await_body_end(self) -> None:
+        """After RESULT the caller closes first: it ends its request half on RESULT, and only then does the response
+        end. Ending the response while the request half is still open makes Cloud Run's front end close that half
+        itself (spike S4d); with megabytes of windows not yet delivered it aborted the stream with RST_STREAM
+        INTERNAL_ERROR and the caller lost every window (2026-11-04, a 26 MB answer). Bounded by the run's deadline;
+        past it the response ends anyway. Body bytes after RESULT carry nothing and are dropped."""
+        if self.body_ended or self.client_lost or self.deadline is None:
+            return
+        loop = asyncio.get_running_loop()
+        while True:
+            remaining = self.deadline - loop.time()
+            if remaining <= 0:
+                logger.warning("[SandboxTunnel] the caller did not end its body after RESULT (op=%s)", self.op)
+                return
+            try:
+                message = await asyncio.wait_for(self.receive(), remaining)
+            except asyncio.TimeoutError:
+                continue
+            if message.get("type") == "http.disconnect":
+                self.client_lost = True
+                return
+            if not message.get("more_body", False):
+                self.body_ended = True
+                return
 
     async def _end_after_failure(self) -> None:
         """The top-level catch: whatever happened, the caller gets an end (S4b), RESULT `error` first when possible."""
