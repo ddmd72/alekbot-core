@@ -13,8 +13,10 @@ its branch, not deployed, not accepted (section "Slice S2" below).
 The script a model wrote for a DOCX (the least constrained input the product runs) executes in a **separate Cloud Run
 service** whose runtime identity holds **no IAM role** and which is given **no secret**. The main service keeps
 `DocxRunnerPort`; `SandboxDocxRunner` (`src/adapters/sandbox_client/`) is a second implementation next to
-`NodeDocxRunner`, chosen once at startup by `SANDBOX_RENDER` (`inprocess` | `sandbox`). There is **never an automatic
-fallback** to the in-process runner: a sandbox that is down degrades the DOCX feature, nothing else.
+`NodeDocxRunner`, chosen once at startup by `SANDBOX_RENDER` (`inprocess` | `sandbox`). Owner decision O15 (2026-11-04): this one knob
+covers the whole render family; `SANDBOX_RENDER=sandbox` also selects `SandboxPuppeteerRunner` (PDF) and `SandboxHtmlRenderer` (widget PNG)
+in place of `NodePuppeteerRunner` / `PlaywrightHtmlRenderer`, wired in `src/composition/sandbox_client_setup.py`; no new key or substitution. There is **never an automatic
+fallback** to the in-process runner: a sandbox that is down degrades the render features (DOCX, PDF, widget PNG), nothing else.
 
 Shape of the service (`sandbox_main.py`, `Dockerfile.sandbox` target `render`):
 
