@@ -575,7 +575,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `parse.pdf_windows`, reached through `PdfSplitterPort.cut_pdf_windows` (EXTERNAL_FILES §4.4); Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
 ### S5. Media for transcripts (C3)
-- Status: **built, not deployed.** Built shape and deltas against rev 4 (design record: the S5 design, owner decisions O18, O17 below):
+- Status: **deployed 2026-11-04 (PR #273); acceptance open** (OneDrive passed; a long Google recording found delta 13). Built shape and deltas against rev 4 (design record: the S5 design, owner decisions O18, O17 below):
   1. OQ-S11 closed with the **reverse tunnel for every source**, OneDrive included (owner approval 2026-11-04, after a spike proved the route).
   2. §4.5's range proxy and O7's host allowlist dropped; the light service needs no egress.
   3. No `SANDBOX_MEDIA` knob; the O14 pattern (a required URL; rollback is a revision rollback); the §4.12 table row and §9 guard 2 are gone.
@@ -588,6 +588,9 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   10. The in-process media path (`media_extractor.py`, `media_launch.py`, `media_relay.py`) is deleted in the same deploy; O9's two-week keep does not apply.
   11. ffmpeg enters the light image, so the parse cold start may grow (measured in acceptance).
   12. `MediaUnreadable("tunnel_violation")` is charged to the file.
+  13. **The caller closes first** (found in acceptance): on RESULT the indexer ends its request half; the route ends the response only after
+      that, bounded by the run's deadline. Ending the response with the request half open made Cloud Run's front end abort a 26 MB answer
+      with RST_STREAM INTERNAL_ERROR (spike S4d; `decisions/sandbox_media_tunnel.md`).
   13. Byte budget per call `min(8 GiB, 2 x size + 64 MiB)` and at most 256 opens (the old relay had 8 GiB per run and no open cap).
   14. No token refresh between ranges.
 - What it is: an adapter swap in the indexer under `MediaAudioPort`: `SubprocessMediaExtractor` -> `SandboxMediaAdapter`. The indexer holds the source and

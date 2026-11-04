@@ -562,6 +562,8 @@ class _TunnelCall:
         if self.body_ended or self.client_lost or self.deadline is None:
             return
         loop = asyncio.get_running_loop()
+        if self.deadline <= loop.time():
+            return        # a deadline RESULT: the caller's own deadline (the same instant) has passed too
         while True:
             remaining = self.deadline - loop.time()
             if remaining <= 0:
