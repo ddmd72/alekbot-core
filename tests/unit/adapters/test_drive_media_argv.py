@@ -5,8 +5,8 @@ import pytest
 
 from src.adapters.drive_parser import media
 
-URL = "https://download.example.invalid/f?tempauth=SECRET-TOKEN-123"
-CA = "/etc/test/ca.pem"
+URL = "http://127.0.0.1:40123/recording"           # the sandbox's loopback range server, the only input since S5
+CA = ""
 
 
 def _window(container="mov,mp4,m4a,3gp,3g2,mj2"):
@@ -20,7 +20,7 @@ def _value(argv, flag):
 def test_protocol_whitelist_pinned():
     for argv in (_window(), media.build_probe_argv(URL, CA),
                  media.build_pass_argv(URL, CA, "matroska,webm", 0, 600, "/w/pass.opus")):
-        assert _value(argv, "-protocol_whitelist") == "https,tls,tcp"      # no `crypto` (Δ180, T-R32)
+        assert _value(argv, "-protocol_whitelist") == "http,tcp"      # plain loopback http only: no `crypto` (Δ180, T-R32)
 
 
 def test_format_whitelist_pinned():
@@ -83,14 +83,16 @@ def test_remote_runs_reconnect_and_fail_on_error():
 
 def test_the_rerun_without_xerror_keeps_the_reconnect_and_every_guard():
     plain = media.build_window_argv(URL, CA, "matroska,webm", 0, 10, "/w/x", xerror=False)
-    assert "-xerror" not in plain and "-reconnect" in plain and "-tls_verify" in plain
+    assert "-xerror" not in plain and "-reconnect" in plain
+    assert _value(plain, "-protocol_whitelist") == "http,tcp" and _value(plain, "-format_whitelist") == media.FORMAT_WHITELIST
+    assert _value(plain, "-rw_timeout") == str(media.NETWORK_TIMEOUT_US) and _value(plain, "-f") == "matroska,webm"
     assert "-xerror" not in media.build_pass_argv(URL, CA, "matroska,webm", 0, 10, "/w/x", xerror=False)
 
 
 def test_the_cut_reads_only_local_ogg():
     argv = media.build_cut_argv("/w/pass.opus", 1_740.0, 1_800.0, "/w/window_1.opus.part")
     assert _value(argv, "-protocol_whitelist") == "file" and _value(argv, "-format_whitelist") == "ogg"
-    assert _value(argv, "-c:a") == "copy" and _value(argv, "-f") == "ogg" and "https" not in " ".join(argv)
+    assert _value(argv, "-c:a") == "copy" and _value(argv, "-f") == "ogg" and "http" not in " ".join(argv)
 
 
 def test_vbr_is_constrained_so_four_hours_fit_the_file_limit():

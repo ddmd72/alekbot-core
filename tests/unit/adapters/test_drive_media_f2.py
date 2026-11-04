@@ -16,7 +16,7 @@ from src.domain.drive_index_params import TRANSCRIBE_WINDOW_S
 from tests.unit.adapters.drive_media_fixtures import HAVE_FFMPEG
 
 needs_ffmpeg = pytest.mark.skipif(not HAVE_FFMPEG, reason="needs ffmpeg and ffprobe")
-URL, CA = "https://x.invalid/f", "/ca.pem"
+URL, CA = "http://127.0.0.1:40123/recording", ""   # the loopback range server, the only input since S5
 
 
 def _value(argv, flag):
@@ -41,7 +41,7 @@ def test_no_nested_resource_demuxer_is_allowlisted():
 def test_the_protocol_allowlist_has_no_crypto():
     for argv in (media.build_probe_argv(URL, CA), media.build_window_argv(URL, CA, "avi", 0, 10, "/o"),
                  media.build_pass_argv(URL, CA, "avi", 0, 10, "/o")):
-        assert _value(argv, "-protocol_whitelist").split(",") == ["https", "tls", "tcp"]
+        assert _value(argv, "-protocol_whitelist").split(",") == ["http", "tcp"]   # no crypto, no tls, nothing else
 
 
 # -- M1: a short window that is not the last ----------------------------------------------------------------------

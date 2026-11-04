@@ -1,11 +1,11 @@
-"""Fixtures for the media extractor tests: a throwaway CA and a local HTTPS server (with Range) built at test time
-into tmp_path — never committed key material — and ffmpeg-made media. Synthetic data only."""
+"""Fixtures for the media extractor tests: a local plain-HTTP loopback server (with Range), a throwaway CA built at
+test time into tmp_path for the tests that still need TLS — never committed key material — and ffmpeg-made media.
+Synthetic data only."""
 import datetime
 import http.server
 import ipaddress
 import shutil
 import socket
-import ssl
 import subprocess
 import threading
 from typing import Dict, Optional, Tuple
@@ -50,10 +50,10 @@ def make_ca_and_server_cert(directory) -> Tuple[str, str, str]:
 
 
 class MediaServer:
-    """HTTPS on localhost; `files` maps a path to bytes. Honours `Range: bytes=a-b` like the Graph download URL."""
+    """Plain HTTP on 127.0.0.1, as the sandbox's loopback range server (the media runner's only input since S5);
+    `files` maps a path to bytes. Honours `Range: bytes=a-b`."""
 
     def __init__(self, directory, files: Optional[Dict[str, bytes]] = None) -> None:
-        self.ca_pem, cert, key = make_ca_and_server_cert(directory)
         self.files: Dict[str, bytes] = dict(files or {})
         self.requests = []
         self.drop_at = None            # absolute byte offset: a body is cut off there and the connection closed
@@ -110,9 +110,6 @@ class MediaServer:
                 self._serve(False)
 
         self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(cert, key)
-        self._httpd.socket = context.wrap_socket(self._httpd.socket, server_side=True)
         self._httpd.daemon_threads = True
         self.port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
@@ -126,7 +123,7 @@ class MediaServer:
         self._httpd.server_close()
 
     def url(self, path: str) -> str:
-        return f"https://localhost:{self.port}{path}"
+        return f"http://127.0.0.1:{self.port}{path}"
 
 
 def _ffmpeg(*args: str, capture: bool = False) -> bytes:

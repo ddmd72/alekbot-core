@@ -1,6 +1,6 @@
 """The media child's runner, `drive_parser/media.py` (USER_DRIVE_INDEXING_RFC §27.4, Δ99, Δ134; plan G14, G15, G35),
-called in process: the bound, the re-run rules and the wall, with real ffmpeg against a local HTTPS server with a test
-CA (skipped without ffmpeg) or with ffmpeg faked. The in-process extractor and its launcher these tests once shared a
+called in process: the bound, the re-run rules and the wall, with real ffmpeg against a local plain-HTTP loopback server
+(skipped without ffmpeg) or with ffmpeg faked. The in-process extractor and its launcher these tests once shared a
 file with are gone (S5 card F): the runner now runs only in the sandbox's media child, end to end in
 `tests/integration/sandbox/test_media_tunnel_contract.py`."""
 import os
@@ -35,7 +35,7 @@ def test_a_pass_that_reaches_the_bound_says_so(tmp_path, monkeypatch):
     out = tmp_path / "o"
     out.mkdir()
     with MediaServer(tmp_path, {"/rec.webm": webm}) as server:
-        result = media.run_windows({"url": server.url("/rec.webm"), "ca_file": server.ca_pem, "container": WEBM,
+        result = media.run_windows({"url": server.url("/rec.webm"), "ca_file": "", "container": WEBM,
                                     "duration_known": False, "out_dir": str(out), "wall_s": 60,
                                     "windows": [{"index": w.index, "start_s": w.start_s, "duration_s": w.duration_s}
                                                 for w in plan]})
@@ -73,7 +73,7 @@ def _fake_runs(monkeypatch, behaviour):
             os.write(2, b"[aac @ 0x1] Error submitting packet to decoder: Invalid data found when processing input\n")
         with open(argv[-1], "wb") as fh:
             fh.write(b"OggS" + str(produced).encode())
-        if "https" in argv[argv.index("-protocol_whitelist") + 1]:
+        if "http" in argv[argv.index("-protocol_whitelist") + 1].split(","):
             runs.append((xerror, code))
         return code, False, 0.1
 
@@ -87,7 +87,7 @@ def _fake_runs(monkeypatch, behaviour):
 
 
 def _windows_request(tmp_path, windows, duration_known=True):
-    return {"url": "https://h/f", "ca_file": "/x/ca.pem", "container": "mp3", "out_dir": str(tmp_path),
+    return {"url": "http://127.0.0.1:40123/recording", "ca_file": "", "container": "mp3", "out_dir": str(tmp_path),
             "wall_s": 60.0, "duration_known": duration_known,
             "windows": [{"index": i, "start_s": st, "duration_s": d} for i, st, d in windows]}
 
@@ -109,7 +109,7 @@ def test_a_pass_cut_at_a_corrupt_cluster_is_re_run_and_keeps_its_later_windows(t
     """A 150 s file without a duration, one pass of three windows: the -xerror pass stops at 75 s with an error
     logged; the windows after it are not dropped and no eof is reported at 75 s."""
     def behaviour(xerror, argv):
-        if "https" not in argv[argv.index("-protocol_whitelist") + 1]:       # a local cut of the pass file
+        if "http" not in argv[argv.index("-protocol_whitelist") + 1].split(","):   # a local cut of the pass file
             return 0, float(argv[argv.index("-t") + 1]), False
         return (first_code, 75.0, True) if xerror else (0, 150.0, True)
     runs = _fake_runs(monkeypatch, behaviour)
@@ -191,7 +191,7 @@ def test_a_wall_in_a_window_returns_the_windows_finished_before_it(tmp_path):
     out.mkdir()
     windows = [{"index": i, "start_s": float(i % 20), "duration_s": 10.0} for i in range(60)]
     with MediaServer(tmp_path, {"/a.mp4": mp4}) as server:
-        result = media.run_windows({"url": server.url("/a.mp4"), "ca_file": server.ca_pem, "container": "mov,mp4,m4a,3gp,3g2,mj2",
+        result = media.run_windows({"url": server.url("/a.mp4"), "ca_file": "", "container": "mov,mp4,m4a,3gp,3g2,mj2",
                                     "windows": windows, "out_dir": str(out), "wall_s": 1.5})
     assert result["status"] == "timeout" and 0 < len(result["windows"]) < 60
     assert [w["index"] for w in result["windows"]] == list(range(len(result["windows"])))
