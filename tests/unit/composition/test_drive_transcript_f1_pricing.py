@@ -14,6 +14,7 @@ from src.domain.billing import BatchUsage, batch_transcription_input_usd, batch_
 from src.domain.drive_index_params import TRANSCRIBE_WINDOW_PROMPT_TOKENS
 from src.domain.user import PerformanceTier
 from src.ports.batch_transcription_port import BatchTranscriptionPort
+from src.ports.media_audio_port import MediaAudioPort
 from src.ports.quota_service import QuotaService
 from tests.unit.agents.drive_model_fakes import prompt_builder
 
@@ -37,7 +38,8 @@ def test_the_composition_builds_the_batch_adapter_on_that_model():
     from src.composition.drive_model_setup import build_drive_transcription
     models = SimpleNamespace(prompt_builder=prompt_builder(), quota=AsyncMock(spec=QuotaService))
     stage = build_drive_transcription(enabled=True, repo=MagicMock(), drive=MagicMock(), models=models,
-                                      keys={"GEMINI_API_KEY": "test-key"}, parser_user=None, monthly_cap_usd=10.0)
+                                      keys={"GEMINI_API_KEY": "test-key"}, media=MagicMock(spec=MediaAudioPort),
+                                      monthly_cap_usd=10.0)
     assert stage is not None and stage._batch._model == RAN
 
 
