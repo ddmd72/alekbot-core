@@ -26,6 +26,20 @@ if TYPE_CHECKING:
 
 _RENDER_TIMEOUT_MS = 8_000
 _DEVICE_SCALE_FACTOR = 2  # Retina-quality output
+_ALLOWED_URL_SCHEMES = ("data:", "about:", "blob:")
+
+
+def is_request_allowed(url: str) -> bool:
+    """True only for URLs that need no network: data:, about:, blob:."""
+    return url.lower().startswith(_ALLOWED_URL_SCHEMES)
+
+
+async def _route_request(route) -> None:  # type: ignore[no-untyped-def]
+    """Continue offline URLs, abort everything else (model-written HTML must not reach the network)."""
+    if is_request_allowed(route.request.url):
+        await route.continue_()
+    else:
+        await route.abort()
 
 
 class PlaywrightHtmlRenderer(HtmlRendererPort):
@@ -64,15 +78,23 @@ class PlaywrightHtmlRenderer(HtmlRendererPort):
 
         page = None
         try:
+            # Model-written HTML: no scripts, no outbound requests.
             page = await browser.new_page(
                 viewport={"width": width, "height": 800},
                 device_scale_factor=_DEVICE_SCALE_FACTOR,
+                java_script_enabled=False,
             )
+            await page.route("**/*", _route_request)
             await page.set_content(html, wait_until="networkidle", timeout=_RENDER_TIMEOUT_MS)
             # Reset browser default margins. Keep body height as fit-content so it wraps the
             # widget without stretching to viewport height. Do NOT override background — the
             # LLM may place the widget background on <body> itself (full-page layout).
-            await page.add_style_tag(content="html,body{margin:0;padding:0;height:fit-content!important}")
+            # add_style_tag hangs with JavaScript disabled; evaluate (CDP) still works, so inject by hand.
+            await page.evaluate(
+                "css => { const s = document.createElement('style'); s.textContent = css;"
+                " document.head.appendChild(s); }",
+                "html,body{margin:0;padding:0;height:fit-content!important}",
+            )
             # Detect widget structure:
             #   Fragment (LLM returns bare <div>): body has 1 child → screenshot that child.
             #   Full page (LLM uses <body> as widget root with 2+ children): screenshot body.
