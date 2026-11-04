@@ -6,13 +6,16 @@ Public interface:
     await texts() -> ConnectorTexts
 
 The first load failing raises `ConnectorTextsUnavailable` (and posts one ops alert when a sink is given). A later
-refresh failing logs an error and keeps serving the last good value. There is never an inline default text.
+refresh failing logs an error and keeps serving the last good value. There is never an inline default text. A key
+no surface requires is not a failure (DRIVE_MCP_CONNECTOR_RFC §14.8: a token uploaded ahead of a deploy must not
+break the running revision): the texts load without it, and one WARNING names the unknown keys each time their set
+changes (not on every refresh).
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import AbstractSet, Callable, Optional
+from typing import AbstractSet, Callable, FrozenSet, Optional
 
 from src.domain.connector_texts import ConnectorTexts
 from src.domain.exceptions import ConnectorTextsUnavailable
@@ -44,6 +47,7 @@ class ConnectorTextService:
         self._lock = asyncio.Lock()
         self._value: Optional[ConnectorTexts] = None
         self._loaded_at = 0.0
+        self._unknown_warned: FrozenSet[str] = frozenset()
 
     async def texts(self) -> ConnectorTexts:
         """The current texts. Raises ConnectorTextsUnavailable only while no load has ever succeeded."""
@@ -79,8 +83,13 @@ class ConnectorTextService:
     async def _load(self) -> ConnectorTexts:
         tool_token = await self._get(self._tool_token_id)
         result_token = await self._get(self._result_token_id)
-        return ConnectorTexts.from_bodies(tool_token.content, result_token.content,
-                                          self._required_tool_keys, self._required_result_keys)
+        texts, unknown = ConnectorTexts.parse_bodies(tool_token.content, result_token.content,
+                                                     self._required_tool_keys, self._required_result_keys)
+        if unknown and unknown != self._unknown_warned:
+            logger.warning(f"[ConnectorTexts] unknown keys ignored (a token ahead of this revision?): "
+                           f"{', '.join(sorted(unknown))}")
+        self._unknown_warned = unknown
+        return texts
 
     async def _get(self, token_id: str) -> Token:
         try:

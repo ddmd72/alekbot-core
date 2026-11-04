@@ -5,9 +5,9 @@ metadata:
   description: Drive MCP connector — the result lines by key (status and what to
     do, every reading line R_*, the withheld-media lines W_*, the too-long route,
     the next-page line, the refusal line and its guidance, the size-guard line,
-    the one-time download link line LINK),
+    the one-time download link line LINK, the paging lines BATCH_* and SEARCH_MORE*),
     formatted by code with the chat constants' placeholders (DRIVE_MCP_CONNECTOR_RFC
-    §5.2, §5.5, §6.2, §7.7, §8). A draft, tuned live; no profile references it.
+    §5.2, §5.5, §6.2, §7.7, §8, §14.4). A draft, tuned live; no profile references it.
   override_by:
   - SYSTEM
   - AGENT
@@ -58,6 +58,21 @@ Cut at the connector's size limit: the rest of this result is not shown. Narrow 
 
 ### LINK
 Download link (opens once, within five minutes): {link}
+
+### BATCH_NEXT
+If the answer is still incomplete, batch {batch} holds lower-ranked passages: the same question in the same scope, with batch {batch}. Call find_passages with exactly these arguments: {arguments}
+
+### BATCH_NEXT_WIDE
+Asked again from batch 1 with wide "yes", the same question returns about twice as many passages in one call.
+
+### BATCH_END
+No further passages for this question in this scope: every ranked passage was returned in an earlier batch. Answer from what was shown, or ask a re-worded question.
+
+### SEARCH_MORE
+Some match groups show fewer files than they matched. To see about twice as many in one call, search again with wide "yes"; to narrow, search within a group's folder (folder).
+
+### SEARCH_MORE_WIDE
+Some match groups still show fewer files than they matched: to see the rest, search within a group's folder (folder).
 
 ### W_RECORDING_UNTRANSCRIBED
 A recording (audio or video) that is not transcribed yet: there is no text to return. Tell the user it has no transcript yet. The file itself: the download link below; when there is none, call get_download_link with this file's ref.

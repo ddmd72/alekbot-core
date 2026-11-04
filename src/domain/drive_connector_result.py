@@ -4,7 +4,17 @@
     What to do: <line>                  WHAT_TO_DO, the one line the status was decided by (below)
     Reading: <line>                     zero or more: `reading_keys` on this one outcome, texts from the token
     <block>                             the call's own text; passages re-rendered with the token's PAGE_NEXT
+    <paging lines>                      a search or a passages find (`paging` given, RFC §14.4), below
     <language line>                     LANGUAGE, after a block that shows passages
+
+Paging lines (only with `paging`, i.e. `search_drive` and `find_passages`, and only on an `OK` outcome):
+- a search whose tier showed fewer files than it matched (`DriveOutcome.more`): SEARCH_MORE, or SEARCH_MORE_WIDE after
+  a wide call;
+- a find whose passages left ranked chunks out (`ExcerptResult.more`): BATCH_NEXT with the next batch and the
+  arguments to resend (`ConnectorPaging.next_batch_arguments`), then BATCH_NEXT_WIDE when the call was not wide.
+A find's block is re-rendered with no "already shown earlier" line (a client has no ledger; batch k's earlier
+batches are its own replay) and with BATCH_END where a batch selected nothing new (`render_excerpts(nothing_new=…)`),
+treating as seen the context the earlier batches showed (`seen_folders`, `seen_files`).
 
 "What to do", by the first rule that holds:
 - the call did not finish in time (`NOT_FINISHED`): UNFINISHED, no block;
@@ -27,7 +37,7 @@ No "Specialist note", no `drive_context`, no delivery items: the client reads th
 hard size guard every tool's result passes (§6.1): cut at a line, then the OVER_SIZE line. Pure: no I/O.
 
 Public interface:
-    compose_connector_result(outcome, texts, *, nonce, link) -> str
+    compose_connector_result(outcome, texts, *, nonce, link, paging) -> str
     cap_result(text, over_size, limit=RESULT_MAX_CHARS) -> str
     connector_status(outcome) -> DriveStatus         the status the result's first line prints
     RESULT_MAX_CHARS                                 100,000: the guard, and the size a client is told to accept
@@ -42,6 +52,7 @@ from . import drive_connector_contract as c
 from .connector_texts import ConnectorTexts
 from .drive_answer import reading_keys, reading_texts
 from .drive_collected_result import CollectedResult
+from .drive_connector_paging import ConnectorPaging
 from .drive_excerpt_render import render_excerpts
 from .drive_op import DriveOp
 from .drive_outcome import DriveOutcome
@@ -96,20 +107,24 @@ def _neutral_refusal(outcome: DriveOutcome) -> bool:
 
 
 def compose_connector_result(outcome: DriveOutcome, texts: ConnectorTexts, *,
-                             nonce: Callable[[], str] = _default_nonce, link: Optional[str] = None) -> str:
+                             nonce: Callable[[], str] = _default_nonce, link: Optional[str] = None,
+                             paging: Optional[ConnectorPaging] = None) -> str:
     """One call's result text (the module docstring's shape and rules). `nonce` gives each passages file its wrapper's
-    nonce when a passages result is re-rendered; `link` is a one-time download link the call issued. Raises KeyError
-    when `texts` lacks a key: never a silent drop."""
+    nonce when a passages result is re-rendered; `link` is a one-time download link the call issued; `paging` is the
+    call's `wide`, batch and arguments, given by `search_drive` and `find_passages`. Raises KeyError when `texts` lacks
+    a key: never a silent drop."""
     r = texts.results
     if link and outcome.withheld is None and outcome.cls is OutcomeClass.OK:
         return "\n".join((r[c.STATUS].format(status=connector_status(outcome).value),
                           r[c.WHAT_TO_DO].format(line=r[c.LINK].format(link=link)), outcome.text))
-    line, block = _line_and_block(outcome, r, nonce)
+    line, block = _line_and_block(outcome, r, nonce, paging)
     out = [r[c.STATUS].format(status=connector_status(outcome).value), r[c.WHAT_TO_DO].format(line=line)]
     blocks = [CollectedResult(handle="r1", step=1, kind=_KIND.get(outcome.op, outcome.op.value), outcome=outcome)]
     out.extend(t.READING_PREFIX + text for text in reading_texts(reading_keys(blocks), r))
     if block:
         out.append(block)
+    if paging is not None and outcome.cls is OutcomeClass.OK:
+        out.extend(_paging_lines(outcome, r, paging))
     if link and outcome.withheld is not None:
         out.append(r[c.LINK].format(link=link))
     if _shows_passages(outcome):
@@ -130,7 +145,23 @@ def cap_result(text: str, over_size: str, limit: int = RESULT_MAX_CHARS) -> str:
     return f"{head}\n{over_size}"
 
 
-def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable[[], str]) -> Tuple[str, str]:
+def _paging_lines(outcome: DriveOutcome, r: Mapping[str, str], paging: ConnectorPaging) -> Tuple[str, ...]:
+    """The search line or the next-batch lines of an `OK` outcome (the module docstring's paging rules)."""
+    if outcome.op is DriveOp.SEARCH:
+        if not outcome.more:
+            return ()
+        return (r[c.SEARCH_MORE_WIDE] if paging.wide else r[c.SEARCH_MORE],)
+    excerpts = outcome.excerpts
+    if excerpts is None or not excerpts.more:
+        return ()
+    lines = [r[c.BATCH_NEXT].format(batch=paging.batch + 1, arguments=paging.next_batch_arguments())]
+    if not paging.wide:
+        lines.append(r[c.BATCH_NEXT_WIDE])
+    return tuple(lines)
+
+
+def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable[[], str],
+                    paging: Optional[ConnectorPaging] = None) -> Tuple[str, str]:
     if outcome.cls is OutcomeClass.NOT_FINISHED:
         return r[c.UNFINISHED], ""
     if outcome.cls is OutcomeClass.NOT_CONNECTED:       # the chat's line would blame a drive merely not shared (§7.4)
@@ -144,15 +175,20 @@ def _line_and_block(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable
     if _neutral_refusal(outcome):
         return r[c.REFUSED_GUIDANCE], r[c.REFUSED]
     if outcome.cls is OutcomeClass.OK or (outcome.cls is OutcomeClass.NOT_FOUND and outcome.op in _RESULT_TEXT_OPS):
-        return r[c.ANSWER_FROM_RESULTS], _block_text(outcome, r, nonce)
-    return _block_text(outcome, r, nonce), ""
+        return r[c.ANSWER_FROM_RESULTS], _block_text(outcome, r, nonce, paging)
+    return _block_text(outcome, r, nonce, paging), ""
 
 
-def _block_text(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable[[], str]) -> str:
-    """The call's own text; a passages result re-rendered with the connector's next-page line (E10)."""
-    if outcome.excerpts is None:
+def _block_text(outcome: DriveOutcome, r: Mapping[str, str], nonce: Callable[[], str],
+                paging: Optional[ConnectorPaging] = None) -> str:
+    """The call's own text; a passages result re-rendered with the connector's next-page line (E10), and for a find
+    (`paging` given) without the "already shown" line and with the end line, over the earlier batches' context."""
+    excerpts = outcome.excerpts
+    if excerpts is None:
         return outcome.text
-    return render_excerpts(outcome.excerpts, nonce=nonce, page_next=r[c.PAGE_NEXT]).text
+    return render_excerpts(excerpts, nonce=nonce, page_next=r[c.PAGE_NEXT], shown_folders=excerpts.seen_folders,
+                           described_files=excerpts.seen_files,
+                           nothing_new=r[c.BATCH_END] if paging is not None else None).text
 
 
 def _shows_passages(outcome: DriveOutcome) -> bool:
