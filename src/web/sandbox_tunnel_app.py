@@ -533,7 +533,8 @@ class _TunnelCall:
 
     async def _close_stream(self, result: TunnelResult, payload: Optional[bytes] = None) -> None:
         """RESULT, then the end of the response. Only RESULT `ok` that reached the end keeps the instance warm."""
-        assert self.start is not None
+        if self.start is None:
+            raise RuntimeError("the tunnel stream closed before START was read")
         data = payload if payload is not None else encode_result(result, self.start)
         self.status = result.status
         if result.status is not SandboxStatus.OK:

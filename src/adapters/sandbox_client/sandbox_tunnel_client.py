@@ -281,13 +281,14 @@ class _Call:
             await self._send_body(encode_frame(Frame(FrameType.START, payload=encode_start(self.start))))
             self.tasks.append(asyncio.create_task(self._feed()))
         except _Stop:
-            pass
+            logger.debug("[SandboxTunnel] request_id=%s the call ended while START was being sent", self.request_id)
         except (OSError, h2.exceptions.H2Error) as exc:
             self._lost(f"sending START failed ({type(exc).__name__})")
         await self.done.wait()
         if self.failure is not None:
             raise self.failure
-        assert self.result is not None
+        if self.result is None:
+            raise RuntimeError("the tunnel call ended with neither a result nor a failure")
         self.succeeded = True
         self._end_body()
         return TunnelReply(result=self.result, windows=self._ordered_windows(self.result),
@@ -317,7 +318,8 @@ class _Call:
     # -- receiving -------------------------------------------------------------------------------------------------
 
     async def _read_loop(self) -> None:
-        assert self.reader is not None and self.conn is not None
+        if self.reader is None or self.conn is None:
+            raise RuntimeError("the tunnel read loop started before the connection")
         try:
             while not self.done.is_set():
                 data = await self.reader.read(_READ_BYTES)
@@ -342,7 +344,8 @@ class _Call:
         if isinstance(event, h2.events.ResponseReceived) and event.stream_id == self.sid:
             self._on_response(dict((str(k).lower(), str(v)) for k, v in event.headers))
         elif isinstance(event, h2.events.DataReceived):
-            assert self.conn is not None
+            if self.conn is None:
+                raise RuntimeError("tunnel data arrived before the connection")
             self.conn.acknowledge_received_data(event.flow_controlled_length, event.stream_id)
             if event.stream_id == self.sid and self.streaming:
                 try:
@@ -505,7 +508,8 @@ class _Call:
     async def _send_body(self, data: bytes) -> None:
         """Writes `data` on the request body within the flow window; a window stuck at 0 for the send-stall deadline is
         a loss. Raises _Stop once the call has ended."""
-        assert self.conn is not None and self.writer is not None
+        if self.conn is None or self.writer is None:
+            raise RuntimeError("the tunnel body was sent before the connection")
         view = memoryview(data)
         while view:
             if self.done.is_set():
