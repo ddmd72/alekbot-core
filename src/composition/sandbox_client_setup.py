@@ -6,7 +6,7 @@ Public interface:
     docx_runner_factory(getenv=os.getenv, on_cloud_run=None) -> Callable[[], DocxRunnerPort]
     build_pdf_runner(getenv=os.getenv, on_cloud_run=None) -> PuppeteerRunnerPort
     pdf_runner_factory(getenv=os.getenv, on_cloud_run=None) -> Callable[[], PuppeteerRunnerPort]
-    build_html_renderer(enabled, inprocess_factory, getenv=os.getenv, on_cloud_run=None) -> Optional[HtmlRendererPort]
+    build_html_renderer(enabled, inprocess_factory) -> Optional[HtmlRendererPort]
 
 `SANDBOX_RENDER` in {`inprocess` (default), `sandbox`}; anything else is a startup error (ValueError). Both knobs
 (`SANDBOX_RENDER`, `SANDBOX_RENDER_URL`) are optional and read with `getenv` at this call site, never through
@@ -138,11 +138,9 @@ def pdf_runner_factory(
 
 def build_html_renderer(
     enabled: bool, inprocess_factory: Callable[[], HtmlRendererPort],
-    getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
 ) -> Optional[HtmlRendererPort]:
     """None when the widget renderer is disabled; otherwise the in-process renderer, whatever `SANDBOX_RENDER` says
-    (owner decision O16: widgets render in-process; `SandboxHtmlRenderer` is built but not wired). `getenv` and
-    `on_cloud_run` are accepted for call-site compatibility and unused."""
+    (owner decision O16: widgets render in-process; `SandboxHtmlRenderer` is built but not wired)."""
     if not enabled:
         return None
     return inprocess_factory()
