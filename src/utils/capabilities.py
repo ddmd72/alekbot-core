@@ -39,7 +39,7 @@ I index your inbox and make it fully searchable. Three levels of access:
 2. Full email: "show me the full text of that email" — I fetch the complete body
 3. Attachment: "read the PDF attached to that invoice" — I open it and read the content, including scanned PDFs. The full email lists each attachment with a reference, so a later turn can open the same file again
 
-4. Send an attachment to the chat: "send me that invoice PDF" — I upload the file here. Attachments of active kinds (HTML, SVG, Office files with macros, shortcuts, programs, scripts) are not forwarded; open those in Gmail
+4. Send an attachment to the chat: "send me that invoice PDF" — I upload the file here. Attachments of active kinds (HTML, SVG, Office files with macros, shortcuts, programs, scripts) are neither forwarded here nor saved to the drive; open those in Gmail
 
 These steps can chain in one conversation — search → read full email → read attachment → send it.
 
