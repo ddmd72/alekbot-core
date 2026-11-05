@@ -50,6 +50,9 @@ def runs(extractor, name):
 async def test_a_new_parser_version_re_extracts_what_the_parser_read(w):
     new_parser = HookedExtractor(PARSER, version=2)
     new_parser.outcomes = dict(w.parser.outcomes)
+    # U5 (A-U5-1): the new version reads notes.md to the same text (a stamp), contract.pdf to a changed one (full path)
+    new_parser.outcomes["contract.pdf"] = ExtractionOutcome(status=ExtractionStatus.TEXT, text=prose(150, "article"))
+    md_before, md_chunks, embeds = w.rec(w.md), w.chunks(w.md), len(w.emb.calls)
     rewire(w, parser=new_parser)
     await w.tick()   # the pass schedules: fresh work first
     for item in (w.md, w.pdf):
@@ -59,7 +62,15 @@ async def test_a_new_parser_version_re_extracts_what_the_parser_read(w):
     assert w.rec(w.scan).state is RecordState.INDEXED and w.rec(w.img).state is RecordState.INDEXED
     await w.settle()
     assert w.rec(w.md).extracted_by == "parser@2" and w.rec(w.pdf).extracted_by == "parser@2"
-    assert w.rec(w.md).indexed_generation == 2 and w.generations(w.md) == [2]
+    assert runs(new_parser, "notes.md") == 1 and runs(new_parser, "contract.pdf") == 1
+    # the same text commits as a stamp: no new generation, the stored chunks kept, the run's generation number burned
+    assert w.rec(w.md).indexed_generation == md_before.indexed_generation == 1 and w.generations(w.md) == [1]
+    assert w.chunks(w.md) == md_chunks and w.rec(w.md).index_generation > md_before.index_generation
+    assert w.summary_total("reread_same") == 1
+    # the changed text takes the full path into a new generation, only its own chunks embedded
+    assert w.rec(w.pdf).indexed_generation == 2 and w.generations(w.pdf) == [2]
+    assert set(w.emb.calls[embeds:]) & {c.text for c in md_chunks} == set()
+    assert {c.text for c in w.chunks(w.pdf)} <= set(w.emb.calls[embeds:])
     assert runs(new_parser, "scan.pdf") == 0 and len(w.reader.requests) == 2   # the reader's work stands
     state = await w.repo.get_sync_state(U_SCOPE)
     assert dict(state.applied_versions)["extractor:parser"] == 2
