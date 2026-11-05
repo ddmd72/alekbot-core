@@ -33,7 +33,7 @@ Layers: `FileConversionService` (`src/services/file_conversion_service.py`) reso
 `DocumentService` (`src/services/document_service.py`) reads bytes behind `DocumentReadPort`
 (`src/ports/document_read_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
 `document_open.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
-`src/utils/file_conversion.py` keeps the alert texts and the markitdown helpers that email attachments still use.
+`src/utils/file_conversion.py` keeps the alert texts and the markitdown helpers (no `src/` caller reads email through them after U4a).
 
 > **See also:** [../file_storage/README.md](../file_storage/README.md) (GCS storage, the upload turn),
 > [../user_drive/README.md](../user_drive/README.md) (drive opens, §29 bound).
@@ -50,8 +50,7 @@ carry the ownership check), refuses an oversize file on metadata before any down
 only, reads them through the document service and answers exactly one of: `body` (today's `[File: <name>]` text, raw,
 unmarked and uncut), `note` (a `[System: ...]` line), or a native file (`native_path` + `native_mime`). `consumer` is
 the consuming model's native declaration (empty: text only). Store errors propagate; the callers map them. Folders,
-recordings, video and the drive's §29 decision stay with the caller (`DriveOperations`). `email:` refs are not opened
-here until U4.
+recordings, video and the drive's §29 decision stay with the caller (`DriveOperations`). `email:` refs open through `open_email` (U4a): one listing of the message, a match by part id or name, one download, the document service with store `email`; a name that matches several parts returns candidate labels, never a guess.
 
 `prefetch(ref, ..., deadline_at) -> Prefetched` (`:295`) is `open` as text only for a specialist
 (DocPlanner, PdfGenerator, HtmlPageGenerator): the text as `content`, marked and cut at 60 000 characters, or a `note`
@@ -151,12 +150,12 @@ File contents never leave in telemetry: file parts of LLM calls are replaced by 
 
 ## Not built yet
 
-- **Email attachments (U4).** `email:` refs and `open_email_attachment`; email attachments still convert through
-  `convert_file_to_text` in `email_search_service.py`.
+- **Email save and send (U4b).** `copy_file_to_drive` and `send_file_to_user` from an `email:` ref; until then a save or
+  send of an `email:` ref answers with an honest "not available yet" line.
 - **One parse engine (U5).** Until then a `text/*` upload of csv or html is read raw as UTF-8 in the service (A3), and
-  markitdown's auto-detect path in `convert_file_to_text` still serves email attachments; U5 moves them to the child's
-  readers with the four fixes of RFC §7.
-- `resolve_file` (the shared resolver for actions) is deferred to U4.
+  markitdown's auto-detect path in `convert_file_to_text` is kept only for the U0-b report script; U5 moves it to the
+  child's readers with the four fixes of RFC §7.
+- `resolve_file` (the shared resolver for actions) is deferred to U4b.
 
 ---
 

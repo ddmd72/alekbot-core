@@ -155,7 +155,7 @@ Specialist agent registered in `AgentRegistry`. Accessible exclusively via `Smar
 |---|---|---|
 | `search_emails` | `{"query": "..."}` | LLM key extraction → 7-stream multi-vector RRF search in `domain_email_facts_v1` |
 | `get_email_details` | `{"email_id": "..."}` | Direct Gmail API fetch → full body returned as text |
-| `get_email_attachment` | `{"email_id": "...", "filename": "file.pdf"}` | Gmail API download → markitdown conversion → text returned |
+| `open_email_attachment` | `{"file_ref": "email:<message id>/<part>"}` or `{"email_id": "...", "name": "file.pdf"}` | Gmail API: one listing of the message, one download of the chosen part → `FileConversionService.open_email` → document service (scans through the reader, native PDF/image attached for models that read them) |
 
 ### 6.2 Search Implementation (`search_emails`)
 
@@ -165,9 +165,11 @@ Mirrors the `SearchEnrichmentService` RRF pattern for facts:
 - `EmailSearchService` runs 7 parallel Firestore queries across 4 vectors.
 - Results merged via Reciprocal Rank Fusion (RRF), top-K returned.
 
-### 6.3 Live Access (`get_email_details`, `get_email_attachment`)
+### 6.3 Live Access (`get_email_details`, `open_email_attachment`)
 
 No search — direct Gmail API call. The stored index provides `email_id`; the full body is fetched fresh at query time. This avoids storing full email bodies in Firestore (privacy + storage cost).
+
+**Attachment refs.** `get_email_details` lists every attachment once, from the live message (nested, inline and forwarded parts included), as a system-made label `[Email file: "<name>" (<size>, <mime>) ref=email:<message id>/<part>]` printed after the untrusted block, and the labels ride in the `email_file_context` history key so a later turn opens the same file by ref. `open_email_attachment` takes a `file_ref` or `email_id` + `name` (`name` is matched exactly, then NFC + case-folded; several matches return the candidate labels as a success with a "pass one ref" note, never a failure). With neither, a message with one attachment opens it and a message with several returns the candidates. **One attachment per call**; for several files the model makes one call per attachment (they run in parallel). Each call lists the message itself, so N opens cost 2N Gmail calls. A scanned PDF goes to the paid reader (up to 200 pages, 60 000 characters per open), the daily review included. The Gmail `attachmentId` is not stored: it is not stable between reads, so the ref carries only the part id. The removed in-process path (`get_attachment`, markitdown in the main service) no longer exists.
 
 ### 6.4 Untrusted marking
 
