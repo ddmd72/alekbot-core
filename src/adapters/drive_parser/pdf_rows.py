@@ -6,7 +6,11 @@ columns, no rules) runs only when no ruled table was found and only under a guar
 _MIN_COLUMNS columns and one mostly numeric column, so a two-column prose page never becomes a table.
 
 Public interface:
-    table_page_text(page) -> Optional[str]     # the page text with its tables as pipe rows; None: no table here
+    table_page_text(page, ruled, aligned) -> Optional[str]   # the page text with its tables as pipe rows; None: no table
+    NUMBER_CELL                                              # a cell or line that is only a number or an amount
+
+The caller opens a page in pdfplumber only when pdfminer's own pass saw a signal on it: drawn lines or rectangles
+(`ruled`) or at least MIN_NUMERIC_LINES lines that are only a number (`aligned`); a page with neither never gets here.
 """
 from __future__ import annotations
 
@@ -14,17 +18,18 @@ import re
 from typing import Any, List, Optional, Sequence, Tuple
 
 _MIN_ROWS = 3
+MIN_NUMERIC_LINES = 3
 _MIN_COLUMNS = 2
 _NUMERIC_SHARE = 0.6
-_NUMBER = re.compile(r"^[-+(]?[€$£]?\s*\d[\d .,' ]*\s*(?:%|[€$£]|EUR|USD|GBP)?\)?$")
+NUMBER_CELL = re.compile(r"^[-+(]?[€$£]?\s*\d[\d .,' ]*\s*(?:%|[€$£]|EUR|USD|GBP)?\)?$")
 
 _Found = List[Tuple[Tuple[float, float, float, float], List[List[str]]]]
 
 
-def table_page_text(page: Any) -> Optional[str]:
+def table_page_text(page: Any, ruled: bool, aligned: bool) -> Optional[str]:
     """The text of one pdfplumber page with each detected table as one `| a | b |` line per row and the rest of the
     page (above, between and below the tables) as pdfplumber extracts it; None when the page has no table."""
-    tables = _ruled_tables(page) or _aligned_tables(page)
+    tables = (ruled and _ruled_tables(page)) or (aligned and _aligned_tables(page))
     if not tables:
         return None
     segments: List[str] = []
@@ -70,7 +75,7 @@ def _has_numeric_column(rows: Sequence[Sequence[str]]) -> bool:
     width = max(len(row) for row in rows)
     for column in range(width):
         cells = [row[column] for row in rows if column < len(row) and row[column]]
-        if len(cells) >= _MIN_ROWS - 1 and sum(1 for cell in cells if _NUMBER.match(cell)) >= _NUMERIC_SHARE * len(cells):
+        if len(cells) >= _MIN_ROWS - 1 and sum(1 for cell in cells if NUMBER_CELL.match(cell)) >= _NUMERIC_SHARE * len(cells):
             return True
     return False
 

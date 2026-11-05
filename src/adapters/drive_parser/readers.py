@@ -5,10 +5,10 @@ They run only inside the sandboxed child process (`drive_parser.child`), never i
 parser here may amplify a small file into gigabytes (§9, Phase 0). Parser libraries are imported inside the
 functions, so they load after the child has applied its limits.
 
-Every admitted kind has a named reader (§5.1): pdfminer.six for PDF (pdfplumber turns a page's table into pipe rows, `pdf_rows`), called directly (markitdown 0.1.8's PdfConverter
-runs pdfplumber first and falls back to pdfminer on any exception: two engines, one of them unpinned by intent);
-markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB,
-MSG and HTML; charset detection for the
+Every admitted kind has a named reader (§5.1): pdfminer.six for PDF, called directly; a page where pdfminer saw drawn lines or numeric-only lines is also opened in
+pdfplumber and its table becomes pipe rows (`pdf_rows`; at most _MAX_TABLE_PAGES pages per file);
+markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB
+and MSG; HTML through `html_text.html_page_text`; charset detection for the
 text kinds, VTT/SRT reduced to `[hh:mm:ss] text` cues; `striprtf` for RTF; the stdlib `email` parser for EML (headers, every text part,
 nested messages, attachments as names only; HTML bodies through `html_page_text`); ODF `content.xml`
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
@@ -41,9 +41,11 @@ import html
 import io
 import os
 import re
+import sys
 import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import lru_cache
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 from typing import BinaryIO, Iterator, Union
 
@@ -51,6 +53,7 @@ from src.adapters.drive_parser.capture import pdf_capture_signals
 from src.adapters.drive_parser.child import is_memory_failure
 from src.adapters.drive_parser.epub_package import PackageError, epub_zip_from_tar, is_tar_package
 from src.adapters.drive_parser.html_text import html_page_text, text_is_html
+from src.adapters.drive_parser.pdf_rows import MIN_NUMERIC_LINES, NUMBER_CELL, table_page_text
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_extraction import ExtractionOutcome, PdfSplitFailed
 from src.domain.document_extraction import ExtractionStatus, failure_label
@@ -324,57 +327,116 @@ def _read_pdf(path: str, kind: str) -> _Read:
 def _pdfminer_text(path: str) -> Tuple[str, bool]:
     """pdfminer's extract_text, page by page: layout stops once MAX_TEXT_CHARS characters are out (R2 P-m6), so a
     thousand dense pages never all go through layout for text the cap drops. `truncated` when a page was left."""
-    from pdfminer.converter import TextConverter
     from pdfminer.layout import LAParams
     from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
     from pdfminer.pdfpage import PDFPage
 
     with open(path, "rb") as fh, io.StringIO() as output, _plumber_pages(path) as plumber:
         manager = PDFResourceManager(caching=True)
-        device = TextConverter(manager, output, codec="utf-8", laparams=LAParams())
+        device = _SignalConverter(manager, output, codec="utf-8", laparams=LAParams())
         interpreter = PDFPageInterpreter(manager, device)
         pages = PDFPage.get_pages(fh, caching=True)
+        candidates = 0
         for index, page in enumerate(pages):
             start = output.tell()
             interpreter.process_page(page)
-            replacement = _table_text(plumber, index)
-            if replacement is not None:              # a page with a table: its rows as pipe lines (U5 F1)
-                output.seek(start)
-                output.truncate()
-                output.write(replacement + "\n\n")
+            if plumber is not None and (device.ruled or device.numeric_lines >= MIN_NUMERIC_LINES):
+                if candidates < _MAX_TABLE_PAGES:
+                    candidates += 1
+                    replacement = _table_text(plumber, index, device.ruled, device.numeric_lines >= MIN_NUMERIC_LINES)
+                    if replacement is not None:          # a page with a table: its rows as pipe lines (U5 F1)
+                        output.seek(start)
+                        output.truncate()
+                        output.write(replacement + "\n\n")
+                elif candidates == _MAX_TABLE_PAGES:
+                    candidates += 1
+                    sys.stderr.write(f"[PdfRows] table_page_cap_hit cap={_MAX_TABLE_PAGES} at_page={index + 1}\n")
             if output.tell() >= MAX_TEXT_CHARS:      # StringIO's position: the characters written so far
                 return output.getvalue(), next(pages, None) is not None
         return output.getvalue(), False
 
 
+_MAX_TABLE_PAGES = 60     # pages per document that may be opened in pdfplumber; later table pages keep pdfminer's text
+
+
+@lru_cache(maxsize=1)
+def _signal_converter_class() -> Any:
+    from pdfminer.converter import TextConverter
+    from pdfminer.layout import LTCurve, LTFigure, LTTextContainer, LTTextLine
+
+    class SignalConverter(TextConverter):  # type: ignore[misc]
+        """pdfminer's TextConverter that also records, per page, whether anything was drawn (lines, rectangles,
+        curves) and how many text lines are only a number: the signals that gate the pdfplumber pass (U5 F1)."""
+
+        ruled = False
+        numeric_lines = 0
+
+        def receive_layout(self, ltpage: Any) -> None:
+            self.ruled, self.numeric_lines = False, 0
+            stack = [ltpage]
+            while stack:
+                for obj in stack.pop():
+                    if isinstance(obj, LTCurve):
+                        self.ruled = True
+                    elif isinstance(obj, LTFigure):
+                        stack.append(obj)
+                    elif isinstance(obj, LTTextContainer):
+                        for line in obj:
+                            if isinstance(line, LTTextLine) and NUMBER_CELL.match(line.get_text().strip()):
+                                self.numeric_lines += 1
+            super().receive_layout(ltpage)
+
+    return SignalConverter
+
+
+def _SignalConverter(*args: Any, **kwargs: Any) -> Any:
+    return _signal_converter_class()(*args, **kwargs)
+
+
+class _LazyPlumber:
+    """The pdfplumber document of a file, opened on the first page asked for (most files never ask)."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._document: Optional[Any] = None
+        self._failed = False
+
+    def page(self, index: int) -> Optional[Any]:
+        if self._document is None and not self._failed:
+            try:
+                import pdfplumber
+
+                self._document = pdfplumber.open(self._path)
+            except Exception as exc:
+                if is_memory_failure(exc):
+                    raise
+                self._failed = True
+        return self._document.pages[index] if self._document is not None else None
+
+    def close(self) -> None:
+        if self._document is not None:
+            self._document.close()
+
+
 @contextmanager
-def _plumber_pages(path: str) -> Iterator[Optional[Any]]:
-    """The pdfplumber document of the file, None when it cannot be opened (pdfminer's text then stands alone)."""
+def _plumber_pages(path: str) -> Iterator[Optional[_LazyPlumber]]:
+    lazy = _LazyPlumber(path)
     try:
-        import pdfplumber
-
-        document = pdfplumber.open(path)
-    except Exception as exc:
-        if is_memory_failure(exc):
-            raise
-        yield None
-        return
-    try:
-        yield document
+        yield lazy
     finally:
-        document.close()
+        lazy.close()
 
 
-def _table_text(plumber: Optional[Any], index: int) -> Optional[str]:
+def _table_text(plumber: Optional[_LazyPlumber], index: int, ruled: bool, aligned: bool) -> Optional[str]:
     """The page text with its tables as rows, or None (no table, or pdfplumber failed: pdfminer's text stands)."""
     if plumber is None:
         return None
     try:
-        from src.adapters.drive_parser.pdf_rows import table_page_text
-
-        page = plumber.pages[index]
+        page = plumber.page(index)
+        if page is None:
+            return None
         try:
-            return table_page_text(page)
+            return table_page_text(page, ruled, aligned)
         finally:
             page.close()
     except Exception as exc:

@@ -5,6 +5,7 @@ from typing import List, Sequence, Tuple
 
 import pytest
 
+from src.adapters.drive_parser import readers
 from src.adapters.drive_parser.readers import _pdfminer_text, read_content
 from src.domain.document_extraction import ExtractionStatus
 from tests.unit.adapters.drive_extraction_fixtures import encrypt_pdf, make_pdf
@@ -120,4 +121,19 @@ def test_two_hundred_pages_are_read_inside_the_wall(tmp_path):
         for _ in range(200)]
     out = read_content(str(_write_pdf(tmp_path / "long.pdf", streams)), "pdf")
     assert out.status is ExtractionStatus.TEXT and out.pages_total == 200
-    assert out.text.count("| Key copy | 2 | 25,00 |") == 200
+    assert out.text.count("| Key copy | 2 | 25,00 |") == readers._MAX_TABLE_PAGES       # later table pages keep pdfminer's text
+    assert out.text.count("Key copy") == 200
+
+
+@pytest.mark.slow
+def test_a_dense_prose_pdf_never_opens_pdfplumber(tmp_path, monkeypatch):
+    import pdfplumber
+
+    opened = []
+    monkeypatch.setattr(pdfplumber, "open", lambda *a, **k: opened.append(a) or pytest.fail("pdfplumber opened"))
+    lines = [f"Item {n} of the garden report with several plain words and a year 2026 inside".encode() for n in range(50)]
+    stream = b"BT /F1 9 Tf 11 TL 40 760 Td\n" + b"\n".join(b"(" + line + b") '" for line in lines) + b"\nET"
+    path = _write_pdf(tmp_path / "prose200.pdf", [stream] * 200)
+    out = read_content(str(path), "pdf")
+    assert out.status is ExtractionStatus.TEXT and out.pages_total == 200
+    assert opened == [] and out.text == _pdfminer_text(str(path))[0].strip()
