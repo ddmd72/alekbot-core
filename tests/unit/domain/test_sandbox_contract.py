@@ -125,9 +125,10 @@ def test_status_and_op_values() -> None:
     # RFC §4.7 (owner 2026-11-03): the parse family, no `parse.pdf_window` (one window is a batch of one).
     # RFC §7 S2: the HTML renderers `render.pdf`, `render.png` join the render family.
     # RFC §7 S5 (O17): the media family over the tunnel route, `media.probe` and `media.audio_windows`, nothing more.
+    # EXTERNAL_FILES U4b (D13, owner decision O2): `parse.container_facts` joins the parse family.
     assert [o.value for o in SandboxOp] == [
         "render.docx", "render.pdf", "render.png", "parse.extract", "parse.pdf_page_count", "parse.pdf_windows",
-        "media.probe", "media.audio_windows",
+        "parse.container_facts", "media.probe", "media.audio_windows",
     ]
 
 

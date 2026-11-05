@@ -306,8 +306,14 @@ async def test_an_email_ref_opens_through_open_and_prefetch_reads_it_as_text(wor
 
 
 async def test_resolve_bytes_refuses_an_email_ref_with_the_honest_line(world):
-    with pytest.raises(EmailFileNotTransferable, match="cannot be saved to the drive or sent"):
+    # U4b (D8): resolve_bytes still refuses an email: ref, but saving and sending now exist, so the line names the
+    # routes that do (read, copy to the drive, send to the chat, then the drive: ref) and no longer says "cannot".
+    with pytest.raises(EmailFileNotTransferable) as refused:
         await world.service.resolve_bytes(format_email_ref(MSG, "1.2"), "ann")
+    line = str(refused.value)
+    for route in ("open_email_attachment", "work_with_drive_files", "send_file_to_user", "drive: ref", "Gmail"):
+        assert route in line
+    assert "cannot be saved" not in line and "yet" not in line
     assert world.email.downloads == []
 
 
