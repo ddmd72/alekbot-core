@@ -1,6 +1,6 @@
 # RFC: One way to open external files — refs, native reading, shared security pieces
 
-**Status:** Proposed (rev 6). Not built. *D* items are owner decisions (2026-10-22 to 2026-11-03); *P* items are author
+**Status:** Proposed (rev 6); U0–U4 built (U4b, email save and send with D13's macro check in the sandbox, 2026-11-05); U5 not built. *D* items are owner decisions (2026-10-22 to 2026-11-03); *P* items are author
 proposals the owner has not ruled on, each separable; *A* items are author decisions on engineering points.
 **Date:** 2026-10-22 (rev 2: 2026-10-23, after four reviews; rev 3: owner decisions D7–D11; rev 4: re-review; rev 5: 2026-10-23, owner decisions D12–D13; rev 6: 2026-11-03, owner decisions D14–D15, code re-read; owner decisions D16–D20 of the same day)
 Code cites are `main` @ `2280ca78`.
@@ -112,7 +112,7 @@ decision records `drive_prefetch_wrapper_slice3.md`, `drive_parser_sandbox_resou
 - **Review round 1** (2026-11-03): `PdfSplitterPort` gains an optional deadline and a batch cut, and the service takes
   it explicitly (§4.4); the audio requirement is P21, with §27's opt-in and cap for drive recordings only (D5); U5's one
   parser `VERSION` bump is gated on a measured upgrade-pass cost and the owner's OK (§7); one adapter object serves both
-  parse ports (§4.9); P5 names its deviation from `src/ports/CLAUDE.md`; the D13 macro check runs in the child.
+  parse ports (§4.9); P5 names its deviation from `src/ports/CLAUDE.md`; the D13 macro check runs in the sandbox (O2, 2026-11-05; see §4.2).
 
 **Changes since rev 1** (rev 2, four reviews, every change arbitrated): the native declaration travels per engine
 attempt on a context copy and carries `max_pages`; one absolute deadline per open; prefetch reads in the worker (P18);
@@ -197,7 +197,7 @@ Facts that shape the design:
   in-process (`file_conversion.py:269-280`; pdfplumber first for PDF). No record calls the split intended; every
   record points to convergence in Slice 3 (`USER_DRIVE_INDEXING_RFC.md` §9 last bullet, §16).
 - **The indexer's chain** (`src/services/drive_indexing_service.py:2851-2986`) is: fetch, sniff (`sniff_kind`,
-  `src/domain/drive_sniff.py:58`), the chain table (`EXTRACTOR_CHAINS`, `src/domain/drive_extraction.py:30`), the
+  `src/domain/document_kind.py`, `sniff_kind`), the chain table (`EXTRACTOR_CHAINS`, `src/domain/drive_extraction.py:30`), the
   router (`model_route`, `:190-205`: no text, under 200 characters per page, over 5 % garbage, parser error), then six
   record- and money-coupled decisions before the reader (`:2912-2927`).
 - **Untrusted marking** exists for drive text only: `wrap_untrusted` and the two reminders
@@ -346,14 +346,16 @@ lenient").
 | Office with macros (docm, xlsm, pptm) | an OOXML ZIP with a `vbaProject.bin` part or a macro-enabled content type |
 | Shortcut (lnk) | the shell-link header magic |
 | Disk image (iso, img) | `CD001` at offset 32 769 (ISO); a raw image has no magic, so only its name shows it |
-| Executable | the sniffer's existing `executable` kind (ELF, Mach-O, MZ; `src/domain/drive_sniff.py:47`, `:52`) |
+| Executable | the sniffer's existing `executable` kind (ELF, Mach-O, MZ; `src/domain/document_kind.py`, `sniff_kind`) |
 | Script | a `#!` first line; scripts without one (js, vbs, ps1, bat, cmd) only by name |
 
   The bytes decide. A name or part mime naming one of these kinds also blocks, never unblocks; this is stricter than
   the bytes alone and covers the kinds without magic. The check reads up to 64 KiB of the head, enough for the ISO
-  marker. The head checks are byte compares in the caller; the macro check, which must list an OOXML ZIP's parts,
-  runs in the parser child under its ZIP caps (`src/utils/document_hardening.py`), so no ZIP is inflated in the main
-  process.
+  marker. The head checks are byte compares in the caller (`src/domain/active_kind.py`); the macro check, which must
+  list a ZIP's parts, runs in the sandbox as the light op `parse.container_facts` (owner decision O2, 2026-11-05;
+  `ContainerFactsPort`, `src/utils/document_hardening.py: zip_container_facts`), so no ZIP is read in the main service.
+  When the check cannot run (outage, timeout, a ZIP above the member cap) the file is refused as "could not be
+  checked": the rule fails closed.
 - The answer is a refusal note, not a failure of the turn: "This attachment is a <kind> file from an email; such
   files are not forwarded to the chat. The user can open it in Gmail." Drive and chat refs are sent without this
   check; an HTML report on the drive is sent as any file.
@@ -921,6 +923,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | D11 | one open verb per store; `open_email_attachment` replaces `get_email_attachment`; refs from `get_email_details` (§4.2, §4.7) | owner, 2026-10-23 |
 | D12 | `open_email_attachment` also takes an email id + attachment name; duplicates list the refs (§4.7) | owner, 2026-10-23 |
 | D13 | `send_file_to_user` refuses active kinds from email attachments, by kind from bytes; drive and chat unrestricted (§4.2) | owner, 2026-10-23 |
+| O2 (U4b) | D13's macro check runs in the sandbox as `parse.container_facts`; no ZIP parsing in the main service; fail closed when it cannot run (§4.2; `decisions/email_send_macro_check_in_sandbox.md`) | owner, 2026-11-05 |
 | D14 | order: U0–U4, then U5, first; sandbox S3/S4 after, as adapter swaps; the parser child is the accepted residual until then (§4.9, §7) | owner, 2026-11-03 |
 | D15 | P4 in principle: one parse engine, the child's readers (§4.8, §8) | owner, 2026-11-03 |
 | D16 | D15's final go given; the U5 re-extract/re-embed cost approved up front, the measured estimate still reported before shipping (§7) | owner, 2026-11-03 |
@@ -995,7 +998,7 @@ them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_bloc
 
 Deltas of U4a (read) from this RFC as written:
 - **No parser child.** S4 is live: the email read parses through `DocumentService` and the sandbox light service, so it is
-  isolated with no extra work. D13's macro check has no child to run in (owner item O2, U4b).
+  isolated with no extra work. D13's macro check runs in the sandbox (owner decision O2, U4b; built).
 - **Native email opens ship in U4a** (D9's `file_omitted` already protects the history); `open_email_attachment` joins
   `NATIVE_OPENING_INTENTS`. U0-d never ran: the adapter's wire tests on synthetic payloads stand in until the live check.
 - **`get_part` takes the listed part**, not a part id: Gmail's `attachmentId` is not stable between `messages.get`
@@ -1018,7 +1021,7 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | **U1 pieces** | P9 (its drive branch on the `drive_ref` codec); P10 moves (G1's mime table moves with `kind_of`); caps table (§4.5, the text-export and §29 rows included); `PdfSplitterPort` (with the optional `deadline_at` and the batch `cut_pdf_windows`, §4.4); the marking function with a tag per store (drive unchanged) | no behaviour change; drive output byte-identical; indexer tests change import lines only | after U0 |
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it except for the three opening intents, the drive specialist passes it on (A5); `DriveOperations` decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped, from `open_file` and from the drive specialist; the key never reaches any other specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
 | **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, splitter, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the one 60 000-character cut (D20) on every open path, email attachments moved from 30 000; P21's per-path audio decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
-| **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; `copy_file_to_drive` from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | after U3; native email opens wait for U0-a |
+| **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; `copy_file_to_drive` from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | **Built:** U4a (read, 2026-11-05) and U4b (`resolve_file`, `copy_file_to_drive` and `send_file_to_user` from an `email:` ref, D13 with the sandbox macro check). After U3; native email opens wait for U0-a |
 | **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, shipped together under **one** parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | **Gate before the bump ships:** the fixes change the child the indexer shares, so the indexer's upgrade pass (`drive_indexing_service.py:2934-2935`, `DRIVE_UPGRADE_PASS`) re-extracts and re-embeds the drive corpus and may route files to the paid reader; a probe measures the cost on a sample and the owner gives an OK under the money rules (over ~$3). Then: the four fixes each tested on a fixture; the U0-b report on real files (PDFs with real fonts, scans, `.msg`, files at the caps, large sheets) accepted by the owner (D15's final go); no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
 | **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P19 parser-text cut | each its own PR | any time after U1 |
 | **S3 / S4** (sandbox RFC) | adapter swaps per §4.9 | no caller diff in the PR | after the document service (D14); S3 needs U1 and U3, S4 also U5 |
