@@ -19,7 +19,7 @@ opentelemetry-exporter-gcp-trace==1.14.0
 # Each line equals its line in requirements.txt (tests/unit/test_sandbox_light_image.py compares them): the extraction a
 # record was indexed with must not drift with the image. The engines under markitdown's converters are pinned too, so the
 # resolution equals the main image's. Bumps are deliberate, with SubprocessContentExtractor.VERSION.
-pypdf==6.21.1
+pypdf==6.21.4
 pdfminer.six==20260107
 markitdown[all]==0.1.8
 openpyxl==3.1.5
