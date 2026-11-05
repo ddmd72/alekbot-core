@@ -1121,13 +1121,15 @@ class DriveTranscriptMirror:
         return doc.mirror_name if doc is not None and doc.mirror_item_id else folder.name
 
     async def _source_chain(self, ctx: "_Run", rec: DriveIndexRecord) -> List[DriveIndexRecord]:
-        """The folder records above `rec`, top first, up to the App Folder root; a missing, deleting or non-folder
-        ancestor, or a cycle, cannot be placed (charged)."""
+        """The folder records above `rec`, top first, up to the area root or to a top with no visible parent (a
+        folder shared with the owner, the top scope ancestor of a folder-scoped connection: the provider names no
+        parent, as every other chain walk here reads it); a missing, deleting or non-folder ancestor, or a cycle,
+        cannot be placed (charged)."""
         area_root = await self._area_root_id(ctx)
         chain: List[DriveIndexRecord] = []
         parent_id, seen = rec.parent_id, {rec.item_id}
-        while parent_id != area_root:
-            if not parent_id or parent_id in seen or len(chain) >= MAX_CHAIN_DEPTH:
+        while parent_id and parent_id != area_root:
+            if parent_id in seen or len(chain) >= MAX_CHAIN_DEPTH:
                 raise _Unplaceable("the source chain cannot be resolved")
             parent = await self._record(ctx, parent_id)
             if parent is None or not parent.is_folder or parent.state is RecordState.DELETING:
