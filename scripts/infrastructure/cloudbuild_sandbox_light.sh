@@ -16,6 +16,8 @@
 # `alek-sandbox-`. Any other SANDBOX_LIGHT_SA (e.g. the main runtime's, from a mis-set .env value) is refused with a
 # non-zero exit before any docker or gcloud call, so the "holds nothing" service can never be given real IAM by accident.
 #
+# Network (RFC §4.5, S6): SANDBOX_VPC_NETWORK and SANDBOX_VPC_SUBNET come from the step env; deploy refuses when either is empty.
+#
 # The service holds no secret (nothing is mounted from Secret Manager; --clear-secrets makes every deploy drop any secret
 # attached by hand), admits authenticated callers only (the platform's invoker check stays on) and gets no public IAM binding.
 set -euo pipefail
@@ -37,6 +39,16 @@ case "${SANDBOX_LIGHT_SA%%@*}" in
 esac
 
 : "${PROJECT_ID:?PROJECT_ID must be set by the Cloud Build step env}"
+# No-egress lock-down (RFC §4.5, S6): the service deploys onto Direct VPC egress `all-traffic` in a custom VPC with no NAT and a
+# deny-all egress firewall. Fail closed: a deploy without the network would silently leave the internet open.
+if [ "$mode" = "deploy" ]; then
+  for var in SANDBOX_VPC_NETWORK SANDBOX_VPC_SUBNET; do
+    if [ -z "${!var:-}" ]; then
+      echo "sandbox light (deploy): $var is empty: refusing to deploy with open egress (docs/07_deployment/README.md § Sandbox network)" >&2
+      exit 4
+    fi
+  done
+fi
 SERVICE="alek-bot-sandbox-light-dev"
 IMAGE="gcr.io/${PROJECT_ID}/${SERVICE}:latest"
 # Size of the in-memory work volume. Instance memory is 2Gi and the volume counts against it. Worst case on the volume:
@@ -59,6 +71,9 @@ case "$mode" in
     gcloud run deploy "$SERVICE" \
       --image="$IMAGE" \
       --region=us-central1 \
+      --network="$SANDBOX_VPC_NETWORK" \
+      --subnet="$SANDBOX_VPC_SUBNET" \
+      --vpc-egress=all-traffic \
       --service-account="$SANDBOX_LIGHT_SA" \
       --no-allow-unauthenticated \
       --clear-secrets \

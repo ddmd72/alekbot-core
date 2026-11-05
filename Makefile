@@ -88,6 +88,10 @@ _SANDBOX_LIGHT_URL = $(SANDBOX_LIGHT_URL_DEV)
 _SANDBOX_LIGHT_CALLERS_MAIN = $(SANDBOX_LIGHT_CALLERS_MAIN_DEV)
 _SANDBOX_LIGHT_CALLERS_INDEXER = $(SANDBOX_LIGHT_CALLERS_INDEXER_DEV)
 
+# No-egress network of both sandbox services (RFC §4.5, S6). Deploy-only keys; `make deploy` refuses empty values.
+_SANDBOX_VPC_NETWORK = $(SANDBOX_VPC_NETWORK_DEV)
+_SANDBOX_VPC_SUBNET = $(SANDBOX_VPC_SUBNET_DEV)
+
 # The indexer's upgrade-pass emergency switch (USER_DRIVE_INDEXING_RFC §25.8): DRIVE_UPGRADE_PASS_DEV=off in .env
 # keeps it off across deploys (the indexer step's --set-env-vars replaces every variable, so a switch set with
 # `gcloud run services update` alone would turn back on at the next deploy). Default on. A deploy-only key, never
@@ -356,11 +360,14 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@if [ -z "$(SANDBOX_LIGHT_URL_DEV)" ]; then \
 		echo "❌ SANDBOX_LIGHT_URL_DEV is empty: both runtimes parse only through the sandbox light service and refuse to start without its URL (docs/07_deployment/README.md § Sandbox light)"; \
 		exit 1; fi
+	@if [ -z "$(SANDBOX_VPC_NETWORK_DEV)" ] || [ -z "$(SANDBOX_VPC_SUBNET_DEV)" ]; then \
+		echo "❌ SANDBOX_VPC_NETWORK_DEV and SANDBOX_VPC_SUBNET_DEV must both be set in .env: the sandbox services deploy with no egress (docs/07_deployment/README.md § Sandbox network)"; \
+		exit 1; fi
 	@echo "🎙  Transcription switch: _DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED), cap: _DRIVE_TRANSCRIBE_USD_CAP=$(if $(_DRIVE_TRANSCRIBE_USD_CAP),$(_DRIVE_TRANSCRIBE_USD_CAP),(empty = the \$$20 maximum))"
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json
