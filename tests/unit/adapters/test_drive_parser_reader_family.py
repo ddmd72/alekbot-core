@@ -52,7 +52,7 @@ def test_the_family_table_covers_every_reader_and_the_closed_set():
 @pytest.mark.parametrize("kind", sorted(READER_FAMILY_OF_KIND))
 def test_each_kind_s_reader_reports_its_family(kind, tmp_path, monkeypatch):
     # the reader itself is replaced: this pins the routing from kind to family, the real readers are below
-    monkeypatch.setitem(readers._READERS, kind, lambda path, k: ("Acme invoice FA-0137 for Alex Doe", 0, False))
+    monkeypatch.setitem(readers._READERS, kind, lambda path, k: ("Ferretería El Tornillo Feliz invoice FA-0137 for Alex Doe", 0, False))
     monkeypatch.setattr(readers, "_check_container", lambda path, k: None)
     path = tmp_path / "file.bin"
     path.write_bytes(b"plain bytes, not a tar")

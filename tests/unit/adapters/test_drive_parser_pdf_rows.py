@@ -53,18 +53,18 @@ def _grid(left: int, top: int, columns: Sequence[int], rows: int, height: int = 
     return out
 
 
-INVOICE = [("Item", "Qty", "Amount"), ("Lock cylinder", "1", "199,00"), ("Key copy", "2", "25,00"),
-           ("Total IVA incluido", "", "249,00")]
+INVOICE = [("Item", "Base", "Amount"), ("Bathroom repair", "852,40", "852,40"), ("IVA 23 %", "852,40", "196,05"),
+           ("Total", "", "1.048,45")]
 
 
 def _ruled_invoice(path: Path) -> Path:
     left, top, columns = 72, 600, [0, 220, 300, 400]
-    text: List[Cell] = [(72, 700, "Invoice FA-0137 for Alex Doe, 12 Oak Street, Springfield")]
+    text: List[Cell] = [(72, 700, "Bathroom repair invoice for Alex Doe, 12 Oak Street, Springfield")]
     for r, row in enumerate(INVOICE):
         for c, value in enumerate(row):
             if value:
                 text.append((left + columns[c] + 6, top - r * 24 - 16, value))
-    text.append((72, 440, "Paid on 15/09/2026."))
+    text.append((72, 440, "Paid in full."))
     return _write_pdf(path, [_grid(left, top, columns, len(INVOICE)) + _text(text)])
 
 
@@ -72,15 +72,15 @@ def test_a_ruled_invoice_keeps_each_row_on_one_line(tmp_path):
     out = read_content(str(_ruled_invoice(tmp_path / "ruled.pdf")), "pdf")
     assert out.status is ExtractionStatus.TEXT and out.pages_total == 1
     lines = out.text.splitlines()
-    assert "| Lock cylinder | 1 | 199,00 |" in lines
-    assert "| Key copy | 2 | 25,00 |" in lines
-    assert "| Total IVA incluido |  | 249,00 |" in lines
-    assert "Invoice FA-0137 for Alex Doe, 12 Oak Street, Springfield" in lines    # the prose around it stays
-    assert "Paid on 15/09/2026." in lines
+    assert "| Bathroom repair | 852,40 | 852,40 |" in lines
+    assert "| IVA 23 % | 852,40 | 196,05 |" in lines
+    assert "| Total |  | 1.048,45 |" in lines
+    assert "Bathroom repair invoice for Alex Doe, 12 Oak Street, Springfield" in lines    # the prose around it stays
+    assert "Paid in full." in lines
 
 
 def test_an_unruled_aligned_invoice_becomes_rows(tmp_path):
-    rows = [("Item", "Base", "Amount"), ("Tiling", "400,00", "400,00"), ("Plumbing", "452,40", "452,40"),
+    rows = [("Item", "Base", "Amount"), ("Base", "", "852,40"),
             ("IVA 23 %", "852,40", "196,05"), ("Total", "", "1.048,45")]
     text: List[Cell] = [(72, 700, "Bathroom repair invoice")]
     for r, row in enumerate(rows):
@@ -89,7 +89,7 @@ def test_an_unruled_aligned_invoice_becomes_rows(tmp_path):
                 text.append((72 + (0, 200, 320)[c], 600 - r * 20, value))
     out = read_content(str(_write_pdf(tmp_path / "unruled.pdf", [_text(text)])), "pdf")
     lines = out.text.splitlines()
-    assert any(line.startswith("| Plumbing |") and "452,40" in line for line in lines)
+    assert any(line.startswith("| Base |") and "852,40" in line for line in lines)
     assert any(line.startswith("| Total |") and line.rstrip(" |").endswith("1.048,45") for line in lines)
 
 
@@ -121,8 +121,8 @@ def test_two_hundred_pages_are_read_inside_the_wall(tmp_path):
         for _ in range(200)]
     out = read_content(str(_write_pdf(tmp_path / "long.pdf", streams)), "pdf")
     assert out.status is ExtractionStatus.TEXT and out.pages_total == 200
-    assert out.text.count("| Key copy | 2 | 25,00 |") == readers._MAX_TABLE_PAGES       # later table pages keep pdfminer's text
-    assert out.text.count("Key copy") == 200
+    assert out.text.count("| Bathroom repair | 852,40 | 852,40 |") == readers._MAX_TABLE_PAGES       # later table pages keep pdfminer's text
+    assert out.text.count("Bathroom repair") == 200
 
 
 @pytest.mark.slow

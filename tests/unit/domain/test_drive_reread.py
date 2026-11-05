@@ -18,7 +18,7 @@ from src.domain.drive_reread import changed_chunks, same_read
 
 NOW = datetime(2026, 11, 5, 10, 0, tzinfo=timezone.utc)
 SPACE = "gemini-embedding-2/768"
-TEXT = ("Invoice FA-0137\n\nAcme to Alex Doe, 12 Oak Street, Springfield.\n\n"
+TEXT = ("Invoice FA-0137\n\nFerretería El Tornillo Feliz to Alex Doe, 12 Oak Street, Springfield.\n\n"
         + "\n\n".join(f"Line {i}: lock cylinder and two key copies, 249,00 EUR." for i in range(120)))
 CHUNKED = chunk_text(TEXT)
 

@@ -24,7 +24,7 @@ def _read(tmp_path, message):
 
 
 def test_every_header_is_read_and_an_rfc2047_subject_is_decoded(tmp_path):
-    message = _message(Sender="office@example.org", Reply_To="reply@example.org", Cc="Clara Moreira <clara@example.com>",
+    message = _message(Sender="office@example.org", Reply_To="reply@example.org", Cc="accounts@example.com",
                        Bcc="hidden@example.org", Date="Mon, 02 Nov 2026 10:00:00 +0100")
     del message["Subject"]
     message["Subject"] = "=?utf-8?b?0J7RgNC10L3QtNCwINC30LAg0LvQuNGB0YLQvtC/0LDQtA==?="
@@ -32,7 +32,7 @@ def test_every_header_is_read_and_an_rfc2047_subject_is_decoded(tmp_path):
     text = _read(tmp_path, message).text
     for line in ("From: Lúcia Exemplo <landlord@example.org>", "Sender: office@example.org",
                  "Reply-To: reply@example.org", "To: Marco Teste <tenant@example.org>",
-                 "Cc: Clara Moreira <clara@example.com>", "Bcc: hidden@example.org",
+                 "Cc: accounts@example.com", "Bcc: hidden@example.org",
                  "Date: Mon, 02 Nov 2026 10:00:00 +0100", "Subject: Оренда за листопад"):
         assert line in text.splitlines()
     assert "Rent for the Lisbon flat is 950 € per month." in text

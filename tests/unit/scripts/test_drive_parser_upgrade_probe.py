@@ -37,7 +37,7 @@ def _prose(prefix, n, noun):
                         for i in range(n))
 
 
-LEASE = "Lease of the flat at Rua das Flores 18, Porto, between Hanna Doe and the landlord.\n\n" + _prose("Clause", 120, "tenant")
+LEASE = "Lease of the flat at Rua Imaginária 45, 2.º, 4000-123 Porto, between Hanna Doe and the landlord.\n\n" + _prose("Clause", 120, "tenant")
 LEASE_CHUNKED = chunk_text(LEASE)
 
 
@@ -161,7 +161,7 @@ def test_an_unrouted_pdf_is_not_kept(probe):
 
 
 def test_a_moved_profile_fingerprint_counts_one_profile_job(probe):
-    cv = "Curriculum vitae of Greta Klein, product designer.\n\n" + _prose("Role", 60, "designer")
+    cv = "Curriculum vitae of Greta Klein, back-end developer.\n\n" + _prose("Role", 60, "designer")
     chunked = chunk_text(cv)
     rec = record(chunked, cv, kind="docx", profile_input_fingerprint="stale-fingerprint")
     stored = stored_of(chunked)
