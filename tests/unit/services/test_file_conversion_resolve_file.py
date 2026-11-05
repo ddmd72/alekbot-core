@@ -2,6 +2,7 @@
 an action", D13; U4b core): every ref kind's bytes, name and mime under the action cap, the email branch with one
 listing and one download and every note, `resolve_bytes` still refusing `email:`, and D13's check failing closed when
 the sandbox's container facts are missing. The real service over the drive, workspace, storage and mailbox fakes."""
+import dataclasses
 import logging
 from typing import List, Optional
 from unittest.mock import AsyncMock
@@ -38,6 +39,7 @@ from tests.unit.services.workspace_fakes import InMemoryWorkspaceStore
 MB = 1024 * 1024
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DEADLINE = 1_900_000_000.0
 MSG = "msg_quote042"
 
@@ -106,6 +108,43 @@ async def test_a_drive_ref_resolves_with_the_item_s_name_and_mime(world):
     resolved = await world.service.resolve_file(ref, "ann", action="save")
     assert resolved == ResolvedFile(data=b"%PDF-garage", name="garage_rules.pdf", mime=PDF)
     world.service._access.check_access.assert_awaited()   # the READ check ran before the download
+
+
+class ExportingDrive(FakeDriveAdapter):
+    """A drive whose items named in `exports` are provider exports (a Google native: `DriveItem.exported`)."""
+
+    def __init__(self, *a, **k) -> None:
+        super().__init__(*a, **k)
+        self.exports: set = set()
+
+    async def get_item(self, handle, item_id):
+        item = await super().get_item(handle, item_id)
+        return dataclasses.replace(item, exported=item_id in self.exports)
+
+
+@pytest.mark.parametrize("name, export_mime, served", [
+    ("Q3 plan", "text/markdown", "Q3 plan.md"),
+    ("Q3 plan.md", "text/markdown", "Q3 plan.md"),                     # never doubled
+    ("Budget 2026", XLSX, "Budget 2026.xlsx"),
+    ("Hamburg talk", "text/plain", "Hamburg talk.txt"),
+    ("Garden plan 2026", PDF, "Garden plan 2026.pdf"),
+    ("brief.docx", "text/markdown", "brief.docx.md"),                  # the bytes are Markdown, not a docx
+])
+async def test_a_provider_export_carries_the_export_mime_and_its_extension(name, export_mime, served):
+    repo = FakeDriveConnectionRepository()
+    conn = await seed(repo, user_id="ann", account_id="ann", connection_id="conn-g", tag="g1", kind="fake_g")
+    drive = ExportingDrive("fake_g", feed_scope=FeedScope.ACCOUNT)
+    item_id = drive.plant(conn.handle, "root", name, b"exported bytes", mime=export_mime)
+    drive.exports.add(item_id)
+    service = FileConversionService(storage=CountingStorage(), drive=drive,
+                                    connections=DriveConnectionService(repo, None), access=allow_access())
+    resolved = await service.resolve_file(f"drive:g1:{item_id}", "ann", action="send")
+    assert resolved == ResolvedFile(data=b"exported bytes", name=served, mime=export_mime)
+
+
+async def test_an_ordinary_drive_file_keeps_its_name_whatever_its_mime(world):
+    ref = _plant(world, "Q3 plan", b"# plan", mime="text/markdown")   # not an export: no extension is invented
+    assert (await world.service.resolve_file(ref, "ann", action="send")).name == "Q3 plan"
 
 
 async def test_a_chat_ref_resolves_from_the_store(world):

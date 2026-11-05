@@ -320,6 +320,7 @@ def to_item(raw: Mapping[str, Any], path: str, id_space: str, drive_id: str,
         content_identity=content_identity(raw),
         media=media_facts(raw, id_space),
         access=access_of(raw),
+        exported=is_native(raw) and export_mime(raw) is not None,   # the bytes are the export of `mime_type`
     )
 
 

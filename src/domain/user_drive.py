@@ -119,7 +119,9 @@ class DriveItem:
     providers, opaque to domain) and `drive_identity` (the drive's, same form); `content_version` (changes whenever
     the content does; "" for a folder); `content_identity` (None when the provider gave no hash); `media` (typed
     facts); `access` (what the provider lets the bot do with it, §11.3; all allowed in an App Folder). `ctag` is the
-    single-drive name of `content_version`, kept until its readers move (slice 1b)."""
+    single-drive name of `content_version`, kept until its readers move (slice 1b). `exported`: the item has no file of
+    its own and a download serves a provider export whose type is `mime_type` (a Google Doc, Sheet, Slides or Drawing,
+    GOOGLE_DRIVE_RFC §3.5), so its `name` carries no extension of those bytes; False for every ordinary file."""
     item_id: str
     name: str
     path: str
@@ -136,6 +138,7 @@ class DriveItem:
     content_identity: Optional[ContentIdentity] = None
     media: DriveMediaFacts = DriveMediaFacts()
     access: ItemAccess = ItemAccess()
+    exported: bool = False
 
 
 class DriveFileTooLargeError(Exception):

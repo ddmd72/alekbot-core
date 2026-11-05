@@ -44,7 +44,7 @@ from ..domain.drive_access_op import AccessOp
 from ..domain.drive_extraction import ParserUnavailable
 from ..domain.drive_handle import DriveHandle
 from ..domain.file_ref import FileRefKind, classify_ref
-from ..domain.document_kind import mime_decides_kind, mime_kind
+from ..domain.document_kind import export_file_name, mime_decides_kind, mime_kind
 from ..domain.document_limits import action_cap
 from ..domain.document_open import ACTIONS, EmailOpening, OpenedFile, Prefetched, ResolvedFile
 from ..domain.document_open_texts import (
@@ -607,8 +607,9 @@ class FileConversionService:
 
         - `email:` — one part listing and one `get_part` (the U4a path), the part found by its id only (the ref is
           authoritative); name and mime are the part's (the mime falls back to the name's guess).
-        - `drive:` — the item through the access policy's READ check; name and mime are the item's; a folder and an
-          item above the cap are refused on metadata, before download.
+        - `drive:` — the item through the access policy's READ check; name and mime are the item's (for a provider
+          export, `DriveItem.exported`, the mime is the export's and the name gets its extension: `export_file_name`);
+          a folder and an item above the cap are refused on metadata, before download.
         - workspace, skill, delivered and chat refs — today's download paths; name = the ref's last path segment, mime
           guessed from it; the cap is checked on the bytes.
 
@@ -632,7 +633,9 @@ class FileConversionService:
                 raise FileNotResolved(action_too_large_note(item.path, item.size_bytes, cap, action))
             data = await self._require_drive().download(handle, item.item_id)
             mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
-            return self._capped(ResolvedFile(data=data, name=item.name, mime=mime), ref, kind, action, cap)
+            # A provider export (a Google native): the bytes are `mime_type`'s, the name gets that type's extension.
+            name = export_file_name(item.name, mime) if item.exported else item.name
+            return self._capped(ResolvedFile(data=data, name=name, mime=mime), ref, kind, action, cap)
         data = await self._download_by_ref(ref, user_id)
         name = ref.rstrip("/").rsplit("/", 1)[-1]
         if kind is FileRefKind.WORKSPACE:
