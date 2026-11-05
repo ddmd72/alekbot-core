@@ -19,7 +19,7 @@ Pipeline:
   1. System prompt — loaded from PromptBuilder.
   2. Single LLM call — model writes complete HTML+CSS as raw text response.
   3. Strip accidental markdown fences from response.
-  4. Run HTML through NodePuppeteerRunner → PDF bytes.
+  4. Run HTML through the PDF runner → PDF bytes.
   5. Extract filename and display name from <title> tag.
   6. Return two DeliveryItems.
 

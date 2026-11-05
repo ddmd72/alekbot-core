@@ -3,7 +3,6 @@ import logging
 
 import pytest
 
-from src.adapters.node_puppeteer_runner import NodePuppeteerRunner
 from src.adapters.sandbox_client.sandbox_puppeteer_runner import SandboxPuppeteerRunner
 from src.composition.sandbox_client_setup import build_html_renderer, build_pdf_runner, pdf_runner_factory
 from src.ports.puppeteer_runner_port import PuppeteerRunnerError
@@ -19,8 +18,7 @@ class _Marker:
     pass
 
 
-def test_inprocess_default_builds_node_runner_and_factory_object():
-    assert isinstance(build_pdf_runner(getenv=_env(), on_cloud_run=True), NodePuppeteerRunner)
+def test_html_renderer_is_the_inprocess_factory_object():
     marker = _Marker()
     assert build_html_renderer(True, lambda: marker) is marker
 
@@ -36,11 +34,6 @@ def test_pdf_factory_shares_one_instance_in_sandbox_mode():
     assert isinstance(factory(), SandboxPuppeteerRunner)
 
 
-def test_pdf_factory_inprocess_builds_node_runner_per_call():
-    factory = pdf_runner_factory(getenv=_env(), on_cloud_run=True)
-    assert isinstance(factory(), NodePuppeteerRunner)
-
-
 async def test_sandbox_empty_url_on_cloud_run_degrades_with_error_log(caplog):
     env = _env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" ")
     with caplog.at_level(logging.ERROR):
@@ -54,17 +47,6 @@ def test_sandbox_empty_url_locally_is_startup_error():
     env = _env(SANDBOX_RENDER="sandbox")
     with pytest.raises(ValueError):
         build_pdf_runner(getenv=env, on_cloud_run=False)
-
-
-def test_bad_value_is_startup_error(monkeypatch):
-    env = _env(SANDBOX_RENDER="maybe")
-    with pytest.raises(ValueError):
-        build_pdf_runner(getenv=env, on_cloud_run=True)
-    with pytest.raises(ValueError):
-        pdf_runner_factory(getenv=env, on_cloud_run=True)
-    monkeypatch.setenv("SANDBOX_RENDER", "maybe")
-    marker = _Marker()
-    assert build_html_renderer(True, lambda: marker) is marker
 
 
 @pytest.mark.parametrize("mode", ["inprocess", "sandbox"])

@@ -17,7 +17,7 @@
  * `--disable-dev-shm-usage`: shared-memory files go to TMPDIR (the size-limited workdir volume), not /dev/shm.
  * Chromium's own sandbox is off (`--no-sandbox`) only when <sandbox> is 0: the engine decides (CHROMIUM_OWN_SANDBOX).
  *
- * pdf: the in-process `runner.js` behaviour (networkidle0, A4, printBackground, preferCSSPageSize) minus host fetching.
+ * pdf: the former in-process runner's behaviour (networkidle0, A4, printBackground, preferCSSPageSize) minus host fetching.
  * png: the in-process `PlaywrightHtmlRenderer` behaviour (viewport {width, 800} at scale 2, 8 s content wait, the reset
  * style tag, the one-child-or-body screenshot, transparent background).
  *

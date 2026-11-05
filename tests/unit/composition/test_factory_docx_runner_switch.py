@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.adapters.node_docx_runner import NodeDocxRunner
 from src.composition import user_agent_factory as uaf
 from src.composition.sandbox_client_setup import docx_runner_factory
 from src.composition.user_agent_factory import UserAgentFactory
@@ -29,22 +28,6 @@ def _construct():
     kwargs = {n: MagicMock() for n, p in params.items()
               if n != "self" and p.default is inspect.Parameter.empty}
     return UserAgentFactory(**kwargs)
-
-
-def test_constructing_the_factory_with_a_bad_value_raises(monkeypatch):
-    monkeypatch.setenv("SANDBOX_RENDER", "maybe")
-    with pytest.raises(ValueError):
-        _construct()
-
-
-def test_constructing_the_factory_unset_keeps_the_node_runner(monkeypatch):
-    monkeypatch.delenv("SANDBOX_RENDER", raising=False)
-    assert isinstance(_construct()._docx_runner_factory(), NodeDocxRunner)
-
-
-def test_inprocess_builds_a_runner_per_build():
-    make = docx_runner_factory(getenv=_env(), on_cloud_run=True)
-    assert isinstance(make(), NodeDocxRunner) and make() is not make()
 
 
 def test_sandbox_mode_shares_one_runner_across_users():
