@@ -11,9 +11,9 @@ The deployed runtimes no longer construct this adapter for parsing (they use the
 local in-process runs, scripts, the drive eval and the sandbox's own engine.
 
 The deployment is multi-user (one whitelist, many users' files on one indexer), so the child also runs as an
-unprivileged user (R3 F3-1): `sandbox_user`, from DRIVE_PARSER_USER — the Dockerfile creates
-that user and sets the variable, so a deployed use always sandboxes, and a configured user that is missing, is
-root, or cannot be switched to fails the start. The child gets that uid/gid and no supplementary groups, a per-run
+unprivileged user (R3 F3-1): `sandbox_user`, from DRIVE_PARSER_USER. No deployed image creates that user any more
+(the class is constructed only by local scripts and tests), so a deployed use would need it provided; a configured
+user that is missing, is root, or cannot be switched to fails the start. The child gets that uid/gid and no supplementary groups, a per-run
 directory it owns (its TMPDIR and HOME), a read-only link of the source file in it, and writes its window there for
 the parent to collect. A child of another uid cannot read the parent's `/proc/<ppid>/environ` (the API keys, the
 Microsoft client secret), nor rewrite the app source or site-packages (root-owned, not world-writable: the image

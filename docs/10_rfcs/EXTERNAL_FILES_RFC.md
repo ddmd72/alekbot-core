@@ -59,8 +59,8 @@ Code cites are `main` @ `2280ca78`.
   (`GOOGLE_DRIVE_RFC.md` §10). Recorded in the sandbox RFC as O12. By code dependency S3 may start once U1 and U3 are
   in, before U4/U5; S4 waits for U5.
 - **D15 (2026-11-03). P4 accepted in principle: one parse engine.** The child's own readers serve every source;
-  markitdown's auto-detect path is retired in U5. The final go is given after the U0-b difference report on real files
-  (§8). Consequences: no `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter` and no
+  markitdown's auto-detect path is retired in U5. The final go was given in D16; the U0-b real-file report is
+  not a gate (§8). Consequences: no `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter` and no
   `chat.convert` op; one parse op family, `parse.*` (A1), serves both runtimes; sandbox S4 is "admit the main service's
   identity to that family and flip its knob". Sandbox S-Δ1 (audio stays with the caller) and S-Δ2 (plain text stays
   with the caller, §4.4) hold. Recorded in the sandbox RFC as O13.
@@ -845,7 +845,7 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
 child's own readers the only engine.
 
 **One engine, the child's own readers, for every source (D15, built in U5).** `convert_file_to_text` and `build_markitdown`
-are gone; markitdown's auto-detect (a converter picked at runtime, exception fallbacks) has no caller. markitdown stays
+are gone; markitdown's auto-detect (a converter picked at runtime, exception fallbacks) has no caller (the final go is D16; the U0-b real-file report is not a gate, §8). markitdown stays
 only as the child's converters for DOCX, PPTX, EPUB and MSG, an allowlist fixed in `document_hardening.py`
 (`MARKITDOWN_ALLOWED_CONVERTERS`); a guard test keeps any import of it inside `drive_parser/`. `.eml` HTML bodies no longer
 use markitdown's HTML converter: they go through the child's `html_page_text`.
@@ -939,7 +939,8 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | D19 | = P14 (built in its own PR) and P15 (§4.1, §4.6) | owner, 2026-11-03 |
 | D20 | = P19 in a changed form: one 60 000-character presentation cut for parser text on every open path, with a note naming the cut; email attachments 30 000 → 60 000; realised in U3 (§4.5) | owner, 2026-11-03 |
 | O-U5-2 | Link policy, chat and drive alike: an external link keeps its full URL without `utm_*` parameters and fragment, cut at 300 characters with an ellipsis; this supersedes D23 (domain only) of USER_DRIVE_INDEXING_RFC (§7 U5) | owner, 2026-11-05 |
-| O-U5-3 | An upgrade re-read never calls the paid reader; the parser's text stands (`decisions/drive_reread_by_text_change.md`) | owner, 2026-11-05 |
+| D21 | U5's drive re-read re-runs the free parser on parser-extracted files and re-embeds only the files whose extracted text changed; reader-extracted files are untouched; records store the reader family actually used (§7) | owner, 2026-11-05 |
+| O-U5-3 | Detail of D21: an upgrade re-read never calls the paid reader; the parser's text stands (`decisions/drive_reread_by_text_change.md`) | owner, 2026-11-05 |
 | O-U5-5 | `.eml` attachments are listed by name, type and size only; their contents are not read | owner, 2026-11-05 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
@@ -1039,7 +1040,7 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 ## 8. Open questions and spikes
 
 **Open questions (owner).** None remain: OQ1–OQ5 were closed by D7–D11, P20 became D12 and OQ6 was closed by D13
-(2026-10-23); P4 became D15 (2026-11-03), whose final go waits on U0-b's real-file run.
+(2026-10-23); P4 became D15 (2026-11-03), whose final go was given in D16 (U0-b's real-file run is not a gate).
 
 **Spikes**
 - **U0-a (D1's check, D9). How to keep file contents out of Logfire.** D9 requires it for every model call; the
@@ -1064,8 +1065,8 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
   spreadsheet float noise; it reads worse in four places (PDF tables, subtitle timecodes, HTML link targets, `.eml`
   headers and parts), which U5 fixes (§7); its statuses mean the chat layer rebuilds today's notes (§4.4). **Not yet
   measured:** real-world PDFs (fonts, ligatures), real scans, `.msg`, files at the caps, large sheets, and the drive
-  evaluation corpus. That run is what D15's final go waits on; its differences are listed per kind, then accepted or
-  fixed before U5.
+  evaluation corpus. That run is not a gate (D16); its differences, when it is run, are listed per kind, then accepted or
+  fixed.
 - **U0-c. The child in the main service:** the uid switch in its execution environment; peak memory of one turn with
   two native PDFs at the caps, capture on, and a child at its limit; slot wait p95 under concurrent opens; the staged
   copy counted.

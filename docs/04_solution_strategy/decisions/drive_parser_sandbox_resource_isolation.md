@@ -4,12 +4,10 @@
 **Status:** Accepted, with an owner-accepted residual risk and a named trigger (User Drive Step 2, Slice 2+4;
 adversarial review A, final review 3). Residual risk accepted by the owner on 2026-10-13 for the current whitelist;
 revisit before the whitelist admits anyone beyond the people the owner vouches for (see Trigger).
-**Status update (U3, EXTERNAL_FILES_RFC D14):** the same child also runs in the main service, under the same unprivileged
-identity (`DRIVE_PARSER_USER`, one slot, `MAIN_PARSER_MAX_CHILDREN`), for chat, workspace, delivered and drive opens. The
-trigger below applies there as well, and the residual risk is accepted in both runtimes until the sandbox's parse slices
-S3/S4 replace the child with an adapter behind the same port (UNTRUSTED_CONTENT_SANDBOX_RFC).
-**Status update (P4, UNTRUSTED_CONTENT_SANDBOX_RFC O14):** once P4 is deployed the parser child no longer runs in either
-deployed runtime (both parse through the light service); the indexer's media children still run under this identity (S5).
+**Status (current):** the residual risk is closed. The parser child runs only in the sandbox light service (S3 for the
+indexer, S4 for the main service; UNTRUSTED_CONTENT_SANDBOX_RFC O14), with a zero-role identity and no egress. No deployed
+credentialed runtime parses hostile bytes in its own process; `SubprocessContentExtractor` is built only by local scripts
+and tests. The history below is kept as the reasoning behind that move.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9, §16 (Phase 0), §24.3,
 §24.14; `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`,
 `src/adapters/drive_parser/readers.py`, `src/utils/document_hardening.py`, `Dockerfile`, `indexer_main.py`.
@@ -88,6 +86,8 @@ module docstring and RFC §24.14 say so in those words.
   have.
 
 ## Trigger to revisit
+
+**Answered:** the separate parser service exists (sandbox light service, S3/S4 live); the text below is the trigger as first written.
 
 Either of:
 - a code-execution CVE in a library the child loads (markitdown and its converters, pdfminer.six / pdfplumber, pypdf,
