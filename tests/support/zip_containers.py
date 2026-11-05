@@ -1,5 +1,5 @@
 """Synthetic ZIP containers for the D13 macro check (EXTERNAL_FILES U4b, `parse.container_facts`): built in the test,
-never a real file. Each builder returns the bytes; the content is invented (`bathroom_quote`, Reformas Exemplo Lda.).
+never a real file. Each builder returns the bytes; the content is invented (`invoice_bathroom_es`, Reformas Exemplo Lda.).
 
     plain_docx()             an OOXML word document, no macro part
     macro_docm()             the same with `word/vbaProject.bin` and the macro-enabled main content type
@@ -13,7 +13,7 @@ import zipfile
 _DOCX_MAIN = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
 _DOCM_MAIN = "application/vnd.ms-word.document.macroEnabled.main+xml"
 _DOCUMENT_XML = (b'<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/'
-                 b'main"><w:body><w:p><w:r><w:t>Reformas Exemplo Lda. - bathroom quote 1.048,45 EUR</w:t></w:r></w:p>'
+                 b'main"><w:body><w:p><w:r><w:t>Reformas Exemplo Lda. - bathroom repair invoice 1.048,45 EUR</w:t></w:r></w:p>'
                  b'</w:body></w:document>')
 
 

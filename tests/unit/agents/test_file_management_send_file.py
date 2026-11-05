@@ -35,7 +35,7 @@ from tests.unit.services.workspace_fakes import InMemoryWorkspaceStore
 
 PDF = "application/pdf"
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-MSG = "msg_quote042"
+MSG = "msg_invoice042"
 CTX = {"user_id": "ann", "account_id": "ann-acc", "origin_channel_id": "C-origin", "origin_platform": "slack"}
 
 
@@ -56,12 +56,12 @@ def _part(part_id, name, data_handle, mime=PDF, size=64) -> EmailPart:
 
 
 EMAIL_FILES = {
-    "1.2": ("bathroom_quote.pdf", PDF, b"%PDF-1.7 quote"),
+    "1.2": ("invoice_bathroom_es.pdf", PDF, b"%PDF-1.7 invoice"),
     "2": ("notes.txt", "text/plain", b"plain notes"),
     "3": ("garage_rules.html", "text/html", b"<!doctype html><html>rules</html>"),
     "4": ("notes_html.txt", "text/plain", b"<html><body>x</body></html>"),
     "5": ("logo.svg", "image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
-    "6": ("quote_macro.docm", "application/vnd.ms-word.document.macroEnabled.12", zc.macro_docm()),
+    "6": ("invoice_bathroom_es.docm", "application/vnd.ms-word.document.macroEnabled.12", zc.macro_docm()),
     "7": ("link.lnk", "application/octet-stream",
           b"\x4c\x00\x00\x00\x01\x14\x02\x00\x00\x00\x00\x00\xc0\x00\x00\x00\x00\x00\x00\x46" + b"x" * 8),
     "8": ("backup.img", "application/octet-stream", b"plain bytes"),
@@ -69,7 +69,7 @@ EMAIL_FILES = {
     "10": ("tool.exe", "application/octet-stream", b"MZ\x90\x00\x03\x00\x00\x00\x00\x00"),
     "11": ("setup.sh", "text/plain", b"#!/bin/sh\necho hi\n"),
     "12": ("hta_form.hta", "text/plain", b"<HTA:APPLICATION ID='x'></HTA:APPLICATION>"),
-    "13": ("quote.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", zc.plain_docx()),
+    "13": ("invoice_bathroom_es.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", zc.plain_docx()),
     "14": ("photo_roof.png", "image/png", PNG_BYTES),
     "15": ("renamed.pdf", PDF, PNG_BYTES),
     "16": ("huge_scan.pdf", PDF, b"%PDF"),
@@ -85,7 +85,7 @@ async def world():
     w.conn = await seed(repo, user_id="ann", account_id="ann", connection_id="conn-2", tag="b2", kind="fake_b")
     w.drive = ExportingDrive("fake_b", feed_scope=FeedScope.ACCOUNT)
     w.storage = CountingStorage({"invoice_FA-0137.pdf": b"%PDF-chat", "photo_roof.png": PNG_BYTES,
-                                 "bathroom_quote.pdf": b"%PDF-bq",
+                                 "invoice_bathroom_es.pdf": b"%PDF-bi",
                                  "big.bin": b"x" * (action_cap() + 1)})
     w.media = AsyncMock()
     w.media.fetch.return_value = b"%PDF-delivered"
@@ -158,10 +158,10 @@ async def test_a_drive_file_is_delivered(world):
 
 
 async def test_a_workspace_file_is_delivered(world):
-    world.workspace.seed("ann", "projects/budget_2026.csv", b"rent,11400\n")
-    await _send(world, "workspace:projects/budget_2026.csv")
+    world.workspace.seed("ann", "projects/invoice_bathroom_es.csv", b"total,1048.45\n")
+    await _send(world, "workspace:projects/invoice_bathroom_es.csv")
     (call,) = world.notify.calls
-    assert (call["file_bytes"], call["filename"]) == (b"rent,11400\n", "budget_2026.csv")
+    assert (call["file_bytes"], call["filename"]) == (b"total,1048.45\n", "invoice_bathroom_es.csv")
     assert call["title"].startswith("Workspace file (")
 
 
@@ -176,7 +176,7 @@ async def test_an_email_attachment_is_delivered_under_its_own_name(world):
     response = await _send(world, _email("1.2"))
     assert response.status == AgentStatus.SUCCESS
     (call,) = world.notify.calls
-    assert (call["file_bytes"], call["filename"], call["title"]) == (b"%PDF-1.7 quote", "bathroom_quote.pdf",
+    assert (call["file_bytes"], call["filename"], call["title"]) == (b"%PDF-1.7 invoice", "invoice_bathroom_es.pdf",
                                                                       "Email attachment (pdf)")
     assert (call["channel_id_override"], call["platform_override"]) == ("C-origin", "slack")
 
@@ -195,18 +195,18 @@ async def test_a_plain_docx_attachment_is_sent_after_the_container_check(world):
 # -- file_name --------------------------------------------------------------------------------------------------------
 
 async def test_a_name_without_extension_keeps_the_source_extension(world):
-    await _send(world, "bathroom_quote.pdf", "Bathroom quote Reformas Exemplo")
-    assert world.notify.calls[0]["filename"] == "Bathroom quote Reformas Exemplo.pdf"
+    await _send(world, "invoice_bathroom_es.pdf", "Bathroom invoice Reformas Exemplo")
+    assert world.notify.calls[0]["filename"] == "Bathroom invoice Reformas Exemplo.pdf"
 
 
 async def test_a_full_name_is_used_and_sanitized(world):
-    await _send(world, "bathroom_quote.pdf", "quote: v2/final.pdf")
-    assert world.notify.calls[0]["filename"] == "quote_ v2_final.pdf"
+    await _send(world, "invoice_bathroom_es.pdf", "invoice: v2/final.pdf")
+    assert world.notify.calls[0]["filename"] == "invoice_ v2_final.pdf"
 
 
 async def test_an_email_part_renamed_keeps_its_extension(world):
-    await _send(world, _email("1.2"), "Bathroom quote")
-    assert world.notify.calls[0]["filename"] == "Bathroom quote.pdf"
+    await _send(world, _email("1.2"), "Bathroom invoice")
+    assert world.notify.calls[0]["filename"] == "Bathroom invoice.pdf"
 
 
 async def test_a_rename_to_an_active_extension_is_refused(world):
