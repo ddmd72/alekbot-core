@@ -2,10 +2,10 @@
 Main-service side of the untrusted-content sandbox (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §4.9, §4.12).
 
 Public interface:
-    build_docx_runner(getenv=os.getenv, on_cloud_run=None) -> DocxRunnerPort   (one runner)
-    docx_runner_factory(getenv=os.getenv, on_cloud_run=None) -> Callable[[], DocxRunnerPort]
-    build_pdf_runner(getenv=os.getenv, on_cloud_run=None) -> PuppeteerRunnerPort
-    pdf_runner_factory(getenv=os.getenv, on_cloud_run=None) -> Callable[[], PuppeteerRunnerPort]
+    build_docx_runner(getenv=os.getenv) -> DocxRunnerPort   (one runner)
+    docx_runner_factory(getenv=os.getenv) -> Callable[[], DocxRunnerPort]
+    build_pdf_runner(getenv=os.getenv) -> PuppeteerRunnerPort
+    pdf_runner_factory(getenv=os.getenv) -> Callable[[], PuppeteerRunnerPort]
     build_html_renderer(enabled, inprocess_factory) -> Optional[HtmlRendererPort]
 
 DOCX and PDF render only through the render sandbox; there is no in-process path and no mode knob (a stale
@@ -57,31 +57,30 @@ def _sandbox_client_or_none(feature: str, getenv: Callable[..., Optional[str]]) 
 
 
 def build_docx_runner(
-    getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
+    getenv: Callable[..., Optional[str]] = os.getenv,
 ) -> DocxRunnerPort:
-    """`on_cloud_run` is accepted for call-site compatibility; an empty URL degrades the same way everywhere."""
     client = _sandbox_client_or_none("DOCX", getenv)
     return _UnavailableDocxRunner() if client is None else SandboxDocxRunner(client)
 
 
 def docx_runner_factory(
-    getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
+    getenv: Callable[..., Optional[str]] = os.getenv,
 ) -> Callable[[], DocxRunnerPort]:
-    shared = build_docx_runner(getenv, on_cloud_run)  # logs the degraded ERROR once
+    shared = build_docx_runner(getenv)  # logs the degraded ERROR once
     return lambda: shared
 
 
 def build_pdf_runner(
-    getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
+    getenv: Callable[..., Optional[str]] = os.getenv,
 ) -> PuppeteerRunnerPort:
     client = _sandbox_client_or_none("PDF", getenv)
     return _UnavailablePuppeteerRunner() if client is None else SandboxPuppeteerRunner(client)
 
 
 def pdf_runner_factory(
-    getenv: Callable[..., Optional[str]] = os.getenv, on_cloud_run: Optional[bool] = None,
+    getenv: Callable[..., Optional[str]] = os.getenv,
 ) -> Callable[[], PuppeteerRunnerPort]:
-    shared = build_pdf_runner(getenv, on_cloud_run)
+    shared = build_pdf_runner(getenv)
     return lambda: shared
 
 

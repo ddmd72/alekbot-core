@@ -261,8 +261,7 @@ is built, not only behind the Microsoft keys.
 - **The media relay (G2).** Google media needs an `Authorization` header, which must never enter the parser sandbox. A
   header-carrying `MediaSource` is served to the transcript child by a one-use loopback relay in the indexer process
   (`media_relay.py`): the child receives only a loopback URL, ffmpeg seeks through it, and the relay adds the header.
-- **Parser user (G13).** Since 2026-11-05 the main image no longer creates the `driveparser` user (no deployed runtime parses in-process; the sandbox light service parses); the text below is history for the local parser child. Parser children ran next to full-drive tokens, so on Cloud Run a missing `DRIVE_PARSER_USER`
-  fails the start instead of running the children as the indexer's own user.
+- **Parser user.** No image creates a parser user: the deployed runtimes parse through the sandbox light service. A local in-process parser child runs as `DRIVE_PARSER_USER` only when that variable is set.
 
 ### 1.0 Native caps by consumer
 
@@ -1081,7 +1080,7 @@ parse retries included, is billed to the user's account and appears in `billing_
 **The deployment is multi-user** (one whitelist, many users' files on one indexer), so a file one user uploads is
 parsed in the same container that holds every user's index and the service's keys. Once the light service is deployed
 (UNTRUSTED_CONTENT_SANDBOX_RFC O14) the indexer parses through it and runs no parser child; the in-process parser child
-(`SubprocessContentExtractor`) described here runs as the unprivileged `driveparser` user (the main Dockerfile no longer creates it since 2026-11-05; only a local run with `DRIVE_PARSER_USER` set uses one):
+(`SubprocessContentExtractor`) described here runs as the unprivileged `driveparser` user (no image creates it; only a local run with `DRIVE_PARSER_USER` set uses one):
 `indexer_main.py` passes `DRIVE_PARSER_USER` as `sandbox_user`, and a configured user that is missing, is root, or
 cannot be switched to fails the indexer's start (never a silent fallback). The child gets that uid and gid with no
 supplementary groups, a per-run directory it owns (its `TMPDIR` and `HOME`), a read-only link of the file, and

@@ -43,8 +43,8 @@ the next free id and says what is wrong, where (file and function, not line numb
 
 ### R-2: The model-written DOCX script still runs in the main service
 
-- Closed 2026-11-05: the DOCX script runs only in the untrusted-content render sandbox; the in-process path and Node
-  are gone from the main image. See
+- Closed: the DOCX script runs only in the untrusted-content render sandbox; the main image has no Node and no
+  in-process path. See
   `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` and `decisions/sandbox_render_service.md`.
 
 ### R-3: The drive parser can reach the metadata server and the network (accepted)

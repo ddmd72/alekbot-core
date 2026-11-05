@@ -166,8 +166,6 @@ redirect (below).
        --member="serviceAccount:<INDEXER_SA_EMAIL>" --role=roles/secretmanager.secretAccessor
    done
    ```
-2. (Historical, 2026-11-05: the main image no longer creates the parser user and the indexer parses through the sandbox light service, so nothing reads `DRIVE_PARSER_USER` in a deployed runtime.) It was required on the indexer: it now holds full-drive tokens in memory, so a missing parser user
-   fails the start on Cloud Run (G13) instead of running the parser children as the indexer's own user.
 
 **Integration connect redirect (`OAUTH_CONNECT_REDIRECT_URI`).** One callback serves every integration connect, Google and
 Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2, E4). Deployed, the key
@@ -448,7 +446,7 @@ request per instance (`SANDBOX_RECYCLE=always`, unchanged).
 cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
 libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
 serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
-limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **No render knob** (the `SANDBOX_RENDER` switch was removed 2026-11-05; a stale value is ignored): the main service sends DOCX and PDF to this service whenever `SANDBOX_RENDER_URL` is set, and degrades them (ERROR logged, no start failure, locally too) when it is empty. Widget PNGs render in the main process (owner decision O16), with Playwright Chromium. The main image no longer carries Node, npm, puppeteer's Chromium, ffmpeg or the parser user.
+limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **No render knob** (a `SANDBOX_RENDER` value is ignored): the main service sends DOCX and PDF to this service whenever `SANDBOX_RENDER_URL` is set, and degrades them (ERROR logged, no start failure, locally too) when it is empty. Widget PNGs render in the main process (owner decision O16), with Playwright Chromium. The main image no longer carries Node, npm, puppeteer's Chromium, ffmpeg or the parser user.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
@@ -680,7 +678,7 @@ python3 scripts/infra/cleanup_gcr_images.py             # delete untagged images
 [`scripts/infra/gcr-io-cleanup-policy.json`](../../scripts/infra/gcr-io-cleanup-policy.json) is a placeholder for a future
 `set-cleanup-policies`; the script is the working implementation.
 
-**Node.js in the image.** The main image carries no Node, npm, puppeteer or ffmpeg (removed 2026-11-05: DOCX and PDF render in the render sandbox). Only the render sandbox image (`Dockerfile.sandbox`) installs `docx_generator/` and `pdf_generator/` dependencies; the main image keeps pip and Playwright Chromium (widgets).
+**Node.js in the image.** The main image carries no Node, npm, puppeteer or ffmpeg: DOCX and PDF render in the render sandbox. Only the render sandbox image (`Dockerfile.sandbox`) installs `docx_generator/` and `pdf_generator/` dependencies; the main image keeps pip and Playwright Chromium (widgets).
 
 ---
 

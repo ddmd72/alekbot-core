@@ -37,8 +37,8 @@ time, and the indexer process never parses a byte:
 - a 120 s wall-clock kill of the child's whole process group from the parent;
 - an allowlisted environment (`PATH`, `HOME`, `LANG`, `LC_ALL` and thread settings), so no credential is in the
   child's own environment;
-- **an unprivileged user.** (Since 2026-11-05 the main Dockerfile no longer creates it: no deployed runtime parses in-process.) The Dockerfile created the system user `driveparser` and sets
-  `DRIVE_PARSER_USER=driveparser`; `indexer_main.py` passes it to `SubprocessContentExtractor(sandbox_user=…)`. The
+- **an unprivileged user.** (No deployed image creates it: the runtimes parse through the sandbox light service.) A local run sets
+  `DRIVE_PARSER_USER` to a system user and `SubprocessContentExtractor(sandbox_user=…)` takes it. The
   child runs with that uid and gid and no supplementary groups. A configured user that is missing, is root, or that
   the process cannot switch to fails the indexer's start — never a silent fallback. Unset (local development), the
   child runs as the developer's own user and the constructor logs a WARNING;

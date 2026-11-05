@@ -424,7 +424,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
 -   **`platform_media_port.py`**: 🆕 `PlatformMediaPort` ABC — `upload_image(bytes, alt_text, channel_id)` and `upload_file(bytes, filename, title, channel_id)`. Implemented by `SlackMediaAdapter` and `TelegramMediaAdapter`.
 -   **`html_renderer_port.py`**: 🆕 `HtmlRendererPort` ABC + `HtmlRenderError`. `render(html, width=480) → bytes`. `HtmlRenderError` lives in ports/ so services can catch it without violating import rules. Implemented by `PlaywrightHtmlRenderer`.
--   **`puppeteer_runner_port.py`**: 🆕 `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`. `run(html, timeout) → bytes`. System boundary for the PDF render. Implemented by `SandboxPuppeteerRunner` (the in-process Node runner was removed 2026-11-05).
+-   **`puppeteer_runner_port.py`**: 🆕 `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`. `run(html, timeout) → bytes`. System boundary for the PDF render. Implemented by `SandboxPuppeteerRunner`.
 
 **Email & Notification Ports:**
 -   **`email_provider_port.py`**: 🆕 `EmailProviderPort` ABC — `list_emails`, `batch_get_full_content`, `refresh_token`. Adapter: `GmailProviderAdapter`.

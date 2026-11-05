@@ -231,9 +231,9 @@ class DocxRunnerPort(ABC):
 Future implementations may include Cloud Run Jobs or a serverless Cloud Function for environments
 where `node` is not available or for better isolation.
 
-### 5.1 SandboxDocxRunner (current) and the removed NodeDocxRunner
+### 5.1 SandboxDocxRunner
 
-**Removed 2026-11-05:** the in-process `NodeDocxRunner` (`src/adapters/node_docx_runner.py`) is deleted; the main service renders DOCX only through the render sandbox (`SandboxDocxRunner`, `src/adapters/sandbox_client/`, URL from `SANDBOX_RENDER_URL`; an empty URL degrades the feature). The sandbox engine keeps the observable contract described below.
+The main service renders DOCX only through the render sandbox (`SandboxDocxRunner`, `src/adapters/sandbox_client/`, URL from `SANDBOX_RENDER_URL`; an empty URL degrades the feature). The sandbox engine's observable contract is described below.
 
 Writes `js_code` to a temp `.js` file inside `docx_generator/` (project root), launches
 `node <tmp_file>` via `asyncio.create_subprocess_exec`, pipes `spec_json` to stdin, captures
@@ -506,7 +506,7 @@ class PuppeteerRunnerPort(ABC):
 **Why a port:** Subprocess execution is a system boundary. The interface is also testable in
 isolation — `PdfGeneratorAgent` receives a mock port in unit tests without spawning Node.js.
 
-**SandboxPuppeteerRunner** (`src/adapters/sandbox_client/`): sends `html` to the render sandbox's `render.pdf` op and returns the PDF bytes. A failure, timeout or empty output raises `PuppeteerRunnerError`. The former in-process `NodePuppeteerRunner` and `pdf_generator/runner.js` were removed 2026-11-05.
+**SandboxPuppeteerRunner** (`src/adapters/sandbox_client/`): sends `html` to the render sandbox's `render.pdf` op and returns the PDF bytes. A failure, timeout or empty output raises `PuppeteerRunnerError`.
 
 **Why `pdf_generator/` is separate from `docx_generator/`:** Each is an independent Node.js
 project with its own `node_modules/`. `docx_generator/` has the `docx` npm library;
