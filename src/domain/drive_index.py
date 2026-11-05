@@ -331,6 +331,7 @@ class DriveIndexRecord:
     indexed_generation: Optional[int] = None
     indexed_version: Optional[str] = None
     extracted_by: Optional[str] = None
+    reader_family: str = ""                   # U5: the parser's reader of the stored text (READER_FAMILIES); "" unknown
     text_chars: int = 0
     pages_total: int = 0
     chunk_count: int = 0

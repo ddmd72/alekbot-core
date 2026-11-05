@@ -35,7 +35,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ...domain.container_facts import ContainerFacts, ContainerStatus, container_facts_from_result
-from ...domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus
+from ...domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus, reported_identity
 from ...domain.drive_capture import signals_from_json
 from ...domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ParserUnavailable, PdfSplitFailed
 from ...domain.drive_index_params import MAX_TEXT_CHARS
@@ -265,6 +265,7 @@ class SandboxContentExtractor(ContentExtractorPort, PdfSplitterPort, ContainerFa
             pages_total = result.get("pages_total", 0)
             truncated = result.get("truncated", False)
             script_rendered = result.get("script_rendered", False)
+            stamp, family = reported_identity(result)   # U5: what the child ran, never this adapter's constant
             if (status not in _CHILD_STATUSES or not isinstance(text, str) or not isinstance(pages_total, int)
                     or pages_total < 0 or not isinstance(truncated, bool) or not isinstance(script_rendered, bool)):
                 raise ValueError("bad field")
@@ -280,9 +281,10 @@ class SandboxContentExtractor(ContentExtractorPort, PdfSplitterPort, ContainerFa
         if "capture_signals" in result and signals is None:
             logger.warning("[SandboxParse] the capture signals have an invalid shape; dropped")
         return ExtractionOutcome(status=status, text=text if is_text else "", pages_total=pages_total,
-                                 truncated=truncated, extracted_by=self.stamp,
+                                 truncated=truncated, extracted_by=stamp,
                                  detail=str(result.get("detail", ""))[:_DETAIL_MAX],
-                                 script_rendered=is_text and script_rendered, capture_signals=signals)
+                                 script_rendered=is_text and script_rendered, capture_signals=signals,
+                                 reader_family=family)
 
 
 def _limits(deadline_at: Optional[float]) -> Tuple[Optional[SandboxLimits], bool]:

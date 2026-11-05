@@ -93,11 +93,14 @@ def dispatch(request: Dict[str, Any]) -> Dict[str, Any]:
     op = request.get("op")
     if op == "extract":
         from src.adapters.drive_parser.readers import read_content
+        from src.domain.document_extraction import PARSER_VERSION
 
         outcome = read_content(str(request["path"]), str(request["kind"]))
+        # U5 (A-U5-2): the version this image's readers are, and the reader that ran; the parent stamps from them
         result: Dict[str, Any] = {"status": outcome.status.value, "text": outcome.text,
                                   "pages_total": outcome.pages_total, "truncated": outcome.truncated,
-                                  "detail": outcome.detail}
+                                  "detail": outcome.detail, "parser_version": PARSER_VERSION,
+                                  "reader_family": outcome.reader_family}
         if outcome.script_rendered:          # parser@2 (§25.3); absent means False
             result["script_rendered"] = True
         if outcome.capture_signals is not None:   # parser@3 (§26.3): PDFs only; absent means none

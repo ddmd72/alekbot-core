@@ -19,6 +19,7 @@ Public interface:
     quiet_over(rec, now) -> bool                                                            (§7.3)
     valid_verdict(rec, content_version) -> Optional[TriageVerdict]
     generation_started(rec, now) / indexed(rec, *, outcome, generation, chunk_count, now)
+    reread_unchanged(rec, outcome, now) -> DriveIndexRecord                        (U5 Layer 2, `drive_reread.same_read`)
     deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
     demoted(rec, reason, now, *, outcome=None, chunk_count=0) / content_retry(rec, reason, now)
     content_requeued(rec, now) -> DriveIndexRecord; FAILED_REASONS                 (the owner's requeue script)
@@ -377,7 +378,7 @@ def _build(change: DriveChange, cls: Classification, existing: Optional[DriveInd
         # that stays one keeps its README excerpt (§5.2, §25.3). Decided from metadata, it carries no extraction stamp:
         # nothing was read, so a later observation that admits the file again reads it (a rename away and back)
         base = replace(base, indexed_generation=None, brief=None, extraction_version=0, extracted_by=None,
-                       chunk_space="", chunk_reembed_pending=False, capture="", capture_source="")
+                       reader_family="", chunk_space="", chunk_reembed_pending=False, capture="", capture_source="")
         if not (existing is not None and collapsed_folder(existing) and _collapsed(change, cls)):
             base = replace(base, lead_text="", readme_pending=False, readme_item_id=None, readme_version="",
                            readme_excerpt="", readme_excerpt_version="")
@@ -1010,7 +1011,8 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
     done = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=generation,
                    chunk_space=chunk_space, chunk_reembed_pending=False,
                    indexed_version=rec.content_version, extraction_version=EXTRACTION_VERSION,
-                   extracted_by=outcome.extracted_by, text_chars=len(outcome.text), pages_total=outcome.pages_total,
+                   extracted_by=outcome.extracted_by, reader_family=outcome.reader_family,
+                   text_chars=len(outcome.text), pages_total=outcome.pages_total,
                    chunk_count=chunk_count, truncated=outcome.truncated, lead_text="", brief=outcome.brief,
                    script_rendered=outcome.script_rendered, capture=outcome.capture,
                    capture_source=outcome.capture_source, pages_refused=outcome.pages_refused,
@@ -1021,6 +1023,16 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
     if new_version:
         done = replace(done, profile_attempts=0, passages_attempts=0)
     return _settled(done, now)
+
+
+def reread_unchanged(rec: DriveIndexRecord, outcome: ExtractionOutcome, now: datetime) -> DriveIndexRecord:
+    """U5 Layer 2 (A-U5-1): a re-read whose text gives exactly the stored chunks (`drive_reread.same_read`) commits as a
+    stamp: only `extracted_by`, `reader_family` and `extraction_version` move, and the run ends as a settled content
+    outcome. `rec` is the fence's re-read of the record; the readable generation, its chunks, hints, profile and
+    every other content field stay as they are, and the generation number the run started is burned (never reused),
+    as after a dropped run. The caller writes no chunk and collects nothing."""
+    return _settled(replace(rec, extracted_by=outcome.extracted_by, reader_family=outcome.reader_family,
+                            extraction_version=EXTRACTION_VERSION), now)
 
 
 def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Optional[ExtractionOutcome] = None,
@@ -1037,6 +1049,7 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
     done = replace(rec, state=RecordState.METADATA_ONLY, reason=reason, indexed_generation=None,
                    chunk_space="", chunk_reembed_pending=False, extraction_version=EXTRACTION_VERSION,
                    extracted_by=outcome.extracted_by if outcome is not None else rec.extracted_by,
+                   reader_family=outcome.reader_family if outcome is not None else rec.reader_family,
                    text_chars=len(text), pages_total=outcome.pages_total if outcome is not None else 0,
                    truncated=outcome.truncated if outcome is not None else False,
                    chunk_count=chunk_count if reason is Reason.USER_CHUNK_CAP else 0,

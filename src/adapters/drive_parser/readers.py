@@ -19,8 +19,11 @@ a document marker or tags over 30 % outside code), go through `html_text.html_pa
 no top-level boilerplate or in-page link blocks, metadata lines at the head — and a page with a <script> and under
 500 visible characters comes back `script_rendered`. A text kind whose HTML path fails keeps its decoded text.
 
+U5: every outcome of `read_content` names the reader that produced it (`reader_family`, a
+`document_extraction.READER_FAMILIES` value; `READER_FAMILY_OF_KIND` plus `epub_package` and `text_html`).
+
 Public interface:
-    MARKITDOWN_CONVERTERS
+    MARKITDOWN_CONVERTERS, READER_FAMILY_OF_KIND
     read_content(path, kind) -> ExtractionOutcome          # `extracted_by` is stamped by the parent
     pdf_page_count(path) -> int                                   # raises PdfSplitFailed
     cut_pdf_window(path, first_page, page_count, out_path) -> int   # pages written; raises PdfSplitFailed
@@ -108,25 +111,31 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
     reader = _READERS.get(kind)
     if reader is None:
         return ExtractionOutcome(status=ExtractionStatus.UNSUPPORTED, detail=f"no reader for kind {kind}")
+    family = READER_FAMILY_OF_KIND[kind]
     try:
         if kind == "epub" and is_tar_package(path):
+            family = "epub_package"
             result: Union[_Read, _PageRead] = _read_epub_package(path)
         else:
             if kind in _ZIP_KINDS:
                 _check_container(path, kind)
             result = reader(path, kind)
     except ArchiveTooLargeError as exc:
-        return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc))
+        return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc), reader_family=family)
     except _Encrypted as exc:
-        return ExtractionOutcome(status=ExtractionStatus.ENCRYPTED, detail=str(exc))
+        return ExtractionOutcome(status=ExtractionStatus.ENCRYPTED, detail=str(exc), reader_family=family)
     except Exception as exc:  # any parser failure on hostile input is this file's outcome, never the tick's
         if is_memory_failure(exc):
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
-        return ExtractionOutcome(status=status, detail=failure_label(exc))   # never the message (R3 F3-5)
+        return ExtractionOutcome(status=status, detail=failure_label(exc),   # never the message (R3 F3-5)
+                                 reader_family=family)
+    if kind in _HTML_CAPABLE_TEXT_KINDS and isinstance(result, _PageRead):
+        family = "text_html"   # a text or Markdown file that is HTML, read by the HTML converter (§25.3)
     text, pages_total, truncated = result[0], result[1], result[2]
     outcome = _finish(text, pages_total, truncated,
                       script_rendered=isinstance(result, _PageRead) and result.script_rendered)
+    outcome = replace(outcome, reader_family=family)
     if kind == "pdf":
         outcome = replace(outcome, capture_signals=_capture_signals(path))
     return outcome
@@ -539,6 +548,14 @@ def _read_odf(path: str, kind: str) -> _Read:
     truncated = _odf_blocks(body, kind, blocks)
     return "\n\n".join(block for block in blocks if block.strip()), 0, truncated
 
+
+# U5: the `reader_family` each kind's reader reports (a `document_extraction.READER_FAMILIES` value). `read_content`
+# reports two more: `epub_package` for an EPUB that is a tar package, `text_html` for a text kind read as HTML.
+READER_FAMILY_OF_KIND: Mapping[str, str] = {
+    "pdf": "pdf", "docx": "docx", "pptx": "pptx", "epub": "epub", "msg": "msg", "xlsx": "xlsx", "xls": "xls",
+    "odt": "odf", "ods": "odf", "odp": "odf", "html": "html", "text": "text", "markdown": "text", "json": "text",
+    "config": "text", "csv": "csv", "subtitles": "subtitles", "rtf": "rtf", "eml": "eml",
+}
 
 _READERS: Dict[str, Callable[[str, str], Union[_Read, _PageRead]]] = {
     "pdf": _read_pdf, "docx": _read_converter, "pptx": _read_converter, "epub": _read_converter,
