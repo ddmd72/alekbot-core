@@ -36,7 +36,7 @@ CARD_VERSION = 4                              # 2: brief, caption and lead text 
 GEO_TABLE_VERSION = 2
 NAME_KEYS_VERSION = 2                         # the name-stream keyer; 2: drive_keys.name_keys_v2 (§25.2.4)
 TRANSCRIBE_VERSION = 1                        # the transcript pipeline (§27); deliberately not in CURRENT_VERSIONS (Δ122)
-EXTRACTION_VERSION = 3                        # chunker, text gate, content_terms normaliser (§12.3, §24.6); 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
+EXTRACTION_VERSION = 3                        # chunker, text gate (§12.3, §24.6); key rules are KEYS_VERSION's: an unchanged re-read only restamps; 2: maximal query forms (D-M1); 3: written-out dates (F5-5)
 TRIAGE_VERSION = 3                            # image triage prompt and verdict rules (§5.3, §24.5); 2: enriched (§25.4.3);
                                               # 3: a text image's capture (§26.3); S6 (unreleased) adds the photo
                                               # location prior (D39) and `scene_labels` (D40)
