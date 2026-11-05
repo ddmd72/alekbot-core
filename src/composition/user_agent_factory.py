@@ -210,7 +210,7 @@ class UserAgentFactory(AgentFactoryPort):
         lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
         video_duration: Optional[VideoDurationPort] = None,
     ) -> None:
-        # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
+        # Resolved once: the sandbox runner (or the degraded one when SANDBOX_RENDER_URL is empty) is built once and shared by all users.
         self._docx_runner_factory = docx_runner_factory()
         self._pdf_runner_factory = pdf_runner_factory()
         self.config = config

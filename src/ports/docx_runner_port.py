@@ -3,11 +3,10 @@ DocxRunnerPort
 ==============
 
 Port for executing a Node.js DOCX generation script.
-System boundary: subprocess (local Node.js) or the untrusted-content sandbox service (HTTP).
+System boundary: the untrusted-content sandbox service (HTTP).
 
 Implementations:
-  NodeDocxRunner  — asyncio subprocess calling local `node` binary.
-  SandboxDocxRunner — HTTP call to the zero-role render service (src/adapters/sandbox_client/); chosen by SANDBOX_RENDER.
+  SandboxDocxRunner — HTTP call to the zero-role render service (src/adapters/sandbox_client/).
 """
 
 from abc import ABC, abstractmethod

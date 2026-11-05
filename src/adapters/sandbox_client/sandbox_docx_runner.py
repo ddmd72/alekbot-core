@@ -1,8 +1,8 @@
 """
 SandboxDocxRunner: DocxRunnerPort over the sandbox's `render.docx` op (RFC §4.7, §4.9, §4.10; plan G1, G10).
 
-Frames `u32-be script_length | script | spec` and maps the outcome back to what `NodeDocxRunner` raises, with the
-in-process wording, so the DocGenerator's repair loop is unchanged:
+Frames `u32-be script_length | script | spec` and maps the outcome back to the error texts the
+DocGenerator's repair loop was written against, so that loop is unchanged:
     ok                                                   -> DOCX bytes
     script_error / timeout / empty_output / too_large    -> DocxRunnerError(<text the service returned>)
     error, detail sandbox_lost                           -> DocxRunnerError("sandbox_lost: ...") (the input is the

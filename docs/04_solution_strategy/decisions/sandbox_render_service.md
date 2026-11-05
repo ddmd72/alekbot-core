@@ -1,9 +1,9 @@
 # Decision: Untrusted-content sandbox, slice S1 — a separate zero-role service runs `render.docx`
 
 **Date:** 2026-10-20
-**Status:** S1 (`render.docx`): live and accepted 2026-11-04 (`SANDBOX_RENDER=sandbox` in production; the S0 b-f checks ran live
+**Status:** S1 (`render.docx`): live and accepted 2026-11-04 (the S0 b-f checks ran live
 during the rollout, RFC §S0). S2: `render.pdf` live 2026-11-04 (PR #270); `render.png` built and tested, not wired (widgets render
-in-process, O16; section "Slice S2" below).
+in-process, O16; section "Slice S2" below). **2026-11-05: the in-process DOCX/PDF render path is removed** (owner waived O9's two-week wait): no `SANDBOX_RENDER` knob, no Node/ffmpeg in the main image.
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 (S1), §8, §11, §12;
 [worker_oidc_and_docx_sandbox.md](worker_oidc_and_docx_sandbox.md); deploy steps in
 [`../../07_deployment/README.md`](../../07_deployment/README.md) § Sandbox render service.
@@ -13,10 +13,8 @@ in-process, O16; section "Slice S2" below).
 The script a model wrote for a DOCX (the least constrained input the product runs) executes in a **separate Cloud Run
 service** whose runtime identity holds **no IAM role** and which is given **no secret**. The main service keeps
 `DocxRunnerPort`; `SandboxDocxRunner` (`src/adapters/sandbox_client/`) is a second implementation next to
-`NodeDocxRunner`, chosen once at startup by `SANDBOX_RENDER` (`inprocess` | `sandbox`). Owner decision O15 (2026-11-04): this one knob
-covers the whole render family; `SANDBOX_RENDER=sandbox` also selects `SandboxPuppeteerRunner` (PDF); widget PNGs are not on the knob (owner decision O16, 2026-11-04: they render in-process, the cold start in the one-shot sandbox is too slow for widgets; `SandboxHtmlRenderer` and `render.png` stay built, not wired)
-in place of `NodePuppeteerRunner` / `PlaywrightHtmlRenderer`, wired in `src/composition/sandbox_client_setup.py`; no new key or substitution. There is **never an automatic
-fallback** to the in-process runner: a sandbox that is down degrades the render features (DOCX, PDF), nothing else.
+the only DOCX runner of the main service, built once at startup from `SANDBOX_RENDER_URL` (there is no in-process runner and no `SANDBOX_RENDER` knob; owner decisions O9 and O15). The same URL builds `SandboxPuppeteerRunner` (PDF); widget PNGs are not on the sandbox (owner decision O16, 2026-11-04: they render in-process, the cold start in the one-shot sandbox is too slow for widgets; `SandboxHtmlRenderer` and `render.png` stay built, not wired). Wired in `src/composition/sandbox_client_setup.py`; an empty URL degrades the feature (ERROR, everywhere, no raise). There is **no
+fallback** to an in-process runner (none exists): a sandbox that is down degrades the render features (DOCX, PDF), nothing else.
 
 Shape of the service (`sandbox_main.py`, `Dockerfile.sandbox` target `render`):
 
@@ -102,7 +100,7 @@ Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.
   `meta` field set stays pinned).
 - **Not yet measured:** the `render` image size, the cold-start latency of a widget (a fresh instance plus a browser start; measured at
   acceptance, the owner decides if it is too slow), the Chromium-sandbox outcome, the work volume size against a large page.
-- **Main-service choice:** PDF follows the `SANDBOX_RENDER` knob; widget PNG is always in-process (O16: the measured cold start of the one-shot render sandbox is too slow for widgets). `render.png` stays built, not wired.
+- **Main-service choice:** PDF uses the same `SANDBOX_RENDER_URL` as DOCX; widget PNG is always in-process (O16: the measured cold start of the one-shot render sandbox is too slow for widgets). `render.png` stays built, not wired.
 
 ## Accepted residuals
 
@@ -123,7 +121,7 @@ Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.
 
 ## Rollback and hard stop
 
-Set `SANDBOX_RENDER_DEV` back to `inprocess` (or empty) and deploy the main service; the render service can stay up unused.
+Roll the main service back to the previous Cloud Run revision (one that still carries the in-process runners) and revert the removal commit; there is no knob to flip. The render service can stay up unused.
 To cut a misbehaving caller off at once, remove its `roles/run.invoker` binding. Do **not** empty
 `SANDBOX_RENDER_CALLERS_DEV` for that: an empty caller list on Cloud Run refuses the new revision, so the old revision keeps
 serving and nothing is stopped.

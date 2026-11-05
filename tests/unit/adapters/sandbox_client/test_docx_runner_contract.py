@@ -1,4 +1,4 @@
-"""NodeDocxRunner vs SandboxDocxRunner: equal observable outcomes (plan G20; RFC §4.9, §4.10).
+"""SandboxDocxRunner: observable outcomes of the DOCX path (plan G20; RFC §4.9, §4.10).
 
 Real variant: client -> real sandbox_app (ASGI) -> real DocxRenderEngine -> real Node. The stub-engine variant runs
 everywhere and pins the status -> DocxRunnerError mapping through the same real app and client.
@@ -9,7 +9,6 @@ import sys
 
 import pytest
 
-from src.adapters.node_docx_runner import NodeDocxRunner
 from src.adapters.sandbox_client.sandbox_docx_runner import SandboxDocxRunner
 from src.adapters.sandbox_client.sandbox_http_client import SandboxHttpClient
 from src.adapters.sandbox_engine.child_launcher import ChildLauncher
@@ -46,10 +45,8 @@ async def _no_sleep(_s):
     return None
 
 
-@pytest.fixture(params=["node", "sandbox"])
-def runner(request, tmp_path):
-    if request.param == "node":
-        return NodeDocxRunner()
+@pytest.fixture
+def runner(tmp_path):
     engine = DocxRenderEngine(ChildLauncher(user=None), output_root=_private(tmp_path))
     transport = real_app_transport(tmp_path, engine=engine, ceiling=BIG)
     client = SandboxHttpClient(BASE, good_token, transport=transport, sleep=_no_sleep)
