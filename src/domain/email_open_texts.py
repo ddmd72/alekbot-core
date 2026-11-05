@@ -36,8 +36,9 @@ EMAIL_NOT_CONNECTED_NOTE = (
 NO_ATTACHMENTS_NOTE = "[System: That email has no attachments.]"
 EMAIL_OPEN_NOT_CONFIGURED_NOTE = "[System: Attachment opening is not configured.]"
 EMAIL_FILE_NOT_TRANSFERABLE_NOTE = (
-    "[System: An email attachment cannot be saved to the drive or sent to the chat yet; it can only be read with "
-    "open_email_attachment. The user can open it in Gmail.]")
+    "[System: An email attachment cannot be saved to the drive or sent to the chat by this route. Read it with open_email_attachment or send "
+    "it with send_file_to_user; to use it here, keep it on the drive first (work_with_drive_files copies it) and "
+    "pass the drive: ref that returns. The user can open it in Gmail.]")
 
 
 def active_kind_refusal_note(kind: str) -> str:
@@ -46,10 +47,10 @@ def active_kind_refusal_note(kind: str) -> str:
     it as the tool's result."""
     if kind == UNCHECKED:
         return ("[System: This email attachment could not be checked for macros right now, so it was not forwarded "
-                "to the chat; try again shortly. The user can open it in Gmail.]")
+                "to the chat; do not retry in this turn; the user can ask again in a few minutes or open it in Gmail.]")
     label = ACTIVE_KIND_LABELS.get(kind, "an active file")
-    return (f"[System: This attachment is {label} from an email; such files are not forwarded to the chat. "
-            f"The user can open it in Gmail.]")
+    return (f"[System: This attachment is {label} from an email; such files are not forwarded to the chat "
+            f"by any route (no drive copy, no re-send); tell the user to open it in Gmail.]")
 
 
 def choose_one_note(labels: Sequence[str], name: str = "") -> str:

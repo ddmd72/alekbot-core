@@ -199,7 +199,8 @@ class FileManagementAgent(BaseAgent):
             return self._answer(message, e.line)
         except (FileNotFoundError, PermissionError) as e:
             logger.warning("FileManagementAgent: send_file_to_user could not read '%s': %s", ref, type(e).__name__)
-            return self._fail(message, f"File '{ref}' was not found (or is not the user's); nothing was sent.")
+            return self._fail(message, f"File '{ref}' was not found (or is not the user's); nothing was sent. "
+                              "For an email attachment, pass its email: ref from get_email_details.")
         name = drive_filename(payload.get("file_name"), resolved.name)
         is_email = classify_ref(ref) is FileRefKind.EMAIL
         if is_email:
