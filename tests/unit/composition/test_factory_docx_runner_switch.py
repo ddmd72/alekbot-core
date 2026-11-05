@@ -32,7 +32,7 @@ def _construct():
 
 def test_sandbox_mode_shares_one_runner_across_users():
     make = docx_runner_factory(
-        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example"), on_cloud_run=True)
+        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example"))
     fake_self = MagicMock()
     fake_self._docx_runner_factory = make
     a = UserAgentFactory._build_doc_generator(fake_self, "u1", MagicMock())
@@ -42,6 +42,6 @@ def test_sandbox_mode_shares_one_runner_across_users():
 
 def test_degraded_error_is_logged_once_not_per_user(caplog):
     with caplog.at_level(logging.ERROR):
-        make = docx_runner_factory(getenv=_env(SANDBOX_RENDER="sandbox"), on_cloud_run=True)
+        make = docx_runner_factory(getenv=_env(SANDBOX_RENDER="sandbox"))
         make(), make(), make()
     assert len([r for r in caplog.records if r.levelno >= logging.ERROR]) == 1

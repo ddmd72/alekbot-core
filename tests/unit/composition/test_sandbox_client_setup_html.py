@@ -25,11 +25,11 @@ def test_html_renderer_is_the_inprocess_factory_object():
 
 def test_sandbox_with_url_builds_sandbox_pdf_runner():
     env = _env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=URL)
-    assert isinstance(build_pdf_runner(getenv=env, on_cloud_run=True), SandboxPuppeteerRunner)
+    assert isinstance(build_pdf_runner(getenv=env), SandboxPuppeteerRunner)
 
 
 def test_pdf_factory_shares_one_instance_in_sandbox_mode():
-    factory = pdf_runner_factory(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=URL), on_cloud_run=True)
+    factory = pdf_runner_factory(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=URL))
     assert factory() is factory()
     assert isinstance(factory(), SandboxPuppeteerRunner)
 
@@ -37,7 +37,7 @@ def test_pdf_factory_shares_one_instance_in_sandbox_mode():
 async def test_sandbox_empty_url_on_cloud_run_degrades_with_error_log(caplog):
     env = _env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" ")
     with caplog.at_level(logging.ERROR):
-        pdf = build_pdf_runner(getenv=env, on_cloud_run=True)
+        pdf = build_pdf_runner(getenv=env)
     assert sum(1 for r in caplog.records if r.levelno >= logging.ERROR) == 1
     with pytest.raises(PuppeteerRunnerError):
         await pdf.run("<p>x</p>", 5)

@@ -14,13 +14,13 @@ def _env(**kw):
 
 def test_sandbox_mode_builds_sandbox_runner():
     runner = build_docx_runner(
-        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example/"), on_cloud_run=True)
+        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example/"))
     assert isinstance(runner, SandboxDocxRunner)
 
 
 async def test_sandbox_without_url_on_cloud_run_degrades_and_logs_error_and_runner_raises_unavailable(caplog):
     with caplog.at_level(logging.ERROR):
-        runner = build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" "), on_cloud_run=True)
+        runner = build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" "))
     assert not isinstance(runner, SandboxDocxRunner)
     assert any(r.levelno >= logging.ERROR for r in caplog.records)
     with pytest.raises(SandboxUnavailable):

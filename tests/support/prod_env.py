@@ -271,27 +271,4 @@ def install_offline_services(monkeypatch) -> OfflineServices:
 
     from src.adapters.platform.factory import PlatformAdapterFactory
     monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {})
-    install_parser_user(monkeypatch, env)
     return OfflineServices(db, env, fallbacks)
-
-
-PARSER_UID_GID = (10001, 10001)
-
-
-def install_parser_user(monkeypatch, env: Dict[str, str]) -> None:
-    """The container's OS boundary of the parser sandbox: the image's parser user exists (`useradd` in the Dockerfile)
-    and the service runs as root (no USER directive). The real `_resolve_sandbox` runs; no test starts a child."""
-    import pwd as real_pwd
-    from types import SimpleNamespace
-
-    from src.adapters import subprocess_content_extractor as extractor
-
-    image_user = env.get(extractor.PARSER_USER_ENV)
-
-    def getpwnam(name: str):
-        if name == image_user:
-            return SimpleNamespace(pw_name=name, pw_uid=PARSER_UID_GID[0], pw_gid=PARSER_UID_GID[1])
-        return real_pwd.getpwnam(name)
-
-    monkeypatch.setattr(extractor, "pwd", SimpleNamespace(getpwnam=getpwnam))
-    monkeypatch.setattr(extractor, "_effective_uid", lambda: 0)
