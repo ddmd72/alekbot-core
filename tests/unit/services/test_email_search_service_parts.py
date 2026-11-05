@@ -35,7 +35,7 @@ class Mailbox(FakeEmailMailbox):
         self.refreshed = 0
 
     async def batch_get_full_content(self, credentials, email_ids, deep=False):
-        return {i: EmailFullContent(i, self.body, None, [p.filename for p in self.messages.get(i, [])], {})
+        return {i: EmailFullContent(i, self.body, None, [p.filename for p in self.messages.get(i, [])])
                 for i in email_ids if i in self.messages}
 
     async def list_parts(self, credentials, message_id):

@@ -68,7 +68,7 @@ async def test_a_forged_closing_tag_or_drive_block_in_the_body_cannot_end_the_bl
 
 async def test_the_error_answers_stay_unwrapped():
     store = CredentialsStore()
-    service = EmailSearchService(SimpleNamespace(), store.repo, _gmail(EmailFullContent("x", "", None, [], {})),
+    service = EmailSearchService(SimpleNamespace(), store.repo, _gmail(EmailFullContent("x", "", None, [])),
                                  SimpleNamespace(), connector=ConnectorRegistry().get("gmail"), nonce=lambda: NONCE)
 
     out = await service.get_details("msg-17", USER)
