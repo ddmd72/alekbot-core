@@ -30,6 +30,7 @@ import aiohttp
 from ..domain.email import (
     EmailFullContent,
     EmailMetadata,
+    EmailPart,
 )
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import OAuthGrantRevokedError, OAuthScopeInsufficientError
@@ -244,6 +245,19 @@ class GmailProviderAdapter(EmailProviderPort):
                 logger.warning(f"⚠️ Failed to parse full content for {eid}: {exc}")
 
         return output
+
+    # ------------------------------------------------------------------
+    # list_parts / get_part (EXTERNAL_FILES_RFC §4.7 P8a)
+    # ------------------------------------------------------------------
+
+    async def list_parts(self, credentials: OAuthCredential, message_id: str) -> List[EmailPart]:
+        """Placeholder of the U4a core: the walker and the typed errors land with part A1 of the same unit."""
+        raise NotImplementedError("GmailProviderAdapter.list_parts lands with U4a part A1")
+
+    async def get_part(self, credentials: OAuthCredential, message_id: str, part: EmailPart,
+                       max_bytes: int) -> bytes:
+        """Placeholder of the U4a core: the part download lands with part A1 of the same unit."""
+        raise NotImplementedError("GmailProviderAdapter.get_part lands with U4a part A1")
 
     # ------------------------------------------------------------------
     # refresh_token

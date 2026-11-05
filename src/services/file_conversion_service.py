@@ -16,6 +16,10 @@ connection raises DriveRefRefused with the code-built line (D13).
 Access policy (MULTI_DRIVE_RFC §11.3, slice 2b): a drive ref is model-supplied, so its item is read through ONE helper,
 `_drive_item`, that runs the READ check of the injected `access` (UserDriveService) after the metadata read and before
 any download or any text that prints the item's path. `access` is required: a service without it would skip the check.
+
+An `email:<message id>/<part id>` ref opens through `open_email` (EXTERNAL_FILES_RFC §4.7): the mailbox is reached
+through the injected EmailSearchService (a TYPE_CHECKING import, REQ-ARCH-22); without it, email opening is not
+configured.
 """
 import mimetypes
 import os
@@ -31,11 +35,12 @@ from ..domain.drive_access_op import AccessOp
 from ..domain.drive_handle import DriveHandle
 from ..domain.file_ref import FileRefKind, classify_ref
 from ..domain.document_kind import mime_decides_kind, mime_kind
-from ..domain.document_open import OpenedFile, Prefetched
+from ..domain.document_open import EmailOpening, OpenedFile, Prefetched
 from ..domain.document_open_texts import open_failed_note, parser_unavailable_note
 from ..domain.document_presentation import note_for, present_text
 from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
+from ..domain.email_ref import parse_email_ref
 from ..domain.exceptions import WorkspaceRefused
 from ..domain.llm import MessagePart
 from ..domain.native_format import NativeFormat
@@ -65,6 +70,7 @@ if TYPE_CHECKING:
     from ..ports.user_drive_port import UserDrivePort
     from ..ports.workspace_store_port import WorkspaceStorePort
     from .drive_connection_service import DriveConnectionService
+    from .email_search_service import EmailSearchService
     from .skill_file_resolver import SkillFileResolver
     from .user_drive_service import UserDriveService
 
@@ -85,6 +91,17 @@ class _Opening(NamedTuple):
     opened: OpenedFile
     display: str
     text: str = ""
+
+
+def _email_answer(opening: EmailOpening, ref: str) -> _Opening:
+    """`open`'s answer for an `email:` ref: the part's name is shown (the ref when no part was found); a note when
+    nothing was read; the bare text of a read that gave text, for the prefetch's presenter."""
+    display = opening.name or ref
+    if opening.opened is None:
+        return _Opening(OpenedFile(None, note=opening.note), display)
+    outcome = opening.opened.outcome
+    text = outcome.text if outcome is not None and outcome.status is ReadStatus.TEXT else ""
+    return _Opening(opening.opened, display, text)
 
 
 def _staged_name(path: str, name: str, item_mime: str) -> str:
@@ -170,6 +187,7 @@ class FileConversionService:
         connections: Optional["DriveConnectionService"] = None,
         *,
         access: "UserDriveService",
+        email: Optional["EmailSearchService"] = None,
     ) -> None:
         self._storage = storage
         # MediaStoragePort serves system-delivered documents (docs/, email_review/,
@@ -188,6 +206,9 @@ class FileConversionService:
         self._workspace = workspace
         # The access policy of the user's drives (MULTI_DRIVE_RFC §11.3): required, so an unwired service cannot skip it.
         self._access = access
+        # `email:` refs (EXTERNAL_FILES_RFC §4.7): the user's mailbox, listed and fetched part by part. None → email
+        # attachment opening is not configured.
+        self._email = email
         # The document service `open` and `prefetch` read through (EXTERNAL_FILES_RFC §4.4); attached by the graph
         # right after it is built (`attach_documents`), None until then.
         self._documents: Optional["DocumentReadPort"] = None
@@ -207,6 +228,8 @@ class FileConversionService:
         attach. `consumer` empty means text only. `caller` is `CALLER_OPEN`, `CALLER_PREFETCH` or
         `CALLER_CONNECTOR` (the drive connector: the paid reader never runs, `document_read.reader_skipped`).
         Store-specific branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
+        An `email:` ref opens through `open_email` with its part id (its notes come back as the note); a ref of the
+        wrong shape raises FileNotFoundError.
         Store errors (FileNotFoundError, PermissionError, DriveRefRefused, DriveItemNotFoundError, WorkspaceRefused)
         propagate; the callers map them. Every failed read is logged at WARNING (the file's) or ERROR (the system's)."""
         return (await self._open(ref, user_id, account_id, consumer, deadline_at, caller)).opened
@@ -218,7 +241,14 @@ class FileConversionService:
             text = await self._read_skill(ref, user_id)
             return _Opening(OpenedFile(None, body=f"[File: {ref}]\n{text}\n[/File: {ref}]"), ref, text)
         if kind is FileRefKind.EMAIL:
-            raise FileNotFoundError(f"{ref!r}: email attachments open through the email tool")
+            try:
+                message_id, part_id = parse_email_ref(ref)
+            except ValueError as e:
+                raise FileNotFoundError(f"{ref!r} is not an email attachment ref (email:<message id>/<part id>); "
+                                        f"email attachments open through the email tool") from e
+            opening = await self.open_email(user_id, account_id, message_id=message_id, part_id=part_id,
+                                            consumer=consumer, deadline_at=deadline_at, caller=caller)
+            return _email_answer(opening, ref)
 
         display, declared_mime, name = ref, "", ref
         if kind is FileRefKind.DRIVE:
@@ -292,6 +322,22 @@ class FileConversionService:
         _log_unread(outcome, kind.value, ref)
         return _Opening(OpenedFile(outcome, note=note_for(outcome, display, declared_mime, size_bytes=len(content))),
                         display)
+
+    async def open_email(self, user_id: str, account_id: str, *, message_id: str, part_id: Optional[str] = None,
+                         name: Optional[str] = None, consumer: Tuple[NativeFormat, ...] = (), deadline_at: float,
+                         caller: str = CALLER_OPEN) -> EmailOpening:
+        """Open one attachment of `message_id` for a model (EXTERNAL_FILES_RFC §4.7, D12; plan U4 §2 A3 and §6).
+        One part listing per call; the part is the one `part_id` names, else the one whose name equals `name`
+        (exactly, then NFC + casefold), else, with neither given, the email's only attachment. Several matches (a
+        shared name, or no `part_id` and no `name` for an email with several attachments) open nothing: the answer
+        carries `candidates` (`(label, ref)` per part) and the choose-one note, and `needs_choice` is True; this is a
+        successful answer, not an error. The size is checked on the listing before download, the bytes are read
+        through the document service (`store="email"`) as `open` reads any file (`[File: <name>]` body, a note, or a
+        native file), and every expected failure is a note (`email_open_texts`): not configured, not connected, the
+        message gone, the part missing or empty, the mailbox not answering, no attachments. Never raises for those.
+
+        Core placeholder (U4a-C): until part A3 builds this, an `email:` ref is refused as before."""
+        raise FileNotFoundError(f"email:{message_id}/{part_id or ''}: email attachments open through the email tool")
 
     async def prefetch(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched:
         """A specialist's prefetch of a ref (EXTERNAL_FILES_RFC §4.2 P18): `open` as text only, under the worker's

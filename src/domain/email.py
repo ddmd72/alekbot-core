@@ -64,6 +64,23 @@ class EmailFullContent:
     attachment_binaries: Dict[str, bytes]  # filename → bytes; empty dict if deep=False
 
 
+@dataclass(frozen=True)
+class EmailPart:
+    """
+    One attachment of a message, as `EmailProviderPort.list_parts()` lists it (EXTERNAL_FILES_RFC §4.7 P8a).
+    Transient: never stored. `part_id` is the MIME part id the `email:` ref carries (`src/domain/email_ref.py`);
+    `filename` the name as the sender wrote it (the index stores the same names); `mime` the part's declared type,
+    a hint only (the bytes decide); `size` the provider's size in bytes. `handle` is opaque to everything but the
+    adapter that listed the part (Gmail: the attachment id, empty for a part whose data is inline): it is valid only
+    with the listing it came from, so it is passed back to `get_part` within one open and never stored.
+    """
+    part_id: str
+    filename: str
+    mime: str
+    size: int
+    handle: str
+
+
 # ---------------------------------------------------------------------------
 # Classification output
 # ---------------------------------------------------------------------------

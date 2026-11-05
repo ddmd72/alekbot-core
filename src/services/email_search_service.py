@@ -9,6 +9,8 @@ used by EmailSearchAgent:
       7-stream multi-vector RRF across all indexed email vector fields.
   - get_details(email_id, user_id)       — Gmail full body (no attachments)
   - get_attachment(email_id, filename, user_id) — Gmail attachment → text
+  - list_attachment_parts(user_id, message_id)   — the message's attachments, one listing (EXTERNAL_FILES_RFC §4.7)
+  - get_attachment_part(user_id, message_id, part, max_bytes) — one listed part's bytes, for the open path
 
 Multi-vector search strategy (2 parallel find_nearest calls → RRF merge):
   Call A: vector:embed(primary)     + tags_vector:embed(tags)      + metadata_vector:embed(primary)
@@ -32,7 +34,7 @@ from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
 from ..domain.connector_spec import ConnectorSpec
-from ..domain.email import IndexedEmail
+from ..domain.email import EmailPart, IndexedEmail
 from ..domain.file_ref import FileRefKind
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
@@ -271,6 +273,26 @@ class EmailSearchService:
             os.unlink(tmp_path)
 
         return truncate_with_alert(text, filename)
+
+    # ------------------------------------------------------------------
+    # Part-level fetch for the open path (EXTERNAL_FILES_RFC §4.7 P8a)
+    # ------------------------------------------------------------------
+
+    async def list_attachment_parts(self, user_id: str, message_id: str) -> List[EmailPart]:
+        """
+        The attachments of one message, from one provider listing, under the user's mail credential (refreshed when
+        expired, as `get_details`). Raises EmailNotConnected without a credential or when the refresh finds it
+        disconnected; the port's EmailMessageGone / EmailPartUnavailable and OAuth errors propagate.
+        """
+        raise NotImplementedError("EmailSearchService.list_attachment_parts lands with U4a part A2")
+
+    async def get_attachment_part(self, user_id: str, message_id: str, part: EmailPart, max_bytes: int) -> bytes:
+        """
+        The bytes of `part`, which `list_attachment_parts` just listed for `message_id` (its handle is valid only
+        with that listing), refused past `max_bytes`. Credential and errors as `list_attachment_parts`, plus the
+        port's EmailPartTooLarge.
+        """
+        raise NotImplementedError("EmailSearchService.get_attachment_part lands with U4a part A2")
 
     # ------------------------------------------------------------------
     # Internal helpers

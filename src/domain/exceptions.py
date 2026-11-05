@@ -357,6 +357,28 @@ class DriveLinkFolder(Exception):
         super().__init__("a download link is for one file")
 
 
+class EmailNotConnected(Exception):
+    """The user has no mail credential, or it was disconnected during a token refresh: an attachment cannot be listed
+    or fetched until the user reconnects (EXTERNAL_FILES_RFC §4.7, the "not connected" note)."""
+
+
+class EmailMessageGone(Exception):
+    """The provider answered that the message does not exist (Gmail 404): deleted, or the mailbox is another account
+    now. An `email:` ref to it reads as "no longer in the mailbox" (§4.7)."""
+
+
+class EmailPartUnavailable(Exception):
+    """The mailbox did not answer (Gmail 429, a 5xx, a timeout): the message and part may be fine; try again (§4.7)."""
+
+
+class EmailPartTooLarge(Exception):
+    """`get_part` passed its `max_bytes` (the listed size understated the part): nothing is returned."""
+
+    def __init__(self, limit_bytes: int) -> None:
+        super().__init__(f"email part exceeded {limit_bytes} bytes")
+        self.limit_bytes = limit_bytes
+
+
 class MediaStreamFailed(Exception):
     """A file's bytes could not be streamed from its media source (a refused or failed upstream request, a broken
     connection). The message never carries the source's url or headers (they are secrets)."""
