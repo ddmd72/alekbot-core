@@ -285,7 +285,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── document_delivery_service.py # 🆕 Stores document bytes (HTML, PDF) to GCS via MediaStoragePort.
 │   │                                #    Key format: docs/{uuid4()}-{filename}. Used by PdfGeneratorAgent.
 │   ├── file_conversion_service.py # 🆕 Centralized file upload to GCS + on-demand content resolution.
-│   │                              #    process_attachment → reference-only MessagePart; resolve_content → text.
+│   │                              #    process_attachment → reference-only MessagePart; resolve_content → text;
+│   │                              #    resolve_file(ref, user_id, action=save|send) → bytes; active_kind_of (D13).
 │   ├── rich_content_service.py # 🆕 File conversion + widget render + media dispatch
 │   ├── search_enrichment_service.py # 🆕 Triple search & weighted merge
 │   ├── lelik_persona_service.py # 🆕 Lelik's warm call-start prompt (full facts minus denylist, directives, primary-channel history)
@@ -364,6 +365,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`deduplication_service.py`**: 🆕 `SmartDeduplicationService` — number-aware duplicate detection. Lives in `domain/` because it has zero external dependencies (only stdlib `re`). Used by `FirestoreFactRepository` and `SearchEnrichmentService` via DI.
 -   **`entities.py`**: Core domain entities: `FactEntity` (with SCD Type 2 fields), `FactType` enum. Also contains `normalize_fact_taxonomy()` — centralizes `.lower()` normalization of 4D taxonomy fields (`domain`, `temporal_class`, `state`, `context_priority`) for enum compatibility. Used by `FactManagementAdapter` and `FirestoreFactManagementAdapter` to eliminate duplicated normalization code.
 -   **`auth.py`**: Auth domain models moved from `ports/`: `TokenClaims`, `OAuthTokens`, `OAuthUserInfo`, `IAMDecision`. Pure data, zero external dependencies — belong in `domain/`, not `ports/`.
+-   **`active_kind.py`**: D13's `active_kind(name, mime, head, container)` — the kinds `send_file_to_user` refuses from an email attachment, decided from header bytes, name, mime and `ContainerFacts`; unchecked ZIP-family files fail closed.
+-   **`container_facts.py`**: `ContainerFacts` / `ContainerStatus` — the ZIP facts (members, VBA project, macro content type, ODF macros) the sandbox op `parse.container_facts` returns.
 -   **`llm.py`**: Core LLM domain types — `Message`, `MessagePart`, `ToolCall`, `LLMRequest`, `LLMResponse`, `ProviderCapabilities`, `UsageMetadata`, `PromptCacheConfig`, `CacheMetadata`, `AutomaticFunctionCallingConfig` + `PROMPT_CACHE_BOUNDARY` constant. Moved from `ports/llm_port.py` (TD-V2 2026-03-08) so ports import domain, not each other.
 -   **`messaging.py`**: Platform-agnostic messaging abstractions (DTOs & Protocols).
 -   **`ui_messages.py`**: Centralized `StatusType` enum for semantic UI updates.
@@ -426,6 +429,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`file_service.py`**: Port for file upload to LLM providers.
 -   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
 -   **`platform_media_port.py`**: 🆕 `PlatformMediaPort` ABC — `upload_image(bytes, alt_text, channel_id)` and `upload_file(bytes, filename, title, channel_id)`. Implemented by `SlackMediaAdapter` and `TelegramMediaAdapter`.
+-   **`container_facts_port.py`**: `ContainerFactsPort` ABC. `container_facts(data, deadline_at) → ContainerFacts`; implemented by `SandboxContentExtractor` over `parse.container_facts`.
 -   **`html_renderer_port.py`**: 🆕 `HtmlRendererPort` ABC + `HtmlRenderError`. `render(html, width=480) → bytes`. `HtmlRenderError` lives in ports/ so services can catch it without violating import rules. Implemented by `PlaywrightHtmlRenderer`.
 -   **`puppeteer_runner_port.py`**: 🆕 `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`. `run(html, timeout) → bytes`. System boundary for the Node.js Puppeteer subprocess. Implemented by `NodePuppeteerRunner`.
 
