@@ -243,7 +243,6 @@ class TestGetDetails:
             body_text="Important flight confirmation ref XYZ",
             body_html=None,
             attachments=["ticket.pdf"],
-            attachment_binaries={},
         )
         mock_gmail.batch_get_full_content.return_value = {"e1": full}
 
@@ -275,7 +274,6 @@ class TestGetDetails:
             body_text="Body only",
             body_html=None,
             attachments=[],
-            attachment_binaries={},
         )
         mock_gmail.batch_get_full_content.return_value = {"e1": full}
 

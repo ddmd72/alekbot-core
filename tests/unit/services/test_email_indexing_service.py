@@ -249,7 +249,7 @@ class TestEmailIndexingServiceRunJob:
         mock_gmail.batch_get_full_content.return_value = {
             "e1": EmailFullContent(
                 email_id="e1", body_text="Booking confirmed",
-                body_html=None, attachments=[], attachment_binaries={}
+                body_html=None, attachments=[]
             )
         }
         mock_classifier.classify_batch.return_value = [

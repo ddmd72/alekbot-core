@@ -26,8 +26,7 @@ def _gmail(email: EmailFullContent) -> SimpleNamespace:
 async def _details(body: str, attachments: List[str], *, nonce: str = NONCE) -> str:
     store = CredentialsStore()
     await store.repo.save(creds(USER, "gmail", token_expiry=LATE))
-    email = EmailFullContent(email_id="msg-17", body_text=body, body_html=None, attachments=attachments,
-                             attachment_binaries={})
+    email = EmailFullContent(email_id="msg-17", body_text=body, body_html=None, attachments=attachments)
     service = EmailSearchService(SimpleNamespace(), store.repo, _gmail(email), SimpleNamespace(),
                                  connector=ConnectorRegistry().get("gmail"), nonce=lambda: nonce)
     return await service.get_details("msg-17", USER)

@@ -101,7 +101,6 @@ def _make_full_content(email_id="e1", body_text="Body text", attachments=None):
         body_text=body_text,
         body_html=None,
         attachments=attachments or [],
-        attachment_binaries={},
     )
 
 
