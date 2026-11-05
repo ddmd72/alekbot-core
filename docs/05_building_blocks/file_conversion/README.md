@@ -34,7 +34,7 @@ Layers: `FileConversionService` (`src/services/file_conversion_service.py`) reso
 (`src/ports/document_read_port.py`); the macro check's ZIP facts come behind `ContainerFactsPort`
 (`src/ports/container_facts_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
 `document_open.py`, `active_kind.py`, `container_facts.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
-`src/utils/file_conversion.py` keeps the alert texts and the markitdown helpers (no `src/` caller reads email through them after U4a).
+`src/utils/file_conversion.py` keeps the alert texts and the type helpers; `convert_file_to_text` and `build_markitdown` are gone (U5).
 
 > **See also:** [../file_storage/README.md](../file_storage/README.md) (GCS storage, the upload turn),
 > [../user_drive/README.md](../user_drive/README.md) (drive opens, §29 bound).
@@ -106,8 +106,9 @@ request id, kind and a failure label, never text or a file name (`document_servi
 7. **Outcome** (`ReadOutcome`): status, raw text, pages total / read / skipped / `cut_within_pages`, links
    (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
 
-Plain text kinds (`text`, `markdown`, `json`, `code`, `log`, and a `text/*` csv or html until U5) are read as UTF-8 in the
-service, not in the child (reading UTF-8 is not parsing).
+Plain text kinds (`text`, `markdown`, `json`, `code`, `log`, and the unreadable-by-child `mhtml`, `other`, `data_dump`) are read as UTF-8 in the
+service, not in the child (reading UTF-8 is not parsing). A chat `csv` or `html` upload (also `text/*`) goes through the child like any other
+parsed kind; `convert_file_to_text` no longer exists.
 
 **Chat audio (P21).** Only a chat upload opened interactively is transcribed (`OpenAITranscriptionAdapter.
 transcribe_metered`); a prefetch never is, and drive recordings keep their own transcript-first rule. The call is
@@ -160,8 +161,10 @@ exists in the contract for a remote adapter and is never returned in-process.
 
 ## Untrusted input
 
-Files are untrusted (chat uploads, drive files, workspace and delivered files). Markitdown's builtins are off; only
-local document converters are registered (`build_markitdown()` in `file_conversion.py`). Left out on purpose:
+Files are untrusted (chat uploads, drive files, workspace and delivered files). markitdown lives only inside the parser
+child (`src/adapters/drive_parser/readers.py`), as the DOCX, PPTX, EPUB and MSG converters: its builtins are off and only
+the classes in `MARKITDOWN_ALLOWED_CONVERTERS` (`document_hardening.py`) are registered; a test fails on any import of it
+outside `drive_parser/`. Left out on purpose:
 `ZipConverter` (inflates every member in RAM), `AudioConverter` (uploads audio to Google), `ImageConverter` and the URL
 converters. `check_zip_container()` refuses a ZIP container declaring more than `MAX_ZIP_UNCOMPRESSED_BYTES` (100 MiB)
 or `MAX_ZIP_MEMBERS` (10 000); both helpers live in `src/utils/document_hardening.py`, free of logger and telemetry
@@ -170,14 +173,6 @@ measured near 1.75 GB) is bounded by the child's limits, not by these checks.
 
 File contents never leave in telemetry: file parts of LLM calls are replaced by `file_omitted` in exported spans
 (`docs/07_deployment/LOGGING.md`).
-
----
-
-## Not built yet
-
-- **One parse engine (U5).** Until then a `text/*` upload of csv or html is read raw as UTF-8 in the service (A3), and
-  markitdown's auto-detect path in `convert_file_to_text` is kept only for the U0-b report script; U5 moves it to the
-  child's readers with the four fixes of RFC §7.
 
 ---
 
