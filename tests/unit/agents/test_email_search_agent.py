@@ -4,12 +4,13 @@ Unit tests for EmailSearchAgent.
 
 import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src.agents.email_search_agent import EmailSearchAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.email_details import EmailDetails
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -306,15 +307,6 @@ class TestCanHandleEmailId:
         )
         assert await agent.can_handle(msg) is True
 
-    async def test_returns_true_with_email_id_and_filename(self, agent):
-        msg = AgentMessage(
-            intent=AgentIntent.QUERY,
-            payload={"intent": "get_email_attachment", "email_id": "msg_example001", "filename": "doc.pdf"},
-            sender="smart", recipient="email_search_agent", task_id="t",
-            context={"user_id": "user123"},
-        )
-        assert await agent.can_handle(msg) is True
-
     async def test_returns_false_empty_payload(self, agent):
         msg = AgentMessage(
             intent=AgentIntent.QUERY,
@@ -339,33 +331,35 @@ class TestGetEmailDetails:
             context={"user_id": "user123", "account_id": "acc1"},
         )
 
+    # Reviewer (U4a A4): the agent reads the details with their attachment parts (one listing, D11), so the
+    # service call is `get_details_with_parts` and its text is the result.
     async def test_success_calls_get_details(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "Email body text here"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("Email body text here")
 
         response = await agent.execute(self._msg())
 
         assert response.status == AgentStatus.SUCCESS
-        mock_search_service.get_details.assert_awaited_once_with(
+        mock_search_service.get_details_with_parts.assert_awaited_once_with(
             email_id="msg_example001",
             user_id="user123",
         )
 
     async def test_success_result_contains_body(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "Important email body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("Important email body")
 
         response = await agent.execute(self._msg())
 
         assert response.result == "Important email body"
 
     async def test_metadata_contains_email_id(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("body")
 
         response = await agent.execute(self._msg("abc123"))
 
         assert response.metadata["email_id"] == "abc123"
 
     async def test_exception_returns_failure(self, agent, mock_search_service):
-        mock_search_service.get_details.side_effect = RuntimeError("Gmail error")
+        mock_search_service.get_details_with_parts.side_effect = RuntimeError("Gmail error")
 
         response = await agent.execute(self._msg())
 
@@ -373,89 +367,11 @@ class TestGetEmailDetails:
         assert "get_email_details failed" in response.error
 
     async def test_vector_search_not_called(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("body")
 
         await agent.execute(self._msg())
 
         mock_search_service.vector_search.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# execute — get_email_attachment routing
-# ---------------------------------------------------------------------------
-
-class TestGetEmailAttachment:
-
-    def _msg(
-        self,
-        email_id: str = "msg_example001",
-        filename: str = "consent_form.pdf",
-    ) -> AgentMessage:
-        return AgentMessage(
-            intent=AgentIntent.QUERY,
-            payload={"intent": "get_email_attachment", "email_id": email_id, "filename": filename},
-            sender="smart", recipient="email_search_agent", task_id="t",
-            context={"user_id": "user123", "account_id": "acc1"},
-        )
-
-    async def test_success_calls_get_attachment(self, agent, mock_search_service):
-        mock_search_service.get_attachment.return_value = "Parsed PDF text"
-
-        response = await agent.execute(self._msg())
-
-        assert response.status == AgentStatus.SUCCESS
-        mock_search_service.get_attachment.assert_awaited_once_with(
-            email_id="msg_example001",
-            filename="consent_form.pdf",
-            user_id="user123",
-        )
-
-    async def test_result_contains_text(self, agent, mock_search_service):
-        mock_search_service.get_attachment.return_value = "Document content"
-
-        response = await agent.execute(self._msg())
-
-        assert response.result == "Document content"
-
-    async def test_metadata_contains_email_id_and_filename(self, agent, mock_search_service):
-        mock_search_service.get_attachment.return_value = "text"
-
-        response = await agent.execute(self._msg("e1", "file.pdf"))
-
-        assert response.metadata["email_id"] == "e1"
-        assert response.metadata["filename"] == "file.pdf"
-
-    async def test_exception_returns_failure(self, agent, mock_search_service):
-        mock_search_service.get_attachment.side_effect = RuntimeError("Gmail error")
-
-        response = await agent.execute(self._msg())
-
-        assert response.status == AgentStatus.FAILED
-        assert "get_email_attachment failed" in response.error
-
-    async def test_vector_search_not_called(self, agent, mock_search_service):
-        mock_search_service.get_attachment.return_value = "text"
-
-        await agent.execute(self._msg())
-
-        mock_search_service.vector_search.assert_not_called()
-
-    async def test_filename_required_to_trigger_attachment_path(
-        self, agent, mock_search_service
-    ):
-        """email_id only (no filename) → get_details path, not attachment."""
-        mock_search_service.get_details.return_value = "body"
-        msg = AgentMessage(
-            intent=AgentIntent.QUERY,
-            payload={"intent": "get_email_details", "email_id": "e1"},  # no filename
-            sender="smart", recipient="email_search_agent", task_id="t",
-            context={"user_id": "user123"},
-        )
-
-        await agent.execute(msg)
-
-        mock_search_service.get_details.assert_awaited_once()
-        mock_search_service.get_attachment.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

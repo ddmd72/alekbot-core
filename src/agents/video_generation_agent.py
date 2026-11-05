@@ -17,7 +17,7 @@ import mimetypes
 from typing import Optional
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
-from ..domain.exceptions import BothProvidersUnavailableError, LLMTimeoutError
+from ..domain.exceptions import BothProvidersUnavailableError, EmailFileNotTransferable, LLMTimeoutError
 from ..domain.llm import (
     FinishReason,
     LLMRequest,
@@ -270,6 +270,8 @@ class VideoGenerationAgent(BaseAgent):
             try:
                 image_data = await self._file_conversion.resolve_bytes(image_ref, user_id)
                 image_mime_type = mimetypes.guess_type(image_ref)[0] or "image/png"
+            except EmailFileNotTransferable as e:
+                return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
             except Exception as e:
                 self._on_agent_error(e, f"resolve image_ref {image_ref}")
                 return AgentResponse.failure(
@@ -324,6 +326,8 @@ class VideoGenerationAgent(BaseAgent):
         user_id = message.context.get("user_id", "")
         try:
             video_data = await self._file_conversion.resolve_bytes(video_ref, user_id)
+        except EmailFileNotTransferable as e:
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
         except Exception as e:
             self._on_agent_error(e, f"resolve video_ref {video_ref}")
             return AgentResponse.failure(

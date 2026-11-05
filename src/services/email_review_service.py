@@ -120,7 +120,6 @@ class EmailReviewService:
         full_content = await self._email_provider.batch_get_full_content(
             credentials=creds,
             email_ids=[m.email_id for m in all_metadata],
-            deep=False,
         )
 
         return [
@@ -173,8 +172,8 @@ class EmailReviewService:
             f"and [FYI] emails: senders you know, mentioned companies, topics, open threads. "
             f"A few targeted searches cover more than one per email.\n"
             f"\n"
-            f"For emails with attachments worth reading, use intent get_email_attachment "
-            f"to fetch the content.\n"
+            f"For emails with attachments worth reading, use intent open_email_attachment "
+            f"to read the file.\n"
             f"\n"
             f"Search the web where it genuinely sharpens the analysis: context on senders, news "
             f"about mentioned events or companies, product updates, regulatory changes. "
@@ -190,7 +189,7 @@ class EmailReviewService:
             f"  • Every email with its classification tag ([ACTION]/[FYI]/[DIGEST]/[NOISE]) — nothing dropped\n"
             f"  • For [ACTION] and [FYI]: your analysis and why it matters to this person\n"
             f"  • Memory facts retrieved via search_memory: what you know about the sender, company, or topic\n"
-            f"  • Attachment content fetched via get_email_attachment\n"
+            f"  • Attachment content read via open_email_attachment\n"
             f"  • Web research findings: context on senders, events, companies, product updates, regulatory changes\n"
             f"  • Suggested next steps for every [ACTION] item\n"
             f"  • Conclusion: the single most critical item the user must act on today\n"

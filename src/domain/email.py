@@ -53,15 +53,30 @@ class EmailFullContent:
     """
     Returned by EmailProviderPort.batch_get_full_content().
     Used by EmailClassificationService (ambiguous snippet) and
-    EmailSearchAgent Mode B (deep search + markitdown attachment parsing).
-    Attachment binaries populated only when deep=True is passed to the adapter.
+    EmailSearchAgent's get_email_details. Attachment bytes are never read here: `list_parts` / `get_part` do that.
     Body text is never stored in Firestore.
     """
     email_id: str
     body_text: str                          # Plain text body (HTML stripped by adapter)
     body_html: Optional[str]               # Original HTML (for structured extraction)
     attachments: List[str]                 # Attachment filenames only
-    attachment_binaries: Dict[str, bytes]  # filename → bytes; empty dict if deep=False
+
+
+@dataclass(frozen=True)
+class EmailPart:
+    """
+    One attachment of a message, as `EmailProviderPort.list_parts()` lists it (EXTERNAL_FILES_RFC §4.7 P8a).
+    Transient: never stored. `part_id` is the MIME part id the `email:` ref carries (`src/domain/email_ref.py`);
+    `filename` the name as the sender wrote it (the index stores the same names); `mime` the part's declared type,
+    a hint only (the bytes decide); `size` the provider's size in bytes. `handle` is opaque to everything but the
+    adapter that listed the part (Gmail: the attachment id, empty for a part whose data is inline): it is valid only
+    with the listing it came from, so it is passed back to `get_part` within one open and never stored.
+    """
+    part_id: str
+    filename: str
+    mime: str
+    size: int
+    handle: str
 
 
 # ---------------------------------------------------------------------------

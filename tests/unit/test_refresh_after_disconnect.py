@@ -131,20 +131,12 @@ async def test_email_details_after_a_disconnect_during_refresh_say_gmail_is_not_
     assert store.docs == {}
 
 
-async def test_email_attachment_after_a_disconnect_during_refresh_say_gmail_is_not_connected(store):
-    await store.repo.save(creds(USER, "gmail", token_expiry=datetime(2020, 1, 1, tzinfo=timezone.utc)))
-    gmail = _gmail_refreshing_after_a_disconnect(store)
-    service = EmailSearchService(MagicMock(), store.repo, gmail, MagicMock(), connector=ConnectorRegistry().get("gmail"))
-    assert await service.get_attachment("e1", "a.pdf", USER) == "[Error: Gmail is not connected for this user.]"
-    gmail.batch_get_full_content.assert_not_called()
-    assert store.docs == {}
-
-
 async def test_email_details_refresh_of_a_connected_grant_is_stored(store):
     await store.repo.save(creds(USER, "gmail", token_expiry=datetime(2020, 1, 1, tzinfo=timezone.utc)))
     gmail = MagicMock()
     gmail.refresh_token = AsyncMock(return_value=creds(USER, "gmail", access_token="new", token_expiry=LATE))
     gmail.batch_get_full_content = AsyncMock(return_value={})
+    gmail.list_parts = AsyncMock(return_value=[])   # reviewer (U4a A2): details also list the parts once (D11)
     await EmailSearchService(MagicMock(), store.repo, gmail, MagicMock(), connector=ConnectorRegistry().get("gmail")).get_details("e1", USER)
     assert (await one(store.repo, USER, "gmail")).access_token == "new"
 

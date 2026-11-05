@@ -445,7 +445,6 @@ class EmailIndexingService:
                         full_content_map = await self._gmail.batch_get_full_content(
                             credentials=credentials,
                             email_ids=valuable_ids,
-                            deep=False,
                         )
                     except Exception as exc:
                         logger.warning(

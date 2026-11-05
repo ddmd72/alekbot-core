@@ -10,7 +10,7 @@ using the same non-internal intents as SmartAgent (discovered via `AgentDescript
 - `search_web` — web search + automatic maps fan-out (see below).
 - `search_emails` — semantic search in indexed email archive.
 - `get_email_details` — fetch full body of a specific email by ID.
-- `get_email_attachment` — parse an email attachment as text.
+- `open_email_attachment` — open an email attachment (by `email:` ref, or email id + name).
 
 Note: `maps_query` is `internal=True` — not shown in LLM tool declarations. Triggered automatically
 via `intent_fanout` when the orchestrator dispatches `search_web` (see § 3.5).
@@ -28,14 +28,14 @@ RouterAgent
   │       │       └─ [fan-out]    → MapsSearchAgent      (parallel, internal)
   │       ├─ search_emails        → EmailSearchAgent     (shared)
   │       ├─ get_email_details    → EmailSearchAgent     (shared)
-  │       └─ get_email_attachment → EmailSearchAgent     (shared)
+  │       └─ open_email_attachment → EmailSearchAgent     (shared)
   └─ Complex Query → SmartResponseAgent
           ├─ search_memory        → MemorySearchAgent    (shared)
           ├─ search_web           → WebSearchAgent       (shared)
           │       └─ [fan-out]    → MapsSearchAgent      (parallel, internal)
           ├─ search_emails        → EmailSearchAgent     (shared)
           ├─ get_email_details    → EmailSearchAgent     (shared)
-          └─ get_email_attachment → EmailSearchAgent     (shared)
+          └─ open_email_attachment → EmailSearchAgent     (shared)
 ```
 
 Both agents use the same `AgentRegistry`. Quick calls `get_available_intents_for(descriptor)` which
@@ -157,14 +157,14 @@ it to `search_web_light`, routing to `WebSearchLightAgent`. Single Gemini + Goog
 **Anti-patterns:** Multi-part research queries; comparative analysis; anything that would benefit
 from synthesis of multiple sources (send those to Smart instead).
 
-### 3.3 search_emails / get_email_details / get_email_attachment → EmailSearchAgent
+### 3.3 search_emails / get_email_details / open_email_attachment → EmailSearchAgent
 
 Routes to `EmailSearchAgent` (shared with Smart path). Same three intents and behavior as on the
 Smart path — no remap applied.
 
 - `search_emails` — semantic 4-vector RRF search in the indexed email archive. Pass `query` as-is.
 - `get_email_details` — fetch full email body from Gmail API. Requires `email_id` in `context`.
-- `get_email_attachment` — parse attachment as text via markitdown. Requires `email_id` + `filename` in `context`.
+- `open_email_attachment` — open one attachment through the file open path. Requires `file_ref` (`email:...`) or `email_id` + `name` in `context`; one attachment per call.
 
 **When to call `search_emails` (per `PROTOCOL_QUICK_AGENT_SELECTION`):**
 - User asks about a specific email, sender, invoice, document, or email thread.
@@ -176,7 +176,7 @@ model history entry contains a JSON block:
 ```json
 {"email_search_context":[{"you_searched":"...","you_received":[{"id":"...","from":"...","date":"...","summary":"..."}]}]}
 ```
-Use `id` from prior turns directly with `get_email_details` / `get_email_attachment` without
+Use `id` from prior turns directly with `get_email_details` / `open_email_attachment` without
 re-searching. See [Multi-Agent System § 9](../multi_agent_system/README.md#9-conversationhandler-email-search-context-persistence).
 
 ### 3.4 maps_query → MapsSearchAgent (via intent fan-out)

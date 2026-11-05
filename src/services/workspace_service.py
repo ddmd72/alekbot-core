@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple
 
 from ..domain import drive_ref
-from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
+from ..domain.exceptions import EmailFileNotTransferable, WorkspaceConflict, WorkspaceRefused
 from ..domain.user_drive import DriveFileTooLargeError, DriveNotConnectedError, DrivePathError, DriveRefRefused
 from ..domain.workspace import (
     COMMANDS,
@@ -625,6 +625,8 @@ class WorkspaceService:
         is_drive = drive_ref.is_drive_ref(source)   # tagged or not (MULTI_DRIVE_RFC §9)
         try:
             return await self._file_conversion.resolve_bytes(source, call.user_id)
+        except EmailFileNotTransferable as e:
+            raise WorkspaceRefused(str(e), reason="source") from None
         except DriveRefRefused as e:
             raise WorkspaceRefused(e.line, reason="source") from None
         except DriveNotConnectedError:

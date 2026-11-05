@@ -526,6 +526,7 @@ class UserAgentFactory(AgentFactoryPort):
             prompt_builder=prompt_builder,
             email_search_service=self.email_search_service,
             user_id=user_id,
+            file_conversion=self.file_conversion_service,
         )
 
         maps_search_context = self.context_builder.build("maps_search", user_profile.config)

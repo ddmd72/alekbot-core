@@ -30,9 +30,16 @@ import aiohttp
 from ..domain.email import (
     EmailFullContent,
     EmailMetadata,
+    EmailPart,
 )
 from ..domain.oauth_credential import OAuthCredential
-from ..domain.exceptions import OAuthGrantRevokedError, OAuthScopeInsufficientError
+from ..domain.exceptions import (
+    EmailMessageGone,
+    EmailPartTooLarge,
+    EmailPartUnavailable,
+    OAuthGrantRevokedError,
+    OAuthScopeInsufficientError,
+)
 from ..ports.email_provider_port import EmailProviderPort
 from ..utils.logger import logger
 
@@ -41,6 +48,8 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Parallel fetch semaphore: Gmail recommends ≤10 concurrent requests per user
 _FETCH_SEMAPHORE_LIMIT = 10
+# One call of the parts surface (list_parts / get_part) is bounded: a timeout is "the mailbox did not answer".
+_PARTS_TIMEOUT_S = 60
 _SCOPE_REASONS = {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}
 
 
@@ -189,14 +198,8 @@ class GmailProviderAdapter(EmailProviderPort):
         self,
         credentials: OAuthCredential,
         email_ids: List[str],
-        deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
-        """
-        Fetches full message content for a list of email IDs.
-
-        deep=False: body text + attachment filenames only
-        deep=True:  also downloads attachment binaries (for markitdown parsing)
-        """
+        """Fetches full message content for a list of email IDs: body text + attachment filenames only."""
         headers = {"Authorization": f"Bearer {credentials.access_token}"}
         sem = asyncio.Semaphore(_FETCH_SEMAPHORE_LIMIT)
 
@@ -228,22 +231,105 @@ class GmailProviderAdapter(EmailProviderPort):
                 body_text, body_html, attachment_names = self._parse_payload(
                     msg.get("payload", {})
                 )
-                attachment_binaries: Dict[str, bytes] = {}
-                if deep and attachment_names:
-                    attachment_binaries = await self._fetch_attachment_binaries(
-                        credentials, eid, msg.get("payload", {}), headers
-                    )
                 output[eid] = EmailFullContent(
                     email_id=eid,
                     body_text=body_text,
                     body_html=body_html,
                     attachments=attachment_names,
-                    attachment_binaries=attachment_binaries,
                 )
             except Exception as exc:
                 logger.warning(f"⚠️ Failed to parse full content for {eid}: {exc}")
 
         return output
+
+    # ------------------------------------------------------------------
+    # list_parts / get_part (EXTERNAL_FILES_RFC §4.7 P8a)
+    # ------------------------------------------------------------------
+
+    async def list_parts(self, credentials: OAuthCredential, message_id: str) -> List[EmailPart]:
+        """Every attachment part of the message, in walk order (one `messages.get format=full`).
+
+        The same walk that produced the indexed names (`_iter_attachment_parts`), so a name the index holds is found
+        here. Raises EmailMessageGone (404) and EmailPartUnavailable (429, 5xx, timeout, network).
+        """
+        msg = await self._fetch_message(credentials, message_id)
+        return [self._to_email_part(raw, path) for raw, path in self._iter_attachment_parts(msg.get("payload", {}))]
+
+    async def get_part(self, credentials: OAuthCredential, message_id: str, part: EmailPart,
+                       max_bytes: int) -> bytes:
+        """The bytes of one listed part: `attachments.get` by `part.handle`, or, for an inline part (empty handle),
+        the message re-read and the part's own `body.data` decoded.
+
+        Nothing is returned past `max_bytes`: the declared size is checked before the download, the real one after it
+        (a lie in the listing raises EmailPartTooLarge as well). Returns b"" when the part has no data.
+        """
+        if part.size > max_bytes:
+            raise EmailPartTooLarge(max_bytes)
+        if part.handle:
+            data = await self._gmail_json(
+                credentials, f"{_GMAIL_BASE}/messages/{message_id}/attachments/{part.handle}", None)
+            encoded = data.get("data") or ""
+        else:
+            msg = await self._fetch_message(credentials, message_id)
+            encoded = ""
+            for raw, path in self._iter_attachment_parts(msg.get("payload", {})):
+                if self._to_email_part(raw, path).part_id == part.part_id:
+                    encoded = raw.get("body", {}).get("data") or ""
+                    break
+        if len(encoded) * 3 // 4 > max_bytes + 3:
+            raise EmailPartTooLarge(max_bytes)
+        raw_bytes = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)) if encoded else b""
+        if len(raw_bytes) > max_bytes:
+            raise EmailPartTooLarge(max_bytes)
+        return raw_bytes
+
+    async def _fetch_message(self, credentials: OAuthCredential, message_id: str) -> dict:
+        return await self._gmail_json(credentials, f"{_GMAIL_BASE}/messages/{message_id}", {"format": "full"})
+
+    async def _gmail_json(self, credentials: OAuthCredential, url: str, params: Optional[dict]) -> dict:
+        """One GET with the typed errors of the parts surface: 404 -> EmailMessageGone; 429, 5xx, timeout and
+        network failure -> EmailPartUnavailable; scope/grant errors and other statuses as everywhere else."""
+        headers = {"Authorization": f"Bearer {credentials.access_token}"}
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=_PARTS_TIMEOUT_S)) as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    await _raise_for_gmail_status(resp)
+                    return await resp.json()
+        except aiohttp.ClientResponseError as exc:
+            if exc.status == 404:
+                raise EmailMessageGone("Gmail answered 404 for the message") from exc
+            if exc.status == 429 or exc.status >= 500:
+                raise EmailPartUnavailable(f"Gmail answered {exc.status}") from exc
+            raise
+        except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+            logger.warning(f"⚠️ Gmail parts call failed: {type(exc).__name__}")
+            raise EmailPartUnavailable(f"Gmail did not answer: {type(exc).__name__}") from exc
+
+    @staticmethod
+    def _to_email_part(raw: dict, path: str) -> EmailPart:
+        body = raw.get("body", {})
+        return EmailPart(
+            part_id=str(raw.get("partId") or path),
+            filename=raw.get("filename", ""),
+            mime=raw.get("mimeType", ""),
+            size=int(body.get("size") or 0),
+            handle=body.get("attachmentId") or "",
+        )
+
+    @classmethod
+    def _iter_attachment_parts(cls, payload: dict, prefix: str = ""):
+        """The one walk behind the indexed names and `list_parts`: yields `(raw part, positional path)`.
+
+        A part with a filename is an attachment and is not descended into (a `message/rfc822` attachment is one part,
+        its children are not listed); a `multipart/*` part without one is descended into; anything else is body.
+        The path is the 0-based index chain ("1.0"), used only when Gmail sends no `partId`.
+        """
+        for index, part in enumerate(payload.get("parts", [])):
+            path = f"{prefix}{index}"
+            if part.get("filename", ""):
+                yield part, path
+            elif part.get("mimeType", "").startswith("multipart/"):
+                yield from cls._iter_attachment_parts(part, f"{path}.")
 
     # ------------------------------------------------------------------
     # refresh_token
@@ -320,9 +406,15 @@ class GmailProviderAdapter(EmailProviderPort):
         Recursively extract body text, HTML body, and attachment filenames
         from a Gmail message payload.
         """
+        body_text, body_html = cls._extract_bodies(payload)
+        attachments = [raw["filename"] for raw, _ in cls._iter_attachment_parts(payload)]
+        return body_text, body_html, attachments
+
+    @classmethod
+    def _extract_bodies(cls, payload: dict) -> Tuple[str, Optional[str]]:
+        """Body text and HTML of a payload (attachments are skipped)."""
         body_text = ""
         body_html = None
-        attachments: List[str] = []
 
         mime_type = payload.get("mimeType", "")
         parts = payload.get("parts", [])
@@ -341,19 +433,16 @@ class GmailProviderAdapter(EmailProviderPort):
                     body_text = " ".join(cls._strip_invisible(_html_lib.unescape(decoded)).split())
         else:
             for part in parts:
-                filename = part.get("filename", "")
-                if filename:
-                    attachments.append(filename)
+                if part.get("filename", ""):
                     continue
 
                 pt = part.get("mimeType", "")
                 part_data = part.get("body", {}).get("data", "")
 
                 if pt.startswith("multipart/"):
-                    sub_text, sub_html, sub_att = cls._parse_payload(part)
+                    sub_text, sub_html = cls._extract_bodies(part)
                     body_text = body_text or sub_text
                     body_html = body_html or sub_html
-                    attachments.extend(sub_att)
                 elif pt == "text/plain" and part_data and not body_text:
                     raw = base64.urlsafe_b64decode(part_data + "==").decode(
                         "utf-8", errors="replace"
@@ -367,7 +456,7 @@ class GmailProviderAdapter(EmailProviderPort):
             if not body_text and body_html:
                 body_text = cls._html_to_text(body_html)
 
-        return body_text, body_html, attachments
+        return body_text, body_html
 
     @staticmethod
     def _strip_invisible(text: str) -> str:
@@ -388,42 +477,3 @@ class GmailProviderAdapter(EmailProviderPort):
         text = cls._strip_invisible(text)
         return " ".join(text.split())
 
-    async def _fetch_attachment_binaries(
-        self,
-        credentials: OAuthCredential,
-        email_id: str,
-        payload: dict,
-        headers: dict,
-    ) -> Dict[str, bytes]:
-        """Download attachment binaries for deep=True path."""
-        binaries: Dict[str, bytes] = {}
-        sem = asyncio.Semaphore(_FETCH_SEMAPHORE_LIMIT)
-
-        async def download(filename: str, attachment_id: str) -> None:
-            async with sem:
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        async with s.get(
-                            f"{_GMAIL_BASE}/messages/{email_id}/attachments/{attachment_id}",
-                            headers=headers,
-                        ) as resp:
-                            await _raise_for_gmail_status(resp)
-                            data = await resp.json()
-                    raw = base64.urlsafe_b64decode(data["data"] + "==")
-                    binaries[filename] = raw
-                except Exception as exc:
-                    logger.warning(
-                        f"⚠️ Failed to download attachment {filename}: {exc}"
-                    )
-
-        tasks = []
-        for part in payload.get("parts", []):
-            filename = part.get("filename", "")
-            attachment_id = part.get("body", {}).get("attachmentId")
-            if filename and attachment_id:
-                tasks.append(download(filename, attachment_id))
-
-        if tasks:
-            await asyncio.gather(*tasks)
-
-        return binaries

@@ -7,7 +7,7 @@ import pytest
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.native_format import NATIVE_FORMATS_KEY, NativeFormat, from_plain, to_plain
-from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
+from src.infrastructure.agent_manifest import FILE_MANAGEMENT, FILE_REF_DESCRIPTION, Intent
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
 from tests.support.opened_file import opened_body, opened_native
@@ -97,4 +97,7 @@ class TestDelete:
 
 def test_the_manifest_names_workspace_copies():
     assert "workspace:binary_files/<name>" in FILE_MANAGEMENT.capability_descriptions[Intent.OPEN_FILE]
-    assert "workspace:binary_files/lease.pdf" in FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]
+    # reviewer (U4a, plan U4 §6): `file_ref` has one neutral description in every descriptor; it names the workspace
+    # store, the capability description above keeps the binary_files form
+    described = FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]
+    assert described == FILE_REF_DESCRIPTION and "workspace:" in described

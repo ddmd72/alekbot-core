@@ -1,13 +1,14 @@
 """
 EmailProviderPort — fetch email data from any provider.
-See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
+See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2; the part-level fetch (`list_parts`, `get_part`) is
+docs/10_rfcs/EXTERNAL_FILES_RFC.md §4.7 P8a.
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from src.domain.email import EmailFullContent, EmailMetadata
+from src.domain.email import EmailFullContent, EmailMetadata, EmailPart
 from src.domain.oauth_credential import OAuthCredential
 
 
@@ -36,12 +37,10 @@ class EmailProviderPort(ABC):
         self,
         credentials: OAuthCredential,
         email_ids: List[str],
-        deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
         """
         Fetch full content for a list of email IDs in parallel (semaphore=10 in adapter).
-        deep=False: body_text + attachment filenames only (attachment_binaries={}).
-        deep=True:  also fetches attachment binaries (for markitdown parsing in Mode B).
+        Returns body_text + attachment filenames only; attachment bytes come from `get_part`.
         Missing or inaccessible IDs are silently absent from result dict.
         """
 
@@ -51,4 +50,25 @@ class EmailProviderPort(ABC):
         Exchange refresh_token for a new access_token.
         Returns updated OAuthCredential with new access_token + token_expiry.
         Raises OAuthExpiredError if refresh_token is expired or revoked.
+        """
+
+    @abstractmethod
+    async def list_parts(self, credentials: OAuthCredential, message_id: str) -> List[EmailPart]:
+        """
+        The message's attachments, from one read of its whole MIME tree, in tree order. One listing rule, the same
+        walk that names the attachments `batch_get_full_content` returns (the index stores those names): a part with
+        a filename is an attachment, inline images with a Content-ID included; a forwarded `message/rfc822` part is
+        one attachment and its children are not listed. Each part's `handle` is valid only with this listing.
+        Raises EmailMessageGone when the message does not exist (404), EmailPartUnavailable when the provider did
+        not answer (429, 5xx, timeout), and the OAuth errors a revoked grant or a missing scope raises today.
+        """
+
+    @abstractmethod
+    async def get_part(self, credentials: OAuthCredential, message_id: str, part: EmailPart,
+                       max_bytes: int) -> bytes:
+        """
+        The bytes of one part `list_parts` just listed for `message_id` (its `handle` locates it; nothing else of
+        the message is downloaded). b"" for a part with neither an attachment id nor inline data. Raises
+        EmailPartTooLarge when the bytes pass `max_bytes` (the listed size understated them), EmailMessageGone when
+        the message or the attachment is gone (404), EmailPartUnavailable on 429, 5xx or a timeout.
         """

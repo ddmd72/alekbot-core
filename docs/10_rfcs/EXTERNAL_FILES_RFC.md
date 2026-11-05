@@ -978,13 +978,12 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 
 **Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); optional P14 built (§4.6);
 U2 built (the native-format declaration, PDF page caps from provider documentation; the measured spike U0-e replaces
-them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_blocks/file_conversion/README.md`); U4 onward
-not started. Deltas of U3 from this RFC as written:
+them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_blocks/file_conversion/README.md`); U4a (read) built on the branch `feat/u4a-email-open`; U4b (save, send) and U5 not started. Deltas of U3 from this RFC as written:
 - **One field added to the contract:** `ReadOutcome.cut_within_pages` (the 1-based pages of the one window shown in part),
   which D7's note needs; every other `ReadOutcome` field is as in §4.4.
 - **The drive presentation stays in `DriveOperations`** (the §29 refusal, the cut line and the drive wrapper); the other
   stores use `present_text`. Both add D7's "what was shown" line outside the wrapper.
-- **`resolve_file` is deferred to U4**, with the email and send work that needs it; `FileConversionService.open` and
+- **`resolve_file` is deferred to U4b**, with the email and send work that needs it; `FileConversionService.open` and
   `prefetch` are the only new service methods.
 - **P21's per-path audio decision: chat only.** Only a chat upload opened interactively is transcribed (metered, cached
   90 days in `<prefix>audio_transcripts`); a prefetch, a workspace or delivered file, and a drive file give the audio note,
@@ -993,6 +992,23 @@ not started. Deltas of U3 from this RFC as written:
   test-file edit left to the test reviewer.
 - **The parser child in the main service is an interim step** until the untrusted-content sandbox's parse service
   replaces it as an adapter behind the same port (UNTRUSTED_CONTENT_SANDBOX_RFC).
+
+Deltas of U4a (read) from this RFC as written:
+- **No parser child.** S4 is live: the email read parses through `DocumentService` and the sandbox light service, so it is
+  isolated with no extra work. D13's macro check has no child to run in (owner item O2, U4b).
+- **Native email opens ship in U4a** (D9's `file_omitted` already protects the history); `open_email_attachment` joins
+  `NATIVE_OPENING_INTENTS`. U0-d never ran: the adapter's wire tests on synthetic payloads stand in until the live check.
+- **`get_part` takes the listed part**, not a part id: Gmail's `attachmentId` is not stable between `messages.get`
+  calls, so the ref carries only the part id and one open does one listing and one download.
+- **Typed errors** (`EmailMessageGone`, `EmailPartUnavailable`, `EmailNotConnected`, `EmailPartTooLarge`) replace the
+  swallow-everything `{}` of the old deep fetch, so "gone" and "mailbox did not answer" read differently.
+- **A choice is a success.** Several name matches, or no ref and no name with several attachments, return the full
+  `[Email file: ...]` labels with a "pass one ref" note; a failure would make the model retry the same call.
+- **`file_ref` has one neutral description** in every descriptor (the shared context schema keeps the first registered
+  text); `name` is described as `open_email_attachment` only. One attachment per call.
+- **Labels printed after the untrusted wrapper**, names escaped inside it, so a forged name cannot pass as a label.
+- **`email:` never enters `resolve_bytes`** (there is no allowlist to leave unchanged); image and video edits from `email:`
+  are deferred. `convert_file_to_text` stays for the U5 spike script and has a guard against `src/` callers.
 
 Each slice: tests first, the reviewer rule for any existing test, `make check` green, docs in the same PR.
 

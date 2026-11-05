@@ -57,7 +57,7 @@ delegate_to_specialist_extended_rules {
         }
 
         email_search_specialist {
-            workflow: "Typically: search_emails → get_email_details or get_email_attachment if the user wants the full content."
+            workflow: "Typically: search_emails → get_email_details or open_email_attachment if the user wants the full content."
 
             intents {
                 search_emails {
@@ -69,9 +69,10 @@ delegate_to_specialist_extended_rules {
                     call: 'delegate_to_specialist(intent="get_email_details", query="", context={"email_id": "<id>"})'
                 }
 
-                get_email_attachment {
-                    requires: "email_id and exact filename from a prior search_emails result."
-                    call: 'delegate_to_specialist(intent="get_email_attachment", query="", context={"email_id": "<id>", "filename": "<name>"})'
+                open_email_attachment {
+                    requires: "A ref=email:... shown on an [Email file: ...] label (from get_email_details or an earlier open), or email_id plus the exact attachment name from a prior search_emails result. One attachment per call; for several, one call per attachment."
+                    call_by_ref: 'delegate_to_specialist(intent="open_email_attachment", query="", context={"file_ref": "email:<message id>/<part>"})'
+                    call_by_name: 'delegate_to_specialist(intent="open_email_attachment", query="", context={"email_id": "<id>", "name": "invoice_FA-0137.pdf"})'
                 }
             }
         }

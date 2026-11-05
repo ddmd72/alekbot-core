@@ -238,7 +238,6 @@ class TestEmailClassificationAgent:
                 body_text="Booking confirmed. Reference: XY123.",
                 body_html=None,
                 attachments=[],
-                attachment_binaries={},
             )
         }
         credentials = OAuthCredential(

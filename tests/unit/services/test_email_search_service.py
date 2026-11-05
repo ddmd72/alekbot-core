@@ -3,12 +3,12 @@ Unit tests for EmailSearchService.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
-from src.domain.email import EmailFullContent, IndexedEmail
+from src.domain.email import EmailFullContent, EmailPart, IndexedEmail
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -16,7 +16,7 @@ from src.ports.email_provider_port import EmailProviderPort
 from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
-from src.services.email_search_service import EmailSearchService, _RRF_K
+from src.services.email_search_service import EmailSearchService
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
 
@@ -243,14 +243,16 @@ class TestGetDetails:
             body_text="Important flight confirmation ref XYZ",
             body_html=None,
             attachments=["ticket.pdf"],
-            attachment_binaries={},
         )
         mock_gmail.batch_get_full_content.return_value = {"e1": full}
+        # reviewer (U4a A2, D11): the attachment line comes from the one part listing, as a label carrying its ref
+        mock_gmail.list_parts.return_value = [EmailPart("1", "ticket.pdf", "application/pdf", 2048, "att-1")]
 
         result = await service.get_details("e1", "user123")
 
         assert "Important flight confirmation ref XYZ" in result
-        assert "ticket.pdf" in result
+        assert '[Email file: "ticket.pdf" (2KB, application/pdf) ref=email:e1/1]' in result
+        mock_gmail.list_parts.assert_awaited_once()
 
     async def test_expired_token_triggers_refresh(self, service, mock_oauth, mock_gmail):
         expired_creds = _make_creds(expired=True)
@@ -275,94 +277,9 @@ class TestGetDetails:
             body_text="Body only",
             body_html=None,
             attachments=[],
-            attachment_binaries={},
         )
         mock_gmail.batch_get_full_content.return_value = {"e1": full}
 
         result = await service.get_details("e1", "user123")
 
         assert "Attachments" not in result
-
-
-# ---------------------------------------------------------------------------
-# get_attachment
-# ---------------------------------------------------------------------------
-
-class TestGetAttachment:
-
-    async def test_no_credentials_returns_error(self, service, mock_oauth):
-        mock_oauth.get.return_value = None
-        mirror_get(mock_oauth)
-
-        result = await service.get_attachment("e1", "file.pdf", "user123")
-
-        assert "not connected" in result.lower() or "error" in result.lower()
-
-    async def test_email_not_found_returns_error(self, service, mock_oauth, mock_gmail):
-        mock_oauth.get.return_value = _make_creds()
-        mirror_get(mock_oauth)
-        mock_gmail.batch_get_full_content.return_value = {}
-
-        result = await service.get_attachment("e1", "file.pdf", "user123")
-
-        assert "not found" in result.lower() or "error" in result.lower()
-
-    async def test_attachment_not_found_lists_available(self, service, mock_oauth, mock_gmail):
-        mock_oauth.get.return_value = _make_creds()
-        mirror_get(mock_oauth)
-        full = EmailFullContent(
-            email_id="e1",
-            body_text="body",
-            body_html=None,
-            attachments=["other.pdf"],
-            attachment_binaries={"other.pdf": b"data"},
-        )
-        mock_gmail.batch_get_full_content.return_value = {"e1": full}
-
-        result = await service.get_attachment("e1", "missing.pdf", "user123")
-
-        assert "missing.pdf" in result
-        assert "other.pdf" in result
-
-    async def test_too_large_returns_size_error(self, service, mock_oauth, mock_gmail):
-        mock_oauth.get.return_value = _make_creds()
-        mirror_get(mock_oauth)
-        big_data = b"x" * (4 * 1024 * 1024)  # 4 MB > 3 MB limit
-        full = EmailFullContent(
-            email_id="e1",
-            body_text="body",
-            body_html=None,
-            attachments=["big.pdf"],
-            attachment_binaries={"big.pdf": big_data},
-        )
-        mock_gmail.batch_get_full_content.return_value = {"e1": full}
-
-        result = await service.get_attachment("e1", "big.pdf", "user123")
-
-        assert "4.0 MB" in result or "exceeds" in result
-
-    async def test_success_returns_converted_text(self, service, mock_oauth, mock_gmail):
-        mock_oauth.get.return_value = _make_creds()
-        mirror_get(mock_oauth)
-        full = EmailFullContent(
-            email_id="e1",
-            body_text="body",
-            body_html=None,
-            attachments=["doc.pdf"],
-            attachment_binaries={"doc.pdf": b"pdf bytes"},
-        )
-        mock_gmail.batch_get_full_content.return_value = {"e1": full}
-
-        with (
-            patch("src.services.email_search_service.convert_file_to_text", new_callable=AsyncMock) as mock_convert,
-            patch("src.services.email_search_service.truncate_with_alert") as mock_truncate,
-        ):
-            mock_convert.return_value = "Parsed document text"
-            mock_truncate.return_value = "Parsed document text"
-
-            result = await service.get_attachment("e1", "doc.pdf", "user123")
-
-        assert result == "Parsed document text"
-        mock_convert.assert_awaited_once()
-        convert_kwargs = mock_convert.await_args.kwargs
-        assert convert_kwargs.get("filename") == "doc.pdf"

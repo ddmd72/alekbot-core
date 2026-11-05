@@ -101,7 +101,6 @@ def _make_full_content(email_id="e1", body_text="Body text", attachments=None):
         body_text=body_text,
         body_html=None,
         attachments=attachments or [],
-        attachment_binaries={},
     )
 
 
@@ -307,7 +306,8 @@ class TestBuildAlert:
         result = EmailReviewService.build_alert("2026-01-15", 5)
         assert "ACTION" in result
         assert "search_memory" in result
-        assert "get_email_attachment" in result
+        # reviewer (U4a T): the intent is renamed; the old name must not survive in the alert
+        assert "open_email_attachment" in result and "get_email_attachment" not in result
         assert "HTML page creation" in result
 
 

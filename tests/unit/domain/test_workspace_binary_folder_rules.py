@@ -3,7 +3,7 @@ import pytest
 
 from src.domain.exceptions import WorkspaceRefused
 from src.domain.workspace import BINARY_FOLDER, FOLDERS, TEXT_FOLDERS, folder_of, is_text, parse_workspace_path
-from src.infrastructure.agent_manifest import FILE_MANAGEMENT, Intent
+from src.infrastructure.agent_manifest import FILE_MANAGEMENT, FILE_REF_DESCRIPTION, Intent
 from src.infrastructure.workspace_tools import build_workspace_tool_declaration
 
 
@@ -62,4 +62,7 @@ class TestDeclaration:
 
 def test_the_open_file_manifest_names_the_new_ref():
     assert "workspace:binary_files/<name>" in FILE_MANAGEMENT.capability_descriptions[Intent.OPEN_FILE]
-    assert "workspace:binary_files/lease.pdf" in FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]
+    # reviewer (U4a, plan U4 §6): `file_ref` has one neutral description in every descriptor; it names the workspace
+    # store, the capability description above keeps the binary_files form
+    described = FILE_MANAGEMENT.context_schemas[Intent.OPEN_FILE]["file_ref"]
+    assert described == FILE_REF_DESCRIPTION and "workspace:" in described

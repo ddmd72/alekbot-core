@@ -131,7 +131,7 @@ Agents marked `eager=False` are **not** instantiated per user until first delega
 | `facts_memory_agent` | `search_memory` | SYNC | False | True | Quick, Smart |
 | `web_search_agent` | `search_web` | SYNC | False | True | Smart |
 | `web_search_light_agent` | `search_web_light` | SYNC | **True** | True | Quick (via `intent_remap`) |
-| `email_search_agent` | `search_emails`, `get_email_details`, `get_email_attachment` | SYNC | False | True | Quick, Smart |
+| `email_search_agent` | `search_emails`, `get_email_details`, `open_email_attachment` | SYNC | False | True | Quick, Smart |
 | `maps_search_agent` | `maps_query` | SYNC | **True** | True | Via `intent_fanout` on `search_web` |
 | `compute_agent` | `compute_math`, `compute_datetime`, `compute_finance`, `compute` | SYNC | False | True | Quick, Smart |
 | `deep_research_agent` | `deep_research` | SYNC | False | **False** | Smart |
