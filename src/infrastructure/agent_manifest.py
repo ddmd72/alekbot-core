@@ -35,6 +35,7 @@ To add a new specialist agent:
 from typing import FrozenSet
 
 from ..domain.companion_config import CompanionConfig
+from ..domain.drive_tool_texts import COPY_FILE_NAME
 from ..domain.voice_errand import SEND_TO_CHAT_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
@@ -49,6 +50,7 @@ class Intent:
     SEARCH_EMAILS        = "search_emails"
     GET_EMAIL_DETAILS    = "get_email_details"
     OPEN_EMAIL_ATTACHMENT = "open_email_attachment"
+    SEND_FILE_TO_USER    = "send_file_to_user"
     MAPS_QUERY           = "maps_query"
     DEEP_RESEARCH        = "deep_research"
     COMPUTE_MATH         = "compute_math"
@@ -547,6 +549,7 @@ FILE_MANAGEMENT = AgentDescriptor(
     capabilities={
         Intent.OPEN_FILE: ExecutionMode.SYNC,
         Intent.DELETE_FILE:        ExecutionMode.SYNC,
+        Intent.SEND_FILE_TO_USER:  ExecutionMode.SYNC,
     },
     # Reads files itself; the coordinator must not download a `file_ref` first (USER_DRIVE_RFC §4.4).
     prefetch_file_ref=False,
@@ -567,6 +570,14 @@ FILE_MANAGEMENT = AgentDescriptor(
             "is deleted through work_with_drive_files instead. "
             'Requires: context={"file_ref": "<filename>"}'
         ),
+        Intent.SEND_FILE_TO_USER: (
+            "Send one file to the user's chat as a file attachment: a chat file, a document you delivered, a "
+            "workspace or skill file, a drive file or an email attachment. One file per call. Email attachments of "
+            "active kinds (HTML, SVG, HTA, Office files with macros, shortcuts, disk images, programs, scripts) are "
+            "not forwarded; the answer says so. "
+            'Requires: context={"file_ref": "<ref exactly as its label shows it>"}; optional "file_name" to send '
+            "it under another name."
+        ),
     },
     context_schemas={
         Intent.OPEN_FILE: {
@@ -574,6 +585,10 @@ FILE_MANAGEMENT = AgentDescriptor(
         },
         Intent.DELETE_FILE: {
             "file_ref": FILE_REF_DESCRIPTION,
+        },
+        Intent.SEND_FILE_TO_USER: {
+            "file_ref": FILE_REF_DESCRIPTION,
+            "file_name": COPY_FILE_NAME,
         },
     },
     internal=False,
@@ -608,7 +623,7 @@ DRIVE_SPECIALIST = AgentDescriptor(
             "It also opens files (a file over 60 000 characters is never delivered whole: it is read page by page, or by "
             "what it says (for the next page, pass the number its [Drive: …] line names (next: from N) in the commission); a recording opens as its transcript; the recording itself comes as a link when the "
             "user asks for it), lists folders, keeps a copy of a chat file, a document you delivered, a workspace copy "
-            "or a skill file, saves a text you composed, moves and renames, creates folders, appends text to a text "
+            "or a skill file or an email attachment (its email: ref), saves a text you composed, moves and renames, creates folders, appends text to a text "
             "file, replaces a file's content with another file (the user gets a notice; rewriting with new text is not "
             "available) and deletes (recoverable from its recycle bin; the user gets a notice). "
             "Files and folders can carry the owner's notes (what he said a file is or is about): it reads, adds to, "
@@ -619,7 +634,7 @@ DRIVE_SPECIALIST = AgentDescriptor(
             "this intent (facts from a document go to memory only through propose_memory_facts, when the user asks). "
             "Write query as a natural-language instruction with the full picture: what the user wants, for a find the "
             "words to find as the user wrote them (one language, no synonyms or translations), for a content need the "
-            "self-contained request in the user's language, every drive: ref, [File: …] label and delivered document "
+            "self-contained request in the user's language, every drive: ref, email: ref, [File: …] label and delivered document "
             "key it points at, "
             "and the facts from this conversation it needs. "
             'File contents to save or append: context={"file_contents": [<one item per file>]}. '
