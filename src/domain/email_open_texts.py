@@ -17,11 +17,14 @@ Public interface:
     choose_one_note(labels, name="") D12 and plan U4 §6: several parts match (a name shared by several, or no name and
                                      no ref given for an email with several); none is opened, their labels are listed.
                                      A successful answer, not a failure: the model picks one ref and calls again.
+    active_kind_refusal_note(kind)   D13: `send_file_to_user` refuses an active kind from an email (`active_kind`); for
+                                     `UNCHECKED` the macro check could not run, so the note says to try again
 """
 from __future__ import annotations
 
 from typing import Sequence
 
+from .active_kind import ACTIVE_KIND_LABELS, UNCHECKED
 from .email_ref import escape_email_name
 
 EMAIL_GONE_NOTE = "[System: That email is no longer in the mailbox.]"
@@ -35,6 +38,18 @@ EMAIL_OPEN_NOT_CONFIGURED_NOTE = "[System: Attachment opening is not configured.
 EMAIL_FILE_NOT_TRANSFERABLE_NOTE = (
     "[System: An email attachment cannot be saved to the drive or sent to the chat yet; it can only be read with "
     "open_email_attachment. The user can open it in Gmail.]")
+
+
+def active_kind_refusal_note(kind: str) -> str:
+    """The refusal of D13 (EXTERNAL_FILES_RFC §4.2): the kind in words, that such files are not forwarded, and Gmail.
+    `kind` is an `active_kind` id; an unknown id is named generically. Not a failure of the turn: the caller answers
+    it as the tool's result."""
+    if kind == UNCHECKED:
+        return ("[System: This email attachment could not be checked for macros right now, so it was not forwarded "
+                "to the chat; try again shortly. The user can open it in Gmail.]")
+    label = ACTIVE_KIND_LABELS.get(kind, "an active file")
+    return (f"[System: This attachment is {label} from an email; such files are not forwarded to the chat. "
+            f"The user can open it in Gmail.]")
 
 
 def choose_one_note(labels: Sequence[str], name: str = "") -> str:

@@ -84,6 +84,10 @@ class SandboxOp(str, Enum):
     PARSE_EXTRACT = "parse.extract"
     PARSE_PDF_PAGE_COUNT = "parse.pdf_page_count"
     PARSE_PDF_WINDOWS = "parse.pdf_windows"
+    # EXTERNAL_FILES U4b (D13, owner decision O2): the facts of a ZIP container (member count, a VBA project part, a
+    # macro-enabled content type, ODF macro folders), read from its central directory and `[Content_Types].xml`
+    # in the parser child. No meta beyond the limits; the body is the file.
+    PARSE_CONTAINER_FACTS = "parse.container_facts"
     # S5 tunnel ops: the request is a START frame in the body, not meta keys; codecs in `sandbox_tunnel`.
     MEDIA_PROBE = "media.probe"
     MEDIA_AUDIO_WINDOWS = "media.audio_windows"

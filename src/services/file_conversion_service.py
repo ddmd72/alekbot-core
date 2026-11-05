@@ -20,6 +20,12 @@ any download or any text that prints the item's path. `access` is required: a se
 An `email:<message id>/<part id>` ref opens through `open_email` (EXTERNAL_FILES_RFC §4.7): the mailbox is reached
 through the injected EmailSearchService (a TYPE_CHECKING import, REQ-ARCH-22); without it, email opening is not
 configured.
+
+Bytes for an action (U4b, §4.2 "Resolver callers"): `resolve_file(ref, user_id, action=…)` hands over any ref kind's
+bytes, name and mime under `action_cap()`, an `email:` ref through one part listing and one `get_part`. `resolve_bytes`
+keeps refusing `email:` (its callers edit or copy bytes, not save or send). `active_kind_of` is D13's check for an
+email attachment: header bytes compared here, the ZIP macro facts read by the sandbox (`ContainerFactsPort`, owner
+decision O2), attached with the document service; it fails closed.
 """
 import mimetypes
 import os
@@ -32,12 +38,18 @@ from typing import TYPE_CHECKING, List, NamedTuple, Optional, Tuple
 import aiofiles
 
 from ..domain import drive_ref
+from ..domain.active_kind import ACTIVE_HEAD_BYTES, active_kind, needs_container_check
+from ..domain.container_facts import ContainerFacts
 from ..domain.drive_access_op import AccessOp
+from ..domain.drive_extraction import ParserUnavailable
 from ..domain.drive_handle import DriveHandle
 from ..domain.file_ref import FileRefKind, classify_ref
 from ..domain.document_kind import mime_decides_kind, mime_kind
-from ..domain.document_open import EmailOpening, OpenedFile, Prefetched
-from ..domain.document_open_texts import open_failed_note, parser_unavailable_note
+from ..domain.document_limits import action_cap
+from ..domain.document_open import ACTIONS, EmailOpening, OpenedFile, Prefetched, ResolvedFile
+from ..domain.document_open_texts import (
+    action_too_large_note, folder_note, open_failed_note, parser_unavailable_note,
+)
 from ..domain.document_presentation import note_for, present_text
 from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
@@ -50,7 +62,7 @@ from ..domain.email_open_texts import (
 from ..domain.email_ref import email_file_label, escape_email_name, format_email_ref, parse_email_ref
 from ..domain.exceptions import (
     EmailFileNotTransferable, EmailMessageGone, EmailNotConnected, EmailPartTooLarge, EmailPartUnavailable,
-    WorkspaceRefused,
+    FileNotResolved, WorkspaceRefused,
 )
 from ..domain.llm import MessagePart
 from ..domain.native_format import NativeFormat
@@ -75,6 +87,7 @@ from ..utils.file_conversion import is_native_binary
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from ..ports.container_facts_port import ContainerFactsPort
     from ..ports.document_read_port import DocumentReadPort
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.user_drive_port import UserDrivePort
@@ -252,11 +265,17 @@ class FileConversionService:
         # The document service `open` and `prefetch` read through (EXTERNAL_FILES_RFC §4.4); attached by the graph
         # right after it is built (`attach_documents`), None until then.
         self._documents: Optional["DocumentReadPort"] = None
+        # The ZIP macro facts of D13 (`parse.container_facts`), attached with the document service. None → every email
+        # attachment that needs the check reads as unchecked and is not sent (fail closed).
+        self._containers: Optional["ContainerFactsPort"] = None
 
-    def attach_documents(self, documents: "DocumentReadPort") -> None:
-        """Attach the document service (`composition/document_service_setup.py`). Built after this service, because
-        it needs the graph's quota service and context builder."""
+    def attach_documents(self, documents: "DocumentReadPort", *,
+                         containers: Optional["ContainerFactsPort"] = None) -> None:
+        """Attach the document service (`composition/document_service_setup.py`) and the sandbox's container-facts
+        reader (the same light-service adapter). Built after this service, because it needs the graph's quota service
+        and context builder."""
         self._documents = documents
+        self._containers = containers
 
     async def open(self, ref: str, user_id: str, account_id: str, *, consumer: Tuple[NativeFormat, ...] = (),
                    deadline_at: float, caller: str = CALLER_OPEN) -> OpenedFile:
@@ -580,6 +599,117 @@ class FileConversionService:
             filename, ref, _format_size(size_bytes),
         )
         return MessagePart(text=label, file_data=file_data)
+
+    async def resolve_file(self, ref: str, user_id: str, *, action: str) -> ResolvedFile:
+        """The bytes, name and declared mime of any ref for an action, `"save"` or `"send"` (EXTERNAL_FILES_RFC §4.2
+        "Resolver callers", §4.5 "Bytes for an action"), under `action_cap()`. No model reads them, so nothing is
+        parsed, marked or cut.
+
+        - `email:` — one part listing and one `get_part` (the U4a path), the part found by its id only (the ref is
+          authoritative); name and mime are the part's (the mime falls back to the name's guess).
+        - `drive:` — the item through the access policy's READ check; name and mime are the item's; a folder and an
+          item above the cap are refused on metadata, before download.
+        - workspace, skill, delivered and chat refs — today's download paths; name = the ref's last path segment, mime
+          guessed from it; the cap is checked on the bytes.
+
+        Raises FileNotResolved (its `line` is the honest note) for what it decides itself: the cap, a folder, every
+        email note (not configured, not connected, gone, missing, empty, the mailbox did not answer). Store errors
+        propagate as from `open` (FileNotFoundError for a ref of a wrong shape, PermissionError, DriveRefRefused,
+        DriveAccessRefused, DriveItemNotFoundError). ValueError for an unknown `action`."""
+        if action not in ACTIONS:
+            raise ValueError(f"unknown action {action!r}; expected one of {sorted(ACTIONS)}")
+        cap = action_cap()
+        kind = classify_ref(ref)
+        if kind is FileRefKind.EMAIL:
+            return await self._resolve_email(ref, user_id, cap, action)
+        if kind is FileRefKind.DRIVE:
+            handle, item = await self._drive_item(ref, user_id)
+            if item.is_folder:
+                raise FileNotResolved(folder_note(item.path))
+            if item.size_bytes > cap:
+                logger.warning("[FileResolve] too_large store=drive action=%s ref=%s size=%d limit=%d",
+                               action, ref, item.size_bytes, cap)
+                raise FileNotResolved(action_too_large_note(item.path, item.size_bytes, cap, action))
+            data = await self._require_drive().download(handle, item.item_id)
+            mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
+            return self._capped(ResolvedFile(data=data, name=item.name, mime=mime), ref, kind, action, cap)
+        data = await self._download_by_ref(ref, user_id)
+        name = ref.rstrip("/").rsplit("/", 1)[-1]
+        if kind is FileRefKind.WORKSPACE:
+            name = os.path.basename(parse_workspace_path(ref)) or name
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        return self._capped(ResolvedFile(data=data, name=name, mime=mime), ref, kind, action, cap)
+
+    @staticmethod
+    def _capped(resolved: ResolvedFile, ref: str, kind: FileRefKind, action: str, cap: int) -> ResolvedFile:
+        if len(resolved.data) > cap:
+            logger.warning("[FileResolve] too_large store=%s action=%s ref=%s size=%d limit=%d",
+                           kind.value, action, ref, len(resolved.data), cap)
+            raise FileNotResolved(action_too_large_note(resolved.name, len(resolved.data), cap, action))
+        return resolved
+
+    async def _resolve_email(self, ref: str, user_id: str, cap: int, action: str) -> ResolvedFile:
+        """`resolve_file`'s email branch: the notes of `open_email`, one listing, one download."""
+        try:
+            message_id, part_id = parse_email_ref(ref)
+        except ValueError as e:
+            raise FileNotFoundError(f"{ref!r} is not an email attachment ref (email:<message id>/<part id>)") from e
+        if self._email is None:
+            raise FileNotResolved(EMAIL_OPEN_NOT_CONFIGURED_NOTE)
+        try:
+            parts = await self._email.list_attachment_parts(user_id, message_id)
+        except (EmailNotConnected, EmailMessageGone, EmailPartUnavailable) as e:
+            raise FileNotResolved(_email_error_note(e)) from e
+        part = next((p for p in parts if p.part_id == part_id), None)
+        if part is None:
+            raise FileNotResolved(ATTACHMENT_MISSING_NOTE)
+        shown = escape_email_name(part.filename)
+        if part.size > cap:
+            logger.warning("[FileResolve] too_large store=email action=%s ref=%s size=%d limit=%d",
+                           action, ref, part.size, cap)
+            raise FileNotResolved(action_too_large_note(shown, part.size, cap, action))
+        try:
+            data = await self._email.get_attachment_part(user_id, message_id, part, cap)
+        except EmailPartTooLarge as e:
+            logger.warning("[FileResolve] too_large store=email action=%s ref=%s size=%d limit=%d (past the listing)",
+                           action, ref, part.size, cap)
+            raise FileNotResolved(action_too_large_note(shown, max(part.size, cap + 1), cap, action)) from e
+        except (EmailNotConnected, EmailMessageGone, EmailPartUnavailable) as e:
+            raise FileNotResolved(_email_error_note(e)) from e
+        if not data:
+            raise FileNotResolved(ATTACHMENT_EMPTY_NOTE)
+        mime = (part.mime.split(";")[0].strip().lower() if part.mime else "") or (
+            mimetypes.guess_type(part.filename)[0] or "application/octet-stream")
+        return ResolvedFile(data=data, name=part.filename, mime=mime)
+
+    async def active_kind_of(self, resolved: ResolvedFile, *, deadline_at: float) -> Optional[str]:
+        """D13's check of an email attachment before it is sent (EXTERNAL_FILES_RFC §4.2): the `active_kind` id, or None
+        when it may be sent. The header bytes are compared here; when the file needs the macro check
+        (`needs_container_check`) the sandbox lists the ZIP (`ContainerFactsPort`, owner decision O2). No reader, an
+        outage, a run failure or an unexpected error leaves the container unchecked, which `active_kind` answers as
+        `UNCHECKED` (fail closed): never sent unchecked. Drive and chat files are not checked (D13): the caller calls
+        this for `email:` refs only."""
+        head = resolved.data[:ACTIVE_HEAD_BYTES]
+        container: Optional[ContainerFacts] = None
+        if needs_container_check(resolved.name, resolved.mime, head):
+            container = await self._container_facts(resolved.data, deadline_at)
+        return active_kind(resolved.name, resolved.mime, head, container)
+
+    async def _container_facts(self, data: bytes, deadline_at: float) -> Optional[ContainerFacts]:
+        if self._containers is None:
+            logger.error("[FileResolve] container check unavailable: no container-facts reader attached")
+            return None
+        try:
+            facts = await self._containers.container_facts(data, deadline_at=deadline_at)
+        except ParserUnavailable as e:
+            logger.warning("[FileResolve] container check unavailable: parser %s", e.reason)
+            return None
+        except Exception:
+            logger.error("[FileResolve] container check raised", exc_info=True)
+            return None
+        if not facts.checked:
+            logger.warning("[FileResolve] container not checked status=%s detail=%s", facts.status.value, facts.detail)
+        return facts
 
     async def resolve_bytes(self, ref: str, user_id: str) -> bytes:
         """Download raw bytes. For specialists that need the original.

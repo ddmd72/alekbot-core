@@ -6,7 +6,7 @@ Public interface:
         every start-up refusal in one place: secret-like environment (T1), recycle policy, caller sets (T6),
         engine user. An empty service URL is not a refusal: the plan says `unconfigured` (G9, two-pass first deploy).
     build_engine_registry(plan) -> Mapping[SandboxOp, engine]
-        family `render`: `render.docx` -> `DocxRenderEngine`; family `light`: the three `parse.*` ops -> `ParseEngine`, one
+        family `render`: `render.docx` -> `DocxRenderEngine`; family `light`: the four `parse.*` ops -> `ParseEngine`, one
         instance per op, over one `ChildLauncher`. Creates/validates the output root.
     build_tunnel_registry(plan) -> Mapping[SandboxOp, tunnel engine]
         the tunnel ops (S5, `sandbox_tunnel.TUNNEL_OPS`): family `light` -> `MediaEngine`, one per op, over a launcher of
@@ -159,7 +159,8 @@ def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
     if plan.family == FAMILY_LIGHT:
         from ..adapters.sandbox_engine.parse_engine import ParseEngine
 
-        ops = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS)
+        ops = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS,
+               SandboxOp.PARSE_CONTAINER_FACTS)
         return {op: ParseEngine(launcher, op=op, output_root=output_root) for op in ops}
     from ..adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
     from ..adapters.sandbox_engine.html_render_engine import (
