@@ -15,10 +15,11 @@ _SCRIPT_PAGE = ("<html lang='en'><head><title>Planner</title><script>" + "var x=
                 "<body><div id='root'></div></body></html>")
 
 
-def test_parser_version_is_3():
+def test_parser_version_is_4():
     # 3: a PDF's capture signals (USER_DRIVE_INDEXING_RFC §26.3, §26.7) on top of parser@2's HTML policy
-    assert SubprocessContentExtractor.VERSION == 3
-    assert SubprocessContentExtractor().stamp == f"{PARSER}@3"
+    # 4: U5's reader fixes (PDF table rows, subtitle times, the full .eml, full HTML links; EXTERNAL_FILES_RFC §7 U5)
+    assert SubprocessContentExtractor.VERSION == 4
+    assert SubprocessContentExtractor().stamp == f"{PARSER}@4"
 
 
 def test_outcome_has_the_flag_off_by_default():

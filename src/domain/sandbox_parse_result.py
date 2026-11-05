@@ -31,8 +31,12 @@ from .sandbox_contract import SandboxOp
 PARSE_RESULT_MAX_BYTES = 2_000_000 * 6 + 1024 * 1024
 DETAIL_MAX_CHARS = 300   # the in-process adapter cuts `detail` at 300
 
+# `parser_version` and `reader_family` (U5, A-U5-2): what the child ran, reported on `parse.extract`; absent from an
+# older child's result (the client then stamps PARSER_VERSION_UNREPORTED). Clients must accept them before the sandbox
+# emits them: deploy the clients first.
 RESULT_KEYS: FrozenSet[str] = frozenset({
     "status", "text", "pages_total", "truncated", "detail", "script_rendered", "capture_signals", "pages",
+    "parser_version", "reader_family",
 })
 _EXTRACT_STATUSES = frozenset({"text", "no_text", "unsupported", "too_large", "encrypted", "error"})
 # `text`, or what PdfSplitFailed can carry (its docstring: encrypted, unsupported, timeout, memory, too_large, error).
@@ -84,6 +88,7 @@ def _is_dict(value: Any) -> bool:
 _FIELD_CHECKS: Mapping[str, Callable[[Any], bool]] = {
     "text": _is_str, "detail": _is_str, "pages_total": _is_count, "pages": _is_count,
     "truncated": _is_bool, "script_rendered": _is_bool, "capture_signals": _is_dict,
+    "parser_version": _is_count, "reader_family": _is_str,
     "members": _is_count, "vba_project": _is_bool, "macro_content_type": _is_bool, "odf_macros": _is_bool,
     "vba_storage": _is_bool,
 }

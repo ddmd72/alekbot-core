@@ -301,7 +301,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── sandbox_app.py / sandbox_caller_gate.py / sandbox_recycler.py / sandbox_supervisor.py / sandbox_unconfigured_app.py
 │   └── (sandbox_*: the render service's op blueprint, OIDC caller gate, pipe recycler, supervisor, unconfigured stub — own deploy unit)
 └── utils/
-├── file_conversion.py     # File-to-text conversion (convert_file_to_text, is_native_binary, make_history_stub)
+├── file_conversion.py     # Type helpers and alert texts (is_native_binary, make_history_stub); no conversion: parsing is the parser child's (U5)
 ├── logger.py              # Centralized logging configuration
 ├── llm_response_parser.py # Unified parser for LLM response envelopes (full_response, response_summary, rich_content)
 ├── groovy_to_markdown_transformer.py # Groovy DSL → Markdown converter (USE_MARKDOWN_PROMPT feature, currently off)
@@ -361,6 +361,10 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`billing.py`**: Billing account models (`BillingAccount`, `AccountUsageStats`).
 -   **`deduplication_service.py`**: 🆕 `SmartDeduplicationService` — number-aware duplicate detection. Lives in `domain/` because it has zero external dependencies (only stdlib `re`). Used by `FirestoreFactRepository` and `SearchEnrichmentService` via DI.
 -   **`entities.py`**: Core domain entities: `FactEntity` (with SCD Type 2 fields), `FactType` enum. Also contains `normalize_fact_taxonomy()` — centralizes `.lower()` normalization of 4D taxonomy fields (`domain`, `temporal_class`, `state`, `context_priority`) for enum compatibility. Used by `FactManagementAdapter` and `FirestoreFactManagementAdapter` to eliminate duplicated normalization code.
+-   **`drive_reread.py`**: `same_read` / `changed_chunks` (U5) — pure comparison of a parser re-read with the stored chunks of the readable generation; an equal read commits as a stamp (`drive_index_planner.reread_unchanged`).
+-   **`drive_upgrade_read.py`**: `upgrade_reread` (U5) — pure test for "this run is a parser-upgrade re-read" (stale `parser@N`, content not edited), which never calls the paid reader.
+-   **`adapters/drive_parser/pdf_rows.py`** (U5): row-aware PDF table text per page (pdfplumber) for the parser child.
+-   **`scripts/infrastructure/drive_parser_upgrade_probe.py`** (U5): owner-run, read-only cost probe of a parser upgrade (counts and dollars only).
 -   **`auth.py`**: Auth domain models moved from `ports/`: `TokenClaims`, `OAuthTokens`, `OAuthUserInfo`, `IAMDecision`. Pure data, zero external dependencies — belong in `domain/`, not `ports/`.
 -   **`active_kind.py`**: D13's `active_kind(name, mime, head, container)` — the kinds `send_file_to_user` refuses from an email attachment, decided from header bytes, name, mime and `ContainerFacts`; unchecked ZIP-family files fail closed.
 -   **`container_facts.py`**: `ContainerFacts` / `ContainerStatus` — the ZIP facts (members, VBA project, macro content type, ODF macros) the sandbox op `parse.container_facts` returns.

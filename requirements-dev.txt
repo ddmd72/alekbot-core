@@ -14,9 +14,9 @@ charset-normalizer==3.4.4  # text kinds that are not UTF-8 (CP1251, UTF-16 witho
 xlrd==2.0.2  # legacy XLS, row-capped (markitdown's converter reads every row)
 olefile==0.47  # encrypted OOXML is an OLE2 package with an EncryptedPackage stream
 # The engines under markitdown's converters, at the resolution of markitdown 0.1.8 on 2026-10-13. PDF text is
-# pdfminer.six called directly; pdfplumber serves only markitdown's own PdfConverter (chat uploads).
+# pdfminer.six called directly; pdfplumber serves the child's PDF table pass.
 pdfminer.six==20260107  # PDF text layer
-pdfplumber==0.11.10  # markitdown 0.1.8's PdfConverter reads with it first (not on the drive path)
+pdfplumber==0.11.10  # the child's PDF table pass
 Pillow==13.0.0  # triage thumbnails; the eval's drawn fixtures pin its encoders byte for byte (drive_eval/make_fixtures_v2.py)
 mammoth==1.11.0  # DOCX → HTML under markitdown's DocxConverter
 python-pptx==1.0.2  # PPTX under markitdown's PptxConverter

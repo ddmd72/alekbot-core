@@ -18,9 +18,11 @@ def _raw(obj) -> bytes:
 
 
 def test_key_set_is_closed_and_has_no_brief_and_no_identity():
+    # U5 (A-U5-2): the child reports `parser_version` and `reader_family`; the identity (`extracted_by`) stays the
+    # caller's stamp, built from the reported version
     assert RESULT_KEYS == {"status", "text", "pages_total", "truncated", "detail", "script_rendered", "capture_signals",
-                           "pages"}
-    assert "brief" not in RESULT_KEYS
+                           "pages", "parser_version", "reader_family"}
+    assert "brief" not in RESULT_KEYS and "extracted_by" not in RESULT_KEYS
 
 
 def test_round_trip_of_a_full_extract_result():

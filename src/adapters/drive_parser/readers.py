@@ -5,11 +5,12 @@ They run only inside the sandboxed child process (`drive_parser.child`), never i
 parser here may amplify a small file into gigabytes (§9, Phase 0). Parser libraries are imported inside the
 functions, so they load after the child has applied its limits.
 
-Every admitted kind has a named reader (§5.1): pdfminer.six for PDF, called directly (markitdown 0.1.8's PdfConverter
-runs pdfplumber first and falls back to pdfminer on any exception: two engines, one of them unpinned by intent);
-markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB,
-MSG and HTML; charset detection for the
-text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
+Every admitted kind has a named reader (§5.1): pdfminer.six for PDF, called directly; a page where pdfminer saw drawn lines or numeric-only lines is also opened in
+pdfplumber and its table becomes pipe rows (`pdf_rows`; at most _MAX_TABLE_PAGES pages per file);
+markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.build_markitdown`) for DOCX, PPTX, EPUB
+and MSG; HTML through `html_text.html_page_text`; charset detection for the
+text kinds, VTT/SRT reduced to `[hh:mm:ss] text` cues; `striprtf` for RTF; the stdlib `email` parser for EML (headers, every text part,
+nested messages, attachments as names only; HTML bodies through `html_page_text`); ODF `content.xml`
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
 repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`. An EPUB that is a plain tar
 (an Apple Books `.epub.pkgf` package) is repacked as an EPUB ZIP in memory first (`epub_package`).
@@ -19,8 +20,11 @@ a document marker or tags over 30 % outside code), go through `html_text.html_pa
 no top-level boilerplate or in-page link blocks, metadata lines at the head — and a page with a <script> and under
 500 visible characters comes back `script_rendered`. A text kind whose HTML path fails keeps its decoded text.
 
+U5: every outcome of `read_content` names the reader that produced it (`reader_family`, a
+`document_extraction.READER_FAMILIES` value; `READER_FAMILY_OF_KIND` plus `epub_package` and `text_html`).
+
 Public interface:
-    MARKITDOWN_CONVERTERS
+    MARKITDOWN_CONVERTERS, READER_FAMILY_OF_KIND
     read_content(path, kind) -> ExtractionOutcome          # `extracted_by` is stamped by the parent
     pdf_page_count(path) -> int                                   # raises PdfSplitFailed
     cut_pdf_window(path, first_page, page_count, out_path) -> int   # pages written; raises PdfSplitFailed
@@ -37,9 +41,11 @@ import html
 import io
 import os
 import re
+import sys
 import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import lru_cache
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 from typing import BinaryIO, Iterator, Union
 
@@ -47,6 +53,7 @@ from src.adapters.drive_parser.capture import pdf_capture_signals
 from src.adapters.drive_parser.child import is_memory_failure
 from src.adapters.drive_parser.epub_package import PackageError, epub_zip_from_tar, is_tar_package
 from src.adapters.drive_parser.html_text import html_page_text, text_is_html
+from src.adapters.drive_parser.pdf_rows import MIN_NUMERIC_LINES, NUMBER_CELL, table_page_text
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_extraction import ExtractionOutcome, PdfSplitFailed
 from src.domain.document_extraction import ExtractionStatus, failure_label
@@ -108,25 +115,31 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
     reader = _READERS.get(kind)
     if reader is None:
         return ExtractionOutcome(status=ExtractionStatus.UNSUPPORTED, detail=f"no reader for kind {kind}")
+    family = READER_FAMILY_OF_KIND[kind]
     try:
         if kind == "epub" and is_tar_package(path):
+            family = "epub_package"
             result: Union[_Read, _PageRead] = _read_epub_package(path)
         else:
             if kind in _ZIP_KINDS:
                 _check_container(path, kind)
             result = reader(path, kind)
     except ArchiveTooLargeError as exc:
-        return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc))
+        return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc), reader_family=family)
     except _Encrypted as exc:
-        return ExtractionOutcome(status=ExtractionStatus.ENCRYPTED, detail=str(exc))
+        return ExtractionOutcome(status=ExtractionStatus.ENCRYPTED, detail=str(exc), reader_family=family)
     except Exception as exc:  # any parser failure on hostile input is this file's outcome, never the tick's
         if is_memory_failure(exc):
             raise MemoryError(str(exc)) from exc
         status = ExtractionStatus.UNSUPPORTED if _deterministic(exc) else ExtractionStatus.ERROR
-        return ExtractionOutcome(status=status, detail=failure_label(exc))   # never the message (R3 F3-5)
+        return ExtractionOutcome(status=status, detail=failure_label(exc),   # never the message (R3 F3-5)
+                                 reader_family=family)
+    if kind in _HTML_CAPABLE_TEXT_KINDS and isinstance(result, _PageRead):
+        family = "text_html"   # a text or Markdown file that is HTML, read by the HTML converter (§25.3)
     text, pages_total, truncated = result[0], result[1], result[2]
     outcome = _finish(text, pages_total, truncated,
                       script_rendered=isinstance(result, _PageRead) and result.script_rendered)
+    outcome = replace(outcome, reader_family=family)
     if kind == "pdf":
         outcome = replace(outcome, capture_signals=_capture_signals(path))
     return outcome
@@ -212,16 +225,23 @@ def decode_text(data: bytes, cut: bool = False) -> str:
 
 
 def subtitle_cues(text: str) -> str:
-    """VTT/SRT reduced to cue text (§8.1 step 6): header, NOTE/STYLE/REGION blocks, cue ids, timing lines and blank
-    separators go; `<v Name>` becomes `Name: `; other tags go; a rolled-up repeat of the previous line goes."""
+    """VTT/SRT reduced to `[hh:mm:ss] text` lines (§8.1 step 6, U5 F2): header, NOTE/STYLE/REGION blocks, cue ids and
+    blank separators go; a cue keeps its start time (milliseconds dropped); `<v Name>` becomes `Name: `; other tags
+    go; a rolled-up repeat of the previous line goes (the first time stays)."""
     lines = [line.strip() for line in text.splitlines()]
     out: List[str] = []
+    last = ""
+    start = ""
     skipping = False
     for index, line in enumerate(lines):
         if not line:
             skipping = False
             continue
-        if skipping or "-->" in line:
+        if "-->" in line:
+            if not skipping:
+                start = _cue_start(line)
+            continue
+        if skipping:
             continue
         if line.startswith("WEBVTT") or re.match(r"(NOTE|STYLE|REGION)(\s|$)", line):
             skipping = True
@@ -230,9 +250,19 @@ def subtitle_cues(text: str) -> str:
             continue                                  # a cue identifier (SRT number or VTT id)
         cue = re.sub(r"<v(?:\.[^\s>]+)?\s+([^>]+)>", r"\1: ", line)
         cue = html.unescape(re.sub(r"</?[^>]+>", "", cue)).strip()
-        if cue and (not out or out[-1] != cue):
-            out.append(cue)
+        if cue and cue != last:
+            out.append(f"[{start}] {cue}" if start else cue)
+            last = cue
     return "\n".join(out)
+
+
+def _cue_start(timing: str) -> str:
+    """`hh:mm:ss` of a cue timing line's start (`00:01:02,500 --> …`, VTT's `mm:ss.mmm` form too); '' when unreadable."""
+    match = re.match(r"\s*(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,]\d+)?\s*-->", timing)
+    if not match:
+        return ""
+    hours, minutes, seconds = int(match.group(1) or 0), int(match.group(2)), int(match.group(3))
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def markdown_table(rows: Sequence[Sequence[Any]]) -> Tuple[str, bool]:
@@ -297,21 +327,122 @@ def _read_pdf(path: str, kind: str) -> _Read:
 def _pdfminer_text(path: str) -> Tuple[str, bool]:
     """pdfminer's extract_text, page by page: layout stops once MAX_TEXT_CHARS characters are out (R2 P-m6), so a
     thousand dense pages never all go through layout for text the cap drops. `truncated` when a page was left."""
-    from pdfminer.converter import TextConverter
     from pdfminer.layout import LAParams
     from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
     from pdfminer.pdfpage import PDFPage
 
-    with open(path, "rb") as fh, io.StringIO() as output:
+    with open(path, "rb") as fh, io.StringIO() as output, _plumber_pages(path) as plumber:
         manager = PDFResourceManager(caching=True)
-        device = TextConverter(manager, output, codec="utf-8", laparams=LAParams())
+        device = _SignalConverter(manager, output, codec="utf-8", laparams=LAParams())
         interpreter = PDFPageInterpreter(manager, device)
         pages = PDFPage.get_pages(fh, caching=True)
-        for page in pages:
+        candidates = 0
+        for index, page in enumerate(pages):
+            start = output.tell()
             interpreter.process_page(page)
+            if plumber is not None and (device.ruled or device.numeric_lines >= MIN_NUMERIC_LINES):
+                if candidates < _MAX_TABLE_PAGES:
+                    candidates += 1
+                    replacement = _table_text(plumber, index, device.ruled, device.numeric_lines >= MIN_NUMERIC_LINES)
+                    if replacement is not None:          # a page with a table: its rows as pipe lines (U5 F1)
+                        output.seek(start)
+                        output.truncate()
+                        output.write(replacement + "\n\n")
+                elif candidates == _MAX_TABLE_PAGES:
+                    candidates += 1
+                    sys.stderr.write(f"[PdfRows] table_page_cap_hit cap={_MAX_TABLE_PAGES} at_page={index + 1}\n")
             if output.tell() >= MAX_TEXT_CHARS:      # StringIO's position: the characters written so far
                 return output.getvalue(), next(pages, None) is not None
         return output.getvalue(), False
+
+
+_MAX_TABLE_PAGES = 60     # pages per document that may be opened in pdfplumber; later table pages keep pdfminer's text
+
+
+@lru_cache(maxsize=1)
+def _signal_converter_class() -> Any:
+    from pdfminer.converter import TextConverter
+    from pdfminer.layout import LTCurve, LTFigure, LTTextContainer, LTTextLine
+
+    class SignalConverter(TextConverter):  # type: ignore[misc]
+        """pdfminer's TextConverter that also records, per page, whether anything was drawn (lines, rectangles,
+        curves) and how many text lines are only a number: the signals that gate the pdfplumber pass (U5 F1)."""
+
+        ruled = False
+        numeric_lines = 0
+
+        def receive_layout(self, ltpage: Any) -> None:
+            self.ruled, self.numeric_lines = False, 0
+            stack = [ltpage]
+            while stack:
+                for obj in stack.pop():
+                    if isinstance(obj, LTCurve):
+                        self.ruled = True
+                    elif isinstance(obj, LTFigure):
+                        stack.append(obj)
+                    elif isinstance(obj, LTTextContainer):
+                        for line in obj:
+                            if isinstance(line, LTTextLine) and NUMBER_CELL.match(line.get_text().strip()):
+                                self.numeric_lines += 1
+            super().receive_layout(ltpage)
+
+    return SignalConverter
+
+
+def _SignalConverter(*args: Any, **kwargs: Any) -> Any:
+    return _signal_converter_class()(*args, **kwargs)
+
+
+class _LazyPlumber:
+    """The pdfplumber document of a file, opened on the first page asked for (most files never ask)."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._document: Optional[Any] = None
+        self._failed = False
+
+    def page(self, index: int) -> Optional[Any]:
+        if self._document is None and not self._failed:
+            try:
+                import pdfplumber
+
+                self._document = pdfplumber.open(self._path)
+            except Exception as exc:
+                if is_memory_failure(exc):
+                    raise
+                self._failed = True
+        return self._document.pages[index] if self._document is not None else None
+
+    def close(self) -> None:
+        if self._document is not None:
+            self._document.close()
+
+
+@contextmanager
+def _plumber_pages(path: str) -> Iterator[Optional[_LazyPlumber]]:
+    lazy = _LazyPlumber(path)
+    try:
+        yield lazy
+    finally:
+        lazy.close()
+
+
+def _table_text(plumber: Optional[_LazyPlumber], index: int, ruled: bool, aligned: bool) -> Optional[str]:
+    """The page text with its tables as rows, or None (no table, or pdfplumber failed: pdfminer's text stands)."""
+    if plumber is None:
+        return None
+    try:
+        page = plumber.page(index)
+        if page is None:
+            return None
+        try:
+            return table_page_text(page, ruled, aligned)
+        finally:
+            page.close()
+    except Exception as exc:
+        if is_memory_failure(exc):
+            raise
+        return None
 
 
 def _page_count(reader: Any) -> int:
@@ -397,6 +528,68 @@ def _read_rtf(path: str, kind: str) -> _Read:
     return str(rtf_to_text(data.decode("latin-1"), errors="replace")), 0, cut
 
 
+_EML_HEADERS = ("From", "Sender", "Reply-To", "To", "Cc", "Bcc", "Date", "Subject")
+_EML_MAX_PARTS = 200
+_EML_MAX_DEPTH = 5
+
+
+class _EmlWalk:
+    """One walk over a MIME tree (U5 F4, A-U5-3/4): text parts, nested messages, and the attachments as names only.
+    Attachment contents are never read as text (O-5); the walk stops at _EML_MAX_PARTS parts and _EML_MAX_DEPTH levels."""
+
+    def __init__(self) -> None:
+        self.parts = 0
+        self.cut = False
+        self.attachments: List[str] = []
+
+    def message(self, message: Any, depth: int) -> List[str]:
+        """Headers, a blank line and the body of one message (the top one or a nested `message/rfc822`)."""
+        header = [f"{name}: {message[name]}" for name in _EML_HEADERS if message[name]]
+        return ["\n".join(header), *self.part(message, depth)]
+
+    def part(self, part: Any, depth: int) -> List[str]:
+        if self.parts >= _EML_MAX_PARTS or depth > _EML_MAX_DEPTH:
+            self.cut = True
+            return []
+        self.parts += 1
+        content_type = part.get_content_type()
+        if content_type == "message/rfc822":
+            inner = part.get_payload()
+            inner = inner[0] if isinstance(inner, list) and inner else None
+            return self.message(inner, depth + 1) if inner is not None else []
+        if part.is_multipart():
+            children = list(part.iter_parts())
+            if content_type == "multipart/alternative" and any(c.get_content_type() == "text/plain" for c in children):
+                children = [c for c in children if c.get_content_type() != "text/html"]
+            texts: List[str] = []
+            for child in children:
+                texts += self.part(child, depth + 1)
+            return texts
+        name = part.get_filename()
+        if part.get_content_disposition() == "attachment" or name or not content_type.startswith("text/"):
+            self.attachments.append(_attachment_label(part, name))
+            return []
+        content = _part_text(part)
+        if content_type == "text/html":
+            content = html_page_text(content)[0]
+        return [content.strip()] if content.strip() else []
+
+
+def _attachment_label(part: Any, name: Optional[str]) -> str:
+    try:
+        payload = part.get_payload(decode=True)
+    except Exception:
+        payload = None
+    size = len(payload) if isinstance(payload, bytes) else 0
+    if size < 1024:
+        shown = f"{size} B"
+    elif size < 1024 * 1024:
+        shown = f"{round(size / 1024)} KB"
+    else:
+        shown = f"{size / (1024 * 1024):.1f} MB"
+    return f"{name or '(unnamed)'} ({part.get_content_type()}, {shown})"
+
+
 def _read_eml(path: str, kind: str) -> _Read:
     import email
     import email.policy
@@ -406,17 +599,11 @@ def _read_eml(path: str, kind: str) -> _Read:
         message = email.message_from_binary_file(fh, policy=email.policy.default)
     if not isinstance(message, EmailMessage):
         raise ValueError("not a MIME message")
-    header = [f"{name}: {message[name]}" for name in ("Subject", "From", "To", "Cc", "Date") if message[name]]
-    body = message.get_body(preferencelist=("plain", "html"))
-    text = ""
-    if isinstance(body, EmailMessage):
-        content = _part_text(body)
-        if body.get_content_subtype() == "html":
-            from markitdown.converters import HtmlConverter
-
-            content = str(HtmlConverter().convert_string(content).markdown or "")
-        text = content
-    return "\n".join(header + ["", text]).strip(), 0, False
+    walk = _EmlWalk()
+    blocks = walk.message(message, 0)
+    if walk.attachments:
+        blocks.append("Attachments: " + ", ".join(walk.attachments))
+    return "\n\n".join(block for block in blocks if block).strip(), 0, walk.cut
 
 
 def _read_xlsx(path: str, kind: str) -> _Read:
@@ -539,6 +726,14 @@ def _read_odf(path: str, kind: str) -> _Read:
     truncated = _odf_blocks(body, kind, blocks)
     return "\n\n".join(block for block in blocks if block.strip()), 0, truncated
 
+
+# U5: the `reader_family` each kind's reader reports (a `document_extraction.READER_FAMILIES` value). `read_content`
+# reports two more: `epub_package` for an EPUB that is a tar package, `text_html` for a text kind read as HTML.
+READER_FAMILY_OF_KIND: Mapping[str, str] = {
+    "pdf": "pdf", "docx": "docx", "pptx": "pptx", "epub": "epub", "msg": "msg", "xlsx": "xlsx", "xls": "xls",
+    "odt": "odf", "ods": "odf", "odp": "odf", "html": "html", "text": "text", "markdown": "text", "json": "text",
+    "config": "text", "csv": "csv", "subtitles": "subtitles", "rtf": "rtf", "eml": "eml",
+}
 
 _READERS: Dict[str, Callable[[str, str], Union[_Read, _PageRead]]] = {
     "pdf": _read_pdf, "docx": _read_converter, "pptx": _read_converter, "epub": _read_converter,

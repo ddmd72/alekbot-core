@@ -2,35 +2,24 @@
 File Conversion Service
 =======================
 
-Converts non-binary file attachments (CSV, TXT, MD, DOCX, XLSX, MP3, WAV, …)
-to plain text using markitdown before they reach LLM adapters.
-
-This keeps conversion logic LLM-agnostic: text output works for Claude, Gemini,
-and Grok without any adapter changes. Images and PDFs bypass this service entirely
-and are handled natively by each adapter.
+Helpers for file attachments (native-binary and audio checks, history stubs, safe temp names). The parsing itself
+is not here: every attachment is read by the document service through the parser child.
 """
 
-import asyncio
-import os
 import tempfile
-from typing import TYPE_CHECKING, Optional
 
 from .document_hardening import (  # noqa: F401 — re-exported: the hardening's historical home
     MAX_ZIP_MEMBERS,
     MAX_ZIP_UNCOMPRESSED_BYTES,
     ArchiveTooLargeError,
-    build_markitdown,
     check_zip_container,
 )
-from ..domain.document_limits import MAX_CONVERTED_CHARS, MAX_FILE_BYTES, MAX_TEXT_EXPORT_BYTES
-from ..domain.document_open_texts import audio_unavailable_note, cut_note
-from ..domain.document_open_texts import conversion_alert as _conversion_alert
-from ..domain.document_open_texts import size_alert as _size_alert
-from ..domain.text_data_uris import drop_data_uri_images
+from ..domain.document_limits import MAX_CONVERTED_CHARS
+from ..domain.document_limits import MAX_FILE_BYTES  # noqa: F401 — re-exported (tests import it from here)
+from ..domain.document_open_texts import conversion_alert as _conversion_alert  # noqa: F401 — re-exported
+from ..domain.document_open_texts import cut_note
+from ..domain.document_open_texts import size_alert as _size_alert  # noqa: F401 — re-exported
 from .logger import logger
-
-if TYPE_CHECKING:
-    from ..ports.audio_transcription_port import AudioTranscriptionPort
 
 HISTORY_PREVIEW_CHARS = 1000         # chars kept in history stub per file
 
@@ -143,7 +132,7 @@ def transcription_alert(filename: str) -> str:
     """System note for a voice message that arrived but could not be transcribed.
 
     Public for the same reason as `download_alert`: voice messages are transcribed in
-    ConversationHandler, not in `convert_file_to_text`, because their transcript becomes
+    ConversationHandler, not in ConversationHandler before file conversion, because their transcript becomes
     the user's turn rather than file content.
     """
     return (
@@ -164,7 +153,7 @@ def truncate_with_alert(text: str, filename: str) -> str:
 
 def make_history_stub(full_output: str, filename: str) -> str:
     """
-    Create a compact stub for session history from convert_file_to_text() output.
+    Create a compact stub for session history from the converted file output.
 
     Keeps first HISTORY_PREVIEW_CHARS of content so LLM has a reminder the file
     existed and what it started with — without dragging full content through every
@@ -190,85 +179,3 @@ def make_history_stub(full_output: str, filename: str) -> str:
         f"[...{omitted} chars omitted. Re-upload for full analysis.]\n"
         f"[/File: {filename}]"
     )
-
-
-def _is_plain_text(mime_type: str) -> bool:
-    """MIME types readable as UTF-8 without any conversion library."""
-    return mime_type.startswith("text/")
-
-
-async def convert_file_to_text(
-    local_path: str,
-    filename: str,
-    mime_type: str,
-    audio_service: Optional["AudioTranscriptionPort"] = None,
-) -> str:
-    """
-    Convert a file to a text string.
-
-    - audio/*: AudioTranscriptionPort (injected) — mp3, wav, m4a, ogg
-    - text/* (txt, csv, md, …): read directly as UTF-8 — no library needed
-    - everything else: markitdown (lazy import) — covers docx, xlsx, etc.
-
-    Returns extracted text wrapped in [File: filename]...[/File: filename],
-    or a [System: ...] alert on failure.
-    """
-    size = os.path.getsize(local_path)
-    plain = _is_plain_text(mime_type) and not is_audio(mime_type)
-    # A text file may be larger than MAX_FILE_BYTES: its inline images are dropped first, and the cap then applies to
-    # the text that is left (G1b). Every other mime keeps the cap on the file itself.
-    if size > (MAX_TEXT_EXPORT_BYTES if plain else MAX_FILE_BYTES):
-        logger.warning(
-            f"[FileConversion] Rejecting oversized file: {filename} ({size / 1024 / 1024:.1f} MB)"
-        )
-        return _size_alert(filename, size, MAX_TEXT_EXPORT_BYTES if plain else MAX_FILE_BYTES)
-
-    # Audio path — via injected AudioTranscriptionPort. markitdown's own AudioConverter is not
-    # registered (it uploads to Google's speech API), so every audio file must be routed here.
-    if is_audio(mime_type) or (
-        mime_type in ("", "application/octet-stream")
-        and os.path.splitext(filename)[1].lower() in _AUDIO_EXTENSIONS
-    ):
-        if audio_service is None:
-            logger.warning(f"[FileConversion] No audio_service for '{filename}' ({mime_type})")
-            return audio_unavailable_note(filename)
-        try:
-            text = await audio_service.transcribe(local_path, mime_type)
-            logger.info(f"[FileConversion] Transcribed audio '{filename}': {len(text)} chars")
-        except Exception as e:
-            logger.warning(f"[FileConversion] Audio transcription failed for '{filename}': {type(e).__name__}: {e}")
-            return _conversion_alert(filename, mime_type)
-    elif _is_plain_text(mime_type):
-        # Fast path: no dependencies, just read bytes as UTF-8
-        try:
-            def _read() -> str:
-                with open(local_path, "r", encoding="utf-8", errors="replace") as f:
-                    return f.read()
-            text = await asyncio.to_thread(_read)
-            text = await asyncio.to_thread(drop_data_uri_images, text)
-            text_size = len(text.encode("utf-8"))
-            if text_size > MAX_FILE_BYTES:
-                logger.warning(f"[FileConversion] Rejecting oversized text: {filename} ({text_size / 1024 / 1024:.1f} MB)")
-                return _size_alert(filename, text_size)
-            logger.info(f"[FileConversion] Read plain text '{filename}': {len(text)} chars")
-        except Exception as e:
-            logger.warning(f"[FileConversion] Failed to read '{filename}': {e}")
-            return _conversion_alert(filename, mime_type)
-    else:
-        # markitdown path: docx, xlsx, pptx, epub, … — local document converters only
-        def _convert() -> str:
-            check_zip_container(local_path)
-            result = build_markitdown().convert(local_path)
-            return result.text_content or ""
-
-        try:
-            text = await asyncio.to_thread(_convert)
-        except Exception as e:
-            logger.warning(f"[FileConversion] Failed to convert '{filename}': {type(e).__name__}: {e}")
-            return _conversion_alert(filename, mime_type)
-
-    if not text.strip():
-        logger.warning(f"[FileConversion] Empty output for '{filename}'")
-        return _conversion_alert(filename, mime_type)
-
-    return f"[File: {filename}]\n{text}\n[/File: {filename}]"

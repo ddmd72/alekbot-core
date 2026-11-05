@@ -165,12 +165,14 @@ async def test_plain_text_is_read_in_process_raw():
     assert out.status is ReadStatus.TEXT and out.text.startswith("# gym pass") and parser.requests == []
 
 
-async def test_a_text_mime_csv_is_read_raw_but_eml_goes_to_the_child():
+async def test_a_text_mime_csv_and_eml_both_go_to_the_child():
+    # U5 A3 (EXTERNAL_FILES_RFC §4.4): a `text/*` CSV is no longer read raw; it is the child's csv reader's
     service, parser, *_ = make()
     out = await service.read(req(b"a,b\n1,2\n", "gym_pass_uk.csv", "text/csv"))
-    assert out.text == "a,b\n1,2\n" and parser.requests == []
+    assert [r.kind for r in parser.requests] == ["csv"]
+    assert out.text == TEXT_OUT.text and out.links == ("parser@3",)
     out = await service.read(req(b"From: ann\nSubject: gym\n\nhi", "gym_pass_uk.eml", "text/plain"))
-    assert parser.requests[0].kind == "eml" and out.links == ("parser@3",)
+    assert [r.kind for r in parser.requests] == ["csv", "eml"] and out.links == ("parser@3",)
 
 
 async def test_a_document_kind_goes_to_the_parser():

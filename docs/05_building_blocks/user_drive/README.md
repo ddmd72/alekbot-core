@@ -408,7 +408,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
 - **Content fields (Slice 2+4)** on the same record: `indexed_generation` (the readable chunk generation, or none),
   `index_generation` (the last generation a run started), `indexed_version` (the content version it was read at),
   `chunk_count`, `chunk_space` (the embedding space of its chunks), `extraction_version`, `extracted_by`
-  (`parser@3` / `reader@2`), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
+  (`parser@N` / `reader@N`), `reader_family` (the parser's reader that produced the text, §4.12; empty when unknown), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
   `brief` (from the reader), the triage `triage_verdict` / `triage_version` / `triaged_content_version` (v1's `caption` is replaced by the
   photo fields below),
   and the run bookkeeping `attempts`, `attempt_started_at`, `dirty_since`, `defer_until` / `defer_priority`. Three
@@ -770,8 +770,8 @@ image `(reader)`, every other admitted kind `(parser)`.
     the file's — charges it to the file (`outage_charged`, §4.10).
 - **Outcome** (`outcome_step` in `src/domain/drive_index_run.py`): `text` goes on; `no_text`, `unsupported`,
   `too_large`, `encrypted` demote; `timeout`, `memory`, `error` retry; `budget_exhausted` waits for next month. See
-  the table in §4.10. `extracted_by` records the link that decided (`parser@3` or `reader@2`), so a new version of
-  that link re-reads exactly the files it decided (§4.12).
+  the table in §4.10. `extracted_by` records the link that decided (`parser@N` or `reader@N`; `N` is the version the parser child reports, not the
+  caller's constant), so a new version of that link re-reads exactly the files it decided (§4.12).
 
 ### Step 5 (images) — triage
 
@@ -1014,6 +1014,29 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   chunks or `readme_excerpt`, hints from the stored chunk text): model calls, billed against the dollar caps.
 - An extractor's version (`extractor:parser`, `extractor:reader` in the target map) → only the files that link
   decided (`extracted_by`) are re-read (`reextraction_due`). Parser@2 (Search v2's HTML converter) is such a bump.
+  **The parser re-read compares text** (U5; `decisions/drive_reread_by_text_change.md`):
+  - A record stamped `parser@N` below the target is read again; `reader@N` records are untouched. Transcripts are exempt.
+  - The parser child reports its version and the `reader_family` that produced the text (`pdf`, `docx`, `html`, `eml`, ...);
+    both are stored on the record (`reader_family` is empty on records read before U5 and filled on their next read).
+  - The new text is chunked and compared with the stored chunks of the readable generation (`drive_reread.same_read`:
+    chunk count, text and offsets, and the record fields the text decides). **Equal:** the record is stamped
+    (`reread_unchanged`: new `extracted_by` and family only); no new generation, no chunk write, no embedding, no profile
+    or hint work. **Different:** the normal index path; the chunk-hash vector reuse embeds only chunks whose text no stored
+    chunk holds, and enrichment runs only where its own fingerprint moved.
+  - An upgrade re-read (a stale `parser@N` stamp, content not edited since; `drive_upgrade_read.upgrade_reread`) **never
+    calls the paid reader**: when the parser's new text would route to the reader, the parser text stands. An edited file
+    keeps the reader route.
+  - The tick summary counts `reread_same` (stamped unchanged) and `reader_skipped_upgrade`.
+  - **The pass is held off at the deploy that bumps the version** (`DRIVE_UPGRADE_PASS_DEV=off`, below and
+    `docs/07_deployment/README.md`) until the owner has run the probe and OKs its number.
+  - **The probe** (`scripts/infrastructure/drive_parser_upgrade_probe.py`, owner-run, read-only): for the `parser@3` records
+    of a user (all when at most `--sample`, else a stratified sample per kind, extrapolated and flagged) it downloads each
+    file, parses it with the in-process child, chunks it and classifies it with the same pure functions the indexer uses.
+    It prints counts and dollars only, no names or text, per kind and in total: records, same, changed, changed chunks,
+    embedding tokens (counted free with the provider; the price per 1M tokens is an argument) and their cost, profile
+    jobs and hint chunks (priced from measured call averages), records kept as parser text that the old rules would have
+    sent to the reader (pages and dollars avoided, not in the total), demotions by reason, chunk-cap refusals, errors.
+    JSON goes to `scripts/memory/u5_probe/` (gitignored). Its only possible write is the drive adapter's OAuth token refresh.
 - **`ACCURACY_VERSION`** (branch, §4.20) → each scorable record is re-graded from its stored profile and stored chunk
   text and re-scored: Firestore reads only, no download, no model call, no re-embed (the score is not in the card text).
   The keys follow, since `about_keys_of` runs on every record write.
@@ -2634,7 +2657,7 @@ on, every v1 index is gated (D30: no tick work, search answers "being rebuilt") 
 tag `drive-search-v1` after marking every user `purging` and deleting every hint document with the v2 code
 (`--all-users --hints-only`), then `drive_initial_build_reset.py` before any later roll-forward. `DRIVE_UPGRADE_PASS`
 (default on) stops every upgrade pass in an emergency; set it through `.env` (`DRIVE_UPGRADE_PASS_DEV`), since a value
-set with `gcloud run services update` is lost at the next deploy.
+set with `gcloud run services update` is lost at the next deploy. A parser version bump ships with it `off`, the probe runs, and the pass is switched on after the owner's OK (§4.12).
 
 **The §26 rollout (done 2026-10-19)** has its own runbook in the rollout notes (ops). In short: back up the prompt layer; composites `READY` and the smoke;
 pause; **upload the six changed tokens inside the paused window** (`OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_` for the

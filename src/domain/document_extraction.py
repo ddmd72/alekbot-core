@@ -6,6 +6,7 @@ service read the same chains, statuses and routing. The router's two thresholds 
 
 Public interface:
     PARSER, PARSER_VERSION, READER, EXTRACTOR_CHAINS, chain_for(kind) -> Tuple[str, ...]
+    PARSER_VERSION_UNREPORTED, READER_FAMILIES, reported_identity(result) -> Tuple[str, str]
     ExtractionStatus
     text_digest(text) -> str, failure_label(exc) -> str
     garbage_share(text) -> float
@@ -17,7 +18,7 @@ import hashlib
 import os
 import re
 from enum import Enum
-from typing import Mapping, Optional, Protocol, Tuple
+from typing import Any, FrozenSet, Mapping, Optional, Protocol, Tuple
 
 from .drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 
@@ -25,7 +26,20 @@ PARSER = "parser"   # the child-process parser adapter (§24.3)
 # 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
 # parser-decided record (§25.4.8). Every parser adapter (in-process and sandbox) reports it, so switching adapters
 # never re-extracts the drive index.
-PARSER_VERSION = 3
+PARSER_VERSION = 4
+# U5 (A-U5-2): the parser child reports the PARSER_VERSION it ran (`parser_version` in its extract result) and the
+# adapters stamp `extracted_by` from that report, never from their own constant, so a record never carries one
+# version's stamp over another version's text. A result without the key comes from a child older than the report:
+# version 3, the last version that did not report itself.
+PARSER_VERSION_UNREPORTED = 3
+# U5: the reader inside the parser that produced a text (`reader_family` of the outcome and the record). "" is unknown
+# or not the parser (the reader agent, transcripts, a record read before U5). `text_html` is a text or Markdown file
+# read through the HTML converter (§25.3); `epub_package` an Apple Books tar package repacked as an EPUB. A test ties
+# the set to the readers' table (`drive_parser/readers.py`).
+READER_FAMILIES: FrozenSet[str] = frozenset({
+    "pdf", "docx", "pptx", "epub", "epub_package", "msg", "xlsx", "xls", "odf", "html", "text", "text_html", "csv",
+    "subtitles", "rtf", "eml",
+})
 READER = "reader"   # the document reader agent (§24.2)
 
 # Which extractor reads which kind, in order; the next link runs only when model_route says so (§9).
@@ -87,6 +101,20 @@ def failure_label(exc: BaseException) -> str:
         tb = tb.tb_next
     where = f" at {os.path.basename(tb.tb_frame.f_code.co_filename)}:{tb.tb_lineno}" if tb is not None else ""
     return f"{type(exc).__name__}{where} #{text_digest(str(exc))}"
+
+
+def reported_identity(result: Mapping[str, Any]) -> Tuple[str, str]:
+    """(`extracted_by`, `reader_family`) of a parser child's extract result, from what the child reported: `parser@N`
+    with N its `parser_version` (PARSER_VERSION_UNREPORTED when absent), and its `reader_family` ("" when absent or
+    not a family this code knows). ValueError when either key is present with a bad type or a version below 1: the
+    child is untrusted, the caller maps that to an invalid result."""
+    version = result.get("parser_version", PARSER_VERSION_UNREPORTED)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise ValueError("bad parser_version")
+    family = result.get("reader_family", "")
+    if not isinstance(family, str):
+        raise ValueError("bad reader_family")
+    return f"{PARSER}@{version}", family if family in READER_FAMILIES else ""
 
 
 def garbage_share(text: str) -> float:

@@ -10,7 +10,6 @@ _ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_file_conversion_re_exports_the_same_objects():
-    assert file_conversion.build_markitdown is document_hardening.build_markitdown
     assert file_conversion.check_zip_container is document_hardening.check_zip_container
     assert file_conversion.ArchiveTooLargeError is document_hardening.ArchiveTooLargeError
     assert file_conversion.MAX_ZIP_MEMBERS == document_hardening.MAX_ZIP_MEMBERS

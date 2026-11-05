@@ -157,7 +157,8 @@ async def test_a_run_failure_is_the_files_outcome_with_a_warning(response, statu
     sandboxed, _ = extractor(response)
     with caplog.at_level(logging.INFO):
         out = await sandboxed.extract(request_for(make_file(tmp_path)))
-    assert (out.status, out.detail) == (status, detail) and out.extracted_by == "parser@3"
+    # no child result to report a version: the failure carries this client's own (current) parser version
+    assert (out.status, out.detail) == (status, detail) and out.extracted_by == f"parser@{PARSER_VERSION}"
     assert logged(caplog)
 
 

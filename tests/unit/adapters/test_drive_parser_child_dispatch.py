@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.domain.document_extraction import PARSER_VERSION
 from tests.unit.adapters.drive_extraction_fixtures import make_pdf
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -29,8 +30,9 @@ def test_a_text_file_end_to_end(tmp_path):
     proc = _run(_request(tmp_path, op="extract", path=str(source), kind="text"))
     assert proc.returncode == 0, proc.stderr
     result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    # U5 (A-U5-2): the child reports the version its readers are and the reader that ran
     assert result == {"status": "text", "text": "hello from the child", "pages_total": 0, "truncated": False,
-                      "detail": ""}
+                      "detail": "", "parser_version": PARSER_VERSION, "reader_family": "text"}
     assert not (tmp_path / "result.json.part").exists()
 
 

@@ -1,7 +1,7 @@
 """Upload branch without a file service: the attachment slot carries a note, nothing is parsed in the handler, and the
 failure is visible as an ERROR line (USER_FILE_PARSING_RFC §4.2, owner rule: graceful degradation + a visible signal)."""
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
 from src.domain.messaging import FileAttachment, MessageContext, SmartResponse
@@ -58,13 +58,14 @@ def _sent_texts(coord):
 
 async def test_without_a_file_service_the_slot_carries_the_note_and_nothing_is_parsed(tmp_path, caplog):
     path = tmp_path / "upload.tmp"
-    path.write_bytes(b"%PDF-1.4")
+    # U5 part C: convert_file_to_text is gone; "nothing is parsed" is now the outcome: the file's text never
+    # reaches the turn
+    path.write_bytes(b"%PDF-1.4\nBT (Invoice FA-0137 total 249,00 EUR) Tj ET")
     handler, coord = _handler()
-    with patch("src.utils.file_conversion.convert_file_to_text", new_callable=AsyncMock) as converter, \
-            caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.ERROR):
         await handler.handle_message(_ctx(), _channel(str(path)))
-    converter.assert_not_awaited()
     sent = _sent_texts(coord)
+    assert "FA-0137" not in sent and "249,00" not in sent
     assert "invoice_painting_es.pdf" in sent and "cannot be stored or read" in sent
     assert any(r.levelno >= logging.ERROR and "No file service" in r.getMessage() for r in caplog.records)
 

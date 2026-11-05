@@ -291,6 +291,13 @@ One route family, versioned: `POST /v1/{op}`.
 - **Ops are added by the slice that builds them** (`SandboxOp`, `src/domain/sandbox_contract.py:79-86`: the three `render.*` ops and the three `parse.*` ops, built). The outcome
   statuses as built are `ok`, `script_error`, `timeout`, `empty_output`, `too_large`, `memory`, `recycling`, `unconfigured`, `bad_request`, `error` (`:89-99`); the parser's
   `ExtractionStatus` values travel in the `parse.*` answers (below).
+- **The parse result carries `parser_version` and `reader_family` (U5, closed schema).** `parse.extract` answers name the
+  `PARSER_VERSION` the child ran and the reader family that produced the text (`READER_FAMILIES`); `decode_parse_result` accepts
+  both keys and their absence, and the client adapters stamp `extracted_by = parser@<reported>` from the report, never from their
+  own constant (an absent key reads as the last unreported version, 3). **Deploy order:** clients (main, indexer) before the
+  sandbox. The schema refuses unknown keys, so a sandbox that runs ahead of its clients makes every parse fail; and the drive
+  upgrade pass (`DRIVE_UPGRADE_PASS`) stays off until the new sandbox is live, or an old-version sandbox would stamp
+  `parser@3` on every re-read and the pass would loop. `cloudbuild-dev.yaml` deploys main and the indexer before the sandbox.
 - **Status convention of the `parse.*` ops (P1, live).** A header of `ok` means the child ran and wrote a result that passed
   validation (`decode_parse_result`: closed keys, the op's status set, scalar types, a size bound). The parser's own status (`text`, `no_text`,
   `unsupported`, `too_large`, `encrypted`, `error`) is the **header detail** of that `ok` answer and the `status` of the JSON body, so a `no_text` result
@@ -554,7 +561,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `PARSER_UNAVAILABLE` and its note already exist (EXTERNAL_FILES U3).
 - Build: admit the main service's identity to the `parse` prefix (its caller group's `GROUP_PREFIXES` row gains `parse`); the degraded-start behaviour of the main service (§4.12). Nothing
   else: no converter port, no `chat.convert`.
-- Needs: EXTERNAL_FILES U3 and U5 (D15's final go); S0 a, b, g.
+- Needs: EXTERNAL_FILES U3 and U5 (built); S0 a, b, g.
 - Tests: the document service's existing cases through both adapters; the audio path untouched (S-Δ1); the 5 MiB check before any call; the
   unavailable note; a hostile-archive case gives the same note as in process.
 - Accept: added p95 latency for a typical 1 MiB docx stated to the owner; a scan opened in chat end to end within D7's deadline, through

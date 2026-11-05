@@ -159,9 +159,11 @@ def test_in_page_links_are_dropped(tmp_path):
 
 def test_external_links_keep_their_text_and_domain_relative_links_their_text(tmp_path):
     text = _read(_write(tmp_path, "issue.html", _NEWSLETTER), "html").text
-    assert "Read the opening programme (example.org)" in " ".join(text.split())
+    # U5 O-2 (b), owner 2026-11-05 (supersedes D23's domain only): the full URL, only `utm_*` parameters and the
+    # fragment removed; this fixture's parameter is `utm`, not `utm_*`, so it stays
+    assert "Read the opening programme (https://www.example.org/market/opening?utm=1)" in " ".join(text.split())
     assert "last week's issue" in text
-    assert "](" not in text and "utm=" not in text and "/archive/11.html" not in text
+    assert "](" not in text and "/archive/11.html" not in text
 
 
 def test_images_become_their_alt_text(tmp_path):

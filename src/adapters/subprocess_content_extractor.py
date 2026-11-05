@@ -45,7 +45,7 @@ from typing import IO, Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from src.domain.drive_capture import signals_from_json
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ParserBusy, PdfSplitFailed
-from src.domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus, text_digest
+from src.domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus, reported_identity, text_digest
 from src.domain.drive_index_params import EXTRACT_WALL_TIMEOUT_S, MAX_TEXT_CHARS
 from src.domain.drive_index_policy import size_cap
 from src.ports.content_extractor_port import ContentExtractorPort
@@ -328,6 +328,7 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
             pages_total = result.get("pages_total", 0)
             truncated = result.get("truncated", False)
             script_rendered = result.get("script_rendered", False)
+            stamp, family = reported_identity(result)   # U5: what the child ran, never this adapter's constant
             if (status not in _CHILD_STATUSES or not isinstance(text, str) or not isinstance(pages_total, int)
                     or pages_total < 0 or not isinstance(truncated, bool) or not isinstance(script_rendered, bool)):
                 raise ValueError("bad field")
@@ -343,9 +344,10 @@ class SubprocessContentExtractor(ContentExtractorPort, PdfSplitterPort):
         if "capture_signals" in result and signals is None:
             logger.warning("[DriveExtract] child capture signals have an invalid shape; dropped")
         return ExtractionOutcome(status=status, text=text if is_text else "",
-                                 pages_total=pages_total, truncated=truncated, extracted_by=self.stamp,
+                                 pages_total=pages_total, truncated=truncated, extracted_by=stamp,
                                  detail=str(result.get("detail", ""))[:300],
-                                 script_rendered=is_text and script_rendered, capture_signals=signals)
+                                 script_rendered=is_text and script_rendered, capture_signals=signals,
+                                 reader_family=family)
 
     async def _pdf_op(self, payload: Mapping[str, Any], deadline_at: Optional[float]) -> Dict[str, Any]:
         """The child's result of a page-window op, or PdfSplitFailed with the outcome status."""

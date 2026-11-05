@@ -103,6 +103,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `INDEXER_URL_DEV` | `_INDEXER_URL` → `DRIVE_INDEXER_URL` (both services) | no trailing slash; `make deploy` refuses when empty unless `DRIVE_FIRST_PASS=1`. Two-pass, below |
 | `DRIVE_TRANSCRIBE_ENABLED_DEV` | `_DRIVE_TRANSCRIBE_ENABLED` → `DRIVE_TRANSCRIBE_ENABLED` | **required**, exactly `on` or `off` (below) |
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
+| `DRIVE_UPGRADE_PASS_DEV` | `_DRIVE_UPGRADE_PASS` → `DRIVE_UPGRADE_PASS` (indexer) | optional; empty = `on`; `off` holds every version upgrade pass (Standing levers) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
 | `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
 | `SANDBOX_VPC_NETWORK_DEV`, `SANDBOX_VPC_SUBNET_DEV` | `_SANDBOX_VPC_NETWORK`, `_SANDBOX_VPC_SUBNET` | **required**: the custom VPC and its subnet both sandbox services deploy onto with no egress; `make deploy` refuses when either is empty, and the sandbox deploy scripts exit 4 (see Sandbox network) |
@@ -615,7 +616,9 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
   running tick keeps going for up to 30 minutes after a pause.
 - Stop every upgrade pass: `gcloud run services update alek-bot-indexer-dev --update-env-vars DRIVE_UPGRADE_PASS=off
   --region=us-central1 --project=<PROJECT_ID>`. **It does not survive a deploy** (`--set-env-vars`): set it again after each
-  deploy while it is needed.
+  deploy while it is needed. The durable form is `DRIVE_UPGRADE_PASS_DEV=off` in `.env` and a deploy. Rollout rule for a
+  parser version bump (U5): `.env` off before the deploy, the deploy (clients before the sandbox), the owner runs the
+  read-only probe and OKs its number, then `DRIVE_UPGRADE_PASS_DEV=on` and a deploy.
 - Stop model spend only: remove `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` from the indexer's secrets; every model call is then
   a model outage (never charged to a file), and parsing, cards and search go on. The Gemini fallback does not take over
   (`GEMINI_API_KEY` stays for embeddings); to turn the fallback off, set `"fallback": None` in the drive entries of

@@ -12,7 +12,7 @@ from src.adapters.drive_parser.readers import (
 from src.domain.drive_extraction import PdfSplitFailed
 from src.domain.document_extraction import ExtractionStatus
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS
-from src.utils.document_hardening import build_markitdown
+from src.utils.document_hardening import MARKITDOWN_ALLOWED_CONVERTERS
 from tests.unit.adapters.drive_extraction_fixtures import (
     encrypt_pdf, make_docx, make_epub, make_inflation_bomb, make_member_bomb, make_odf, make_pdf, make_pptx,
     make_xlsx,
@@ -36,8 +36,13 @@ def test_every_slice2_content_kind_has_a_reader():
 
 @pytest.mark.slow
 def test_markitdown_converters_are_all_in_the_phase0_allowlist():
-    registered = {type(reg.converter).__name__ for reg in build_markitdown()._converters}
-    assert {name for name, _, _ in MARKITDOWN_CONVERTERS.values()} <= registered
+    # U5 part C: the allowlist is a constant of class names (build_markitdown is gone); each name the child uses is on
+    # it and is a real converter class of the pinned markitdown (the child resolves it with getattr)
+    from markitdown import converters
+
+    used = {name for name, _, _ in MARKITDOWN_CONVERTERS.values()}
+    assert used <= MARKITDOWN_ALLOWED_CONVERTERS
+    assert all(isinstance(getattr(converters, name, None), type) for name in used)
 
 
 @pytest.mark.parametrize("kind", ["doc", "ppt", "image", "archive", "iwork", "other"])
@@ -139,21 +144,24 @@ line two
 
 
 def test_vtt_reduced_to_cue_text():
-    assert subtitle_cues(VTT) == "Clara: We agreed on the budget.\nWe agreed on the budget.\nNext step & owner"
+    # U5 F2 (A-U5-5): each cue line keeps its cue's start time, milliseconds dropped
+    assert subtitle_cues(VTT) == ("[00:00:01] Clara: We agreed on the budget.\n[00:00:03] We agreed on the budget.\n"
+                                  "[00:00:05] Next step & owner")
 
 
 def test_srt_reduced_to_cue_text_and_a_numeric_cue_survives():
-    assert subtitle_cues(SRT) == "Hello there.\n42\nLine one\nline two"
+    assert subtitle_cues(SRT) == "[00:00:01] Hello there.\n[00:00:02] 42\n[00:00:04] Line one\n[00:00:04] line two"
 
 
 def test_subtitles_kind_reads_a_file(tmp_path):
     path = tmp_path / "talk.srt"
     path.write_text(SRT, encoding="utf-8")
-    assert _read(path, "subtitles").text.startswith("Hello there.")
+    assert _read(path, "subtitles").text.startswith("[00:00:01] Hello there.\n")
 
 
 def test_rolled_up_repeats_are_dropped():
-    assert subtitle_cues("1\n00:00 --> 00:01\nsame\n\n2\n00:01 --> 00:02\nsame\n") == "same"
+    # the repeat goes, the first cue's time stays (U5 F2)
+    assert subtitle_cues("1\n00:00 --> 00:01\nsame\n\n2\n00:01 --> 00:02\nsame\n") == "[00:00:00] same"
 
 
 # =============================================================================
@@ -417,7 +425,9 @@ def _eml(tmp_path, *, plain=None, html=None, charset="utf-8"):
 
 def test_eml_prefers_the_plain_part(tmp_path):
     text = _read(_eml(tmp_path, plain=CYRILLIC, html="<p>HTML VERSION</p>"), "eml").text
-    assert text.startswith("Subject: Оренда: рахунок за березень\nFrom: landlord@example.com")
+    # U5 F4 (A-U5-4): the closed header list in its order (From, Sender, Reply-To, To, Cc, Bcc, Date, Subject)
+    assert text.startswith("From: landlord@example.com\nTo: tenant@example.com\n"
+                           "Subject: Оренда: рахунок за березень\n\n")
     assert CYRILLIC in text and "HTML VERSION" not in text
 
 

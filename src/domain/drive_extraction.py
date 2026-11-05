@@ -48,6 +48,9 @@ class ExtractionOutcome:
     brief: Optional[DocumentBrief] = None
     extracted_by: str = ""       # "id@version" of the link that produced `text`
     detail: str = ""             # for the log line only, never shown to the user
+    # U5: the parser's reader that produced `text` (`document_extraction.READER_FAMILIES`); "" for unknown, the reader
+    # agent, a transcript. Copied to the record beside `extracted_by`.
+    reader_family: str = ""
     model_calls: int = 0         # reader calls made for this file (tick summary, §24.9)
     model_cost: float = 0.0      # their cost in USD, already billed to the account (§24.9)
     model_fallback_cost: float = 0.0   # of it, what the fallback served (the fallback alert, §25.4.5, XC-5)
