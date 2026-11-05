@@ -1,8 +1,9 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** Proposed (rev 4). The parse family is built and live in both runtimes (O14). S1 (`render.docx`) is deployed behind
-`SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped) and not accepted. S2 (`render.pdf`, `render.png`) is built
-on its branch, not deployed; widgets render in-process (O16), only `render.pdf` is wired. No S0 spike has run (`decisions/sandbox_render_service.md`). *O* items are owner decisions,
+**Status:** rev 4, in rollout (2026-11-05). Live and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
+(S1) and `render.pdf` (S2) with `SANDBOX_RENDER=sandbox` in production, media for transcripts (S5, accepted 2026-11-05).
+`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S5b (the main service's
+`video_probe`) and S6 (in-process paths out, no egress). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -289,7 +290,7 @@ One route family, versioned: `POST /v1/{op}`.
 - **Ops are added by the slice that builds them** (`SandboxOp`, `src/domain/sandbox_contract.py:79-86`: the three `render.*` ops and the three `parse.*` ops, built). The outcome
   statuses as built are `ok`, `script_error`, `timeout`, `empty_output`, `too_large`, `memory`, `recycling`, `unconfigured`, `bad_request`, `error` (`:89-99`); the parser's
   `ExtractionStatus` values travel in the `parse.*` answers (below).
-- **Status convention of the `parse.*` ops (P1, built, not deployed).** A header of `ok` means the child ran and wrote a result that passed
+- **Status convention of the `parse.*` ops (P1, live).** A header of `ok` means the child ran and wrote a result that passed
   validation (`decode_parse_result`: closed keys, the op's status set, scalar types, a size bound). The parser's own status (`text`, `no_text`,
   `unsupported`, `too_large`, `encrypted`, `error`) is the **header detail** of that `ok` answer and the `status` of the JSON body, so a `no_text` result
   keeps its `pages_total` and `capture_signals` (the server streams a body only on `ok`). A run failure is a non-ok header: `timeout`, `memory`
@@ -495,7 +496,14 @@ Each slice is accepted by its tests, its owner steps, and a stated measurement. 
 An op family is enabled only when its caller's identity exists (P0, met) and its slice is accepted.
 
 ### S0. Spike (no product code; scratch deployment, results to the private spike folder)
-Not run. Each item gates the slices named after it; S1's acceptance needs b, c, d, e, f.
+Status (2026-11-05): not run as a separate spike; b-f ran as live checks during the S1/S2 rollouts on 2026-11-04 and passed
+(b: recycle and back-to-back bursts, every first-attempt 503/500 recovered by the single retry; c: the zero-role token
+refused by Firestore, Secret Manager, Storage, Vertex and Maps; d: the audit; e: unauthenticated 403, wrong caller and
+wrong audience 401, admitted caller ok, `--ingress=internal` not run, decided by §4.3; f: child uid, Node under
+`RLIMIT_AS`, memory limit enforced, `/tmp` and `/dev/shm` found writable and closed by the supervisor; Chromium's own sandbox
+off, accepted). For media, a (large bodies) is superseded by the reverse tunnel and its own HTTP/2 spike
+(`decisions/sandbox_media_tunnel.md`). Open: a for the parse ops, g (equivalence), h (the bomb set) and i (no-NAT, S6).
+Each item gates the slices named after it; S1's acceptance needs b, c, d, e, f.
 a. **Large bodies** (S3, S4; S5 if media takes bytes, OQ-S11): a 100 MiB request (the PDF cap) and a 64 MiB response through Cloud Run to a Hypercorn
    app with HTTP/2 end to end, from an `httpx` HTTP/2 client; memory and the work volume bounded.
 b. **Recycle** (every slice; S1 first): respond, then the supervisor stops the instance; no truncation; a fresh instance for the next call; cold start
@@ -513,7 +521,7 @@ g. **Equivalence** (S3: the drive evaluation corpus, `scripts/validation/drive_e
 h. **Limits on the new host** (S3): rerun the Phase 0 bomb set (`scripts/infrastructure/drive_extract_s1.py`) with the child limits; peak memory per case.
 i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a request.
 
-### S1. The service skeleton and `render.docx` — built, not deployed, not accepted
+### S1. The service skeleton and `render.docx` — live and accepted (2026-11-04, `SANDBOX_RENDER=sandbox`)
 - Rationale: the model-written script is the least constrained input, and the skeleton (auth, contract, child launcher, recycle, deploy tests) is proved on
   a consumer with one op, bytes out, no large input.
 - Built (`decisions/sandbox_render_service.md`): `src/domain/sandbox_contract.py`; `sandbox_main.py`; `src/web/sandbox_app.py` and the caller gate;
@@ -527,7 +535,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   parse no binary output); wire tests at the HTTP boundary.
 - Accept: S0 b–f in hand; the owner steps (§8); DocGenerator e2e in `sandbox` mode; the engine child confirmed under its own uid.
 
-### S2. The other renderers (C5, C6) — built on its branch, not deployed, not accepted
+### S2. The other renderers (C5, C6) — `render.pdf` live (2026-11-04, PR #270); `render.png` built, not wired (O16)
 - Build: `render.pdf`, `render.png`; `SandboxPuppeteerRunner`, `SandboxHtmlRenderer`; one browser (chrome-headless-shell) in the `render` image, in a child under its own uid;
   Chromium's own sandbox tested on gen2 (S0-f) and the result recorded; the child boundary is the claim either way.
 - Built (`decisions/sandbox_render_service.md` § S2): `HtmlRenderEngine` and `render_html_child.py` (`src/adapters/sandbox_engine/`), the fixed
@@ -542,10 +550,11 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - Main-service choice (O15, O16): the same `SANDBOX_RENDER` knob as S1 selects `SandboxPuppeteerRunner` or `NodePuppeteerRunner` (`build_pdf_runner`); no new key. Widgets always use the in-process renderer (`build_html_renderer`); `SandboxHtmlRenderer` and `render.png` stay built, not wired.
 
 ### S3. Drive parsers (C1) — after the document service (O12)
-- Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob, slots and soak below for the parse family).
+- Status: **live** (O14): the indexer parses through the light service (verified in its logs 2026-11-04). S0 g and h not run.
+  O14 supersedes the knob, slots and soak below for the parse family.
 - What it is: an adapter swap in the indexer under the document service's parse ports: `SubprocessContentExtractor` → `SandboxContentExtractor`
   (`ContentExtractorPort` and `PdfSplitterPort`: one object serves both, as today), at the indexer's composition line (`indexer_main.py:138`). No caller changes.
-- **P1 (service side) built, not deployed:** the three `parse.*` ops (§4.7) on the `light` target (`SANDBOX_SERVICE=light`, groups MAIN and INDEXER), over
+- **P1 (service side) live:** the three `parse.*` ops (§4.7) on the `light` target (`SANDBOX_SERVICE=light`, groups MAIN and INDEXER), over
   `drive_parser/child.py` unchanged; no client, no deploy step, no caller. The rest of this list is P2 and later.
 - **P2 (client side) built, not wired:** `SandboxContentExtractor` (`src/adapters/sandbox_client/`) behind both parse ports, `build_sandbox_parser(url)`
   (`src/composition/sandbox_parse_setup.py`), and `SandboxHttpClient`'s file bodies, `windows` meta and deadline-capped retries. An outage of the service ends as
@@ -563,7 +572,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `sandbox_lost`. Then `drive_parser_sandbox_resource_isolation.md` gets its status line (S-Δ8) and GOOGLE_DRIVE_RFC §10's residual ends for the indexer.
 
 ### S4. The main service's reads (C2) — after the document service, with one engine (O12, O13)
-- Status: P4 built: both runtimes wired, not deployed (O14 supersedes the knob and soak below).
+- Status: **live** (O14) in the main service. S0 g not run. O14 supersedes the knob and soak below.
 - What it is: the same swap in the main service's `build_document_service`, behind its `SANDBOX_PARSE` (its own substitution key). No caller changes:
   `PARSER_UNAVAILABLE` and its note already exist (EXTERNAL_FILES U3).
 - Build: admit the main service's identity to the `parse` prefix (its caller group's `GROUP_PREFIXES` row gains `parse`); the degraded-start behaviour of the main service (§4.12). Nothing
@@ -575,7 +584,8 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   `parse.pdf_windows`, reached through `PdfSplitterPort.cut_pdf_windows` (EXTERNAL_FILES §4.4); Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
 ### S5. Media for transcripts (C3)
-- Status: **deployed 2026-11-04 (PR #273); acceptance open** (OneDrive passed; a long Google recording found delta 13). Built shape and deltas against rev 4 (design record: the S5 design, owner decisions O18, O17 below):
+- Status: **accepted 2026-11-05** (PR #273, close-order fix #274): OneDrive and two long Google recordings (2 h 27 min and
+  2 h 46 min, 6 windows each) transcribed through the sandbox; delta 13 was found and fixed during acceptance. Built shape and deltas against rev 4 (design record: the S5 design, owner decisions O18, O17 below):
   1. OQ-S11 closed with the **reverse tunnel for every source**, OneDrive included (owner approval 2026-11-04, after a spike proved the route).
   2. §4.5's range proxy and O7's host allowlist dropped; the light service needs no egress.
   3. No `SANDBOX_MEDIA` knob; the O14 pattern (a required URL; rollback is a revision rollback); the §4.12 table row and §9 guard 2 are gone.
@@ -686,7 +696,7 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
 9. **The main service's reads have five converter call sites** (§1, C2), the e-mail attachment path among them (`email_search_service.py:251`); EXTERNAL_FILES
    U3 replaces all five with its document service before S4.
 10. **Media decoding ran in the indexer (T1) through `SubprocessMediaExtractor` and, for Google, a `LoopbackMediaRelay`** inside the token-holding process
-    (`media_extractor.py`, `media_relay.py`, `media_launch.py`). S5 (built, not deployed) replaces it with `SandboxMediaAdapter` and deletes those modules in
+    (`media_extractor.py`, `media_relay.py`, `media_launch.py`). S5 (live, accepted 2026-11-05) replaced it with `SandboxMediaAdapter` and deletes those modules in
     the same deploy (S-Δ6, O18).
 11. **The media op's URL premise held for OneDrive only** (a Google source needs the `Authorization` header, GOOGLE_DRIVE_RFC G2). Resolved by the reverse
     tunnel for every source (O18): no URL and no header reaches the sandbox.

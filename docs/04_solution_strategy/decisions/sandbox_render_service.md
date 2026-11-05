@@ -1,9 +1,9 @@
 # Decision: Untrusted-content sandbox, slice S1 — a separate zero-role service runs `render.docx`
 
 **Date:** 2026-10-20
-**Status:** S1 (`render.docx`): merged on `main`, deployed behind `SANDBOX_RENDER` (default `inprocess`; the switch is not yet flipped),
-**not accepted**: acceptance needs the S0 spike results, the owner steps and the owner's go. S2 (`render.pdf`, `render.png`): built on
-its branch, not deployed, not accepted (section "Slice S2" below).
+**Status:** S1 (`render.docx`): live and accepted 2026-11-04 (`SANDBOX_RENDER=sandbox` in production; the S0 b-f checks ran live
+during the rollout, RFC §S0). S2: `render.pdf` live 2026-11-04 (PR #270); `render.png` built and tested, not wired (widgets render
+in-process, O16; section "Slice S2" below).
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §7 (S1), §8, §11, §12;
 [worker_oidc_and_docx_sandbox.md](worker_oidc_and_docx_sandbox.md); deploy steps in
 [`../../07_deployment/README.md`](../../07_deployment/README.md) § Sandbox render service.
@@ -79,7 +79,7 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 - Also unproven without a cloud: the image has never been built (apt `nodejs`/`npm`, the world-writable gate), the zero-role
   checks (S0-c), HTTP/2 end to end (S0-a).
 
-## Slice S2: `render.pdf` and `render.png` (built on its branch, not deployed)
+## Slice S2: `render.pdf` and `render.png` (`render.pdf` live 2026-11-04; `render.png` not wired, O16)
 
 Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.6, §4.7, §7 S2; author deltas D1-D6 are recorded there).
 

@@ -1,7 +1,7 @@
 # Decision: media reaches the sandbox through a reverse tunnel opened by the indexer (S5, O18)
 
 **Date:** 2026-11-04
-**Status:** deployed 2026-11-04 (PR #273). Acceptance: OneDrive passed; a long Google recording found the close-order defect below.
+**Status:** accepted 2026-11-05 (PR #273; the close-order fix below, #274, found during acceptance).
 **Context:** [UNTRUSTED_CONTENT_SANDBOX_RFC.md](../../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4.5, §4.7, §7 S5, OQ-S11;
 [GOOGLE_DRIVE_RFC.md](../../10_rfcs/GOOGLE_DRIVE_RFC.md) G2; [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27.4.
 
