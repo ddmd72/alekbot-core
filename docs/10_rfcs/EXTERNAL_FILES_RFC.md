@@ -59,8 +59,8 @@ Code cites are `main` @ `2280ca78`.
   (`GOOGLE_DRIVE_RFC.md` §10). Recorded in the sandbox RFC as O12. By code dependency S3 may start once U1 and U3 are
   in, before U4/U5; S4 waits for U5.
 - **D15 (2026-11-03). P4 accepted in principle: one parse engine.** The child's own readers serve every source;
-  markitdown's auto-detect path is retired in U5. The final go is given after the U0-b difference report on real files
-  (§8). Consequences: no `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter` and no
+  markitdown's auto-detect path is retired in U5. The final go was given in D16; the U0-b real-file report is
+  not a gate (§8). Consequences: no `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter` and no
   `chat.convert` op; one parse op family, `parse.*` (A1), serves both runtimes; sandbox S4 is "admit the main service's
   identity to that family and flip its knob". Sandbox S-Δ1 (audio stays with the caller) and S-Δ2 (plain text stays
   with the caller, §4.4) hold. Recorded in the sandbox RFC as O13.
@@ -848,7 +848,7 @@ markitdown, `requirements.txt:30`, engines pinned at `:40-49`), so U3 can run to
 chat and email until U5.
 
 **P4, accepted in principle (D15). One engine: the child's own readers, for every source.** Retiring markitdown's
-auto-detect path is its own slice (U5); the owner's final go follows the U0-b report on real files (§8).
+auto-detect path is its own slice (U5); the final go is given (D16); the U0-b real-file report is not a gate (§8).
 
 | Evidence | Source |
 |---|---|
@@ -936,6 +936,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | D18 | = P13: the 200-page allowance per open for every store; chat and email opens are not in the drive's monthly ledger (§4.4) | owner, 2026-11-03 |
 | D19 | = P14 (built in its own PR) and P15 (§4.1, §4.6) | owner, 2026-11-03 |
 | D20 | = P19 in a changed form: one 60 000-character presentation cut for parser text on every open path, with a note naming the cut; email attachments 30 000 → 60 000; realised in U3 (§4.5) | owner, 2026-11-03 |
+| D21 | U5's drive re-read re-runs the free parser on parser-extracted files and re-embeds only the files whose extracted text changed; reader-extracted files are untouched; records will store the reader family actually used (§7) | owner, 2026-11-05 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
 | P5 | `LLMPort.native_formats(model_name)` with a text-only default; per-attempt key on a context copy (§4.3) | author, realises D3 |
@@ -986,7 +987,7 @@ Withdrawn: P4 (now D15), P7 (now D7), P8c (required by D11), P8d (now D10), P12 
 
 **Status:** U1 built (shared pieces moved to source-neutral modules, no behaviour change); optional P14 built (§4.6);
 U2 built (the native-format declaration, PDF page caps from provider documentation; the measured spike U0-e replaces
-them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_blocks/file_conversion/README.md`); U4a (read) built on the branch `feat/u4a-email-open`; U4b (save, send) and U5 not started. Deltas of U3 from this RFC as written:
+them); **U3 built** (2026-11-03; the map of the result is `docs/05_building_blocks/file_conversion/README.md`); U4a (read) and U4b (save, send) built; U5 not started. Deltas of U3 from this RFC as written:
 - **One field added to the contract:** `ReadOutcome.cut_within_pages` (the 1-based pages of the one window shown in part),
   which D7's note needs; every other `ReadOutcome` field is as in §4.4.
 - **The drive presentation stays in `DriveOperations`** (the §29 refusal, the cut line and the drive wrapper); the other
@@ -1027,14 +1028,14 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
 | **U2 declaration** | P5 on four adapters (wire tests), the proxies forward, the four engine runners set the key per attempt, the coordinator drops it except for the three opening intents, the drive specialist passes it on (A5); `DriveOperations` decides native from it (still through today's converter) | a PDF opened under Grok arrives as text, not dropped, from `open_file` and from the drive specialist; the key never reaches any other specialist or a Cloud Task body; DomainResearcher and Quick keep native reading | after U1 |
 | **U3 service** | `DocumentReadPort`, `DocumentService`, `build_document_service` (child parser, splitter, reader); `open` for chat, delivered, workspace and drive opens (drive with §29's extent, A4); the two request limits; D7's cut; statuses and presentation, the chat wrapper and alert texts rebuilt from statuses, the one 60 000-character cut (D20) on every open path, email attachments moved from 30 000; P21's per-path audio decision (§4.4), the `defect:D3` ledger line deleted; D9 per U0-a's result; P13; the build-check fix; the legacy branch retired; with P18, prefetch in the worker | parsing on every interactive path runs in the child (either engine); a scan opened by a text-only consumer returns reader text within the store's budget, with nothing read past it, and a note that says what is shown; a chat file that fails gives the same note as today; with both new fields unset, the reader's existing tests pass unchanged; the `PARSER_UNAVAILABLE` and `STILL_WORKING` notes tested (the second with a fake adapter); no open exceeds its agent's timeout in tests; every transcribing path is metered, cached and under the §27 cap in tests; no file part in a captured span (D9); chat text marked after the owner's prompt upload | after U2; gated on U0-a, U0-c |
 | **U4 email and send** | P8a, P8b; `open_email_attachment` replacing `get_email_attachment` (by ref, or id plus name, D12); refs from `get_email_details`; the notes; the two service methods; the tool texts and the full removal list; the old attachment path removed; `copy_file_to_drive` from an `email:` ref; `send_file_to_user` (D8) with its kind check, the D13 active-kind block and `capabilities.py` entry | the incident's three steps (read, save, send) pass on a synthetic multipart fixture (nested, inline, scan), opened by ref; a failed upload answers as a failure; one test per D13 kind from an email ref is refused with the note (including a renamed file and a name-only kind), and an HTML file from a drive ref is still sent; no caller of the old attachment path remains; email text marked and the email workflow line updated after the owner's prompt upload; the owner's live check | **Built:** U4a (read, 2026-11-05) and U4b (`resolve_file`, `copy_file_to_drive` and `send_file_to_user` from an `email:` ref, D13 with the sandbox macro check). After U3; native email opens wait for U0-a |
-| **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, shipped together under **one** parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | **Gate before the bump ships:** the fixes change the child the indexer shares, so the indexer's upgrade pass (`drive_indexing_service.py:2934-2935`, `DRIVE_UPGRADE_PASS`) re-extracts and re-embeds the drive corpus and may route files to the paid reader; a probe measures the cost on a sample and the owner gives an OK under the money rules (over ~$3). Then: the four fixes each tested on a fixture; the U0-b report on real files (PDFs with real fonts, scans, `.msg`, files at the caps, large sheets) accepted by the owner (D15's final go); no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
+| **U5 one engine** | D15: markitdown's auto-detect path retired; `csv`, `html`, `eml`, `rtf`, `subtitles` to the child (A3); four fixes in the child first, shipped together under **one** parser `VERSION` bump: (1) **PDF tables**: a row-aware text pass so a number stays on the line of its row label (A6: in the child, with the pdfplumber engine already pinned for chat today; not the reader route, which is paid and needs a new router signal); (2) **subtitles** keep their timecodes; (3) **HTML links** keep the full URL, not only the host (email HTML bodies read through the same converter gain it too); (4) **`.eml`** shows every header the chat path needs (not only the five read today) and every body part | **Gate before the bump ships:** the fixes change the child the indexer shares, so the indexer's upgrade pass (`drive_indexing_service.py:2934-2935`, `DRIVE_UPGRADE_PASS`) re-extracts and re-embeds the drive corpus and may route files to the paid reader; a probe measures the cost on a sample and the owner gives an OK under the money rules (over ~$3). Then: the four fixes each tested on a fixture; no caller of `convert_file_to_text`'s markitdown branch remains | after U4, on D15's go |
 | **Optional** | P11 rename; P14 email bodies and lines; P17 image normalisation; P19 parser-text cut | each its own PR | any time after U1 |
 | **S3 / S4** (sandbox RFC) | adapter swaps per §4.9 | no caller diff in the PR | after the document service (D14); S3 needs U1 and U3, S4 also U5 |
 
 ## 8. Open questions and spikes
 
 **Open questions (owner).** None remain: OQ1–OQ5 were closed by D7–D11, P20 became D12 and OQ6 was closed by D13
-(2026-10-23); P4 became D15 (2026-11-03), whose final go waits on U0-b's real-file run.
+(2026-10-23); P4 became D15 (2026-11-03), whose final go was given in D16 (U0-b's real-file run is not a gate).
 
 **Spikes**
 - **U0-a (D1's check, D9). How to keep file contents out of Logfire.** D9 requires it for every model call; the
@@ -1059,8 +1060,8 @@ Each slice: tests first, the reviewer rule for any existing test, `make check` g
   spreadsheet float noise; it reads worse in four places (PDF tables, subtitle timecodes, HTML link targets, `.eml`
   headers and parts), which U5 fixes (§7); its statuses mean the chat layer rebuilds today's notes (§4.4). **Not yet
   measured:** real-world PDFs (fonts, ligatures), real scans, `.msg`, files at the caps, large sheets, and the drive
-  evaluation corpus. That run is what D15's final go waits on; its differences are listed per kind, then accepted or
-  fixed before U5.
+  evaluation corpus. That run is not a gate (D16); its differences, when it is run, are listed per kind, then accepted or
+  fixed.
 - **U0-c. The child in the main service:** the uid switch in its execution environment; peak memory of one turn with
   two native PDFs at the caps, capture on, and a child at its limit; slot wait p95 under concurrent opens; the staged
   copy counted.

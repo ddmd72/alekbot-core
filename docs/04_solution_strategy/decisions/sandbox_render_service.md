@@ -89,8 +89,7 @@ Same service, same skeleton; two more ops on the `render` image (RFC §4.2, §4.
   start and starts tens of threads. The browser has its own launcher; the DOCX and parse children keep theirs. The instance's 2 GiB
   with one request per instance is the real memory wall. The numbers are initial; S0-f confirms them.
 - **Chromium's own sandbox is off** (`--no-sandbox`) behind a code constant, `CHROMIUM_OWN_SANDBOX`
-  (`src/adapters/sandbox_engine/html_render_engine.py`), not an env knob (no new deploy key). It is turned on only after S0-f shows it
-  starts on gen2; until then the claim is the separate uid, the zero-role identity and the closed network. Outcome of that check: not yet run.
+  (`src/adapters/sandbox_engine/html_render_engine.py`), not an env knob (no new deploy key). It stays off: the S0-f live check ran with it off and passed (2026-11-04) and the owner accepted that; the claim is the separate uid, the zero-role identity and the closed network.
 - **No outbound fetch.** JavaScript off; request interception aborts everything except `data:`, `about:`, `blob:` (public hosts too);
   no host name resolves; a dead proxy; DevTools over a pipe. Each layer alone stops a plain page.
 - **Fonts.** The Debian set the in-process Playwright image renders with (Latin, Cyrillic, CJK, Thai, emoji), so widgets and PDFs look alike.
