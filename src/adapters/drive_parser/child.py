@@ -118,7 +118,7 @@ def dispatch(request: Dict[str, Any]) -> Dict[str, Any]:
         except PdfSplitFailed as exc:
             return {"status": exc.status.value, "detail": exc.detail}
     if op == "container_facts":   # EXTERNAL_FILES D13 / O2: a ZIP's or OLE2 file's macro facts, read here, never in the caller
-        from src.utils.document_hardening import container_facts
+        from src.adapters.drive_parser.container_facts import container_facts
 
         return container_facts(str(request["path"]))
     if op in ("media_probe", "media_windows"):   # ffprobe / ffmpeg on a download URL (§27.4); the grandchild inherits the limits

@@ -355,7 +355,7 @@ lenient").
   the bytes alone and covers the kinds without magic. The check reads up to 64 KiB of the head, enough for the ISO
   marker. The head checks are byte compares in the caller (`src/domain/active_kind.py`); the macro check, which must
   list a ZIP's parts, runs in the sandbox as the light op `parse.container_facts` (owner decision O2, 2026-11-05;
-  `ContainerFactsPort`, `src/utils/document_hardening.py: container_facts`: the ZIP facts, or for an OLE2 file the directory's
+  `ContainerFactsPort`, `src/adapters/drive_parser/container_facts.py: container_facts`, sandbox side only: the ZIP facts, or for an OLE2 file the directory's
   `vba_storage`), so no ZIP or OLE2 container is read in the main service.
   When the check cannot run (outage, timeout, a ZIP above the member cap) the file is refused as "could not be
   checked": the rule fails closed.
