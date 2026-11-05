@@ -1,4 +1,5 @@
 """SandboxMediaAdapter.duration_s (VideoDurationPort) over the scripted loopback sandbox (S5b)."""
+import asyncio
 import logging
 
 import pytest
@@ -79,3 +80,26 @@ async def test_the_sandbox_receives_the_video_from_memory_in_a_probe_start():
         await sandbox(server.url).duration_s(VIDEO)
     assert seen["bytes"] == VIDEO
     assert seen["start"].op is SandboxOp.MEDIA_PROBE and seen["start"].source_bytes == len(VIDEO)
+
+
+class _RaisingClient:
+    """A tunnel client whose call raises `exc`: the adapter's own handling of the failure, nothing on the wire."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def run(self, *args, **kwargs):
+        raise self._exc
+
+
+async def test_an_unexpected_failure_is_none_and_logged(caplog):
+    adapter = SandboxMediaAdapter(_RaisingClient(RuntimeError("boom")))
+    with caplog.at_level(logging.WARNING):
+        assert await adapter.duration_s(VIDEO) is None
+    assert "video duration unknown: RuntimeError" in caplog.text
+
+
+async def test_a_cancelled_probe_is_not_swallowed():
+    adapter = SandboxMediaAdapter(_RaisingClient(asyncio.CancelledError()))
+    with pytest.raises(asyncio.CancelledError):
+        await adapter.duration_s(VIDEO)
