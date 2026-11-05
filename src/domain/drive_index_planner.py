@@ -1027,12 +1027,12 @@ def indexed(rec: DriveIndexRecord, *, outcome: ExtractionOutcome, generation: in
 
 def reread_unchanged(rec: DriveIndexRecord, outcome: ExtractionOutcome, now: datetime) -> DriveIndexRecord:
     """U5 Layer 2 (A-U5-1): a re-read whose text gives exactly the stored chunks (`drive_reread.same_read`) commits as a
-    stamp: only `extracted_by`, `reader_family` and `extraction_version` move, and the run ends as a settled content
-    outcome. `rec` is the fence's re-read of the record; the readable generation, its chunks, hints, profile and
+    stamp: only `extracted_by`, `reader_family` and `extraction_version` move, the record is `indexed` again (the
+    upgrade's re-plan left it pending; `reason` clears) and the run ends as a settled content outcome. `rec` is the fence's re-read of the record; the readable generation, its chunks, hints, profile and
     every other content field stay as they are, and the generation number the run started is burned (never reused),
     as after a dropped run. The caller writes no chunk and collects nothing."""
-    return _settled(replace(rec, extracted_by=outcome.extracted_by, reader_family=outcome.reader_family,
-                            extraction_version=EXTRACTION_VERSION), now)
+    return _settled(replace(rec, state=RecordState.INDEXED, reason=None, extracted_by=outcome.extracted_by,
+                            reader_family=outcome.reader_family, extraction_version=EXTRACTION_VERSION), now)
 
 
 def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Optional[ExtractionOutcome] = None,

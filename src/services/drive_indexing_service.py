@@ -160,11 +160,13 @@ from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, access_observed, access_recheck_due,
     access_rechecked, access_regained, attempt_crashed, can_start_file, can_start_reembed, capped,
     card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
-    drops_readable, extractor_stale, generation_started, indexed, marked_inaccessible, model_available, model_outage,
+    drops_readable, extractor_stale, generation_started, indexed, reread_unchanged, marked_inaccessible, model_available, model_outage,
     model_recovered, month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     scope_restart, stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
+from ..domain.drive_reread import same_read
+from ..domain.drive_upgrade_read import upgrade_reread
 from ..domain.drive_keys import about_keys_capped, word_form_keys, word_keys_capped
 from ..domain import drive_mirror_plan as mirror_versions
 from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, MirrorRoot
@@ -3185,6 +3187,13 @@ class DriveIndexingService:
                 why = model_route(outcome, kind) if outcome is not None else None
                 if why is None:
                     break
+                if upgrade_reread(run, self._extractor_versions):
+                    # O-3 (b): a re-read caused only by a parser upgrade never calls the paid reader; the parser's
+                    # outcome stands and takes its normal step
+                    summary["reader_skipped_upgrade"] = summary.get("reader_skipped_upgrade", 0) + 1
+                    logger.info(f"[DriveIndex] item {run.item_id} of {handle.user_id[:8]} is an upgrade re-read: the "
+                                f"reader is skipped ({why})")
+                    break
                 logger.info(f"[DriveIndex] item {run.item_id} of {handle.user_id[:8]} goes to the {extractor_id}: {why}")
             max_pages = 0
             if extractor_id == READER:
@@ -3284,12 +3293,29 @@ class DriveIndexingService:
         chunked = await asyncio.to_thread(chunk_text, outcome.text)
         if not chunked.chunks:
             return demoted(run, Reason.NO_TEXT, now, outcome=outcome)
+        stored, stored_vectors = await self._stored_chunks(handle, run)
+        if outcome.extracted_by.rpartition("@")[0] == PARSER and same_read(run, stored, chunked, outcome,
+                                                                          space=self._space):
+            # U5 Layer 2: the new text gives exactly the stored chunks: the run commits as a stamp, with no chunk
+            # write and no embedding (§7.4 fence as below)
+            fresh = (await self._repo.get_records(handle.scope, [run.item_id])).get(run.item_id)
+            if fresh is None or fresh.content_version != run.content_version or fresh.index_generation != run.index_generation:
+                logger.info(f"[DriveIndex] item {run.item_id} of {handle.user_id[:8]} changed during its run; result dropped")
+                mark.committed = True
+                _fence()
+                await self._collect(handle, run.item_id, fresh.indexed_generation if fresh is not None else None)
+                summary["dropped"] = summary.get("dropped", 0) + 1
+                if fresh is not None and fresh.attempt_started_at == run.attempt_started_at:
+                    await self._commit(handle, [replace(fresh, attempt_started_at=None)], set())
+                return None
+            summary["reread_same"] = summary.get("reread_same", 0) + 1
+            return reread_unchanged(fresh, outcome, now)
         if chunk_cap_refuses(await self._repo.readable_chunk_total(handle.scope), run, len(chunked.chunks)):
             logger.info(f"[DriveIndex] item {run.item_id} of {handle.user_id[:8]} refused by the chunk cap "
                         f"({len(chunked.chunks)} chunks)")
             return demoted(run, Reason.USER_CHUNK_CAP, now, outcome=outcome, chunk_count=len(chunked.chunks))
         keys = [_text_key(c.text) for c in chunked.chunks]
-        reused = await self._reusable_vectors(handle, run)
+        reused = stored_vectors
         missing = {k: c.text for k, c in zip(keys, chunked.chunks) if k not in reused}   # one call per distinct text
         started = self._monotonic()
         try:
@@ -3404,15 +3430,18 @@ class DriveIndexingService:
         return replace(done, passages_generation=new_gen, passages_version=PASSAGES_VERSION,
                        passages_next_index=to_hint if complete else 0, passages_attempts=0)
 
-    async def _reusable_vectors(self, handle: DriveHandle, run: DriveIndexRecord) -> Dict[str, List[float]]:
-        """The readable generation's vectors by chunk-text hash, when it is in this tick's embedding space (final
-        review F1-3): an edit embeds only its new or changed chunks. A vector from another space is never mixed in."""
+    async def _stored_chunks(self, handle: DriveHandle, run: DriveIndexRecord
+                             ) -> Tuple[List[DriveChunk], Dict[str, List[float]]]:
+        """The readable generation's chunks and their vectors by chunk-text hash, when it is in this tick's embedding
+        space (final review F1-3): an edit embeds only its new or changed chunks, and an upgrade re-read of an
+        unchanged text commits as a stamp (U5). A vector from another space is never mixed in; one read serves both."""
         readable = run.indexed_generation
         if readable is None or run.chunk_count <= 0 or run.chunk_space != self._space:
-            return {}
+            return [], {}
         stored = await self._repo.get_chunks_with_vectors(handle.scope, run.item_id, readable, range(run.chunk_count),
                                                           terms=False)
-        return {_text_key(c.text): vector for c, vector in stored if c.text and vector}
+        return ([c for c, _ in stored],
+                {_text_key(c.text): vector for c, vector in stored if c.text and vector})
 
     async def _embed_texts(self, texts: List[str]) -> List[List[float]]:
         """At most EMBED_IN_FLIGHT calls at once (§8.1 step 8). Any error but a 400 wins, so a quota error is never

@@ -163,3 +163,10 @@ def test_demoted_copies_the_family_of_its_outcome_and_keeps_the_record_s_without
 def test_record_and_outcome_default_to_an_unknown_family():
     assert DriveIndexRecord(user_id="u", item_id="i").reader_family == ""
     assert ExtractionOutcome(status=ExtractionStatus.TEXT).reader_family == ""
+
+
+def test_reread_unchanged_settles_a_pending_record_as_indexed_again():
+    pending = record(state=RecordState.PENDING, reason=None, extraction_version=0, dirty_since=None)
+    after = reread_unchanged(pending, outcome(), NOW)
+    assert (after.state, after.reason) == (RecordState.INDEXED, None)
+    assert after.indexed_generation == 4 and after.extraction_version == EXTRACTION_VERSION
