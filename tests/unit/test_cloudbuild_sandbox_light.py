@@ -188,7 +188,8 @@ def test_a_service_account_outside_the_prefix_is_refused_without_any_call(tmp_pa
 
 def test_with_the_service_account_set_build_and_deploy_carry_the_light_values(tmp_path):
     env = {"SANDBOX_LIGHT_SA": _SA, "SANDBOX_LIGHT_URL": "u-placeholder",
-           "SANDBOX_LIGHT_CALLERS_MAIN": "m-placeholder", "SANDBOX_LIGHT_CALLERS_INDEXER": "i-placeholder"}
+           "SANDBOX_LIGHT_CALLERS_MAIN": "m-placeholder", "SANDBOX_LIGHT_CALLERS_INDEXER": "i-placeholder",
+           "SANDBOX_VPC_NETWORK": "net-placeholder", "SANDBOX_VPC_SUBNET": "subnet-placeholder"}
     proc, calls = _run("build", tmp_path, env)
     assert proc.returncode == 0 and "-f Dockerfile.sandbox" in calls and "--target light" in calls
     assert "--cache-from gcr.io/proj/alek-bot-sandbox-light-dev:latest" in calls

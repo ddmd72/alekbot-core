@@ -3,7 +3,7 @@
 **Status:** rev 4, in rollout (2026-11-05). Live and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
 (S1) and `render.pdf` (S2) with `SANDBOX_RENDER=sandbox` in production, media for transcripts (S5, accepted 2026-11-05);
 the main service's edit-video duration probe through `media.probe` (S5b, built 2026-11-05).
-`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (in-process paths out, no egress). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
+`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (in-process paths out; the no-egress network is built: both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -212,7 +212,7 @@ payload in a request: the caller opens a reverse tunnel (§4.7) and the sandbox 
   sandbox sees ranges of one recording and nothing else. The in-indexer `LoopbackMediaRelay` path is deleted in the same deploy (S5 card F).
 - **Range proxy dropped, O7's host allowlist superseded.** The earlier design (a host-suffix allowlist, IP-literal and redirect rules, a fetcher under
   its own uid) is not built: with no outbound call there is nothing to allowlist. A test asserts the light service's code opens no socket outward;
-  the S6 lock-down (no egress at all) covers the whole light service.
+  the S6 lock-down (no egress at all) covers the whole light service. Both the light and the render service deploy with no egress (Direct VPC egress `all-traffic` into a deny-all VPC, `docs/07_deployment/README.md` § Sandbox network); render needs none, since Chromium already aborts every non-data URL (`pdf_generator/render_html.js:12`).
 - **ffmpeg reads a loopback range server inside the media child**, not a server-side helper and not the network: the child serves `127.0.0.1` with a
   nonce path, GET/HEAD and single Range only, header caps, a handful of connections, and turns each read into a tunnel OPEN. The server parses only
   fixed-size records from the child.
@@ -502,7 +502,7 @@ refused by Firestore, Secret Manager, Storage, Vertex and Maps; d: the audit; e:
 wrong audience 401, admitted caller ok, `--ingress=internal` not run, decided by §4.3; f: child uid, Node under
 `RLIMIT_AS`, memory limit enforced, `/tmp` and `/dev/shm` found writable and closed by the supervisor; Chromium's own sandbox
 off, accepted). For media, a (large bodies) is superseded by the reverse tunnel and its own HTTP/2 spike
-(`decisions/sandbox_media_tunnel.md`). Open: a for the parse ops, g (equivalence), h (the bomb set) and i (no-NAT, S6).
+(`decisions/sandbox_media_tunnel.md`). Open: a for the parse ops, g (equivalence) and h (the bomb set).
 Each item gates the slices named after it; S1's acceptance needs b, c, d, e, f.
 a. **Large bodies** (S3, S4; S5 if media takes bytes, OQ-S11): a 100 MiB request (the PDF cap) and a 64 MiB response through Cloud Run to a Hypercorn
    app with HTTP/2 end to end, from an `httpx` HTTP/2 client; memory and the work volume bounded.
@@ -519,7 +519,7 @@ f. **Child uid on gen2** (S1; the Chromium part gates S2): engine children start
 g. **Equivalence** (S3: the drive evaluation corpus, `scripts/validation/drive_eval`; S4: the chat and email fixtures, which EXTERNAL_FILES U0-b already
    compares in process): in-process against deployed engines; byte-equal text expected; list differences.
 h. **Limits on the new host** (S3): rerun the Phase 0 bomb set (`scripts/infrastructure/drive_extract_s1.py`) with the child limits; peak memory per case.
-i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a request.
+i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a request. Ran 2026-11-05: PASS (deny-all served; internet unreachable; metadata and Google APIs via PGA OK).
 
 ### S1. The service skeleton and `render.docx` — live and accepted (2026-11-04, `SANDBOX_RENDER=sandbox`)
 - Rationale: the model-written script is the least constrained input, and the skeleton (auth, contract, child launcher, recycle, deploy tests) is proved on

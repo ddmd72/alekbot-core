@@ -234,7 +234,7 @@ def test_unset_service_account_is_also_skipped(tmp_path):
 
 def test_steps_run_when_the_service_account_is_set(tmp_path):
     env = {"SANDBOX_RENDER_SA": _SA, "SANDBOX_RENDER_URL": "u-placeholder",
-           "SANDBOX_RENDER_CALLERS": "c-placeholder"}
+           "SANDBOX_RENDER_CALLERS": "c-placeholder", "SANDBOX_VPC_NETWORK": "net-placeholder", "SANDBOX_VPC_SUBNET": "subnet-placeholder"}
     build, calls = _run("build", tmp_path, env)
     assert build.returncode == 0 and "-f Dockerfile.sandbox" in calls and "--target render" in calls
     assert "--cache-from gcr.io/proj/alek-bot-sandbox-render-dev:latest" in calls
@@ -258,5 +258,6 @@ def test_a_service_account_outside_the_alek_sandbox_prefix_is_refused_without_an
 
 
 def test_a_service_account_with_the_prefix_runs(tmp_path):
-    proc, calls = _run("deploy", tmp_path, {"SANDBOX_RENDER_SA": "alek-sandbox-x@placeholder.example"})
+    proc, calls = _run("deploy", tmp_path, {"SANDBOX_RENDER_SA": "alek-sandbox-x@placeholder.example",
+                                       "SANDBOX_VPC_NETWORK": "net-placeholder", "SANDBOX_VPC_SUBNET": "subnet-placeholder"})
     assert proc.returncode == 0 and "gcloud run deploy" in calls
