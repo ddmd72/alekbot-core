@@ -663,19 +663,23 @@ async def test_no_token_is_401_and_a_token_for_another_op_family_is_403(rig):
     assert r.engine.calls == [] and not r.slot.busy and r.recycler.calls == 0
 
 
-async def test_the_real_gate_gives_the_indexer_media_and_refuses_the_main_service(rig, monkeypatch):
+@pytest.mark.parametrize("member", ["tok-indexer", "tok-main"])
+async def test_the_real_gate_gives_both_light_groups_media_and_refuses_a_caller_in_no_group(rig, monkeypatch, member):
+    # S5b: the main service gained `media` next to the indexer, so no light group lacks it; a verified caller in no
+    # group is the refusal the real table still makes.
     from src.composition.sandbox_setup import LIGHT_GROUP_PREFIXES
 
     monkeypatch.delenv("K_SERVICE", raising=False)
-    emails = {"Bearer tok-indexer": "indexer@example.com", "Bearer tok-main": "main@example.com"}
+    emails = {"Bearer tok-indexer": "indexer@example.com", "Bearer tok-main": "main@example.com",
+              "Bearer tok-outsider": "outsider@example.com"}
     monkeypatch.setattr(sandbox_caller_gate, "verify_oidc_identity", lambda auth, audiences: emails.get(auth))
     gate = sandbox_caller_gate.SandboxCallerGate(
         {"MAIN": frozenset({"main@example.com"}), "INDEXER": frozenset({"indexer@example.com"})},
         LIGHT_GROUP_PREFIXES, "https://sandbox-light.test")
     r = await rig(gate=gate)
-    refused = await r.call(token="tok-main")
-    assert refused.status == 403 and r.engine.calls == []
-    allowed = await r.call(token="tok-indexer")
+    refused = await r.call(token="tok-outsider")
+    assert refused.status == 403 and refused.outcome().detail == "forbidden_op" and r.engine.calls == []
+    allowed = await r.call(token=member)
     assert allowed.status == 200 and (await allowed.next_frame()).kind is FrameType.OPEN
 
 
