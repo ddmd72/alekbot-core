@@ -58,6 +58,9 @@ owner's map [user_drive/README.md](../../05_building_blocks/user_drive/README.md
 - **Charging nothing for an unexpected error.** One bug in one file would hold the head of the queue for ever; it is charged and parks (Δ220).
 - **A stored back-off for root setup.** No root document exists to hold it and a sync-state field would be a schema change; it lives in process memory
   (Δ227).
+  The ladder's exponent stops at `ROOT_SETUP_HOLD_MAX_DOUBLINGS` (6), so any run of failures holds at the 6 h cap (2026-11-05: the 39th failure in a row
+  overflowed `timedelta` before the cap applied and failed every tick of a read-only connection). A connection with no write folder (MULTI_DRIVE D7)
+  tries nothing, so it steps no ladder.
 
 ## Consequences and costs
 

@@ -77,6 +77,7 @@ from .drive_index_params import (
     ACCESS_LOSS_TTL, CARD_LEAD_CHARS, DENSE_FOLDER_CHILDREN, DOWNLOAD_TIMEOUT_S, EMBED_FILE_BUDGET_S,
     EXTRACT_WALL_TIMEOUT_S, FILE_START_MARGIN_S, INACCESSIBLE_RETRY_MIN, INACCESSIBLE_RETRY_SLOW, MAX_ATTEMPTS,
     MAX_DEFER, MODEL_BACKOFF_BASE_S, MODEL_BACKOFF_CAP_S, MODEL_FILE_BUDGET_S, QUIET, RETRY_BASE, RETRY_CAP,
+    RETRY_MAX_DOUBLINGS,
     STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
 from .drive_index_policy import (
@@ -784,7 +785,9 @@ def released(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
 
 
 def backoff(attempts: int) -> timedelta:
-    delay: timedelta = min(RETRY_BASE * (2 ** attempts), RETRY_CAP)
+    """RETRY_BASE doubling per attempt, at most RETRY_CAP, for any count: the exponent stops past the cap, so a counter
+    that keeps growing (a mirror document parked and retried for months) never overflows timedelta (at 39)."""
+    delay: timedelta = min(RETRY_BASE * (2 ** min(max(attempts, 0), RETRY_MAX_DOUBLINGS)), RETRY_CAP)
     return delay
 
 
