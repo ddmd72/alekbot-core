@@ -101,7 +101,6 @@ _SERVICE_URL = "https://alek-bot-dev.test.example"
 # from the owner's `.env`, which the tests never read: fakes shaped like the real ones.
 LIVE_OVERRIDES: Dict[str, Substitution] = {
     "_DRIVE_TRANSCRIBE_ENABLED": Substitution("on", "docs/07_deployment/README.md (Transcripts switch and cap): transcription T1 is live (Makefile default is off)"),
-    "_SANDBOX_RENDER": Substitution("inprocess", "decisions/sandbox_render_service.md: the sandbox S1 is not deployed (equals the Makefile default)"),
 }
 FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "PROJECT_ID": Substitution("p9-test-project", "Cloud Build built-in; a fake project id"),
@@ -110,7 +109,7 @@ FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "_VOICE_RELAY_URL": Substitution("wss://alek-voice-relay-dev.test.example", "Makefile: patsubst https:// -> wss:// of VOICE_RELAY_URL_DEV"),
     "_INDEXER_URL": Substitution("https://alek-bot-indexer-dev.test.example", "Makefile: INDEXER_URL_DEV, non-empty as `make deploy` requires"),
     "_DRIVE_TRANSCRIBE_USD_CAP": Substitution("", "Makefile: DRIVE_TRANSCRIBE_USD_CAP_DEV, empty = the $20 maximum"),
-    "_SANDBOX_RENDER_URL": Substitution("", "Makefile: SANDBOX_RENDER_URL_DEV, empty while the sandbox is not deployed"),
+    "_SANDBOX_RENDER_URL": Substitution("https://alek-sandbox-render.test.example", "Makefile: SANDBOX_RENDER_URL_DEV, a fake, non-empty (DOCX/PDF render only in the sandbox, §4.12)"),
     "_SANDBOX_LIGHT_URL": Substitution("https://alek-sandbox-light.test.example", "Makefile: SANDBOX_LIGHT_URL_DEV, a fake, non-empty"),
 }
 

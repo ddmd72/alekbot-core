@@ -1,4 +1,4 @@
-"""One knob (SANDBOX_RENDER / SANDBOX_RENDER_URL) for the PDF runner; the widget PNG renderer is off the knob (O16)."""
+"""SANDBOX_RENDER_URL selects the PDF sandbox (a stale SANDBOX_RENDER is ignored); the widget PNG renderer is off it (O16)."""
 import logging
 
 import pytest
@@ -41,12 +41,6 @@ async def test_sandbox_empty_url_on_cloud_run_degrades_with_error_log(caplog):
     assert sum(1 for r in caplog.records if r.levelno >= logging.ERROR) == 1
     with pytest.raises(PuppeteerRunnerError):
         await pdf.run("<p>x</p>", 5)
-
-
-def test_sandbox_empty_url_locally_is_startup_error():
-    env = _env(SANDBOX_RENDER="sandbox")
-    with pytest.raises(ValueError):
-        build_pdf_runner(getenv=env, on_cloud_run=False)
 
 
 @pytest.mark.parametrize("mode", ["inprocess", "sandbox"])
