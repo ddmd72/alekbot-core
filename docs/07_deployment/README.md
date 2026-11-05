@@ -98,6 +98,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
 | `SANDBOX_RENDER_DEV`, `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
+| `SANDBOX_VPC_NETWORK_DEV`, `SANDBOX_VPC_SUBNET_DEV` | `_SANDBOX_VPC_NETWORK`, `_SANDBOX_VPC_SUBNET` | **required**: the custom VPC and its subnet both sandbox services deploy onto with no egress; `make deploy` refuses when either is empty, and the sandbox deploy scripts exit 4 (see Sandbox network) |
 | `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | `SANDBOX_LIGHT_URL_DEV` is required by the deploy target (it becomes `SANDBOX_PARSE_URL` on the main service and the indexer); see Sandbox light (parse) service |
 
 `DRIVE_FIRST_PASS=1` is a command-line flag for the indexer's first pass only; never put it in `.env`.
@@ -413,6 +414,23 @@ it. **While it is empty, no drive task queue is built and indexing never runs:**
    curl -s -o /dev/null -w '%{http_code}\n' -X POST "<indexer URL>/worker" -d '{}'   # 404 (ingress), never 2xx/5xx
    ```
    On this second pass a task may meet the indexer's 503 for a minute or two; the queue retries it.
+
+### Sandbox network (no egress)
+
+Both sandbox services deploy with Direct VPC egress `all-traffic` into a custom VPC that has no route to the internet
+([RFC](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4.5, S6): `--network`, `--subnet` and `--vpc-egress=all-traffic` come from
+`SANDBOX_VPC_NETWORK_DEV` and `SANDBOX_VPC_SUBNET_DEV` (`_SANDBOX_VPC_*`), and `cloudbuild_sandbox_{light,render}.sh deploy`
+exits 4 when either is empty, so a deploy never silently keeps open egress. Neither service needs the network: parse and render
+input travels in the request, media ranges come back over the caller's tunnel, and Chromium aborts every non-data URL. The metadata
+server and Google APIs (logging, image pull) keep working through Private Google Access.
+
+**One-time owner setup** (placeholder names; nothing here is run by an agent):
+1. A custom-mode VPC `<sandbox-vpc>` with one subnet `<sandbox-subnet>` (a /26 in us-central1) with Private Google Access on.
+2. A Cloud DNS private zone on `<sandbox-vpc>` mapping `googleapis.com` to `private.googleapis.com` (`199.36.153.8/30`).
+3. Firewall rules on `<sandbox-vpc>`: deny all egress (low priority) and allow egress `tcp:443` to `199.36.153.8/30` (higher priority).
+4. **No Cloud NAT** and no external-IP route.
+5. `.env`: `SANDBOX_VPC_NETWORK_DEV=<sandbox-vpc>`, `SANDBOX_VPC_SUBNET_DEV=<sandbox-subnet>`; the deployer needs
+   `roles/compute.networkUser` on the subnet.
 
 ### Sandbox render service
 

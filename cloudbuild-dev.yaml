@@ -368,6 +368,8 @@ steps:
       - "SANDBOX_LIGHT_URL=$_SANDBOX_LIGHT_URL"
       - "SANDBOX_LIGHT_CALLERS_MAIN=$_SANDBOX_LIGHT_CALLERS_MAIN"
       - "SANDBOX_LIGHT_CALLERS_INDEXER=$_SANDBOX_LIGHT_CALLERS_INDEXER"
+      - "SANDBOX_VPC_NETWORK=$_SANDBOX_VPC_NETWORK"
+      - "SANDBOX_VPC_SUBNET=$_SANDBOX_VPC_SUBNET"
 
   # Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). After every drive step on purpose: a
   # failing sandbox step never blocks a hotfix of the bot. Each step is a no-op while _SANDBOX_RENDER_SA is empty (the
@@ -416,6 +418,8 @@ steps:
       - "SANDBOX_RENDER_SA=$_SANDBOX_RENDER_SA"
       - "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL"
       - "SANDBOX_RENDER_CALLERS=$_SANDBOX_RENDER_CALLERS"
+      - "SANDBOX_VPC_NETWORK=$_SANDBOX_VPC_NETWORK"
+      - "SANDBOX_VPC_SUBNET=$_SANDBOX_VPC_SUBNET"
 
 # Two full image builds run serially once the sandbox identity is set; the 10-minute default would cut the second one off.
 timeout: 1800s
@@ -448,3 +452,6 @@ substitutions:
   _SANDBOX_LIGHT_URL: ""
   _SANDBOX_LIGHT_CALLERS_MAIN: ""
   _SANDBOX_LIGHT_CALLERS_INDEXER: ""
+  # No-egress network of both sandbox services (RFC §4.5, S6); the deploy steps refuse empty values.
+  _SANDBOX_VPC_NETWORK: ""
+  _SANDBOX_VPC_SUBNET: ""
