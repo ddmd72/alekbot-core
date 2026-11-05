@@ -26,6 +26,7 @@ from .drive_index_fakes import U_SCOPE
 pytestmark = pytest.mark.usefixtures("admitted")
 
 MARK = "zz-r3-merge-mark"
+_TAIL = " The appendix closes the payment terms for the tenant."
 
 
 async def _counters(w: ContentWorld):
@@ -34,7 +35,9 @@ async def _counters(w: ContentWorld):
 
 async def test_a_reextraction_reuses_every_vector_and_recomputes_every_chunks_terms(monkeypatch):
     """Search v2 (§25.2.2): a chunk's terms are its `word_keys`, computed by `word_keys_capped` (the v1 `content_terms`
-    are retired); the property is unchanged: new keying rules reach every chunk of a re-extraction."""
+    are retired); the property is unchanged: new keying rules reach every chunk of a re-extraction. U5 (A-U5-1): a
+    re-read whose text gives exactly the stored chunks commits as a stamp and writes no chunk, so here the new
+    extractor's text differs in one chunk and the run takes the full path into a new generation."""
     w = ContentWorld()
     doc = w.add_doc("terms.md", prose(300))
     await w.settle()
@@ -45,16 +48,39 @@ async def test_a_reextraction_reuses_every_vector_and_recomputes_every_chunks_te
     monkeypatch.setattr(svc_mod, "word_keys_capped",
                         lambda text: ((*real_keys(text)[0], MARK), False))   # the new rules
     w.parser._version = 2                                     # the extractor changed: its files are read again (§9)
+    w.parser.outcomes["terms.md"] = ExtractionOutcome(status=ExtractionStatus.TEXT, text=prose(300) + _TAIL)
     _switch_space(w, "test-space/8", w.emb)
     parses, embedded = len(w.parser.requests), len(w.emb.calls)
     await w.settle()
     after = w.rec(doc)
     assert len(w.parser.requests) == parses + 1
     assert after.state is RecordState.INDEXED and after.indexed_generation != before.indexed_generation
-    assert [c.text for c in w.readable(doc)] == texts
-    assert not set(texts) & set(w.emb.calls[embedded:])        # no unchanged chunk embedded again
-    assert all(MARK in c.word_keys for c in w.readable(doc))
+    now_texts = [c.text for c in w.readable(doc)]
+    unchanged = set(texts) & set(now_texts)
+    assert len(now_texts) == len(texts) and len(unchanged) == len(texts) - 1   # one chunk changed
+    assert not unchanged & set(w.emb.calls[embedded:])       # no unchanged chunk embedded again
+    assert all(MARK in c.word_keys for c in w.readable(doc))   # reused vectors carry no old terms
     assert w.generations(doc) == [after.indexed_generation]    # the old generation is collected
+    assert w.summary_total("reread_same") == 0
+
+
+async def test_a_same_text_reread_is_a_stamp_that_leaves_the_chunks_and_their_keys_to_keys_version(monkeypatch):
+    """U5 (A-U5-1): the same text commits as a stamp: no chunk is written, so the stored chunks keep the keys they were
+    made with and the record keeps its `keys_version`; re-keying stored text is KEYS_VERSION's job (§25.4.5)."""
+    w = ContentWorld()
+    doc = w.add_doc("terms.md", prose(300))
+    await w.settle()
+    before, chunks = w.rec(doc), w.readable(doc)
+    real_keys = svc_mod.word_keys_capped
+    monkeypatch.setattr(svc_mod, "word_keys_capped", lambda text: ((*real_keys(text)[0], MARK), False))
+    w.parser._version = 2
+    _switch_space(w, "test-space/8", w.emb)                   # the indexer redeployed with the new extractor
+    embedded = len(w.emb.calls)
+    await w.settle()
+    after = w.rec(doc)
+    assert after.extracted_by == "parser@2" and after.indexed_generation == before.indexed_generation
+    assert w.readable(doc) == chunks and len(w.emb.calls) == embedded
+    assert after.keys_version == before.keys_version and w.summary_total("reread_same") == 1
 
 
 async def test_the_card_slot_and_the_chunk_cap_both_hold_before_the_reader(monkeypatch):

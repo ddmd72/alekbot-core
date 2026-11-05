@@ -102,9 +102,9 @@ class TestChild:
 
 
 class TestParent:
-    def test_parser_version_is_3(self):
-        assert SubprocessContentExtractor.VERSION == 3
-        assert SubprocessContentExtractor().stamp == f"{PARSER}@3"
+    def test_parser_version_is_4(self):
+        assert SubprocessContentExtractor.VERSION == 4                  # U5 ships on parser@4, after parser@3's capture
+        assert SubprocessContentExtractor().stamp == f"{PARSER}@4"
 
     def test_the_parent_passes_valid_signals(self):
         signals = CaptureSignals(pages=1, text_pages=0, raster_pages=1, median_dpi=200.0, page_short_mm=140.0,
