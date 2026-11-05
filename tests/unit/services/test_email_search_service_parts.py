@@ -197,3 +197,16 @@ async def test_a_disconnected_user_gets_the_not_connected_line():
     result = await service.get_details_with_parts("msg-17", USER)
 
     assert result.text.startswith("[Error: Gmail is not connected") and result.files == ()
+
+
+async def test_a_part_with_an_unusable_id_is_left_out_of_the_labels_and_logged(caplog):
+    import logging
+    bad = EmailPart("x/../1", "sneaky.pdf", "application/pdf", 10, "h")
+    service = await _service(Mailbox(messages={"msg-17": [bad, INVOICE]}))
+
+    with caplog.at_level(logging.WARNING):
+        result = await service.get_details_with_parts("msg-17", USER)
+
+    assert [ref for _, ref in result.files] == ["email:msg-17/1"]
+    assert "sneaky.pdf" not in result.text
+    assert any("has no valid ref" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)

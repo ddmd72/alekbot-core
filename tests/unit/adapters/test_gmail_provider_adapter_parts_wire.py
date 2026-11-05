@@ -208,3 +208,9 @@ async def test_another_status_is_not_swallowed(monkeypatch, adapter):
     with pytest.raises(aiohttp.ClientResponseError) as exc:
         await adapter.list_parts(CREDS, "m1")
     assert exc.value.status == 401
+
+
+async def test_an_inline_part_whose_data_exceeds_the_cap_is_too_large(http, adapter):
+    part = EmailPart("4", "totals.csv", "text/csv", 5, "")  # the listing says 5; the message holds 23 bytes
+    with pytest.raises(EmailPartTooLarge):
+        await adapter.get_part(CREDS, MSG, part, max_bytes=5)

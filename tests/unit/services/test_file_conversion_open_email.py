@@ -309,3 +309,22 @@ async def test_resolve_bytes_refuses_an_email_ref_with_the_honest_line(world):
     with pytest.raises(EmailFileNotTransferable, match="cannot be saved to the drive or sent"):
         await world.service.resolve_bytes(format_email_ref(MSG, "1.2"), "ann")
     assert world.email.downloads == []
+
+
+async def test_a_document_port_that_raises_is_logged_and_the_same_error_propagates(world, caplog):
+    import logging
+
+    class Boom(RuntimeError):
+        pass
+
+    class RaisingDocuments(RecordingDocuments):
+        async def read(self, request):
+            raise Boom("parser crashed")
+
+    world.service.attach_documents(RaisingDocuments())
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(Boom, match="parser crashed"):
+            await _open(world, part_id="1.3")
+
+    assert any("[FileOpen] read raised store=email" in r.getMessage() and r.levelno == logging.ERROR
+               for r in caplog.records)
