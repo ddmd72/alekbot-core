@@ -1,9 +1,10 @@
-"""`document_hardening.container_facts` / `ole_container_facts`: the reader the parser child runs for
+"""`drive_parser.container_facts.container_facts` / `ole_container_facts`: the reader the parser child runs for
 `parse.container_facts` on a legacy OLE2 file (EXTERNAL_FILES D13, owner decision 2026-11-05), on synthetic compound
 files built in the test (`tests/support/ole_containers.py`)."""
 import pytest
 
-from src.utils.document_hardening import MAX_ZIP_MEMBERS, container_facts, ole_container_facts
+from src.adapters.drive_parser.container_facts import container_facts, ole_container_facts
+from src.utils.document_hardening import MAX_ZIP_MEMBERS
 from tests.support import ole_containers as oc
 from tests.support import zip_containers as zc
 

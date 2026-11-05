@@ -1,11 +1,12 @@
-"""`document_hardening.zip_container_facts`: the reader the parser child runs for `parse.container_facts` (EXTERNAL_FILES
+"""`drive_parser.container_facts.zip_container_facts`: the reader the parser child runs for `parse.container_facts` (EXTERNAL_FILES
 D13, owner decision O2), on synthetic ZIPs built in the test."""
 import zipfile
 
 import pytest
 
-from src.utils import document_hardening
-from src.utils.document_hardening import MAX_ZIP_MEMBERS, zip_container_facts
+from src.adapters.drive_parser import container_facts as container_facts_module
+from src.adapters.drive_parser.container_facts import zip_container_facts
+from src.utils.document_hardening import MAX_ZIP_MEMBERS
 from tests.support import zip_containers as zc
 
 
@@ -42,7 +43,7 @@ def test_more_members_than_the_cap_gives_no_facts(tmp_path):
 
 
 def test_a_content_types_part_above_its_cap_gives_no_facts(tmp_path, monkeypatch):
-    monkeypatch.setattr(document_hardening, "MAX_CONTENT_TYPES_BYTES", 64)
+    monkeypatch.setattr(container_facts_module, "MAX_CONTENT_TYPES_BYTES", 64)
     assert zip_container_facts(_at(tmp_path, zc.plain_docx()))["status"] == "too_large"
 
 

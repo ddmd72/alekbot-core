@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from src.domain.container_facts import ContainerStatus, container_facts_from_result
-from src.utils.document_hardening import container_facts
+from src.adapters.drive_parser.container_facts import container_facts
 from tests.support import ole_containers as oc
 from tests.unit.adapters.sandbox_client.test_sandbox_container_facts_contract import _over_the_real_app
 
