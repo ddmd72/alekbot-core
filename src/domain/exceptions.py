@@ -382,3 +382,8 @@ class EmailPartTooLarge(Exception):
 class MediaStreamFailed(Exception):
     """A file's bytes could not be streamed from its media source (a refused or failed upstream request, a broken
     connection). The message never carries the source's url or headers (they are secrets)."""
+
+
+class EmailFileNotTransferable(Exception):
+    """An `email:` ref was given to a path that needs the file's bytes (save to the drive, copy, send) before U4b builds
+    it. The message is the honest line for the model (`email_open_texts.EMAIL_FILE_NOT_TRANSFERABLE_NOTE`)."""

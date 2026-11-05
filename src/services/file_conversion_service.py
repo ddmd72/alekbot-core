@@ -25,8 +25,9 @@ import mimetypes
 import os
 import secrets
 import tempfile
+import unicodedata
 import uuid
-from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, List, NamedTuple, Optional, Tuple
 
 import aiofiles
 
@@ -40,8 +41,17 @@ from ..domain.document_open_texts import open_failed_note, parser_unavailable_no
 from ..domain.document_presentation import note_for, present_text
 from ..domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadRequest, ReadStatus
 from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
-from ..domain.email_ref import parse_email_ref
-from ..domain.exceptions import WorkspaceRefused
+from ..domain.email import EmailPart
+from ..domain.email_open_texts import (
+    ATTACHMENT_EMPTY_NOTE, ATTACHMENT_MISSING_NOTE, EMAIL_FILE_NOT_TRANSFERABLE_NOTE, EMAIL_GONE_NOTE,
+    EMAIL_NOT_CONNECTED_NOTE, EMAIL_OPEN_NOT_CONFIGURED_NOTE, MAILBOX_UNAVAILABLE_NOTE, NO_ATTACHMENTS_NOTE,
+    choose_one_note,
+)
+from ..domain.email_ref import email_file_label, escape_email_name, format_email_ref, parse_email_ref
+from ..domain.exceptions import (
+    EmailFileNotTransferable, EmailMessageGone, EmailNotConnected, EmailPartTooLarge, EmailPartUnavailable,
+    WorkspaceRefused,
+)
 from ..domain.llm import MessagePart
 from ..domain.native_format import NativeFormat
 from ..domain.skill import DELIVERED_REF_PREFIXES, SKILL_REF_PREFIX
@@ -102,6 +112,36 @@ def _email_answer(opening: EmailOpening, ref: str) -> _Opening:
     outcome = opening.opened.outcome
     text = outcome.text if outcome is not None and outcome.status is ReadStatus.TEXT else ""
     return _Opening(opening.opened, display, text)
+
+
+def _part_label(message_id: str, part: EmailPart) -> str:
+    return email_file_label(part.filename, part.size, part.mime, format_email_ref(message_id, part.part_id))
+
+
+def _email_error_note(error: Exception) -> str:
+    """The note of an expected mailbox failure (`email_open_texts`)."""
+    if isinstance(error, EmailNotConnected):
+        return EMAIL_NOT_CONNECTED_NOTE
+    if isinstance(error, EmailMessageGone):
+        return EMAIL_GONE_NOTE
+    return MAILBOX_UNAVAILABLE_NOTE
+
+
+def _fold(name: str) -> str:
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def _match_email_part(parts: List[EmailPart], part_id: Optional[str],
+                      name: Optional[str]) -> Tuple[Optional[EmailPart], List[EmailPart]]:
+    """The one part to open, else (None, the parts to choose from; empty when nothing matches). By part id; else by
+    name, exact then NFC + casefold; with neither, the only attachment."""
+    if part_id:
+        return next((p for p in parts if p.part_id == part_id), None), []
+    if name:
+        found = [p for p in parts if p.filename == name] or [p for p in parts if _fold(p.filename) == _fold(name)]
+    else:
+        found = list(parts)
+    return (found[0], []) if len(found) == 1 else (None, found)
 
 
 def _staged_name(path: str, name: str, item_mime: str) -> str:
@@ -336,8 +376,62 @@ class FileConversionService:
         native file), and every expected failure is a note (`email_open_texts`): not configured, not connected, the
         message gone, the part missing or empty, the mailbox not answering, no attachments. Never raises for those.
 
-        Core placeholder (U4a-C): until part A3 builds this, an `email:` ref is refused as before."""
-        raise FileNotFoundError(f"email:{message_id}/{part_id or ''}: email attachments open through the email tool")
+        A `part_id` that matches no part is a missing attachment (the ref is authoritative: no fall back to the name)."""
+        if self._email is None:
+            return EmailOpening(note=EMAIL_OPEN_NOT_CONFIGURED_NOTE)
+        try:
+            parts = await self._email.list_attachment_parts(user_id, message_id)
+        except (EmailNotConnected, EmailMessageGone, EmailPartUnavailable) as e:
+            return EmailOpening(note=_email_error_note(e))
+        part, others = _match_email_part(parts, part_id, name)
+        if part is None:
+            if others:
+                labels = tuple((_part_label(message_id, p), format_email_ref(message_id, p.part_id)) for p in others)
+                return EmailOpening(candidates=labels, note=choose_one_note([lab for lab, _ in labels], name or ""))
+            return EmailOpening(note=NO_ATTACHMENTS_NOTE if not parts and not part_id else ATTACHMENT_MISSING_NOTE)
+
+        ref = format_email_ref(message_id, part.part_id)
+        shown = escape_email_name(part.filename)
+        declared_mime = (part.mime.split(";")[0].strip().lower() if part.mime else "") or (
+            mimetypes.guess_type(part.filename)[0] or "application/octet-stream")
+
+        def answer(**kw) -> EmailOpening:
+            return EmailOpening(ref=ref, name=part.filename, size=part.size, mime=declared_mime, **kw)
+
+        cap = _drive_cap(declared_mime, consumer)
+        if part.size > cap:
+            logger.warning("[FileOpen] too_large store=email ref=%s size=%d limit=%d", ref, part.size, cap)
+            return answer(note=_too_large_line(shown, part.size, cap))
+        if self._documents is None:
+            logger.error("[FileOpen] parser_unavailable store=email ref=%s: no document service attached", ref)
+            return answer(note=parser_unavailable_note(shown))
+        try:
+            content = await self._email.get_attachment_part(user_id, message_id, part, cap)
+        except EmailPartTooLarge:
+            logger.warning("[FileOpen] too_large store=email ref=%s size=%d limit=%d (past the listing)",
+                           ref, part.size, cap)
+            return answer(note=_too_large_line(shown, max(part.size, cap), cap))
+        except (EmailNotConnected, EmailMessageGone, EmailPartUnavailable) as e:
+            return answer(note=_email_error_note(e))
+        if not content:
+            return answer(note=ATTACHMENT_EMPTY_NOTE)
+        request = ReadRequest(
+            content=content, name=part.filename, declared_mime=declared_mime, store=FileRefKind.EMAIL.value,
+            caller=caller, native_formats=consumer, user_id=user_id, account_id=account_id,
+            deadline_at=deadline_at, request_id=uuid.uuid4().hex)
+        try:
+            outcome = await self._documents.read(request)
+        except Exception:
+            logger.error("[FileOpen] read raised store=email ref=%s", ref, exc_info=True)
+            raise
+        if outcome.status is ReadStatus.NATIVE:
+            return answer(opened=_native_file(outcome, content, declared_mime, part.filename))
+        if outcome.status is ReadStatus.TEXT:
+            body = f"[File: {shown}]\n{outcome.text}\n[/File: {shown}]"
+            return answer(opened=OpenedFile(outcome, body=body))
+        _log_unread(outcome, "email", ref)
+        return answer(opened=OpenedFile(
+            outcome, note=note_for(outcome, shown, declared_mime, size_bytes=len(content), limit_bytes=cap)))
 
     async def prefetch(self, ref: str, user_id: str, account_id: str, *, deadline_at: float) -> Prefetched:
         """A specialist's prefetch of a ref (EXTERNAL_FILES_RFC §4.2 P18): `open` as text only, under the worker's
@@ -490,9 +584,12 @@ class FileConversionService:
     async def resolve_bytes(self, ref: str, user_id: str) -> bytes:
         """Download raw bytes. For specialists that need the original.
 
+        An `email:` ref is refused (EmailFileNotTransferable, carrying the honest line) until save and send are built.
         Dispatches by ref shape: delivered-document key → MediaStoragePort (with
         ownership check); bare filename → user-upload FileStoragePort.
         """
+        if classify_ref(ref) is FileRefKind.EMAIL:
+            raise EmailFileNotTransferable(EMAIL_FILE_NOT_TRANSFERABLE_NOTE)
         if _is_drive_ref(ref):
             return await self._resolve_drive_bytes(ref, user_id)
         return await self._download_by_ref(ref, user_id)
