@@ -14,6 +14,7 @@ MAINTENANCE_SHARE = 0.30                    # classes 3-4 share of the tick budg
 MAX_ATTEMPTS = 3
 RETRY_BASE = timedelta(minutes=5)
 RETRY_CAP = timedelta(hours=6)
+RETRY_MAX_DOUBLINGS = 7                     # 5 min x 2**7 is past the cap: `backoff` never overflows timedelta
 EMBED_IN_FLIGHT = 4
 MAX_CARD_RECORDS_PER_USER = 25_000
 K = 8

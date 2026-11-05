@@ -2285,7 +2285,7 @@ class DriveIndexingService:
     def _step_root_hold(self, handle: DriveHandle) -> timedelta:
         """One more failure in a row on `_root_setup_holds`: 10 min doubling to 6 h (Δ227). Returns the hold."""
         failures = self._root_setup_holds.get(handle.connection_id, (0, self._clock()))[0] + 1
-        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        hold = _hold_after(failures)
         self._root_setup_holds[handle.connection_id] = (failures, self._clock() + hold)
         return hold
 
@@ -2295,7 +2295,7 @@ class DriveIndexingService:
         take the reserved tail on every tick (final review, deploy Minor 2). The step itself is still tried every tick;
         the first start clears the hold. Returns the hold."""
         failures = self._mirror_step_holds.get(handle.connection_id, (0, self._clock()))[0] + 1
-        hold = min(ROOT_SETUP_HOLD_BASE * (2 ** (failures - 1)), ROOT_SETUP_HOLD_CAP)
+        hold = _hold_after(failures)
         self._mirror_step_holds[handle.connection_id] = (failures, self._clock() + hold)
         return hold
 
@@ -2305,7 +2305,11 @@ class DriveIndexingService:
         the reserve on hold for ROOT_SETUP_HOLD_BASE, doubling per failure in a row up to ROOT_SETUP_HOLD_CAP (a delta to Δ209).
         Process memory, not a stored field: no root document exists to hold it, the indexer is one instance, and a
         restart costs at most one reserved tail. With a root document: a root-loss mark whose confirming read failed
-        steps the same ladder (Δ244); the mark gone (cleared, or the loss confirmed) clears the hold."""
+        steps the same ladder (Δ244); the mark gone (cleared, or the loss confirmed) clears the hold. A connection with
+        no write folder has no mirror (D7): nothing was tried, so it is no failure and steps no ladder."""
+        if out.get("mirror_no_write_folder"):
+            self._root_setup_holds.pop(handle.connection_id, None)
+            return
         root = _connected_root(mirror)
         if root is not None and root.root_item_id not in root.previous_root_ids:
             if root.root_item_id not in mirror.gone_ids:
@@ -5350,6 +5354,18 @@ def _transcribing() -> bool:
 # Root setup that keeps failing is held off the reserve (Task 21C fix round 1, a delta to Δ209): 10 min (the fan-out's period), doubling, at most 6 h
 ROOT_SETUP_HOLD_BASE = timedelta(minutes=10)
 ROOT_SETUP_HOLD_CAP = timedelta(hours=6)
+# 10 min doubled 6 times is past the cap; the exponent stops there, so a long run of failures never overflows
+# timedelta (2026-11-05: the 39th failure in a row raised OverflowError and failed every tick of the connection)
+ROOT_SETUP_HOLD_MAX_DOUBLINGS = 6
+
+
+def _hold_after(failures: int) -> timedelta:
+    """The ladder's hold after `failures` in a row: ROOT_SETUP_HOLD_BASE doubling per failure, at most
+    ROOT_SETUP_HOLD_CAP, for any count."""
+    doublings = min(max(failures - 1, 0), ROOT_SETUP_HOLD_MAX_DOUBLINGS)
+    return min(ROOT_SETUP_HOLD_BASE * (2 ** doublings), ROOT_SETUP_HOLD_CAP)
+
+
 # What counts as root setup's progress in a run: a root created, documents reset, the loss confirmed
 _ROOT_SETUP_PROGRESS = ("mirror_root_created", "mirror_reset", "mirror_reset_dropped", "mirror_root_lost")
 
