@@ -41,6 +41,12 @@ class _RecordingProvider(EmailProviderPort):
     async def refresh_token(self, credentials):
         raise AssertionError("the credentials are far from expiry; no refresh is expected")
 
+    async def list_parts(self, credentials, message_id):
+        raise NotImplementedError
+
+    async def get_part(self, credentials, message_id, part, max_bytes):
+        raise NotImplementedError
+
 
 async def _review_at(monkeypatch, instant: datetime) -> dict:
     store = CredentialsStore()
