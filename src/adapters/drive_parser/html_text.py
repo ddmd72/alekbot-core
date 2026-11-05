@@ -15,8 +15,9 @@ reader: BeautifulSoup and markdownify are imported inside the functions, after t
   note's <aside> beside a paragraph) are content and stay.
 - Hidden elements (`hidden`, aria-hidden="true"), scripts, styles, frames, forms' option lists are dropped.
 - **Links:** a block made only of in-page links (a table of contents, a skip link, "Back to top") is dropped; an
-  in-page link inside a sentence keeps its text. An external link is kept as its text plus its domain ("Read more
-  (example.org)"); any other link as its text. An image becomes its alt text.
+  in-page link inside a sentence keeps its text. An external link is kept as its text plus its cleaned URL ("Read
+  more (https://example.org/a?id=7)": no `utm_*` parameters, no fragment, cut at LINK_URL_MAX characters with "…";
+  owner decision O-2 (b), 2026-11-05, supersedes D23's domain-only rule); any other link as its text. An image becomes its alt text.
 - Title, meta description, og:* (media and URL values left out) and the page language are written as plain lines at
   the head of the text.
 - **`script_rendered`** (§25.3: a `template` profile, no doc2query): under SCRIPT_RENDERED_TEXT_MAX characters of
@@ -34,8 +35,9 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
+LINK_URL_MAX = 300                 # characters of an external link URL kept in the text (O-2 (b))
 HTML_TAG_SHARE_MIN = 0.30          # tag names over 30 % of the text outside code (review M1, arbiter)
 SCRIPT_RENDERED_TEXT_MAX = 500     # visible characters below which a page with a <script> is script-rendered (M2)
 ARTICLE_SHARE_MIN = 0.5            # the largest <article> is the content only with half the body's text (M3)
@@ -265,10 +267,10 @@ def _rewrite_links(links: List[Any]) -> None:
         if href.startswith("#"):
             _page_link(link, only_page_links)
             continue
-        domain = _external_domain(href)
+        full = _external_url(href)
         text = " ".join(link.get_text(" ", strip=True).split())
-        if domain and text and domain not in text.lower():
-            link.replace_with(f"{text} ({domain})")
+        if full and text and not _text_holds_url(text, full):
+            link.replace_with(f"{text} ({_cut_url(full)})")
         else:
             link.unwrap()
 
@@ -296,19 +298,31 @@ def _only_page_links(element: Any, cache: Dict[int, bool]) -> bool:
     return cache[key]
 
 
-def _external_domain(href: str) -> str:
-    """The host of an http(s) link without "www.", or "" (relative, mailto:, javascript:, malformed)."""
+def _external_url(href: str) -> str:
+    """An external http(s) link cleaned: no `utm_*` query parameters (the others stay in order), no fragment; "" for
+    a relative link, mailto:, javascript:, data: or a malformed one."""
     if href.startswith("//"):
         href = "https:" + href
     try:
         parts = urlsplit(href)
-        host = parts.hostname or ""
+        host = parts.hostname
     except ValueError:
         return ""
     if parts.scheme.lower() not in ("http", "https") or not host:
         return ""
-    host = host.lower()
-    return host[4:] if host.startswith("www.") else host
+    query = "&".join(pair for pair in parts.query.split("&")
+                     if pair and not pair.lower().startswith("utm_"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def _text_holds_url(text: str, url: str) -> bool:
+    lowered = text.lower()
+    bare = re.sub(r"^https?://", "", url.lower())
+    return url.lower() in lowered or bare in lowered or bare.rstrip("/") in lowered
+
+
+def _cut_url(url: str) -> str:
+    return url if len(url) <= LINK_URL_MAX else url[:LINK_URL_MAX] + "\u2026"
 
 
 # -- content ----------------------------------------------------------------------------------------------------------
