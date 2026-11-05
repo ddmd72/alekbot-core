@@ -455,6 +455,7 @@ class ServiceContainer:
                 workspace=self.workspace_store,
                 connections=self.drive_connection_service,
                 access=self.user_drive_service,
+                email=self.email_search_service,
             )
             if self.file_storage else None
         )
