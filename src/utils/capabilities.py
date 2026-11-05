@@ -39,7 +39,9 @@ I index your inbox and make it fully searchable. Three levels of access:
 2. Full email: "show me the full text of that email" — I fetch the complete body
 3. Attachment: "read the PDF attached to that invoice" — I open it and read the content, including scanned PDFs. The full email lists each attachment with a reference, so a later turn can open the same file again
 
-These three steps can chain in one conversation — search → read full email → read attachment.
+4. Send an attachment to the chat: "send me that invoice PDF" — I upload the file here. Attachments of active kinds (HTML, SVG, Office files with macros, shortcuts, programs, scripts) are not forwarded; open those in Gmail
+
+These steps can chain in one conversation — search → read full email → read attachment → send it.
 
 *Daily email digest* — every morning I send you a structured review of the past 24 hours in your inbox: key emails, action items, things requiring attention. Enable and set the time in Cabinet → Integrations → Gmail → Daily review.
 
@@ -108,6 +110,7 @@ Send me files directly in the chat — documents, images, PDFs, spreadsheets. I 
 - Read and analyse the content on any subsequent turn (no need to re-upload)
 - Use files as source material for document generation (PDF, DOCX, HTML page) — e.g. "create a PDF from this file"
 - Delete files when you no longer need them
+- Send any file back to the chat as a file — a chat file, a document I made, a drive file or an email attachment
 
 Chat attachments are kept for 90 days; to keep a file, ask me to remember it on your drive. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
 
