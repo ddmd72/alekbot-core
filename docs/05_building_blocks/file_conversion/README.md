@@ -221,7 +221,7 @@ tool result of that turn, not history.
 ## Dependencies
 
 ```
-requirements.txt:
+requirements-dev.txt (tests, CI, local scripts; the main image does not install it):
 markitdown[all]   # [all] required: onnxruntime describes images inside DOCX/XLSX
 ```
 

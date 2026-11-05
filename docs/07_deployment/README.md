@@ -20,6 +20,11 @@ The first four units share one image (`gcr.io/$PROJECT_ID/alek-bot-dev:latest`) 
 (`cloudbuild-dev.yaml`); one `make deploy` builds and deploys them all, and a unit differs only by `--command`/`--args`.
 The sandbox render and light (parse) services have their own image file (`Dockerfile.sandbox`, one target each) and are built by the same `make deploy`.
 
+The shared image installs `requirements.txt` only: what the four entry points import, no file-parsing library (those run
+in the sandbox images, `requirements-sandbox*.txt`). Tests, CI and local scripts install `requirements-dev.txt`
+(`-r requirements.txt` plus the parsing libraries and the test tools). `tests/unit/test_main_image_requirements_closure.py`
+fails when code reachable from an entry point imports a distribution `requirements.txt` does not provide.
+
 | Unit | Type | Region | Timeout | Scaling | Secrets it reads | `make` targets |
 |------|------|--------|---------|---------|-------------------|-----------------|
 | `alek-bot-dev` | Cloud Run service (gen2: the parser child's limits were measured there) | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |

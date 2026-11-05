@@ -12,7 +12,7 @@
 #   debug_prompts/              — local debug output
 #
 # What is NOT copied (recreate manually):
-#   venv/         — run: python3 -m venv venv && pip install -r requirements.txt
+#   venv/         — run: python3 -m venv venv && pip install -r requirements-dev.txt
 #   *.log         — recreated on app start
 
 set -euo pipefail
@@ -56,4 +56,4 @@ copy_if_exists "debug_prompts"
 echo ""
 echo "Done. Don't forget to:"
 echo "  1. Update GOOGLE_APPLICATION_CREDENTIALS in .env if repo path changed"
-echo "  2. python3 -m venv venv && pip install -r requirements.txt"
+echo "  2. python3 -m venv venv && pip install -r requirements-dev.txt"
