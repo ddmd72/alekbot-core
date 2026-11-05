@@ -7,7 +7,7 @@ used by EmailSearchAgent:
 
   - vector_search(primary_query, alternative_query, tags, user_id)
       7-stream multi-vector RRF across all indexed email vector fields.
-  - get_details(email_id, user_id)       — Gmail full body (no attachments)
+  - get_details(email_id, user_id)       — Gmail full body + attachment labels with refs (no bytes)
   - get_attachment(email_id, filename, user_id) — Gmail attachment → text
   - list_attachment_parts(user_id, message_id)   — the message's attachments, one listing (EXTERNAL_FILES_RFC §4.7)
   - get_attachment_part(user_id, message_id, part, max_bytes) — one listed part's bytes, for the open path
@@ -27,7 +27,7 @@ import secrets
 import tempfile
 import os
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -35,6 +35,10 @@ from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
 from ..domain.connector_spec import ConnectorSpec
 from ..domain.email import EmailPart, IndexedEmail
+from ..domain.email_details import EmailDetails
+from ..domain.email_open_texts import EMAIL_NOT_CONNECTED_NOTE, MAILBOX_UNAVAILABLE_NOTE
+from ..domain.email_ref import email_file_label, format_email_ref
+from ..domain.exceptions import EmailMessageGone, EmailNotConnected, EmailPartUnavailable
 from ..domain.file_ref import FileRefKind
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
@@ -176,35 +180,73 @@ class EmailSearchService:
     # ------------------------------------------------------------------
 
     async def get_details(self, email_id: str, user_id: str) -> str:
-        """
-        Fetch full email body from Gmail (no attachments).
-        Returns formatted text or an error message.
+        """The text of `get_details_with_parts`, for callers that need no attachment refs."""
+        return (await self.get_details_with_parts(email_id, user_id)).text
 
-        The body and the attachment names are the sender's text, so they go inside one `<external_content>` wrapper
-        (EXTERNAL_FILES_RFC §4.6, P14) after its reminder; the tool's own frame (the id line) stays outside. The
-        wrapper's name is empty: this fetch carries no subject (`EmailFullContent` has none).
+    async def get_details_with_parts(self, email_id: str, user_id: str) -> EmailDetails:
+        """
+        Fetch full email body from Gmail (no attachment bytes) and list its attachments once (D11).
+        Returns the text (or an error message) and the attachments as `(label, ref)` pairs.
+
+        The body is the sender's text, so it goes inside one `<external_content>` wrapper (EXTERNAL_FILES_RFC §4.6, P14)
+        after its reminder; the tool's own frame (the id line) stays outside. The wrapper's name is empty: this fetch
+        carries no subject (`EmailFullContent` has none). The attachments follow the wrapper as system-made labels
+        carrying their refs (plan U4 §6): a label's name is escaped, so a forged name cannot end a quote or open a tag.
+        When the listing fails after the body was read, the body is still returned, with the attachment names the
+        index-side fetch knows (inside the wrapper, as before) and the mailbox note in place of labels.
         """
         logger.info(f"📧 EmailSearchService.get_details: {email_id} user={user_id[:8]}")
 
         creds = await self._credential(user_id)
         if not creds:
-            return "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]"
+            return EmailDetails(EMAIL_NOT_CONNECTED_NOTE)
 
         creds = await self._maybe_refresh(creds)
         if creds is None:
-            return "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]"
-        contents = await self._gmail.batch_get_full_content(creds, [email_id], deep=False)
+            return EmailDetails(EMAIL_NOT_CONNECTED_NOTE)
+        contents, listed = await asyncio.gather(
+            self._gmail.batch_get_full_content(creds, [email_id], deep=False),
+            self._list_parts_or_error(creds, email_id),
+        )
         email = contents.get(email_id)
-        if not email:
-            return f"[Error: Email {email_id} not found or inaccessible.]"
+        if not email or listed is EmailMessageGone:
+            return EmailDetails(f"[Error: Email {email_id} not found or inaccessible.]")
 
         body_preview = (email.body_text or "")[:5000]
-        attachments_str = (
-            f"\nAttachments: {', '.join(email.attachments)}" if email.attachments else ""
-        )
-        wrapped = wrap_untrusted(body_preview + attachments_str, nonce=self._nonce(), store=FileRefKind.EMAIL,
-                                 ref=email_id, label="")
-        return f"{EXTERNAL_REMINDER}\nEmail {email_id}:\nBody:\n{wrapped}"
+        if listed is EmailPartUnavailable:
+            names = f"\nAttachments: {', '.join(email.attachments)}" if email.attachments else ""
+            wrapped = wrap_untrusted(body_preview + names, nonce=self._nonce(), store=FileRefKind.EMAIL,
+                                     ref=email_id, label="")
+            note = f"\n{MAILBOX_UNAVAILABLE_NOTE}" if email.attachments else ""
+            return EmailDetails(f"{EXTERNAL_REMINDER}\nEmail {email_id}:\nBody:\n{wrapped}{note}")
+
+        wrapped = wrap_untrusted(body_preview, nonce=self._nonce(), store=FileRefKind.EMAIL, ref=email_id, label="")
+        files = self._labels(email_id, listed)
+        labels = "".join(f"\n{label}" for label, _ in files)
+        heading = "\nAttachments:" if files else ""
+        return EmailDetails(f"{EXTERNAL_REMINDER}\nEmail {email_id}:\nBody:\n{wrapped}{heading}{labels}", tuple(files))
+
+    async def _list_parts_or_error(self, creds, message_id: str):
+        """The listing, or the exception class that says why there is none (the body fetch still answers)."""
+        try:
+            return await self._gmail.list_parts(creds, message_id)
+        except EmailMessageGone:
+            return EmailMessageGone
+        except EmailPartUnavailable:
+            logger.warning(f"📧 EmailSearchService: attachment listing of {message_id} unavailable")
+            return EmailPartUnavailable
+
+    @staticmethod
+    def _labels(message_id: str, parts: List[EmailPart]) -> List[Tuple[str, str]]:
+        """`(label, ref)` per part; a part whose ids do not fit the ref shape is left out, logged."""
+        out: List[Tuple[str, str]] = []
+        for part in parts:
+            try:
+                ref = format_email_ref(message_id, part.part_id)
+                out.append((email_file_label(part.filename, part.size, part.mime, ref), ref))
+            except ValueError:
+                logger.warning(f"📧 EmailSearchService: part {part.part_id!r} of {message_id} has no valid ref")
+        return out
 
     # ------------------------------------------------------------------
     # Fetch + convert attachment
@@ -284,7 +326,8 @@ class EmailSearchService:
         expired, as `get_details`). Raises EmailNotConnected without a credential or when the refresh finds it
         disconnected; the port's EmailMessageGone / EmailPartUnavailable and OAuth errors propagate.
         """
-        raise NotImplementedError("EmailSearchService.list_attachment_parts lands with U4a part A2")
+        creds = await self._connected_credential(user_id)
+        return await self._gmail.list_parts(creds, message_id)
 
     async def get_attachment_part(self, user_id: str, message_id: str, part: EmailPart, max_bytes: int) -> bytes:
         """
@@ -292,7 +335,8 @@ class EmailSearchService:
         with that listing), refused past `max_bytes`. Credential and errors as `list_attachment_parts`, plus the
         port's EmailPartTooLarge.
         """
-        raise NotImplementedError("EmailSearchService.get_attachment_part lands with U4a part A2")
+        creds = await self._connected_credential(user_id)
+        return await self._gmail.get_part(creds, message_id, part, max_bytes)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -326,6 +370,16 @@ class EmailSearchService:
         """The user's credential of the mail kind (the oldest when several), or None."""
         keys = await self._oauth.list_keys(user_id, self._kind)
         return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
+
+    async def _connected_credential(self, user_id: str) -> OAuthCredential:
+        """The user's refreshed mail credential; EmailNotConnected when there is none or the refresh found it
+        disconnected."""
+        creds = await self._credential(user_id)
+        if creds:
+            creds = await self._maybe_refresh(creds)
+        if not creds:
+            raise EmailNotConnected(user_id)
+        return creds
 
     async def _maybe_refresh(self, creds):
         """Refresh access token if expired."""
