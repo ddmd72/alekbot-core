@@ -1,0 +1,132 @@
+{
+  "id": "18f0a1b2c3d4e5f6",
+  "threadId": "18f0a1b2c3d4e5f6",
+  "labelIds": [
+    "INBOX"
+  ],
+  "snippet": "Invoice for October",
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/mixed",
+    "filename": "",
+    "headers": [
+      {
+        "name": "Subject",
+        "value": "Invoice for October"
+      },
+      {
+        "name": "From",
+        "value": "billing@acme.example"
+      }
+    ],
+    "body": {
+      "size": 0
+    },
+    "parts": [
+      {
+        "partId": "0",
+        "mimeType": "multipart/alternative",
+        "filename": "",
+        "body": {
+          "size": 0
+        },
+        "parts": [
+          {
+            "partId": "0.0",
+            "mimeType": "text/plain",
+            "filename": "",
+            "body": {
+              "size": 21,
+              "data": "SW52b2ljZSBhdHRhY2hlZCwgdGh4"
+            }
+          },
+          {
+            "partId": "0.1",
+            "mimeType": "multipart/related",
+            "filename": "",
+            "body": {
+              "size": 0
+            },
+            "parts": [
+              {
+                "partId": "0.1.0",
+                "mimeType": "text/html",
+                "filename": "",
+                "body": {
+                  "size": 40,
+                  "data": "PHA-SW52b2ljZSBhdHRhY2hlZCwgPGI-dGh4PC9iPjwvcD4"
+                }
+              },
+              {
+                "partId": "0.1.1",
+                "mimeType": "image/png",
+                "filename": "logo.png",
+                "headers": [
+                  {
+                    "name": "Content-ID",
+                    "value": "<logo@acme.example>"
+                  },
+                  {
+                    "name": "Content-Disposition",
+                    "value": "inline"
+                  }
+                ],
+                "body": {
+                  "size": 4096,
+                  "attachmentId": "ATT-LOGO-a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "partId": "1",
+        "mimeType": "application/pdf",
+        "filename": "invoice_INV-2024-417.pdf",
+        "body": {
+          "size": 20000,
+          "attachmentId": "ATT-PDF-a"
+        }
+      },
+      {
+        "partId": "2",
+        "mimeType": "application/pdf",
+        "filename": "invoice_INV-2024-417.pdf",
+        "body": {
+          "size": 21000,
+          "attachmentId": "ATT-PDF-b"
+        }
+      },
+      {
+        "partId": "3",
+        "mimeType": "message/rfc822",
+        "filename": "forwarded.eml",
+        "body": {
+          "size": 3000,
+          "attachmentId": "ATT-EML-a"
+        },
+        "parts": [
+          {
+            "partId": "3.1",
+            "mimeType": "application/pdf",
+            "filename": "child_inside_eml.pdf",
+            "body": {
+              "size": 900,
+              "attachmentId": "ATT-CHILD-a"
+            }
+          }
+        ]
+      },
+      {
+        "partId": "4",
+        "mimeType": "text/csv",
+        "filename": "totals.csv",
+        "body": {
+          "size": 24,
+          "data": "aXRlbSxhbW91bnQKd2lkZ2V0LDEwMAo"
+        }
+      }
+    ]
+  }
+}
