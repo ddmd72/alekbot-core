@@ -28,8 +28,8 @@ def test_the_family_is_the_last_plan_field_and_defaults_to_render():
 
 
 def test_light_prefixes_give_main_and_indexer_the_parse_ops():
-    # S5 (owner decision): the INDEXER group gains `media` (drive transcripts); MAIN stays parse-only until S5b.
-    assert LIGHT_GROUP_PREFIXES == {"MAIN": frozenset({"parse"}), "INDEXER": frozenset({"parse", "media"})}
+    # S5 (owner decision): the INDEXER group gains `media` (drive transcripts); S5b: MAIN gains `media` (edit-video probe).
+    assert LIGHT_GROUP_PREFIXES == {"MAIN": frozenset({"parse", "media"}), "INDEXER": frozenset({"parse", "media"})}
 
 
 def test_light_accepts_one_or_both_groups():

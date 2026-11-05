@@ -78,9 +78,11 @@ src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design sing
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_token_repository.FirestoreTokenRepository 1  # by-design single instance
-src.adapters.sandbox_client.metadata_id_token_provider.MetadataIdTokenProvider 1  # by-design the main service's one ID-token source for the light service, built with the parse adapter (sandbox_parse_setup.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10)
+src.adapters.sandbox_client.metadata_id_token_provider.MetadataIdTokenProvider 2  # by-design one per light-service client, as on the indexer: the parse adapter's (sandbox_parse_setup.py) and the video duration media adapter's (sandbox_media_setup.py, S5b); same audience, each caches its own token (UNTRUSTED_CONTENT_SANDBOX_RFC 4.10)
 src.adapters.sandbox_client.sandbox_content_extractor.SandboxContentExtractor 1  # by-design the main service's one parse adapter, parser and splitter of the document service (application_graph.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10, O14)
 src.adapters.sandbox_client.sandbox_http_client.SandboxHttpClient 1  # by-design the one signed HTTP client of the parse adapter (sandbox_parse_setup.py)
+src.adapters.sandbox_client.sandbox_media_adapter.SandboxMediaAdapter 1  # by-design the main service's one video duration probe, built after the parse adapter (application_graph.py, UNTRUSTED_CONTENT_SANDBOX_RFC S5b)
+src.adapters.sandbox_client.sandbox_tunnel_client.SandboxTunnelClient 1  # by-design the media adapter's signed tunnel client (sandbox_media_setup.py)
 src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, and one shared by the skill and note services (service_container.py shared_security_port, prompt_assembly_setup.py:29)
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance

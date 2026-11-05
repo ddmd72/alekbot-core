@@ -1,9 +1,9 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
 **Status:** rev 4, in rollout (2026-11-05). Live and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
-(S1) and `render.pdf` (S2) with `SANDBOX_RENDER=sandbox` in production, media for transcripts (S5, accepted 2026-11-05).
-`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S5b (the main service's
-`video_probe`) and S6 (in-process paths out, no egress). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
+(S1) and `render.pdf` (S2) with `SANDBOX_RENDER=sandbox` in production, media for transcripts (S5, accepted 2026-11-05);
+the main service's edit-video duration probe through `media.probe` (S5b, built 2026-11-05).
+`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (in-process paths out, no egress). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -595,6 +595,9 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   7. The media ceiling (240/150 s) is separate from the parse ceiling (120/90 s).
   8. A systemic outage is raised as `ParserUnavailable` (not `SandboxUnavailable`); same effect, no stage change.
   9. `video_probe` -> `media.probe` is split to S5b (the main service gains the `media` prefix with an in-memory range source).
+     Built 2026-11-05: `SandboxMediaAdapter` also implements `VideoDurationPort` (`duration_s(bytes)`, `None` whenever it cannot
+     tell, wall 20 s); the bytes stream from `BytesRangeSource`; the main service builds its own adapter from `SANDBOX_PARSE_URL`
+     (`build_sandbox_media`); `src/utils/video_probe.py` is deleted, no in-process fallback (O14 pattern).
   10. The in-process media path (`media_extractor.py`, `media_launch.py`, `media_relay.py`) is deleted in the same deploy; O9's two-week keep does not apply.
   11. ffmpeg enters the light image, so the parse cold start may grow (measured in acceptance).
   12. `MediaUnreadable("tunnel_violation")` is charged to the file.
@@ -607,7 +610,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
   answers range requests over the tunnel; the sandbox decodes.
 - Image: the light target adds ffmpeg (`apt-get install --no-install-recommends`), `media_engine.py`, `media_child.py` and the tunnel closure
   (`sandbox_tunnel.py`, `sandbox_slot.py`, `sandbox_tunnel_app.py`; the render target copies the tunnel closure too, since `sandbox_main.py` is shared). The
-  indexer's caller group gains the `media` prefix (MAIN keeps `parse` only until S5b). The deploy script is unchanged: timeout 900 s covers the 240 s ceiling
+  indexer's caller group gains the `media` prefix (MAIN gained it with S5b). The deploy script is unchanged: timeout 900 s covers the 240 s ceiling
   and the 320 MiB volume is enough (nothing is written but window files).
 - Tests: the tunnel codec and bounds; the engine with a scripted child; the child's loopback server; the `@slow` contract suite (real server, real
   ffmpeg, a local HTTPS Range upstream) asserting outcomes equal the old in-process extractor on the same files.
@@ -690,7 +693,7 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
 6. **One image serves every credentialed runtime.** Main, indexer, research job and relay run the same image (`cloudbuild-dev.yaml:16`, `:33`, `:158`,
    `:213`, `:261`), built from `Dockerfile`, which installs ffmpeg, Node and two Chromium builds (`Dockerfile:13`, `:25-26`, `:36`). Only the sandbox has its own
    (`Dockerfile.sandbox`). Removing them requires a requirements split (S6-a).
-7. **`video_probe` is an unlisted consumer** in the main service (`video_probe.py:21`, used at `video_generation_agent.py:36`; S-Δ7).
+7. **`video_probe` was an unlisted consumer** in the main service (S-Δ7; moved to `media.probe` in S5b, the module is deleted).
 8. **`PuppeteerRunnerPort` named a future Cloud Function** (closed in S2: it now names `SandboxPuppeteerRunner`, `puppeteer_runner_port.py:6-10`); `DocxRunnerPort` names the built
    `SandboxDocxRunner` (`docx_runner_port.py:6-10`). Their timeout arguments become the request's `limits`.
 9. **The main service's reads have five converter call sites** (§1, C2), the e-mail attachment path among them (`email_search_service.py:251`); EXTERNAL_FILES

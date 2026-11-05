@@ -8,6 +8,7 @@ from src.services.agent_context_builder import AgentExecutionContext
 from src.ports.llm_port import ProviderCapabilities, LLMPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.composition.user_agent_factory import _UserContext
+from src.ports.video_duration_port import VideoDurationPort
 from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
 from src.ports.video_generation_port import VideoGenerationPort, VideoPollResult
 from src.services.provider_registry import ProviderRegistry
@@ -174,7 +175,8 @@ def test_build_video_generation_returns_configured_agent(mock_dependencies):
     mock_dependencies["file_conversion_service"] = Mock()
     video_registry = ProviderRegistry()
     video_registry.register("grok", FakeVideoPort())
-    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry)
+    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry,
+                                             video_duration=AsyncMock(spec=VideoDurationPort))
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig()
@@ -214,7 +216,8 @@ def test_build_video_generation_resolves_max_duration_from_config_service(mock_d
     mock_dependencies["file_conversion_service"] = Mock()
     video_registry = ProviderRegistry()
     video_registry.register("grok", FakeVideoPort())
-    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry)
+    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry,
+                                             video_duration=AsyncMock(spec=VideoDurationPort))
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig(max_video_duration_s=25)

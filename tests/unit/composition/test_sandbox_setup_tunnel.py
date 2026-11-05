@@ -47,6 +47,6 @@ def test_render_builds_no_tunnel_engine(tmp_path):
     assert build_tunnel_registry(_plan(tmp_path, "render")) == {}
 
 
-def test_the_indexer_gains_media_and_the_main_service_does_not():
+def test_the_indexer_gains_media_and_so_does_the_main_service_since_s5b():
     assert LIGHT_GROUP_PREFIXES["INDEXER"] == frozenset({"parse", "media"})
-    assert LIGHT_GROUP_PREFIXES["MAIN"] == frozenset({"parse"})
+    assert LIGHT_GROUP_PREFIXES["MAIN"] == frozenset({"parse", "media"})

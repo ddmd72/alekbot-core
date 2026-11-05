@@ -14,6 +14,7 @@ the offset and whose total is N, cut at N; a source that expires within the run'
 (no token refresh between ranges).
 
 Public interface:
+    RangeSource                       the three-method protocol the tunnel client's upstream satisfies
     HttpRangeSource(source, *, wall_s, transport=None, now=None)
         .size() -> int                    raises MediaUnreadable
         .stream(offset) -> AsyncIterator[bytes]   raises MediaUnreadable (the tunnel ends that stream with END error)
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator, Callable, Dict, Optional
+from typing import AsyncIterator, Callable, Dict, Optional, Protocol
 
 import httpx
 
@@ -36,6 +37,16 @@ EXPIRY_GRACE_S = 30.0               # the relay's RELAY_GRACE_S: the source must
 UPSTREAM_CONNECT_S = 10.0
 UPSTREAM_READ_S = 30.0              # ffmpeg's own -rw_timeout in the old path
 _CONTENT_RANGE = re.compile(r"^bytes ([0-9]{1,20})-([0-9]{1,20})/([0-9]{1,20})$")
+
+
+class RangeSource(Protocol):
+    """What the media tunnel reads a source through: its size, then streams from an offset."""
+
+    async def size(self) -> int: ...
+
+    def stream(self, offset: int) -> AsyncIterator[bytes]: ...
+
+    async def aclose(self) -> None: ...
 
 
 class HttpRangeSource:

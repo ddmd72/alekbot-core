@@ -486,8 +486,8 @@ deploy that switches the callers.
 
 The `light` image also carries `ffmpeg` (apt, no recommends; the `render` target does not) for the `media.*` ops (RFC §7 S5, live, accepted 2026-11-05). Those ops
 are tunnel ops on the route `POST /v1/media.<op>` (a raw ASGI app in front of Quart; the indexer opens a full-duplex HTTP/2 stream and serves byte ranges
-of the recording, so the service needs no egress and receives no URL or credential). The caller map gives the **indexer** the prefixes `parse` and `media`,
-the main service `parse` only. The deploy script is unchanged: the 900 s timeout covers the 240 s media ceiling, the 320 Mi volume holds the window files.
+of the recording, so the service needs no egress and receives no URL or credential). The caller map gives both the **indexer** and the main service the prefixes
+`parse` and `media` (the main service probes edit-video sources from memory, S5b). The deploy script is unchanged: the 900 s timeout covers the 240 s media ceiling, the 320 Mi volume holds the window files.
 The indexer needs no new env key: it already has `SANDBOX_PARSE_URL`, and the media adapter targets the same service (no `SANDBOX_MEDIA` knob).
 Like the render service, on Cloud Run its supervisor closes `/tmp` and `/dev/shm` to the engine uid at start-up (gen2 mounts both world-writable) and refuses start when that does not hold (`decisions/sandbox_render_service.md`).
 

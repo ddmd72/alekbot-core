@@ -18,6 +18,10 @@ open. Cloud Run's front end then closes that half itself (spike S4d), and with a
 aborted the stream with RST_STREAM INTERNAL_ERROR, twice in a row, while the sandbox and Cloud Run's request log both recorded success. The spike
 had sent only small frames in that direction.
 
+The main service uses the same op for one thing (S5b, 2026-11-05): `media.probe` of an edit-video source it already holds in
+memory, streamed from `BytesRangeSource` through the same adapter (`VideoDurationPort`); any failure means "duration unknown"
+and the request is not blocked. Its caller group gains `media`.
+
 ## Rejected alternatives
 
 - **(a) Whole file in one request into the work volume:** the volume is memory, so a cap far below 8 GiB, or a re-upload every step.

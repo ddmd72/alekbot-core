@@ -62,6 +62,7 @@ from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.document_service_setup import build_document_service
 from src.composition.sandbox_client_setup import build_html_renderer
+from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
@@ -214,6 +215,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     secret_digest_key = cipher_setup.digest_key(config.get("SECRET_DIGEST_KEY"))
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
+    # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
+    video_duration = build_sandbox_media(config.get("SANDBOX_PARSE_URL") or "")
 
     logger.info("� Initializing Account Repository...")
     account_repo = FirestoreAccountRepository(
@@ -602,6 +605,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         localization=_localization,
         language_service=_language_service,
         alert_sink=_alert_webhook,
+        video_duration=video_duration,
     )
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
     _language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
