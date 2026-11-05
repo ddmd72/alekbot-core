@@ -68,7 +68,8 @@ OPEN_REF = ("The file's drive: ref, from a card, a [Drive: …] label, the commi
             "opened from storage.")
 RECORDING_REF = "The recording's drive: ref."
 SOURCE_REF = ("The file to keep: a chat file name from a [File: …] label, a delivered document key, a workspace:<path> "
-              "file or a skill: file. Never a drive: ref (a file already on the drive is moved, not copied).")
+              "file, a skill: file, or an email: ref from an [Email file: …] label (the attachment keeps its own name unless "
+              "file_name is given). Never a drive: ref (a file already on the drive is moved, not copied).")
 WRITE_FOLDER = (f"Optional, only when the user named a folder: {_FOLDER}; created if missing. Empty saves to "
                 "Inbox.")
 COPY_FILE_NAME = "Optional: the file name to use, extension included; empty keeps the source's name and extension."

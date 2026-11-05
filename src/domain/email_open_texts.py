@@ -36,8 +36,9 @@ EMAIL_NOT_CONNECTED_NOTE = (
 NO_ATTACHMENTS_NOTE = "[System: That email has no attachments.]"
 EMAIL_OPEN_NOT_CONFIGURED_NOTE = "[System: Attachment opening is not configured.]"
 EMAIL_FILE_NOT_TRANSFERABLE_NOTE = (
-    "[System: An email attachment cannot be saved to the drive or sent to the chat yet; it can only be read with "
-    "open_email_attachment. The user can open it in Gmail.]")
+    "[System: An email attachment cannot be used here directly. Read it with open_email_attachment, keep it on the "
+    "drive (work_with_drive_files copies it), or send it to the chat with send_file_to_user, then use the saved "
+    "drive: ref. The user can open it in Gmail.]")
 
 
 def active_kind_refusal_note(kind: str) -> str:
