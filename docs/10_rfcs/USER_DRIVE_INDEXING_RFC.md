@@ -4399,7 +4399,7 @@ windows) -> [opus path]`), same child launcher (`child.serve`, `apply_limits`, a
 limits (`RLIMIT_CPU` 150 s, wall `TRANSCRIBE_EXTRACT_WALL_S` 240 s, `RLIMIT_FSIZE` 64 MiB — a 30-min window is ≈ 5.4 MB;
 `RLIMIT_AS` 1 GiB, ffmpeg needed 19 MB). `ffmpeg` is already in the image (`Dockerfile:11-13`, for pydub); the
 indexer is the same image.
-- **S-Δ6 (sandbox S5, built, not deployed): decoding moved to the sandbox.** The text above describes the T1 in-indexer reader. With S5 the
+- **S-Δ6 (sandbox S5, live, accepted 2026-11-05): decoding moved to the sandbox.** The text above describes the T1 in-indexer reader. With S5 the
   decoder (`ffprobe`/`ffmpeg`, these limits and the demuxer whitelist) runs in the sandbox light service's media child
   (`UNTRUSTED_CONTENT_SANDBOX_RFC.md` §7 S5); `SandboxMediaAdapter` implements `MediaAudioPort`. The indexer keeps the source (the Graph URL or the
   Google bearer) and serves byte ranges over a reverse tunnel; neither a URL nor a credential nor the bytes in one piece reach the sandbox. The
@@ -5151,7 +5151,7 @@ the pinned transcripts alone unless asked (`--mirror`), because a roll-forward n
   languages' wording is an owner review step (§27.15 step 8f).
   There is **a second user** with drive indexing enabled (an empty drive today). For them transcription stays **off**
   — `drive_transcribe_enabled` defaults to False and is not set — until the zero-credential parser service exists
-  (owner, 2026-10-19; OQ-T3). **S-Δ6 / O17:** the decoder now runs in that service (S5, built, not deployed); the owner decided on 2026-11-04 to enable
+  (owner, 2026-10-19; OQ-T3). **S-Δ6 / O17:** the decoder now runs in that service (S5, live, accepted 2026-11-05); the owner decided on 2026-11-04 to enable
   transcripts for a second user right after S5's acceptance, through this same per-connection flag. Consent is **per user and explicit (arbiter call, Δ125):** `drive_transcribe_enabled` is its own flag, default False,
   separate from `drive_indexing_enabled`; indexing alone never sends a recording anywhere. The owner enables it for
   themselves; the Cabinet toggle (later) carries the sentence above. D26's no-re-consent reasoning is not relied on.

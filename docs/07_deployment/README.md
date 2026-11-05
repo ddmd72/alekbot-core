@@ -430,7 +430,7 @@ request per instance (`SANDBOX_RECYCLE=always`, unchanged).
 cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
 libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
 serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
-limits (RFC §4.6); Chromium's own sandbox stays off until the gen2 check (RFC §7 S0-f). S2 is not deployed yet. **One knob for the whole render family** (owner decision O15, 2026-11-04): `SANDBOX_RENDER=sandbox` makes the main service
+limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **One knob for the whole render family** (owner decision O15, 2026-11-04): `SANDBOX_RENDER=sandbox` makes the main service
 send DOCX and PDF to this service; the default `inprocess` keeps both in the main process. Widget PNGs always render in the main process (owner decision O16). There is no per-format switch and no
 fallback between the two.
 
@@ -484,7 +484,7 @@ the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service
 `SANDBOX_PARSE_URL` (set from `_SANDBOX_LIGHT_URL`), locally too. Deploy the service (steps below) before the first
 deploy that switches the callers.
 
-The `light` image also carries `ffmpeg` (apt, no recommends; the `render` target does not) for the `media.*` ops (RFC §7 S5, built, not deployed). Those ops
+The `light` image also carries `ffmpeg` (apt, no recommends; the `render` target does not) for the `media.*` ops (RFC §7 S5, live, accepted 2026-11-05). Those ops
 are tunnel ops on the route `POST /v1/media.<op>` (a raw ASGI app in front of Quart; the indexer opens a full-duplex HTTP/2 stream and serves byte ranges
 of the recording, so the service needs no egress and receives no URL or credential). The caller map gives the **indexer** the prefixes `parse` and `media`,
 the main service `parse` only. The deploy script is unchanged: the 900 s timeout covers the 240 s media ceiling, the 320 Mi volume holds the window files.
