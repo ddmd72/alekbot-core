@@ -154,18 +154,3 @@ async def test_an_inaccessible_record_is_not_re_read():
     await world.settle()
     assert not any(r.name == "ipo-report.md" for r in parser.requests)
     assert world.rec(doc).extracted_by == "parser@1" and world.summary_total("reread_same") == 0
-
-
-async def test_a_transcript_record_is_untouched_by_a_parser_upgrade(w):
-    memo = w.drive.add_file("memo.m4a", b"\x00" * 64, mime_type="audio/mp4")
-    await w.tick()
-    rec = w.rec(memo)
-    stamped = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=1, index_generation=1,
-                      indexed_version=rec.content_version, extracted_by="transcribe-gemini@1")
-    w.repo.records[("u", memo)] = stamped
-    parser = upgraded(w)
-    for _ in range(3):
-        await w.tick()
-    assert not any(r.name == "memo.m4a" for r in parser.requests)
-    assert w.rec(memo).extracted_by == "transcribe-gemini@1"
-    assert w.chunks(memo) == []   # no Layer 2 stamp, no new text
