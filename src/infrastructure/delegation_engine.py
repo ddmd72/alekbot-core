@@ -179,7 +179,7 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
         f"Found {len(emails)} email(s):",
         wrap_untrusted("\n".join(lines), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label=""),
         "\nTo read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}"
-        "\nTo read attachment: delegate get_email_attachment with context={\"email_id\": \"<id>\", \"filename\": \"<filename>\"}",
+        "\nTo read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", \"name\": \"<filename>\"}",
     ])
 
 

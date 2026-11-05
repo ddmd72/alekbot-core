@@ -37,7 +37,7 @@ Your facts are visible in Cabinet → Memory, where you can browse, search, filt
 I index your inbox and make it fully searchable. Three levels of access:
 1. Search: "find emails from my accountant about the 2024 tax return" — I search by topic, sender, date, content
 2. Full email: "show me the full text of that email" — I fetch the complete body
-3. Attachment: "read the PDF attached to that invoice" — I extract and parse the content (PDF, DOCX, and other formats)
+3. Attachment: "read the PDF attached to that invoice" — I open it and read the content, including scanned PDFs. The full email lists each attachment with a reference, so a later turn can open the same file again
 
 These three steps can chain in one conversation — search → read full email → read attachment.
 

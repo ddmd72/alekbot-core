@@ -81,7 +81,7 @@ _LEG_AGENT = {"search_web": "web_agent", "fetch_url": "web_agent", "maps": "maps
 # Smart dry run: delegations that only READ. Everything else is stubbed.
 _READ_ONLY_INTENTS = {
     "search_memory", "search_web", "search_web_light", "fetch_url", "search_emails",
-    "get_email_details", "get_email_attachment", "maps_query", "compute", "compute_math",
+    "get_email_details", "open_email_attachment", "maps_query", "compute", "compute_math",
     "compute_datetime", "compute_finance", "user_guide", "open_file",
 }
 _JUDGE_MODEL = "claude-sonnet-5-5"
