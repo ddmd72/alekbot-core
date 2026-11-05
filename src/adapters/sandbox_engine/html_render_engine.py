@@ -13,8 +13,8 @@ The launcher handed in is the browser family's own (`memory_mode=BROWSER_MEMORY_
 GiB of address space at start), so the browser child is bounded by RLIMIT_DATA per process and by the instance memory
 as a whole; NPROC counts threads per uid and Chromium starts with ~60-120. S0-f confirms the numbers.
 
-`CHROMIUM_OWN_SANDBOX`: whether Chromium's namespace + seccomp sandbox runs under the uid boundary. Unknown on Cloud Run
-gen2 until S0-f; a code constant, not an env knob (no new deploy substitution).
+`CHROMIUM_OWN_SANDBOX`: whether Chromium's namespace + seccomp sandbox runs under the uid boundary. Off, accepted
+(the S0-f live check passed without it); a code constant, not an env knob (no new deploy substitution).
 
 **No engine or browser text leaves**: a non-ok answer carries a fixed detail code only. No repair loop consumes the text
 (unlike render.docx, RFC §4.9) and the browser's stderr can echo attacker-chosen URLs; the client maps statuses to fixed

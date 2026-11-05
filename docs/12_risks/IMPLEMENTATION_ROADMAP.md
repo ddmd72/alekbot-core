@@ -47,11 +47,10 @@ the next free id and says what is wrong, where (file and function, not line numb
   in-process path. See
   `docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md` and `decisions/sandbox_render_service.md`.
 
-### R-3: The drive parser can reach the metadata server and the network (accepted)
+### R-3: The drive parser can reach the metadata server and the network (closed)
 
-- The parser child runs as the unprivileged `driveparser` user under rlimits: it cannot read the indexer's keys or
-  rewrite its code, but it shares the network. Owner-accepted residual until the zero-credential parser service
-  exists; see `decisions/drive_parser_sandbox_resource_isolation.md`.
+- Closed: the parser runs only in the sandbox light service (zero-role identity, no egress, a separate uid per
+  request); no credentialed runtime parses hostile bytes. See `decisions/drive_parser_sandbox_resource_isolation.md`.
 
 ### R-4: Session writes soft-fail by default
 
