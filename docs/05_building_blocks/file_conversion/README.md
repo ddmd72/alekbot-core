@@ -31,8 +31,9 @@ read turn:    opener (FileManagementAgent / DriveOperations, or the coordinator'
 
 Layers: `FileConversionService` (`src/services/file_conversion_service.py`) resolves refs and stages bytes;
 `DocumentService` (`src/services/document_service.py`) reads bytes behind `DocumentReadPort`
-(`src/ports/document_read_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
-`document_open.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
+(`src/ports/document_read_port.py`); the macro check's ZIP facts come behind `ContainerFactsPort`
+(`src/ports/container_facts_port.py`); contracts and texts are pure domain modules (`src/domain/document_read.py`,
+`document_open.py`, `active_kind.py`, `container_facts.py`, `document_limits.py`, `document_presentation.py`, `document_open_texts.py`);
 `src/utils/file_conversion.py` keeps the alert texts and the markitdown helpers (no `src/` caller reads email through them after U4a).
 
 > **See also:** [../file_storage/README.md](../file_storage/README.md) (GCS storage, the upload turn),
@@ -56,6 +57,28 @@ recordings, video and the drive's §29 decision stay with the caller (`DriveOper
 (DocPlanner, PdfGenerator, HtmlPageGenerator): the text as `content`, marked and cut at 60 000 characters, or a `note`
 the specialist reports ("do not guess"). It never raises and never transcribes. The coordinator injects `file_content`
 or `file_note` into the specialist's params (`agent_coordinator.py:609`).
+
+### `FileConversionService.resolve_file` (save and send)
+
+`resolve_file(ref, user_id, *, action) -> ResolvedFile` (`action` is `"save"` or `"send"`) returns the bytes, name and
+declared mime of any ref for an action that no model reads: nothing is parsed, marked or cut. The cap is the action's
+(`action_cap()`), checked on metadata where the store has it (drive) and on the bytes elsewhere. An `email:` ref costs one
+part listing and one download (the part found by its id). A Google native is named by its export (`DriveItem.exported`:
+the export's mime and extension). What the service decides itself raises `FileNotResolved`, whose `line` is the honest
+note (cap, folder, every email note); the callers answer with it. Callers: `copy_file_to_drive` (accepts `email:` refs) and
+the FileManagement intent `send_file_to_user` (SYNC; `file_ref` plus an optional `file_name`; delivery through
+`UserNotificationService.notify_file_bytes` to the origin channel; a refusal answers with a note, a failed upload is a
+failure).
+
+**D13: active kinds from email are not sent.** For an `email:` ref only, `send_file_to_user` calls
+`active_kind_of(resolved, deadline_at=...)` on the file as resolved and again under the name the model gave. It compares
+the head (64 KiB) in `src/domain/active_kind.py` (HTML, SVG, shortcut, disk image, executable, script) and, for a ZIP
+family file (`needs_container_check`), asks `ContainerFactsPort.container_facts` for the macro facts. The adapter is
+`SandboxContentExtractor` over the sandbox light op `parse.container_facts` (central directory and `[Content_Types].xml`
+only); the main service reads no ZIP. A name or mime naming an active kind blocks too, never unblocks. **Fail closed:** no
+port, an outage, a run failure, `error` or `too_large` leaves the container unchecked, and `active_kind` answers
+`unchecked_container`: the file is refused with a "could not be checked" note, never sent. Drive and chat refs are sent
+without the check.
 
 ### `DocumentService.read`
 
@@ -150,12 +173,9 @@ File contents never leave in telemetry: file parts of LLM calls are replaced by 
 
 ## Not built yet
 
-- **Email save and send (U4b).** `copy_file_to_drive` and `send_file_to_user` from an `email:` ref; until then a save or
-  send of an `email:` ref answers with an honest "not available yet" line.
 - **One parse engine (U5).** Until then a `text/*` upload of csv or html is read raw as UTF-8 in the service (A3), and
   markitdown's auto-detect path in `convert_file_to_text` is kept only for the U0-b report script; U5 moves it to the
   child's readers with the four fixes of RFC §7.
-- `resolve_file` (the shared resolver for actions) is deferred to U4b.
 
 ---
 

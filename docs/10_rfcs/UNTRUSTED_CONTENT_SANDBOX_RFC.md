@@ -273,6 +273,7 @@ One route family, versioned: `POST /v1/{op}`.
 | `parse.pdf_page_count` | PDF bytes | JSON `{pages_total}` | same |
 | `parse.pdf_window` | PDF bytes, first page, count | PDF bytes | same |
 | `parse.pdf_windows` | PDF bytes, window plan | the windows, streamed one after another (one upload instead of one per window) | same |
+| `parse.container_facts` (built, EXTERNAL_FILES U4b, O2 of that RFC) | any bytes (a ZIP-family file), `limits`; no meta | JSON `{status: zip\|not_zip\|too_large\|error, members, vba_project, macro_content_type, odf_macros}` | `drive_parser/child.py` op `container_facts` over `document_hardening.zip_container_facts`: reads the ZIP central directory and inflates one member, `[Content_Types].xml` (≤ 1 MiB); above `MAX_ZIP_MEMBERS` members the status is `too_large`, no facts. Light service, the caller groups that already hold `parse.*` (MAIN, INDEXER); only the main service calls it, through `ContainerFactsPort` (`SandboxContentExtractor`) |
 | `media.probe` (built, S5; tunnel) | START body frame: source size, window plan, limits; ranges via the tunnel | RESULT frame: JSON `{duration_s, has_audio, container}` | `MediaEngine` + `media_child` (`src/adapters/sandbox_engine/media_engine.py`) |
 | `media.audio_windows` (built, S5; tunnel) | START body frame: source size, window plan, limits; ranges via the tunnel | RESULT frame (windows, eof, `no_audio`, `too_long`) and Opus window bytes as DATA frames | same; `ffmpeg` per §27.4 |
 | `render.docx` (built, S1) | body `u32-be script_length \| script \| spec`, `limits` | DOCX bytes; on a script error its text in the body, capped at 16 KiB | `DocxRenderEngine` (`src/adapters/sandbox_engine/docx_render_engine.py:47`), a new engine: `NodeDocxRunner` writes into the repo tree and sets no rlimits (`decisions/sandbox_render_service.md`) |
@@ -295,7 +296,7 @@ One route family, versioned: `POST /v1/{op}`.
   `unsupported`, `too_large`, `encrypted`, `error`) is the **header detail** of that `ok` answer and the `status` of the JSON body, so a `no_text` result
   keeps its `pages_total` and `capture_signals` (the server streams a body only on `ok`). A run failure is a non-ok header: `timeout`, `memory`
   (new: a killed child leaves no result), `error`, `bad_request`, `too_large`. Every non-ok answer is logged at WARNING. Ops built: `parse.extract`
-  (meta `kind` required, `ext` optional), `parse.pdf_page_count` and `parse.pdf_windows` (meta `windows`: 1..200 `[first_page, page_count]` pairs;
+  (meta `kind` required, `ext` optional), `parse.container_facts` (no meta; the facts are the body of an `ok` answer, a status of `error` or `too_large` is a result, not a non-ok header), `parse.pdf_page_count` and `parse.pdf_windows` (meta `windows`: 1..200 `[first_page, page_count]` pairs;
   response `u32-be count | (u32-be length | bytes) x count`, all or nothing under one wall clock; a window whose result is not `text` answers `ok` with
   that status and a `{status, detail}` body, no frame). There is no single-window op: one window is a batch of one. Caps: request = the 100 MiB PDF
   cap plus 1 MiB, response the same figure (owner, 2026-11-03).

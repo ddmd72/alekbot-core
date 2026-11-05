@@ -23,6 +23,7 @@ Public interface:
     kind_of(name, mime, is_folder) -> str
     mime_kind(mime) -> Optional[str]
     mime_decides_kind(name, mime) -> bool
+    export_file_name(name, mime) -> str     a provider export's name: the export's extension appended unless present
 """
 from __future__ import annotations
 
@@ -265,6 +266,22 @@ def mime_decides_kind(name: str, mime: str) -> bool:
     if by_ext == by_mime or by_ext not in _MIME_TABLE_KINDS:
         return False
     return not (by_ext in _MIME_TEXT_KINDS and by_mime in _MIME_TEXT_KINDS)
+
+
+_EXPORT_SUFFIX: Dict[str, str] = {
+    "markdown": ".md", "text": ".txt", "csv": ".csv", "pdf": ".pdf", "docx": ".docx", "xlsx": ".xlsx", "pptx": ".pptx",
+}
+
+
+def export_file_name(name: str, mime: str) -> str:
+    """The name of a provider export's bytes (a Google native, `DriveItem.exported`): `name` with the extension of the
+    export's mime appended unless the name already ends with it ("Q3 plan" + text/markdown -> "Q3 plan.md"; "Q3 plan.md"
+    stays; "brief.docx" exported as Markdown -> "brief.docx.md", the bytes being Markdown). A mime outside the table
+    leaves the name as it is."""
+    suffix = _EXPORT_SUFFIX.get(mime_kind(mime) or "", "")
+    if not suffix or name.lower().endswith(suffix):
+        return name
+    return name + suffix
 
 
 def kind_of(name: str, mime: str, is_folder: bool) -> str:

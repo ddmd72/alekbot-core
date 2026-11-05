@@ -4,6 +4,9 @@ ParseEngine: the service's `parse.*` engine (UNTRUSTED_CONTENT_SANDBOX_RFC §4.6
     parse.extract          one child, `{"op": "extract"}`, on `source.<ext>` (a hard link of the request body)
     parse.pdf_page_count   one child, `{"op": "pdf_page_count"}`, on the body
     parse.pdf_windows      one child per window (`{"op": "cut_pdf_window"}`), in order, under one wall clock
+    parse.container_facts  one child, `{"op": "container_facts"}`, on the body (EXTERNAL_FILES D13, owner decision O2):
+                           the ZIP facts of `document_hardening.zip_container_facts`; its status (`zip`, `not_zip`,
+                           `too_large`, `error`) is the detail of an ok answer like a parser status
 
 The child is the drive parser's own (`drive_parser/child.py`, through `parse_child.py`), unchanged, started by the
 `ChildLauncher` (own uid, allowlisted environment, `limits_exec` applied before it loads). Each child re-applies the
@@ -61,7 +64,8 @@ CHILD_ENV: Mapping[str, str] = {
 }
 
 _NO_RESULT = "no valid result"
-_PARSE_OPS = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS)
+_PARSE_OPS = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS,
+              SandboxOp.PARSE_CONTAINER_FACTS)
 
 
 class NotRegularFile(OSError):
@@ -118,6 +122,9 @@ class ParseEngine:
             return await self._answer(result)
         if self._op is SandboxOp.PARSE_PDF_PAGE_COUNT:
             result = await self._child(0, {"op": "pdf_page_count", "path": body_path}, workdir, limits, started, peak)
+            return await self._answer(result)
+        if self._op is SandboxOp.PARSE_CONTAINER_FACTS:
+            result = await self._child(0, {"op": "container_facts", "path": body_path}, workdir, limits, started, peak)
             return await self._answer(result)
         if not meta.windows:
             raise _Failure(SandboxStatus.BAD_REQUEST, "windows are required")

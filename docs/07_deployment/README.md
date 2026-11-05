@@ -42,6 +42,8 @@ queue then the indexer and its binding, the research job, the relay and its bind
 queue it feeds). The sandbox steps stay serial and wait for all of them. A failing drive, relay or sandbox step therefore
 never blocks a fix of the bot, and the parallel tail costs the longest branch (the indexer deploy), not the sum.
 
+**Deploy order and the sandbox light service.** The main service deploys first and the sandbox light service last, so a revision that uses a new `parse.*` op reaches the main service before the sandbox serves it. For `parse.container_facts` (the D13 macro check on email sends) that is a brief window in which every ZIP-family email attachment send is refused as "could not be checked" (fail closed, no unchecked send); it ends when the light deploy finishes.
+
 **Voice relay** (`relay_main.py`, a plain `websockets` server; [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md)
 §4.14). Its own service because an open WebSocket is one long billed request and needs the 3600 s timeout, which must not
 apply to the main service.

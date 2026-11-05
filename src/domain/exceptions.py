@@ -384,6 +384,16 @@ class MediaStreamFailed(Exception):
     connection). The message never carries the source's url or headers (they are secrets)."""
 
 
+class FileNotResolved(Exception):
+    """`FileConversionService.resolve_file` refused to hand over a file's bytes for an action (save, send) for a reason
+    it decided itself: the action cap, a folder, or an email attachment's note (gone, missing, empty, the mailbox did
+    not answer, not connected, not configured). `line` is the honest `[System: …]` line for the model."""
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        self.line = line
+
+
 class EmailFileNotTransferable(Exception):
     """An `email:` ref was given to a path that needs the file's bytes (save to the drive, copy, send) before U4b builds
     it. The message is the honest line for the model (`email_open_texts.EMAIL_FILE_NOT_TRANSFERABLE_NOTE`)."""

@@ -69,7 +69,7 @@ from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS
 from ..domain.document_kind import kind_of
-from ..domain.document_open import OpenedFile
+from ..domain.document_open import ACTION_SAVE, OpenedFile
 from ..domain.document_open_texts import shown_line, storage_read_note
 from ..domain.document_presentation import present_text
 from ..domain.document_read import (
@@ -110,7 +110,7 @@ from ..domain.drive_line import DriveLine
 from ..domain.drive_preflight import DrivePreflight
 from ..domain.drive_search_line import SearchLine
 from ..domain.drive_tier_result import CoverageFacts
-from ..domain.exceptions import EmailFileNotTransferable, WorkspaceRefused
+from ..domain.exceptions import EmailFileNotTransferable, FileNotResolved, WorkspaceRefused
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
@@ -512,13 +512,23 @@ class DriveOperations:
 
     async def copy(self, context: Mapping[str, Any], user_id: str, source_ref: str, *, folder: Any = None,
                    file_name: Any = None, wait_s: float) -> DriveOutcome:
-        """A chat file, delivered document, `workspace:` or `skill:` file → the drive (§4.4)."""
+        """A chat file, delivered document, `workspace:` or `skill:` file, or an `email:` attachment → the drive (§4.4).
+        An `email:` source comes from `resolve_file(action="save")`, named after the attachment unless `file_name`."""
         async def run() -> DriveOutcome:
             ref = source_ref or ""
             # Refuse before naming: drive_filename() on a drive ref would produce "drive_<id>" (§4.4).
             if drive_ref.is_drive_ref(ref):
                 return _fail(DriveOp.COPY, f"'{ref}' is already on the drive; use move_file.",
                              OutcomeClass.REQUEST_ERROR)
+            if classify_ref(ref) is FileRefKind.EMAIL:
+                try:
+                    resolved = await self._conversion_service.resolve_file(ref, user_id, action=ACTION_SAVE)
+                except FileNotResolved as e:
+                    raise _Refusal(e.line, OutcomeClass.REFUSED)
+                data = resolved.data
+                filename = drive_filename(file_name, resolved.name)
+                mime = resolved.mime or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                return await self._store(DriveOp.COPY, user_id, data, filename, mime, folder)
             data = await self._source_bytes(ref, user_id, DriveOp.COPY)
             filename = drive_filename(file_name, ref)
             mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"

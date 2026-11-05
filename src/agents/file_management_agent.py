@@ -17,6 +17,7 @@ today's AgentResponse, text for text; `delete_file` refuses a `drive:` ref (§4.
 """
 
 import asyncio
+import dataclasses
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 
@@ -32,7 +33,14 @@ from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..infrastructure.agent_manifest import Intent
 from ..infrastructure.drive_operations import DriveOperations
 from ..domain.document_limits import MAX_VIDEO_ATTACH_BYTES
+from ..domain.document_kind import SNIFF_HEAD_BYTES, kind_of, sniff_kind
+from ..domain.document_open import ACTION_SEND
 from ..domain.document_read import INTERACTIVE_OPEN_S, OPEN_MARGIN_S
+from ..domain.email_open_texts import active_kind_refusal_note
+from ..domain.email_ref import escape_email_name
+from ..domain.exceptions import FileNotResolved
+from ..domain.file_ref import FileRefKind, classify_ref
+from ..domain.user_drive import DriveAccessRefused, DriveRefRefused, drive_filename
 from ..ports.file_storage_port import FileStoragePort
 from ..utils.logger import logger
 
@@ -43,6 +51,13 @@ if TYPE_CHECKING:
     from ..services.user_drive_service import UserDriveService
     from ..services.file_conversion_service import FileConversionService
     from ..services.user_notification_service import UserNotificationService
+
+
+# What a sent file's upload title names first (the store it came from).
+_STORE_TITLES = {
+    FileRefKind.EMAIL: "Email attachment", FileRefKind.DRIVE: "Drive file", FileRefKind.WORKSPACE: "Workspace file",
+    FileRefKind.SKILL: "Skill file", FileRefKind.DELIVERED: "Delivered document", FileRefKind.CHAT: "Chat file",
+}
 
 
 class FileManagementAgent(BaseAgent):
@@ -74,6 +89,8 @@ class FileManagementAgent(BaseAgent):
             localization=localization, language_service=language_service, drive_search=drive_search,
         )
         self._storage = storage
+        self._conversion = conversion_service
+        self._notification = notification
 
     # Read-only views of the shared operations' state, still read by the shared-instance contract test.
     @property
@@ -115,6 +132,9 @@ class FileManagementAgent(BaseAgent):
                 return self._fail(message, f"'{ref}' is on the user's drive; delete it through work_with_drive_files.")
             return await self._delete(message, payload, user_id)
 
+        if intent == Intent.SEND_FILE_TO_USER:
+            return await self._send(message, payload, context, user_id)
+
         logger.warning(
             "FileManagementAgent: unknown intent '%s'", intent,
         )
@@ -123,7 +143,7 @@ class FileManagementAgent(BaseAgent):
             agent_id=self.agent_id,
             error=(
                 f"File agent does not support intent '{intent}'. "
-                f"Supported intents: open_file, delete_file."
+                f"Supported intents: open_file, delete_file, send_file_to_user."
             ),
         )
 
@@ -157,6 +177,54 @@ class FileManagementAgent(BaseAgent):
 
     def _fail(self, message: AgentMessage, error: str) -> AgentResponse:
         return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=error)
+
+    def _answer(self, message: AgentMessage, text: str) -> AgentResponse:
+        """A successful answer: what the model reads next. A refusal travels this way, never as a failure (a failure
+        is wrapped as "correct your input" and the model repeats the call)."""
+        self._on_agent_success(char_count=len(text), output_text=text[:200])
+        return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result=text, confidence=1.0)
+
+    async def _send(self, message: AgentMessage, payload: dict, context: dict, user_id: str) -> AgentResponse:
+        """`send_file_to_user` (EXTERNAL_FILES_RFC §4.2, D8, D13): any ref's bytes through the core's resolver, an
+        email attachment through D13's active-kind check, then one upload to the origin channel. A refusal is an
+        answer; only an upload that did not happen is a failure."""
+        ref = payload.get("file_ref") or ""
+        if not ref:
+            return self._fail(message, 'file_ref is required for send_file_to_user. Pass context={"file_ref": "<ref>"}.')
+        self._on_agent_start(f"send_file_to_user: {ref}")
+        deadline_at = time.time() + self._open_budget_s()
+        try:
+            resolved = await self._conversion.resolve_file(ref, user_id, action=ACTION_SEND)
+        except (FileNotResolved, DriveRefRefused, DriveAccessRefused) as e:
+            return self._answer(message, e.line)
+        except (FileNotFoundError, PermissionError) as e:
+            logger.warning("FileManagementAgent: send_file_to_user could not read '%s': %s", ref, type(e).__name__)
+            return self._fail(message, f"File '{ref}' was not found (or is not the user's); nothing was sent. "
+                              "For an email attachment, pass its email: ref from get_email_details.")
+        name = drive_filename(payload.get("file_name"), resolved.name)
+        is_email = classify_ref(ref) is FileRefKind.EMAIL
+        if is_email:
+            candidates = [resolved]
+            if name != resolved.name:
+                candidates.append(dataclasses.replace(resolved, name=name))
+            for candidate in candidates:
+                active = await self._conversion.active_kind_of(candidate, deadline_at=deadline_at)
+                if active is not None:
+                    logger.info("FileManagementAgent: send_file_to_user refused an email attachment (kind=%s)", active)
+                    return self._answer(message, active_kind_refusal_note(active))
+        kind = sniff_kind(resolved.data[:SNIFF_HEAD_BYTES], kind_of(resolved.name, resolved.mime, False))
+        store = _STORE_TITLES.get(classify_ref(ref), "File")
+        if self._notification is None:
+            return self._fail(message, "File delivery is not configured; the file was not sent.")
+        sent = await self._notification.notify_file_bytes(
+            user_id=user_id, account_id=context.get("account_id") or "", file_bytes=resolved.data, filename=name,
+            title=f"{store} ({kind})", channel_id_override=context.get("origin_channel_id"),
+            platform_override=context.get("origin_platform"),
+        )
+        if not sent:
+            return self._fail(message, f"'{name}' could not be delivered to the user's chat; nothing was sent.")
+        shown = escape_email_name(name) if is_email else name
+        return self._answer(message, f"Sent '{shown}' ({kind}) to the user's chat as a file.")
 
     async def _delete(
         self, message: AgentMessage, payload: dict, user_id: str,

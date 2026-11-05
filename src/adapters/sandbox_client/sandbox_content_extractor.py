@@ -18,6 +18,10 @@ is never raised: there is no client-side slot (D1); the service's own 429 is `Pa
 domain's `split_windows`, all or nothing. Nothing here imports a parser library, `json` or `decode` (architecture
 test); bodies are decoded by `domain/sandbox_parse_result` and `domain/sandbox_windows_frame`.
 
+`container_facts` (`ContainerFactsPort`, EXTERNAL_FILES D13 / owner decision O2) is one `parse.container_facts`
+request with the bytes as the body: the ZIP facts the D13 macro check needs, read in the sandbox. A run failure or an
+invalid answer is `ContainerFacts(status=ERROR)`; an outage is `ParserUnavailable`, as for the other ops.
+
 Public interface:
     SandboxContentExtractor(client)    extractor_id = PARSER, version = PARSER_VERSION
 """
@@ -30,6 +34,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ...domain.container_facts import ContainerFacts, ContainerStatus, container_facts_from_result
 from ...domain.document_extraction import PARSER, PARSER_VERSION, ExtractionStatus
 from ...domain.drive_capture import signals_from_json
 from ...domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ParserUnavailable, PdfSplitFailed
@@ -50,6 +55,7 @@ from ...domain.sandbox_contract import (
 from ...domain.sandbox_errors import SandboxMisconfigured, SandboxUnavailable
 from ...domain.sandbox_parse_result import ParseResultError, decode_parse_result
 from ...domain.sandbox_windows_frame import BadFrame, split_windows
+from ...ports.container_facts_port import ContainerFactsPort
 from ...ports.content_extractor_port import ContentExtractorPort
 from ...ports.pdf_splitter_port import PdfSplitterPort
 from ...utils.logger import logger
@@ -70,7 +76,7 @@ _RUN_FAILURES = {
 }
 
 
-class SandboxContentExtractor(ContentExtractorPort, PdfSplitterPort):
+class SandboxContentExtractor(ContentExtractorPort, PdfSplitterPort, ContainerFactsPort):
 
     def __init__(self, client: SandboxHttpClient) -> None:
         self._client = client
@@ -156,13 +162,32 @@ class SandboxContentExtractor(ContentExtractorPort, PdfSplitterPort):
                     os.unlink(out_path)
             raise
 
+    # -- ContainerFactsPort -------------------------------------------------------------------------------------
+
+    async def container_facts(self, data: bytes, *, deadline_at: Optional[float] = None) -> ContainerFacts:
+        op = SandboxOp.PARSE_CONTAINER_FACTS
+        if len(data) > REQUEST_CAP_BYTES:
+            return ContainerFacts(status=ContainerStatus.TOO_LARGE, detail=f"{len(data)} bytes")
+        limits, lowered = _limits(deadline_at)
+        if limits is None:
+            logger.warning("[SandboxParse] container_facts: the deadline passed, no request sent")
+            return ContainerFacts(status=ContainerStatus.ERROR, detail="deadline")
+        reply = await self._call(op, None, limits, deadline_at, body=data)
+        failure = self._run_failure(op, reply.outcome, lowered)
+        if failure is not None:
+            return ContainerFacts(status=ContainerStatus.ERROR, detail=f"{failure[0].value}: {failure[1]}")
+        result = self._result(op, reply)
+        if result is None:
+            return ContainerFacts(status=ContainerStatus.ERROR, detail="invalid result")
+        return container_facts_from_result(result)
+
     # -- the call -----------------------------------------------------------------------------------------------
 
-    async def _call(self, op: SandboxOp, path: str, limits: SandboxLimits, deadline_at: Optional[float], *,
+    async def _call(self, op: SandboxOp, path: Optional[str], limits: SandboxLimits, deadline_at: Optional[float], *,
                     kind: Optional[str] = None, ext: Optional[str] = None,
-                    windows: Optional[Sequence[Tuple[int, int]]] = None) -> SandboxReply:
+                    windows: Optional[Sequence[Tuple[int, int]]] = None, body: Optional[bytes] = None) -> SandboxReply:
         try:
-            return await self._client.call(op, None, limits, kind=kind, ext=ext, body_path=path,
+            return await self._client.call(op, body, limits, kind=kind, ext=ext, body_path=path,
                                            deadline_at=deadline_at, windows=windows)
         except SandboxUnavailable as exc:
             raise ParserUnavailable(exc.reason) from exc

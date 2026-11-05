@@ -1,7 +1,7 @@
 """
 What `FileConversionService.open` and `.prefetch` return (docs/10_rfcs/EXTERNAL_FILES_RFC.md §4.2, §4.4, P18). Pure.
 
-Three public classes on purpose (CLAUDE.md's one-class rule waived): the answers of one open path, read together.
+Four public classes on purpose (CLAUDE.md's one-class rule waived): the answers of one open path, read together.
 
 `OpenedFile` is exactly one of three answers: `body`, today's `"[File: <name>]\\n<text>\\n[/File: <name>]"`, raw,
 unmarked and uncut (the store's presenter marks and cuts it, §4.5, §4.6); `note`, a `[System: …]` note; or a native
@@ -19,7 +19,12 @@ parts to choose from, each label the full `email_file_label`, when several match
 ref for an email with several attachments); then nothing is opened, `note` lists them and `needs_choice` is True.
 A choice is a successful answer, never an exception: the caller tells it from an open by `needs_choice`.
 
+`ResolvedFile` is `FileConversionService.resolve_file`'s answer (§4.2 "Resolver callers", U4b): the bytes of a file
+for an action (save to the drive, send to the chat), its name and its declared mime type. No model reads them.
+
 Public interface:
+    ACTION_SAVE, ACTION_SEND, ACTIONS                                       what `resolve_file` resolves bytes for
+    ResolvedFile(data, name, mime)                                          `data` kept out of the repr
     OpenedFile(outcome, body="", note="", native_path="", native_mime="")   ValueError unless exactly one answer
     Prefetched(content="", note="")                                         ValueError when both are set
     EmailOpening(opened=None, ref="", name="", size=0, mime="", candidates=(), note="")
@@ -30,11 +35,22 @@ Public interface:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import FrozenSet, Optional, Tuple
 
 from .document_read import ReadOutcome
 from .email_ref import email_file_label
+
+ACTION_SAVE = "save"
+ACTION_SEND = "send"
+ACTIONS: FrozenSet[str] = frozenset({ACTION_SAVE, ACTION_SEND})
+
+
+@dataclass(frozen=True)
+class ResolvedFile:
+    data: bytes = field(repr=False)
+    name: str
+    mime: str
 
 
 @dataclass(frozen=True)

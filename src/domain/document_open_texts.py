@@ -16,6 +16,8 @@ Public interface:
     image_too_large_note(name), image_format_note(name)            an image the consumer cannot take
     open_failed_note(ref)                                          an unexpected error while opening a file
     storage_read_note(ref)                                         the store could not be read right now
+    folder_note(path)                                              a folder ref given where a file is needed
+    action_too_large_note(name, size_bytes, limit_bytes, action)   a file above the action cap (save, send; U4b)
     shown_line(name, outcome) -> str                               D7: what a page-wise read shows; "" for nothing
 """
 from __future__ import annotations
@@ -107,6 +109,22 @@ def storage_read_note(ref: str) -> str:
     """The file store failed while a stored file was downloaded: the file may be fine, the store is not."""
     return (f"[System: The file '{ref}' could not be read from storage right now; try again later. "
             f"Do not guess what it contains.]")
+
+
+def folder_note(path: str) -> str:
+    """A folder ref given where a file is needed (save, send): the hint to list it."""
+    return f"[System: '{path or '/'}' is a folder, not a file. List the folder to see what is inside.]"
+
+
+_ACTION_WORDS = {"save": "saved to the drive", "send": "sent to the chat"}
+
+
+def action_too_large_note(name: str, size_bytes: int, limit_bytes: int, action: str) -> str:
+    """A file above `document_limits.action_cap()` for a save or a send (EXTERNAL_FILES §4.5 "Bytes for an action").
+    `name` is printed as given: the caller escapes a sender's name first."""
+    mb = 1024 * 1024
+    return (f"[System: '{name}' is {size_bytes / mb:.1f} MB; a file above {limit_bytes // mb} MB cannot be "
+            f"{_ACTION_WORDS.get(action, 'used here')}.]")
 
 
 def _pages(pages: Sequence[int]) -> str:

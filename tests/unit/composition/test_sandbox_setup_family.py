@@ -70,12 +70,14 @@ def test_light_on_cloud_run_without_callers_is_still_refused_and_without_url_is_
     assert plan.unconfigured is True and plan.engine_user == "sandboxengine"
 
 
-def test_light_registry_maps_the_three_parse_ops_and_no_render_op(tmp_path):
+def test_light_registry_maps_the_four_parse_ops_and_no_render_op(tmp_path):
+    """EXTERNAL_FILES U4b (D13, owner decision O2): `parse.container_facts` is the fourth parse op."""
     from src.adapters.sandbox_engine.parse_engine import ParseEngine
 
     plan = _light({"SANDBOX_WORK_ROOT": str(tmp_path / "w"), "SANDBOX_OUTPUT_ROOT": str(tmp_path / "o")})
     registry = build_engine_registry(plan)
-    assert set(registry) == {SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS}
+    assert set(registry) == {SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS,
+                             SandboxOp.PARSE_CONTAINER_FACTS}
     assert all(isinstance(engine, ParseEngine) for engine in registry.values())
     assert {op: engine._op for op, engine in registry.items()} == {op: op for op in registry}
 

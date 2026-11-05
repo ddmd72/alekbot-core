@@ -381,7 +381,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             transcriber=audio_service,
             transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
             parser=parse_adapter,
-        ))
+        ), containers=parse_adapter)   # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
