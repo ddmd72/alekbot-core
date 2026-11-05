@@ -40,6 +40,7 @@ from src.domain.llm import LLMResponse
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.ports.video_duration_port import VideoDurationPort
 from src.ports.video_generation_port import VideoGenerationPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.services.file_conversion_service import FileConversionService
@@ -113,6 +114,7 @@ def agent(mock_llm, mock_prompt_builder, mock_video_port):
         config=config,
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         max_duration_s=10,
@@ -163,6 +165,7 @@ async def test_execute_edit_video_forwards_origin_platform(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -171,8 +174,8 @@ async def test_execute_edit_video_forwards_origin_platform(
     msg = _make_message("edit_video", context={"origin_platform": "telegram"})
     msg.payload["video_ref"] = "clip.mp4"
 
-    with patch(
-        "src.agents.video_generation_agent.probe_video_duration_s",
+    with patch.object(
+        agent._video_duration, "duration_s",
         new=AsyncMock(return_value=5.0),
     ):
         await agent.execute(msg)
@@ -219,6 +222,7 @@ async def test_execute_generate_video_per_user_override_raises_ceiling(mock_llm,
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         max_duration_s=20,  # this user's own override, higher than the system default of 10
@@ -250,6 +254,7 @@ async def test_execute_generate_video_with_image_ref_resolves_bytes(mock_llm, mo
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -297,6 +302,7 @@ async def test_crafting_call_includes_image_presence_marker_with_image_ref(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -321,6 +327,7 @@ async def test_crafting_call_includes_edit_mode_marker_for_edit_video(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -392,6 +399,7 @@ async def test_execute_edit_video_happy_path(mock_llm, mock_prompt_builder, mock
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -400,8 +408,8 @@ async def test_execute_edit_video_happy_path(mock_llm, mock_prompt_builder, mock
 
     msg = _make_message("edit_video", query="make the sky sunset orange")
     msg.payload["video_ref"] = "clip.mp4"
-    with patch(
-        "src.agents.video_generation_agent.probe_video_duration_s",
+    with patch.object(
+        agent._video_duration, "duration_s",
         new=AsyncMock(return_value=5.0),
     ):
         response = await agent.execute(msg)
@@ -431,6 +439,7 @@ async def test_execute_edit_video_resolve_bytes_failure(mock_llm, mock_prompt_bu
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -456,6 +465,7 @@ async def test_execute_edit_video_oversized_video_fails_without_calling_port(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -479,6 +489,7 @@ async def test_execute_edit_video_port_raises_fails(mock_llm, mock_prompt_builde
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -487,8 +498,8 @@ async def test_execute_edit_video_port_raises_fails(mock_llm, mock_prompt_builde
 
     msg = _make_message("edit_video")
     msg.payload["video_ref"] = "clip.mp4"
-    with patch(
-        "src.agents.video_generation_agent.probe_video_duration_s",
+    with patch.object(
+        agent._video_duration, "duration_s",
         new=AsyncMock(return_value=5.0),
     ):
         response = await agent.execute(msg)
@@ -508,6 +519,7 @@ async def test_execute_edit_video_source_too_long_fails_without_calling_port(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -516,8 +528,8 @@ async def test_execute_edit_video_source_too_long_fails_without_calling_port(
 
     msg = _make_message("edit_video")
     msg.payload["video_ref"] = "clip.mp4"
-    with patch(
-        "src.agents.video_generation_agent.probe_video_duration_s",
+    with patch.object(
+        agent._video_duration, "duration_s",
         new=AsyncMock(return_value=12.4),
     ):
         response = await agent.execute(msg)
@@ -540,6 +552,7 @@ async def test_execute_edit_video_probe_failure_does_not_block(
         config=AgentConfig(agent_id="video_generation_agent_user123", agent_type="video_generation"),
         execution_context=_make_execution_context(mock_llm),
         video_port=mock_video_port,
+        video_duration=AsyncMock(spec=VideoDurationPort, **{"duration_s.return_value": None}),
         prompt_builder=mock_prompt_builder,
         user_id="user123",
         file_conversion=mock_file_conversion,
@@ -548,8 +561,8 @@ async def test_execute_edit_video_probe_failure_does_not_block(
 
     msg = _make_message("edit_video")
     msg.payload["video_ref"] = "clip.mp4"
-    with patch(
-        "src.agents.video_generation_agent.probe_video_duration_s",
+    with patch.object(
+        agent._video_duration, "duration_s",
         new=AsyncMock(return_value=None),
     ):
         response = await agent.execute(msg)
