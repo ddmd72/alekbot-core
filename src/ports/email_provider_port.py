@@ -37,12 +37,10 @@ class EmailProviderPort(ABC):
         self,
         credentials: OAuthCredential,
         email_ids: List[str],
-        deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
         """
         Fetch full content for a list of email IDs in parallel (semaphore=10 in adapter).
-        deep=False: body_text + attachment filenames only (attachment_binaries={}).
-        deep=True:  also fetches attachment binaries (for markitdown parsing in Mode B).
+        Returns body_text + attachment filenames only; attachment bytes come from `get_part`.
         Missing or inaccessible IDs are silently absent from result dict.
         """
 

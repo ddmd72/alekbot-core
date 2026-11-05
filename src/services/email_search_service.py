@@ -8,7 +8,6 @@ used by EmailSearchAgent:
   - vector_search(primary_query, alternative_query, tags, user_id)
       7-stream multi-vector RRF across all indexed email vector fields.
   - get_details(email_id, user_id)       — Gmail full body + attachment labels with refs (no bytes)
-  - get_attachment(email_id, filename, user_id) — Gmail attachment → text
   - list_attachment_parts(user_id, message_id)   — the message's attachments, one listing (EXTERNAL_FILES_RFC §4.7)
   - get_attachment_part(user_id, message_id, part, max_bytes) — one listed part's bytes, for the open path
 
@@ -22,10 +21,7 @@ Total: 7 search streams, 3 embedding calls (parallel).
 import asyncio
 from dataclasses import replace
 import json
-import mimetypes
 import secrets
-import tempfile
-import os
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -42,15 +38,7 @@ from ..domain.exceptions import EmailMessageGone, EmailNotConnected, EmailPartUn
 from ..domain.file_ref import FileRefKind
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
-from ..utils.file_conversion import (
-    convert_file_to_text,
-    truncate_with_alert,
-)
 from ..utils.logger import logger
-
-# Per-attachment and total size guards
-_MAX_SINGLE_BYTES = 3 * 1024 * 1024   # 3 MB
-_MAX_TOTAL_BYTES  = 10 * 1024 * 1024  # 10 MB
 
 # RRF constant — same as used in fact repository
 _RRF_K = 60
@@ -205,7 +193,7 @@ class EmailSearchService:
         if creds is None:
             return EmailDetails(EMAIL_NOT_CONNECTED_NOTE)
         contents, listed = await asyncio.gather(
-            self._gmail.batch_get_full_content(creds, [email_id], deep=False),
+            self._gmail.batch_get_full_content(creds, [email_id]),
             self._list_parts_or_error(creds, email_id),
         )
         email = contents.get(email_id)
@@ -247,74 +235,6 @@ class EmailSearchService:
             except ValueError:
                 logger.warning(f"📧 EmailSearchService: part {part.part_id!r} of {message_id} has no valid ref")
         return out
-
-    # ------------------------------------------------------------------
-    # Fetch + convert attachment
-    # ------------------------------------------------------------------
-
-    async def get_attachment(
-        self,
-        email_id: str,
-        filename: str,
-        user_id: str,
-    ) -> str:
-        """
-        Download attachment from Gmail and convert to text.
-        Enforces per-file (3 MB) and total (10 MB) size limits.
-        """
-        logger.info(
-            f"📧 EmailSearchService.get_attachment: {email_id}/{filename} user={user_id[:8]}"
-        )
-
-        creds = await self._credential(user_id)
-        if not creds:
-            return "[Error: Gmail is not connected for this user.]"
-
-        creds = await self._maybe_refresh(creds)
-        if creds is None:
-            return "[Error: Gmail is not connected for this user.]"
-        contents = await self._gmail.batch_get_full_content(creds, [email_id], deep=True)
-        email = contents.get(email_id)
-        if not email:
-            return f"[Error: Email {email_id} not found or inaccessible.]"
-
-        raw_bytes = email.attachment_binaries.get(filename)
-        if raw_bytes is None:
-            available = ", ".join(email.attachment_binaries.keys()) or "none"
-            return f"[Error: Attachment '{filename}' not found. Available: {available}]"
-
-        size = len(raw_bytes)
-        if size > _MAX_SINGLE_BYTES:
-            mb = size / 1024 / 1024
-            return (
-                f"[Error: Attachment '{filename}' is {mb:.1f} MB — exceeds the 3 MB limit. "
-                f"Cannot include it in context.]"
-            )
-        if size > _MAX_TOTAL_BYTES:
-            return (
-                f"[Error: Total attachment size exceeds the 10 MB limit. "
-                f"Cannot include '{filename}'.]"
-            )
-
-        mime_type, _ = mimetypes.guess_type(filename)
-        mime_type = mime_type or "application/octet-stream"
-
-        suffix = os.path.splitext(filename)[1] or ".bin"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(raw_bytes)
-            tmp_path = tmp.name
-
-        try:
-            text = await convert_file_to_text(
-                local_path=tmp_path,
-                filename=filename,
-                mime_type=mime_type,
-                audio_service=None,
-            )
-        finally:
-            os.unlink(tmp_path)
-
-        return truncate_with_alert(text, filename)
 
     # ------------------------------------------------------------------
     # Part-level fetch for the open path (EXTERNAL_FILES_RFC §4.7 P8a)

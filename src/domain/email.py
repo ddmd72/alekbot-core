@@ -53,15 +53,13 @@ class EmailFullContent:
     """
     Returned by EmailProviderPort.batch_get_full_content().
     Used by EmailClassificationService (ambiguous snippet) and
-    EmailSearchAgent Mode B (deep search + markitdown attachment parsing).
-    Attachment binaries populated only when deep=True is passed to the adapter.
+    EmailSearchAgent's get_email_details. Attachment bytes are never read here: `list_parts` / `get_part` do that.
     Body text is never stored in Firestore.
     """
     email_id: str
     body_text: str                          # Plain text body (HTML stripped by adapter)
     body_html: Optional[str]               # Original HTML (for structured extraction)
     attachments: List[str]                 # Attachment filenames only
-    attachment_binaries: Dict[str, bytes]  # filename → bytes; empty dict if deep=False
 
 
 @dataclass(frozen=True)

@@ -198,14 +198,8 @@ class GmailProviderAdapter(EmailProviderPort):
         self,
         credentials: OAuthCredential,
         email_ids: List[str],
-        deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
-        """
-        Fetches full message content for a list of email IDs.
-
-        deep=False: body text + attachment filenames only
-        deep=True:  also downloads attachment binaries (for markitdown parsing)
-        """
+        """Fetches full message content for a list of email IDs: body text + attachment filenames only."""
         headers = {"Authorization": f"Bearer {credentials.access_token}"}
         sem = asyncio.Semaphore(_FETCH_SEMAPHORE_LIMIT)
 
@@ -237,17 +231,11 @@ class GmailProviderAdapter(EmailProviderPort):
                 body_text, body_html, attachment_names = self._parse_payload(
                     msg.get("payload", {})
                 )
-                attachment_binaries: Dict[str, bytes] = {}
-                if deep and attachment_names:
-                    attachment_binaries = await self._fetch_attachment_binaries(
-                        credentials, eid, msg.get("payload", {}), headers
-                    )
                 output[eid] = EmailFullContent(
                     email_id=eid,
                     body_text=body_text,
                     body_html=body_html,
                     attachments=attachment_names,
-                    attachment_binaries=attachment_binaries,
                 )
             except Exception as exc:
                 logger.warning(f"⚠️ Failed to parse full content for {eid}: {exc}")
@@ -489,42 +477,3 @@ class GmailProviderAdapter(EmailProviderPort):
         text = cls._strip_invisible(text)
         return " ".join(text.split())
 
-    async def _fetch_attachment_binaries(
-        self,
-        credentials: OAuthCredential,
-        email_id: str,
-        payload: dict,
-        headers: dict,
-    ) -> Dict[str, bytes]:
-        """Download attachment binaries for deep=True path."""
-        binaries: Dict[str, bytes] = {}
-        sem = asyncio.Semaphore(_FETCH_SEMAPHORE_LIMIT)
-
-        async def download(filename: str, attachment_id: str) -> None:
-            async with sem:
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        async with s.get(
-                            f"{_GMAIL_BASE}/messages/{email_id}/attachments/{attachment_id}",
-                            headers=headers,
-                        ) as resp:
-                            await _raise_for_gmail_status(resp)
-                            data = await resp.json()
-                    raw = base64.urlsafe_b64decode(data["data"] + "==")
-                    binaries[filename] = raw
-                except Exception as exc:
-                    logger.warning(
-                        f"⚠️ Failed to download attachment {filename}: {exc}"
-                    )
-
-        tasks = []
-        for part in payload.get("parts", []):
-            filename = part.get("filename", "")
-            attachment_id = part.get("body", {}).get("attachmentId")
-            if filename and attachment_id:
-                tasks.append(download(filename, attachment_id))
-
-        if tasks:
-            await asyncio.gather(*tasks)
-
-        return binaries

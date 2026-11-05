@@ -9,7 +9,6 @@ through this table (§4.1), so `skill`, like an unknown store, is refused.
 Caps that stay where they are (a provider's fact or another store's own rule), cited here so the table is complete:
     GOOGLE_EXPORT_MAX_BYTES          10 MiB  src/adapters/google/google_drive_mapping.py (Google's export cap)
     MAX_VISION_IMAGE_BYTES           3.75 MiB src/domain/drive_image_mime.py (the reader's vision input, base64-safe)
-    _MAX_SINGLE_BYTES                3 MB    src/services/email_search_service.py (one email attachment; U4, D10)
     MAX_DRIVE_APPEND_FILE_BYTES,
     MAX_DRIVE_TEXT_FILE_BYTES        5 MiB   src/domain/user_drive.py (what the bot writes, not what it opens)
     workspace.MAX_FILE_BYTES         10 MiB  src/domain/workspace.py (the workspace store's own cap: a different

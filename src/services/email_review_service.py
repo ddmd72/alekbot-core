@@ -120,7 +120,6 @@ class EmailReviewService:
         full_content = await self._email_provider.batch_get_full_content(
             credentials=creds,
             email_ids=[m.email_id for m in all_metadata],
-            deep=False,
         )
 
         return [
