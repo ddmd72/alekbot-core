@@ -10,6 +10,7 @@ import pytest
 
 from src.agents.email_search_agent import EmailSearchAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
+from src.domain.email_details import EmailDetails
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -330,33 +331,35 @@ class TestGetEmailDetails:
             context={"user_id": "user123", "account_id": "acc1"},
         )
 
+    # Reviewer (U4a A4): the agent reads the details with their attachment parts (one listing, D11), so the
+    # service call is `get_details_with_parts` and its text is the result.
     async def test_success_calls_get_details(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "Email body text here"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("Email body text here")
 
         response = await agent.execute(self._msg())
 
         assert response.status == AgentStatus.SUCCESS
-        mock_search_service.get_details.assert_awaited_once_with(
+        mock_search_service.get_details_with_parts.assert_awaited_once_with(
             email_id="msg_example001",
             user_id="user123",
         )
 
     async def test_success_result_contains_body(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "Important email body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("Important email body")
 
         response = await agent.execute(self._msg())
 
         assert response.result == "Important email body"
 
     async def test_metadata_contains_email_id(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("body")
 
         response = await agent.execute(self._msg("abc123"))
 
         assert response.metadata["email_id"] == "abc123"
 
     async def test_exception_returns_failure(self, agent, mock_search_service):
-        mock_search_service.get_details.side_effect = RuntimeError("Gmail error")
+        mock_search_service.get_details_with_parts.side_effect = RuntimeError("Gmail error")
 
         response = await agent.execute(self._msg())
 
@@ -364,7 +367,7 @@ class TestGetEmailDetails:
         assert "get_email_details failed" in response.error
 
     async def test_vector_search_not_called(self, agent, mock_search_service):
-        mock_search_service.get_details.return_value = "body"
+        mock_search_service.get_details_with_parts.return_value = EmailDetails("body")
 
         await agent.execute(self._msg())
 

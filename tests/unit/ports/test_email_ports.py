@@ -48,8 +48,9 @@ class TestEmailProviderPort:
             EmailProviderPort()
 
     def test_abstract_method_count(self):
+        # reviewer (U4a, EXTERNAL_FILES_RFC §4.7 P8a): the part listing and the part download join the port
         assert _abstract_methods(EmailProviderPort) == {
-            "list_emails", "batch_get_full_content", "refresh_token"
+            "list_emails", "batch_get_full_content", "refresh_token", "list_parts", "get_part"
         }
 
     def test_list_emails_signature(self):
@@ -61,10 +62,8 @@ class TestEmailProviderPort:
         assert "query" in params
 
     def test_batch_get_full_content_signature(self):
-        params = _params(EmailProviderPort, "batch_get_full_content")
-        assert "credentials" in params
-        assert "email_ids" in params
-        assert "deep" in params
+        # reviewer (U4a-R): the `deep` attachment download is removed; attachment bytes come from `get_part` only
+        assert _params(EmailProviderPort, "batch_get_full_content") == ["self", "credentials", "email_ids"]
 
     def test_refresh_token_signature(self):
         params = _params(EmailProviderPort, "refresh_token")

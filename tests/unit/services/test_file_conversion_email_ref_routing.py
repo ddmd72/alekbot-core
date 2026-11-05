@@ -9,7 +9,7 @@ import pytest
 
 from src.domain.document_open import EmailOpening, OpenedFile
 from src.domain.document_read import CALLER_OPEN, CALLER_PREFETCH, ReadOutcome, ReadStatus
-from src.domain.email_open_texts import ATTACHMENT_MISSING_NOTE
+from src.domain.email_open_texts import ATTACHMENT_MISSING_NOTE, EMAIL_OPEN_NOT_CONFIGURED_NOTE
 from src.domain.email_ref import format_email_ref
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
@@ -76,7 +76,9 @@ async def test_the_prefetch_of_a_missing_part_is_its_note(service):
     assert prefetched.note == ATTACHMENT_MISSING_NOTE and prefetched.content == ""
 
 
-async def test_until_part_a3_an_email_ref_is_refused_as_before():
+async def test_without_an_email_service_an_email_ref_opens_to_the_not_configured_note():
+    """Reviewer (U4a A3): the placeholder refusal ("email tool") is gone now that `open_email` is built; a service
+    composed without the email service answers the ref with the not-configured note, nothing opened."""
     plain = FileConversionService(storage=AsyncMock(spec=FileStoragePort), access=allow_access())
-    with pytest.raises(FileNotFoundError, match="email tool"):
-        await plain.open(format_email_ref(MSG, "1.2"), "ann", "ann", deadline_at=DEADLINE)
+    opened = await plain.open(format_email_ref(MSG, "1.2"), "ann", "ann", deadline_at=DEADLINE)
+    assert opened.note == EMAIL_OPEN_NOT_CONFIGURED_NOTE and opened.outcome is None

@@ -136,6 +136,7 @@ async def test_email_details_refresh_of_a_connected_grant_is_stored(store):
     gmail = MagicMock()
     gmail.refresh_token = AsyncMock(return_value=creds(USER, "gmail", access_token="new", token_expiry=LATE))
     gmail.batch_get_full_content = AsyncMock(return_value={})
+    gmail.list_parts = AsyncMock(return_value=[])   # reviewer (U4a A2): details also list the parts once (D11)
     await EmailSearchService(MagicMock(), store.repo, gmail, MagicMock(), connector=ConnectorRegistry().get("gmail")).get_details("e1", USER)
     assert (await one(store.repo, USER, "gmail")).access_token == "new"
 

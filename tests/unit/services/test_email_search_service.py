@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.domain.email import EmailFullContent, IndexedEmail
+from src.domain.email import EmailFullContent, EmailPart, IndexedEmail
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -245,11 +245,14 @@ class TestGetDetails:
             attachments=["ticket.pdf"],
         )
         mock_gmail.batch_get_full_content.return_value = {"e1": full}
+        # reviewer (U4a A2, D11): the attachment line comes from the one part listing, as a label carrying its ref
+        mock_gmail.list_parts.return_value = [EmailPart("1", "ticket.pdf", "application/pdf", 2048, "att-1")]
 
         result = await service.get_details("e1", "user123")
 
         assert "Important flight confirmation ref XYZ" in result
-        assert "ticket.pdf" in result
+        assert '[Email file: "ticket.pdf" (2KB, application/pdf) ref=email:e1/1]' in result
+        mock_gmail.list_parts.assert_awaited_once()
 
     async def test_expired_token_triggers_refresh(self, service, mock_oauth, mock_gmail):
         expired_creds = _make_creds(expired=True)

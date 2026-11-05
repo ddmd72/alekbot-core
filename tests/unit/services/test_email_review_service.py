@@ -306,7 +306,8 @@ class TestBuildAlert:
         result = EmailReviewService.build_alert("2026-01-15", 5)
         assert "ACTION" in result
         assert "search_memory" in result
-        assert "get_email_attachment" in result
+        # reviewer (U4a T): the intent is renamed; the old name must not survive in the alert
+        assert "open_email_attachment" in result and "get_email_attachment" not in result
         assert "HTML page creation" in result
 
 

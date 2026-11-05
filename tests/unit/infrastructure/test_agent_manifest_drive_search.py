@@ -29,8 +29,8 @@ def test_kind_description_names_the_families():
 
 # Names that already collide with differing descriptions (§10.4). Each is a silent
 # "first description wins" today; fix one, then remove it here. A new name never joins this list.
+# Reviewer (U4a, plan U4 §6): `file_ref` now has one neutral description in every descriptor, so it left the list.
 KNOWN_COLLISIONS = frozenset({
-    "file_ref",     # TODO: nine intents describe it differently
     "resolution",   # TODO: image and video generation
 })
 

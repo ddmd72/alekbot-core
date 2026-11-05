@@ -69,4 +69,6 @@ def test_the_production_stack_forwards_through_both_proxies():
 
 
 def test_the_opening_intents_are_named_in_the_manifest():
-    assert NATIVE_OPENING_INTENTS == frozenset({Intent.OPEN_FILE, Intent.WORK_WITH_DRIVE_FILES})
+    # reviewer (U4a A4): an email attachment opens natively too
+    assert NATIVE_OPENING_INTENTS == frozenset({Intent.OPEN_FILE, Intent.WORK_WITH_DRIVE_FILES,
+                                                Intent.OPEN_EMAIL_ATTACHMENT})
