@@ -1,6 +1,6 @@
 """Spike S0 item g: do the two engines read the same bytes the same way? (UNTRUSTED_CONTENT_SANDBOX_RFC §7 S0)
 
-    equivalence.py --dump DIR [--chat-dir DIR]     one JSON line per file on stdout, no text:
+    equivalence.py --dump DIR                      one JSON line per file on stdout, no text:
                                                    {file_id, kind, status, text_len, text_sha256}
     equivalence.py --compare A.jsonl B.jsonl       differences between two dumps (status and text hash per file_id)
     equivalence.py --show FILE_ID --dir DIR [--against TEXT_FILE] [--window N]
@@ -8,25 +8,21 @@
                                                    the window around the first difference from that text. Local only,
                                                    run on a mismatch; deployed text is never printed.
 
-`--dump` runs every file of DIR through `SubprocessContentExtractor` (the drive parser, kind derived as the tick does:
-kind_of + sniff_kind) and every chat-convertible file through `convert_file_to_text`. Run it locally and as the
-Cloud Run Job in the repo image; the log lines of the other loggers in between are ignored by `--compare`.
+`--dump` runs every file of DIR through `SubprocessContentExtractor` (the parser child, kind derived as the tick does:
+kind_of + sniff_kind). Chat and drive are one engine since U5: there is no chat path here (a comparison with the
+pre-U5 chat engine runs from a worktree at the pre-U5 commit). Run it locally and as the Cloud Run Job in the repo image; the log lines of the other loggers in between are ignored by `--compare`.
 Output goes through `print` (standalone script).
 """
 import argparse
 import asyncio
 import hashlib
 import json
-import mimetypes
 import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-# Extensions the chat path converts (markitdown or plain text); PDFs and images go to the model natively there.
-CHAT_EXTENSIONS = {".docx", ".xlsx", ".pptx", ".csv", ".txt", ".md", ".html", ".json", ".rtf", ".eml", ".xml"}
 
 
 def _sha(text: str) -> str:
@@ -54,15 +50,7 @@ async def _parser_text(extractor: Any, path: Path, kind: str) -> Dict[str, Any]:
     return {"status": outcome.status.value, "text": outcome.text}
 
 
-async def _chat_text(path: Path) -> Dict[str, Any]:
-    from src.utils.file_conversion import convert_file_to_text
-
-    mime = mimetypes.guess_type(path.name)[0] or ""
-    text = await convert_file_to_text(str(path), path.name, mime, None)
-    return {"status": "alert" if text.startswith("[System:") else "text", "text": text}
-
-
-async def _dump(root: Path, chat_root: Optional[Path]) -> int:
+async def _dump(root: Path) -> int:
     from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 
     extractor = SubprocessContentExtractor(sandbox_user=os.getenv(PARSER_USER_ENV) or None)
@@ -74,16 +62,6 @@ async def _dump(root: Path, chat_root: Optional[Path]) -> int:
         except Exception as exc:        # a crash is a row, not the end of the dump
             got = {"status": f"exception:{type(exc).__name__}", "text": ""}
         print(json.dumps({"file_id": rel, "kind": kind, "status": got["status"], "text_len": len(got["text"]),
-                          "text_sha256": _sha(got["text"])}), flush=True)
-    for path in _files(chat_root or root):
-        if path.suffix.lower() not in CHAT_EXTENSIONS:
-            continue
-        rel = "chat:" + str(path.relative_to(chat_root or root))
-        try:
-            got = await _chat_text(path)
-        except Exception as exc:
-            got = {"status": f"exception:{type(exc).__name__}", "text": ""}
-        print(json.dumps({"file_id": rel, "kind": "chat", "status": got["status"], "text_len": len(got["text"]),
                           "text_sha256": _sha(got["text"])}), flush=True)
     return 0
 
@@ -122,15 +100,11 @@ def _compare(a_path: str, b_path: str) -> int:
 
 
 async def _show(file_id: str, root: Path, against: Optional[str], window: int) -> int:
-    chat = file_id.startswith("chat:")
-    path = root / file_id.removeprefix("chat:")
-    if chat:
-        got = await _chat_text(path)
-    else:
-        from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
+    from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 
-        got = await _parser_text(SubprocessContentExtractor(sandbox_user=os.getenv(PARSER_USER_ENV) or None),
-                                 path, _kind_for(path))
+    path = root / file_id
+    got = await _parser_text(SubprocessContentExtractor(sandbox_user=os.getenv(PARSER_USER_ENV) or None),
+                             path, _kind_for(path))
     text = got["text"]
     if against is None:
         print(f"status={got['status']} length={len(text)}\n--- first {window} chars ---\n{text[:window]}")
@@ -147,7 +121,6 @@ async def _show(file_id: str, root: Path, against: Optional[str], window: int) -
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dump", metavar="DIR")
-    parser.add_argument("--chat-dir", metavar="DIR", help="chat fixtures (default: the --dump directory)")
     parser.add_argument("--compare", nargs=2, metavar=("A", "B"))
     parser.add_argument("--show", metavar="FILE_ID")
     parser.add_argument("--dir", metavar="DIR", help="the corpus directory for --show")
@@ -155,7 +128,7 @@ def main() -> int:
     parser.add_argument("--window", type=int, default=400)
     args = parser.parse_args()
     if args.dump:
-        return asyncio.run(_dump(Path(args.dump), Path(args.chat_dir) if args.chat_dir else None))
+        return asyncio.run(_dump(Path(args.dump)))
     if args.compare:
         return _compare(*args.compare)
     if args.show and args.dir:

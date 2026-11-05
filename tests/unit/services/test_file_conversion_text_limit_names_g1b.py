@@ -10,7 +10,6 @@ from src.ports.file_storage_port import FileStoragePort
 from src.services.document_service import DocumentService
 from src.services.drive_connection_service import DriveConnectionService
 from src.services.file_conversion_service import FileConversionService
-from src.utils.file_conversion import convert_file_to_text
 from tests.support.drive_access_stub import allow_access
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_connections import seed
@@ -49,17 +48,3 @@ async def test_a_text_export_refused_above_the_export_cap_names_ten_megabytes(wo
 async def test_a_pdf_refused_above_the_file_cap_names_five_megabytes(world):
     out = await _read(world, "brief.pdf", b"%PDF" + b"0" * (6 * MB), "application/pdf")
     assert "files above 5.0MB" in out
-
-
-async def test_the_converter_names_ten_megabytes_for_text_over_the_export_cap(tmp_path):
-    path = tmp_path / "big.md"
-    path.write_bytes(b"x" * (11 * MB))
-    out = await convert_file_to_text(str(path), "big.md", "text/markdown")
-    assert "10 MB limit" in out
-
-
-async def test_the_converter_names_five_megabytes_for_text_left_over_five(tmp_path):
-    path = tmp_path / "log.txt"
-    path.write_bytes(b"real words\n" * (6 * MB // 11 + 1))
-    out = await convert_file_to_text(str(path), "log.txt", "text/plain")
-    assert "5 MB limit" in out

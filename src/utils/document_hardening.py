@@ -7,7 +7,7 @@ under its memory limit for every file (USER_DRIVE_INDEXING_RFC §9). `file_conve
 """
 
 import zipfile
-from typing import Any
+from typing import FrozenSet
 
 # OOXML / EPUB are ZIP containers: a 5 MB upload can declare gigabytes once inflated. Checked on
 # the archive's central directory before any converter opens it.
@@ -33,26 +33,10 @@ def check_zip_container(local_path: str) -> None:
         raise ArchiveTooLargeError(f"{declared} bytes inflated (limit {MAX_ZIP_UNCOMPRESSED_BYTES})")
 
 
-def build_markitdown() -> Any:
-    """MarkItDown with local document converters only — the files are untrusted user input.
-
-    Builtins stay off: ZipConverter inflates every archive member in RAM (decompression bomb),
-    AudioConverter uploads audio to Google's speech API, Image/URL converters call out to
-    exiftool and the network. Registration order mirrors `MarkItDown.enable_builtins`.
-    """
-    from markitdown import MarkItDown, PRIORITY_GENERIC_FILE_FORMAT  # lazy — optional dependency
-    from markitdown.converters import (
-        CsvConverter, DocxConverter, EpubConverter, HtmlConverter, IpynbConverter,
-        OutlookMsgConverter, PdfConverter, PlainTextConverter, PptxConverter, RssConverter,
-        XlsConverter, XlsxConverter,
-    )
-
-    md = MarkItDown(enable_builtins=False, enable_plugins=False)
-    md.register_converter(PlainTextConverter(), priority=PRIORITY_GENERIC_FILE_FORMAT)
-    md.register_converter(HtmlConverter(), priority=PRIORITY_GENERIC_FILE_FORMAT)
-    for converter in (
-        RssConverter(), DocxConverter(), XlsxConverter(), XlsConverter(), PptxConverter(),
-        IpynbConverter(), PdfConverter(), OutlookMsgConverter(), EpubConverter(), CsvConverter(),
-    ):
-        md.register_converter(converter)
-    return md
+# The Phase 0 allowlist of markitdown converters (class names; no markitdown import here): local document converters
+# only. Builtins stay off: ZipConverter inflates every archive member in RAM (decompression bomb), AudioConverter
+# uploads audio to Google's speech API, Image/URL converters call out to exiftool and the network.
+MARKITDOWN_ALLOWED_CONVERTERS: FrozenSet[str] = frozenset({
+    "PlainTextConverter", "HtmlConverter", "RssConverter", "DocxConverter", "XlsxConverter", "XlsConverter",
+    "PptxConverter", "IpynbConverter", "PdfConverter", "OutlookMsgConverter", "EpubConverter", "CsvConverter",
+})
