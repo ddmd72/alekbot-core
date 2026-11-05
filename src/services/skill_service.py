@@ -10,6 +10,7 @@ import secrets
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.exceptions import (
+    EmailFileNotTransferable,
     SkillCapExceeded,
     SkillDraftNotFound,
     SkillFileMissing,
@@ -198,6 +199,8 @@ class SkillService:
             raise SkillRejected("files cannot be re-saved here; write the needed part as a file")
         try:
             data = await self._file_conversion.resolve_bytes(ref, user_id)
+        except EmailFileNotTransferable as e:
+            raise SkillRejected(str(e)) from e
         except (FileNotFoundError, PermissionError) as e:
             logger.warning("⚠️ [Skills] from_file %r not readable for user %s: %s", ref, user_id[:8], e)
             if is_skill_ref:  # the resolver's message lists the skill's actual files

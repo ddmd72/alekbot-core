@@ -32,6 +32,7 @@ from typing import List, Optional
 
 from .base_agent import BaseAgent
 from ..domain.billing import IMAGE_EDIT_MODEL, IMAGE_GENERATE_MODEL, calculate_external_cost
+from ..domain.exceptions import EmailFileNotTransferable
 from ..domain.retry_policy import NO_RETRY_POLICY
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse, DeliveryItem
 from ..domain.llm import LLMResponse, Message, MessagePart, describe_empty_output
@@ -221,6 +222,8 @@ class ImageGenerationAgent(BaseAgent):
             if isinstance(result, Exception)
         ]
         if failed:
+            if isinstance(failed[0][1], EmailFileNotTransferable):
+                return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(failed[0][1]))
             failed_names = ", ".join(ref for ref, _ in failed)
             self._on_agent_error(failed[0][1], f"resolve image_refs {failed_names}")
             return AgentResponse.failure(

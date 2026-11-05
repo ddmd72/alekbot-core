@@ -13,12 +13,12 @@ Three intents, all routed through one agent instance:
                             payload: {"email_id": "..."}
                             No LLM — direct Gmail API call via EmailSearchService.
 
-  get_email_attachment    — download + convert attachment to text.
-                            payload: {"email_id": "...", "filename": "file.pdf"}
-                            No LLM — Gmail API + markitdown via EmailSearchService.
+  open_email_attachment   — open ONE attachment through the document service (scans read, native files attach).
+                            payload: {"file_ref": "email:<msg>:<part>"} or {"email_id": "...", "name": "file.pdf"}
+                            No LLM — Gmail API + FileConversionService.open_email.
 
 Routing: execute() dispatches on payload["intent"]:
-  get_email_attachment  →  _handle_get_attachment (requires email_id in payload)
+  open_email_attachment →  _handle_open_attachment (an email: file_ref, or email_id)
   get_email_details     →  _handle_get_details    (requires email_id in payload)
   search_emails         →  _handle_search_emails  (requires query in payload)
 """
@@ -26,12 +26,21 @@ Routing: execute() dispatches on payload["intent"]:
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..domain.document_open import EmailOpening
+from ..domain.document_presentation import present_text
+from ..domain.document_read import OPEN_MARGIN_S, ReadOutcome, ReadStatus
+from ..domain.email_open_texts import EMAIL_OPEN_NOT_CONFIGURED_NOTE
+from ..domain.email_ref import EMAIL_FILE_CONTEXT_KEY, parse_email_ref
+from ..domain.file_ref import EMAIL_REF_PREFIX
+from ..domain.native_format import NATIVE_FORMATS_KEY, from_plain
+from ..domain.untrusted_text import attached_reminder
 from ..ports.llm_port import (
     AgentExecutionContext,
     LLMRequest,
@@ -44,6 +53,7 @@ from ..infrastructure.agent_config import EMAIL_SEARCH
 
 if TYPE_CHECKING:
     from ..services.email_search_service import EmailSearchService
+    from ..services.file_conversion_service import FileConversionService
 
 
 class EmailSearchAgent(BaseAgent):
@@ -63,6 +73,7 @@ class EmailSearchAgent(BaseAgent):
         prompt_builder: PromptBuilderPort,
         email_search_service: EmailSearchService,
         user_id: Optional[str] = None,
+        file_conversion: Optional[FileConversionService] = None,
     ) -> None:
         super().__init__(config)
         self.execution_context = execution_context
@@ -70,6 +81,7 @@ class EmailSearchAgent(BaseAgent):
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder
         self._search_service = email_search_service
+        self._file_conversion = file_conversion
         self.user_id = user_id
 
         logger.info(
@@ -82,7 +94,7 @@ class EmailSearchAgent(BaseAgent):
             return False
         payload = message.payload
         intent = payload.get("intent", "")
-        if intent in ("get_email_details", "get_email_attachment"):
+        if intent in ("get_email_details", "open_email_attachment"):
             return True  # email_id validation happens in execute()
         return bool(payload.get("query", ""))
 
@@ -92,7 +104,6 @@ class EmailSearchAgent(BaseAgent):
         user_id = message.context.get("user_id") or self.user_id
         intent = payload.get("intent", "")
         email_id: str = payload.get("email_id", "")
-        filename: str = payload.get("filename", "")
 
         if intent == "get_email_details":
             if not email_id:
@@ -107,18 +118,8 @@ class EmailSearchAgent(BaseAgent):
                 )
             return await self._handle_get_details(message, email_id, user_id)
 
-        if intent == "get_email_attachment":
-            if not email_id:
-                return AgentResponse.failure(
-                    task_id=message.task_id,
-                    agent_id=self.agent_id,
-                    error=(
-                        "email_id is required for get_email_attachment. "
-                        "From the prior search_emails result, copy the bracketed email id "
-                        'and pass it as context={"email_id": "<value>", "filename": "<attachment name>"}.'
-                    ),
-                )
-            return await self._handle_get_attachment(message, email_id, filename, user_id)
+        if intent == "open_email_attachment":
+            return await self._handle_open_attachment(message, user_id)
 
         return await self._handle_search_emails(message, user_id)
 
@@ -137,7 +138,7 @@ class EmailSearchAgent(BaseAgent):
         start_time = time.time()
 
         try:
-            result = await self._search_service.get_details(
+            details = await self._search_service.get_details_with_parts(
                 email_id=email_id,
                 user_id=user_id or "",
             )
@@ -155,53 +156,96 @@ class EmailSearchAgent(BaseAgent):
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result=result,
+            result=details.text,
             confidence=1.0,
             metadata={"email_id": email_id, "duration_ms": duration_ms},
+            history_context=self._file_context(details.files),
         )
 
     # ------------------------------------------------------------------
-    # Intent: get_email_attachment
+    # Intent: open_email_attachment
     # ------------------------------------------------------------------
 
-    async def _handle_get_attachment(
-        self,
-        message: AgentMessage,
-        email_id: str,
-        filename: str,
-        user_id: Optional[str],
-    ) -> AgentResponse:
-        """Download + convert a Gmail attachment to text. No LLM involved."""
-        logger.info(
-            f"📬 EmailSearchAgent.get_attachment: {email_id}/{filename} "
-            f"user={user_id[:8] if user_id else '?'}"
-        )
-        start_time = time.time()
+    @staticmethod
+    def _file_context(files: Any) -> Optional[Dict[str, Any]]:
+        """The `email_file_context` history entry: `[{label, ref}]` per attachment (plan U4 section 6)."""
+        entries = [{"label": label, "ref": ref} for label, ref in files]
+        return {EMAIL_FILE_CONTEXT_KEY: entries} if entries else None
 
-        try:
-            result = await self._search_service.get_attachment(
-                email_id=email_id,
-                filename=filename,
-                user_id=user_id or "",
-            )
-        except Exception as exc:
-            logger.error(f"📬 EmailSearchAgent: get_attachment failed: {exc}", exc_info=True)
+    async def _handle_open_attachment(self, message: AgentMessage, user_id: Optional[str]) -> AgentResponse:
+        """Open one attachment through `FileConversionService.open_email`. No LLM involved.
+
+        Inputs: `file_ref` (an `email:` ref), or `email_id` with `name` (`filename` is the fallback for `name`; a
+        `file_ref` without the prefix next to an `email_id` is taken as the name). A choice (several parts match) and
+        every note are SUCCESS answers: a failure makes the model retry the same call."""
+        payload = message.payload
+        file_ref: str = (payload.get("file_ref") or "").strip()
+        email_id: str = (payload.get("email_id") or "").strip()
+        name: str = (payload.get("name") or payload.get("filename") or "").strip()
+        message_id, part_id = "", None
+        if file_ref.startswith(EMAIL_REF_PREFIX):
+            try:
+                message_id, part_id = parse_email_ref(file_ref)
+            except ValueError:
+                return AgentResponse.failure(
+                    task_id=message.task_id, agent_id=self.agent_id,
+                    error=(f"'{file_ref}' is not a valid email: ref. Pass the ref exactly as its [Email file: …] "
+                           'label shows it, or context={"email_id": "<id>", "name": "<attachment name>"}.'))
+        else:
+            message_id = email_id
+            name = name or file_ref
+        if not message_id:
             return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error=f"get_email_attachment failed: {exc}",
-            )
+                task_id=message.task_id, agent_id=self.agent_id,
+                error=("open_email_attachment needs a file_ref (an email: ref from an [Email file: …] label) or an "
+                       'email_id: context={"email_id": "<id from search_emails>", "name": "<attachment name>"}.'))
+        if self._file_conversion is None:
+            return AgentResponse.success(
+                task_id=message.task_id, agent_id=self.agent_id, result=EMAIL_OPEN_NOT_CONFIGURED_NOTE,
+                confidence=1.0)
 
+        context = message.context
+        account_id = context.get("account_id") or ""
+        timeout_ms = self.config.timeout_ms
+        budget_s = timeout_ms / 1000 - OPEN_MARGIN_S if timeout_ms else 270.0
+        logger.info(f"📬 EmailSearchAgent.open_attachment: {message_id}/{part_id or name or '-'} "
+                    f"user={user_id[:8] if user_id else '?'}")
+        start_time = time.time()
+        try:
+            opening: EmailOpening = await self._file_conversion.open_email(
+                user_id or "", account_id, message_id=message_id, part_id=part_id, name=name or None,
+                consumer=from_plain(context.get(NATIVE_FORMATS_KEY)), deadline_at=time.time() + budget_s)
+        except Exception as exc:
+            logger.error(f"📬 EmailSearchAgent: open_attachment failed: {exc}", exc_info=True)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"open_email_attachment failed: {exc}")
         duration_ms = int((time.time() - start_time) * 1000)
-        logger.info(f"📬 EmailSearchAgent.get_attachment done in {duration_ms}ms")
+        metadata: Dict[str, Any] = {"email_id": message_id, "duration_ms": duration_ms}
 
+        if opening.needs_choice:
+            labels = "\n".join(label for label, _ in opening.candidates)
+            return AgentResponse.success(
+                task_id=message.task_id, agent_id=self.agent_id, result=f"{opening.note}\n{labels}",
+                confidence=1.0, metadata=metadata, history_context=self._file_context(opening.candidates))
+        opened = opening.opened
+        if opened is None or opened.note:
+            return AgentResponse.success(
+                task_id=message.task_id, agent_id=self.agent_id, result=opening.note or (opened.note if opened else ""),
+                confidence=1.0, metadata=metadata)
+
+        files = ((opening.label, opening.ref),)
+        if opened.native_path:
+            metadata["file_data"] = {"path": opened.native_path, "mime_type": opened.native_mime}
+            result = (f"{attached_reminder('email')}\n{opening.label}\n"
+                      f"File '{opening.name}' ({opened.native_mime}) is attached. You can see and analyse it directly.")
+        else:
+            outcome = opened.outcome or ReadOutcome(status=ReadStatus.TEXT)
+            text = present_text(opened.body, store="email", ref=opening.ref, label=opening.name,
+                                nonce=secrets.token_hex(8), outcome=outcome)
+            result = f"{text}\n{opening.label}"
         return AgentResponse.success(
-            task_id=message.task_id,
-            agent_id=self.agent_id,
-            result=result,
-            confidence=1.0,
-            metadata={"email_id": email_id, "filename": filename, "duration_ms": duration_ms},
-        )
+            task_id=message.task_id, agent_id=self.agent_id, result=result, confidence=1.0, metadata=metadata,
+            history_context=self._file_context(files))
 
     # ------------------------------------------------------------------
     # Intent: search_emails

@@ -110,7 +110,7 @@ from ..domain.drive_line import DriveLine
 from ..domain.drive_preflight import DrivePreflight
 from ..domain.drive_search_line import SearchLine
 from ..domain.drive_tier_result import CoverageFacts
-from ..domain.exceptions import WorkspaceRefused
+from ..domain.exceptions import EmailFileNotTransferable, WorkspaceRefused
 from ..domain.language import LanguageCode
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.ui_messages import UIMessage
@@ -804,7 +804,10 @@ class DriveOperations:
     async def _fetch_video(self, context: Mapping[str, Any], ref: str, user_id: str) -> DriveOutcome:
         """A delivered video is resent as a native file attachment: it cannot be converted to text and is not native
         LLM input, so the only useful open is handing it back as a forwardable file. Delivery is a side effect."""
-        data = await self._conversion_service.resolve_bytes(ref, user_id)
+        try:
+            data = await self._conversion_service.resolve_bytes(ref, user_id)
+        except EmailFileNotTransferable as e:
+            return _fail(DriveOp.OPEN, str(e), OutcomeClass.REFUSED)
         if len(data) > MAX_VIDEO_ATTACH_BYTES:
             return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, text=(
                 f"Video '{ref}' is too large ({len(data) / 1_048_576:.1f}MB) to "
@@ -983,6 +986,8 @@ class DriveOperations:
             return data
         except DriveItemNotFoundError:
             raise
+        except EmailFileNotTransferable as e:
+            raise _Refusal(str(e), OutcomeClass.REFUSED)
         except FileNotFoundError:
             if drive_ref.is_drive_ref(ref):
                 raise

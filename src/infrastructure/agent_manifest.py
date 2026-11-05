@@ -48,7 +48,7 @@ class Intent:
     FETCH_URL            = "fetch_url"
     SEARCH_EMAILS        = "search_emails"
     GET_EMAIL_DETAILS    = "get_email_details"
-    GET_EMAIL_ATTACHMENT = "get_email_attachment"
+    OPEN_EMAIL_ATTACHMENT = "open_email_attachment"
     MAPS_QUERY           = "maps_query"
     DEEP_RESEARCH        = "deep_research"
     COMPUTE_MATH         = "compute_math"
@@ -102,10 +102,18 @@ class Intent:
     EDIT_VIDEO          = "edit_video"
 
 
+# The one description of the shared `file_ref` context field. The delegate tool builds ONE `context` schema from every
+# descriptor and the first registration wins (base_agent.py, agent_registry.py), so every descriptor says the same.
+FILE_REF_DESCRIPTION = (
+    "the ref exactly as its label shows it: a [File: …] filename, email:…, drive:…, skill:…, workspace:…"
+)
+
+
 # The SYNC intents that open files: the only readers of the native-format declaration
 # (`domain/native_format.NATIVE_FORMATS_KEY`, EXTERNAL_FILES_RFC §4.3). The coordinator drops the key from every other
-# specialist's message and from every enqueued task. `open_email_attachment` joins in slice U4.
-NATIVE_OPENING_INTENTS: FrozenSet[str] = frozenset({Intent.OPEN_FILE, Intent.WORK_WITH_DRIVE_FILES})
+# specialist's message and from every enqueued task.
+NATIVE_OPENING_INTENTS: FrozenSet[str] = frozenset(
+    {Intent.OPEN_FILE, Intent.WORK_WITH_DRIVE_FILES, Intent.OPEN_EMAIL_ATTACHMENT})
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +210,10 @@ EMAIL_SEARCH = AgentDescriptor(
     capabilities={
         Intent.SEARCH_EMAILS:        ExecutionMode.SYNC,
         Intent.GET_EMAIL_DETAILS:    ExecutionMode.SYNC,
-        Intent.GET_EMAIL_ATTACHMENT: ExecutionMode.SYNC,
+        Intent.OPEN_EMAIL_ATTACHMENT: ExecutionMode.SYNC,
     },
+    # Opens its own attachments (`open_email_attachment`); the coordinator must not download a `file_ref` first.
+    prefetch_file_ref=False,
     description="Email archive specialist",
     capability_descriptions={
         Intent.SEARCH_EMAILS: (
@@ -216,19 +226,22 @@ EMAIL_SEARCH = AgentDescriptor(
             "Use after search_emails to read the content of a found email. "
             'Requires: context={"email_id": "<id from search_emails result>"}'
         ),
-        Intent.GET_EMAIL_ATTACHMENT: (
-            "Extract and read an email attachment as text (PDF, DOCX, etc.). "
-            "Use after search_emails when the email has an attachment. "
-            'Requires: context={"email_id": "<id from search_emails result>", "filename": "<filename from search_emails result>"}'
+        Intent.OPEN_EMAIL_ATTACHMENT: (
+            "Open an email attachment and read it (PDF, DOCX, scans and photos included; a PDF or image may come "
+            "attached). Use after search_emails or get_email_details when the email has an attachment. "
+            "One attachment per call; for several, one call per attachment (they run in parallel). "
+            'Requires: context={"file_ref": "<email: ref from an [Email file: …] label>"} or '
+            'context={"email_id": "<id from search_emails result>", "name": "<attachment name>"}'
         ),
     },
     context_schemas={
         Intent.GET_EMAIL_DETAILS: {
             "email_id": "Email message ID from a prior search_emails result",
         },
-        Intent.GET_EMAIL_ATTACHMENT: {
+        Intent.OPEN_EMAIL_ATTACHMENT: {
+            "file_ref": FILE_REF_DESCRIPTION,
             "email_id": "Email message ID from a prior search_emails result",
-            "filename": "Exact attachment filename from a prior search_emails result",
+            "name": "open_email_attachment only: the attachment's filename as search_emails or the [Email file: …] label shows it",
         },
     },
 )
@@ -437,7 +450,7 @@ DOC_PLANNER = AgentDescriptor(
     },
     context_schemas={
         Intent.CREATE_DOCUMENT: {
-            "file_ref": "Filename from [File: name (size)] label — source file for the document (optional)",
+            "file_ref": FILE_REF_DESCRIPTION,
         },
     },
     internal=False,
@@ -474,7 +487,7 @@ PDF_GENERATOR = AgentDescriptor(
     },
     context_schemas={
         Intent.CREATE_PDF: {
-            "file_ref": "Filename from [File: name (size)] label — source file for the PDF (optional)",
+            "file_ref": FILE_REF_DESCRIPTION,
         },
     },
     internal=False,
@@ -519,7 +532,7 @@ HTML_PAGE_GENERATOR = AgentDescriptor(
     },
     context_schemas={
         Intent.CREATE_HTML_PAGE: {
-            "file_ref": "Filename from [File: name (size)] label — source file for the page (optional)",
+            "file_ref": FILE_REF_DESCRIPTION,
         },
     },
     internal=False,
@@ -557,14 +570,10 @@ FILE_MANAGEMENT = AgentDescriptor(
     },
     context_schemas={
         Intent.OPEN_FILE: {
-            "file_ref": (
-                "Filename from the file label in conversation (e.g. 'report.docx'), a skill file ref "
-                "(e.g. 'skill:flight-status/references/airlines.md'), or a workspace copy "
-                "(e.g. 'workspace:binary_files/lease.pdf')"
-            ),
+            "file_ref": FILE_REF_DESCRIPTION,
         },
         Intent.DELETE_FILE: {
-            "file_ref": "Filename of the file to delete (e.g. 'report.docx')",
+            "file_ref": FILE_REF_DESCRIPTION,
         },
     },
     internal=False,
