@@ -19,11 +19,7 @@ ENTRYPOINTS = ("main.py", "indexer_main.py", "relay_main.py", "job_main.py")
 REQUIREMENTS = ROOT / "requirements.txt"
 
 # Imported only inside functions that no deployed path calls. Each entry names the chain and the cut that would remove it.
-NOT_EXECUTED = {
-    "markitdown": "src/utils/document_hardening.py build_markitdown() (lazy import); its only caller, "
-                  "src/utils/file_conversion.py convert_file_to_text(), has no deployed caller "
-                  "(tests/unit/test_no_in_process_attachment_parse.py); kept for the local comparison script (U5)",
-}
+NOT_EXECUTED: dict = {}
 
 
 def normalize(name: str) -> str:

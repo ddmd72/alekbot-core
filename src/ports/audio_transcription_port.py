@@ -21,7 +21,7 @@ unavailable" alert.
 - **Voice messages** (Slack voice memo, Telegram voice note) are transcribed in
   ConversationHandler, and the transcript becomes the user's own message text — down the
   file path it would be a reference-only part that never reaches session history.
-- **Attached audio files** (an uploaded mp3) go through `convert_file_to_text`, and the
+- **Attached audio files** (an uploaded mp3) are transcribed by the document service, and the
   transcript is file content wrapped in `[File: …]`.
 
 ## History

@@ -58,8 +58,8 @@ _TEXT_LINK = "text-utf8"
 _CACHE_LINK = "transcribe-cache"
 _TRANSCRIBE_LINK = "transcribe-openai"
 _EXT = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
-# Until U5 a `text/*` upload of these kinds is read raw, as today (A3); eml and subtitles go to the child's readers.
-_RAW_TEXT_KINDS = IN_PROCESS_TEXT_KINDS | {"csv", "html", "other", "data_dump", "mhtml"}
+# A `text/*` upload of these kinds is read raw (A3); csv, html, eml and subtitles go to the child's readers.
+_RAW_TEXT_KINDS = IN_PROCESS_TEXT_KINDS | {"other", "data_dump", "mhtml"}
 # ERROR: systemic or a bug (Errors-dev pages on it); everything else that is not a success is a WARNING.
 _ERROR_STATUSES = frozenset({ReadStatus.ERROR, ReadStatus.MEMORY, ReadStatus.MODEL_UNAVAILABLE,
                              ReadStatus.PARSER_UNAVAILABLE})
@@ -117,8 +117,7 @@ class DocumentService(DocumentReadPort):
             return await self._audio(request)
         if kind in ("pdf", "image"):
             return await self._pdf_or_image(request, kind)
-        if kind in IN_PROCESS_TEXT_KINDS or (mime.lower().startswith("text/") and kind in _RAW_TEXT_KINDS
-                                             and kind not in PARSE_KINDS - {"csv", "html"}):
+        if kind in IN_PROCESS_TEXT_KINDS or (mime.lower().startswith("text/") and kind in _RAW_TEXT_KINDS):
             return await self._plain_text(request, kind)
         if kind in PARSE_KINDS:
             return await self._staged(request, kind, mime)

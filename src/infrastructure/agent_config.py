@@ -89,7 +89,7 @@ class QuickAgentConfig:
     max_agent_retries: int = 1
     retry_backoff_seconds: float = 0.5
     # AgentConfig field — see RetryPolicy in domain/retry_policy.py for retry behavior.
-    # 300 s: covers PDF attachment parsing via markitdown (confirmed >60 s in production)
+    # 300 s: covers PDF attachment parsing in the parser child (confirmed >60 s in production)
     timeout_ms: int = 300_000
     # Dispatch-time intent substitution (applied in QuickResponseAgent._delegate_quick).
     intent_remap: Dict[str, str] = field(default_factory=dict)
@@ -198,7 +198,7 @@ class ConsolidationAgentConfig:
 @dataclass
 class EmailSearchAgentConfig:
     max_tokens: int = 250
-    # 300 s: PDF attachment parsing via markitdown can be slow (confirmed >30 s in production)
+    # 300 s: PDF attachment parsing in the parser child can be slow (confirmed >30 s in production)
     timeout_ms: int = 300_000
 
 
