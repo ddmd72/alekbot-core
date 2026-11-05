@@ -35,6 +35,7 @@ from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..domain.consolidation import consolidation_agent_id
 from ..domain.consolidation_pass_stats import stats_alerts_enabled
 from ..ports.user_repository import UserRepository
+from ..ports.video_duration_port import VideoDurationPort
 from ..ports.account_repository import AccountRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.llm_port import LLMPort
@@ -207,6 +208,7 @@ class UserAgentFactory(AgentFactoryPort):
         drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
         lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
+        video_duration: Optional[VideoDurationPort] = None,
     ) -> None:
         # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
         self._docx_runner_factory = docx_runner_factory()
@@ -258,6 +260,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.drive_search_service = drive_search_service
         self.alert_sink = alert_sink
         self.lifecycle_counters = lifecycle_counters
+        self.video_duration = video_duration
         self.localization = localization
         self.language_service = language_service
 
@@ -1057,6 +1060,9 @@ class UserAgentFactory(AgentFactoryPort):
                 "[UserAgentFactory] No video_registry configured, skipping video_generation"
             )
             return None
+        if self.video_duration is None:
+            logger.error("[UserAgentFactory] No video duration probe wired, skipping video generation")
+            return None
         try:
             execution_context = self.context_builder.build("video_generation", ctx.user_profile.config)
             video_port, _ = self.context_builder.resolve_video_generation_context(
@@ -1088,6 +1094,7 @@ class UserAgentFactory(AgentFactoryPort):
             ),
             execution_context=execution_context,
             video_port=video_port,
+            video_duration=self.video_duration,
             prompt_builder=ctx.prompt_builder,
             user_id=user_id,
             file_conversion=self.file_conversion_service,

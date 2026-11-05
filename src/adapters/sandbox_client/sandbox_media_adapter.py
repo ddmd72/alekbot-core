@@ -23,9 +23,13 @@ RESULT mapping: `ok` -> the media inside (a windows run OK, or TIMEOUT with the 
 ParserUnavailable("misconfigured"), ERROR. One log line per port call: request id, op, status, attempts, opens, bytes,
 wall; never the source.
 
+The same adapter serves the main service's `VideoDurationPort` (S5b): the video's bytes are streamed from memory
+(`BytesRangeSource`) to the `media.probe` op, and anything but a known duration is `None`.
+
 Public interface:
     SandboxMediaAdapter(client, *, range_source=HttpRangeSource, probe_wall_s=PROBE_WALL_S)
         .probe(source) -> MediaProbeOutcome
+        .duration_s(video) -> Optional[float]       never raises (VideoDurationPort)
         .extract_windows(source, windows, out_dir, *, wall_s, container, duration_known=True) -> MediaWindowsOutcome
 """
 from __future__ import annotations
@@ -35,7 +39,7 @@ import contextlib
 import os
 import random
 import re
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from ...domain.drive_extraction import ParserUnavailable
 from ...domain.drive_index_params import MEDIA_PASS_MAX_WINDOWS, TRANSCRIBE_MIN_RUN_WALL_S
@@ -64,25 +68,28 @@ from ...domain.sandbox_tunnel import (
     tunnel_budget,
 )
 from ...ports.media_audio_port import MediaAudioPort
+from ...ports.video_duration_port import VideoDurationPort
 from ...utils.logger import logger
-from .media_range_source import HttpRangeSource
+from .bytes_range_source import BytesRangeSource
+from .media_range_source import HttpRangeSource, RangeSource
 from .sandbox_tunnel_client import SandboxTunnelClient, TunnelLost, TunnelReply
 
 PROBE_WALL_S = 60.0                 # the in-process extractor's probe wall
+VIDEO_DURATION_WALL_S = 20.0        # a user turn waits on it: the old in-process wall was 15 s, plus a sandbox cold start
 PROBE_MIN_RUN_WALL_S = 30.0         # a probe retries only with this much of its wall left
 MAX_ATTEMPTS = 2                    # never more than one retry per call
 _JITTER_S = (0.05, 0.25)            # before retrying a 503 (another instance may take it)
 _CONTAINER = re.compile(r"^[a-z0-9_]+(,[a-z0-9_]+)*$")     # the probed format, as the codec checks it
 _SYSTEMIC_REASON = {"recycling": "busy", "no_answer": "unavailable", "lost": "unavailable"}
 
-RangeSourceFactory = Callable[[MediaSource, float], HttpRangeSource]
+RangeSourceFactory = Callable[[MediaSource, float], RangeSource]
 
 
-def _http_range_source(source: MediaSource, wall_s: float) -> HttpRangeSource:
+def _http_range_source(source: MediaSource, wall_s: float) -> RangeSource:
     return HttpRangeSource(source, wall_s=wall_s)
 
 
-class SandboxMediaAdapter(MediaAudioPort):
+class SandboxMediaAdapter(MediaAudioPort, VideoDurationPort):
     def __init__(self, client: SandboxTunnelClient, *, range_source: RangeSourceFactory = _http_range_source,
                  probe_wall_s: float = PROBE_WALL_S) -> None:
         self._client = client
@@ -92,10 +99,34 @@ class SandboxMediaAdapter(MediaAudioPort):
     # -- port -------------------------------------------------------------------------------------------------------
 
     async def probe(self, source: MediaSource) -> MediaProbeOutcome:
+        return await self._probe(lambda: self._range_source(source, self._probe_wall_s), self._probe_wall_s)
+
+    async def duration_s(self, video: bytes) -> Optional[float]:
+        if not video:
+            return None
+        try:
+            outcome = await self._probe(lambda: BytesRangeSource(video), VIDEO_DURATION_WALL_S)
+        except asyncio.CancelledError:
+            raise
+        except ParserUnavailable as exc:
+            logger.warning("[SandboxMedia] video duration unknown: unavailable (%s)", exc)
+            return None
+        except MediaUnreadable as exc:
+            logger.warning("[SandboxMedia] video duration unknown: unreadable (%s)", exc.detail)
+            return None
+        except Exception as exc:
+            logger.warning("[SandboxMedia] video duration unknown: %s", type(exc).__name__)
+            return None
+        if outcome.status is MediaStatus.OK and outcome.probe is not None and outcome.probe.duration_known:
+            return outcome.probe.duration_s
+        logger.warning("[SandboxMedia] video duration unknown: %s", outcome.status.value)
+        return None
+
+    async def _probe(self, open_upstream: Callable[[], RangeSource], wall_s: float) -> MediaProbeOutcome:
         def make(size: int, budget: int, child_wall: float) -> TunnelStart:
             return TunnelStart(op=SandboxOp.MEDIA_PROBE, source_bytes=size, budget_bytes=budget, wall_s=child_wall)
 
-        reply = await self._call(SandboxOp.MEDIA_PROBE, source, self._probe_wall_s, PROBE_MIN_RUN_WALL_S, make)
+        reply = await self._call(SandboxOp.MEDIA_PROBE, open_upstream, wall_s, PROBE_MIN_RUN_WALL_S, make)
         result = reply.result
         if result.status is SandboxStatus.OK and isinstance(result.media, TunnelProbe):
             media = result.media
@@ -130,7 +161,8 @@ class SandboxMediaAdapter(MediaAudioPort):
             return TunnelStart(op=SandboxOp.MEDIA_AUDIO_WINDOWS, source_bytes=size, budget_bytes=budget,
                                wall_s=child_wall, container=container, duration_known=duration_known, windows=plan)
 
-        reply = await self._call(SandboxOp.MEDIA_AUDIO_WINDOWS, source, wall_s, float(TRANSCRIBE_MIN_RUN_WALL_S), make)
+        reply = await self._call(SandboxOp.MEDIA_AUDIO_WINDOWS, lambda: self._range_source(source, wall_s), wall_s,
+                                 float(TRANSCRIBE_MIN_RUN_WALL_S), make)
         result = reply.result
         if result.status is not SandboxStatus.OK or not isinstance(result.media, TunnelWindows):
             status, detail = self._run_failure(SandboxOp.MEDIA_AUDIO_WINDOWS, result)
@@ -144,14 +176,14 @@ class SandboxMediaAdapter(MediaAudioPort):
 
     # -- the call ---------------------------------------------------------------------------------------------------
 
-    async def _call(self, op: SandboxOp, source: MediaSource, wall_s: float, min_run_s: float,
+    async def _call(self, op: SandboxOp, open_upstream: Callable[[], RangeSource], wall_s: float, min_run_s: float,
                     make: Callable[[int, int, float], TunnelStart]) -> TunnelReply:
         loop = asyncio.get_running_loop()
         started = loop.time()
         deadline = started + wall_s
         log = {"request_id": "-", "status": "error", "attempts": 0, "opens": 0, "bytes_in": 0}
         try:
-            upstream = self._range_source(source, wall_s)
+            upstream = open_upstream()
             try:
                 try:
                     async with asyncio.timeout_at(deadline):

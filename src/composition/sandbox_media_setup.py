@@ -1,10 +1,10 @@
 """
-Indexer side of the sandboxed media decoder (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §7 S5; S5 design §2.6, §2.7).
+Indexer and main-service side of the sandboxed media decoder (docs/10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md §7 S5; S5 design §2.6, §2.7).
 
 Public interface:
     build_sandbox_media(url) -> SandboxMediaAdapter
 
-The `MediaAudioPort` over the light service's media tunnel: a `SandboxTunnelClient` that signs every call with the
+The `MediaAudioPort` (indexer) and `VideoDurationPort` (main service, S5b) over the light service's media tunnel: a `SandboxTunnelClient` that signs every call with the
 service's ID token (audience = the light URL, the same `SANDBOX_PARSE_URL` the parser uses), and drive reads through
 `HttpRangeSource`, which keeps the drive's URL and token in the indexer. Reads no environment and has no knob (O14's
 pattern: a required URL, rollback by revision). An empty URL is refused (ValueError, ERROR logged).

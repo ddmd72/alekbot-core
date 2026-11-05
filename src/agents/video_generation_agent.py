@@ -31,9 +31,9 @@ from ..infrastructure.agent_config import VIDEO_GENERATION
 from ..infrastructure.agent_manifest import Intent
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.prompt_builder_port import PromptBuilderPort
+from ..ports.video_duration_port import VideoDurationPort
 from ..ports.video_generation_port import VideoGenerationPort
 from ..utils.logger import logger
-from ..utils.video_probe import probe_video_duration_s
 from .base_agent import BaseAgent
 
 DEFAULT_VIDEO_DURATION_S = 5
@@ -76,6 +76,7 @@ class VideoGenerationAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         video_port: VideoGenerationPort,
+        video_duration: VideoDurationPort,
         prompt_builder: PromptBuilderPort,
         user_id: Optional[str] = None,
         file_conversion=None,
@@ -85,6 +86,7 @@ class VideoGenerationAgent(BaseAgent):
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self._video_port = video_port
+        self._video_duration = video_duration
         self.prompt_builder = prompt_builder
         self.user_id = user_id
         self._file_conversion = file_conversion
@@ -341,7 +343,7 @@ class VideoGenerationAgent(BaseAgent):
                 error="Video too large to edit — please use a smaller clip.",
             )
 
-        probed_duration_s = await probe_video_duration_s(video_data)
+        probed_duration_s = await self._video_duration.duration_s(video_data)
         if probed_duration_s is not None and probed_duration_s > MAX_EDIT_VIDEO_SOURCE_DURATION_S:
             self._on_agent_error(
                 ValueError(f"video too long: {probed_duration_s:.1f}s"),
@@ -355,7 +357,7 @@ class VideoGenerationAgent(BaseAgent):
                     "editing videos up to 8 seconds. Please use a shorter clip."
                 ),
             )
-        # probed_duration_s is None (ffprobe unavailable/failed) — do NOT block;
+        # probed_duration_s is None (the sandbox could not tell) — do NOT block;
         # let xAI's own real-time check be the final word rather than rejecting a
         # possibly-valid video on a measurement failure.
 

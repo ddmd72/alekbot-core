@@ -52,9 +52,9 @@ from .sandbox_callers import load_caller_sets
 # The gate's group -> op-prefix mapping of the render family. Group names match `SANDBOX_CALLERS_<GROUP>`.
 GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {"RENDER": frozenset({"render"})}
 # The light family: the main service and the indexer each get the `parse` prefix; the indexer also `media` (S5: drive
-# recordings over the tunnel). MAIN gains `media` only with S5b (video_probe).
+# recordings over the tunnel); MAIN also gets `media` (S5b: it probes edit-video sources).
 LIGHT_GROUP_PREFIXES: Mapping[str, FrozenSet[str]] = {
-    "MAIN": frozenset({"parse"}), "INDEXER": frozenset({"parse", "media"}),
+    "MAIN": frozenset({"parse", "media"}), "INDEXER": frozenset({"parse", "media"}),
 }
 
 FAMILY_RENDER = "render"
