@@ -90,6 +90,50 @@ def zip_container_facts(local_path: str) -> Dict[str, Any]:
     }
 
 
+# Storage / stream names of a VBA project in an OLE2 file: Word keeps `Macros/VBA/...`, Excel `_VBA_PROJECT_CUR/VBA/...`,
+# and the project's own `VBA` storage holds the modules. Compared lower-cased on every path component.
+_OLE_VBA_NAMES = frozenset({"macros", "_vba_project_cur", "vba", "_vba_project"})
+
+
+def container_facts(local_path: str) -> Dict[str, Any]:
+    """The `parse.container_facts` body for any file: the ZIP facts, else the OLE2 facts, else `not_zip`
+    (owner decision 2026-11-05: legacy .doc/.xls/.ppt macros). The child's op."""
+    facts = zip_container_facts(local_path)
+    if facts["status"] != "not_zip":
+        return facts
+    return ole_container_facts(local_path)
+
+
+def ole_container_facts(local_path: str) -> Dict[str, Any]:
+    """The facts of an OLE2 compound file (olefile, imported lazily):
+
+        {"status": "not_zip"}                                   not an OLE2 file either
+        {"status": "too_large", "members": n, "detail": ...}    above MAX_ZIP_MEMBERS directory entries
+        {"status": "error", "detail": ...}                      an OLE2 file the reader cannot read
+        {"status": "ole", "members": n, "vba_storage": bool}
+
+    Reads the directory only, never a stream body. `vba_storage`: any entry path with a component in `_OLE_VBA_NAMES`.
+    An encrypted OOXML package (`EncryptionInfo` / `EncryptedPackage`) has none, so it stays a checked, macro-free
+    answer exactly as before (it was `not_zip`)."""
+    import olefile
+
+    try:
+        if not olefile.isOleFile(local_path):
+            return {"status": "not_zip"}
+        with olefile.OleFileIO(local_path) as ole:
+            entries = ole.listdir(streams=True, storages=True)
+    except Exception as exc:   # untrusted bytes: olefile raises OSError, struct.error, IndexError, ... on a broken file
+        return {"status": "error", "detail": type(exc).__name__}
+    if len(entries) > MAX_ZIP_MEMBERS:
+        return {"status": "too_large", "members": len(entries),
+                "detail": f"{len(entries)} entries (limit {MAX_ZIP_MEMBERS})"}
+    return {
+        "status": "ole",
+        "members": len(entries),
+        "vba_storage": any(part.lower() in _OLE_VBA_NAMES for entry in entries for part in entry),
+    }
+
+
 def build_markitdown() -> Any:
     """MarkItDown with local document converters only — the files are untrusted user input.
 

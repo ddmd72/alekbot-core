@@ -16,7 +16,7 @@ Public interface:
 There is no `brief` key: the child never writes one (it is the reader's), and no identity.
 
 `parse.container_facts` (EXTERNAL_FILES U4b, D13/O2) has its own closed key set, `CONTAINER_RESULT_KEYS`, and status
-set: `zip` (the facts are given), `not_zip`, `too_large` (the member cap or the content-types cap), `error` (a ZIP the
+set: `zip` (the facts are given), `ole` (a legacy OLE2 file: `vba_storage`), `not_zip`, `too_large` (the member cap or the content-types cap), `error` (a ZIP the
 reader could not read). The main side builds `container_facts.ContainerFacts` from the decoded dict.
 """
 from __future__ import annotations
@@ -39,8 +39,14 @@ _EXTRACT_STATUSES = frozenset({"text", "no_text", "unsupported", "too_large", "e
 _PAGE_STATUSES = frozenset({"text", "encrypted", "unsupported", "timeout", "memory", "too_large", "error"})
 CONTAINER_RESULT_KEYS: FrozenSet[str] = frozenset({
     "status", "detail", "members", "vba_project", "macro_content_type", "odf_macros",
+    "vba_storage",
 })
-_CONTAINER_STATUSES = frozenset({"zip", "not_zip", "too_large", "error"})
+_CONTAINER_STATUSES = frozenset({"zip", "ole", "not_zip", "too_large", "error"})
+# What a decoded answer of each status must carry: a `zip` its four facts, an `ole` its member count and `vba_storage`.
+_CONTAINER_FACTS_NEEDED: Mapping[str, FrozenSet[str]] = {
+    "zip": frozenset({"members", "vba_project", "macro_content_type", "odf_macros"}),
+    "ole": frozenset({"members", "vba_storage"}),
+}
 _STATUSES: Mapping[SandboxOp, FrozenSet[str]] = {
     SandboxOp.PARSE_EXTRACT: _EXTRACT_STATUSES,
     SandboxOp.PARSE_PDF_PAGE_COUNT: _PAGE_STATUSES,
@@ -79,6 +85,7 @@ _FIELD_CHECKS: Mapping[str, Callable[[Any], bool]] = {
     "text": _is_str, "detail": _is_str, "pages_total": _is_count, "pages": _is_count,
     "truncated": _is_bool, "script_rendered": _is_bool, "capture_signals": _is_dict,
     "members": _is_count, "vba_project": _is_bool, "macro_content_type": _is_bool, "odf_macros": _is_bool,
+    "vba_storage": _is_bool,
 }
 
 
@@ -109,9 +116,10 @@ def decode_parse_result(raw: Union[bytes, bytearray], op: SandboxOp) -> Dict[str
     result = _validated(obj, statuses, _KEYS[op])
     if op is SandboxOp.PARSE_PDF_PAGE_COUNT and result["status"] == "text" and "pages_total" not in result:
         raise ParseResultError("page count result without pages_total")
-    if op is SandboxOp.PARSE_CONTAINER_FACTS and result["status"] == "zip" and not (
-            CONTAINER_RESULT_KEYS - {"detail"} <= set(result)):
-        raise ParseResultError("container facts without every fact")
+    if op is SandboxOp.PARSE_CONTAINER_FACTS:
+        needed = _CONTAINER_FACTS_NEEDED.get(result["status"])
+        if needed is not None and not needed <= set(result):
+            raise ParseResultError("container facts without every fact")
     return result
 
 

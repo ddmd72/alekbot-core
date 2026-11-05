@@ -70,12 +70,14 @@ the FileManagement intent `send_file_to_user` (SYNC; `file_ref` plus an optional
 `UserNotificationService.notify_file_bytes` to the origin channel; a refusal answers with a note, a failed upload is a
 failure).
 
-**D13: active kinds from email are not sent.** For an `email:` ref only, `send_file_to_user` calls
+**D13: active kinds from email are not sent or saved.** For an `email:` ref only, `send_file_to_user` and the email branch of
+`DriveOperations.copy` (`copy_file_to_drive`; a refusal uploads nothing, owner 2026-11-05) call
 `active_kind_of(resolved, deadline_at=...)` on the file as resolved and again under the name the model gave. It compares
 the head (64 KiB) in `src/domain/active_kind.py` (HTML, SVG, shortcut, disk image, executable, script) and, for a ZIP
-family file (`needs_container_check`), asks `ContainerFactsPort.container_facts` for the macro facts. The adapter is
+family file or an OLE2 head, i.e. a legacy `.doc`/`.xls`/`.ppt` under any name (`needs_container_check`), asks `ContainerFactsPort.container_facts` for the macro facts. The adapter is
 `SandboxContentExtractor` over the sandbox light op `parse.container_facts` (central directory and `[Content_Types].xml`
-only); the main service reads no ZIP. A name or mime naming an active kind blocks too, never unblocks. **Fail closed:** no
+only; for an OLE2 file its directory, never a stream body: `vba_storage` is a `Macros`, `_VBA_PROJECT_CUR` or `VBA`
+storage, a plain or encrypted-OOXML OLE2 file has none); the main service reads no container. A name or mime naming an active kind blocks too, never unblocks. **Fail closed:** no
 port, an outage, a run failure, `error` or `too_large` leaves the container unchecked, and `active_kind` answers
 `unchecked_container`: the file is refused with a "could not be checked" note, never sent. Drive and chat refs are sent
 without the check.

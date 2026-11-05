@@ -70,6 +70,7 @@ from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS
 from ..domain.document_kind import kind_of
 from ..domain.document_open import ACTION_SAVE, OpenedFile
+from ..domain.email_open_texts import active_kind_refusal_note
 from ..domain.document_open_texts import shown_line, storage_read_note
 from ..domain.document_presentation import present_text
 from ..domain.document_read import (
@@ -527,6 +528,14 @@ class DriveOperations:
                     raise _Refusal(e.line, OutcomeClass.REFUSED)
                 data = resolved.data
                 filename = drive_filename(file_name, resolved.name)
+                # D13 (owner decision 2026-11-05): an active kind from an email is not saved either; refused before
+                # any upload. Both the attachment's name and the name the file would get on the drive are checked.
+                deadline_at = time.time() + wait_s
+                for candidate in {resolved.name: resolved, filename: replace(resolved, name=filename)}.values():
+                    active = await self._conversion_service.active_kind_of(candidate, deadline_at=deadline_at)
+                    if active is not None:
+                        logger.info("DriveOperations: copy refused an email attachment (kind=%s)", active)
+                        raise _Refusal(active_kind_refusal_note(active), OutcomeClass.REFUSED)
                 mime = resolved.mime or mimetypes.guess_type(filename)[0] or "application/octet-stream"
                 return await self._store(DriveOp.COPY, user_id, data, filename, mime, folder)
             data = await self._source_bytes(ref, user_id, DriveOp.COPY)
