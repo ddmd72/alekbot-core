@@ -6,10 +6,11 @@ import pytest
 
 from src.domain.document_extraction import PARSER, READER, ExtractionStatus
 from src.domain.drive_extraction import ExtractionOutcome
-from src.domain.drive_index import RecordState
+from src.domain.drive_index import Reason, RecordState
 from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_world import ContentWorld, HookedExtractor, admitted, prose  # noqa: F401  (fixture)
+from .drive_inaccessible_world import ClosedWorld
 from .drive_index_fakes import LegacyConnections
 
 pytestmark = pytest.mark.usefixtures("admitted")
@@ -30,6 +31,16 @@ def upgraded(w, **outcomes):
 def thin(pages=3):
     """A parser outcome the router sends to the reader (under MODEL_EXTRACT_DENSITY chars per page)."""
     return ExtractionOutcome(status=ExtractionStatus.TEXT, text="Lab report LAB-2025-03-0417", pages_total=pages)
+
+
+def garbage():
+    """Text over MODEL_EXTRACT_GARBAGE unreadable characters, dense enough not to be low_density."""
+    return ExtractionOutcome(status=ExtractionStatus.TEXT, text=("(cid:12)" * 40 + " Lab report LAB-2025-03-0417 ") * 3,
+                             pages_total=1)
+
+
+ROUTED = {"no_text": ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=2),
+          "low_density": thin(), "garbage_text": garbage()}
 
 
 @pytest.fixture
@@ -83,8 +94,9 @@ async def test_an_edit_during_the_run_drops_the_result(w):
     assert w.rec(w.doc).extracted_by == "parser@1"   # nothing of the dropped run was written
 
 
-@pytest.mark.parametrize("outcome", [thin(), ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=2)])
-async def test_an_upgrade_re_read_never_calls_the_reader(w, outcome):
+@pytest.mark.parametrize("why", sorted(ROUTED))
+async def test_an_upgrade_re_read_never_calls_the_reader(w, why):
+    outcome = ROUTED[why]
     calls = len(w.reader.requests)
     upgraded(w, **{"lab-report.pdf": outcome})
     await w.settle()
@@ -93,10 +105,11 @@ async def test_an_upgrade_re_read_never_calls_the_reader(w, outcome):
     assert w.rec(w.pdf).extracted_by == "parser@2"
 
 
-async def test_an_edited_pdf_whose_text_routes_still_reaches_the_reader(w):
+@pytest.mark.parametrize("why", sorted(ROUTED))
+async def test_an_edited_pdf_whose_text_routes_still_reaches_the_reader(w, why):
     w.reader.outcomes["lab-report.pdf"] = ExtractionOutcome(status=ExtractionStatus.TEXT, text=prose(5),
                                                             pages_total=3, pages_sent=3, model_calls=1)
-    upgraded(w, **{"lab-report.pdf": thin()})
+    upgraded(w, **{"lab-report.pdf": ROUTED[why]})
     w.drive.edit(w.pdf, b"%PDF-1.7\nnew text", modified_at=w.clock.now)
     w.clock.advance(3600)
     await w.settle()
@@ -118,3 +131,41 @@ async def test_chunks_in_another_space_take_the_full_path(w):
     await w.settle()
     assert w.summary_total("reread_same") <= 1   # only the PDF may stamp
     assert len(w.emb.calls) > embeds and w.rec(w.doc).chunk_space == "test-space/8"
+
+
+async def test_a_demoted_parser_record_is_an_upgrade_re_read_too(w):
+    demoted = replace(w.rec(w.pdf), state=RecordState.METADATA_ONLY, reason=Reason.NO_TEXT, indexed_generation=None,
+                      indexed_version=None, chunk_space="", chunk_count=0, dirty_since=None)
+    w.repo.records[("u", w.pdf)] = demoted
+    upgraded(w, **{"lab-report.pdf": thin()})
+    await w.settle()
+    rec = w.rec(w.pdf)
+    assert len(w.reader.requests) == 0 and w.summary_total("reader_skipped_upgrade") == 1
+    assert rec.state is RecordState.INDEXED and rec.extracted_by == "parser@2"   # the parser's text is kept
+    assert any("LAB-2025-03-0417" in c.text for c in w.readable(w.pdf))
+
+
+async def test_an_inaccessible_record_is_not_re_read():
+    world = ClosedWorld()
+    doc = world.add_doc("ipo-report.md", prose(40))
+    await world.settle()
+    world.drive.closed.add(doc)
+    parser = upgraded(world)
+    await world.settle()
+    assert not any(r.name == "ipo-report.md" for r in parser.requests)
+    assert world.rec(doc).extracted_by == "parser@1" and world.summary_total("reread_same") == 0
+
+
+async def test_a_transcript_record_is_untouched_by_a_parser_upgrade(w):
+    memo = w.drive.add_file("memo.m4a", b"\x00" * 64, mime_type="audio/mp4")
+    await w.tick()
+    rec = w.rec(memo)
+    stamped = replace(rec, state=RecordState.INDEXED, reason=None, indexed_generation=1, index_generation=1,
+                      indexed_version=rec.content_version, extracted_by="transcribe-gemini@1")
+    w.repo.records[("u", memo)] = stamped
+    parser = upgraded(w)
+    for _ in range(3):
+        await w.tick()
+    assert not any(r.name == "memo.m4a" for r in parser.requests)
+    assert w.rec(memo).extracted_by == "transcribe-gemini@1"
+    assert w.chunks(memo) == []   # no Layer 2 stamp, no new text

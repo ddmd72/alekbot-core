@@ -3309,9 +3309,7 @@ class DriveIndexingService:
                     await self._commit(handle, [replace(fresh, attempt_started_at=None)], set())
                 return None
             summary["reread_same"] = summary.get("reread_same", 0) + 1
-            # the re-plan of the upgrade left the record pending; the stamp settles it as indexed again, as `indexed` does
-            # (`reread_unchanged` moves only the stamp fields: the state is this caller's to restore)
-            return replace(reread_unchanged(fresh, outcome, now), state=RecordState.INDEXED, reason=None)
+            return reread_unchanged(fresh, outcome, now)
         if chunk_cap_refuses(await self._repo.readable_chunk_total(handle.scope), run, len(chunked.chunks)):
             logger.info(f"[DriveIndex] item {run.item_id} of {handle.user_id[:8]} refused by the chunk cap "
                         f"({len(chunked.chunks)} chunks)")
