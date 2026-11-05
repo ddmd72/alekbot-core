@@ -213,7 +213,7 @@ help: ## Show this help message
 install: ## Install dependencies
 	@echo "📦 Installing dependencies..."
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r requirements.txt
+	$(PYTHON) -m pip install -r requirements-dev.txt
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
@@ -250,7 +250,7 @@ PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
 # --durations=25 is an advisory report of the slowest tests.
 PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v) --durations=25
-XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
+XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements-dev.txt)")
 
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
