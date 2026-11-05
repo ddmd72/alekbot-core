@@ -1,8 +1,8 @@
 """
 DocxRenderEngine: the service's `render.docx` engine (RFC §4.6, §4.7, §4.9; plan G1, G2, G20).
 
-Not `NodeDocxRunner` itself: that runner writes into `docx_generator/`, runs node as the caller's uid and applies no
-limits. This engine keeps its observable contract (prelude, error texts) but runs `render_docx_child` through the
+The former in-process runner wrote into `docx_generator/`, ran node as the caller's uid and applied no limits. This
+engine keeps its observable contract (prelude, error texts) but runs `render_docx_child` through the
 `ChildLauncher` (own uid, allowlisted environment, `limits_exec` applied once before the child starts and inherited by
 node across its exec).
 

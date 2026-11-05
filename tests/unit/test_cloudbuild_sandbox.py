@@ -176,31 +176,35 @@ def test_only_the_sandbox_deploys_pin_a_service_account_and_each_pins_its_own():
         assert f'run deploy "$SERVICE"' in block and f'--service-account="${var}"' in block, rel
 
 
-# ---- the main service passes the switch -----------------------------------------------------------------------------
+# ---- the main service passes the URL, and no render switch (the in-process path is gone, §4.12) ----------------------
 
-def test_main_step_passes_the_switch_as_substitution():
+def test_main_step_passes_the_url_and_no_switch():
     env = next(a for a in _main_step()["args"] if a.startswith("--set-env-vars="))
-    assert "SANDBOX_RENDER=$_SANDBOX_RENDER" in env.split(",")
+    names = [pair.split("=", 1)[0] for pair in env.split(",")]
+    assert "SANDBOX_RENDER" not in names
+    assert "$_SANDBOX_RENDER," not in env + "," and not env.endswith("$_SANDBOX_RENDER")
     assert "SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL" in env.split(",")
 
 
-def test_substitution_defaults_keep_the_switch_inprocess_and_the_rest_empty():
+def test_substitutions_carry_no_switch_and_keep_the_rest_empty():
     subs = _build()["substitutions"]
-    assert subs["_SANDBOX_RENDER"] == "inprocess"
+    assert "_SANDBOX_RENDER" not in subs
     for name in ("_SANDBOX_RENDER_URL", "_SANDBOX_RENDER_SA", "_SANDBOX_RENDER_CALLERS"):
         assert subs[name] == ""
 
 
 def test_makefile_passes_every_sandbox_substitution():
     make = _MAKEFILE.read_text()
-    assert re.search(r"^_SANDBOX_RENDER\s*=\s*\$\(or \$\(SANDBOX_RENDER_DEV\),inprocess\)", make, re.M)
+    assert not re.search(r"^_SANDBOX_RENDER\s*=", make, re.M)
+    assert "$(_SANDBOX_RENDER)" not in make and "SANDBOX_RENDER_DEV" not in make
     assert re.search(r"^_SANDBOX_RENDER_URL\s*=\s*\$\(SANDBOX_RENDER_URL_DEV\)", make, re.M)
     assert re.search(r"^_SANDBOX_RENDER_SA\s*=\s*\$\(SANDBOX_RENDER_SA_DEV\)", make, re.M)
     assert re.search(r"^_SANDBOX_RENDER_CALLERS\s*=\s*\$\(SANDBOX_RENDER_CALLERS_DEV\)", make, re.M)
     deploy = make.split("\ndeploy:", 1)[1].split("\ndeploy-indexes:", 1)[0]
-    for name in ("_SANDBOX_RENDER", "_SANDBOX_RENDER_URL", "_SANDBOX_RENDER_SA", "_SANDBOX_RENDER_CALLERS"):
+    for name in ("_SANDBOX_RENDER_URL", "_SANDBOX_RENDER_SA", "_SANDBOX_RENDER_CALLERS"):
         assert f",{name}=$({name})" in deploy, name
-    assert "docs/07_deployment/README.md" in make.split("_SANDBOX_RENDER =", 1)[0][-900:]
+    assert ",_SANDBOX_RENDER=" not in deploy
+    assert "docs/07_deployment/README.md" in make.split("_SANDBOX_RENDER_URL =", 1)[0][-900:]
 
 
 # ---- behaviour of the script, with stub gcloud/docker ---------------------------------------------------------------

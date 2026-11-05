@@ -52,7 +52,7 @@ User → Smart/Quick → coordinator.handle_delegation(CREATE_DOCUMENT, ASYNC)
                                                         │
                                                         └─ DocxRunnerPort.run(js_code, raw_spec)
                                                               │
-                                                        NodeDocxRunner (subprocess)
+                                                        SandboxDocxRunner (render sandbox, HTTP)
                                                               │
                                                         DOCX bytes → DeliveryItem("file_upload")
                                                               │
@@ -231,9 +231,9 @@ class DocxRunnerPort(ABC):
 Future implementations may include Cloud Run Jobs or a serverless Cloud Function for environments
 where `node` is not available or for better isolation.
 
-### 5.1 NodeDocxRunner (current implementation)
+### 5.1 SandboxDocxRunner
 
-**File:** `src/adapters/node_docx_runner.py`
+The main service renders DOCX only through the render sandbox (`SandboxDocxRunner`, `src/adapters/sandbox_client/`, URL from `SANDBOX_RENDER_URL`; an empty URL degrades the feature). The sandbox engine's observable contract is described below.
 
 Writes `js_code` to a temp `.js` file inside `docx_generator/` (project root), launches
 `node <tmp_file>` via `asyncio.create_subprocess_exec`, pipes `spec_json` to stdin, captures
@@ -256,7 +256,7 @@ The `docx` npm library must be resolvable via `node_modules/`. Writing the temp 
 
 | Implementation | When to use |
 |---|---|
-| `NodeDocxRunner` | Local `node` + npm. Current default. |
+| `SandboxDocxRunner` | The render sandbox over HTTP. Current and only implementation. |
 | `CloudFunctionDocxRunner` | Serverless; no node on the host; better sandbox isolation. |
 | `CloudRunJobDocxRunner` | Heavy documents; longer timeout; dedicated CPU. |
 
@@ -426,7 +426,7 @@ User → Smart/Quick → coordinator.handle_delegation(CREATE_PDF, ASYNC)
                                   │
                                   ├─ PuppeteerRunnerPort.run(html)
                                   │        │
-                                  │   NodePuppeteerRunner (node pdf_generator/runner.js)
+                                  │   SandboxPuppeteerRunner (render sandbox, HTTP)
                                   │        │
                                   │   PDF bytes
                                   │
@@ -506,9 +506,7 @@ class PuppeteerRunnerPort(ABC):
 **Why a port:** Subprocess execution is a system boundary. The interface is also testable in
 isolation — `PdfGeneratorAgent` receives a mock port in unit tests without spawning Node.js.
 
-**NodePuppeteerRunner** (`src/adapters/node_puppeteer_runner.py`): pipes `html` to stdin of
-`node pdf_generator/runner.js`, captures raw PDF bytes from stdout. Error cases match
-`NodeDocxRunner`: non-zero exit code, timeout, or empty stdout all raise `PuppeteerRunnerError`.
+**SandboxPuppeteerRunner** (`src/adapters/sandbox_client/`): sends `html` to the render sandbox's `render.pdf` op and returns the PDF bytes. A failure, timeout or empty output raises `PuppeteerRunnerError`.
 
 **Why `pdf_generator/` is separate from `docx_generator/`:** Each is an independent Node.js
 project with its own `node_modules/`. `docx_generator/` has the `docx` npm library;
@@ -542,7 +540,7 @@ rendering or platform-specific upload logic.
 | Renderer | Node.js process runs `docx` library | Puppeteer (headless Chromium) |
 | Node.js project | `docx_generator/` (`docx` npm) | `pdf_generator/` (`puppeteer` npm) |
 | Port | `DocxRunnerPort` | `PuppeteerRunnerPort` |
-| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` |
+| Adapter | `SandboxDocxRunner` | `SandboxPuppeteerRunner` |
 | GCS storage | Not used (bytes returned inline) | `DocumentDeliveryService` (both HTML + PDF) |
 | DeliveryItem type | `"file_upload"` | `"document"` (two items: HTML + PDF) |
 | Filename source | JSON spec `filename` field | `<title>` tag extracted from HTML |
@@ -787,7 +785,7 @@ injected for them.
 | Renderer | Node.js `docx` library | Puppeteer (headless Chromium) | None — HTML is final |
 | Node.js project | `docx_generator/` | `pdf_generator/` | None |
 | Port | `DocxRunnerPort` | `PuppeteerRunnerPort` | `ImageSearchPort` (optional) |
-| Adapter | `NodeDocxRunner` | `NodePuppeteerRunner` | `UnsplashAdapter` (optional) |
+| Adapter | `SandboxDocxRunner` | `SandboxPuppeteerRunner` | `UnsplashAdapter` (optional) |
 | Image sourcing | None | None | Unsplash post-processing (placeholder → real URL) |
 | GCS storage | Not used (bytes inline) | `DocumentDeliveryService` (HTML + PDF) | `DocumentDeliveryService` (HTML only) |
 | DeliveryItem type | `"file_upload"` | `"document"` (two items) | `"document"` (one item) |
@@ -803,13 +801,13 @@ injected for them.
 - `src/agents/doc_planner_agent.py` — Phase 1: planning, raw forward to generator, fire-and-forget
 - `src/agents/doc_generator_agent.py` — Phase 2: tool-calling loop, `_make_filename`
 - `src/ports/docx_runner_port.py` — `DocxRunnerPort` ABC + `DocxRunnerError`
-- `src/adapters/node_docx_runner.py` — `NodeDocxRunner`: temp file, subprocess, timeout
+- `src/adapters/sandbox_client/sandbox_docx_runner.py` — `SandboxDocxRunner`: HTTP call to the render sandbox
 - `docx_generator/` — project root directory; `node_modules/docx` installed here
 
 **PDF pipeline:**
 - `src/agents/pdf_generator_agent.py` — single LLM call, `_strip_markdown_fences`, Puppeteer rendering, `_extract_filename_from_html`, two DeliveryItems
 - `src/ports/puppeteer_runner_port.py` — `PuppeteerRunnerPort` ABC + `PuppeteerRunnerError`
-- `src/adapters/node_puppeteer_runner.py` — `NodePuppeteerRunner`: stdin HTML → stdout PDF bytes
+- `src/adapters/sandbox_client/sandbox_puppeteer_runner.py` — `SandboxPuppeteerRunner`: HTML → PDF bytes through the render sandbox
 - `src/services/document_delivery_service.py` — GCS storage via `MediaStoragePort` (key: `docs/{uuid}-{filename}`)
 - `pdf_generator/runner.js` — Puppeteer wrapper: stdin → headless Chrome → stdout PDF bytes
 - `pdf_generator/package.json` — `puppeteer ^24.x`

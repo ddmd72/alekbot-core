@@ -526,11 +526,11 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 - `src/agents/doc_planner_agent.py`: Two-phase DOCX creation specialist (intent: `create_document`, ASYNC).
 - `src/agents/doc_generator_agent.py`: Internal Node.js DOCX code generation specialist (intent: `generate_docx_code`, ASYNC, `internal=True`).
 - `src/ports/docx_runner_port.py`: `DocxRunnerPort` ABC + `DocxRunnerError` — system boundary for subprocess execution.
-- `src/adapters/node_docx_runner.py`: `NodeDocxRunner` — runs Node.js scripts in `docx_generator/`, captures stdout as DOCX bytes.
+- `src/adapters/sandbox_client/sandbox_docx_runner.py`: `SandboxDocxRunner` — sends the Node.js script to the render sandbox, returns DOCX bytes.
 - `src/agents/pdf_generator_agent.py`: PDF creation specialist (intent: `create_pdf`, ASYNC, BALANCED tier, `internal=False`). Single LLM call → HTML+CSS → Puppeteer rendering.
 - `src/agents/html_page_generator_agent.py`: HTML page creation specialist (intent: `create_html_page`, ASYNC, PERFORMANCE tier, `internal=False`). Single LLM call → HTML+CSS+JS → GCS public URL. No subprocess, no Slack file upload.
-- `src/ports/puppeteer_runner_port.py`: `PuppeteerRunnerPort` ABC — system boundary for Node.js Puppeteer subprocess.
-- `src/adapters/node_puppeteer_runner.py`: `NodePuppeteerRunner` — pipes HTML to `pdf_generator/runner.js` via stdin, captures PDF bytes from stdout.
+- `src/ports/puppeteer_runner_port.py`: `PuppeteerRunnerPort` ABC — system boundary for the PDF render.
+- `src/adapters/sandbox_client/sandbox_puppeteer_runner.py`: `SandboxPuppeteerRunner` — HTML to PDF bytes through the render sandbox.
 - `src/services/document_delivery_service.py`: `DocumentDeliveryService` — stores document bytes to GCS via `MediaStoragePort` (key: `docs/{uuid4()}-{filename}`). Used by both PdfGeneratorAgent and HtmlPageGeneratorAgent.
 - `src/composition/user_agent_factory.py`: Lifecycle and DI management.
 - `src/services/history_summary_service.py`: LLM-based response compression (Gemini-locked, fail-fast).

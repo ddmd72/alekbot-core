@@ -99,7 +99,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `DRIVE_TRANSCRIBE_ENABLED_DEV` | `_DRIVE_TRANSCRIBE_ENABLED` → `DRIVE_TRANSCRIBE_ENABLED` | **required**, exactly `on` or `off` (below) |
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
 | `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
-| `SANDBOX_RENDER_DEV`, `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
+| `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
 | `SANDBOX_VPC_NETWORK_DEV`, `SANDBOX_VPC_SUBNET_DEV` | `_SANDBOX_VPC_NETWORK`, `_SANDBOX_VPC_SUBNET` | **required**: the custom VPC and its subnet both sandbox services deploy onto with no egress; `make deploy` refuses when either is empty, and the sandbox deploy scripts exit 4 (see Sandbox network) |
 | `SANDBOX_LIGHT_SA_DEV`, `SANDBOX_LIGHT_URL_DEV`, `SANDBOX_LIGHT_CALLERS_MAIN_DEV`, `SANDBOX_LIGHT_CALLERS_INDEXER_DEV` | `_SANDBOX_LIGHT_*` | `SANDBOX_LIGHT_URL_DEV` is required by the deploy target (it becomes `SANDBOX_PARSE_URL` on the main service and the indexer); see Sandbox light (parse) service |
 
@@ -168,8 +168,6 @@ redirect (below).
        --member="serviceAccount:<INDEXER_SA_EMAIL>" --role=roles/secretmanager.secretAccessor
    done
    ```
-2. `DRIVE_PARSER_USER` must be set on the indexer: it now holds full-drive tokens in memory, so a missing parser user
-   fails the start on Cloud Run (G13) instead of running the parser children as the indexer's own user.
 
 **Integration connect redirect (`OAUTH_CONNECT_REDIRECT_URI`).** One callback serves every integration connect, Google and
 Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2, E4). Deployed, the key
@@ -450,13 +448,10 @@ request per instance (`SANDBOX_RECYCLE=always`, unchanged).
 cannot write, and the font set (Latin, Cyrillic, CJK, Thai, emoji). No Playwright, no full Chrome. The image grows by the browser, its
 libraries and fonts; its size is measured at acceptance. S2 adds **no deploy key, no substitution and no setting**: the same four keys below
 serve it, and `StartupPlan.browser_cache_dir` reads `PUPPETEER_CACHE_DIR`, set in the image. The browser child runs under its own
-limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **One knob for the whole render family** (owner decision O15, 2026-11-04): `SANDBOX_RENDER=sandbox` makes the main service
-send DOCX and PDF to this service; the default `inprocess` keeps both in the main process. Widget PNGs always render in the main process (owner decision O16). There is no per-format switch and no
-fallback between the two.
+limits (RFC §4.6); Chromium's own sandbox stays off (accepted at the S2 rollout, RFC §S0-f). `render.pdf` is live since 2026-11-04; `render.png` is not wired (O16). **No render knob** (a `SANDBOX_RENDER` value is ignored): the main service sends DOCX and PDF to this service whenever `SANDBOX_RENDER_URL` is set, and degrades them (ERROR logged, no start failure, locally too) when it is empty. Widget PNGs render in the main process (owner decision O16), with Playwright Chromium. The main image no longer carries Node, npm, puppeteer's Chromium, ffmpeg or the parser user.
 
 | `.env` key | Substitution | Meaning |
 |---|---|---|
-| `SANDBOX_RENDER_DEV` | `_SANDBOX_RENDER` | the one switch on the **main** service for DOCX and PDF: `inprocess` (default when empty) or `sandbox` |
 | `SANDBOX_RENDER_URL_DEV` | `_SANDBOX_RENDER_URL` | the render service's own `https://` URL: the main service's target and the service's token audience (`SANDBOX_URL`) |
 | `SANDBOX_RENDER_SA_DEV` | `_SANDBOX_RENDER_SA` | the render service's runtime identity; **empty skips every sandbox build step** |
 | `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER_CALLERS` | emails admitted to `render.*` (`:`-separated; a comma is refused) |
@@ -469,7 +464,7 @@ fallback between the two.
 2. **Let the deployer act as it:** `roles/iam.serviceAccountUser` on `<sandbox-render-sa>` (that account only) for the
    build's deployer identity, so `gcloud run deploy --service-account=<sandbox-render-sa>` is allowed.
 3. **Put the keys in `.env`:** `SANDBOX_RENDER_SA_DEV=<sandbox-render-sa>` and `SANDBOX_RENDER_CALLERS_DEV=<main-runtime-sa>`.
-   Leave `SANDBOX_RENDER_URL_DEV` empty and `SANDBOX_RENDER_DEV` unset. The callers must be set **before the first
+   Leave `SANDBOX_RENDER_URL_DEV` empty. The callers must be set **before the first
    deploy**: an empty caller set on Cloud Run refuses the revision.
 4. **Pass one: `make deploy`.** The service starts with `SANDBOX_URL` empty, serves **only `/health`**, and answers every
    op with `503 unconfigured`.
@@ -480,11 +475,9 @@ fallback between the two.
 6. **Grant invoker to the main runtime only:** `roles/run.invoker` on the render service to `<main-runtime-sa>`; never
    `allUsers` or `allAuthenticatedUsers`. Audit once and after each deploy that neither the project nor the service policy
    contains them (RFC §8 step 2).
-7. **Pass two: `make deploy`.** The render service now knows its audience; the main service has the URL. The switch is
-   still `inprocess`.
-8. **Flip the switch** only on the owner's go:
-   `SANDBOX_RENDER_DEV=sandbox` in `.env`, then `make deploy`. With `sandbox` and an empty URL on Cloud Run the main service
-   still starts (ERROR logged) and DOCX and PDF report the sandbox unavailable; locally it is a startup error.
+7. **Pass two: `make deploy`.** The render service now knows its audience; the main service has the URL. DOCX and PDF
+   now render through the service. With an empty URL the main service still starts (ERROR logged) and DOCX and PDF report the
+   sandbox unavailable, on Cloud Run and locally.
 
 While `SANDBOX_RENDER_SA_DEV` is empty, `cloudbuild_sandbox_render.sh` exits 0 in every mode, so `make deploy` works
 before step 1.
@@ -646,7 +639,7 @@ indexer does no notes work. Reads go on (the open header, the deleted-files sear
 the local name `DRIVE_NOTES_ENABLED` for the deploy, and never set it by hand with `services update` (`--set-env-vars`
 replaces it at the next deploy).
 
-**Sandbox render.** Back to in-process: `SANDBOX_RENDER_DEV=inprocess` (or empty) and `make deploy`; the render service can
+**Sandbox render.** There is no in-process path to go back to: roll the main service back to a previous Cloud Run revision and revert the removal commit; the render service can
 stay up unused. **Hard stop:** remove the caller's `roles/run.invoker` binding on the render service. Never empty
 `SANDBOX_RENDER_CALLERS_DEV` to stop it: an empty caller list refuses the new revision, so the old one keeps serving.
 
@@ -687,11 +680,7 @@ python3 scripts/infra/cleanup_gcr_images.py             # delete untagged images
 [`scripts/infra/gcr-io-cleanup-policy.json`](../../scripts/infra/gcr-io-cleanup-policy.json) is a placeholder for a future
 `set-cleanup-policies`; the script is the working implementation.
 
-**Node.js in the image.** `docx_generator/` (`docx`) and `pdf_generator/` (`puppeteer`, downloads Chromium, ~170 MB) are
-installed in the Docker build with `npm install --omit=dev`, in layers placed before `pip install` so a `requirements.txt`
-change does not rebuild them; `pdf_generator/node_modules/` is excluded by `.dockerignore`.
-The first build after a Puppeteer version change takes a few minutes longer; later builds use the layer cache while
-`pdf_generator/package.json` is unchanged.
+**Node.js in the image.** The main image carries no Node, npm, puppeteer or ffmpeg: DOCX and PDF render in the render sandbox. Only the render sandbox image (`Dockerfile.sandbox`) installs `docx_generator/` and `pdf_generator/` dependencies; the main image keeps pip and Playwright Chromium (widgets).
 
 ---
 
