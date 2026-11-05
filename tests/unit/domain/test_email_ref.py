@@ -61,8 +61,8 @@ def test_the_history_key_is_the_email_file_context():
 
 def test_the_label_names_the_file_its_size_its_mime_and_its_ref():
     ref = format_email_ref(MSG, "1.2")
-    assert email_file_label("invoice_bathroom_es.pdf", 340 * KB, "application/pdf", ref) == (
-        f'[Email file: "invoice_bathroom_es.pdf" (340KB, application/pdf) ref={ref}]')
+    assert email_file_label("invoice_painting_es.pdf", 340 * KB, "application/pdf", ref) == (
+        f'[Email file: "invoice_painting_es.pdf" (340KB, application/pdf) ref={ref}]')
 
 
 def test_the_label_prints_the_bare_mime_lowercase():
@@ -144,10 +144,10 @@ def _opened() -> OpenedFile:
 
 def test_an_opening_with_a_file_carries_the_parts_label():
     ref = format_email_ref(MSG, "1.2")
-    opening = EmailOpening(opened=_opened(), ref=ref, name="invoice_bathroom_es.pdf", size=340 * KB,
+    opening = EmailOpening(opened=_opened(), ref=ref, name="invoice_painting_es.pdf", size=340 * KB,
                            mime="application/pdf")
     assert not opening.needs_choice
-    assert opening.label == email_file_label("invoice_bathroom_es.pdf", 340 * KB, "application/pdf", ref)
+    assert opening.label == email_file_label("invoice_painting_es.pdf", 340 * KB, "application/pdf", ref)
 
 
 def test_a_choice_is_a_note_with_candidates_and_nothing_opened():

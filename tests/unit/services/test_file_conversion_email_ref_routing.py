@@ -42,12 +42,12 @@ def _text_opening(part_id: str, name: str, text: str = TEXT) -> EmailOpening:
 
 @pytest.fixture
 def service() -> TableOpening:
-    return TableOpening({(MSG, "1.2"): _text_opening("1.2", "invoice_bathroom_es.pdf")})
+    return TableOpening({(MSG, "1.2"): _text_opening("1.2", "invoice_painting_es.pdf")})
 
 
 async def test_an_email_ref_opens_the_part_it_names(service):
     opened = await service.open(format_email_ref(MSG, "1.2"), "ann", "ann", deadline_at=DEADLINE)
-    assert opened.body == f"[File: invoice_bathroom_es.pdf]\n{TEXT}\n[/File: invoice_bathroom_es.pdf]"
+    assert opened.body == f"[File: invoice_painting_es.pdf]\n{TEXT}\n[/File: invoice_painting_es.pdf]"
     assert service.callers == [CALLER_OPEN]
 
 
@@ -67,7 +67,7 @@ async def test_the_prefetch_marks_the_parts_text_as_email_text(service):
     prefetched = await service.prefetch(format_email_ref(MSG, "1.2"), "ann", "ann", deadline_at=DEADLINE)
     assert "<external_content" in prefetched.content and TEXT in prefetched.content
     assert f'ref="{format_email_ref(MSG, "1.2")}"' in prefetched.content
-    assert '="invoice_bathroom_es.pdf">' in prefetched.content   # the part's name is the wrapper's label
+    assert '="invoice_painting_es.pdf">' in prefetched.content   # the part's name is the wrapper's label
     assert service.callers == [CALLER_PREFETCH]
 
 
