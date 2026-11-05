@@ -132,7 +132,7 @@ def transcription_alert(filename: str) -> str:
     """System note for a voice message that arrived but could not be transcribed.
 
     Public for the same reason as `download_alert`: voice messages are transcribed in
-    ConversationHandler, not in `convert_file_to_text`, because their transcript becomes
+    ConversationHandler, not in ConversationHandler before file conversion, because their transcript becomes
     the user's turn rather than file content.
     """
     return (
@@ -153,7 +153,7 @@ def truncate_with_alert(text: str, filename: str) -> str:
 
 def make_history_stub(full_output: str, filename: str) -> str:
     """
-    Create a compact stub for session history from convert_file_to_text() output.
+    Create a compact stub for session history from the converted file output.
 
     Keeps first HISTORY_PREVIEW_CHARS of content so LLM has a reminder the file
     existed and what it started with — without dragging full content through every
