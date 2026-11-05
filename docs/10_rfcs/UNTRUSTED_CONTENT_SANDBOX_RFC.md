@@ -1,9 +1,9 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
 **Status:** rev 4, in rollout (2026-11-05). Live and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
-(S1) and `render.pdf` (S2) with `SANDBOX_RENDER=sandbox` in production, media for transcripts (S5, accepted 2026-11-05);
+(S1) and `render.pdf` (S2) as the only DOCX/PDF path of the main service (the in-process render path is removed, 2026-11-05), media for transcripts (S5, accepted 2026-11-05);
 the main service's edit-video duration probe through `media.probe` (S5b, built 2026-11-05).
-`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (in-process paths out; the no-egress network is built: both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
+`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (the rest of the in-process paths out; the no-egress network is built: both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -378,7 +378,7 @@ Chromium yet), and S3 adds `light`. The service has no database import to leak (
 
 ### 4.12 Composition and the switch (O9)
 
-**Superseded by O15 for DOCX and PDF:** one knob, `SANDBOX_RENDER` / `SANDBOX_RENDER_URL`, selects both together (`build_docx_runner`, `build_pdf_runner` in `src/composition/sandbox_client_setup.py`); no per-part switch, no new key. Widget PNGs are off the knob (O16). Per-part acceptance and rollback of O9 therefore holds between families, not inside the render family.
+**DOCX and PDF (O15, then O9's wait waived 2026-11-05): no knob.** The main service renders DOCX and PDF only through the render sandbox (`build_docx_runner`, `build_pdf_runner` in `src/composition/sandbox_client_setup.py`), taking the URL from `SANDBOX_RENDER_URL`. `SANDBOX_RENDER` is gone and any value of it is ignored. An empty URL degrades the feature everywhere, Cloud Run and local alike: ERROR logged once, the runner raises `SandboxUnavailable` (DOCX) / `PuppeteerRunnerError` (PDF), nothing else degrades. The in-process render adapters (`NodeDocxRunner`, `NodePuppeteerRunner`, `pdf_generator/runner.js`) are deleted, not kept for dev: with Node, npm, ffmpeg and puppeteer's Chromium out of the main image they had no runtime left. Widget PNGs are off the sandbox (O16).
 
 **Superseded by O14 for the parse family:** no `SANDBOX_PARSE` knob, no two substitution keys, no observation period; each runtime builds the sandbox parser from a required `SANDBOX_PARSE_URL`. **Superseded by O18 for the media family:** no `SANDBOX_MEDIA` knob. The indexer builds `SandboxMediaAdapter` from the same required `SANDBOX_PARSE_URL` (one light service), refuses to start without it, and has no in-process media fallback; rollback is a revision rollback of the indexer. The text below holds for the remaining per-part switches.
 
@@ -387,14 +387,13 @@ Each caller family reads one knob with `os.getenv` at its composition line (opti
 | Knob | Read by | Values | Default during the transition |
 |------|---------|--------|-------------------------------|
 | `SANDBOX_PARSE` (A2) | each runtime at its own parse composition line: the indexer's (`indexer_main.py:138`, today `build_drive_models` with the parser aliased as splitter, `drive_model_setup.py:124`), the main service's `build_document_service` | `sandbox` \| `inprocess` | `inprocess` until its slice is accepted, then `sandbox` |
-| `SANDBOX_RENDER` (built, `src/composition/sandbox_client_setup.py`; O15: DOCX and PDF) | the main service | same | same |
 
 One knob per runtime governs both its parser and its splitter, so a runtime never parses in one place and cuts windows in another; one
 `SandboxContentExtractor` object implements both ports, as the in-process adapter does today (EXTERNAL_FILES §4.9).
 
 **Two substitution keys for the one variable.** `SANDBOX_PARSE` is the variable each runtime reads, but the deploy feeds it from two separate `.env`
 keys and Cloud Build substitutions, one per runtime (the indexer's for the indexer's deploy step, the main service's for the main step), each mapped
-onto `SANDBOX_PARSE` in its own step's `--set-env-vars`, as `_SANDBOX_RENDER` is today (`cloudbuild-dev.yaml:35`, default `:390`). Why: one shared key
+onto `SANDBOX_PARSE` in its own step's `--set-env-vars`, as `_SANDBOX_RENDER_URL` is for the render service. Why: one shared key
 would flip both runtimes at once, which breaks O9's per-part switch (S3 and S4 are accepted and rolled back apart), and a key reused across steps is
 the deploy-substitution trap the root `CLAUDE.md` names (one local value baked into every step that reads it). The deploy test pins both keys, each
 in its own step. Rejected:
@@ -407,15 +406,15 @@ say otherwise.
 - **The assistant flips each switch after deploy and reports to the owner (O9); the owner can roll back with one command** (the knob set back to `inprocess`, §8).
 - **There is no automatic fallback.** If the sandbox is down the caller fails, per §4.9. Falling back to in-process would parse hostile bytes in the credentialed
   runtime exactly when the boundary is unavailable. The only fallback is the explicit knob, a conscious deploy-time act.
-- **On Cloud Run an unset knob is `sandbox`** once the slice is accepted. A missing sandbox URL **fails the start of the indexer** (background; a failed start is visible and harmless) but **degrades the main service**: it starts, logs ERROR, raises an alert, and answers an affected request with the converter-unavailable note (§4.9); the render knob already does this (`sandbox_client_setup.py:57-59`), because the main service also serves unrelated traffic. `inprocess` on Cloud Run logs an ERROR line at start.
+- **On Cloud Run an unset knob is `sandbox`** once the slice is accepted. A missing sandbox URL **fails the start of the indexer** (background; a failed start is visible and harmless) but **degrades the main service**: it starts, logs ERROR, raises an alert, and answers an affected request with the converter-unavailable note (§4.9); the render runners already do this (`sandbox_client_setup.py`), because the main service also serves unrelated traffic. `inprocess` on Cloud Run logs an ERROR line at start.
 - **After two weeks of observation per part (O9) with no sandbox-attributable defect the in-process path is removed from deployed callers** (S6-a): the knob goes, the adapters stay for dev/tests
   and as the sandbox's engine, and the parser libraries leave the credentialed runtimes' image (§7).
 
 ### 4.13 Tests run locally the same way
 
 The ports are the seam. Unit tests use the in-process adapters (as `tests/unit/adapters/test_subprocess_content_extractor.py` does) or `AsyncMock(spec=Port)`. The HTTP adapters are tested
-at the HTTP boundary (a fake ASGI sandbox app in-process via the real `sandbox_app`, per `ADAPTER_WIRE_TESTING.md`: mock where the SDK ends, not the port). A **contract
-suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) and asserts equal outcomes. Locally `SANDBOX_*` unset means in-process; no container needed.
+at the HTTP boundary (a fake ASGI sandbox app in-process via the real `sandbox_app`, per `ADAPTER_WIRE_TESTING.md`: mock where the SDK ends, not the port). The contract
+suites pin the observable outcomes of the sandbox adapters (S1-S5). For the render family a local run with `SANDBOX_RENDER_URL` unset degrades the feature; no container needed.
 
 ### 4.14 Observability and cost
 
@@ -440,14 +439,14 @@ suite** runs the same cases against `inprocess` and `sandbox` adapters (S1-S5) a
 | **O6** | **No egress for pulling large files.** HTTP/2 end to end is tried for bodies above 32 MiB; if it fails, 32 MiB stays a known limitation for parsed files, with no signed-URL fallback (§4.7) | owner (2026-10-20) |
 | **O7** (superseded by O18: no egress, no allowlist) | **The media op may have egress, only through the in-sandbox loopback proxy:** host allowlist by name suffix (never address pinning; raw-IP URLs refused; DNS per request); no redirects; the allowlist is configuration built from the real download-URL hosts seen in the transcripts measurement (drive RFC §27 T0), extendable without a code change (§4.5) | owner (2026-10-20) |
 | **O8** | **Slice order and prerequisite:** `render.docx`, then the other renderers, then drive parsers, then chat uploads, then media; each part is enabled only after its caller's own service account exists (§7, §4.4). The parse slices' place is amended by O12 | owner (2026-10-20) |
-| **O9** | **Per-part switch; two weeks of observation each; then the in-process path is removed.** The assistant flips each switch after deploy and reports; the owner can roll back with one command (§4.12, §8) | owner (2026-10-20) |
+| **O9** | **Per-part switch; two weeks of observation each; then the in-process path is removed.** The assistant flips each switch after deploy and reports; the owner can roll back with one command (§4.12, §8) | owner (2026-10-20); render family: in-process path removed 2026-11-05, wait waived by the owner |
 | **O10** | **Two services:** light (parsers, chat conversion, media audio, `ffprobe` of chat videos) and render (Chromium and Node: DOCX, PDF, PNG). `video_probe` moves to the light service; Gmail HTML cleaning stays in the main service by decision, a pure-Python parser (§4.2) | owner (2026-10-20) |
 | **O11** | **The drive indexer is in the intended public-invoker set** (§8) as an accepted exception: internal ingress only, every caller's token verified in-app with a pinned audience; the per-runtime identity design relies on the same in-app check | owner (2026-10-20) |
 | **O12** | **Order:** EXTERNAL_FILES_RFC's document service first (U0–U4, then U5); S3 (indexer) and S4 (main) after it, as adapter swaps under `ContentExtractorPort` and `PdfSplitterPort`; the parser child is the accepted residual until then, Google full-drive grants included; S1/S2 an independent track (header, §7) | owner (2026-11-03) |
 | **O13** | **One parse engine in principle** (EXTERNAL_FILES D15): no `DocumentConverterPort` or `chat.convert`; one `parse.*` family for both runtimes; S4 = identity + knob; final go after that RFC's U0-b report on real files (header, §4.7) | owner (2026-11-03) |
 | **O14** | **The parse switch is one deploy (2026-11-03).** No `SANDBOX_PARSE` knob, no watch period, no soak, no client slot counter (`SANDBOX_INDEXER_SLOTS` is dropped). The main service and the indexer build `build_sandbox_parser(url)` from a required `SANDBOX_PARSE_URL` and refuse to start without it, locally too; neither composition has an in-process fallback or a `K_SERVICE` branch. One retry on `recycling`; concurrency 1, max-instances 5 as a cost guard. Rollback is a Cloud Run revision rollback of both callers. | owner |
-| **O15** | **One knob for DOCX and PDF (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner; no new env key, no new substitution. Replaces O9's per-part switch for these two (widget PNG: see O16). `sandbox` with an empty URL: ERROR + degraded feature on Cloud Run, startup error locally; never a fallback | owner |
-| **O16** | **Widget PNGs render in-process (2026-11-04).** In the main service, whatever `SANDBOX_RENDER` says (measured cold start in the one-shot render sandbox too slow for widgets). The in-process renderer runs with JavaScript off and no outbound requests. `render.png` and `SandboxHtmlRenderer` stay built, not wired; wire them when the render sandbox has a fast start | owner |
+| **O15** | **One knob for DOCX and PDF (2026-11-04).** The existing `SANDBOX_RENDER` / `SANDBOX_RENDER_URL` also selects the PDF runner; no new env key, no new substitution. Replaces O9's per-part switch for these two (widget PNG: see O16). Knob removed 2026-11-05: an empty `SANDBOX_RENDER_URL` degrades the feature (ERROR, no raise) on Cloud Run and locally; never a fallback | owner |
+| **O16** | **Widget PNGs render in-process (2026-11-04).** In the main service (measured cold start in the one-shot render sandbox too slow for widgets). The in-process renderer runs with JavaScript off and no outbound requests. `render.png` and `SandboxHtmlRenderer` stay built, not wired; wire them when the render sandbox has a fast start | owner |
 | **O17** | **Second user's transcripts (2026-11-04): enabled right after S5's acceptance**, through the per-connection opt-in (§9) | owner |
 | **O18** | **OQ-S11 resolved (2026-11-04): media reaches the sandbox through a reverse tunnel opened by the indexer, for every source** (OneDrive included); the owner approved the spike and the build. No range proxy, no host allowlist, no egress for the light service (§4.5). Media is one deploy with no `SANDBOX_MEDIA` knob (the O14 pattern); the in-process media reader and its relay are deleted in the same deploy | owner |
 | P0 | Per-runtime identities are a prerequisite for each op family; caller groups must not share an identity (§4.4). Met in configuration | author, folded into O8 |
@@ -522,13 +521,13 @@ g. **Equivalence** (S3: the drive evaluation corpus, `scripts/validation/drive_e
 h. **Limits on the new host** (S3): rerun the Phase 0 bomb set (`scripts/infrastructure/drive_extract_s1.py`) with the child limits; peak memory per case.
 i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a request. Ran 2026-11-05: PASS (deny-all served; internet unreachable; metadata and Google APIs via PGA OK).
 
-### S1. The service skeleton and `render.docx` — live and accepted (2026-11-04, `SANDBOX_RENDER=sandbox`)
+### S1. The service skeleton and `render.docx` — live and accepted (2026-11-04; the in-process path was removed 2026-11-05)
 - Rationale: the model-written script is the least constrained input, and the skeleton (auth, contract, child launcher, recycle, deploy tests) is proved on
   a consumer with one op, bytes out, no large input.
 - Built (`decisions/sandbox_render_service.md`): `src/domain/sandbox_contract.py`; `sandbox_main.py`; `src/web/sandbox_app.py` and the caller gate;
   `src/composition/sandbox_setup.py`; `Dockerfile.sandbox` (`render` target); the Cloud Build steps (`cloudbuild-dev.yaml:372-418`, a no-op while the
   sandbox's identity value is empty); the child launcher (`src/adapters/sandbox_engine/`); `src/adapters/sandbox_client/` with `SandboxHttpClient` and
-  `SandboxDocxRunner`; `SandboxUnavailable`/`SandboxMisconfigured` (`src/domain/sandbox_errors.py`); main wiring behind `SANDBOX_RENDER`.
+  `SandboxDocxRunner`; `SandboxUnavailable`/`SandboxMisconfigured` (`src/domain/sandbox_errors.py`); main wiring from `SANDBOX_RENDER_URL`.
 - Tests (built): contract suite (`inprocess` vs `sandbox` `DocxRunnerPort`: success bytes, script error text, timeout, empty output); the field set of a
   request is pinned (I3); caller gate (signature, audience, per-group prefixes, disjoint groups, fail closed); startup self-check; image-contents test;
   Cloud Build test (no `--set-secrets`, `--no-allow-unauthenticated`, no `--no-invoker-iam-check`, no public-invoker binding, the knob present); failure
@@ -548,7 +547,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 - Tests: contract suite per runner; no outbound connection from the render service; blocked-host test for the request filter; PNG width; HTML timeout; the image contains the
   browser executable (a missing browser answers `error/browser_unavailable` at request time, not at construction).
 - Accept: widget render latency (cold) stated, measured at acceptance; PdfGenerator e2e; S0-f's Chromium-sandbox outcome recorded; image size recorded.
-- Main-service choice (O15, O16): the same `SANDBOX_RENDER` knob as S1 selects `SandboxPuppeteerRunner` or `NodePuppeteerRunner` (`build_pdf_runner`); no new key. Widgets always use the in-process renderer (`build_html_renderer`); `SandboxHtmlRenderer` and `render.png` stay built, not wired.
+- Main-service choice (O15, O16): `build_pdf_runner` builds `SandboxPuppeteerRunner` from the same `SANDBOX_RENDER_URL` as S1 (the in-process runner was removed 2026-11-05); no new key. Widgets always use the in-process renderer (`build_html_renderer`); `SandboxHtmlRenderer` and `render.png` stay built, not wired.
 
 ### S3. Drive parsers (C1) — after the document service (O12)
 - Status: **live** (O14): the indexer parses through the light service (verified in its logs 2026-11-04). S0 g and h not run.
@@ -627,7 +626,7 @@ i. **No-NAT dry run** (S6): a deny-all egress deployment that still serves a req
 5. **Set the caller groups and URL values** in `.env` (`SANDBOX_CALLERS_<GROUP>` per runtime, the service URLs) as substitutions; never in the repository.
 6. **Flip one knob per slice** after its acceptance; one soak window before S6.
 
-Rollback: for the parse family (O14) a Cloud Run revision rollback of the main service and the indexer, then a revert. For the other families: set the family's knob back to `inprocess` and deploy the caller (a substitution, not a hand edit, §4.12). The sandbox services can stay up unused. To stop one op family reaching a sandbox that misbehaves,
+Rollback: for the parse family (O14) a Cloud Run revision rollback of the main service and the indexer, then a revert. For the render family (DOCX, PDF) too: a Cloud Run revision rollback of the main service, then a revert (the in-process path no longer exists, so there is no knob to flip). For any remaining per-part knob: set it back to `inprocess` and deploy the caller (a substitution, not a hand edit, §4.12). The sandbox services can stay up unused. To stop one op family reaching a sandbox that misbehaves,
 change the caller map in the **sandbox's** environment and **redeploy the sandbox** (the map is its environment, not the callers').
 
 ## 9. What this unblocks: transcripts for a second user (USER_DRIVE_INDEXING §27.12, OQ-T3)

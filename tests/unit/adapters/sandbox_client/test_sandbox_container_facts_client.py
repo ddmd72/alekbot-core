@@ -16,7 +16,7 @@ from tests.unit.adapters.sandbox_client.sandbox_client_helpers import reply
 from tests.unit.adapters.sandbox_client.test_sandbox_content_extractor import extractor, meta_of
 
 ZIP = {"status": "zip", "members": 3, "vba_project": True, "macro_content_type": True, "odf_macros": False}
-BODY = b"PK\x03\x04 bathroom quote"
+BODY = b"PK\x03\x04 bathroom repair invoice"
 
 
 def _ok(result: dict, detail=None) -> httpx.Response:

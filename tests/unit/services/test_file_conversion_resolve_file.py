@@ -41,7 +41,7 @@ PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DEADLINE = 1_900_000_000.0
-MSG = "msg_quote042"
+MSG = "msg_invoice042"
 
 
 class FakeContainers(ContainerFactsPort):
@@ -76,11 +76,11 @@ async def world():
     w.media.fetch.return_value = b"%PDF-delivered"
     w.workspace = InMemoryWorkspaceStore()
     w.mailbox = FakeEmailMailbox(
-        messages={MSG: [_part("1.2", "bathroom_quote.pdf", 2048, "h-quote"),
-                        _part("1.3", "bathroom_quote.docx", 4096, "h-docx", mime=DOCX),
+        messages={MSG: [_part("1.2", "invoice_bathroom_es.pdf", 2048, "h-bathroom"),
+                        _part("1.3", "invoice_bathroom_es.docx", 4096, "h-docx", mime=DOCX),
                         _part("2", "empty.txt", 0, "", mime="text/plain"),
                         _part("3", "huge_scan.pdf", action_cap() + 1, "h-huge")]},
-        blobs={"h-quote": b"%PDF-quote", "h-docx": zc.macro_docm(), "h-huge": b"%PDF"})
+        blobs={"h-bathroom": b"%PDF-bathroom", "h-docx": zc.macro_docm(), "h-huge": b"%PDF"})
     w.email = FakeEmailSearch(w.mailbox)
     w.containers = FakeContainers()
     w.service = FileConversionService(
@@ -98,7 +98,7 @@ def _plant(w, name, data, mime="", folder=False):
 
 async def test_an_email_ref_resolves_with_one_listing_and_one_download(world):
     resolved = await world.service.resolve_file(format_email_ref(MSG, "1.2"), "ann", action="send")
-    assert resolved == ResolvedFile(data=b"%PDF-quote", name="bathroom_quote.pdf", mime=PDF)
+    assert resolved == ResolvedFile(data=b"%PDF-bathroom", name="invoice_bathroom_es.pdf", mime=PDF)
     assert world.email.listings == 1 and [d[:2] for d in world.email.downloads] == [(MSG, "1.2")]
     assert world.email.downloads[0][2] == action_cap()
 
@@ -125,7 +125,7 @@ class ExportingDrive(FakeDriveAdapter):
 @pytest.mark.parametrize("name, export_mime, served", [
     ("Q3 plan", "text/markdown", "Q3 plan.md"),
     ("Q3 plan.md", "text/markdown", "Q3 plan.md"),                     # never doubled
-    ("Budget 2026", XLSX, "Budget 2026.xlsx"),
+    ("Invoice bathroom", XLSX, "Invoice bathroom.xlsx"),
     ("Hamburg talk", "text/plain", "Hamburg talk.txt"),
     ("Garden plan 2026", PDF, "Garden plan 2026.pdf"),
     ("brief.docx", "text/markdown", "brief.docx.md"),                  # the bytes are Markdown, not a docx
@@ -153,9 +153,9 @@ async def test_a_chat_ref_resolves_from_the_store(world):
 
 
 async def test_a_workspace_ref_resolves_by_its_path(world):
-    world.workspace.seed("ann", "projects/budget_2026.csv", b"rent,11400\n")
-    resolved = await world.service.resolve_file("workspace:projects/budget_2026.csv", "ann", action="send")
-    assert (resolved.data, resolved.name, resolved.mime) == (b"rent,11400\n", "budget_2026.csv", "text/csv")
+    world.workspace.seed("ann", "projects/invoice_bathroom_es.csv", b"total,1048.45\n")
+    resolved = await world.service.resolve_file("workspace:projects/invoice_bathroom_es.csv", "ann", action="send")
+    assert (resolved.data, resolved.name, resolved.mime) == (b"total,1048.45\n", "invoice_bathroom_es.csv", "text/csv")
 
 
 async def test_a_delivered_document_resolves_after_the_ownership_check(world):
@@ -259,7 +259,7 @@ async def test_resolve_bytes_still_refuses_an_email_ref(world):
 # -- D13: active_kind_of ---------------------------------------------------------------------------------------------
 
 async def test_a_pdf_is_sent_without_asking_the_sandbox(world):
-    resolved = ResolvedFile(data=b"%PDF-1.7 quote", name="bathroom_quote.pdf", mime=PDF)
+    resolved = ResolvedFile(data=b"%PDF-1.7 invoice", name="invoice_bathroom_es.pdf", mime=PDF)
     assert await world.service.active_kind_of(resolved, deadline_at=DEADLINE) is None
     assert world.containers.calls == []
 
@@ -272,7 +272,7 @@ async def test_a_zip_head_asks_the_sandbox_and_its_macros_block(world):
 
 
 async def test_a_plain_container_is_sent(world):
-    resolved = ResolvedFile(data=zc.plain_docx(), name="bathroom_quote.docx", mime=DOCX)
+    resolved = ResolvedFile(data=zc.plain_docx(), name="invoice_bathroom_es.docx", mime=DOCX)
     assert await world.service.active_kind_of(resolved, deadline_at=DEADLINE) is None
 
 
@@ -290,7 +290,7 @@ async def test_header_bytes_decide_without_the_sandbox(world):
 ])
 async def test_an_unchecked_container_fails_closed(world, containers, caplog):
     world.service.attach_documents(RecordingDocuments(), containers=containers)
-    resolved = ResolvedFile(data=zc.plain_docx(), name="bathroom_quote.docx", mime=DOCX)
+    resolved = ResolvedFile(data=zc.plain_docx(), name="invoice_bathroom_es.docx", mime=DOCX)
     with caplog.at_level(logging.INFO):
         assert await world.service.active_kind_of(resolved, deadline_at=DEADLINE) == ak.UNCHECKED
     assert any(r.levelno >= logging.WARNING and "[FileResolve]" in r.getMessage() for r in caplog.records)

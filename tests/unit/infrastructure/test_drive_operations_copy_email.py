@@ -25,7 +25,7 @@ from tests.unit.services.test_file_conversion_open import CountingStorage
 from tests.unit.services.test_file_conversion_open_email import FakeEmailSearch
 
 PDF = "application/pdf"
-MSG = "msg_quote042"
+MSG = "msg_invoice042"
 CTX = {"account_id": "ann"}
 
 
@@ -43,11 +43,11 @@ async def world():
     w.conn = await seed(repo, user_id="ann", account_id="ann", connection_id="conn-1", tag="a1", kind="fake_a")
     w.drive = FakeDriveAdapter("fake_a")
     w.mailbox = FakeEmailMailbox(
-        messages={MSG: [_part("1.2", "bathroom_quote.pdf", 2048, "h-quote"),
+        messages={MSG: [_part("1.2", "invoice_bathroom_es.pdf", 2048, "h-bathroom"),
                         _part("1.3", "invoice_FA-0137.pdf", 1024, "h-inv"),
                         _part("2", "empty.txt", 0, "", mime="text/plain"),
                         _part("3", "huge_scan.pdf", action_cap() + 1, "h-huge")]},
-        blobs={"h-quote": b"%PDF-quote", "h-inv": b"%PDF-invoice", "h-huge": b"%PDF"})
+        blobs={"h-bathroom": b"%PDF-bathroom", "h-inv": b"%PDF-invoice", "h-huge": b"%PDF"})
     w.email = FakeEmailSearch(w.mailbox)
     w.storage = CountingStorage({"chat_notes.txt": b"chat bytes"})
     conversion = FileConversionService(storage=w.storage, drive=w.drive, connections=connections,
@@ -70,8 +70,8 @@ def _folder_of(world, name):
 async def test_an_email_ref_is_saved_under_the_part_s_name_with_the_part_s_bytes(world):
     out = await world.ops.copy(CTX, "ann", format_email_ref(MSG, "1.2"), wait_s=5)
     assert out.success and out.op is DriveOp.COPY
-    assert _stored(world) == {"bathroom_quote.pdf": b"%PDF-quote"}
-    assert _folder_of(world, "bathroom_quote.pdf") == "Inbox"
+    assert _stored(world) == {"invoice_bathroom_es.pdf": b"%PDF-bathroom"}
+    assert _folder_of(world, "invoice_bathroom_es.pdf") == "Inbox"
     assert world.email.listings == 1 and [d[:2] for d in world.email.downloads] == [(MSG, "1.2")]
 
 
@@ -81,13 +81,13 @@ async def test_a_requested_folder_is_used(world):
 
 
 async def test_a_file_name_without_an_extension_keeps_the_part_s_extension(world):
-    await world.ops.copy(CTX, "ann", format_email_ref(MSG, "1.2"), file_name="Quote Reformas Exemplo", wait_s=5)
-    assert _stored(world) == {"Quote Reformas Exemplo.pdf": b"%PDF-quote"}
+    await world.ops.copy(CTX, "ann", format_email_ref(MSG, "1.2"), file_name="Invoice Reformas Exemplo", wait_s=5)
+    assert _stored(world) == {"Invoice Reformas Exemplo.pdf": b"%PDF-bathroom"}
 
 
 async def test_a_file_name_with_an_extension_is_used_as_given(world):
-    await world.ops.copy(CTX, "ann", format_email_ref(MSG, "1.2"), file_name="quote_2026.pdf", wait_s=5)
-    assert _stored(world) == {"quote_2026.pdf": b"%PDF-quote"}
+    await world.ops.copy(CTX, "ann", format_email_ref(MSG, "1.2"), file_name="invoice_painting_es.pdf", wait_s=5)
+    assert _stored(world) == {"invoice_painting_es.pdf": b"%PDF-bathroom"}
 
 
 @pytest.mark.parametrize("part, note", [("9", ATTACHMENT_MISSING_NOTE), ("2", ATTACHMENT_EMPTY_NOTE)])

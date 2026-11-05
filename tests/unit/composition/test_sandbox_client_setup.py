@@ -3,9 +3,8 @@ import logging
 
 import pytest
 
-from src.adapters.node_docx_runner import NodeDocxRunner
 from src.adapters.sandbox_client.sandbox_docx_runner import SandboxDocxRunner
-from src.composition.sandbox_client_setup import build_docx_runner
+from src.composition.sandbox_client_setup import build_docx_runner, build_pdf_runner
 from src.domain.sandbox_errors import SandboxUnavailable
 
 
@@ -13,34 +12,19 @@ def _env(**kw):
     return lambda name, default=None: kw.get(name, default)
 
 
-def test_inprocess_is_default_and_builds_node_runner():
-    assert isinstance(build_docx_runner(getenv=_env(), on_cloud_run=True), NodeDocxRunner)
-    assert isinstance(build_docx_runner(getenv=_env(SANDBOX_RENDER="inprocess"), on_cloud_run=False), NodeDocxRunner)
-
-
 def test_sandbox_mode_builds_sandbox_runner():
     runner = build_docx_runner(
-        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example/"), on_cloud_run=True)
+        getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL="https://sandbox.example/"))
     assert isinstance(runner, SandboxDocxRunner)
-
-
-def test_unknown_value_is_startup_error():
-    with pytest.raises(ValueError):
-        build_docx_runner(getenv=_env(SANDBOX_RENDER="maybe"), on_cloud_run=True)
 
 
 async def test_sandbox_without_url_on_cloud_run_degrades_and_logs_error_and_runner_raises_unavailable(caplog):
     with caplog.at_level(logging.ERROR):
-        runner = build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" "), on_cloud_run=True)
-    assert not isinstance(runner, (NodeDocxRunner, SandboxDocxRunner))
+        runner = build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox", SANDBOX_RENDER_URL=" "))
+    assert not isinstance(runner, SandboxDocxRunner)
     assert any(r.levelno >= logging.ERROR for r in caplog.records)
     with pytest.raises(SandboxUnavailable):
         await runner.run("x", "{}", 5)
-
-
-def test_sandbox_without_url_locally_is_startup_error():
-    with pytest.raises(ValueError):
-        build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox"), on_cloud_run=False)
 
 
 def test_knob_read_with_getenv_not_load_settings():
@@ -49,10 +33,10 @@ def test_knob_read_with_getenv_not_load_settings():
     assert "SANDBOX_RENDER" not in src
 
 
-def test_on_cloud_run_none_is_derived_from_the_environment():
-    url_less = {"SANDBOX_RENDER": "sandbox"}
-    with pytest.raises(ValueError):
-        build_docx_runner(getenv=_env(**url_less))
-    degraded = build_docx_runner(getenv=_env(K_SERVICE="svc", **url_less))
+@pytest.mark.parametrize("runtime", [{}, {"K_SERVICE": "svc"}, {"CLOUD_RUN_JOB": "j"}])
+def test_on_cloud_run_left_unset_degrades_the_same_in_every_environment(runtime):
+    # An empty URL degrades locally and on Cloud Run alike: with on_cloud_run left to its default the environment
+    # no longer changes the outcome (no local startup error since the in-process path is gone).
+    degraded = build_docx_runner(getenv=_env(SANDBOX_RENDER="sandbox", **runtime))
     assert degraded.__class__.__name__ == "_UnavailableDocxRunner"
-    assert build_docx_runner(getenv=_env(CLOUD_RUN_JOB="j", **url_less)).__class__.__name__ == "_UnavailableDocxRunner"
+    assert build_pdf_runner(getenv=_env(**runtime)).__class__.__name__ == "_UnavailablePuppeteerRunner"

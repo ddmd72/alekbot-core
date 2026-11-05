@@ -27,7 +27,7 @@ def test_every_variable_of_the_deploy_step_has_a_substitution_row():
 
 def test_the_makefile_defaults_are_read_and_the_live_overrides_name_real_ones():
     defaults = prod_env.makefile_defaults()
-    assert defaults["_SANDBOX_RENDER"] == "inprocess"
+    assert "_SANDBOX_RENDER" not in defaults  # the render switch is gone: DOCX/PDF always use the sandbox (§4.12)
     assert defaults["_DRIVE_TRANSCRIBE_ENABLED"] == "off"
     assert defaults["_DRIVE_UPGRADE_PASS"] == "on"
     assert set(prod_env.LIVE_OVERRIDES) <= set(defaults)

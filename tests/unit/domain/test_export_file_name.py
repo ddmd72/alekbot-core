@@ -9,7 +9,7 @@ from src.domain.document_kind import export_file_name
     ("Q3 plan", "text/markdown", "Q3 plan.md"),
     ("Q3 plan.MD", "text/markdown", "Q3 plan.MD"),
     ("Hamburg talk", "text/plain; charset=utf-8", "Hamburg talk.txt"),
-    ("Budget 2026", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Budget 2026.xlsx"),
+    ("Invoice bathroom", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Invoice bathroom.xlsx"),
     ("Garden plan 2026", "application/pdf", "Garden plan 2026.pdf"),
     ("v2.1 notes", "text/markdown", "v2.1 notes.md"),
     ("Q3 plan", "application/vnd.google-apps.form", "Q3 plan"),

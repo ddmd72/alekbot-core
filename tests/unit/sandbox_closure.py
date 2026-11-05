@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Dict, Set, Tuple
+from typing import Dict, Iterable, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = "sandbox_main.py"
@@ -41,11 +41,14 @@ def _imported_names(path: str, tree: ast.AST) -> Set[str]:
     return names
 
 
-def closure() -> Tuple[Set[str], Set[str]]:
-    """(repo files in the closure, external dotted import names). Package `__init__.py` files on the way are included."""
+def closure(entrypoints: Iterable[str] = (ENTRYPOINT,)) -> Tuple[Set[str], Set[str]]:
+    """(repo files in the closure, external dotted import names). Package `__init__.py` files on the way are included.
+
+    `entrypoints` defaults to the sandbox service; the main-image closure passes its four entry points.
+    """
     files: Dict[str, bool] = {}
     external: Set[str] = set()
-    stack = [ENTRYPOINT]
+    stack = list(entrypoints)
     while stack:
         path = stack.pop()
         if path in files:

@@ -1,4 +1,4 @@
-"""NodePuppeteerRunner vs SandboxPuppeteerRunner: equal observable outcomes (card F; RFC §4.7).
+"""SandboxPuppeteerRunner: observable outcomes of the PDF path (card F; RFC §4.7).
 
 Sandbox variant: client -> real sandbox_app (ASGI) -> real HtmlRenderEngine -> real node + headless shell.
 Skipped without node, pdf_generator/node_modules/puppeteer, a chrome-headless-shell, or as root.
@@ -9,7 +9,6 @@ import sys
 
 import pytest
 
-from src.adapters.node_puppeteer_runner import NodePuppeteerRunner
 from src.adapters.sandbox_client.sandbox_http_client import SandboxHttpClient
 from src.adapters.sandbox_client.sandbox_puppeteer_runner import SandboxPuppeteerRunner
 from src.adapters.sandbox_engine.child_launcher import ChildLauncher
@@ -49,10 +48,8 @@ async def _no_sleep(_s):
     return None
 
 
-@pytest.fixture(params=["node", "sandbox"])
-def runner(request, tmp_path):
-    if request.param == "node":
-        return NodePuppeteerRunner()
+@pytest.fixture
+def runner(tmp_path):
     nproc = 4000 if sys.platform == "darwin" else BROWSER_NPROC
     launcher = ChildLauncher(memory_mode=BROWSER_MEMORY_MODE, nproc=nproc, nofile=BROWSER_NOFILE)
     out_root = tmp_path / "engine-out"

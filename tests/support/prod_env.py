@@ -101,7 +101,6 @@ _SERVICE_URL = "https://alek-bot-dev.test.example"
 # from the owner's `.env`, which the tests never read: fakes shaped like the real ones.
 LIVE_OVERRIDES: Dict[str, Substitution] = {
     "_DRIVE_TRANSCRIBE_ENABLED": Substitution("on", "docs/07_deployment/README.md (Transcripts switch and cap): transcription T1 is live (Makefile default is off)"),
-    "_SANDBOX_RENDER": Substitution("inprocess", "decisions/sandbox_render_service.md: the sandbox S1 is not deployed (equals the Makefile default)"),
 }
 FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "PROJECT_ID": Substitution("p9-test-project", "Cloud Build built-in; a fake project id"),
@@ -110,7 +109,7 @@ FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "_VOICE_RELAY_URL": Substitution("wss://alek-voice-relay-dev.test.example", "Makefile: patsubst https:// -> wss:// of VOICE_RELAY_URL_DEV"),
     "_INDEXER_URL": Substitution("https://alek-bot-indexer-dev.test.example", "Makefile: INDEXER_URL_DEV, non-empty as `make deploy` requires"),
     "_DRIVE_TRANSCRIBE_USD_CAP": Substitution("", "Makefile: DRIVE_TRANSCRIBE_USD_CAP_DEV, empty = the $20 maximum"),
-    "_SANDBOX_RENDER_URL": Substitution("", "Makefile: SANDBOX_RENDER_URL_DEV, empty while the sandbox is not deployed"),
+    "_SANDBOX_RENDER_URL": Substitution("https://alek-sandbox-render.test.example", "Makefile: SANDBOX_RENDER_URL_DEV, a fake, non-empty (DOCX/PDF render only in the sandbox, §4.12)"),
     "_SANDBOX_LIGHT_URL": Substitution("https://alek-sandbox-light.test.example", "Makefile: SANDBOX_LIGHT_URL_DEV, a fake, non-empty"),
 }
 
@@ -272,27 +271,4 @@ def install_offline_services(monkeypatch) -> OfflineServices:
 
     from src.adapters.platform.factory import PlatformAdapterFactory
     monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {})
-    install_parser_user(monkeypatch, env)
     return OfflineServices(db, env, fallbacks)
-
-
-PARSER_UID_GID = (10001, 10001)
-
-
-def install_parser_user(monkeypatch, env: Dict[str, str]) -> None:
-    """The container's OS boundary of the parser sandbox: the image's parser user exists (`useradd` in the Dockerfile)
-    and the service runs as root (no USER directive). The real `_resolve_sandbox` runs; no test starts a child."""
-    import pwd as real_pwd
-    from types import SimpleNamespace
-
-    from src.adapters import subprocess_content_extractor as extractor
-
-    image_user = env.get(extractor.PARSER_USER_ENV)
-
-    def getpwnam(name: str):
-        if name == image_user:
-            return SimpleNamespace(pw_name=name, pw_uid=PARSER_UID_GID[0], pw_gid=PARSER_UID_GID[1])
-        return real_pwd.getpwnam(name)
-
-    monkeypatch.setattr(extractor, "pwd", SimpleNamespace(getpwnam=getpwnam))
-    monkeypatch.setattr(extractor, "_effective_uid", lambda: 0)

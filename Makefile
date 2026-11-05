@@ -72,10 +72,9 @@ _VOICE_RELAY_URL = $(patsubst https://%,wss://%,$(VOICE_RELAY_URL_DEV))
 _INDEXER_URL = $(INDEXER_URL_DEV)
 
 # Untrusted-content sandbox, render family (UNTRUSTED_CONTENT_SANDBOX_RFC §4.12). Each value has its own .env key and its
-# own Cloud Build substitution (never reuse a local key: the deploy-substitution trap). The switch defaults to `inprocess`,
-# so deploy does NOT refuse an empty URL; the sandbox build/deploy steps skip while SANDBOX_RENDER_SA_DEV is empty. First
+# own Cloud Build substitution (never reuse a local key: the deploy-substitution trap). An empty URL degrades DOCX/PDF
+# (it never blocks the deploy); the sandbox build/deploy steps skip while SANDBOX_RENDER_SA_DEV is empty. First
 # deploy is two-pass (SA, then URL): docs/07_deployment/README.md.
-_SANDBOX_RENDER = $(or $(SANDBOX_RENDER_DEV),inprocess)
 _SANDBOX_RENDER_URL = $(SANDBOX_RENDER_URL_DEV)
 _SANDBOX_RENDER_SA = $(SANDBOX_RENDER_SA_DEV)
 _SANDBOX_RENDER_CALLERS = $(SANDBOX_RENDER_CALLERS_DEV)
@@ -213,7 +212,7 @@ help: ## Show this help message
 install: ## Install dependencies
 	@echo "📦 Installing dependencies..."
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r requirements.txt
+	$(PYTHON) -m pip install -r requirements-dev.txt
 
 install-dev: install ## Install dependencies + test/lint tools
 	@echo "📦 Installing dev tools..."
@@ -250,7 +249,7 @@ PYTEST_WORKERS ?= auto
 PYTEST_XDIST = $(shell $(PYTHON) -c "import xdist" 2>/dev/null && echo yes)
 # --durations=25 is an advisory report of the slowest tests.
 PYTEST_UNIT_FLAGS = $(if $(PYTEST_XDIST),-n $(PYTEST_WORKERS) -q,-v) --durations=25
-XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements.txt)")
+XDIST_WARNING = $(if $(PYTEST_XDIST),,echo "⚠️  pytest-xdist not installed — running serially (pip install -r requirements-dev.txt)")
 
 test: ## Run all tests
 	@echo "🧪 Running all tests..."
@@ -367,7 +366,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER=$(_SANDBOX_RENDER),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
 	@echo "✅ Deployment complete!"
 
 deploy-indexes: ## Deploy Firestore indexes from config/firestore.indexes.json

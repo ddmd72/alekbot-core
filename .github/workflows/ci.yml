@@ -46,7 +46,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Cache ffmpeg
         # The media extractor tests run the real ffmpeg/ffprobe (they skip without them). A pinned static
@@ -176,7 +176,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.changes.outputs.docs_only != 'true'
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: make test-timing
         if: steps.changes.outputs.docs_only != 'true'

@@ -21,9 +21,9 @@ def _iso(mark: bytes = b"CD001", offset: int = 32769) -> bytes:
 
 @pytest.mark.parametrize("head, kind", [
     (b"<!DOCTYPE html><html><body>Invoice FA-0137</body></html>", ak.HTML),
-    (b"\xef\xbb\xbf\n  <html><head><title>Quote</title></head></html>", ak.HTML),
+    (b"\xef\xbb\xbf\n  <html><head><title>Invoice</title></head></html>", ak.HTML),
     (b"<div>pay here</div><script>location='https://example.com'</script>", ak.HTML),
-    ("<html>quote</html>".encode("utf-16"), ak.HTML),
+    ("<html>invoice</html>".encode("utf-16"), ak.HTML),
     (b"<html><head><hta:application id='x'/></head></html>", ak.HTA),
     (b"<?xml version='1.0'?><svg xmlns='http://www.w3.org/2000/svg'><script/></svg>", ak.SVG),
     (LNK, ak.SHORTCUT),
@@ -36,12 +36,12 @@ def _iso(mark: bytes = b"CD001", offset: int = 32769) -> bytes:
 ])
 def test_the_bytes_name_the_kind_whatever_the_name_says(head, kind):
     # a renamed file: the name is a harmless kind, the bytes decide
-    assert active_kind("bathroom_quote.txt", "text/plain", head, None) == kind
+    assert active_kind("invoice_bathroom_es.txt", "text/plain", head, None) == kind
 
 
 def test_an_office_document_with_macros_is_seen_by_its_container_facts_under_a_plain_name():
     macro = ContainerFacts(status=ContainerStatus.ZIP, members=12, vba_project=True)
-    assert active_kind("bathroom_quote.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    assert active_kind("invoice_bathroom_es.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                        b"PK\x03\x04rest", macro) == ak.OFFICE_MACROS
 
 
@@ -57,7 +57,7 @@ def test_each_container_macro_fact_blocks(facts):
 
 @pytest.mark.parametrize("name, kind", [
     ("garage_rules.html", ak.HTML), ("rules.mhtml", ak.HTML), ("app.hta", ak.HTA), ("logo.svg", ak.SVG),
-    ("budget.xlsm", ak.OFFICE_MACROS), ("letter.docm", ak.OFFICE_MACROS), ("slides.pptm", ak.OFFICE_MACROS),
+    ("invoice_bathroom_es.xlsm", ak.OFFICE_MACROS), ("letter.docm", ak.OFFICE_MACROS), ("slides.pptm", ak.OFFICE_MACROS),
     ("Invoice FA-0137.lnk", ak.SHORTCUT), ("backup.img", ak.DISK_IMAGE), ("install.iso", ak.DISK_IMAGE),
     ("setup.exe", ak.EXECUTABLE), ("invoice.pdf.exe", ak.EXECUTABLE), ("SETUP.EXE. ", ak.EXECUTABLE),
     ("run.js", ak.SCRIPT), ("macro.vbs", ak.SCRIPT), ("fix.ps1", ak.SCRIPT), ("start.bat", ak.SCRIPT),
@@ -87,7 +87,7 @@ def test_a_harmless_name_never_unblocks_active_bytes():
     ("photo_roof.png", "image/png", b"\x89PNG\r\n\x1a\n", None),
     ("gym_pass.txt", "text/plain", b"Iron Temple gym pass, open 7-22", None),
     ("invoice.xml", "application/xml", b"<?xml version='1.0'?><Invoice><Total>249,00</Total></Invoice>", None),
-    ("bathroom_quote.docx", "", b"PK\x03\x04", PLAIN_ZIP),
+    ("invoice_bathroom_es.docx", "", b"PK\x03\x04", PLAIN_ZIP),
     ("photos.zip", "application/zip", b"PK\x03\x04", PLAIN_ZIP),
 ])
 def test_ordinary_files_are_not_active(name, mime, head, facts):
@@ -102,12 +102,12 @@ def test_ordinary_files_are_not_active(name, mime, head, facts):
     ContainerFacts(status=ContainerStatus.TOO_LARGE, members=10_001),
 ])
 def test_a_container_that_was_not_checked_is_unchecked(facts):
-    assert active_kind("bathroom_quote.docx", "", b"PK\x03\x04", facts) == ak.UNCHECKED
-    assert active_kind("quote.pdf", "application/pdf", b"PK\x03\x04", facts) == ak.UNCHECKED   # a ZIP head
+    assert active_kind("invoice_bathroom_es.docx", "", b"PK\x03\x04", facts) == ak.UNCHECKED
+    assert active_kind("invoice_bathroom_es.pdf", "application/pdf", b"PK\x03\x04", facts) == ak.UNCHECKED   # a ZIP head
 
 
 def test_a_docx_name_on_bytes_that_are_not_a_zip_is_checked_and_sent():
-    assert active_kind("bathroom_quote.docx", "", b"plain text", NOT_ZIP) is None
+    assert active_kind("invoice_bathroom_es.docx", "", b"plain text", NOT_ZIP) is None
 
 
 @pytest.mark.parametrize("name, mime, head, needed", [
