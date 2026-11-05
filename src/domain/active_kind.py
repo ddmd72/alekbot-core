@@ -12,7 +12,7 @@ the sandbox's.
 and the only way to see the kinds without magic: a raw disk image, scripts without `#!`). Order: head magic, then the
 container's macros, then the name's extension, then the mime type, then the fail-closed rule.
 
-**Fail closed.** When the file needs the container check (`needs_container_check`: a ZIP head, or a name or mime of an
+**Fail closed.** When the file needs the container check (`needs_container_check`: a ZIP or OLE2 head, or a name or mime of an
 OOXML / ODF / ZIP family) and no checked answer exists (no facts, `TOO_LARGE`, `ERROR`), the kind is `UNCHECKED`: the
 caller refuses with an honest "could not be checked" note, never sends the file unchecked.
 
@@ -23,7 +23,7 @@ Kinds (the RFC's table; the extension and mime lists go beyond the RFC's example
 | HTA            | `<hta:application` in a markup head                           | .hta; application/hta                          |
 | HTML           | markup head with `<!doctype html`, `<html`, or (no `<svg`) `<head`/`<body`/`<script`/`<iframe` | .html .htm .xhtml .shtml .mht .mhtml; text/html, application/xhtml+xml, multipart/related |
 | SVG            | `<svg` in a markup head                                       | .svg .svgz; image/svg+xml                      |
-| OFFICE_MACROS  | container: `vbaProject.bin`, a macro-enabled content type, ODF `Basic/`/`Scripts/` | .docm .dotm .xlsm .xltm .xlam .pptm .potm .ppsm .ppam .sldm; a mime with `macroenabled` |
+| OFFICE_MACROS  | container: `vbaProject.bin`, a macro-enabled content type, ODF `Basic/`/`Scripts/`, an OLE2 VBA storage | .docm .dotm .xlsm .xltm .xlam .pptm .potm .ppsm .ppam .sldm; a mime with `macroenabled` |
 | SHORTCUT       | the shell-link header (`4C 00 00 00` + LNK CLSID)              | .lnk .url .scf; application/x-ms-shortcut      |
 | DISK_IMAGE     | `CD001` / `BEA01` / `NSR02` / `NSR03` at 32 769 (also 34 817, 36 865 for CD001) | .iso .img .vhd .vhdx .dmg; application/x-iso9660-image |
 | EXECUTABLE     | `document_kind.sniff_kind`'s `executable` (ELF, Mach-O, MZ), plus MZ and every Mach-O magic at offset 0 | .exe .dll .msi .msix .msp .appx .com .scr .pif .cpl .jar .apk; application/x-msdownload, … |
@@ -114,6 +114,7 @@ _CONTAINER_MIME_PREFIXES: Tuple[str, ...] = (
 )
 
 _ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"   # OLE2 compound file: .doc/.xls/.ppt, encrypted OOXML
 _LNK_HEADER = b"\x4c\x00\x00\x00\x01\x14\x02\x00\x00\x00\x00\x00\xc0\x00\x00\x00\x00\x00\x00\x46"
 _ISO_MARKS: Tuple[Tuple[int, bytes], ...] = (
     (32769, b"CD001"), (34817, b"CD001"), (36865, b"CD001"),
@@ -181,8 +182,9 @@ def _mime_kind(mime: str) -> Optional[str]:
 
 
 def needs_container_check(name: str, mime: str, head: bytes) -> bool:
-    """True when the macro check must run: a ZIP head, or a name or mime of the OOXML / ODF / ZIP families."""
-    return (head.startswith(_ZIP_MAGICS) or _ext(name) in _CONTAINER_EXTS
+    """True when the macro check must run: a ZIP head, an OLE2 head (legacy Office under any name; owner decision
+    2026-11-05), or a name or mime of the OOXML / ODF / ZIP families."""
+    return (head.startswith(_ZIP_MAGICS) or head.startswith(_OLE_MAGIC) or _ext(name) in _CONTAINER_EXTS
             or _bare_mime(mime).startswith(_CONTAINER_MIME_PREFIXES))
 
 

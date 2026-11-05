@@ -17,7 +17,8 @@ Public interface:
     choose_one_note(labels, name="") D12 and plan U4 §6: several parts match (a name shared by several, or no name and
                                      no ref given for an email with several); none is opened, their labels are listed.
                                      A successful answer, not a failure: the model picks one ref and calls again.
-    active_kind_refusal_note(kind)   D13: `send_file_to_user` refuses an active kind from an email (`active_kind`); for
+    active_kind_refusal_note(kind)   D13: `send_file_to_user` and a drive save (`copy` of an `email:` source) refuse an
+                                     active kind from an email (`active_kind`); for
                                      `UNCHECKED` the macro check could not run, so the note says to try again
 """
 from __future__ import annotations
@@ -47,10 +48,10 @@ def active_kind_refusal_note(kind: str) -> str:
     it as the tool's result."""
     if kind == UNCHECKED:
         return ("[System: This email attachment could not be checked for macros right now, so it was not forwarded "
-                "to the chat; do not retry in this turn; the user can ask again in a few minutes or open it in Gmail.]")
+                "or saved; do not retry in this turn; the user can ask again in a few minutes or open it in Gmail.]")
     label = ACTIVE_KIND_LABELS.get(kind, "an active file")
-    return (f"[System: This attachment is {label} from an email; such files are not forwarded to the chat "
-            f"by any route (no drive copy, no re-send); tell the user to open it in Gmail.]")
+    return (f"[System: This attachment is {label} from an email; such files are not forwarded or saved "
+            f"by any route (no chat send, no drive copy); tell the user to open it in Gmail.]")
 
 
 def choose_one_note(labels: Sequence[str], name: str = "") -> str:

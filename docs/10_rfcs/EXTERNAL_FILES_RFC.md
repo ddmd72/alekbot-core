@@ -48,7 +48,9 @@ Code cites are `main` @ `2280ca78`.
 - **D13. `send_file_to_user` does not forward "active" kinds from email attachments.** For email attachments only, by
   kind sniffed from the bytes (not the name): HTML/HTM, SVG, HTA, Office with macros, shortcuts (lnk), disk images
   (iso/img), executables and scripts. The bot says what kind it is and that it does not forward such files; the owner
-  can open it in Gmail. Drive and chat files are sent without this restriction.
+  can open it in Gmail. Drive and chat files are sent without this restriction. Owner 2026-11-05: legacy OLE2 Office
+  files (.doc, .xls, .ppt, any name) with a VBA project count as Office with macros, and saving an email attachment to
+  the drive (`copy_file_to_drive` from an `email:` ref) is checked like sending it.
 - **D14 (2026-11-03). Order: the document service first, the sandbox after it.** "Risk is not scary; do it the most
   logical and hexagonal way." U0 → U1 → U2 → U3 → U4 are built first, then U5. The sandbox's parse slices come after,
   as adapter swaps under the document service's ports (`ContentExtractorPort`, `PdfSplitterPort`): S3 in the indexer,
@@ -343,7 +345,7 @@ lenient").
 |---|---|
 | HTML / HTM, HTA | markup head (`<!doctype html`, `<html`, `<hta:application`), as the sniffer's HTML rule |
 | SVG | `<svg` in a markup head |
-| Office with macros (docm, xlsm, pptm) | an OOXML ZIP with a `vbaProject.bin` part or a macro-enabled content type |
+| Office with macros (docm, xlsm, pptm; doc, xls, ppt) | an OOXML ZIP with a `vbaProject.bin` part or a macro-enabled content type; an OLE2 file (magic `D0 CF 11 E0 A1 B1 1A E1`, any name) with a `Macros`, `_VBA_PROJECT_CUR` or `VBA` storage (owner 2026-11-05). A plain OLE2 file, and an encrypted OOXML package, is not active |
 | Shortcut (lnk) | the shell-link header magic |
 | Disk image (iso, img) | `CD001` at offset 32 769 (ISO); a raw image has no magic, so only its name shows it |
 | Executable | the sniffer's existing `executable` kind (ELF, Mach-O, MZ; `src/domain/document_kind.py`, `sniff_kind`) |
@@ -353,12 +355,15 @@ lenient").
   the bytes alone and covers the kinds without magic. The check reads up to 64 KiB of the head, enough for the ISO
   marker. The head checks are byte compares in the caller (`src/domain/active_kind.py`); the macro check, which must
   list a ZIP's parts, runs in the sandbox as the light op `parse.container_facts` (owner decision O2, 2026-11-05;
-  `ContainerFactsPort`, `src/utils/document_hardening.py: zip_container_facts`), so no ZIP is read in the main service.
+  `ContainerFactsPort`, `src/adapters/drive_parser/container_facts.py: container_facts`, sandbox side only: the ZIP facts, or for an OLE2 file the directory's
+  `vba_storage`), so no ZIP or OLE2 container is read in the main service.
   When the check cannot run (outage, timeout, a ZIP above the member cap) the file is refused as "could not be
   checked": the rule fails closed.
 - The answer is a refusal note, not a failure of the turn: "This attachment is a <kind> file from an email; such
-  files are not forwarded to the chat. The user can open it in Gmail." Drive and chat refs are sent without this
-  check; an HTML report on the drive is sent as any file.
+  files are not forwarded or saved. The user can open it in Gmail." Drive and chat refs are sent without this
+  check; an HTML report on the drive is sent as any file. The same check, with the same note, runs before an `email:`
+  source is saved to the drive (`DriveOperations.copy`, on the file as resolved and under its drive name); a refused
+  save uploads nothing. Drive-to-drive and chat-file copies stay unchecked (owner 2026-11-05).
 - Delivery goes through `UserNotificationService.notify_file_bytes` (`src/services/user_notification_service.py:692`),
   with `origin_channel_id` and `origin_platform` from the message context as overrides, as the video branch does today
   (`drive_operations.py:1063-1068`).

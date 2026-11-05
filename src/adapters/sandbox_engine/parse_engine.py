@@ -5,7 +5,7 @@ ParseEngine: the service's `parse.*` engine (UNTRUSTED_CONTENT_SANDBOX_RFC §4.6
     parse.pdf_page_count   one child, `{"op": "pdf_page_count"}`, on the body
     parse.pdf_windows      one child per window (`{"op": "cut_pdf_window"}`), in order, under one wall clock
     parse.container_facts  one child, `{"op": "container_facts"}`, on the body (EXTERNAL_FILES D13, owner decision O2):
-                           the ZIP facts of `document_hardening.zip_container_facts`; its status (`zip`, `not_zip`,
+                           the ZIP facts of `drive_parser.container_facts.zip_container_facts`; its status (`zip`, `not_zip`,
                            `too_large`, `error`) is the detail of an ok answer like a parser status
 
 The child is the drive parser's own (`drive_parser/child.py`, through `parse_child.py`), unchanged, started by the

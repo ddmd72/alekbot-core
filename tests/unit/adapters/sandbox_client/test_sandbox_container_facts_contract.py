@@ -15,7 +15,8 @@ from src.adapters.sandbox_engine.child_launcher import ChildLauncher
 from src.adapters.sandbox_engine.parse_engine import ParseEngine
 from src.domain.container_facts import ContainerStatus, container_facts_from_result
 from src.domain.sandbox_contract import SandboxOp
-from src.utils.document_hardening import MAX_ZIP_MEMBERS, zip_container_facts
+from src.adapters.drive_parser.container_facts import zip_container_facts
+from src.utils.document_hardening import MAX_ZIP_MEMBERS
 from src.web import sandbox_app
 from tests.support import zip_containers as zc
 from tests.unit.adapters.sandbox_client.sandbox_client_helpers import BASE, good_token

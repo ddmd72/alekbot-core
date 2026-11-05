@@ -580,7 +580,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             "A drive audio or video recording is shared as a link by work_with_drive_files, not sent here. "
             "Email attachments of "
             "active kinds (HTML, SVG, HTA, Office files with macros, shortcuts, disk images, programs, scripts) are "
-            "not forwarded; the answer says so. "
+            "neither forwarded nor saved to the drive; the answer says so. "
             'Requires: context={"file_ref": "<ref exactly as its label shows it>"}; optional "file_name" to send '
             "it under another name."
         ),
