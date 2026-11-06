@@ -15,7 +15,8 @@ from ..ports.llm_port import (
     LLMRequest,
     PROMPT_CACHE_BOUNDARY,
 )
-from ..domain.llm import FinishReason
+from ..domain.llm import FinishReason, USER_TURN_SYSTEM_ANCHOR
+from ..domain.system_fingerprint import wrap_system
 from ..domain.user import PerformanceTier
 from ..domain.drive_image_mime import VISION_MIME_TYPES
 from ..domain.document_limits import native_ceiling
@@ -143,6 +144,7 @@ class GeminiAdapter(LLMPort):
                 "Use a provider with prompt_caching capability (e.g., Claude)."
             )
         # Convert agnostic messages to Gemini-specific contents
+        messages = self._key_turn_anchor(messages, request.turn_key)
         contents = await self._convert_messages(messages)
 
         if tools:
@@ -331,6 +333,29 @@ class GeminiAdapter(LLMPort):
             config={'mime_type': mime_type}
         )
         return MessagePart(file_data={"uri": uploaded_file.uri, "mime_type": uploaded_file.mime_type})
+
+    @staticmethod
+    def _key_turn_anchor(messages: List[Message], turn_key: Optional[str]) -> List[Message]:
+        """Put the turn anchor inside a keyed system note (SYSTEM_TURN_FINGERPRINT_RFC §4.8).
+
+        Only a text part that STARTS with USER_TURN_SYSTEM_ANCHOR counts (BaseAgent prepends it); the scan runs
+        last to first, so a delegation turn 2 finds the anchor further up. No key: messages unchanged."""
+        if not turn_key:
+            return messages
+        for idx in range(len(messages) - 1, -1, -1):
+            message = messages[idx]
+            if message.role != "user":
+                continue
+            for i, part in enumerate(message.parts):
+                if not part.text or not part.text.startswith(USER_TURN_SYSTEM_ANCHOR):
+                    continue
+                keyed = wrap_system(USER_TURN_SYSTEM_ANCHOR, turn_key) + part.text[len(USER_TURN_SYSTEM_ANCHOR):]
+                new_part = part.model_copy(update={"text": keyed})
+                new_message = message.model_copy(update={
+                    "parts": message.parts[:i] + [new_part] + message.parts[i + 1:],
+                })
+                return messages[:idx] + [new_message] + messages[idx + 1:]
+        return messages
 
     async def _convert_messages(self, messages: List[Message]) -> List[types.Content]:
         gemini_contents = []
