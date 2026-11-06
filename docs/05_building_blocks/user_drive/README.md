@@ -68,7 +68,7 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | Which drive a file is on; what a connection, a handle, a ref tag and the primary are; why a ref says "search again" | §1.2, §2.1 |
 | What a mount, the primary, the write folder and "searched by default" are; why a drive is read-only; why a path was refused | §1.2 (mounts, the access policy) |
 | Which settings the user can change and where (scope, write folder, primary, rename, disconnect); why the bot cannot change them | §1.2 (the access policy), `src/agents/CLAUDE.md` → Drive |
-| Why a folder is or is not indexed; what changing the scope does to the index | §1.2 (scope), §3 (`applied_scope`, skeleton records), §5 |
+| Why a folder is or is not indexed; what changing the scope does to the index (a diff, or a restart for the whole drive); why the Cabinet says "reading the chosen folders" or "removing" | §1.2 (a scope change), §3 (`applied_scope`, the applied set, skeleton records), §5 (the scope diff) |
 | Why a search read one drive or several; what "also on" and `drives not searched` mean; how passages work across drives | §6 (which drives) |
 | Why the mirror folder is where it is, or missing on a drive | §4.23 (the mirror folder) |
 | What a note on a whole drive is; where notes go at a disconnect | §4.24 |
@@ -187,11 +187,23 @@ holds no drive id; the connection's `drive_identity` names the drive.
   item exists; the conversion and note services take the access check as a required dependency (fail closed).
   Code: `src/domain/drive_access_policy.py`, `drive_access_op.py`, `drive_access_decision.py`, `drive_ancestry.py`,
   `drive_connection_access.py`, `drive_item_access.py`, `drive_setting_refused.py`.
+- **A scope change is a diff** ([DRIVE_SCOPE_WALK_RFC](../../10_rfcs/DRIVE_SCOPE_WALK_RFC.md) step 1). The index stores
+  the folder set it was built under, and the indexer applies a Cabinet change as the difference between that set and the
+  connection's: a folder added is **walked** (only its subtree is listed), a folder removed has its stored subtree
+  **removed** under a guard, and the rest of the index is untouched. The owner's file notes survive a removal (the
+  removal notices the mirror `unstored`, not `gone`). **Whole drive keeps the restart:** a change to a scope that covers
+  everything (folders to whole drive, or to an `AREA` feed's default) re-enumerates, and so does any change made while an
+  enumeration is unfinished, folder scopes included. A switch to whole drive while a removal runs restarts at once, with
+  no parent reads first. Going from whole drive to folders is a diff whose removal covers the drive's top level (the
+  Cabinet warns first). Detail: §3 (state), §5 (the tick).
 - **The Cabinet's drive card (slice 2b; `src/web/user_cabinet_app.py`).** `GET /api/drive/connections` returns one row per
   live connection: `connection_id`, `mount_name`, `kind`, `provider_label`, `account_label`, `state`, `primary`,
-  `write_folder`, `scope` (`whole_drive`, `folders` with paths, `empty_means`: `"area"` for a drive whose empty scope is the
+  `write_folder`, `scope` (`whole_drive`, `folders` with paths, and `missing: true` on a saved folder the drive no longer has, which stays
+  savable so it can be removed; `empty_means`: `"area"` for a drive whose empty scope is the
   bot's own area, `"nothing"` for an account-wide drive, `null` when the drive's capabilities could not be read), `searched_by_default`, `indexing_enabled`,
-  `transcribe_enabled`, the drive `note`, the `indexing` status block, and `reconnect` (the credential id) when the grant
+  `transcribe_enabled`, the drive `note`, the `indexing` status block (with `scope_progress`: `removing`, `removing_outside`, `walking`, `listed`,
+  `blocked`; the card shows one state, removing ranked before walking ("Removing N folder(s)", else "Reading the chosen
+  folders: N folders read" plus "N folders could not be read yet"); leaving whole drive for folders shows a warning first), and `reconnect` (the credential id) when the grant
   is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
   gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
   (a missing connection is 404): `/api/drive/connections/<id>/name`, `/scope`, `/write-folder`, `/searched-by-default`,
@@ -383,9 +395,22 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   recording on any connection share one), the mirror roots `{user_id}:{drive_identity}`, the mirror ledger
   `{user_id}:{kind}:{sha256(mirror identity / source identity)[:32]}`, and owner notes. Firestore indexes use
   `connection_id` (records, chunks) or `drive_identity` (the ledger) in place of `user_id` forms.
-- **Scope on the index (slice 2b).** The sync state carries `applied_scope`, the key of the scope the stored records were
-  built under (`drive_access_policy.scope_key`); a tick that sees a different key restarts the feed (cursor cleared, epoch
-  plus one), and the epoch sweep drops what the new scope no longer holds. On an account-wide feed a change is kept only
+- **Scope on the index (slice 2b; a diff since DRIVE_SCOPE_WALK step 1).** The sync state carries `applied_scope`, the
+  key of the scope the stored records were built under (`drive_access_policy.scope_key`); it stays the **detector**: a tick
+  that sees a different key from the connection's runs `_apply_scope_change`
+  (`src/services/drive_indexing_service.py:1531`), which diffs the stored set against the new one
+  (`plan_scope_diff`, `src/domain/drive_scope_diff.py:101`) and writes marks; only a scope that covers everything (and a
+  change during an unfinished enumeration) still restarts the feed (cursor cleared, epoch plus one, `scope_restart`
+  stamping the new set), and then the epoch sweep drops what the new scope no longer holds. The set itself is stored
+  beside the key (`DriveSyncState`, `src/domain/drive_index.py`): `applied_whole`, `applied_roots` (what the Cabinet
+  saved), `removing_roots` (removed roots whose guarded removal still runs), `ancestry_dirty` (the skeleton paths must be
+  derived again), `walking`, `walk_listed` and `walk_blocked` (the Cabinet's progress counters). There is no separate
+  shape field: the stored set is valid exactly when `scope_key(applied_roots, applied_whole) == applied_scope`
+  (`shape_valid`, `drive_scope_diff.py:62`). A state that fails the check is adopted when `applied_scope` equals the
+  connection's key (the first tick after the upgrade, or a revision rolled back) and restarted otherwise. Per-record
+  marks: `cascade_unstored` (a `DELETING` folder that left the scope, not one deleted on the drive) and `trim_pending`
+  (a folder turned path folder whose off-path children must go), both worked page by page with `cascade_cursor`. On an
+  account-wide feed a change is kept only
   when its parent chain reaches a scope folder; the folders on the way from the root to a scope folder are stored as
   **skeleton ancestor records** (`Reason.SCOPE_ANCESTOR`, no card, never searchable) so printed paths resolve. The pure
   rule is `src/domain/drive_index_scope.py`. Search applies the same scope as a second line (§6).
@@ -454,7 +479,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   for the owner. A tick writes nothing once its clock reaches `lease_until - LEASE_MARGIN`, and `save_sync_state` /
   `delete_sync_state` apply only while it still holds the stored lease (`LeaseLost` otherwise: a quiet stop, INFO).
 - A subtree that must be listed again (a folder leaving an opaque root, or restored after a delete) is a flag on the
-  folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 2 (RFC Δ18).
+  folder's own record (`reobserve_pending`, `reobserve_cursor`), worked page by page in class 1, on the walk's time share and no item call (RFC Δ18, Δ9; §5).
 - **Policy (§5).** Since `POLICY_VERSION` 2 the §5.1 document kinds are admitted for content (`admission()` →
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
   subtitles (and, since 5, config files). Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
@@ -1896,8 +1921,38 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
 payload is `{user_id, connection_id}` (plus the nudge); a payload without a connection is refused. The fan-out lists the
 `ACTIVE` connections with indexing on, so a user with two drives gets two ticks, each under its own lease. Caps are
 per drive (the alert texts say "per drive"). **Scope (slice 2b):** the tick compares the sync state's `applied_scope` with
-the connection's scope key; a change restarts the feed and an out-of-scope held record is removed through the planner
-(§3). The account-wide feed's ancestry filter reads unseen parents by `get_change`, memoised per tick.
+the connection's scope key; a change is applied as a **diff** (below), except a scope that covers everything, which
+restarts the feed; an out-of-scope held record is removed through the planner (§3). The account-wide feed's ancestry
+filter reads unseen parents by `get_change`, memoised per tick.
+
+**The scope diff (DRIVE_SCOPE_WALK_RFC step 1).** After the gate and before the feed, `_apply_scope_change` reads the
+stored parent map of the saved, applied and removing roots (a read that runs out of item calls leaves the diff to the next
+tick), then marks the work and stamps the new set. It deletes nothing itself.
+- **Walk.** A root the index does not hold gets one `get_change` and becomes a normal folder with `reobserve_pending`; a
+  skeleton or a `DELETING` root that is in scope again is re-planned (`_replan_listed`) and re-listed. The listing is the
+  existing re-listing recursion (`_reobserve_step`, `:3285`): pages of `WALK_PAGE` (1 000; OneDrive keeps 200 per page)
+  that spend **no item call** but a time share, `WALK_SHARE` (0.5) of the tick's start budget (`_Budget.walk_allowed`,
+  `:443`); a page past the share waits for the next tick. A re-listing is **class 1** (structure), ahead of the content
+  it brings, and descends only into folders new to the index. `walking` is settled once per tick after the due loop
+  (`_settle_walk`, `:1784`) and ends when no listing is pending.
+- **Blocked folder.** A listing that fails `MAX_ATTEMPTS` times is not dropped: the folder stays pending, due again after
+  `RETRY_CAP`, and counts in `walk_blocked` ("N folders could not be read yet"). This holds for every re-listing, not only
+  a scope walk.
+- **Guarded removal.** A removed root is marked `DELETING` with `cascade_unstored`, or, when a new root lies inside it, turned
+  into a path folder with `trim_pending` and trimmed (`_trim_step`, `:1722`). Every removal step starts only through
+  `_removal_open` (`:1674`): the tick's ancestry is loaded, no feed change of the tick touched a folder, and a **fresh
+  re-read** of the connection (the existing `_recheck_gate`, forced) shows the scope the tick started with; a closed guard
+  makes the step wait. The cascade (`_cascade_step`, `:2989`) judges the folder again before removing anything: in scope
+  again, it is revived and listed; a path folder becomes a skeleton; only a negative verdict cascades, and never over a child
+  the scope keeps (roots, the paths to them, the mirror's folders). The mirror is told `unstored`. A cascade left by the
+  code before this one (`cascade_unstored` false) takes the same path after one provider read when the verdict or a kept
+  child calls for it; under whole drive it waits until the restart has run. A whole-drive narrowing removes the drive's
+  top level with the same child rule (`_top_level_pass`, `:1802`).
+- **Skeleton paths.** When a scope root or a stored path folder is deleted, moved or newly stored, `ancestry_dirty` is set
+  and the path folders are re-derived (`_derive_skeletons`, `:1830`): missing ones are stored from the chain reads, stale
+  ones (on no root's path) are marked for the cascade. At the scan limit (`_SKELETON_SCAN`) stale ones are left.
+- **Mid-tick save.** A scope saved during a tick is seen by the forced re-read: no more paid work starts and no removal
+  runs that tick; the next tick walks the new scope.
 1. **Gate** (`access_action` in `drive_index_planner.py`), from Firestore, never from the agent cache, on the connection
    and its sync state: connection absent or DISCONNECTED → purge, retaining the paid transcripts its records carried (I8;
    nothing stored → `disabled`); indexing off with anything stored → purge; indexing off with nothing stored →
@@ -1917,8 +1972,8 @@ the connection's scope key; a change restarts the feed and an out-of-scope held 
    round completes or the 8-minute start budget is spent. A full enumeration (onboarding, an expired cursor) opens an
    epoch; the sweep at its end deletes what it did not see, then sweeps orphan chunks.
 4. **Work off** due records after a complete round, by class: 0 edits and nudges, 1 cascades (folder deletes,
-   rescopes, probes, parent resolution, card drops), 2 first-seen cards, triage and index runs, and subtree
-   re-listings, 3 maintenance (version upgrades, card-cap release, README reads, re-embeds, month-held model work),
+   rescopes, trims, subtree re-listings, probes, parent resolution, card drops), 2 first-seen cards, triage and index
+   runs, 3 maintenance (version upgrades, card-cap release, README reads, re-embeds, month-held model work),
    4 retries. When one class runs out of budget, lower classes wait (RFC Δ19). A deleting folder whose children are
    all deleting folders outside the page steps aside one second behind them. Search v2 splits the order: classes 0–2
    within 60 % of the start budget, then the **enrichment** phase (§4.17, a start window of at least 40 %), then
@@ -1943,8 +1998,9 @@ Purge is keyed on facts only, never on an exception: a rejected refresh (`invali
 `consent_required`, RFC Δ41) sets `needs_reconnect` and stops. A purge deletes chunks first, then records, then the
 sync state of the connection (Search v2: hint documents before chunks; the usage and initial-build documents are kept; the user's stored transcripts are kept by a rebuild, by a disconnect and whenever the user has another connection, DISCONNECTED ones included). Errors are classified by what the call is about (§8.2):
 - **Per item.** A probe, a parent lookup or a re-listing page that fails defers that one item (retried with
-  backoff); a successful step resets the item's attempts. After `MAX_ATTEMPTS` a probe or a re-listing is settled
-  without it (not dense; the subtree not re-listed). A parent lookup that keeps failing transiently keeps the record
+  backoff); a successful step resets the item's attempts. After `MAX_ATTEMPTS` a probe is settled
+  without it (not dense); a re-listing is not: its folder stays pending, due again after `RETRY_CAP`, and is counted as
+  blocked (`walk_blocked`). A parent lookup that keeps failing transiently keeps the record
   `unresolved` and retries every 6 h; only a definite not-found removes it as an orphan (a folder with its stored
   subtree, through the cascade; RFC Δ29). A failed nudge read is left to the delta feed. Item calls share one budget
   (`ITEM_CALLS_PER_TICK` = 20, RFC Δ9) and also stop once the tick's time is spent. A change that fails inside a page
