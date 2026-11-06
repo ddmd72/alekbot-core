@@ -1,6 +1,6 @@
 # RFC: Voice Companion — a spoken companion over the existing agent stack
 
-**Status:** Proposed — telephony-only v1, dev-only and experimental
+**Status:** Implemented — telephony v1 (`LelikAgent`, `LelikSummarizerAgent`, the Twilio webhook and control-plane apps); the web transport is `VOICE_WEB_TRANSPORT_RFC.md`
 **Date:** 2026-09-20 (supersedes the 2026-08-15 draft and its revisions; no changelog is kept — this document is the spec)
 **Owner:** Dmytro
 **Milestone:** New interaction surface — voice

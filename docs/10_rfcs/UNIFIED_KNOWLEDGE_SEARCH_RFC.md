@@ -1,6 +1,6 @@
 # RFC: Unified Knowledge Search
 
-**Status:** DRAFT  
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.  
 **Date:** 2026-04-08  
 **Replaces:** Implicit architecture (separate FactsMemoryAgent + EmailSearchAgent for search)  
 **Related:** `GMAIL_EMAIL_INDEXING_RFC.md`, `DELIBERATE_FACT_MANAGEMENT_RFC.md`, `ACP_V2_SIMPLIFIED_RFC.md`

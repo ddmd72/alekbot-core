@@ -1,6 +1,6 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor was log-only until S5; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify was applied 2026-10-27** (see "S5 as built" in §9) and the owner's re-review of closed facts applied; **the janitor writes since the deploy of 2026-10-27** (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0`; rollback = remove the variable, a deploy). **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what the owner archives; never-true stays invalidated. The review change this needs is **deployed** (see "P2 revised" in §9); the janitor was switched on after it shipped.
+**Status:** Implemented, S1–S5 (accepted for implementation by the owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor was log-only until S5; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify was applied 2026-10-27** (see "S5 as built" in §9) and the owner's re-review of closed facts applied; **the janitor writes since the deploy of 2026-10-27** (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0`; rollback = remove the variable, a deploy). **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what the owner archives; never-true stays invalidated. The review change this needs is **deployed** (see "P2 revised" in §9); the janitor was switched on after it shipped.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
 arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2–S4 are deployed (2026-10-27) with the janitor log-only; S5's classify was applied and the janitor switched on on 2026-10-27.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
@@ -726,8 +726,8 @@ level, overridable per account and per user).** The context is kept for the reco
    delivery; echo-trap exception; P1, P2, P3; the owner's answers by digit, button, reply and Cabinet; alerts. Record:
    `decisions/fact_review_and_owner_questions.md`; the code is described in the owner's map, §5.5 and §5.6.
 5. **S5 — one-time classify (§7.3), review dry run (§7.3b), janitor on.**
-6. **P2 revised (owner, 2026-10-27)** — a fact whose date has passed becomes history: built, not deployed; it ships, with its
-   `CONSOLIDATION_LIFECYCLE` upload, before the janitor is switched on. See "P2 revised" below.
+6. **P2 revised (owner, 2026-10-27)** — a fact whose date has passed becomes history: deployed (with its
+   `CONSOLIDATION_LIFECYCLE` upload, before the janitor was switched on). See "P2 revised" below.
 
 **S2 as built (2026-10-23).** Where this text and the code differ, the code wins and is described here. The owner
 confirmed deltas D-1 to D-15 on 2026-10-23.
@@ -768,7 +768,7 @@ Where the built code differs from the S2 plan:
 - **Owner decision (F1 S-1), decided 2026-10-23, built in S3** (below): a Cabinet delete from a page loaded before the fact was rewritten no longer invalidates a current version whose text the owner never saw; until then the behaviour was D8 as written.
 
 
-**S3 as built (2026-10-23).** On the S2–S5 branch, not deployed (it ships with S4 and S5 in one switch window). Where this
+**S3 as built (2026-10-23).** Deployed 2026-10-27 (with S4 and S5, in one switch window). Where this
 text and the code differ, the code wins and is described here. The owner's map is `docs/05_building_blocks/memory/README.md`
 (§2.7, §3.11, §5.5); the decision record is `decisions/fact_expiry_and_janitor.md`; the deploy steps are in
 the rollout notes (ops).
@@ -913,7 +913,7 @@ Cites in this RFC that had moved or were wrong:
 | `refresh_biographical_context_cache` skips without service `:805-810` | `firestore_repo.py:753` (logs and swallows its errors) |
 | `TAXONOMY:78-93` (TTL column); `TOOLS:44`, `TAXONOMY:137`, `POLICIES:49` (`HISTORICAL`) | the TTL column is now the `expiry` block (kinds table, date rules) of `CONSOLIDATION_TAXONOMY`; `ARCHIVAL` since P8, uploaded with S3 |
 
-**S4 as built (2026-10-26).** On the S2–S5 branch, not deployed (it ships with S5 in one switch window). Where this text and
+**S4 as built (2026-10-26).** Deployed 2026-10-27 (with S5, in one switch window). Where this text and
 the code differ, the code wins and is described here. The owner's map is `docs/05_building_blocks/memory/README.md` (§2.7,
 §5.5, §5.6); the decision record is `decisions/fact_review_and_owner_questions.md`; the deploy steps are in the rollout notes
 (ops).

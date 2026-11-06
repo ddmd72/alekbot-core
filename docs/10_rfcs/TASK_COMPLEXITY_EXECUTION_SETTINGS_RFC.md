@@ -1,6 +1,6 @@
 # RFC: Task Complexity Classification & Dynamic Execution Settings
 
-**Status**: Accepted
+**Status**: Implemented through §6 phase 3 (domain types, `TaskExecutionResolver` in `src/infrastructure/`, the router emits `task_complexity`, reminders and worker tasks pass an explicit hint). Phase 4 (Quick removal) is not built: `QuickResponseAgent` is live code. The Cabinet complexity-settings endpoint (Q10) is not built.
 **Owner**: Dmytro
 **Date**: 2026-04-14
 

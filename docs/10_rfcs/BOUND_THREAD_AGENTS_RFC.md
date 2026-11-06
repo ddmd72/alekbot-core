@@ -1,6 +1,6 @@
 # RFC: Channel Binding — Direct Agent Sessions via Slack Channels
 
-**Status:** DRAFT
+**Status:** Phases 1, 1b and 2 implemented (channel binding, `$agent` / `$primary`, `DelegationEngine`, per-channel `session_id`). Phases 3 (`$route`), 4 (incognito) and 5 (`allowed_direct_agents`) are not built.
 **Date:** 2026-04-06
 **Owner:** Dmytro
 

@@ -1,6 +1,6 @@
 # RFC: Cluster Review — Periodic Knowledge Base Maintenance
 
-**Status:** Approved — Ready for Implementation
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning. The inline cluster review after each consolidation batch (Stage 2a in `src/agents/consolidation_agent.py`) is built and stays; the periodic whole-base pass is what is dropped.
 **Date:** 2026-03-05
 **Owner:** AI Engineering
 
