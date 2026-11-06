@@ -58,7 +58,14 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
 ## S0 items S1 still waits on
 
 - **Flush barrier (G7 / S0-b):** that the response is fully flushed before the supervisor stops the instance is unproven.
-- **`RLIMIT_AS` vs Node's `DATA` mapping (G6 / S0-f):** whether 1 GiB address space suits `node` on gen2.
+- **`RLIMIT_AS` vs Node's `DATA` mapping (G6 / S0-f) — decided by a live failure: `RLIMIT_DATA`.** On 2026-11-06 every real
+  model script ended `rc=-6` with an empty `err.txt`: the scripts read their spec from stdin (a file), which starts libuv's
+  threadpool, and under `RLIMIT_AS` 1 GiB its four threads (8 MiB stack each) found no address space left; libuv's
+  `init_threads()` then calls `abort()` with no message. A script that blocks `fs` before reading stdin exited 1 with
+  its own text in the same window; the 258-byte checks of 2026-11-04 passed (their scripts are not on record). Node reserves address space it never commits (V8 code range, per-thread malloc arenas),
+  so the `render.docx` launcher bounds `RLIMIT_DATA` (writable private memory, 1 GiB) instead, like the browser
+  (`DOCX_MEMORY_MODE`, `docx_render_engine.py`). Not reproduced on the gen2 host itself (no Linux runtime at diagnosis);
+  `test_docx_render_engine_limits.py` has the docker acceptance test against the image.
 - **NPROC / NOFILE 64 / 64** may be low for Node; confirm on gen2 (S0-f).
 - **`/tmp` and `/dev/shm` (S0-f) — measured, closed at start-up.** On gen2 the engine uid could write both: the platform
   mounts its own world-writable tmpfs over them, so the image's `chmod 0700 /tmp` does not survive (memory outside

@@ -162,17 +162,19 @@ def build_engine_registry(plan: StartupPlan) -> Mapping[SandboxOp, Any]:
         ops = (SandboxOp.PARSE_EXTRACT, SandboxOp.PARSE_PDF_PAGE_COUNT, SandboxOp.PARSE_PDF_WINDOWS,
                SandboxOp.PARSE_CONTAINER_FACTS)
         return {op: ParseEngine(launcher, op=op, output_root=output_root) for op in ops}
-    from ..adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
+    from ..adapters.sandbox_engine.docx_render_engine import DOCX_MEMORY_MODE, DocxRenderEngine
     from ..adapters.sandbox_engine.html_render_engine import (
         BROWSER_MEMORY_MODE, BROWSER_NOFILE, BROWSER_NPROC, HtmlRenderEngine,
     )
 
-    # The browser cannot live under RLIMIT_AS (it reserves tens of GiB of address space): its own launcher.
+    # Neither node nor the browser can live under RLIMIT_AS (address space reserved, never committed): each has its own
+    # launcher on RLIMIT_DATA. Node keeps the default NPROC / NOFILE.
+    docx_launcher = ChildLauncher(user=plan.engine_user, memory_mode=DOCX_MEMORY_MODE)
     browser_launcher = ChildLauncher(
         user=plan.engine_user, memory_mode=BROWSER_MEMORY_MODE, nproc=BROWSER_NPROC, nofile=BROWSER_NOFILE,
     )
     cache_dir = os.path.expanduser(plan.browser_cache_dir or _DEFAULT_BROWSER_CACHE_DIR)
-    registry: Dict[SandboxOp, Any] = {SandboxOp.RENDER_DOCX: DocxRenderEngine(launcher, output_root=output_root)}
+    registry: Dict[SandboxOp, Any] = {SandboxOp.RENDER_DOCX: DocxRenderEngine(docx_launcher, output_root=output_root)}
     for op in (SandboxOp.RENDER_PDF, SandboxOp.RENDER_PNG):
         registry[op] = HtmlRenderEngine(browser_launcher, op=op, output_root=output_root, browser_cache_dir=cache_dir)
     return registry
