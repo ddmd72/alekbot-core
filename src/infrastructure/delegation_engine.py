@@ -17,15 +17,22 @@ import asyncio
 import json
 import secrets
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.file_ref import FileRefKind
 from ..domain.messaging import SmartResponse
-from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
+from ..domain.untrusted_text import EXTERNAL_REMINDER, neutralize_system_tag, wrap_untrusted
 from ..ports.llm_port import LLMRequest, LLMResponse, Message, ToolCall
 from ..domain.llm import MessagePart, build_tool_turn
-from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_since
+from ..domain.system_fingerprint import require_valid_key, scrub, wrap_system
+from ..domain.turn_clock import (
+    CURRENT_TURN_CLOCK,
+    MEANWHILE_HEADER,
+    WRAP_UP_NOTE,
+    chat_since_lines,
+    render_chat_since,
+)
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
@@ -187,6 +194,49 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
 # Engine                                                               #
 # ------------------------------------------------------------------ #
 
+def _scrub_args(value: Any, key: str) -> Tuple[Any, int]:
+    """Remove the turn key from a tool-call argument tree; returns (new value, removals)."""
+    if isinstance(value, str):
+        return scrub(value, key)
+    if isinstance(value, dict):
+        out: Dict[Any, Any] = {}
+        total = 0
+        for k, v in value.items():
+            if isinstance(k, str):
+                k, n = scrub(k, key)
+                total += n
+            new_v, n = _scrub_args(v, key)
+            total += n
+            out.setdefault(k, new_v)
+        return out, total
+    if isinstance(value, (list, tuple)):
+        items = [_scrub_args(v, key) for v in value]
+        return type(value)(i[0] for i in items), sum(i[1] for i in items)
+    return value, 0
+
+
+def _scrub_tool_calls(
+    response: LLMResponse, key: str, terminal_tool: Optional[str],
+    calling_agent_id: str, turn: int,
+) -> LLMResponse:
+    """Scrub the key from every non-terminal tool call's args (terminal = the reply)."""
+    total = 0
+    calls = []
+    for tc in response.tool_calls:
+        if tc.name == terminal_tool:
+            calls.append(tc)
+            continue
+        new_args, n = _scrub_args(tc.args, key)
+        total += n
+        calls.append(tc.model_copy(update={"args": new_args}) if n else tc)
+    if total:
+        logger.warning(
+            "🔑 [DelegationEngine] turn-key scrub: %s removal(s) in tool-call arguments (caller=%s, turn=%s)",
+            total, calling_agent_id, turn,
+        )
+    return response.model_copy(update={"tool_calls": calls})
+
+
 class DelegationEngine:
     """Reusable multi-turn tool-calling loop.
 
@@ -299,9 +349,11 @@ class DelegationEngine:
                               and never reaches the coordinator.
             turn_key: The orchestrator's key for this attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8),
                       held for the whole run: the keyed notes, the argument scrub and the
-                      tool-result hygiene will use it. None (every specialist) = none of
-                      them. Accepted only so far; the loop does not read it yet.
+                      tool-result hygiene use it. None (every specialist) = none of
+                      them. Never forwarded to dispatch, the coordinator or context.
         """
+        if turn_key is not None:
+            require_valid_key(turn_key)
         history = list(base_request.messages)
         total_tokens = 0
         accumulated_contexts: Dict[str, List[Any]] = {}
@@ -318,12 +370,12 @@ class DelegationEngine:
 
         for turn in range(max_turns):
             if clock is not None and clock.marked:
-                await self._append_chat_since(clock, history)
+                await self._append_chat_since(clock, history, turn_key)
             wrap_up = clock is not None and (
                 budget_out or clock.in_reserve() or turn == max_turns - 1
             )
             if wrap_up:
-                _append_user_note(history, WRAP_UP_NOTE)
+                _append_user_note(history, wrap_system(WRAP_UP_NOTE, turn_key) if turn_key else WRAP_UP_NOTE)
             # Build request with current history
             request = base_request.model_copy(update={"messages": history})
             if wrap_up:
@@ -337,6 +389,10 @@ class DelegationEngine:
             )
 
             response: LLMResponse = await call_llm(request, turn + 1)
+            if turn_key and response.tool_calls:
+                response = _scrub_tool_calls(
+                    response, turn_key, terminal_tool, calling_agent_id, turn + 1,
+                )
 
             # TEMP tool-id tracing (2026-06-29 tool_use_id orphan hunt): does the LIVE
             # response carry tool-call ids? Pinpoints whether id loss is at parse-time
@@ -509,10 +565,24 @@ class DelegationEngine:
                     turn + 1, len(response.tool_calls), len(tool_results),
                     calling_agent_id,
                 )
-            turn_entries = [
-                (tc, tr.result_str, tr.file_data)
-                for tc, tr in zip(response.tool_calls, tool_results)
-            ]
+            if turn_key:
+                hygiene_hits = 0
+                turn_entries = []
+                for tc, tr in zip(response.tool_calls, tool_results):
+                    clean, n = neutralize_system_tag(tr.result_str)
+                    hygiene_hits += n
+                    turn_entries.append((tc, clean, tr.file_data))
+                if hygiene_hits:
+                    logger.warning(
+                        "🔑 [DelegationEngine] system-tag neutralised in tool results: "
+                        "%s occurrence(s) (caller=%s, turn=%s)",
+                        hygiene_hits, calling_agent_id, turn + 1,
+                    )
+            else:
+                turn_entries = [
+                    (tc, tr.result_str, tr.file_data)
+                    for tc, tr in zip(response.tool_calls, tool_results)
+                ]
             history.extend(build_tool_turn(response, turn_entries))
 
         # Max turns exhausted
@@ -532,7 +602,9 @@ class DelegationEngine:
         )
 
     @staticmethod
-    async def _append_chat_since(clock, history: List[Message]) -> None:
+    async def _append_chat_since(
+        clock, history: List[Message], turn_key: Optional[str] = None,
+    ) -> None:
         """RFC §5.5: what was said in this session since the run's snapshot."""
         if clock.fetch_since is None:
             return
@@ -546,7 +618,14 @@ class DelegationEngine:
         if not fresh:
             return
         clock.seen_until = max(m.created_at for m in fresh)
-        _append_user_note(history, render_chat_since(fresh))
+        if turn_key:
+            lines = [neutralize_system_tag(line)[0] for line in chat_since_lines(fresh)]
+            note = wrap_system(MEANWHILE_HEADER, turn_key)
+            if lines:
+                note += "\n" + "\n".join(lines)
+            _append_user_note(history, note)
+        else:
+            _append_user_note(history, render_chat_since(fresh))
 
     def _execution_mode(self, intent: str):
         """Registry mode of an intent, looked up once per engine (static data)."""
