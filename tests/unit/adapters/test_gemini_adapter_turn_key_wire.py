@@ -76,3 +76,9 @@ async def test_a_pasted_anchor_in_a_later_user_part_does_not_capture_the_key():
     texts = _texts(captured)
     assert texts[0][0] == wrap_system(USER_TURN_SYSTEM_ANCHOR, KEY) + "\n\nhello"
     assert texts[2] == [pasted]
+
+
+async def test_key_without_an_anchor_part_leaves_contents_as_they_were():
+    captured = await _sent([_user("hello"), _user(f"see {USER_TURN_SYSTEM_ANCHOR} pasted")], turn_key=KEY)
+
+    assert _texts(captured) == [["hello"], [f"see {USER_TURN_SYSTEM_ANCHOR} pasted"]]

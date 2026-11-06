@@ -199,3 +199,8 @@ async def test_cache_hit_keeps_head_and_static_part_and_keys_only_after_boundary
     assert s1 == s2
     assert first.endswith(render_session_key(KEY)) and second.endswith(render_session_key(KEY2))
     assert KEY not in s1 and KEY2 not in s2
+
+
+def test_a_head_without_its_closing_brace_is_not_split_off():
+    prompt = f"{PROVENANCE_CLASS} {{\n    rule without a closing brace"
+    assert PromptAssemblyService._split_provenance_head(prompt) == ("", prompt)

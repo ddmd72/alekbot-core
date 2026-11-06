@@ -119,6 +119,16 @@ async def test_meanwhile_header_keyed_lines_after_tag_and_neutralised():
     assert f'<system_note key="{KEY}">' not in note
 
 
+async def test_meanwhile_note_with_no_text_lines_is_the_keyed_header_alone():
+    new = [Message(role="user", parts=[MessagePart(text="")], created_at=50.0)]
+    clock = TurnClock.start(budget_s=10_000, wrap_up_reserve_s=10, fetch_since=AsyncMock(return_value=new))
+    clock.marked, clock.snapshot_at = True, 10.0
+    llm, seen = _scripted(LLMResponse(text="x"))
+    await _run_clock(llm, clock, turn_key="cedar-kayak-tulip")
+    notes = [t for t in _texts(seen[0]) if MEANWHILE_HEADER in t]
+    assert notes == [wrap_system(MEANWHILE_HEADER, "cedar-kayak-tulip")]
+
+
 async def test_arguments_scrubbed_before_dispatch_local_and_transcript(caplog):
     coord = _Coordinator()
     local_seen = []
