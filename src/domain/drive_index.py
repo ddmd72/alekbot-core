@@ -600,6 +600,7 @@ class DriveSyncState:
     walk_listed: int = 0                      # §5.2, §5.5: folders listed since the current walk began (Cabinet)
     walk_blocked: int = 0                     # §5.2, §5.5 W5: walk folders that could not be listed (Cabinet)
     top_level_cursor: str = ""                # the drive's top-level removal pass: "<list>:<last item id>", "" = start
+    diff_parents: Tuple[str, ...] = ()        # a waiting scope diff's root->parent links already read ("id\x1fparent")
     top_level_unclean: bool = False           # that pass changed or met something: it is "clean" only after a full pass
 
     def cards_in_space(self, embedding_space: str) -> bool:
