@@ -9,8 +9,8 @@ Why Quick and not a Smart retry:
 - Quick has a fixed, conservative provider/model config — its failure surface is
   deliberately independent of whatever caused Smart to fail.
 - Quick also formulates the apology in the user's language/style via the prompt system
-  (a system note is injected so the model knows to apologize gracefully, not expose
-  technical details). A raw retry or static string cannot do this.
+  (a system note, passed in the `fallback_note` context field and keyed by Quick, tells
+  the model to apologize gracefully, not expose technical details). A raw retry or static string cannot do this.
 
 TIMEOUT is reported like any other failure (2026-10-05, retiring the two-phase
 timeout path — LONG_RUNNING_TURNS_RFC §5.9). Under the long-running-turns budget
@@ -112,7 +112,6 @@ class AgentFallbackService:
             except Exception as exc:
                 logger.warning("[AgentFallbackService] primary-failure alert failed: %s", exc)
 
-        system_note = MessagePart(text=self._FAILURE_NOTE)
         fallback_message = AgentMessage.create(
             sender="agent_fallback_service",
             recipient=f"quick_response_agent_{context.user_id}",
@@ -123,7 +122,8 @@ class AgentFallbackService:
                 "user_id": context.user_id,
                 "account_id": context.account_id,
                 "thread_id": context.thread_id,
-                "current_message_parts": list(message_parts) + [system_note],
+                "current_message_parts": list(message_parts),
+                "fallback_note": self._FAILURE_NOTE,
             },
         )
 

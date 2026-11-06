@@ -28,6 +28,8 @@ from ...infrastructure.agent_config import QUICK
 from ...infrastructure.agent_manifest import QUICK_RESPONSE
 from ...infrastructure.delegation_engine import DelegationEngine
 from ...infrastructure.turn_key import TurnKeySource, draw_turn_key
+from ...infrastructure.turn_fingerprint import neutralize_history, scrub_reply
+from ...domain.system_fingerprint import wrap_system
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -122,7 +124,7 @@ class QuickResponseAgent(BaseAgent):
             history_summary_service: Optional service for generating compact history summaries
             user_timezone: IANA timezone for message timestamps (e.g. "Europe/Madrid")
             turn_key_source: Draws the key of each execution (SYSTEM_TURN_FINGERPRINT_RFC §4.8);
-                defaults to `draw_turn_key`. Stored only; not drawn yet.
+                defaults to `draw_turn_key`; drawn once per `execute`.
         """
         super().__init__(config)
         self.execution_context = execution_context
@@ -183,6 +185,7 @@ class QuickResponseAgent(BaseAgent):
         self._on_agent_start(text)
 
         try:
+            turn_key = self._turn_key_source()  # local only: never self.*, never message.context
             enriched_context = message.context.get("enriched_context")
 
             cached_biographical = []
@@ -219,6 +222,7 @@ class QuickResponseAgent(BaseAgent):
                 biographical_facts=biographical_facts,  # Enriched with semantic context
                 kb_preamble=True,
                 agent_notes=agent_notes,
+                session_key=turn_key,
             )
             
             current_message_parts = message.context.get("current_message_parts", [])
@@ -228,9 +232,17 @@ class QuickResponseAgent(BaseAgent):
                 current_message_parts=current_message_parts,
                 context_window=self.CONTEXT_WINDOW
             )
+            conversation_history, neutralised = neutralize_history(conversation_history)
+            if neutralised:
+                logger.warning("[QuickResponseAgent] neutralised %d system-tag look-alikes in history", neutralised)
             # Inject behavioral anchor (information-gap + posture rules) into the
             # latest user message — in-memory only, never persisted to history.
             conversation_history = self._inject_user_turn_anchor(conversation_history)
+            fallback_note = message.context.get("fallback_note")
+            if isinstance(fallback_note, str) and fallback_note and conversation_history:
+                last = conversation_history[-1]
+                keyed = MessagePart(text=wrap_system(fallback_note, turn_key))
+                conversation_history[-1] = last.model_copy(update={"parts": [*last.parts, keyed]})
 
             logger.debug(
                 f"⚡ [QuickResponseAgent] Context: {len(conversation_history)} messages, "
@@ -244,6 +256,7 @@ class QuickResponseAgent(BaseAgent):
                 messages=conversation_history,
                 tools=self._get_quick_tool_declarations(),
                 response_schema=self._RESPONSE_SCHEMA,
+                turn_key=turn_key,
             )
             delegation_result = await engine.execute(
                 call_llm=self._call_llm,
@@ -259,6 +272,7 @@ class QuickResponseAgent(BaseAgent):
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
                 terminal_tool="deliver_response",
+                turn_key=turn_key,
             )
 
             if delegation_result.failed:
@@ -274,6 +288,10 @@ class QuickResponseAgent(BaseAgent):
             )
             final_rich = rich if rich else delegation_result.structured_data
             smart_response = SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list)
+            smart_response, history_summary, scrubbed = scrub_reply(smart_response, history_summary, turn_key)
+            if scrubbed:
+                logger.warning("[QuickResponseAgent] scrubbed %d key/tag spellings from the reply", scrubbed)
+            final_rich = smart_response.structured_data
             total_tokens = delegation_result.total_tokens
             delivery_items = delegation_result.delivery_items
 
