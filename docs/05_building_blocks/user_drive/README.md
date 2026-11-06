@@ -203,7 +203,7 @@ holds no drive id; the connection's `drive_identity` names the drive.
   bot's own area, `"nothing"` for an account-wide drive, `null` when the drive's capabilities could not be read), `searched_by_default`, `indexing_enabled`,
   `transcribe_enabled`, the drive `note`, the `indexing` status block (with `scope_progress`: `removing`, `removing_outside`, `walking`, `listed`,
   `blocked`; the card shows one state, removing ranked before walking ("Removing N folder(s)", else "Reading the chosen
-  folders: N folders read" plus "N folders could not be read yet"); leaving whole drive for folders shows a warning first), and `reconnect` (the credential id) when the grant
+  folders: N folders read" plus "N folders could not be read yet"); leaving whole drive for folders shows a warning first, and so does a OneDrive connection leaving its default App Folder for chosen folders (owner decision 2026-11-06)), and `reconnect` (the credential id) when the grant
   is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
   gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
   (a missing connection is 404): `/api/drive/connections/<id>/name`, `/scope`, `/write-folder`, `/searched-by-default`,

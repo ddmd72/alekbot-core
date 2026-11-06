@@ -360,6 +360,8 @@ today). No rebuild, so no paid content is lost (W12). The step-2 deploy needs no
   whole drive and the new one is folders: what leaves the index (everything outside the chosen folders, including
   items shared with the account that sit in no folder) and that adding it back later means reading it again. No item
   count: it would need an index scan inside the request (W20).
+  The warning also covers a OneDrive connection leaving its default (the App Folder) for chosen folders: the default
+  folder's files leave the index (owner decision 2026-11-06; `drive.scope_narrow_area_warning`, a `confirm()` on Save).
 - **Folder missing** (D4). Today `_item_path` (`src/web/user_cabinet_app.py:1610-1618`) turns any read failure into an
   empty path. A not-found or trashed answer becomes `missing: true` on that folder, shown as "Folder missing on the
   drive" with a Remove action; a transient failure keeps today's empty path. A save that keeps a missing folder is
