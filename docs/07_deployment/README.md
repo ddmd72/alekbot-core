@@ -345,6 +345,10 @@ limit) it samples every second.
 fails closed until one repository secret exists (Settings → Secrets and variables → Actions):
 - `PII_DENYLIST` — the private denylist's content (`hard|soft <regex>` per line).
 
+The same secret must also exist in the **Dependabot** store (`gh secret set PII_DENYLIST --app dependabot`): a PR opened
+by Dependabot runs its workflows with Dependabot secrets, not Actions secrets, so without the copy the gate fails closed
+on every dependency bump. The gate is a required status check in the `main` ruleset: a red gate blocks the merge.
+
 CI prints counts only (the repository is public, so is the Actions log). To see which lines hit, run the check locally:
 `PII_DENYLIST_FILE=<path to the private denylist> python3 -m scripts.pii_gate.denylist_check --range origin/main...HEAD`.
 
