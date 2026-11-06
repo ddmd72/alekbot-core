@@ -28,6 +28,9 @@ def _function(name: str) -> str:
     return found.group(1)
 
 
+_WARNING = "T:drive.scope_narrow_warning"
+
+
 def _run(body: str, *, refuse: bool = False):
     # a saved scope comes back on the row the way the reload after a save shows it
     stored = ('if (method === "PUT" && path.endsWith("/scope")) driveData.connections[0].scope = {'
@@ -40,6 +43,9 @@ def _run(body: str, *, refuse: bool = False):
         'function driveUiOf(id) { return ui; }\n'
         'function t(key) { return "T:" + key; }\n'
         'function showToast(msg, type) { toasts.push([msg, type]); }\n'
+        # leaving whole drive asks first (DRIVE_SCOPE_WALK_RFC §8, W20); the owner accepts unless a test says otherwise
+        'let confirmAnswer = true; const confirms = [];\n'
+        'function confirm(m) { confirms.push(m); return confirmAnswer; }\n'
         'function redrawDrive() {}\n'
         'async function loadDriveStatus() { reloads += 1; }\n'
         'async function saveDriveWriteFolder(id, value) { calls.push(["write-folder", value]); }\n'
@@ -50,7 +56,7 @@ def _run(body: str, *, refuse: bool = False):
         + "".join(_function(name) for name in _FUNCTIONS)
         + "\n(async () => {\n" + body
         + "\nprocess.stdout.write(JSON.stringify({ calls, toasts, reloads, picker: ui.picker !== null,"
-          " error: ui.scopeError || '' }));\n})().catch((e) => { console.error(e); process.exit(1); });\n")
+          " error: ui.scopeError || '', confirms }));\n})().catch((e) => { console.error(e); process.exit(1); });\n")
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout
     return json.loads(out)
 
@@ -87,6 +93,7 @@ def test_removing_a_folder_saves_the_scope_without_it():
 def test_unticking_whole_drive_restores_the_folders_chosen_before_it():
     out = _run('await toggleDriveScopeWhole("c1", true); await toggleDriveScopeWhole("c1", false);')
     assert out["calls"] == [_put(True, []), _put(False, ["fold-a", "fold-b"])]
+    assert out["confirms"] == [_WARNING]           # ticking whole drive asks nothing; leaving it warns once
 
 
 @node
@@ -94,6 +101,7 @@ def test_after_a_page_reload_unticking_whole_drive_leaves_the_default_scope():
     out = _run('await toggleDriveScopeWhole("c1", true); delete ui.foldersBeforeWhole;'
                ' await toggleDriveScopeWhole("c1", false);')
     assert out["calls"] == [_put(True, []), _put(False, [])]
+    assert out["confirms"] == [_WARNING]
 
 
 @node
@@ -101,6 +109,15 @@ def test_a_refused_untick_keeps_the_remembered_folders_for_the_next_try():
     out = _run('await toggleDriveScopeWhole("c1", true); refuse = true; await toggleDriveScopeWhole("c1", false);'
                ' refuse = false; await toggleDriveScopeWhole("c1", false);')
     assert out["calls"] == [_put(True, []), _put(False, ["fold-a", "fold-b"]), _put(False, ["fold-a", "fold-b"])]
+    assert out["confirms"] == [_WARNING, _WARNING]  # the refused save left the scope whole: the next try warns again
+
+
+@node
+def test_a_declined_warning_keeps_the_remembered_folders_for_the_next_try():
+    out = _run('await toggleDriveScopeWhole("c1", true); confirmAnswer = false; await toggleDriveScopeWhole("c1", false);'
+               ' confirmAnswer = true; await toggleDriveScopeWhole("c1", false);')
+    assert out["calls"] == [_put(True, []), _put(False, ["fold-a", "fold-b"])]
+    assert out["confirms"] == [_WARNING, _WARNING]
 
 
 @node
