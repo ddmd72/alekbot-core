@@ -27,6 +27,7 @@ from ..base_agent import BaseAgent
 from ...infrastructure.agent_config import QUICK
 from ...infrastructure.agent_manifest import QUICK_RESPONSE
 from ...infrastructure.delegation_engine import DelegationEngine
+from ...infrastructure.turn_key import TurnKeySource, draw_turn_key
 from ...domain.agent import (
     AgentMessage,
     AgentResponse,
@@ -103,6 +104,7 @@ class QuickResponseAgent(BaseAgent):
         history_recent_full_turns: int = 2,
         history_summary_service: Optional[HistorySummaryService] = None,
         user_timezone: str = "UTC",
+        turn_key_source: Optional[TurnKeySource] = None,
     ):
         """
         Initialize Quick Response Agent.
@@ -119,6 +121,8 @@ class QuickResponseAgent(BaseAgent):
             history_recent_full_turns: Number of recent model turns to keep at full text.
             history_summary_service: Optional service for generating compact history summaries
             user_timezone: IANA timezone for message timestamps (e.g. "Europe/Madrid")
+            turn_key_source: Draws the key of each execution (SYSTEM_TURN_FINGERPRINT_RFC §4.8);
+                defaults to `draw_turn_key`. Stored only; not drawn yet.
         """
         super().__init__(config)
         self.execution_context = execution_context
@@ -133,6 +137,7 @@ class QuickResponseAgent(BaseAgent):
         self.history_recent_full_turns = history_recent_full_turns
         self.history_summary_service = history_summary_service
         self._user_timezone = user_timezone
+        self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
 
         # Extract user_id from config metadata
         self.user_id = config.metadata.get("user_id")

@@ -214,6 +214,7 @@ class DelegationEngine:
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
         use_turn_clock: bool = False,
         allow_delegation: bool = True,
+        turn_key: Optional[str] = None,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -240,6 +241,7 @@ class DelegationEngine:
                 local_tools=local_tools,
                 use_turn_clock=use_turn_clock,
                 allow_delegation=allow_delegation,
+                turn_key=turn_key,
             )
 
     async def _execute_loop(
@@ -257,6 +259,7 @@ class DelegationEngine:
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
         use_turn_clock: bool = False,
         allow_delegation: bool = True,
+        turn_key: Optional[str] = None,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -294,6 +297,10 @@ class DelegationEngine:
                               specialist, DRIVE_SPECIALIST_RFC §5.4): delegate_to_specialist
                               is not declared, so a stray call gets the unknown-tool answer
                               and never reaches the coordinator.
+            turn_key: The orchestrator's key for this attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8),
+                      held for the whole run: the keyed notes, the argument scrub and the
+                      tool-result hygiene will use it. None (every specialist) = none of
+                      them. Accepted only so far; the loop does not read it yet.
         """
         history = list(base_request.messages)
         total_tokens = 0

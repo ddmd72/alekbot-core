@@ -53,6 +53,7 @@ from ...ports.session_store import SessionStore
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
+from ...infrastructure.turn_key import TurnKeySource, draw_turn_key
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...infrastructure.skill_tools import (
@@ -237,6 +238,7 @@ class SmartResponseAgent(BaseAgent):
         long_turn_registry: Optional[LongTurnRegistry] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
         workspace_service: Optional["WorkspaceService"] = None,
+        turn_key_source: Optional[TurnKeySource] = None,
     ):
         super().__init__(config)
         self.execution_context = execution_context
@@ -258,6 +260,8 @@ class SmartResponseAgent(BaseAgent):
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
         self.workspace_service = workspace_service
+        # Draws the key of each execution attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8); not drawn yet.
+        self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
         # and ``self._agent_execution_context`` (set by _set_execution_context

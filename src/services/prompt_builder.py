@@ -127,6 +127,7 @@ class PromptBuilder(PromptBuilderPort):
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
         skills_catalog: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> str:
         """
         Build complete system prompt for agent using PromptAssemblyService.
@@ -142,6 +143,8 @@ class PromptBuilder(PromptBuilderPort):
             conversation_history: Optional conversation history for runtime injection
             include_biographical: Whether to load biographical facts from Firestore.
                 Set False for agents that don't need personal context (e.g. router).
+            session_key: The orchestrator's key for this attempt, passed to the assembly
+                (SYSTEM_TURN_FINGERPRINT_RFC §4.2). None for every other agent.
 
         Returns:
             Fully formatted system prompt string
@@ -221,6 +224,7 @@ class PromptBuilder(PromptBuilderPort):
             extra_static_blocks=extra_static_blocks,
             include_datetime=include_datetime,
             skills_catalog=skills_catalog,
+            session_key=session_key,
         )
 
     def _get_static_rules(self) -> str:

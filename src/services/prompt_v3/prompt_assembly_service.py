@@ -74,6 +74,7 @@ class PromptAssemblyService:
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
         skills_catalog: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> str:
         """Full prompt assembly with class-collection model + caching.
 
@@ -93,6 +94,8 @@ class PromptAssemblyService:
             query_specific_context: Pre-formatted query-specific context string from router
                 enrichment. Validated here via SecurityPort and appended after the cache
                 boundary. None if no Q-S context for this request.
+            session_key: The orchestrator's key for this attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.2).
+                Accepted, not rendered yet; None for every other agent.
 
         Returns:
             Assembled prompt string
