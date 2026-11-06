@@ -54,12 +54,13 @@ Paths are under `src/`. "Orchestrator" means Smart and Quick, the two agents tha
 | Running jobs | `RUNNING_JOBS_HEADER` + one line per running long turn, its title taken from the owner's question | `domain/turn_clock.py:34`; `infrastructure/long_turn_tools.py:21`; `smart_response_agent.py:540-542` |
 | Fallback note | `_FAILURE_NOTE` ("the assistant ran into a problem… apologize…"), appended as an extra part of Quick's current message | `services/agent_fallback_service.py:42-47,115-126`; the handler persists its own parts, not this copy |
 | Recitation retry | `RECITATION_RETRY_DIRECTIVE` appended to the last user message | `domain/llm.py:385`; `base_agent.py:1297`; only callers `pdf_generator_agent.py:195`, `html_page_generator_agent.py:149` (specialists) |
+| Lelik commission headers | `[Asked by Lelik during a phone call with the user. …]` and `[Errand from Lelik during a phone call with the user. …]` after the query, with the last call exchanges (the caller's own words) and Lelik's note; Smart's current turn | `agents/alek_gateway_agent.py:50-71` (`_commission`) |
 
 **(b) Persisted in the session** — saved as written; later turns read them as history.
 
 | Site | Text | Where |
 |---|---|---|
-| Notify frame | `[System: {system_alert}{suffix}]` as the whole user turn (reminders, daily review, deep research, errands) | `services/user_notification_service.py:503` |
+| Notify frame | `[System: {system_alert}{suffix}]` as the whole user turn; callers listed below | `services/user_notification_service.py:503` |
 | Chat-upload alerts | `[System: User attached '…' but…]`, storage-unavailable, voice-not-transcribed; parts of the owner's own message | `utils/file_conversion.py:99,116,131`; built at `handlers/conversation_handler.py:810-924`; persisted by `_clean_user_parts` (`:1468`) |
 | Late answer | `[System: late answer to "<q>" …]` before the answer | `domain/turn_clock.py:108-113`; `services/long_turn_service.py` (`save_late_answer`) |
 | Call record | `[System: phone call with Lelik …]` + the posted note | `domain/voice_call_note.py:26,35`; `user_notification_service.py` (call-event pair) |
@@ -71,6 +72,25 @@ Paths are under `src/`. "Orchestrator" means Smart and Quick, the two agents tha
 | Drive-note context line | `[Drive note: <path> ref=… v<n>]` (no system claim) | `domain/drive_note.py:744` |
 | Safety block | `[SYSTEM: Response contained unsafe content and was blocked]`, replaces a blocked reply; user-visible | `conversation_handler.py:608` |
 
+Callers of `UserNotificationService.notify` (each becomes a `[System: …]` notify-frame turn of the recipient):
+
+| Notification | Recipient | Where |
+|---|---|---|
+| Reminder fired | Smart | `handlers/worker_handler.py:1032` |
+| Daily email review | Smart | `worker_handler.py:1221` |
+| Deep-research notice; report not prepared; deep-research failure | Quick | `worker_handler.py:611`; `services/deep_research_delivery.py:322`; `handlers/agent_worker_handler.py:377` |
+| Video timeout, video provider error | Quick | `worker_handler.py:769,835` |
+| Gmail needs reconnect | Quick | `worker_handler.py:1109` |
+| Integration reconnect notice (R1) | Quick | `services/integration_reconnect_service.py:171` |
+| Drive sync notice | Quick | `services/drive_sync_scheduler_service.py:351` |
+| Document (DOCX) failure | Quick | `agent_worker_handler.py:341` |
+| Lelik errand failure | Quick | `agent_worker_handler.py:358` |
+| Response language changed | Quick | `services/language_preference_service.py:163` |
+| `$consolidate` outcome | Quick | `handlers/conversation_handler.py:1641` |
+
+A Lelik errand that succeeds never reaches `notify`: it reaches Smart as the `[Errand from Lelik …]` commission of
+§2.1(a), and the gateway posts the outcome itself.
+
 Readers of the literal prefix: `domain/fact_review_task.py:19,38` drops parts starting `[System:` from the owner's
 language sample; the prompt tokens `PROTOCOL_LONG_TURNS`, `PROTOCOL_MEMORY_REVIEW_MARKERS`, `PROTOCOL_VOICE_PARTNER`,
 `CONSOLIDATION_POLICIES` and `CONSOLIDATION_EXAMPLES` describe these lines by their exact text (`prompts_snapshot/`).
@@ -81,7 +101,7 @@ language sample; the prompt tokens `PROTOCOL_LONG_TURNS`, `PROTOCOL_MEMORY_REVIE
 |---|---|---|
 | Document-open notes | `[System: User attempted to attach …]`, truncated, not read in time, reader or converter down, image too large, folder, too large for an action | `domain/document_open_texts.py:31-155`; `domain/document_presentation.py:45`; `services/file_conversion_service.py:107,317,351` |
 | Email-open notes | `[System: That email is no longer in the mailbox.]`, attachment missing/empty, macro, list of refs | `domain/email_open_texts.py:31-64` |
-| Refusal line | `FileNotResolved.line` carries the two families above to drive tools, the file specialist, and the Cabinet's error JSON | `domain/exceptions.py:387-394`; `web/user_cabinet_app.py:1588` |
+| Refusal line | `FileNotResolved.line` carries the two families above to drive tools and the file specialist | `domain/exceptions.py:387-394` |
 | Delegation | `SYSTEM ERROR: unknown tool …`, `SYSTEM ERROR: … without 'intent'`, `SYSTEM: Specialist agent rejected the request …`, fan-out preamble and rejection | `delegation_engine.py:732,770,848,908,938` |
 | Skill tools | `SYSTEM: No skill named …`, already in context, draft rejected / could not be stored / Done | `infrastructure/skill_tools.py:66,73,191,203,226,237,244,252` |
 | Workspace | `SYSTEM: your arguments were cut off …`, unknown command, unavailable, changed since read, refusal, does not exist, binary, rename interrupted | `infrastructure/workspace_tools.py:170,240`; `services/workspace_service.py:74,76,123,130,228,519` |
@@ -190,6 +210,7 @@ most of the time, not always, so this is defence in depth, not a trust boundary.
 | | the notify frame and its body (§8) |
 | | OpenAI/Grok anchors: they stay in the `developer` item, which the user channel cannot forge, and both adapters find the turn anchor by exact string |
 | | the recitation directive: specialist-only, and specialists get no key |
+| | the Lelik commission headers (`[Asked by Lelik …]`, `[Errand from Lelik …]`): the block mixes code-written framing with the query Lelik's model wrote and the caller's words, so keying it would raise untrusted text (§8's constraint); they stay as today |
 
 The wrapper adds lines around the keyed text and never edits it: `[System: turn budget ending — final answer now]`
 stays word for word inside the tag, so `PROTOCOL_LONG_TURNS` still matches it.
@@ -234,7 +255,8 @@ exception.
 | Unknown tool, delegation without intent | `SYSTEM ERROR: …` | `Tool error: …` |
 
 Only the prefix changes; the sentence after it stays. `WorkspaceRefused`'s docstring (`exceptions.py:297`) follows.
-The Cabinet shows `FileNotResolved.line` in its error JSON, so the Cabinet's text changes with it. No prompt token
+The Cabinet is unaffected: its drive-route errors carry `DriveSettingRefused.line` (`web/user_cabinet_app.py:1588`),
+which has no prefix. No prompt token
 names these prefixes (`prompts_snapshot/` checked). Existing tests that pin the old prefixes are changed by the reviewer,
 since this RFC changes that behaviour on purpose (repo reviewer rule).
 
@@ -258,15 +280,23 @@ through an orchestrator are scrubbed there; the safety block is a constant; Leli
 specialist never sees the key because its commission is scrubbed. The key does reach request capture (BigQuery
 `prompt_content`, Logfire) as part of the prompt; it is dead by the time anyone reads it.
 
+**Trap for the build (engine side).** The tool-result hygiene in `DelegationEngine` (§4.7) neutralises look-alikes of
+the **system tag word only**. Tool results legitimately carry live `<drive_document nonce=…>` and
+`<external_content nonce=…>` wrappers; running the full `escape_text` over a tool result would neutralise their openers
+and break the untrusted marking the model relies on. The same holds for the in-memory pass over history. Only
+`escape_text` itself (applied to a wrapper's body, inside `wrap_untrusted`) neutralises all three tag words.
+
 ### 4.7 Input hygiene
 
 The key is the defence; a forged tag without it proves nothing. Hygiene keeps look-alikes from confusing the model and
 reuses the existing neutraliser instead of a new layer: `untrusted_text.py`'s look-alike regex gains the system tag word
 (fullwidth and small openers, invisible characters, as for the two untrusted tag words). Applied:
 
-- `escape_text`, so every untrusted wrapper body neutralises a forged system tag for free;
-- in memory, to the text parts of the history the orchestrator loads, before any keyed text is added;
-- in `DelegationEngine`, to every tool result's text before it enters the transcript.
+- `escape_text`, so every untrusted wrapper body neutralises a forged system tag for free (all three tag words);
+- in memory, to the text parts of the history the orchestrator loads, before any keyed text is added (system tag word
+  only);
+- in `DelegationEngine`, to every tool result's text before it enters the transcript (system tag word only: see the
+  trap in §4.6).
 
 Persisted text is not rewritten.
 
@@ -275,8 +305,9 @@ Persisted text is not rewritten.
 - `domain/system_fingerprint.py` (pure): the word list, `SYSTEM_TAG`, `wrap_system(text, key)`, `scrub(text, key)`,
   `render_session_key(key)`, key-shape validation; the look-alike pattern is shared with `untrusted_text.py`. **No
   randomness in the domain**: the caller supplies the key, as for nonces, so tests pin it.
-- Key draw: the orchestrator's `_run` (Smart, Quick), with `secrets`, once per attempt.
-- **Carriage is explicit, no `ContextVar`.** `_run` passes the key to `PromptBuilder.build_for_agent` →
+- Key draw, with `secrets`, once per attempt: Smart in `_run` (`smart_response_agent.py:402`, re-entered on provider
+  rotation); Quick, which has no `_run`, in its `execute` (`quick_response_agent.py:161`).
+- **Carriage is explicit, no `ContextVar`.** The drawing method passes the key to `PromptBuilder.build_for_agent` →
   `PromptAssemblyService.assemble(session_key=…)`; to a new optional `LLMRequest.turn_key` that the Claude and Gemini
   adapters use to key the anchors; and to `DelegationEngine.execute(turn_key=…)` for the notes, the argument scrub and
   the tool-result hygiene. `None` (specialists, consolidation, Lelik) means no keying and no scrub. A nested specialist
@@ -311,7 +342,8 @@ Persisted text is not rewritten.
 
 `email_for_triage` puts sender-written email data into Smart's static system prompt unwrapped, the channel the rule
 calls trusted. This RFC wraps it: the block's email data goes through `wrap_untrusted` (`domain/untrusted_text.py`,
-store `email`, tag `external_content`, a nonce drawn by the caller as for every other wrapper) with `EXTERNAL_REMINDER`
+store `email`, tag `external_content`, ref `"email_for_triage"`, label `"daily email review"`, a nonce drawn by the
+caller as for every other wrapper) with `EXTERNAL_REMINDER`
 before it, at the place Smart builds the block (`smart_response_agent.py:458-465`). The block stays an
 `extra_static_blocks` entry; its text differs per run anyway, so caching is unchanged. One recorded daily-review call
 verifies that triage still works.
@@ -355,8 +387,8 @@ verifies that triage still works.
 | S1b | `email_for_triage` wrapped as `external_content` (§4.11). Independent of the key; one recorded daily-review call. |
 | S2 | `domain/system_fingerprint.py`, the shared look-alike pattern, unit tests (wrap, scrub, hygiene, key shape). |
 | S3 | Assembly: `session_key` block, the `provenance` head rule; `LLMRequest.turn_key`; adapter keying (Claude, Gemini) with wire tests; engine notes, fallback-note carrier, scrub and hygiene sites. Deployed with the rule token **not yet uploaded**: without the rule a keyed block is only a tag the model is not told about (the §6 before/after set checks that it changes nothing). |
-| S4 | Owner uploads the rule token, blueprint class and profile assignments. Code first, token second: the rule without keyed text would strip the anchors of their standing. |
-| S5 | The must-pass notification calls (§8), then the eval (§9) against the new build; keep if both hold, otherwise remove the token assignment (the code then only adds the tag). |
+| S4 | **Gate, before any upload.** Locally, on the deployed head, with the rule token, blueprint class and profile assignments served from `prompts_snapshot/` through the existing read-only overlays (`SnapshotTokenOverlay`, `SnapshotBlueprintOverlay`, `SnapshotProfileOverlay` in `scripts/consolidation/s3_dry_run_kit.py`, given the new ids): the must-pass calls of §8, then the eval (§9). Any must-pass failure, or an eval bar missed, blocks S5. |
+| S5 | Owner uploads the rule token, blueprint class and profile assignments. Code first, token second: the rule without keyed text would strip the anchors of their standing. Before the upload, confirm which profile document Smart and Quick resolve live (`smart` / `quick` or the `universal_agent_v1_SYSTEM_*` ones). The static template is cached for 24 hours per instance, so the instances are restarted after the upload for the rule to take effect at once. If live traffic shows a regression, the token assignment is removed (the code then only adds the tag). |
 
 Reviewer rule applies: no existing test is edited by the implementer. The eval's cost is estimated before it runs.
 
@@ -373,10 +405,12 @@ harder question that a reminder exists precisely to be executed.
 **Rev-2 decision: notify turns stay unkeyed.** Under the rule a notify turn reads as the user's own message, not as the
 system. A fired reminder is the owner's earlier request, so that is close to what it is, but the model may hesitate on a
 message that claims a system voice without a key. So "the notification still works" is a **must-pass** check of the
-build: one recorded call per notification kind (a fired reminder, the daily review, a deep-research delivery, an
-errand), each read for the same outcome as before the rule. A failure blocks S4. Keying the frame head with the body
-outside the tag is the right end state and stays with the class-B RFC; skipping the rule on notify runs was rejected
-(it splits behaviour by entry point).
+build, run in the S4 gate before the rule is uploaded: one recorded call each for a fired reminder (Smart), the daily
+review (Smart), a deep-research delivery (Quick), an integration reconnect notice (Quick), a Lelik errand that succeeds
+(Smart, through the `[Errand from Lelik …]` commission, which is not a notify frame) and a Lelik errand failure notice
+(Quick, through `notify`). Each is read for the same outcome as before the rule. A failure blocks the upload (S5).
+Keying the frame head with the body outside the tag is the right end state and stays with the class-B RFC; skipping the
+rule on notify runs was rejected (it splits behaviour by entry point).
 
 ## 9. Evaluation
 
