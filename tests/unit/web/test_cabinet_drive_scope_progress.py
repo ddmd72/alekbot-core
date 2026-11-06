@@ -317,3 +317,34 @@ def test_google_picking_folders_on_its_default_gets_no_area_warning():
     google = page._row("c1", "Work", means="nothing")
     out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 0); await saveDrivePicker("c1");', google)
     assert out["confirms"] == [] and len(out["puts"]) == 1
+
+
+class _UnreadableDrive:
+    """The drive service as the Cabinet sees it, but a folder's path cannot be read (a provider hiccup, not a deletion)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def get_item(self, handle, item_id):
+        raise RuntimeError("provider hiccup")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def test_a_saved_folder_whose_path_cannot_be_read_is_listed_with_an_empty_path_not_as_missing():
+    w = World()
+    conn = await w.connect(writable=False)
+    folder = await _saved_folder(w, conn, "Springfield")
+    app = w.app(user_drive_service=_UnreadableDrive(w.drive))
+    folders = (await call(app, "get", "/api/drive/connections"))[1]["connections"][0]["scope"]["folders"]
+    assert folders == [{"id": folder, "path": ""}]
+
+
+async def test_without_a_drive_service_a_saved_folder_is_listed_by_id_with_an_empty_path():
+    w = World()
+    conn = await w.connect(writable=False)
+    folder = await _saved_folder(w, conn, "Springfield")
+    folders = (await call(w.app(user_drive_service=None), "get", "/api/drive/connections")
+               )[1]["connections"][0]["scope"]["folders"]
+    assert folders == [{"id": folder, "path": ""}]
