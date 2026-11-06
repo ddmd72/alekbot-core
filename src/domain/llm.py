@@ -294,6 +294,9 @@ class LLMRequest(BaseModel):
     # (Claude 120s read, Grok 60s, Gemini per-request).
     # All paths translate to LLMTimeoutError on expiry.
     timeout: Optional[int] = None
+    # The orchestrator's key for this execution attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8): the Claude and Gemini
+    # adapters key the turn anchor with it. None (specialists, consolidation, Lelik) = no keying.
+    turn_key: Optional[str] = None
 
 
 class FinishReason(str, Enum):

@@ -94,15 +94,20 @@ CURRENT_TURN_CLOCK: ContextVar[Optional[TurnClock]] = ContextVar(
 )
 
 
-def render_chat_since(messages: List[Message]) -> str:
-    """Summaries (`text`, never `full_text`) of messages written since the snapshot."""
-    lines = [MEANWHILE_HEADER]
+def chat_since_lines(messages: List[Message]) -> List[str]:
+    """The `- you: …` / `- user: …` lines of messages written since the snapshot."""
+    lines: List[str] = []
     for msg in messages:
         who = "you" if msg.role == "model" else "user"
         text = " ".join(p.text for p in msg.parts if p.text).strip()
         if text:
             lines.append(f"- {who}: {text}")
-    return "\n".join(lines)
+    return lines
+
+
+def render_chat_since(messages: List[Message]) -> str:
+    """Summaries (`text`, never `full_text`) of messages written since the snapshot."""
+    return "\n".join([MEANWHILE_HEADER, *chat_since_lines(messages)])
 
 
 def render_late_answer_note(question: str, asked_at: str, link: Optional[str]) -> str:

@@ -75,6 +75,15 @@ Accepts `fallback`, `api_url`, and `api_key` via constructor — no direct adapt
 
 The `PromptAssemblyService` calls the `SecurityPort` for every runtime variable injection, ensuring that malicious history or facts cannot hijack the agent's instructions.
 
+### 5.1a System-turn fingerprint (Smart and Quick)
+
+Code-written text of the current turn (anchors, wrap-up and meanwhile notes, the fallback note) travels in `<system_note key="…">`;
+the key is three words drawn per attempt and also sits in the `session_key` block at the end of the system prompt, and the
+`provenance` rule head tells the model that only a note with that key speaks for the system. Hygiene around it: tool-result
+text and loaded history lose system-tag look-alikes in memory (persisted text unchanged); tool-call arguments (values and dict
+keys) and the reply (text, structured data, rich content, link list, history summary) are scrubbed of the key. Spec:
+`docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`; code `src/domain/system_fingerprint.py`, `src/infrastructure/turn_fingerprint.py`.
+
 ### 5.2 Conversation Handling
 
 The `ConversationHandler` uses `validate_model_output()` to check LLM responses. This prevents "indirect injection" where a model is tricked into generating malicious instructions that are then stored and used in future turns.

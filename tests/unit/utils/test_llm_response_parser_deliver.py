@@ -38,10 +38,13 @@ class TestFirstObjectRecovery:
         assert rec.outcome == "first_object"
         assert rec.levelno == logging.INFO
 
-    def test_first_object_logs_tail_not_text(self, caplog):
+    def test_first_object_logs_tail_length_not_text(self, caplog):
+        # RFC §4.6: the tail may carry the turn key and is logged before the scrub,
+        # so only its length is reported ("}" + 200 chars = 201), none of its characters.
         parse_llm_response(OBJ + "}" + "x" * 200)
         msg = _one(caplog).getMessage()
-        assert "tail=" in msg and "x" * 61 not in msg and "Hello" not in msg
+        assert "tail_len=201" in msg
+        assert "tail=" not in msg and "}" not in msg and "xx" not in msg and "Hello" not in msg
 
     def test_control_characters_inside_string_are_accepted(self, caplog):
         raw = '{"full_response": "line1\nline2\tend", "response_summary": "s"}'

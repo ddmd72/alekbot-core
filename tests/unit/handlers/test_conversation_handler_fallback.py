@@ -117,9 +117,8 @@ class TestGracefulDegradationFallback:
         # Second call goes directly to QuickAgent, not Router
         second_msg = coordinator.route_message.call_args_list[1].args[0]
         assert second_msg.recipient == f"quick_response_agent_{context.user_id}"
-        # System note injected in parts
-        parts = second_msg.context["current_message_parts"]
-        assert any("[System:" in (p.text or "") for p in parts)
+        # System note carried in the fallback_note context field (SYSTEM_TURN_FINGERPRINT_RFC §4.3)
+        assert "[System:" in second_msg.context["fallback_note"]
         # User gets the text response, not an error
         channel.send_chunked_message.assert_called_once()
         channel.send_status.assert_not_called()
@@ -211,10 +210,8 @@ class TestGracefulDegradationFallback:
         await handler.handle_message(context, channel)
 
         fallback_msg = coordinator.route_message.call_args_list[1].args[0]
-        parts = fallback_msg.context["current_message_parts"]
-        system_parts = [p.text for p in parts if p.text and "[System:" in p.text]
-        assert system_parts, "Expected at least one [System: ...] note"
-        note = system_parts[0]
+        note = fallback_msg.context["fallback_note"]
+        assert "[System:" in note, "Expected a [System: ...] note"
         assert "Do NOT mention technical details" in note
         assert "apologize" in note
 

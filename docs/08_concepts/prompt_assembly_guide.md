@@ -120,13 +120,14 @@ Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6)
 3. Format and validate `conversation_history` via `SecurityPort`
 4. Build `knowledge_base {}` if any of `user_location`, biographical context or conversation history is non-empty;
    `extra_static_blocks` go right after it:
-   - `kb_preamble=True` → placed **before** the blueprint template (conversational agents)
+   - `kb_preamble=True` → placed **before** the blueprint template (conversational agents); the `provenance` head of the template (when the blueprint has the class) is lifted and stays **before** it
    - `kb_preamble=False` (default) → placed **after** the blueprint template (consolidation)
 5. Append the skills catalog (Smart), then `standing_directives {}`, the last static block
 6. Append `<!-- CACHE_BOUNDARY -->`
 7. Append `active_reminders {}` (only when the orchestrator has reminders)
 8. Append `current_date_time {}` (only with `include_datetime=True`; by default the time is stamped into user messages: `BaseAgent._inject_timestamps()` prefixes each user message with a stamp in the user's timezone, `UserBotConfig.timezone`, UTC when unset or invalid, and `AgentCoordinator` prefixes a delegation query with a UTC stamp)
 9. Append `query_specific_context` block (only if Q-S facts present)
+10. Append `session_key { <three-word key> }` as the **last** dynamic block (only when the orchestrator passes `session_key`; Smart and Quick draw a fresh key per attempt; `SYSTEM_TURN_FINGERPRINT_RFC.md` §4.2)
 
 ---
 
@@ -136,6 +137,8 @@ Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6)
 
 ```
 [STATIC PREFIX — cached by Anthropic ~5 min]
+
+provenance { ... }                     ← Smart/Quick: who speaks for the system; BEFORE the preamble
 
 knowledge_base {                       ← BEFORE blueprint (preamble)
   biographical_context: '''
@@ -156,6 +159,7 @@ available_skills { ... }               ← Smart, when the user has skills
 standing_directives { ... }            ← binding user rules, last static block
 
 [DYNAMIC SUFFIX — sent fresh every request]
+session_key { lamp-orbit-fern }        ← last dynamic block, orchestrator turns only
 ```
 
 **Pattern B: Document Analysis (Consolidation) — `kb_preamble=False` (default)**

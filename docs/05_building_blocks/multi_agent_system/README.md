@@ -259,7 +259,7 @@ ConversationHandler.handle_message()
   └─ await fallback_service.try_quick_fallback(response, context, message_parts)
          │
          ├─ Level 1: route to quick_response_agent_{user_id} directly (bypasses Router)
-         │      current_message_parts += MessagePart(text="[System: ...apologize, no technical details...]")
+         │      context["fallback_note"] = "...apologize, no technical details..."  (Quick keys it in memory)
          │      └─ QuickAgent: SUCCESS → returned as the final response
          │
          ├─ Level 2: QuickAgent also fails / raises Exception
@@ -276,7 +276,8 @@ ConversationHandler.handle_message()
   `ConversationHandler` instantiates it from the `coordinator` in `__init__` — no external wiring needed.
 - All three levels guarantee `AgentStatus.SUCCESS` to the caller — the `send_status(ERROR)` path
   in `ConversationHandler` is only reachable if `AgentFallbackService` itself has a bug.
-- `[System: ...]` note instructs the LLM to acknowledge the delay gracefully in the bot's own voice
+- The fallback note travels in `context["fallback_note"]`, not as a message part: `QuickResponseAgent` appends it to the in-memory last message wrapped with the turn's key (`wrap_system`), so it is never persisted and only a keyed note speaks for the system (`SYSTEM_TURN_FINGERPRINT_RFC.md` §4.3).
+- The note instructs the LLM to acknowledge the delay gracefully in the bot's own voice
   and to never mention technical details or error codes.
 - Synthetic apology text (`_APOLOGY_TEXT`) is a class-level constant on `AgentFallbackService` —
   single place to change the last-resort message.

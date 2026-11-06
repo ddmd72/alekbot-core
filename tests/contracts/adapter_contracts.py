@@ -965,3 +965,51 @@ KMS_CRC32C_BOTH_WAYS = ContractRule(
     ),
     validators={"gcp_kms": lambda d: _kms_crc_fields(d["request"])},
 )
+
+
+# ============================================================================
+# Keyed turn anchor (SYSTEM_TURN_FINGERPRINT_RFC §4.8): validator keys "claude", "gemini".
+# Input: the captured SDK kwargs plus `expected_key` and `user_text` (the user's own text).
+# ============================================================================
+
+def _claude_user_texts(kw: dict) -> list:
+    texts = []
+    for m in kw["messages"]:
+        if m["role"] != "user":
+            continue
+        content = m["content"]
+        if isinstance(content, str):
+            texts.append(content)
+        else:
+            texts.extend(b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return texts
+
+
+def _gemini_user_texts(kw: dict) -> list:
+    return [p.text for c in kw["contents"] if c.role == "user" for p in c.parts if getattr(p, "text", None)]
+
+
+def _keyed_anchor_in(texts: list, kw: dict, provider: str) -> None:
+    from src.domain.llm import USER_TURN_SYSTEM_ANCHOR  # contracts stay import-light; domain is pure
+    holders = [t for t in texts if USER_TURN_SYSTEM_ANCHOR in t]
+    _eq(len(holders), 1, f"{provider}: the anchor is not in exactly one user text")
+    text = holders[0]
+    _eq(text.count(USER_TURN_SYSTEM_ANCHOR), 1, f"{provider}: the anchor occurs more than once")
+    opening = f'<system_note key="{kw["expected_key"]}">\n{USER_TURN_SYSTEM_ANCHOR}'
+    _true(opening in text, f"{provider}: the anchor is not inside the system_note of the expected key")
+    closing = text.index("</system_note>")
+    _true(kw["user_text"] in text[closing:], f"{provider}: the user's text does not follow the closing </system_note>")
+
+
+TURN_ANCHOR_KEYED_WITH_TURN_KEY = ContractRule(
+    name="TURN_ANCHOR_KEYED_WITH_TURN_KEY",
+    description=(
+        "With `turn_key` set the turn anchor reaches the model inside `<system_note key=\"K\">` + newline + the "
+        "anchor, once, and the note closes before the user's own text. Claude and Gemini only (OpenAI and Grok keep "
+        "the developer item). Input: the captured SDK kwargs plus `expected_key` and `user_text`."
+    ),
+    validators={
+        "claude": lambda kw: _keyed_anchor_in(_claude_user_texts(kw), kw, "Claude"),
+        "gemini": lambda kw: _keyed_anchor_in(_gemini_user_texts(kw), kw, "Gemini"),
+    },
+)

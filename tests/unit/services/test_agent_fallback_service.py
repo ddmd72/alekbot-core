@@ -88,8 +88,8 @@ async def test_non_timeout_failure_keeps_apology_note():
     await svc.try_quick_fallback(_failed(), _ctx(), [])
 
     sent_message = svc._coordinator.route_message.await_args.args[0]
-    notes = [p.text for p in sent_message.context["current_message_parts"] if p.text]
-    assert any("apolog" in n.lower() for n in notes)
+    note = sent_message.context["fallback_note"]
+    assert "apolog" in note.lower()
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_timeout_note_does_not_promise_a_follow_up():
     await svc.try_quick_fallback(_timed_out(), _ctx(), [])
 
     sent_message = svc._coordinator.route_message.await_args.args[0]
-    notes = [p.text for p in sent_message.context["current_message_parts"] if p.text]
-    joined = " ".join(notes)
-    assert "could follow" not in joined.lower()
-    assert "may follow" not in joined.lower()
+    note = sent_message.context["fallback_note"]
+    assert isinstance(note, str) and note.strip(), "the timeout fallback must carry a note"
+    assert "could follow" not in note.lower()
+    assert "may follow" not in note.lower()
