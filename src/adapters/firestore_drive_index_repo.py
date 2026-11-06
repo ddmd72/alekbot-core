@@ -304,6 +304,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     # DRIVE_SCOPE_WALK_RFC §5.2: Firestore returns arrays as lists; the state keeps tuples
     "applied_roots": _strs, "removing_roots": _strs,
     "applied_whole": bool, "ancestry_dirty": bool, "walking": bool, "walk_listed": int, "walk_blocked": int,
+    "top_level_cursor": str, "top_level_unclean": bool,
 }
 
 

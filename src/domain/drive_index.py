@@ -599,6 +599,8 @@ class DriveSyncState:
     walking: bool = False                     # §5.2, §5.5: a diff walk runs (settled by `has_pending_listing`)
     walk_listed: int = 0                      # §5.2, §5.5: folders listed since the current walk began (Cabinet)
     walk_blocked: int = 0                     # §5.2, §5.5 W5: walk folders that could not be listed (Cabinet)
+    top_level_cursor: str = ""                # the drive's top-level removal pass: "<list>:<last item id>", "" = start
+    top_level_unclean: bool = False           # that pass changed or met something: it is "clean" only after a full pass
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""
