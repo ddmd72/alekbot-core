@@ -63,14 +63,14 @@ def make_use_skill_handler(skills: Sequence[Skill], visible: Mapping[str, int]) 
             available = ", ".join(sorted(by_name)) or "none"
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: No skill named '{name}'. Available skills: {available}.",
+                result_str=f"Tool note: No skill named '{name}'. Available skills: {available}.",
                 failed=True,
             )
         if (name in visible and visible[name] == skill.version) or name in loaded_now:
             logger.info("🧩 [use_skill] already-visible name=%s", name)
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: The text of skill '{name}' is already in your context above; follow it.",
+                result_str=f"Tool note: The text of skill '{name}' is already in your context above; follow it.",
             )
         if name in visible:
             logger.info("🧩 [use_skill] visible body is v%s, current v%s — loading again name=%s",
@@ -188,7 +188,7 @@ def make_draft_skill_handler(
             logger.info("🧩 [draft_skill] validation rejected name=%s: %s", name, reason)
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: draft rejected — {reason}. Fix it and call draft_skill again.",
+                result_str=f"Tool note: draft rejected — {reason}. Fix it and call draft_skill again.",
                 failed=True,
             )
 
@@ -200,7 +200,7 @@ def make_draft_skill_handler(
             return ToolResult(
                 name=tool_call.name,
                 result_str=(
-                    "SYSTEM: draft rejected — files must be a list of file-change objects. "
+                    "Tool note: draft rejected — files must be a list of file-change objects. "
                     "Fix it and call draft_skill again."
                 ),
                 failed=True,
@@ -223,7 +223,7 @@ def make_draft_skill_handler(
                 return ToolResult(
                     name=tool_call.name,
                     result_str=(
-                        f"SYSTEM: draft rejected — {label}: {reason}. Fix it and call draft_skill again."
+                        f"Tool note: draft rejected — {label}: {reason}. Fix it and call draft_skill again."
                     ),
                     failed=True,
                 )
@@ -234,14 +234,14 @@ def make_draft_skill_handler(
             logger.info("🧩 [draft_skill] draft rejected name=%s: %s", name, e)
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: draft rejected — {e}. Fix it and call draft_skill again.",
+                result_str=f"Tool note: draft rejected — {e}. Fix it and call draft_skill again.",
                 failed=True,
             )
         except Exception as e:
             logger.error("❌ [draft_skill] draft could not be stored for name=%s: %s", name, e)
             return ToolResult(
                 name=tool_call.name,
-                result_str="SYSTEM: draft could not be stored.",
+                result_str="Tool note: draft could not be stored.",
                 failed=True,
             )
 
@@ -249,7 +249,7 @@ def make_draft_skill_handler(
         return ToolResult(
             name=tool_call.name,
             result_str=(
-                "SYSTEM: Done. The draft was created and its preview with the save command was "
+                "Tool note: Done. The draft was created and its preview with the save command was "
                 "delivered to the owner. Your part is complete: do not call draft_skill again for "
                 "this draft. Call it again only if the owner asks for changes. The skill becomes "
                 "active when the owner pastes the save command; that step is the owner's. Now tell "

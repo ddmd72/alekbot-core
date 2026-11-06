@@ -22,7 +22,7 @@ async def test_missing_intent_is_failed():
         {}, intent_remap={}, intent_fanout={}, calling_agent_id="x",
     )
     assert result.failed is True
-    assert "SYSTEM ERROR" in result.result_str
+    assert "Tool error" in result.result_str
 
 
 @pytest.mark.asyncio

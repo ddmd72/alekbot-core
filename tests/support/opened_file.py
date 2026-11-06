@@ -11,7 +11,7 @@ def opened_body(text: str, outcome: Optional[ReadOutcome] = None) -> OpenedFile:
 
 
 def opened_note(note: str, status: ReadStatus = ReadStatus.ERROR, detail: str = "") -> OpenedFile:
-    """A read that gave a `[System: …]` note."""
+    """A read that gave a `[Tool note: …]` note."""
     return OpenedFile(outcome=ReadOutcome(status=status, detail=detail), note=note)
 
 

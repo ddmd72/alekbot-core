@@ -2,7 +2,7 @@
 What the model gets for a read (docs/10_rfcs/EXTERNAL_FILES_RFC.md §4.4 "Presentation", §4.5 caps, §4.6 marking, D7,
 D20). Pure.
 
-`note_for` turns a status into its `[System: …]` note. Every per-file failure (NO_TEXT, UNSUPPORTED, ENCRYPTED, ERROR,
+`note_for` turns a status into its `[Tool note: …]` note. Every per-file failure (NO_TEXT, UNSUPPORTED, ENCRYPTED, ERROR,
 MEMORY and a TIMEOUT that is not the open's deadline) gives today's conversion alert, so a chat file that fails reads
 as today; TOO_LARGE gives today's size alert. An image the consumer cannot take gets one of the two image notes (too
 large, unreadable format) and an audio file left unsupported today's audio note.
@@ -44,7 +44,7 @@ def _is_audio(outcome: ReadOutcome, declared_mime: str) -> bool:
 
 def note_for(outcome: ReadOutcome, name: str, declared_mime: str, *, size_bytes: int = 0,
              limit_bytes: int = MAX_FILE_BYTES) -> str:
-    """The `[System: …]` note of an outcome that carries no text to show. `size_bytes` and `limit_bytes` word the
+    """The `[Tool note: …]` note of an outcome that carries no text to show. `size_bytes` and `limit_bytes` word the
     size alert of a TOO_LARGE file (the open path knows both; the outcome carries neither). TEXT and NATIVE are not
     notes: asking for one is a caller bug (ValueError)."""
     status = outcome.status

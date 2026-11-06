@@ -4,7 +4,7 @@ What `FileConversionService.open` and `.prefetch` return (docs/10_rfcs/EXTERNAL_
 Four public classes on purpose (CLAUDE.md's one-class rule waived): the answers of one open path, read together.
 
 `OpenedFile` is exactly one of three answers: `body`, today's `"[File: <name>]\\n<text>\\n[/File: <name>]"`, raw,
-unmarked and uncut (the store's presenter marks and cuts it, §4.5, §4.6); `note`, a `[System: …]` note; or a native
+unmarked and uncut (the store's presenter marks and cuts it, §4.5, §4.6); `note`, a `[Tool note: …]` note; or a native
 file, `native_path` with its `native_mime`, for the consumer to attach. `outcome` is the read's, None when no read
 happened (a refusal before download).
 

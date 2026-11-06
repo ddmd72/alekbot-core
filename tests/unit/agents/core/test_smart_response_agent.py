@@ -606,7 +606,7 @@ class TestDelegateToAgentWithRetry:
     async def test_no_intent_returns_error(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "q"})
         result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
-        assert "SYSTEM ERROR" in result.result_str
+        assert "Tool error" in result.result_str
 
     async def test_str_context_params_wrapped_as_reasoning(self, engine, ctx):
         """context as string is wrapped into {"reasoning": ...}."""
@@ -638,7 +638,7 @@ class TestDelegateToAgentWithRetry:
             args={"intent": "search_memory", "query": "q"},
         )
         result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
-        assert "SYSTEM" in result.result_str
+        assert "Tool note" in result.result_str
         engine._coordinator.handle_delegation.assert_called_once()
 
     async def test_search_emails_uses_compact_formatter(self, engine, ctx):

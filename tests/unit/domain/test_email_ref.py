@@ -115,14 +115,14 @@ def test_the_choose_one_note_lists_every_label_on_its_own_line():
     labels = [email_file_label("invoice_INV-2024-417.pdf", 20 * KB, "application/pdf", format_email_ref(MSG, p))
               for p in ("1", "2.1")]
     note = choose_one_note(labels, name="invoice_INV-2024-417.pdf")
-    assert note.startswith('[System: Several attachments of this email are named "invoice_INV-2024-417.pdf"')
+    assert note.startswith('[Tool note: Several attachments of this email are named "invoice_INV-2024-417.pdf"')
     assert note.splitlines()[1:] == [labels[0], labels[1] + "]"]
     assert "pass one ref in file_ref" in note.lower()
 
 
 def test_the_choose_one_note_without_a_name_says_the_email_has_several():
     note = choose_one_note(["[Email file: \"a.pdf\" (1KB) ref=email:m/1]"])
-    assert note.startswith("[System: This email has several attachments;")
+    assert note.startswith("[Tool note: This email has several attachments;")
 
 
 def test_the_choose_one_note_escapes_the_name_given():

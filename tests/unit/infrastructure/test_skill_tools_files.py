@@ -102,7 +102,7 @@ async def test_draft_invalid_files_entry_rejected_as_tool_failure():
     ))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     assert r.delivery_items == []
     draft.assert_not_awaited()
 
@@ -116,7 +116,7 @@ async def test_draft_files_entry_with_two_actions_rejected():
     ))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     draft.assert_not_awaited()
 
 
@@ -129,7 +129,7 @@ async def test_draft_files_entry_not_a_dict_rejected():
     ))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     draft.assert_not_awaited()
 
 
@@ -141,7 +141,7 @@ async def test_draft_files_not_a_list_rejected():
     ))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     assert "files" in r.result_str
     draft.assert_not_awaited()
 

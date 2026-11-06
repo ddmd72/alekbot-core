@@ -54,7 +54,7 @@ class TestCopyGuards:
         conversion.resolve_bytes = AsyncMock(side_effect=DriveRefRefused("That drive link is not a file ref"))
         svc, store = _svc(conversion)
         r = await svc.run(_call(), "copy", {"source": "see drive:abc123", "path": "binary_files/a.pdf"})
-        assert r.failed and r.text == "SYSTEM: That drive link is not a file ref."
+        assert r.failed and r.text == "Tool note: That drive link is not a file ref."
         conversion.resolve_bytes.assert_awaited_once_with("see drive:abc123", USER)
         assert store.versions_of(USER, "binary_files/a.pdf") == []
 
@@ -82,7 +82,7 @@ class TestByteCapOnOverwrite:
         store.seed(USER, "projects/b.md", "b" * 45)
         r = await svc.run(_call({"projects/a.md": a.generation}), "copy",
                           {"source": "u.txt", "path": "projects/a.md"})
-        assert r.failed and r.text.startswith("SYSTEM: workspace full (")
+        assert r.failed and r.text.startswith("Tool note: workspace full (")
         assert store.live_text(USER, "projects/a.md") == "a" * 50
 
     async def test_copy_overwrite_within_the_cap_is_allowed(self, monkeypatch):
@@ -101,7 +101,7 @@ class TestByteCapOnOverwrite:
         store.seed(USER, "projects/a.md", "n" * 10)
         store.seed(USER, "projects/b.md", "b" * 30)
         r = await svc.run(_call(), "restore", {"path": "projects/a.md", "generation": str(old.generation)})
-        assert r.failed and r.text.startswith("SYSTEM: workspace full (")
+        assert r.failed and r.text.startswith("Tool note: workspace full (")
         assert store.live_text(USER, "projects/a.md") == "n" * 10
 
 

@@ -52,7 +52,7 @@ class TestCreate:
         with caplog.at_level(logging.INFO):
             r = await svc.run(_call(), "create", {"path": P, "content": "lost"})
         assert r.failed and r.text == (
-            f"SYSTEM: {P} exists. View it first and use str_replace, or view it and create again to overwrite.")
+            f"Tool note: {P} exists. View it first and use str_replace, or view it and create again to overwrite.")
         assert store.live_text(USER, P) == "keep"
         assert any(rec.levelno == logging.WARNING and "result=refused:exists" in rec.getMessage()
                    for rec in caplog.records)
@@ -71,25 +71,25 @@ class TestCreate:
         e = store.seed(USER, P, "old")
         store.seed(USER, P, "theirs")
         r = await svc.run(_call(known={P: e.generation}), "create", {"path": P, "content": "mine"})
-        assert r.failed and r.text == (f"SYSTEM: {P} changed since you read it (another conversation or run wrote "
+        assert r.failed and r.text == (f"Tool note: {P} changed since you read it (another conversation or run wrote "
                                        "it). View it again and redo your change.")
         assert store.live_text(USER, P) == "theirs"
 
     async def test_binary_files_folder_is_copy_only(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": "binary_files/a.md", "content": "x"})
-        assert r.text == "SYSTEM: invalid workspace path 'binary_files/a.md': binary_files/ holds binary files only; use copy."
+        assert r.text == "Tool note: invalid workspace path 'binary_files/a.md': binary_files/ holds binary files only; use copy."
 
     async def test_text_kinds_only(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": "projects/a.pdf", "content": "x"})
-        assert r.text == ("SYSTEM: invalid workspace path 'projects/a.pdf': create writes text files only "
+        assert r.text == ("Tool note: invalid workspace path 'projects/a.pdf': create writes text files only "
                           "(.md .txt .csv .tsv .json .yaml .yml).")
 
     async def test_text_size(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "create", {"path": P, "content": "x" * (MAX_TEXT_FILE_BYTES + 1)})
-        assert r.text == (f"SYSTEM: {P}: text file over 3 MB — rename it to an archive name "
+        assert r.text == (f"Tool note: {P}: text file over 3 MB — rename it to an archive name "
                           "(e.g. projects/a-archive-1.md) and start a new file.")
 
     async def test_file_cap(self):
@@ -97,14 +97,14 @@ class TestCreate:
         for i in range(MAX_FILES_PER_USER):
             store.seed(USER, f"projects/f{i}.md", "x")
         r = await svc.run(_call(), "create", {"path": P, "content": "x"})
-        assert r.text == "SYSTEM: workspace full (100 files); delete or merge first."
+        assert r.text == "Tool note: workspace full (100 files); delete or merge first."
 
     async def test_byte_cap_counts_the_new_size(self):
         svc, store = _svc()
         store.seed(USER, "binary_files/big.pdf", b"x", size=MAX_BYTES_PER_USER - 3)
         assert not (await svc.run(_call(), "create", {"path": "projects/ok.md", "content": "abc"})).failed
         r = await svc.run(_call(), "create", {"path": P, "content": "d"})
-        assert r.text == "SYSTEM: workspace full (100 MB); delete or merge first."
+        assert r.text == "Tool note: workspace full (100 MB); delete or merge first."
 
     async def test_empty_content_is_an_empty_file(self):
         svc, store = _svc()
@@ -142,15 +142,15 @@ class TestStrReplace:
         svc, store = _svc()
         store.seed(USER, P, "x\nx")
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "y", "new_str": "z"})
-        assert r.text == f"SYSTEM: old_str not found in {P}."
+        assert r.text == f"Tool note: old_str not found in {P}."
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "x", "new_str": "z"})
-        assert r.text == f"SYSTEM: found 2 matches of old_str in {P} at lines 1, 2; include more surrounding text."
+        assert r.text == f"Tool note: found 2 matches of old_str in {P} at lines 1, 2; include more surrounding text."
 
     async def test_missing_file(self, caplog):
         svc, _ = _svc()
         with caplog.at_level(logging.INFO):
             r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "a", "new_str": "b"})
-        assert r.failed and r.text == f"SYSTEM: {P} does not exist; view it to see its history."
+        assert r.failed and r.text == f"Tool note: {P} does not exist; view it to see its history."
         assert any(rec.levelno == logging.WARNING and "result=not_found" in rec.getMessage()
                    for rec in caplog.records)
 

@@ -59,7 +59,7 @@ def _read_as_xlsx(w):
 @pytest.mark.parametrize("name", ["Q3 budget", "budget.csv"])
 async def test_the_mime_gives_the_suffix_when_the_name_has_none_or_disagrees(world, name):
     out = await _read(world, name, world.xlsx, XLSX)
-    assert "Hamburg travel" in out and "[System:" not in out
+    assert "Hamburg travel" in out and "[Tool note:" not in out
     _read_as_xlsx(world)
 
 
@@ -72,7 +72,7 @@ async def test_a_name_that_agrees_keeps_its_suffix(world):
 
 async def test_a_text_name_with_a_text_mime_takes_the_plain_text_path(world):
     out = await _read(world, "notes.md", b"Roses in March.", "text/plain")
-    assert "Roses in March." in out and "[System:" not in out
+    assert "Roses in March." in out and "[Tool note:" not in out
     assert world.parser.requests == []
 
 

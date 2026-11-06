@@ -51,12 +51,12 @@ async def test_a_six_megabyte_markdown_of_images_opens_with_its_text(world):
     data = (b"# Garden plan 2026/27\nRoses in March.\n![](data:image/png;base64," + b"A" * (6 * MB) + b")\nDone.\n")
     out = await _read(world, "Garden plan 2026/27", data, "text/markdown")
     assert "Roses in March." in out and "Done." in out
-    assert "base64" not in out and "[System:" not in out
+    assert "base64" not in out and "[Tool note:" not in out
 
 
 async def test_a_six_megabyte_plain_text_gets_the_size_line(world):
     out = await _read(world, "log.txt", (b"real words here\n" * (6 * MB // 16 + 1)), "text/plain")
-    assert out.startswith("[System:") and "5 MB" in out
+    assert out.startswith("[Tool note:") and "5 MB" in out
 
 
 async def test_an_eleven_megabyte_markdown_gets_the_size_line_and_nothing_beyond_the_cap_is_written(world, monkeypatch):
@@ -72,11 +72,11 @@ async def test_an_eleven_megabyte_markdown_gets_the_size_line_and_nothing_beyond
 
     monkeypatch.setattr(world.drive, "download_to_file", spy)
     out = await _read(world, "big.md", b"x" * (11 * MB), "text/markdown")
-    assert out.startswith("[System:")
+    assert out.startswith("[Tool note:")
     assert written == [MAX_TEXT_EXPORT_BYTES]
 
 
 async def test_a_six_megabyte_pdf_is_refused_before_any_download(world):
     out = await _read(world, "brief.pdf", b"%PDF" + b"0" * (MAX_FILE_BYTES + MB), "application/pdf")
-    assert out.startswith("[System:")
+    assert out.startswith("[Tool note:")
     assert not [c for c in world.drive.calls if c[0].startswith("download")]

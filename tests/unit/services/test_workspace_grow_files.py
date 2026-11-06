@@ -18,7 +18,7 @@ def _call(known=None):
     return WorkspaceCall(user_id=USER, origin="chat", known=dict(known or {}))
 
 
-STALE = (f"SYSTEM: {P} changed since you last read it in this run (or you have not read it): "
+STALE = (f"Tool note: {P} changed since you last read it in this run (or you have not read it): "
          "view the lines around {n} again, then insert.")
 
 
@@ -73,7 +73,7 @@ class TestInsertAtTheEnd:
         store.seed(USER, P, "a\n")
         store.before_put += [lambda: store.seed(USER, P, "a\n1\n"), lambda: store.seed(USER, P, "a\n1\n2\n")]
         r = await svc.run(_call(), "insert", {"path": P, "insert_line": -1, "insert_text": "mine"})
-        assert r.failed and r.text.startswith(f"SYSTEM: {P} changed since you read it")
+        assert r.failed and r.text.startswith(f"Tool note: {P} changed since you read it")
 
 
 class TestInsertInTheMiddle:
@@ -127,7 +127,7 @@ class TestInsertRefusals:
         seen = await svc.run(_call(), "view", {"path": P})   # the current generation is known: the range check is reached
         r = await svc.run(_call(seen.generations), "insert", {"path": P, "insert_line": 5, "insert_text": "x"})
         assert r.failed and r.text == (
-            "SYSTEM: insert_line 5 is out of range: the file has 2 lines; use 0..2, or -1 for the end.")
+            "Tool note: insert_line 5 is out of range: the file has 2 lines; use 0..2, or -1 for the end.")
         assert store.live_text(USER, P) == "a\nb\n"
 
     async def test_an_unread_out_of_range_middle_line_is_reported_stale_first(self, caplog):
@@ -142,7 +142,7 @@ class TestInsertRefusals:
     async def test_missing_file(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "insert", {"path": P, "insert_line": -1, "insert_text": "x"})
-        assert r.failed and r.text == f"SYSTEM: {P} does not exist; view it to see its history."
+        assert r.failed and r.text == f"Tool note: {P} does not exist; view it to see its history."
 
     async def test_empty_text_and_missing_line(self):
         svc, store = _svc()
@@ -265,4 +265,4 @@ class TestResultTails:
         svc, store = _svc()
         store.seed(USER, P, "x\nKim\ny\nKim\n")
         r = await svc.run(_call(), "str_replace", {"path": P, "old_str": "Kim", "new_str": "Jordan"})
-        assert r.text == f"SYSTEM: found 2 matches of old_str in {P} at lines 2, 4; include more surrounding text."
+        assert r.text == f"Tool note: found 2 matches of old_str in {P} at lines 2, 4; include more surrounding text."

@@ -123,7 +123,7 @@ class TestFetchText:
         inner = re.search(r'<external_content nonce="([0-9a-f]{16})"[^>]*>\n(.*)\n</external_content nonce="\1">',
                           response.result, re.S)
         assert inner is not None and len(inner.group(2)) == 10_000
-        assert "[System:" not in response.result
+        assert "[Tool note:" not in response.result
 
 
 # ---------------------------------------------------------------------------

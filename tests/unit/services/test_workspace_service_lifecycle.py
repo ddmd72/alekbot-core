@@ -51,7 +51,7 @@ class TestDelete:
     async def test_missing(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "delete", {"path": P})
-        assert r.failed and r.text == f"SYSTEM: {P} does not exist; view it to see its history."
+        assert r.failed and r.text == f"Tool note: {P} does not exist; view it to see its history."
 
     async def test_warns_about_skills_and_reminders_that_name_it(self):
         svc, store = _svc()
@@ -94,7 +94,7 @@ class TestRename:
         store.seed(USER, P, "a")
         store.seed(USER, Q, "b")
         r = await svc.run(_call(), "rename", {"path": P, "new_path": Q})
-        assert r.text == f"SYSTEM: {Q} already exists; pick another new_path, or view and delete it first."
+        assert r.text == f"Tool note: {Q} already exists; pick another new_path, or view and delete it first."
         assert store.live_text(USER, P) == "a"
 
     async def test_folder_rules(self):
@@ -111,7 +111,7 @@ class TestRename:
         store.seed(USER, P, "x")
         store.fail_next["delete"] = [WorkspaceConflict(P)]
         r = await svc.run(_call(), "rename", {"path": P, "new_path": Q})
-        assert r.failed and r.text.startswith(f"SYSTEM: {P} changed since you read it")
+        assert r.failed and r.text.startswith(f"Tool note: {P} changed since you read it")
         assert store.live_text(USER, P) == "x" and store.live_text(USER, Q) is None
 
     async def test_failed_rollback_names_both_paths(self, caplog):
@@ -163,7 +163,7 @@ class TestRestore:
         for i in range(MAX_FILES_PER_USER):
             store.seed(USER, f"projects/f{i}.md", "x")
         r = await svc.run(_call(), "restore", {"path": P, "generation": str(old.generation)})
-        assert r.text == "SYSTEM: workspace full (100 files); delete or merge first."
+        assert r.text == "Tool note: workspace full (100 files); delete or merge first."
 
     async def test_current_generation(self):
         svc, store = _svc()
@@ -175,6 +175,6 @@ class TestRestore:
         svc, store = _svc()
         store.seed(USER, P, "v1")
         r = await svc.run(_call(), "restore", {"path": P})
-        assert r.text == "SYSTEM: restore needs a generation; history lists them."
+        assert r.text == "Tool note: restore needs a generation; history lists them."
         r = await svc.run(_call(), "restore", {"path": P, "generation": "999"})
-        assert r.text == f"SYSTEM: {P} has no version 999; history lists them."
+        assert r.text == f"Tool note: {P} has no version 999; history lists them."

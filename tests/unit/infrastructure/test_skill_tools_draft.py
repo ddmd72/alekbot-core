@@ -53,7 +53,7 @@ async def test_validation_error_is_a_failed_result_without_calling_draft():
     r = await handle(_call(name="Not Kebab Case", description="desc", body="body"))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     assert r.delivery_items == []
     draft.assert_not_awaited()
 
@@ -65,7 +65,7 @@ async def test_empty_body_is_a_validation_error():
     r = await handle(_call(name="ok-name", description="desc", body="   "))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     draft.assert_not_awaited()
 
 
@@ -77,7 +77,7 @@ async def test_service_rejection_is_a_failed_result_with_reason(exc):
     r = await handle(_call(name="ok-name", description="desc", body="body"))
 
     assert r.failed
-    assert "SYSTEM: draft rejected" in r.result_str
+    assert "Tool note: draft rejected" in r.result_str
     assert str(exc) in r.result_str
     assert r.delivery_items == []
 
@@ -89,7 +89,7 @@ async def test_other_exception_is_a_generic_failed_result():
     r = await handle(_call(name="ok-name", description="desc", body="body"))
 
     assert r.failed
-    assert r.result_str == "SYSTEM: draft could not be stored."
+    assert r.result_str == "Tool note: draft could not be stored."
     assert "firestore down" not in r.result_str
 
 

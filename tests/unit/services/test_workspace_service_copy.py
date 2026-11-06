@@ -56,7 +56,7 @@ class TestCopyFromChat:
     async def test_a_binary_upload_goes_only_into_binary_files(self):
         svc, store = _svc(_conversion(b"%PDF-1.4 \xff\xfe"))
         r = await svc.run(_call(), "copy", {"source": "lease.pdf", "path": "projects/lease.pdf"})
-        assert r.text == ("SYSTEM: invalid workspace path 'projects/lease.pdf': "
+        assert r.text == ("Tool note: invalid workspace path 'projects/lease.pdf': "
                           "binary files go only under binary_files/.")
         assert store.versions_of(USER, "projects/lease.pdf") == []
 
@@ -73,15 +73,15 @@ class TestCopyFromChat:
     async def test_missing_and_foreign_sources(self):
         svc, _ = _svc(_conversion([FileNotFoundError("x"), PermissionError("y")]))
         r = await svc.run(_call(), "copy", {"source": "x.pdf", "path": "binary_files/x.pdf"})
-        assert r.text == ("SYSTEM: 'x.pdf' not found — pass the file name from its [File: …] label, or the "
+        assert r.text == ("Tool note: 'x.pdf' not found — pass the file name from its [File: …] label, or the "
                           "delivered-document key.")
         r = await svc.run(_call(), "copy", {"source": "docs/u2/x.pdf", "path": "binary_files/x.pdf"})
-        assert r.text == "SYSTEM: 'docs/u2/x.pdf' does not belong to this user."
+        assert r.text == "Tool note: 'docs/u2/x.pdf' does not belong to this user."
 
     async def test_without_file_conversion(self):
         svc, _ = _svc(None)
         r = await svc.run(_call(), "copy", {"source": "x.pdf", "path": "binary_files/x.pdf"})
-        assert r.text == "SYSTEM: copying chat files and delivered documents is unavailable here."
+        assert r.text == "Tool note: copying chat files and delivered documents is unavailable here."
 
     async def test_needs_a_source(self):
         svc, _ = _svc(_conversion())
@@ -91,7 +91,7 @@ class TestCopyFromChat:
     async def test_size_cap(self):
         svc, _ = _svc(_conversion(b"x" * (MAX_FILE_BYTES + 1)))
         r = await svc.run(_call(), "copy", {"source": "big.pdf", "path": "binary_files/big.pdf"})
-        assert r.text == "SYSTEM: binary_files/big.pdf: file over 10 MB."
+        assert r.text == "Tool note: binary_files/big.pdf: file over 10 MB."
 
 
 class TestCopyWithinTheWorkspace:
@@ -116,7 +116,7 @@ class TestCopyWithinTheWorkspace:
     async def test_missing_workspace_source(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "copy", {"source": "scratch/nope.md", "path": "projects/nope.md"})
-        assert r.text == "SYSTEM: workspace:scratch/nope.md does not exist; view it to see its history."
+        assert r.text == "Tool note: workspace:scratch/nope.md does not exist; view it to see its history."
 
 
 class TestCopyDestination:
@@ -124,7 +124,7 @@ class TestCopyDestination:
         svc, store = _svc(_conversion())
         store.seed(USER, "binary_files/lease.pdf", b"old")
         r = await svc.run(_call(), "copy", {"source": "lease.pdf", "path": "binary_files/lease.pdf"})
-        assert r.text == ("SYSTEM: binary_files/lease.pdf exists. View it first to overwrite it with copy, or pick another "
+        assert r.text == ("Tool note: binary_files/lease.pdf exists. View it first to overwrite it with copy, or pick another "
                           "path.")
 
     async def test_overwrite_after_a_view(self):
@@ -141,4 +141,4 @@ class TestCopyDestination:
         for i in range(MAX_FILES_PER_USER):
             store.seed(USER, f"projects/f{i}.md", "x")
         r = await svc.run(_call(), "copy", {"source": "lease.pdf", "path": "binary_files/lease.pdf"})
-        assert r.text == "SYSTEM: workspace full (100 files); delete or merge first."
+        assert r.text == "Tool note: workspace full (100 files); delete or merge first."
