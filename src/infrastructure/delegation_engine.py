@@ -219,7 +219,7 @@ def _scrub_tool_calls(
     response: LLMResponse, key: str, terminal_tool: Optional[str],
     calling_agent_id: str, turn: int,
 ) -> LLMResponse:
-    """Scrub the key from every non-terminal tool call's args (terminal = the reply)."""
+    """Scrub the key from every non-terminal tool call's name and args (terminal = the reply)."""
     total = 0
     calls = []
     for tc in response.tool_calls:
@@ -227,8 +227,10 @@ def _scrub_tool_calls(
             calls.append(tc)
             continue
         new_args, n = _scrub_args(tc.args, key)
+        new_name, n_name = scrub(tc.name, key)
+        n += n_name
         total += n
-        calls.append(tc.model_copy(update={"args": new_args}) if n else tc)
+        calls.append(tc.model_copy(update={"args": new_args, "name": new_name}) if n else tc)
     if total:
         logger.warning(
             "🔑 [DelegationEngine] turn-key scrub: %s removal(s) in tool-call arguments (caller=%s, turn=%s)",

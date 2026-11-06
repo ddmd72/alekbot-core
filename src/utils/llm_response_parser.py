@@ -99,11 +99,11 @@ def _load_json(candidate: str) -> Optional[dict]:
     return _load_json_traced(candidate)[0]
 
 
-def _log_parse(source: str, outcome: str, via: Optional[str], length: int, tail: Optional[str] = None) -> None:
-    """One structured line per parser call. Never logs the text itself (only a short tail)."""
+def _log_parse(source: str, outcome: str, via: Optional[str], length: int, tail_len: Optional[int] = None) -> None:
+    """One structured line per parser call. Never logs the text itself (only the trailing length)."""
     msg = f"[LlmResponseParse] source={source} outcome={outcome} via={via} len={length}"
-    if tail is not None:
-        msg += f" tail={tail!r}"
+    if tail_len is not None:
+        msg += f" tail_len={tail_len}"
     level = logging.INFO
     if source == "deliver" and outcome == "unparseable":
         # A non-empty unparseable string still reaches the user as prose; only an empty one is an error.
@@ -228,7 +228,7 @@ def parse_llm_response(raw_text: str, *, source: str = "text") -> _ParsedTuple:
         except ValueError:
             obj, end = None, 0
         if isinstance(obj, dict) and any(k in obj for k in _ENVELOPE_KEYS):
-            _log_parse(source, "first_object", None, length, tail=base[end:end + 60])
+            _log_parse(source, "first_object", None, length, tail_len=len(base) - end)
             return _envelope_fields(obj)
 
     _log_parse(source, "unparseable", None, length)

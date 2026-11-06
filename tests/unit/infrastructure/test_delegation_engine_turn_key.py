@@ -196,3 +196,35 @@ async def test_invalid_key_raises_before_first_call():
     with pytest.raises(ValueError):
         await _run(DelegationEngine(MagicMock()), llm, turn_key="lamp-orbit")
     llm.assert_not_awaited()
+
+
+@pytest.mark.parametrize("spelled", [KEY, "Lamp.Orbit.FERN"])
+async def test_tool_call_name_scrubbed_everywhere(caplog, spelled):
+    clock = TurnClock.start(budget_s=10_000, wrap_up_reserve_s=10)
+    llm, seen = _scripted(
+        LLMResponse(text="", tool_calls=[ToolCall(name=spelled, args={})]),
+        LLMResponse(text="done"),
+    )
+    steps = []
+    orig = type(clock).__setattr__
+
+    def spy(self, name, value):
+        if name == "step":
+            steps.append(value)
+        orig(self, name, value)
+
+    with caplog.at_level(logging.DEBUG):
+        type(clock).__setattr__ = spy
+        try:
+            await _run_clock(llm, clock, turn_key=KEY)
+        finally:
+            type(clock).__setattr__ = orig
+    assert steps
+    assert all(re.search(KEY_RE, str(s), re.I) is None for s in steps)
+    assert re.search(KEY_RE, str(clock.step), re.I) is None
+    assert all(re.search(KEY_RE, r.getMessage(), re.I) is None for r in caplog.records)
+    parts = [p for m in seen[1].messages for p in m.parts if p.tool_call]
+    assert parts and re.search(KEY_RE, repr([p.tool_call for p in parts]), re.I) is None
+    results = [repr(p.tool_response) for m in seen[1].messages for p in m.parts if p.tool_response]
+    assert any("Tool error:" in r for r in results)
+    assert all(re.search(KEY_RE, r, re.I) is None for r in results)
