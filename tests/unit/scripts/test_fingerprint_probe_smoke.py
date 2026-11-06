@@ -2,7 +2,7 @@
 case's scripted first turn, the production handler answers it, the one "paid" call goes to the scripted LLM, and the
 probe writes its files. Cases: R2 (daily review through the real notify path) and R1.3 (memory proposal rejected)."""
 import json
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -10,7 +10,7 @@ from scripts.validation import fingerprint_cases as cases
 from scripts.validation import fingerprint_probe as probe
 from scripts.validation.drive_eval.cost_meter import Meter
 from src.domain.llm import LLMResponse, UsageMetadata
-from tests.support.scripted_llm import ScriptedLLM, text
+from tests.support.scripted_llm import ScriptedLLM
 from tests.support.tool_e2e import StubPromptBuilder, smart_rig
 
 
