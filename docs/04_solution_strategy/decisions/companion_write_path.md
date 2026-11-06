@@ -58,8 +58,8 @@ fact: whether this channel has a companion policy attached.
 **3. Auto-attach a default `CompanionConfig` on bind (Critical #1's resolution).**
 `AgentDescriptor` gains `companion_default_config: Optional[CompanionConfig] = None`
 (`infrastructure/agent_registry.py`). The `TUTOR` descriptor
-(`infrastructure/agent_manifest.py`) sets it to `CompanionConfig(window_threshold=50,
-batch_size=30)` — these two numbers mirror Alek's own live-production consolidation
+(`infrastructure/agent_manifest.py`) set it to `CompanionConfig(window_threshold=50,
+batch_size=30)` (retuned to 20 and 10 on 2026-09-17; the code default is the current value, see the comment on the `TUTOR` descriptor) — these two numbers mirrored Alek's own live-production consolidation
 threshold/batch (`config/settings.py`: `if env_config.is_production: consolidation.threshold =
 50; consolidation.batch_size = 30`), a proven live magnitude rather than an arbitrary new pair,
 and remain per-channel-tunable later via `CompanionWindowResolver`. Every other `CompanionConfig`
@@ -86,7 +86,7 @@ as before — this is additive, not a behavior change for existing bound-agent t
   effect to be surprised by, but it means `$agent tutor` and `$agent domain_researcher` (say) are
   no longer symmetric in what they provision — worth remembering if a third companion type is
   added with different default sizing needs than the tutor's.
-- `window_threshold=50`/`batch_size=30` are the tutor's defaults specifically, chosen because they
+- `window_threshold=50`/`batch_size=30` were the tutor's defaults specifically (now 20/10), chosen because they
   match a proven production magnitude for *Alek's* consolidation cadence — a future companion type
   with much shorter or longer natural turns (e.g. a moderator watching a group channel) should not
   assume these numbers transfer; they are a starting point, not a universal constant.

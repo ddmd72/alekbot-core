@@ -238,11 +238,10 @@ steps:
   # Runs as its own service account (--service-account below): relay_main.py mints an OIDC token from its
   # own Cloud Run runtime identity to call back into the main service's
   # /voice/* control plane (src/web/voice_control_plane_app.py). Main accepts
-  # SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL (the relay's own runtime SA, once that
-  # secret exists) and the optional OIDC_TRANSITION_SA_EMAILS list. A relay under a
-  # different service account therefore needs VOICE_RELAY_SA_EMAIL (or the
-  # transition list) set first, or every one of those calls 401s. Until then the
-  # relay runs as the same default service account as the other runtimes.
+  # SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL (the relay's own runtime SA) and the
+  # optional OIDC_TRANSITION_SA_EMAILS list. VOICE_RELAY_SA_EMAIL (or the transition
+  # list) must be set before the relay's service account changes, or every one of
+  # those calls 401s. Every runtime now has its own service account.
   # Three secrets: relay_main.py reads OPENAI_API_KEY, XAI_API_KEY and
   # BILLING_SLACK_WEBHOOK_URL via os.environ (see its module docstring). The provider
   # of each call comes from the user's session config, not from env

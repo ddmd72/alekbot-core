@@ -1,6 +1,6 @@
 # Memory telemetry — every process, every work unit, queryable for 90 days
 
-Status: accepted by the owner 2026-10-15 (sink, retention). Slice 1 in progress on `feat/memory-telemetry`.
+Status: accepted by the owner 2026-10-15 (sink, retention). Built: the memory records (`memory.boot`, `memory.sample`, `memory.scope`) and the opt-in census (`memory.census`, slice 2) are on `main`; the owner's map is `docs/05_building_blocks/memory_telemetry/README.md`.
 
 ## Why
 

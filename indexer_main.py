@@ -2,7 +2,7 @@
 Indexer service entrypoint — the SECOND Cloud Run **service** of the drive index
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §9 "Host: a separate indexer service", §12.5, §13; owner
 decision D5). Same image as the main service, its own entry point and its own environment. It runs
-the whole `drive_sync` tick, so the main service (1 GiB, already at 74-90 % memory) never indexes.
+the whole `drive_sync` tick, so the main service (2 GiB in `cloudbuild-dev.yaml`; the split was made when it had 1 GiB and ran at 74-90 % memory) never indexes.
 
 Builds only what the tick needs: Firestore (`us-production`), the user repository (the tick's gate
 reads the opt-in flag uncached), OAuth credentials + the drive adapter, the drive index repository,

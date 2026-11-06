@@ -436,7 +436,7 @@ openai-forward: ## Remove OPENAI_TIER_OVERRIDES -> code tier map governs (live)
 
 # Deep Research model levers. NOTE: CLAUDE_DEEP_RESEARCH_MODEL (model_override) pins EVERY
 # DR tier, not just PERFORMANCE — it is a coarse break-glass kill-switch. The forward default
-# (BALANCED/PERFORMANCE -> Sonnet 5.5, ULTRA -> Opus 5.5, ECO -> Haiku) comes from the adapter's
+# (BALANCED/PERFORMANCE -> Sonnet 5.5, ULTRA -> Fable 5.1, ECO -> Haiku) comes from the adapter's
 # MODEL_TIERS map when the override is UNSET; `make dr-forward` restores that by removing it.
 dr-model: ## Show the live CLAUDE_DEEP_RESEARCH_MODEL (unset => tier map: Sonnet 5.5 default)
 	@gcloud run services describe $(SERVICE_NAME) --region=$(REGION) --format=export 2>/dev/null \
@@ -448,11 +448,11 @@ dr-rollback: ## KILL-SWITCH: pin ALL Deep Research tiers live -> Sonnet 5 (no re
 		--update-env-vars CLAUDE_DEEP_RESEARCH_MODEL=claude-sonnet-5
 	@echo "✅ Live env flipped. Run 'make dr-forward' to restore the tier map (Sonnet 5.5)."
 
-dr-forward: ## Remove the DR override -> back to tier map (BALANCED/PERFORMANCE = Sonnet 5)
+dr-forward: ## Remove the DR override -> back to tier map (BALANCED/PERFORMANCE = Sonnet 5.5)
 	@echo "⏩ Removing CLAUDE_DEEP_RESEARCH_MODEL override -> tier map governs (live)..."
 	gcloud run services update $(SERVICE_NAME) --region=$(REGION) \
 		--remove-env-vars CLAUDE_DEEP_RESEARCH_MODEL
-	@echo "✅ Override removed. Deep Research now follows MODEL_TIERS (Sonnet 5 default)."
+	@echo "✅ Override removed. Deep Research now follows MODEL_TIERS (Sonnet 5.5 default)."
 
 status: ## Show service status
 	@echo "📊 Service status ($(SERVICE_NAME)):"

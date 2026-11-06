@@ -1029,7 +1029,7 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   - The tick summary counts `reread_same` (stamped unchanged) and `reader_skipped_upgrade`.
   - **The pass is held off at the deploy that bumps the version** (`DRIVE_UPGRADE_PASS_DEV=off`, below and
     `docs/07_deployment/README.md`) until the owner has run the probe and OKs its number.
-  - **The probe** (`scripts/infrastructure/drive_parser_upgrade_probe.py`, owner-run, read-only): for the `parser@3` records
+  - **The probe** (`scripts/infrastructure/drive_parser_upgrade_probe.py`, owner-run, read-only): for the records stamped by an older `parser@N`
     of a user (all when at most `--sample`, else a stratified sample per kind, extrapolated and flagged) it downloads each
     file, parses it with the in-process child, chunks it and classifies it with the same pure functions the indexer uses.
     It prints counts and dollars only, no names or text, per kind and in total: records, same, changed, changed chunks,
@@ -1226,7 +1226,7 @@ fallback and the indexer warns at start. `GeminiAdapter` sends the inline base64
 Gemini has no `allow_provider_storage` switch (like Claude). The failover is per call: one call of a PDF's windows
 or one triage batch may be read by Gemini while the rest are read by the primary, and `extracted_by` does not record
 which. The eval and the live model check run each provider alone, never with the fallback. It does **not** re-read files
-already read: `extracted_by` is `reader@2` whichever provider read it. To have them read again by the new provider,
+already read: `extracted_by` is `reader@N` whichever provider read it. To have them read again by the new provider,
 bump `READER_VERSION` in `src/composition/drive_reader_runner.py` (a deploy; re-reads and re-bills every
 reader-decided file of every user, §4.12). Before switching for real, compare the two on real files with
 `scripts/validation/drive_model_check.py read <folder> --providers claude,openai`, and re-record the eval bars with
@@ -2592,7 +2592,7 @@ item id is the last part of the file's `drive:<tag>:<item_id>` ref, the connecti
 
 Then the indexer's logs (`make fetch-logs-indexer K=…`, grep the item id):
 - `[DriveIndex] run user=… item=<id> outcome=indexed|failed|demoted|retried|deferred state=… reason=…
-  extractor=parser@3|reader@2 attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
+  extractor=parser@N|reader@N attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
   run, held and deferred runs included;
 - `[DriveReader] user=… item=<id> kind=… status=… pages=… calls=… cost=… truncated=… refused=…` — what the reader
   did with it;

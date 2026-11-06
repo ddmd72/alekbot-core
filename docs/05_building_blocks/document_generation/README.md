@@ -228,8 +228,7 @@ class DocxRunnerPort(ABC):
 
 **Why a port:** Subprocess execution is a system boundary per the hexagonal rule:
 "Port is justified when: 2+ implementations, testable substitution, system boundary."
-Future implementations may include Cloud Run Jobs or a serverless Cloud Function for environments
-where `node` is not available or for better isolation.
+The isolation path is built: the only implementation is `SandboxDocxRunner`, which sends the code to the render sandbox service (§5.1).
 
 ### 5.1 SandboxDocxRunner
 
@@ -252,13 +251,13 @@ The `docx` npm library must be resolvable via `node_modules/`. Writing the temp 
 
 **Configuration:** `DOC_GENERATOR.node_timeout_s` from `agent_config.py` (default: 60s).
 
-### 5.2 Future Implementations
+### 5.2 Implementations
 
 | Implementation | When to use |
 |---|---|
 | `SandboxDocxRunner` | The render sandbox over HTTP. Current and only implementation. |
-| `CloudFunctionDocxRunner` | Serverless; no node on the host; better sandbox isolation. |
-| `CloudRunJobDocxRunner` | Heavy documents; longer timeout; dedicated CPU. |
+
+`CloudFunctionDocxRunner` and `CloudRunJobDocxRunner` were once listed as the future isolation path; the render sandbox service replaced them and neither exists.
 
 All implementations raise `DocxRunnerError` on failure. `DocGeneratorAgent` catches only
 `DocxRunnerError` — platform-specific exceptions stay inside the adapter.

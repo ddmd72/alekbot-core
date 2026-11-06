@@ -127,7 +127,7 @@ With one deadline, Smart times out only after the mark, where §5.2 and §5.7 ow
 - **Notice window** ~90 s — from interactive turn durations.
 - **Budget** ~25 min / ~40 loop turns; **wrap-up reserve** sized from observed wrap-up calls.
 - **Queue concurrency:** `maxConcurrentDispatches 5` — each long turn holds a slot for its whole run.
-- **Resource exhaustion** (OOM on the shared 1 GiB instance) is out of scope — graceful degradation under resource pressure is its own topic. This RFC's part is only §5.7: a turn killed with its instance is reported, never silently re-run.
+- **Resource exhaustion** (OOM on the shared instance) is out of scope — graceful degradation under resource pressure is its own topic. This RFC's part is only §5.7: a turn killed with its instance is reported, never silently re-run.
 
 ## 7. Per entry point
 

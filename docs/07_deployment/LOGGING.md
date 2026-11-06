@@ -13,7 +13,7 @@ How logs are structured, where to find them, and how to query them — for both 
 
 **Detection:** `K_SERVICE` env var — automatically set by Cloud Run runtime, absent locally. No manual configuration needed.
 
-**Privacy:** `DEBUG_PROMPTS` defaults to `false` in all cloud deployments. Prompt and response files are never written in cloud.
+**Prompt content:** `DEBUG_PROMPTS` is the global capture switch. It defaults to `false` in code, but the deploy config (`cloudbuild-dev.yaml`) sets it to `true`, so in cloud every LLM call's prompt and response goes to the BigQuery `prompt_content` table (30-day TTL), the live debug source. Prompt and response **files** are never written in cloud.
 
 ---
 
