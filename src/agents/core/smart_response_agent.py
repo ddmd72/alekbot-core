@@ -29,7 +29,7 @@ from ...domain.agent import (
 from ...domain.messaging import SmartResponse
 from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
-from ...domain.turn_clock import CURRENT_TURN_CLOCK
+from ...domain.turn_clock import CURRENT_TURN_CLOCK, RUNNING_JOBS_HEADER
 from ...domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ...domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
@@ -41,7 +41,7 @@ from ...infrastructure.long_turn_tools import (
     CANCEL_LONG_TURN_TOOL,
     build_cancel_long_turn_tool_declaration,
     make_cancel_long_turn_handler,
-    render_running_jobs,
+    running_job_lines,
 )
 from ...ports.llm_port import (
     LLMResponse,
@@ -54,6 +54,7 @@ from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...infrastructure.task_execution_resolver import ExecutionOverride
 from ...infrastructure.turn_key import TurnKeySource, draw_turn_key
+from ...infrastructure.turn_fingerprint import keyed_header, neutralize_history, scrub_reply
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...infrastructure.skill_tools import (
@@ -260,7 +261,7 @@ class SmartResponseAgent(BaseAgent):
         self.long_turn_registry = long_turn_registry
         self.memory_fact_service = memory_fact_service
         self.workspace_service = workspace_service
-        # Draws the key of each execution attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8); not drawn yet.
+        # Draws the key of each attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.8); `_run` draws it, as a local.
         self._turn_key_source: TurnKeySource = turn_key_source or draw_turn_key
 
         # NOTE: ``self.llm``, ``self.model_name``, ``self.execution_context``,
@@ -425,6 +426,7 @@ class SmartResponseAgent(BaseAgent):
         self._on_agent_start(text)
 
         try:
+            turn_key = self._turn_key_source()  # local only: never self.*, never message.context or engine context
             enriched_context = message.context.get("enriched_context")
             agent_notes = message.context.get("agent_notes") or []
             prompt_user_id = self.user_id or user_id
@@ -487,6 +489,7 @@ class SmartResponseAgent(BaseAgent):
                 agent_notes=agent_notes,
                 extra_static_blocks=extra_static_blocks,
                 skills_catalog=render_catalog(skills),
+                session_key=turn_key,
             )
 
             clock = CURRENT_TURN_CLOCK.get()
@@ -500,6 +503,9 @@ class SmartResponseAgent(BaseAgent):
                 current_message_parts=current_message_parts,
                 context_window=self.CONTEXT_WINDOW
             )
+            conversation_history, neutralised = neutralize_history(conversation_history)
+            if neutralised:
+                logger.warning("[SmartResponseAgent] neutralised %d system-tag look-alikes in history", neutralised)
             # Inject behavioral anchor (information-gap + posture rules) into the
             # latest user message — in-memory only, never persisted to history.
             conversation_history = self._inject_user_turn_anchor(conversation_history)
@@ -549,7 +555,8 @@ class SmartResponseAgent(BaseAgent):
 
             running = await self._load_running_jobs(prompt_user_id, message)
             if running:
-                note = MessagePart(text=render_running_jobs(running, time.time()))
+                note = MessagePart(text=keyed_header(
+                    RUNNING_JOBS_HEADER, running_job_lines(running, time.time()), turn_key))
                 last = clean_history[-1]
                 clean_history[-1] = last.model_copy(update={"parts": [*last.parts, note]})
                 tools.append(build_cancel_long_turn_tool_declaration())
@@ -566,6 +573,7 @@ class SmartResponseAgent(BaseAgent):
                 response_schema=self._RESPONSE_SCHEMA,
                 thinking=eff.thinking_effort,
                 max_tokens=self.MAX_TOKENS,
+                turn_key=turn_key,
             )
 
             # Closure: every LLM call inside the engine routes through the
@@ -597,6 +605,7 @@ class SmartResponseAgent(BaseAgent):
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
                 local_tools=local_tools,
                 use_turn_clock=True,
+                turn_key=turn_key,
             )
 
             if delegation_result.failed:
@@ -607,6 +616,9 @@ class SmartResponseAgent(BaseAgent):
                 )
 
             smart_response, history_summary = self._build_smart_response(delegation_result)
+            smart_response, history_summary, scrubbed = scrub_reply(smart_response, history_summary, turn_key)
+            if scrubbed:
+                logger.warning("[SmartResponseAgent] scrubbed %d key/tag spellings from the reply", scrubbed)
             if (not smart_response.text.strip() and delegation_result.async_dispatches):
                 logger.info("empty_text_after_async agent=%s intents=%s",
                             self.agent_id, delegation_result.async_dispatches)

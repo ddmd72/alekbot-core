@@ -18,12 +18,16 @@ def _short(turn_id: str) -> str:
     return turn_id[-_SHORT_ID:]
 
 
-def render_running_jobs(running: List[LongTurnRecord], now: float) -> str:
-    lines = [RUNNING_JOBS_HEADER]
+def running_job_lines(running: List[LongTurnRecord], now: float) -> List[str]:
+    lines = []
     for r in running:
         minutes = max(0, int((now - r.started_at) // 60))
         lines.append(f'- "{r.title}" — {minutes} min, now: {r.step} (id={_short(r.turn_id)})')
-    return "\n".join(lines)
+    return lines
+
+
+def render_running_jobs(running: List[LongTurnRecord], now: float) -> str:
+    return "\n".join([RUNNING_JOBS_HEADER, *running_job_lines(running, now)])
 
 
 def build_cancel_long_turn_tool_declaration() -> Dict[str, Any]:
