@@ -3109,12 +3109,10 @@ class DriveIndexingService:
         if budget.cascade_ops <= 0:
             return False
         view = _TICK_SCOPE.get()
-        filtered = view is not None and view.filtered
         unstored = folder.cascade_unstored
         keep: FrozenSet[str] = frozenset()
         limit = min(budget.cascade_ops, RECORD_WRITE_BATCH)
-        if filtered:
-            assert view is not None
+        if view is not None and view.filtered:
             if not await self._removal_open(handle, view):
                 return None
             decided = await self._scope_verdict(handle, view, ctx, change_from_record(folder), {}, {}, budget)
