@@ -26,5 +26,5 @@ async def test_timeout_uses_the_failure_note(make_context):
     svc = AgentFallbackService(coordinator=coordinator)
     await svc.try_quick_fallback(AgentResponse.timeout(task_id="t", agent_id="s", error="x"),
                                  make_context(), [])
-    parts = coordinator.route_message.call_args.args[0].context["current_message_parts"]
-    assert parts[-1].text == AgentFallbackService._FAILURE_NOTE
+    sent_context = coordinator.route_message.call_args.args[0].context
+    assert sent_context["fallback_note"] == AgentFallbackService._FAILURE_NOTE
