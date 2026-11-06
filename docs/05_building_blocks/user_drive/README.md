@@ -404,7 +404,10 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   stamping the new set), and then the epoch sweep drops what the new scope no longer holds. The set itself is stored
   beside the key (`DriveSyncState`, `src/domain/drive_index.py`): `applied_whole`, `applied_roots` (what the Cabinet
   saved), `removing_roots` (removed roots whose guarded removal still runs), `ancestry_dirty` (the skeleton paths must be
-  derived again), `walking`, `walk_listed` and `walk_blocked` (the Cabinet's progress counters). There is no separate
+  derived again), `walking`, `walk_listed` and `walk_blocked` (the Cabinet's progress counters), and three resume points
+  so no pass restarts from zero each tick: `top_level_cursor` / `top_level_unclean` (the top-level removal pass after
+  leaving whole drive), `skeleton_cursor` (the paged skeleton scan) and `diff_parents` (root→parent links a waiting diff
+  already read; cleared when the diff stamps or the scope restarts). There is no separate
   shape field: the stored set is valid exactly when `scope_key(applied_roots, applied_whole) == applied_scope`
   (`shape_valid`, `drive_scope_diff.py:62`). A state that fails the check is adopted when `applied_scope` equals the
   connection's key (the first tick after the upgrade, or a revision rolled back) and restarted otherwise. Per-record
