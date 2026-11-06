@@ -1,7 +1,6 @@
 # RFC: User Drive search metrics
 
-**Status:** Proposed, revision 1 (2026-10-14). Nothing is built or active. The owner approved the nine decisions of
-the study (§3) on 2026-10-14; this text turns them into a design. **S0 (§12), the pre-v2 baseline copy, was dropped by the owner on 2026-10-20; nothing is scheduled, and a need assessment for the rest is pending.**
+**Status:** CLOSED — not built (owner, 2026-11-06): see `docs/04_solution_strategy/decisions/drive_search_metrics_not_built.md`. Kept for its reasoning.
 **Builds on:** [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (Search v2, §25: tiers, coverage line, D29),
 the drive building block [user_drive/README.md](../05_building_blocks/user_drive/README.md) (§6 search, §7 operations).
 **Precedents reused:** `PromptContentStore` / `BigQueryPromptContentAdapter` (best-effort hot-path capture into a
