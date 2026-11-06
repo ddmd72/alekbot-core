@@ -35,6 +35,11 @@ class DriveIndexingStatus:
     unreadable: Tuple[UnreadableFile, ...] = ()   # up to CABINET_UNREADABLE_MAX files the index could not read
     unreadable_total: int = 0                 # how many there are in all (the counters: unread minus not read yet)
     awaiting_rebuild: bool = False            # a v1 index not rebuilt under v2 yet (D30): no tick work until then
+    scope_removing: int = 0                   # removed scope folders whose guarded removal still runs (RFC §8)
+    scope_removing_outside: bool = False      # a whole-drive narrowing is removing what lies outside the folders
+    scope_walking: bool = False               # a diff walk of the added scope folders runs
+    scope_listed: int = 0                     # folders the current walk has listed
+    scope_blocked: int = 0                    # walk folders that could not be listed yet
 
     def index_kept(self, now: datetime) -> bool:
         """A stored index exists and is inside the access-loss grace period (§7.7): the only time the Cabinet

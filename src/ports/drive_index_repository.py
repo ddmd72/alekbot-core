@@ -129,6 +129,17 @@ class DriveIndexRepository(ABC):
         """Whether any record is in `state` at priority class `priority` (one limit-1 equality query)."""
 
     @abstractmethod
+    async def has_pending_listing(self, scope: ConnectionScope) -> bool:
+        """Whether any folder of the connection has a re-listing pending (`reobserve_pending`): a walk is running
+        (DRIVE_SCOPE_WALK_RFC §5.2). One limit-1 equality query, no ordering: no composite index."""
+
+    @abstractmethod
+    async def scope_ancestor_records(self, scope: ConnectionScope, limit: int) -> List[DriveIndexRecord]:
+        """At most `limit` of the connection's skeleton records (`reason == scope_ancestor`), in no defined order
+        (DRIVE_SCOPE_WALK_RFC §5.9: re-derivation). Equality filters only, no ordering: no composite index. A caller
+        that gets `limit` records cannot tell it saw them all."""
+
+    @abstractmethod
     async def children(self, scope: ConnectionScope, parent_id: str, after_item_id: Optional[str],
                        limit: int) -> List[DriveIndexRecord]:
         """Direct children ordered by item_id, starting after `after_item_id`."""

@@ -7,7 +7,8 @@ Public interface:
     PlanContext, Classification, ObservationPlan, AccessAction
     parent_scope(parent_id, parent, root_item_id, mirror_root_ids=frozenset(), scope_root_ids=frozenset(),
                  whole_drive=False, root_covered=True) -> Optional[Scope]
-    scope_ancestor_classification(change) -> Classification / scope_restart(state, scope_key) -> DriveSyncState  (RFC §11.3)
+    scope_ancestor_classification(change) -> Classification / scope_restart(state, scope_key, *, applied=None)
+        -> DriveSyncState  (RFC §11.3; DRIVE_SCOPE_WALK_RFC W12)
     mirror_root_classification(change) -> Classification                                   (§27.9.8)
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
@@ -81,6 +82,7 @@ from .drive_index_params import (
     RETRY_MAX_DOUBLINGS,
     STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
+from .drive_scope_diff import AppliedScope
 from .drive_index_policy import (
     TRANSCRIBED_KINDS, Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, readme_readable, searchable, size_cap,
@@ -203,11 +205,15 @@ def scope_ancestor_classification(change: DriveChange) -> Classification:
                           content_class_of(kind))
 
 
-def scope_restart(state: DriveSyncState, scope_key: str) -> DriveSyncState:
+def scope_restart(state: DriveSyncState, scope_key: str, *, applied: Optional[AppliedScope] = None) -> DriveSyncState:
     """The connection's scope changed since the stored records were enumerated (RFC §11.3): enumerate again. The
-    re-enumeration re-observes everything, the scope filter deletes what left, the epoch sweep removes the rest."""
-    return replace(state, cursor=None, epoch=state.epoch + 1, epoch_phase=EpochPhase.ENUMERATING,
-                   round_complete=False, round_started_at=None, applied_scope=scope_key)
+    re-enumeration re-observes everything, the scope filter deletes what left, the epoch sweep removes the rest.
+    `applied`: the scope itself, stamped with its key when the restart starts (DRIVE_SCOPE_WALK_RFC W12)."""
+    restarted = replace(state, cursor=None, epoch=state.epoch + 1, epoch_phase=EpochPhase.ENUMERATING,
+                        round_complete=False, round_started_at=None, applied_scope=scope_key)
+    if applied is None:
+        return restarted
+    return replace(restarted, applied_whole=applied.whole, applied_roots=tuple(applied.roots))
 
 
 def _density_decision_reusable(change: DriveChange, previous: Optional[DriveIndexRecord]) -> bool:
@@ -713,12 +719,14 @@ def schedule(rec: DriveIndexRecord, now: datetime, *, first_seen: bool) -> Drive
 
 def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple[Priority, datetime]]:
     works: List[Tuple[Priority, datetime]] = []
-    if (rec.probe_pending or rec.rescope_pending or rec.state is RecordState.DELETING
+    if (rec.probe_pending or rec.rescope_pending or rec.trim_pending or rec.state is RecordState.DELETING
             or rec.state is RecordState.UNRESOLVED or _card_drop_due(rec)):
         works.append((Priority.CASCADE, now))
     closed = inaccessible(rec)
     if rec.reobserve_pending and not closed:     # a folder the bot cannot list waits for access (§26.2)
-        works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
+        # class 1 with the other structural work: a walk's listing runs before the content it brings (DRIVE_SCOPE_WALK
+        # plan Delta 2; it was class 2, "re-observed subtrees")
+        works.append((Priority.CASCADE, now))
     if rec.readme_pending and not closed:
         works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
     recheck = access_recheck_at(rec)

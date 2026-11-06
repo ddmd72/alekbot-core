@@ -1957,6 +1957,13 @@
           "drive.status_ok": "Up to date",
           "drive.index_cant_read": "Can't read",
           "drive.index_checking": "Checking which files are in your folders… {n}",
+          "drive.scope_removing": "Removing {n} folder(s) from the index…",
+          "drive.scope_removing_outside": "Removing what lies outside the chosen folders from the index…",
+          "drive.scope_walking": "Reading the chosen folders: {n} folders read",
+          "drive.scope_blocked": "{n} folders could not be read yet",
+          "drive.scope_narrow_warning": "Everything outside the chosen folders leaves the index, including items shared with you that sit in no folder. Adding it back later means reading it again.",
+          "drive.scope_narrow_area_warning": "The files in this drive's default folder leave the index, except those in the folders you chose. Adding them back later means reading them again.",
+          "drive.folder_missing": "Folder missing on the drive",
           "drive.all_counters": "All counters",
           "drive.index_described": "Described",
           "drive.index_readable_content": "Readable by content",
@@ -2254,6 +2261,13 @@
           "drive.status_ok": "Актуально",
           "drive.index_cant_read": "Не вдається прочитати",
           "drive.index_checking": "Перевіряємо, які файли лежать у ваших папках… {n}",
+          "drive.scope_removing": "Видаляємо з індексу папки: {n}…",
+          "drive.scope_removing_outside": "Видаляємо з індексу все, що поза вибраними папками…",
+          "drive.scope_walking": "Читаємо вибрані папки: прочитано папок — {n}",
+          "drive.scope_blocked": "Ще не вдалося прочитати папок: {n}",
+          "drive.scope_narrow_warning": "Усе поза вибраними папками вийде з індексу, зокрема файли, якими з вами поділилися і які не лежать у жодній папці. Щоб повернути це пізніше, усе доведеться прочитати знову.",
+          "drive.scope_narrow_area_warning": "Файли зі стандартної папки цього диска вийдуть з індексу, крім тих, що лежать у вибраних папках. Щоб повернути їх пізніше, їх доведеться прочитати знову.",
+          "drive.folder_missing": "Папки немає на диску",
           "drive.all_counters": "Усі лічильники",
           "drive.index_described": "Описані",
           "drive.index_readable_content": "Читаються за змістом",
@@ -2551,6 +2565,13 @@
           "drive.status_ok": "À jour",
           "drive.index_cant_read": "Illisibles",
           "drive.index_checking": "Vérification des fichiers qui sont dans vos dossiers… {n}",
+          "drive.scope_removing": "Retrait de {n} dossier(s) de l'index…",
+          "drive.scope_removing_outside": "Retrait de l'index de tout ce qui est hors des dossiers choisis…",
+          "drive.scope_walking": "Lecture des dossiers choisis : {n} dossiers lus",
+          "drive.scope_blocked": "{n} dossiers n'ont pas encore pu être lus",
+          "drive.scope_narrow_warning": "Tout ce qui est hors des dossiers choisis quitte l'index, y compris les éléments partagés avec vous qui ne sont dans aucun dossier. Le rajouter plus tard signifie tout relire.",
+          "drive.scope_narrow_area_warning": "Les fichiers du dossier par défaut de ce disque quittent l'index, sauf ceux des dossiers choisis. Les rajouter plus tard signifie les relire.",
+          "drive.folder_missing": "Dossier introuvable sur le lecteur",
           "drive.all_counters": "Tous les compteurs",
           "drive.index_described": "Décrits",
           "drive.index_readable_content": "Lisibles par le contenu",
@@ -2848,6 +2869,13 @@
           "drive.status_ok": "Al día",
           "drive.index_cant_read": "No se pueden leer",
           "drive.index_checking": "Comprobando qué archivos están en tus carpetas… {n}",
+          "drive.scope_removing": "Quitando {n} carpeta(s) del índice…",
+          "drive.scope_removing_outside": "Quitando del índice todo lo que está fuera de las carpetas elegidas…",
+          "drive.scope_walking": "Leyendo las carpetas elegidas: {n} carpetas leídas",
+          "drive.scope_blocked": "{n} carpetas aún no se han podido leer",
+          "drive.scope_narrow_warning": "Todo lo que está fuera de las carpetas elegidas sale del índice, incluidos los elementos compartidos contigo que no están en ninguna carpeta. Volver a añadirlo más tarde significa leerlo de nuevo.",
+          "drive.scope_narrow_area_warning": "Los archivos de la carpeta predeterminada de este disco salen del índice, salvo los de las carpetas elegidas. Volver a añadirlos más tarde significa leerlos de nuevo.",
+          "drive.folder_missing": "Carpeta no encontrada en el disco",
           "drive.all_counters": "Todos los contadores",
           "drive.index_described": "Descritos",
           "drive.index_readable_content": "Legibles por contenido",
@@ -4573,7 +4601,8 @@
             }
           }
           // the poll runs while any drive's first build is running
-          data.indexing = { building: data.connections.some((row) => row.indexing && row.indexing.building) };
+          const scopeBusy = (ix) => { const sp = ix.scope_progress || {}; return !!(sp.removing_outside || sp.removing > 0 || sp.walking); };
+          data.indexing = { building: data.connections.some((row) => row.indexing && (row.indexing.building || scopeBusy(row.indexing))) };
           const snapshot = JSON.stringify(data);
           // Re-render only when the data changed: the poll must not twitch the UI.
           if (snapshot !== _driveStatusSnapshot) {
@@ -4682,12 +4711,22 @@
         // leave the index) has its own line, and `not_read_yet` is listed under "All counters".
         const waiting = driveNum(c.pending);
         const checking = driveNum(c.unresolved);
+        const sp = (ix && ix.scope_progress) || {};
+        let scopeLine = "";
+        if (searchOn && !(row.reconnect)) {
+          if (sp.removing_outside) scopeLine = t("drive.scope_removing_outside");
+          else if (driveNum(sp.removing) > 0) scopeLine = driveText("drive.scope_removing", { n: driveFmt(driveNum(sp.removing)) });
+          else if (sp.walking) {
+            scopeLine = driveText("drive.scope_walking", { n: driveFmt(driveNum(sp.listed)) });
+            if (driveNum(sp.blocked) > 0) scopeLine += `<div class="dv-row-sub">${driveText("drive.scope_blocked", { n: driveFmt(driveNum(sp.blocked)) })}</div>`;
+          }
+        }
         const cantRead = driveNum(c.inaccessible) + driveNum(c.failed);
         const building = searchOn && !!(ix.building || ix.awaiting_rebuild);
         const pct = building && searchable + waiting > 0
           ? Math.min(99, Math.round((100 * searchable) / (searchable + waiting))) : null;
         return {
-          ix, sv, searchOn, searchable, waiting, checking, cantRead, building, pct,
+          ix, sv, searchOn, searchable, waiting, checking, cantRead, building, pct, scopeLine,
           hasIndex: !!(ix && (ix.available || ix.enabled)),
           needsReconnect: !!row.reconnect,
           full: searchOn && !!ix.index_full,
@@ -4877,10 +4916,11 @@
           if (!m.searchOn) search = t("drive.ov_search_off");
           else if (m.needsReconnect) search = t("drive.status_paused");
           else if (m.emptyIndex) search = t("drive.ov_search_empty");
+          else if (m.scopeLine) search = m.scopeLine;
           else if (m.building) {
             search = (m.pct !== null ? driveText("drive.ov_search_building", { pct: m.pct }) + `<div class="dv-bar"><span style="width:${m.pct}%"></span></div>` : t("drive.index_building"));
           } else search = driveText("drive.ov_search_ok", { n: driveFmt(m.searchable) });
-          if (m.searchOn && m.checking > 0) search += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(m.checking) })}</div>`;
+          if (m.searchOn && m.checking > 0 && !m.scopeLine) search += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(m.checking) })}</div>`;
         }
         const w = driveWriteValue(row, m);
         return `
@@ -4914,7 +4954,8 @@
           rows = `<div class="dv-frow">${driveIcon("home", "fi")}<div class="dv-row-main"><div class="dv-row-title">${t("drive.scope_default")}</div></div></div>`;
         } else {
           rows = sv.folders.map((f, i) => `<div class="dv-frow">${driveIcon("folder", "fi")}<div class="dv-row-main"><div class="dv-row-title">${escapeHtml(f.path || f.id)}
-            ${wf && wf.id === f.id ? `<span class="dv-tag">${t("drive.saves_here_tag")}</span>` : ""}</div></div>
+            ${wf && wf.id === f.id ? `<span class="dv-tag">${t("drive.saves_here_tag")}</span>` : ""}</div>
+            ${f.missing ? `<div class="dv-row-sub dv-warn-text">${t("drive.folder_missing")}</div>` : ""}</div>
             <button type="button" class="dv-icon-btn" onclick="removeDriveScopeFolder('${q}', ${i})" aria-label="${escapeHtml(driveText("drive.stop_showing", { name: driveFolderName(f) }))}">${driveIcon("x", "sm")}</button></div>`).join("");
         }
         const explain = t(sv.means === "area" ? "drive.sees_explain_area" : "drive.sees_explain_account");
@@ -5130,6 +5171,7 @@
       // The server keeps no folders under "whole drive", so the page remembers them (until it is reloaded) and
       // unticking the box brings them back.
       async function toggleDriveScopeWhole(id, whole) {
+        if (!whole && driveScopeOf(id).whole_drive && !confirm(t("drive.scope_narrow_warning"))) return;
         const ui = driveUiOf(id);
         const ids = driveScopeOf(id).folders.map((f) => f.id);
         if (whole) ui.foldersBeforeWhole = ids;
@@ -5219,7 +5261,7 @@
         drivePickerId = id;
         driveUiOf(id).picker = {
           purpose, source: "root", trail: [], folders: [], outer: [], top: null, loading: true, filter: "", error: "",
-          confirm: false, busy: false, req: 0, sel, whole: sv.whole, stash: null, write, writePath: wf ? wf.path || "" : "",
+          confirm: false, busy: false, req: 0, sel, whole: sv.whole, area: sv.area, stash: null, write, writePath: wf ? wf.path || "" : "",
           init: { ids: sel.map((s) => s.id), whole: sv.whole, write },
         };
         document.body.classList.add("dv-modal-open");
@@ -5346,6 +5388,9 @@
         const ui = driveUiOf(id);
         const p = ui.picker;
         if (!p || p.busy || drivePickerChanges(p) === 0) return;
+        // A drive on its default area (an app folder) leaving it for chosen folders: the default folder's
+        // files leave the index; ask first, and a decline saves nothing.
+        if (p.purpose === "scope" && p.area && !p.whole && p.sel.length > 0 && !confirm(t("drive.scope_narrow_area_warning"))) return;
         p.busy = true;
         p.error = "";
         renderDrivePickerPart(id, "foot");
@@ -5555,7 +5600,9 @@
             : p.write === "" ? t(sv.means === "area" ? "drive.own_folder" : "drive.write_top") : escapeHtml(p.writePath || p.write);
           tray = t("drive.pk_saves_to").replace("{v}", `<strong>${value}</strong>`);
         }
+        const narrow = p.purpose === "scope" && !p.whole && n > 0 && sv.whole;
         return `<div class="dv-tray" aria-label="${escapeHtml(t("drive.pk_selected"))}">${tray}</div>
+          ${narrow ? `<div class="dv-msg dv-warn-text" role="alert">${t("drive.scope_narrow_warning")}</div>` : ""}
           ${p.error ? `<div class="dv-msg err" role="alert">${escapeHtml(p.error)}</div>` : ""}
           <div class="dv-foot-row"><div class="dv-pk-actions"><button type="button" class="btn btn-secondary dv-btn-sm" onclick="closeDrivePicker('${q}')">${t("drive.cancel")}</button>
           <button type="button" class="btn btn-primary dv-btn-sm" ${n && !p.busy ? "" : "disabled"} onclick="saveDrivePicker('${q}')">${t("drive.save")}${n ? " (" + n + ")" : ""}</button></div></div>`;
@@ -5631,6 +5678,8 @@
               <div class="dv-alert-actions"><button type="button" class="btn btn-primary dv-btn-sm" onclick="openDrivePicker('${q}', 'scope')">${t("drive.choose_folders")}</button></div>`;
           } else if (ix.awaiting_rebuild) {
             status = `<div class="dv-status">${t("drive.index_awaiting_rebuild")}</div>`;
+          } else if (model.scopeLine) {
+            status = `<div class="dv-status">${model.scopeLine}</div>`;
           } else if (ix.building) {
             status = `<div class="dv-status">${t("drive.index_building")}${model.pct !== null && model.pct !== undefined ? " " + model.pct + "%" : ""}</div>
               ${model.pct !== null && model.pct !== undefined ? `<div class="dv-bar"><span style="width:${Math.max(model.pct, 2)}%"></span></div>` : ""}`;
@@ -5638,7 +5687,7 @@
             status = `<div class="dv-status ok">${driveIcon("check")}${t("drive.status_ok")}</div>`;
           }
           const checking = num(c.unresolved);
-          if (checking > 0 && !model.needsReconnect) status += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(checking) })}</div>`;
+          if (checking > 0 && !model.needsReconnect && !model.scopeLine) status += `<div class="dv-row-sub">${driveText("drive.index_checking", { n: driveFmt(checking) })}</div>`;
           if (!model.needsReconnect || ix.last_success_at) status += `<div class="dv-row-sub">${t("drive.index_last_sync")}: ${escapeHtml(last)}</div>`;
 
           let tiles = "";

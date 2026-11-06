@@ -234,6 +234,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def has_record_in(self, scope: ConnectionScope, state: RecordState, priority: int) -> bool:
         return any(r.state is state and r.priority == priority for r in self._conn(scope))
 
+    async def has_pending_listing(self, scope: ConnectionScope) -> bool:
+        return any(r.reobserve_pending for r in self._conn(scope))
+
+    async def scope_ancestor_records(self, scope: ConnectionScope, limit: int) -> List[DriveIndexRecord]:
+        found = sorted((r for r in self._conn(scope) if r.reason is Reason.SCOPE_ANCESTOR), key=lambda r: r.item_id)
+        return found[:limit]
+
     async def children(self, scope: ConnectionScope, parent_id: str, after_item_id: Optional[str],
                        limit: int) -> List[DriveIndexRecord]:
         kids = sorted((r for r in self._conn(scope) if r.parent_id == parent_id), key=lambda r: r.item_id)

@@ -33,29 +33,57 @@ def _bump_card_version(monkeypatch):
 
 
 class TestRelistingRetryBudget:
-    async def test_relisting_is_dropped_after_max_attempts(self):
-        """§8.2, RFC Δ18: a re-listing that keeps failing is dropped, never retried forever."""
+    async def test_relisting_is_blocked_after_max_attempts_and_retried_at_the_cap(self):
+        """DRIVE_SCOPE_WALK_RFC §5.5 W5 (supersedes RFC Δ18's drop): a re-listing that fails MAX_ATTEMPTS times is
+        never marked done. It stays pending at the RETRY_CAP back-off, is counted once as blocked, is retried once per
+        RETRY_CAP (not in a hot loop), and lists its subtree when a retry succeeds."""
         w = World()
         hidden = w.drive.add(".hidden", folder=True)
-        w.drive.add("a.pdf", parent=hidden)
+        inner = w.drive.add("a.pdf", parent=hidden)
         await w.settle()
         w.drive.rename(hidden, "visible")
         orig = w.drive.list_children_changes
         calls = {"n": 0}
+        refusing = {"on": True}
 
         async def denied(user_id, folder_id, limit, cursor=None):
-            if folder_id == hidden:
+            if folder_id == hidden and refusing["on"]:
                 calls["n"] += 1
                 raise DriveAccessDenied("refused")
             return await orig(user_id, folder_id, limit, cursor)
 
         w.drive.list_children_changes = denied
         for _ in range(MAX_ATTEMPTS + 3):
+            if calls["n"] >= MAX_ATTEMPTS:
+                break
+            assert w.rec(hidden).attempts < MAX_ATTEMPTS   # not blocked before its MAX_ATTEMPTS-th failure
             await w.settle()
             w.clock.advance(RETRY_CAP.total_seconds())   # every backoff has elapsed
+        assert calls["n"] == MAX_ATTEMPTS
+        folder = w.rec(hidden)
+        assert folder.reobserve_pending is True and folder.attempts == MAX_ATTEMPTS   # blocked, not dropped
+        assert (await w.repo.get_sync_state(U_SCOPE)).walk_blocked == 1             # counted
+        assert w.rec(inner) is None                                                 # the subtree is still out
+
+        # the cap holds: nothing before RETRY_CAP elapses, then exactly one retry per RETRY_CAP, still counted once
+        blocked_at = folder.due_at
+        w.clock.advance((blocked_at - w.clock.now).total_seconds() - 60)
+        await w.settle()
+        assert calls["n"] == MAX_ATTEMPTS
+        w.clock.advance(120)
+        await w.settle()
+        assert calls["n"] == MAX_ATTEMPTS + 1
+        assert w.rec(hidden).reobserve_pending is True
+        assert (await w.repo.get_sync_state(U_SCOPE)).walk_blocked == 1
+
+        # a retry that succeeds lists the subtree and clears the block
+        refusing["on"] = False
+        w.clock.advance(RETRY_CAP.total_seconds())
+        await w.settle()
         folder = w.rec(hidden)
         assert folder.reobserve_pending is False and folder.reobserve_cursor is None
-        assert calls["n"] == MAX_ATTEMPTS
+        assert w.rec(inner) is not None
+        assert (await w.repo.get_sync_state(U_SCOPE)).walk_blocked == 0
 
 
 class TestVersionUpgradeVerification:

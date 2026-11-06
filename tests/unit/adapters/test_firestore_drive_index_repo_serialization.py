@@ -95,7 +95,8 @@ def full_record() -> DriveIndexRecord:
         owner_note_id="N1", owner_note_version=2, owner_note_text="Рахунок підрядника, 1.048,45 EUR", owner_doc_type="contract",
         owner_life_areas=("home", "finance"), owner_note_merge_version=1, note_lookup_due=True,
         # MULTI_DRIVE_RFC §7.2, §8: the connection and the adapter-built item identity
-        connection_id="c1", identity="microsoft_onedrive:D1:I1")
+        connection_id="c1", identity="microsoft_onedrive:D1:I1",
+        cascade_unstored=True, trim_pending=True)   # DRIVE_SCOPE_WALK_RFC §5.6
 
 
 def full_state() -> DriveSyncState:
@@ -121,7 +122,11 @@ def full_state() -> DriveSyncState:
         # §3.4, §7.1, §7.4: the archive checks, the audit's clock and pass cursor (part C review verdict)
         note_checks=(NoteCheck("n1", "I1", "gone", T),), notes_audited_at=T, notes_audit_after_at=T,
         notes_audit_after_id="n1",
-        applied_scope="whole")   # MULTI_DRIVE_RFC §11.3: the scope key the records were enumerated under
+        applied_scope="whole",   # MULTI_DRIVE_RFC §11.3: the scope key the records were enumerated under
+        # DRIVE_SCOPE_WALK_RFC §5.2: the applied scope itself and the diff's progress
+        applied_whole=True, applied_roots=("f-rd", "f-coimbra"), removing_roots=("f-springfield",),
+        ancestry_dirty=True, walking=True, walk_listed=12, walk_blocked=1, top_level_cursor="1:item-9", top_level_unclean=True,
+        diff_parents=("f-coimbra\x1fitem-9",), skeleton_cursor="item-77")
 
 
 def stored(value):

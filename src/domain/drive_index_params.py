@@ -25,6 +25,9 @@ DENSE_FOLDER_CHILDREN = 500
 PROBE_CHILDREN = 200
 ITEM_CALLS_PER_TICK = 20                    # RFC Δ9: probes, parent lookups, re-listing pages
 RELIST_PAGE = 200                           # children per re-listing page (one item call)
+WALK_SHARE = 0.5                            # DRIVE_SCOPE_WALK_RFC W3: share of TICK_START_BUDGET a diff walk lists in
+WALK_PAGE = 1000                            # DRIVE_SCOPE_WALK_RFC §4 P2: children per walk page (Google's documented
+                                            # maximum; OneDrive clamps to its own page size)
 FOLDER_INMEM_CARDS = 1_000
 CABINET_UNREADABLE_MAX = 5                  # files the Cabinet card lists as "could not be read"; the rest is "+N more"
 CASCADE_OPS_PER_TICK = 2_000

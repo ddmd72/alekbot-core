@@ -1,6 +1,6 @@
 # RFC: Drive scope by folder walk — a scope change without re-reading the account
 
-**Status:** Accepted (owner, 2026-11-06) — not built.
+**Status:** Accepted (owner, 2026-11-06) — **step 1 built** (see "Built (step 1)" at the end: ten plan deltas and two review rules); step 2 not built.
 **Owner:** AI Engineering
 **Builds on:** [MULTI_DRIVE_RFC.md](MULTI_DRIVE_RFC.md) (§11.3 scope and access policy; E70, E71, E87),
 [GOOGLE_DRIVE_RFC.md](GOOGLE_DRIVE_RFC.md) (§3.3 the feed; GE-14, GE-35, GE-36),
@@ -360,6 +360,8 @@ today). No rebuild, so no paid content is lost (W12). The step-2 deploy needs no
   whole drive and the new one is folders: what leaves the index (everything outside the chosen folders, including
   items shared with the account that sit in no folder) and that adding it back later means reading it again. No item
   count: it would need an index scan inside the request (W20).
+  The warning also covers a OneDrive connection leaving its default (the App Folder) for chosen folders: the default
+  folder's files leave the index (owner decision 2026-11-06; `drive.scope_narrow_area_warning`, a `confirm()` on Save).
 - **Folder missing** (D4). Today `_item_path` (`src/web/user_cabinet_app.py:1610-1618`) turns any read failure into an
   empty path. A not-found or trashed answer becomes `missing: true` on that folder, shown as "Folder missing on the
   drive" with a Remove action; a transient failure keeps today's empty path. A save that keeps a missing folder is
@@ -450,3 +452,31 @@ All against the fake providers (one `AREA`, one `ACCOUNT`), counting provider ca
 | W19 | A lost cursor under a folder scope: epoch + 1, cursor at now, resync walk of the roots, sweep. | E71's backstop, scoped to the roots. | A full account enumeration. |
 | W20 | The whole → folders warning names what leaves, without a count. | A count needs an index scan in the request. | A counted warning. |
 | W21 | `set_scope` keeps a missing selected folder without its ancestry; the Cabinet shows it as missing. | D4: missing until the owner removes it, and a save of another change must not be refused for it. | Refusing any save that still holds a missing folder. |
+
+---
+
+## Built (step 1)
+
+Step 1 (§5.2-§5.6, §5.9-§5.11, §8, the walk share of §5.5) is built as written, except for the following; where this
+list and the text above differ, this list wins. Code: `src/domain/drive_scope_diff.py` (the pure diff),
+`src/services/drive_indexing_service.py` (`_apply_scope_change`, `_removal_open`, `_cascade_step`, `_trim_step`,
+`_scope_step`, `_reobserve_step`, `_settle_walk`), `src/web/user_cabinet_app.py` (`scope_progress`, `missing`).
+
+1. **No `applied_shape` field (§5.2).** The stored set (`applied_whole`, `applied_roots`) is valid when
+   `scope_key(applied_roots, applied_whole) == applied_scope` (`shape_valid`); the key stays the detector.
+2. **Class (§5.5, §6).** Folders waiting to be listed are class 1 with the other structural work, not class 2.
+3. **Unfinished enumeration (§5.4, W13).** In step 1 a change during any unfinished enumeration restarts, folder scopes
+   included (W13 named only a scope that covers everything).
+4. **W5 applies to every re-listing**, not only a scope walk, and supersedes Δ18's "dropped after `MAX_ATTEMPTS`": the
+   folder stays pending at `RETRY_CAP` and is counted (`walk_blocked`).
+5. **The cascade of a folder that left the scope notices `UNSTORED` (§5.6).** The old cascade noticed `GONE`; a folder
+   deleted on the drive still does (`cascade_unstored` tells them apart).
+6. **W11 rides the existing `_recheck_gate`**, forced for a removal's guard, not a new read.
+7. **Walk progress is state fields** (`walking`, `walk_listed`, `walk_blocked`), settled once per tick while a walk runs.
+8. **The Cabinet "checking" (`unresolved`) line stays in step 1**, ranked last after the scope line (§8).
+9. **Skeleton re-derivation stores the path folders it reads** (§5.9), and marks stale ones for the cascade.
+10. **OneDrive walks keep 200 per page** (`_CHILDREN_TOP`); Google lists `WALK_PAGE` = 1 000.
+
+Review-driven rules: a switch to whole drive while a removal runs restarts at once (no parent reads first), and the
+cascade under whole drive waits until the restart has run; a cascade left by the code before step 1
+(`cascade_unstored` false) takes the guarded path after one provider read when the verdict or a kept child calls for it.

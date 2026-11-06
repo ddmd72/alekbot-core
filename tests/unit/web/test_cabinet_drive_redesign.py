@@ -401,8 +401,14 @@ def test_ticking_the_whole_drive_on_an_account_drive_saves_whole_with_no_folders
 @node
 def test_an_area_drive_saves_whole_drive_false_even_when_one_was_stored():
     row = _row(means="area", whole=True, write="none")
-    out = _picker('toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");', row=row)
+    # Leaving the area for chosen folders asks first (native confirm); this stub records the question and accepts.
+    data = {"connections": [row], "add_kinds": [], "dr_copy": None}
+    out = _run(LISTING + "const confirms = []; globalThis.confirm = (m) => { confirms.push(m); return true; };"
+               + "driveData = " + json.dumps(data) + ';\nawait openDrivePicker("c1", "scope");\n'
+               + 'toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");'
+               + "\nprocess.stdout.write(JSON.stringify({ calls: calls.filter((c) => c[0] === 'PUT'), confirms }));")
     assert out["calls"][0][2] == {"whole_drive": False, "folder_ids": ["f-inv"]}
+    assert out["confirms"] == ["T:drive.scope_narrow_area_warning"]
 
 
 @node

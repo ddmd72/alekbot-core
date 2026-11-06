@@ -1,6 +1,6 @@
 """Account-wide indexing (MULTI_DRIVE_RFC §11.3, E20; T-4 stage 2, indexing half): on an ACCOUNT feed a new connection
 indexes nothing, a chosen scope keeps only the subtrees of its folders (ancestors as skeletons), a delta that leaves the
-scope removes the record (`unstored`, never `gone`), a folder moved in is listed, narrowing the scope re-enumerates, the
+scope removes the record (`unstored`, never `gone`), a folder moved in is listed, narrowing the scope is a diff (DRIVE_SCOPE_WALK_RFC §5.4), the
 whole drive admits a parentless item, and the App Folder default makes no extra provider read."""
 from dataclasses import replace
 from typing import Any, Dict, List, Tuple
@@ -10,7 +10,7 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_feed_scope import FeedScope
-from src.domain.drive_index import Reason
+from src.domain.drive_index import EpochPhase, Reason
 from src.services import drive_indexing_service as svc_mod
 from src.services.drive_indexing_service import DriveIndexingService
 from tests.support.drive_connection_service_fake import FakeDriveConnectionService, connection
@@ -125,18 +125,23 @@ async def test_a_folder_moved_into_the_scope_is_listed(acct):
     assert {"Springfield", "Birth", "birth-certificate.pdf"} <= set(names)
 
 
-async def test_narrowing_the_scope_re_enumerates_and_the_sweep_removes_the_rest(acct):
+async def test_narrowing_the_scope_is_a_diff_that_removes_the_rest(acct):
+    """DRIVE_SCOPE_WALK_RFC §5.4, §5.6: narrowing removes the removed root's subtree under the guard, with no
+    re-enumeration (the epoch stays) and the kept subtree untouched (same `seen_epoch`)."""
     acct.plant(acct.coimbra, "photo.jpg")
     await acct.scope(folders=[acct.rd, acct.coimbra])
     await acct.settle()
     assert "photo.jpg" in acct.names()
-    epoch = self_epoch = (await acct.repo.get_sync_state(ConnectionScope(user_id=USER, connection_id=CONN))).epoch
+    before = await acct.repo.get_sync_state(ConnectionScope(user_id=USER, connection_id=CONN))
+    kept = {n: acct.names()[n].seen_epoch for n in ("R&D", "Tom's plan.docx")}
     await acct.scope(folders=[acct.rd])
     await acct.settle()
     state = await acct.repo.get_sync_state(ConnectionScope(user_id=USER, connection_id=CONN))
-    assert state.epoch > self_epoch and epoch == self_epoch
+    assert (state.epoch, state.epoch_phase) == (before.epoch, EpochPhase.IDLE)   # no re-enumeration, no sweep
     assert set(acct.names()) == {"R&D", "Tom's plan.docx"}
+    assert {n: acct.names()[n].seen_epoch for n in kept} == kept
     assert state.applied_scope == (await acct.connections.get(USER, CONN)).scope_key
+    assert state.applied_roots == (acct.rd,)
 
 
 async def test_the_whole_drive_admits_a_parentless_item(acct):

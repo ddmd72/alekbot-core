@@ -107,7 +107,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import (
-    TYPE_CHECKING, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
+    TYPE_CHECKING, AbstractSet, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple,
 )
 
 from ..domain import drive_enrich_plan as enrich
@@ -137,6 +137,7 @@ from ..domain.drive_extraction import (
 )
 from ..domain.document_extraction import PARSER, READER, ExtractionStatus, chain_for, model_route
 from ..domain.drive_access import access_counts
+from ..domain.drive_scope_diff import AppliedScope, applied_of, covered, covers_everything, normal_form, plan_scope_diff, shape_valid, stale_skeletons
 from ..domain.drive_index import (
     ACCURACY_VERSION, CURRENT_VERSIONS, KEYS_VERSION, MIGRATION_GATE_KEY, PASSAGES_VERSION, DriveChange, DriveChanges, DriveChunk,
     DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase, ErrorCategory, FolderProbe, LeaseLost,
@@ -153,7 +154,7 @@ from ..domain.drive_index_params import (
     README_CHILD_NAMES, README_SCAN_CHILDREN, READER_PAGE_USD_ESTIMATE, READER_RENDITION_STEPS, RECORD_WRITE_BATCH,
     RELIST_PAGE, RETRY_CAP, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_FILE_BUDGET,
     TICK_START_BUDGET, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_SHARE, TRANSCRIBE_UPLOAD_S, TRANSCRIBE_USD_PER_MONTH,
-    TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_EDGE_PX,
+    TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_EDGE_PX, WALK_PAGE, WALK_SHARE,
 )
 from ..domain.drive_index_scope import ANCESTOR, IndexScope, verdict as scope_verdict
 from ..domain.drive_index_planner import (
@@ -255,6 +256,15 @@ _STEP_ASIDE = timedelta(seconds=1)   # a deleting folder waiting for its childre
 # MULTI_DRIVE_RFC E87: the stored records one False scope verdict reads under the links of its chain (the drain), at
 # most; the removals also spend the cascade budget, so one verdict never takes a tick
 _DRAIN_PER_STEP = RECORD_WRITE_BATCH
+# DRIVE_SCOPE_WALK_RFC §5.9: the skeleton records one re-derivation reads at most; a full read cannot tell it saw them all
+_SKELETON_SCAN = 1000
+# the drive's top-level removal pass reads at most this many pages a tick; its cursor is kept in the sync state
+_TOP_LEVEL_PAGES = 5
+# past the skeleton scan cap the re-derivation reads the index by item id, this many pages a tick
+_SKELETON_PAGES = 5
+# tick summary keys a scope change's removal work moves (a continuation is asked for only while one moved)
+_SCOPE_PROGRESS = ("deleted", "scope_marked", "scope_removed", "scope_trimmed", "skeletons_stored", "skeletons_removed",
+                   "paths_derived", "walk_pages")
 # tick summary keys that are not progress (`last_success_at`): read pages, and class-1 records left for want of an item
 # call (E87)
 _NOT_PROGRESS = frozenset({"pages", "waiting_item_calls"})
@@ -362,6 +372,8 @@ class _Budget:
     # else 0: the content classes, enrichment and extraction then stop that much earlier, and the mirror step's window
     # is at least that long
     mirror_reserve: float = 0.0
+    # DRIVE_SCOPE_WALK_RFC W3: time spent listing a diff walk this tick; the walk stops at WALK_SHARE of the start budget
+    walk_s: float = 0.0
 
     def elapsed(self) -> float:
         return self.monotonic() - self.started
@@ -434,6 +446,11 @@ class _Budget:
 
     def maintenance_allowed(self) -> bool:
         return self.maintenance_s < MAINTENANCE_SHARE * TICK_START_BUDGET.total_seconds()
+
+    def walk_allowed(self) -> bool:
+        """A walk page starts only within the walk's share of the start budget and the start budget itself (W3), so a
+        large walk never starves the content classes: it comes back next tick."""
+        return self.walk_s < WALK_SHARE * TICK_START_BUDGET.total_seconds() and self.time_left()
 
 
 @dataclass
@@ -567,7 +584,12 @@ class _ScopeView:
     stored children the drain has gone through this tick (E87); `drain_after`: where a link's drain, cut by its bound,
     goes on (the last child id read). `folder_changed`: an `_apply` of this tick met a folder change (a folder created,
     moved, renamed or re-emitted, or a stored folder's tombstone): the ancestry and the chains read before it may be
-    stale, so the tick drains nothing (E87)."""
+    stale, so the tick drains nothing (E87).
+
+    DRIVE_SCOPE_WALK_RFC step 1: `scope_key` the connection's key the tick started with (None: not set); `scope_moved`
+    a re-read of the connection showed another key, so no paid work starts this tick (W11); `reads` the provider reads of
+    `_chain_parent` (a skeleton is stored from them); `ancestry_dirty` this tick's `_apply` met a scope root or a stored
+    skeleton that was deleted or moved (the skeleton paths must be re-derived, W9)."""
     scope: IndexScope
     ancestors: Set[str] = field(default_factory=set)
     parents: Dict[str, str] = field(default_factory=dict)
@@ -576,6 +598,13 @@ class _ScopeView:
     drained: Set[str] = field(default_factory=set)
     drain_after: Dict[str, str] = field(default_factory=dict)
     folder_changed: bool = False
+    scope_key: Optional[str] = None
+    scope_moved: bool = False
+    reads: Dict[str, DriveChange] = field(default_factory=dict)
+    ancestry_dirty: bool = False
+    removing: FrozenSet[str] = frozenset()                  # the state's `removing_roots` (non-drive-root entries)
+    waited: Set[str] = field(default_factory=set)           # records a step left for the next tick: not fetched again
+    guard_waited: bool = False                              # a removal step found its guard closed this tick
 
     @property
     def filtered(self) -> bool:
@@ -846,7 +875,8 @@ class DriveIndexingService:
             if state.epoch == 0 and state.cursor is None and not state.applied_versions:
                 # nothing stored yet: onboarding builds every record under the current versions (§12.3)
                 state = replace(state, applied_versions=self._target_versions(), applied_space=self._space,
-                                applied_scope=connection.scope_key)
+                                applied_scope=connection.scope_key, applied_whole=connection.scope_whole_drive,
+                                applied_roots=tuple(sorted(set(connection.scope_folder_ids))))
             action = access_action(state, connection, now)   # facts may have moved before the lease
             if action in (AccessAction.PURGE_OPT_OUT, AccessAction.PURGE_EXPIRED, AccessAction.PURGE_DISCONNECTED,
                           AccessAction.PURGE_DRIVE_SWITCH, AccessAction.PURGE_THEN_RESTART):
@@ -876,14 +906,6 @@ class DriveIndexingService:
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
                 logger.info(f"[DriveIndex] access regained for {handle.user_id[:8]}; continuing from the cursor")
-            if state.applied_scope != connection.scope_key:
-                if state.cursor is not None:
-                    # the owner changed the scope (RFC §11.3): enumerate again; the filter deletes what left, the sweep
-                    # removes the rest
-                    logger.info(f"[DriveIndex] scope of connection {handle.connection_id[:8]} changed; re-enumerating")
-                    state = scope_restart(state, connection.scope_key)
-                else:
-                    state = replace(state, applied_scope=connection.scope_key)   # nothing enumerated yet
             return await self._run(handle, state, nudge, now, enabled, summary, cont, connection)
         except LeaseLost as exc:
             # another tick holds the lease, or this one's is ending: it carries on from the last saved state
@@ -992,7 +1014,9 @@ class DriveIndexingService:
             # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
             _TICK_MIRROR.set(await self._start_mirror(handle, connection))
             index_scope = IndexScope.of(connection, await self._drive.capabilities(handle))
-            _TICK_SCOPE.set(_ScopeView(index_scope))
+            view = _ScopeView(index_scope, scope_key=connection.scope_key)
+            _TICK_SCOPE.set(view)
+            state = await self._apply_scope_change(handle, state, connection, view, now, budget, summary, saved)
             _TICK_CLOSED.set(await self._start_marks(handle, state))
             # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b), once per tick: after observe, before the
             # work-off; but first when the round was left incomplete (read before `_observe` resets it), because then
@@ -1008,6 +1032,7 @@ class DriveIndexingService:
             if state.round_complete:
                 state = await self._work_off(handle, state, now, budget, summary, models)
             more = await self._has_more(handle, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0,
+                                        summary=summary,
                                         models=models, idle=budget.enrich_idle)
             job_counts: Dict[str, int] = {}
             if state.round_complete and self._enrich_wired():
@@ -1164,6 +1189,9 @@ class DriveIndexingService:
             state = replace(state, drive_identity=page.drive_identity or state.drive_identity,
                             root_item_id=page.root_item_id)
             await self._apply(handle, self._ctx(handle, state, now), list(page.changes), budget, summary)
+            view = _TICK_SCOPE.get()
+            if view is not None and view.ancestry_dirty and not state.ancestry_dirty:
+                state = replace(state, ancestry_dirty=True)   # before the cursor moves: the change is never seen again
             state = replace(state, cursor=page.cursor)
             if page.complete:
                 phase = EpochPhase.SWEEPING if state.epoch_phase is EpochPhase.ENUMERATING else state.epoch_phase
@@ -1231,9 +1259,16 @@ class DriveIndexingService:
             await self._resolve_page(handle, changes, page, seen)
         for i, change in enumerate(page):
             out_of_scope = False
+            fed_parent = change.parent_id   # where the drive says the item is now (the verdict turns it into a deletion)
             stored = cache.get(change.item_id)
             if view is not None and (change.is_folder or (stored is not None and stored.is_folder)):
-                view.folder_changed = True   # E87: no drain on a tick whose feed changed the tree's folders
+                if stored is not None or not relisting:
+                    # E87: no drain on a tick whose feed changed the tree's folders. A folder new to the index met in a
+                    # re-listing cannot make the loaded ancestry stale (DRIVE_SCOPE_WALK_RFC step 1): else every walk page
+                    # holding a sub-folder would hold every guarded removal of the tick
+                    view.folder_changed = True
+            if view is not None and self._path_changed(view, change, stored):
+                view.ancestry_dirty = True   # a scope root or a stored skeleton moved or left: the paths are re-derived (W9)
             try:
                 if seen is not None:
                     looked = seen[i]
@@ -1255,6 +1290,16 @@ class DriveIndexingService:
                 summary["skipped"] = summary.get("skipped", 0) + 1
                 continue
             plan = self._adjusted(plan, existing, ctx, view is not None, relisting=relisting, nudged=nudged)
+            if plan.upsert is not None and plan.upsert.state is RecordState.DELETING:
+                # explicit, the planner's `replace(existing)` would carry a stale flag: a folder that left the scope is
+                # noticed `unstored` and re-judged by its cascade; a tombstone is `gone` (plan Delta 5)
+                plan = replace(plan, upsert=replace(plan.upsert, cascade_unstored=out_of_scope))
+                if out_of_scope and plan.upsert.parent_id != fed_parent:
+                    # a folder that left the scope by a move keeps the parent it has now, not the one it had: the
+                    # cascade judges it again by its stored chain, and the old chain would show it in scope and revive it
+                    plan = replace(plan, upsert=replace(plan.upsert, parent_id=fed_parent))
+                if existing is not None and existing.state is not RecordState.DELETING:
+                    _inc(summary, "scope_marked")   # new removal work: its cascade is worth a continuation
             if plan.delete_item_id is not None and existing is not None:
                 gone.update(self._mirror_notices([existing], GONE if change.deleted and not out_of_scope else UNSTORED))
             elif (existing is not None and existing.owner_note_id and plan.upsert is not None
@@ -1300,17 +1345,21 @@ class DriveIndexingService:
                   relisting: bool, nudged: bool) -> ObservationPlan:
         """The tick's own scheduling on top of the planner's plan: a folder new to a filtered index or to a re-listing
         is listed once; a nudged item's due card is class 0."""
-        if (filtered and not relisting and existing is None and ctx.phase is not EpochPhase.ENUMERATING
+        # a stored skeleton that is planned as a normal folder is new to the index as far as its children go: they were
+        # never stored (DRIVE_SCOPE_WALK_RFC W4, §5.9), and its trim ends
+        fresh = existing is None or (existing.reason is Reason.SCOPE_ANCESTOR and plan.upsert is not None
+                                     and plan.upsert.reason is not Reason.SCOPE_ANCESTOR)
+        if (filtered and not relisting and fresh and ctx.phase is not EpochPhase.ENUMERATING
                 and plan.upsert is not None and plan.upsert.is_folder and plan.upsert.scope is Scope.NORMAL
                 and plan.upsert.reason is not Reason.SCOPE_ANCESTOR):
             # a folder new to a filtered index during a delta round (moved into the scope): its children were never
             # stored, so it is listed once (the `relisting` rule below)
-            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
-                                                 first_seen=True))
-        if (relisting and existing is None and plan.upsert is not None and plan.upsert.is_folder
+            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True, trim_pending=False,
+                                                         cascade_cursor=None), ctx.now, first_seen=True))
+        if (relisting and fresh and plan.upsert is not None and plan.upsert.is_folder
                 and plan.upsert.scope is Scope.NORMAL):
-            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True), ctx.now,
-                                                 first_seen=True))
+            plan = replace(plan, upsert=schedule(replace(plan.upsert, reobserve_pending=True, trim_pending=False,
+                                                         cascade_cursor=None), ctx.now, first_seen=True))
         if (nudged and plan.upsert is not None and plan.upsert.due_at is not None
                 and card_eligible(plan.upsert) and plan.upsert.card_hash != card_hash(plan.upsert)):
             plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
@@ -1331,7 +1380,7 @@ class DriveIndexingService:
         out: List[Optional[_Seen]] = []
         for change in page:
             stored = scratch.get(change.item_id)
-            if change.is_folder or (stored is not None and stored.is_folder):
+            if (change.is_folder or (stored is not None and stored.is_folder)) and (stored is not None or not relisting):
                 view.folder_changed = True   # E87, as in the planning pass
             try:
                 looked, out_of_scope, probe, existing, parent, previous_parent = await self._observe_one(
@@ -1424,6 +1473,8 @@ class DriveIndexingService:
             logger.warning(f"[DriveIndex] scope chain read failed for {handle.user_id[:8]}: {exc}")
             return None
         view.parents[item_id] = "" if read.deleted else read.parent_id
+        if not read.deleted:
+            view.reads[item_id] = read
         return view.parents[item_id]
 
     async def _load_scope_ancestors(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext,
@@ -1434,15 +1485,24 @@ class DriveIndexingService:
             return
         folders = view.scope.folder_ids
         for folder_id in sorted(folders):
+            chain: List[str] = []
             current = folder_id
+            reached_root = True
             for _ in range(MAX_CHAIN_DEPTH):
                 parent = await self._chain_parent(handle, view, current, budget)
                 if parent is None:
+                    view.ancestors.update(chain)   # incomplete: what was read stays, the next `_apply` continues
+                    await self._store_read_links(handle, view, ctx, view.ancestors)   # and the next tick resumes from them
                     return
-                if parent == "" or parent == ctx.root_item_id or parent in folders:
+                if parent in folders:
+                    reached_root = False   # nested under another root: the outer root covers it (§5.9)
                     break
-                view.ancestors.add(parent)
+                if parent == "" or parent == ctx.root_item_id:
+                    break
+                chain.append(parent)
                 current = parent
+            if reached_root:
+                view.ancestors.update(chain)
         view.loaded = True
 
     async def _scope_verdict(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext, change: DriveChange,
@@ -1464,6 +1524,455 @@ class DriveIndexingService:
                 return None
             parents[decided] = link
         return False
+
+    # -- the scope diff (DRIVE_SCOPE_WALK_RFC §5.3-§5.6, §5.9; step 1) ---------------------------------------------------
+
+    @staticmethod
+    def _path_changed(view: _ScopeView, change: DriveChange, stored: Optional[DriveIndexRecord]) -> bool:
+        """A scope root or a stored skeleton that this change deletes, moves, or (a root) brings to the index: the skeleton
+        paths must be derived again (§5.9, W9)."""
+        is_root = change.item_id in view.scope.folder_ids
+        is_skeleton = stored is not None and stored.reason is Reason.SCOPE_ANCESTOR
+        if not (is_root or is_skeleton):
+            return False
+        return change.deleted or stored is None or stored.parent_id != change.parent_id
+
+    async def _restart_for_scope(self, handle: DriveHandle, state: DriveSyncState, key: str, new: AppliedScope,
+                                 saved: _Saved) -> DriveSyncState:
+        """A scope change the diff cannot apply (it covers everything, an enumeration is unfinished, or the diff's rules
+        say so): enumerate again, stamping the scope with the restart (W12, W13)."""
+        logger.info(f"[DriveIndex] scope of connection {handle.connection_id[:8]} changed; re-enumerating")
+        state = replace(scope_restart(state, key, applied=new), walking=False, diff_parents=(), skeleton_cursor="")
+        await self._save_state(state)
+        saved.state = state
+        return state
+
+    async def _apply_scope_change(self, handle: DriveHandle, state: DriveSyncState, connection: DriveConnection,
+                                  view: _ScopeView, now: datetime, budget: _Budget, summary: Dict[str, int],
+                                  saved: _Saved) -> DriveSyncState:
+        """The connection's scope against the one the index applied (§5.3, §5.4): a diff written as marks (walk starts,
+        removal starts), or a restart. Nothing here deletes a record: a removal is a mark, worked off later by the guarded
+        steps (`_cascade_step`, `_trim_step`, `_scope_step`), each of which judges the folder again. Every branch that
+        changes the state saves it; a diff that is not stamped is computed again next tick (marks are idempotent)."""
+        key = connection.scope_key
+        new = AppliedScope(connection.scope_whole_drive, tuple(sorted(set(connection.scope_folder_ids))))
+        who = handle.connection_id[:8]
+
+        async def kept(updated: DriveSyncState) -> DriveSyncState:
+            await self._save_state(updated)
+            saved.state = updated
+            return updated
+
+        if state.cursor is None:   # nothing enumerated yet, or a restart before its first page
+            if (state.applied_scope, state.applied_whole, state.applied_roots) != (key, new.whole, new.roots):
+                return await kept(replace(state, applied_scope=key, applied_whole=new.whole, applied_roots=new.roots))
+            return state
+        if not shape_valid(state):   # D5: built before the pair existed, or a rolled-back revision moved the key
+            if state.applied_scope == key:
+                logger.info(f"[DriveIndex] scope of connection {who} adopted as applied (step-1 upgrade)")
+                return await kept(replace(state, applied_whole=new.whole, applied_roots=new.roots))
+            return await self._restart_for_scope(handle, state, key, new, saved)
+        if state.applied_scope == key:
+            return state
+        feed = view.scope.feed
+        root = state.root_item_id
+        if state.epoch_phase is EpochPhase.ENUMERATING or (
+                covers_everything(new, feed)
+                and normal_form(new, feed, root) != normal_form(applied_of(state), feed, root)):
+            return await self._restart_for_scope(handle, state, key, new, saved)   # no parent map is read (review hole 1)
+
+        # the stored parent map of every root the diff reads; the links an earlier waiting tick read are seeded
+        roots_read = (set(state.applied_roots) | set(new.roots) | set(state.removing_roots)) - {root}
+        if state.diff_parents:   # only for a root with no record: a stored record knows its parent better
+            held = await self._repo.get_records(handle.scope, sorted(roots_read))
+            for pair in state.diff_parents:
+                item_id, _, parent_id = pair.partition("\x1f")
+                if item_id in roots_read and held.get(item_id) is None:
+                    view.parents.setdefault(item_id, parent_id)
+        walked: Set[str] = set()
+        for item_id in sorted(roots_read):
+            current = item_id
+            for _ in range(MAX_CHAIN_DEPTH):
+                parent = await self._chain_parent(handle, view, current, budget)
+                if parent is None:
+                    logger.info(f"[DriveIndex] scope diff of connection {who} waits for the next tick: parent reads")
+                    await self._store_read_links(handle, view, self._ctx(handle, state, now), walked - roots_read)
+                    # the root -> parent links read from the provider, so the next tick does not read them again
+                    links = tuple(f"{i}\x1f{view.parents[i]}" for i in sorted(roots_read)
+                                  if i in view.reads and i in view.parents)
+                    if not state.ancestry_dirty or set(links) - set(state.diff_parents):
+                        state = await kept(replace(state, ancestry_dirty=True,
+                                                   diff_parents=tuple(sorted(set(state.diff_parents) | set(links)))))
+                    return state
+                if parent == "" or parent == root:
+                    break
+                walked.add(parent)
+                current = parent
+        parents = dict(view.parents)
+        diff = plan_scope_diff(applied_of(state), new, feed_scope=feed, root_item_id=root,
+                               enumerating=state.epoch_phase is EpochPhase.ENUMERATING, parents=parents)
+        if diff.restart:
+            return await self._restart_for_scope(handle, state, key, new, saved)
+
+        ctx = self._ctx(handle, state, now)
+        stored = await self._repo.get_records(
+            handle.scope, sorted(set(diff.walk_roots) | set(diff.remove_roots) | set(new.roots)))
+        # a root the applied scope covers but the index holds no record of: removed by an earlier diff whose stamp was
+        # still pending when the owner added it again (8c). It is walked like a new root, never taken for indexed
+        walk_roots = diff.walk_roots + tuple(r for r in new.roots
+                                             if r not in diff.walk_roots and stored.get(r) is None)
+        complete = True
+        for item_id in walk_roots:
+            if item_id in ctx.mirror_root_ids:
+                continue
+            rec = stored.get(item_id)
+            if rec is None:
+                if not budget.item_call_allowed():
+                    complete = False
+                    continue
+                budget.item_calls -= 1
+                try:
+                    change = await self._drive.get_change(handle, item_id)
+                except DriveItemNotFoundError:
+                    continue   # a root the drive no longer has (W10)
+                except _PER_ITEM_ERRORS as exc:
+                    logger.warning(f"[DriveIndex] scope root read failed for {handle.user_id[:8]}: {exc}")
+                    complete = False
+                    continue
+                if not change.deleted:
+                    # a scope root: the planner makes it a normal folder and `_adjusted` lists it
+                    await self._apply(handle, ctx, [change], budget, summary, relisting=True)
+            elif rec.is_folder and (rec.state is RecordState.DELETING or rec.reason is Reason.SCOPE_ANCESTOR):
+                await self._replan_listed(handle, rec, ctx)   # a removed root added again (8c) / a path folder made a root
+        removed: List[str] = []
+        for item_id in diff.remove_roots:
+            rec = stored.get(item_id)
+            if rec is None or not rec.is_folder or item_id in ctx.mirror_root_ids:
+                continue
+            removed.append(item_id)
+            if rec.state is RecordState.DELETING or (rec.reason is Reason.SCOPE_ANCESTOR and rec.trim_pending):
+                continue   # marked already
+            if any(covered(k, frozenset({item_id}), parents) for k in diff.keep_roots):
+                skeleton = await self._as_skeleton(handle, rec, ctx, frozenset({item_id}))
+                if skeleton is not None:
+                    await self._commit(handle, [skeleton], set(), collects=_ever_read([rec]))
+            else:
+                await self._commit(handle, [replace(_dying(rec, now), cascade_unstored=True)], set())
+        roots_now = frozenset(new.roots)
+        removing = [e for e in state.removing_roots if e not in roots_now and not covered(e, roots_now, parents)]
+        removing += removed
+        if diff.from_whole and root:
+            removing.append(root)
+        removing_roots = tuple(dict.fromkeys(removing))
+        if complete:
+            walking = state.walking or bool(walk_roots)
+            state = replace(state, applied_scope=key, applied_whole=new.whole, applied_roots=new.roots,
+                            removing_roots=removing_roots, ancestry_dirty=True, walking=walking,
+                            walk_listed=0 if walk_roots and not state.walking else state.walk_listed,
+                            walk_blocked=0 if walk_roots and not state.walking else state.walk_blocked,
+                            diff_parents=())
+        else:
+            # the stamp waits: the links read stay, so the next tick spends its calls on the walk roots
+            links = tuple(f"{i}\x1f{view.parents[i]}" for i in sorted(roots_read) if i in view.reads and i in view.parents)
+            state = replace(state, removing_roots=removing_roots, ancestry_dirty=True,
+                            diff_parents=tuple(sorted(set(state.diff_parents) | set(links))))
+        state = await kept(state)
+        logger.info(f"[DriveIndex] scope of connection {who} applied as a diff: walk={len(walk_roots)} "
+                    f"remove={len(diff.remove_roots) + (1 if diff.from_whole else 0)}"
+                    f"{'' if complete else ' (stamp waits for the next tick)'}")
+        return state
+
+    async def _store_read_links(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext,
+                                links: AbstractSet[str]) -> None:
+        """A walk of parent links that needs more reads than a tick has calls keeps the folders it did read as skeleton
+        (path folder) records, so the next tick resumes from them instead of reading the same links again; the stale
+        ones are trimmed by the re-derivation (§5.9). Only `links` (the links the walk went through) are stored, never
+        a folder a page's verdict read happened to fetch, and never a scope root."""
+        ids = sorted(i for i in links if i in view.reads and view.reads[i].is_folder and i != ctx.root_item_id
+                     and i not in view.scope.folder_ids)
+        if not ids:
+            return
+        have = await self._repo.get_records(handle.scope, ids)
+        ctx = replace(ctx, scope_ancestor_ids=ctx.scope_ancestor_ids | frozenset(ids))
+        for item_id in ids:
+            if have.get(item_id) is None:
+                await self._commit_plan(handle, plan_observation(view.reads[item_id], None, None, None, ctx, None), None)
+
+    async def _replan_listed(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> None:
+        """A stored folder (deleting, or a skeleton) that is in scope again: planned as a normal folder (the planner's
+        revive), with its subtree listed again (W4) and no removal pending."""
+        parent = await self._parent_of(handle, rec, ctx)
+        plan = plan_observation(change_from_record(rec), rec, parent, None, ctx, parent, observed=False)
+        up = plan.upsert
+        if up is not None and up.item_id == rec.item_id and up.is_folder:
+            if up.scope is Scope.NORMAL:
+                up = replace(up, reobserve_pending=True, reobserve_cursor=None, attempts=0)
+            up = replace(up, trim_pending=False, cascade_unstored=False, cascade_cursor=None)
+            plan = replace(plan, upsert=schedule(up, ctx.now, first_seen=not up.has_card))
+        await self._commit_plan(handle, plan, rec)
+
+    async def _as_skeleton(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext,
+                           path_ids: FrozenSet[str]) -> Optional[DriveIndexRecord]:
+        """`rec` as a path folder: planned by the planner's skeleton branch (metadata only, `scope_ancestor`), its card
+        dropped, its off-path children left to the trim step (`trim_pending`). None when the plan is no skeleton."""
+        parent = await self._parent_of(handle, rec, ctx)
+        path_ctx = replace(ctx, scope_ancestor_ids=ctx.scope_ancestor_ids | path_ids)
+        plan = plan_observation(change_from_record(rec), rec, parent, None, path_ctx, parent, observed=False)
+        up = plan.upsert
+        if up is None or up.item_id != rec.item_id or up.reason is not Reason.SCOPE_ANCESTOR:
+            return None
+        up = replace(up, trim_pending=True, cascade_cursor=None, reobserve_pending=False, reobserve_cursor=None,
+                     rescope_pending=False, has_card=False, card_hash=None)
+        return schedule(up, ctx.now, first_seen=False)
+
+    async def _removal_open(self, handle: DriveHandle, view: _ScopeView) -> bool:
+        """The guard of every removal the scope change causes (DRIVE_SCOPE_WALK_RFC §5.6): the tick's ancestry is loaded,
+        no `_apply` of the tick met a folder change, and the connection read now still has the scope the tick started
+        with. A closed guard makes the step wait, never remove."""
+        if not (view.filtered and view.loaded and not view.folder_changed):
+            view.guard_waited = True
+            return False
+        await self._recheck_gate(handle, force=True)
+        if view.scope_moved:
+            view.guard_waited = True
+        return not view.scope_moved
+
+    @staticmethod
+    def _kept_ids(view: _ScopeView, ctx: PlanContext) -> FrozenSet[str]:
+        """Records no removal of this tick touches: the scope's roots, the paths to them, the bot's own mirror folders."""
+        return frozenset(view.scope.folder_ids | view.ancestors | ctx.mirror_root_ids)
+
+    async def _trim_children(self, handle: DriveHandle, view: _ScopeView, ctx: PlanContext,
+                             kids: Sequence[DriveIndexRecord], summary: Dict[str, int]) -> Tuple[bool, int]:
+        """The child rule of a trim and of the top-level pass (§5.6): roots and mirror roots stay, a folder on a path
+        becomes a skeleton with its own trim, a deleting record is left to its cascade, everything else is removed
+        (`unstored`). (clean, acted): clean when the page changed nothing and left nothing pending; acted the records it
+        removed or turned into skeletons (what the caller charges to the cascade budget)."""
+        clean = True
+        removals: List[DriveIndexRecord] = []
+        skeletons: List[DriveIndexRecord] = []
+        collects: Set[str] = set()
+        for kid in kids:
+            if kid.item_id in view.scope.folder_ids or kid.item_id in ctx.mirror_root_ids:
+                continue
+            if kid.state is RecordState.DELETING:
+                clean = False
+                continue
+            if kid.is_folder and kid.item_id in view.ancestors:
+                if kid.reason is Reason.SCOPE_ANCESTOR:
+                    clean = clean and not kid.trim_pending
+                    continue
+                skeleton = await self._as_skeleton(handle, kid, ctx, frozenset({kid.item_id}))
+                if skeleton is not None:
+                    skeletons.append(skeleton)
+                    collects |= _ever_read([kid])
+                    clean = False
+                    continue
+            removals.append(kid)
+            clean = False
+        if skeletons:
+            await self._commit(handle, skeletons, set(), collects=collects)
+        if removals:
+            await self._remove_out_of_scope(handle, removals, ctx)
+            _inc(summary, "scope_removed", len(removals))
+        return clean, len(removals) + len(skeletons)
+
+    async def _trim_step(self, handle: DriveHandle, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
+                         summary: Dict[str, int]) -> Optional[bool]:
+        """One page of a path folder's off-path children (§5.6). True: the record moved. None: it waits for the next tick
+        (the guard is closed, or a verdict needs an item call)."""
+        if folder.reason is not Reason.SCOPE_ANCESTOR:   # in scope again, or no longer a path folder: nothing to trim
+            await self._commit(handle, [schedule(replace(folder, trim_pending=False, cascade_cursor=None), ctx.now,
+                                                 first_seen=not folder.has_card)], set())
+            return True
+        view = _TICK_SCOPE.get()
+        if view is None or not await self._removal_open(handle, view):
+            return None
+        if budget.cascade_ops <= 0:
+            return False
+        decided = await self._scope_verdict(handle, view, ctx, change_from_record(folder), {}, {}, budget)
+        if decided is None:
+            return None
+        if decided is True:   # a root covers it now: a normal folder again, its subtree listed (W4)
+            await self._replan_listed(handle, folder, ctx)
+            return True
+        limit = min(budget.cascade_ops, RECORD_WRITE_BATCH)
+        kids = await self._repo.children(handle.scope, folder.item_id, folder.cascade_cursor, limit)
+        await self._trim_children(handle, view, ctx, kids, summary)
+        _inc(summary, "scope_trimmed")
+        budget.cascade_ops -= max(len(kids), 1)
+        done = len(kids) < limit
+        fresh = (await self._repo.get_records(handle.scope, [folder.item_id])).get(folder.item_id) or folder
+        await self._commit(handle, [schedule(replace(fresh, trim_pending=not done,
+                                                     cascade_cursor=None if done else kids[-1].item_id),
+                                             ctx.now, first_seen=not fresh.has_card)], set())   # the marker last
+        return True
+
+    async def _scope_step(self, handle: DriveHandle, state: DriveSyncState, now: datetime, budget: _Budget,
+                          summary: Dict[str, int]) -> DriveSyncState:
+        """The state-level work of a scope change (§5.6, §5.9): the drive's top-level removal of a whole-drive narrowing,
+        the skeleton paths derived again, and the settling of `removing_roots`. Each removal is guarded."""
+        view = _TICK_SCOPE.get()
+        if view is None:
+            return state
+        if view.ancestry_dirty and not state.ancestry_dirty:
+            state = replace(state, ancestry_dirty=True)
+        view.removing = frozenset(e for e in state.removing_roots if e != state.root_item_id)
+        if view.removing:
+            # a removal-root record the earlier code's `schedule()` left with no due time (a rolled-back revision keeps
+            # `trim_pending` through the merge) is due again
+            stored = await self._repo.get_records(handle.scope, sorted(view.removing))
+            stuck = [schedule(r, now, first_seen=False) for r in stored.values()
+                     if r is not None and r.due_at is None and (r.state is RecordState.DELETING or r.trim_pending)]
+            if stuck:
+                await self._commit(handle, stuck, set())
+        ctx = self._ctx(handle, state, now)
+        if view.filtered and not view.loaded:
+            await self._load_scope_ancestors(handle, view, ctx, budget)
+            ctx = self._ctx(handle, state, now)
+        if state.root_item_id and state.root_item_id in state.removing_roots:
+            state = await self._top_level_pass(handle, state, view, ctx, budget, summary)
+        if state.ancestry_dirty:
+            state = await self._derive_skeletons(handle, state, view, ctx, now, budget, summary)
+        return state
+
+    async def _settle_removing(self, handle: DriveHandle, state: DriveSyncState, now: datetime) -> DriveSyncState:
+        """After the due loop, so a removal that ended in this tick ends its entry in it too: an entry stays while its
+        record exists and is deleting or has a trim pending."""
+        if not state.removing_roots:
+            return state
+        stored = await self._repo.get_records(handle.scope, [e for e in state.removing_roots if e != state.root_item_id])
+        kept = [e for e in state.removing_roots if e == state.root_item_id
+                or ((rec := stored.get(e)) is not None and (rec.state is RecordState.DELETING or rec.trim_pending))]
+        if tuple(kept) != state.removing_roots:
+            state = replace(state, removing_roots=tuple(kept))
+        return state
+
+    async def _settle_walk(self, handle: DriveHandle, state: DriveSyncState, summary: Mapping[str, int],
+                           stopped_class: Optional[int]) -> DriveSyncState:
+        """After the due loop (§5.5, Delta 7): the Cabinet's walk counters, and the end of the walk. It ends when no due
+        work is left (every listing still pending is blocked, backing off or waiting for access) or no folder has a
+        listing pending at all (one query per tick)."""
+        blocked = max(0, state.walk_blocked + summary.get("walk_blocked_new", 0) - summary.get("walk_unblocked", 0))
+        listed, walking = state.walk_listed, state.walking
+        view = _TICK_SCOPE.get()
+        if view is not None and view.ancestry_dirty and not state.ancestry_dirty:
+            state = replace(state, ancestry_dirty=True)   # set after the scope step ran (a root's cascade ended)
+        if walking:
+            listed += summary.get("walk_folders_listed", 0)
+            if stopped_class is None or not await self._repo.has_pending_listing(handle.scope):
+                walking = False
+        if (listed, walking, blocked) != (state.walk_listed, state.walking, state.walk_blocked):
+            state = replace(state, walk_listed=listed, walking=walking, walk_blocked=blocked)
+        return state
+
+    async def _top_level_pass(self, handle: DriveHandle, state: DriveSyncState, view: _ScopeView, ctx: PlanContext,
+                              budget: _Budget, summary: Dict[str, int]) -> DriveSyncState:
+        """A whole-drive (or default-area) scope narrowed to folders (cases 5a, 5c): the drive's top level holds no
+        removal mark, so this pass applies the child rule of a trim to the children of the drive root and to the
+        parentless ones. It reads at most `_TOP_LEVEL_PAGES` pages a tick and keeps its place in the sync state
+        (`top_level_cursor`); only the records it removes or converts are charged to the cascade budget, so kept and
+        deleting records never starve the cascades. A pass that reads both lists to the end and found only kept records
+        ends the entry; one that met anything else starts again from the top."""
+        root = state.root_item_id
+        if not view.filtered:
+            return replace(state, removing_roots=tuple(e for e in state.removing_roots if e != root),
+                           top_level_cursor="", top_level_unclean=False)
+        lists = tuple(dict.fromkeys((root, "")))
+        head, _, tail = state.top_level_cursor.partition(":")
+        index, after = (int(head) if head.isdigit() else 0), (tail or None)
+        unclean, pages = state.top_level_unclean, 0
+        while index < len(lists):
+            if budget.cascade_ops <= 0 or not budget.time_left() or pages >= _TOP_LEVEL_PAGES:
+                break   # the rest is next tick's, from the saved place
+            if not await self._removal_open(handle, view):
+                break
+            kids = await self._repo.children(handle.scope, lists[index], after, RECORD_WRITE_BATCH)
+            clean, acted = await self._trim_children(handle, view, ctx, kids, summary)
+            unclean = unclean or not clean
+            budget.cascade_ops -= acted
+            pages += 1
+            if len(kids) < RECORD_WRITE_BATCH:
+                index, after = index + 1, None
+            else:
+                after = kids[-1].item_id
+        if index >= len(lists):   # a full pass
+            if not unclean:
+                return replace(state, removing_roots=tuple(e for e in state.removing_roots if e != root),
+                               top_level_cursor="", top_level_unclean=False)
+            return replace(state, top_level_cursor="", top_level_unclean=False)
+        return replace(state, top_level_cursor=f"{index}:{after or ''}", top_level_unclean=unclean)
+
+    async def _derive_skeletons(self, handle: DriveHandle, state: DriveSyncState, view: _ScopeView, ctx: PlanContext,
+                                now: datetime, budget: _Budget, summary: Dict[str, int]) -> DriveSyncState:
+        """The skeleton paths derived again (§5.9, W9): a path folder with no record is stored from the chain read; a
+        skeleton on no root's path is stale. Stale ones are not deleted here: they are marked deleting for the cascade,
+        which judges them again."""
+        if not view.filtered:
+            return replace(state, ancestry_dirty=False)
+        if not view.loaded:
+            return state
+        stored_ids = [i for i in sorted(view.ancestors) if i not in view.scope.folder_ids and i in view.reads]
+        have = await self._repo.get_records(handle.scope, stored_ids)
+        for item_id in stored_ids:
+            if have.get(item_id) is not None:
+                continue
+            read = view.reads[item_id]
+            parent = (await self._repo.get_records(handle.scope, [read.parent_id])).get(read.parent_id) \
+                if read.parent_id and read.parent_id != ctx.root_item_id else None
+            plan = plan_observation(read, None, parent, None, ctx, None)
+            await self._commit_plan(handle, plan, None)
+            _inc(summary, "skeletons_stored")
+        if not await self._removal_open(handle, view):
+            return state
+        recs = await self._repo.scope_ancestor_records(handle.scope, _SKELETON_SCAN)
+        ended, cursor = True, ""
+        if len(recs) >= _SKELETON_SCAN:
+            # a full read cannot tell it saw every skeleton: the index is read by item id, a few pages a tick, from
+            # the place the sync state keeps; the flag clears only after the last page
+            recs, cursor, ended = await self._skeleton_page(handle, state.skeleton_cursor)
+        roots = view.scope.folder_ids
+        parents: Dict[str, str] = {r.item_id: r.parent_id for r in recs}
+        outside = [r for r in recs if r.item_id not in view.ancestors and r.item_id not in roots]
+        walked: Set[str] = set()
+        for rec in outside:   # the chain of each, to judge coverage over stored parents
+            current = rec.item_id
+            for _ in range(MAX_CHAIN_DEPTH):
+                parent_id = await self._chain_parent(handle, view, current, budget)
+                if parent_id is None:
+                    await self._store_read_links(handle, view, ctx, walked)
+                    return state   # the flag stays; the next tick reads on
+                parents[current] = parent_id
+                if parent_id == "" or parent_id == ctx.root_item_id or parent_id in roots:
+                    break
+                walked.add(parent_id)
+                current = parent_id
+        stale = stale_skeletons([r.item_id for r in recs], view.ancestors, roots, parents=parents)
+        for rec in outside:
+            if not await self._removal_open(handle, view):
+                return state
+            if rec.item_id in stale:
+                await self._commit(handle, [replace(_dying(rec, now), cascade_unstored=True)], set())
+                _inc(summary, "skeletons_removed")
+            else:   # in scope under a root: a normal folder again, its subtree listed (W4)
+                await self._replan_listed(handle, rec, ctx)
+        if not ended:
+            return replace(state, skeleton_cursor=cursor)   # a scan alone asks for no continuation
+        _inc(summary, "paths_derived")
+        return replace(state, ancestry_dirty=False, skeleton_cursor="")
+
+    async def _skeleton_page(self, handle: DriveHandle, cursor: str) -> Tuple[List[DriveIndexRecord], str, bool]:
+        """The skeleton records among the next `_SKELETON_PAGES` pages of the index (by item id) after `cursor`, the
+        place to go on from, and whether the end of the index was reached."""
+        after: Optional[str] = cursor or None
+        found: List[DriveIndexRecord] = []
+        for _ in range(_SKELETON_PAGES):
+            page = await self._repo.records_page(handle.scope, after, RECORD_WRITE_BATCH)
+            found += [r for r in page if r.reason is Reason.SCOPE_ANCESTOR]
+            if len(page) < RECORD_WRITE_BATCH:
+                return found, "", True
+            after = page[-1].item_id
+        return found, after or "", False
 
     async def _observe_closed_children(self, handle: DriveHandle, ctx: PlanContext, changes: Sequence[DriveChange],
                                        cache: Dict[str, Optional[DriveIndexRecord]],
@@ -2095,6 +2604,7 @@ class DriveIndexingService:
             budget.mirror_reserve = MIRROR_RESERVE_S
         if state.epoch_phase is EpochPhase.SWEEPING:
             state = await self._sweep(handle, state, now, budget, summary)
+        state = await self._scope_step(handle, state, now, budget, summary)
         if _transcribing():
             # §27.3: poll, collect and finalize first, with no share (a finalize takes a file slot, G32); then the
             # shares the content classes and enrichment leave to extraction while it has work (G16)
@@ -2102,6 +2612,8 @@ class DriveIndexingService:
             if await self._extraction_ready(handle, models):
                 budget.transcribe_share = TRANSCRIBE_SHARE
         stopped_class, worked = await self._due_loop(handle, state, now, budget, summary, models)
+        state = await self._settle_walk(handle, state, summary, stopped_class)
+        state = await self._settle_removing(handle, state, now)
         if _transcribing():
             # after the enrichment phase (inside the due loop) whatever class it stopped at, before the upgrade pass
             await self._transcript_extract(handle, budget, summary, models)
@@ -2461,11 +2973,13 @@ class DriveIndexingService:
             more_beyond = len(same) == _DUE_PAGE   # the page holds only this class: more of it may follow
             done = await self._work_class(handle, state, same, now, budget, summary, models, more_beyond)
             worked |= done.progressed
+            if self._scope_moved():
+                return cls, worked   # W11: the scope was saved mid-tick; the next tick walks it, no paid work starts
             if cls >= Priority.MAINTENANCE:
                 budget.maintenance_s += self._monotonic() - started
             if not done.progressed:
                 if cls == Priority.CASCADE and done.waits_for_item_calls:
-                    skipped.add(cls)   # E87: the page only waits for item calls; the next class goes on
+                    skipped.add(cls)   # E87: the page only waits for item calls or a closed removal guard; the next goes on
                     _inc(summary, "waiting_item_calls", len(same))
                     continue
                 if cls <= Priority.FIRST_SEEN:
@@ -2483,6 +2997,7 @@ class DriveIndexingService:
         next tick's ancestry, are counted apart from any other stop, so the due loop can tell a page that only waits for
         the next tick (MULTI_DRIVE_RFC E87)."""
         ctx = self._ctx(handle, state, now)
+        view = _TICK_SCOPE.get()
         cards: List[DriveIndexRecord] = []
         images: List[DriveIndexRecord] = []
         progressed = False
@@ -2500,12 +3015,21 @@ class DriveIndexingService:
                 continue
             rec = rec_or_none
             # its content may start now: due for other work (a card, a re-embed), it still keeps its quiet period
+            if self._scope_moved():
+                break   # W11: the scope was saved mid-tick; nothing more is taken up, the next tick walks it
             content_now = content_due(rec, now) and quiet_over(rec, now)
             if content_now and content_class and runs and not budget.content_allowed():
                 break   # the content classes' share is spent (§25.4.5): the rest waits for the next tick
             taken += 1
+            if view is not None and rec.item_id in view.waited:
+                item_waits += 1   # a step of it waited already: left for the next tick
+                continue
             if rec.state is RecordState.DELETING:
-                progressed |= await self._cascade_step(handle, rec, now, budget, summary, page_ids)
+                moved = await self._cascade_step(handle, state, rec, ctx, now, budget, summary, page_ids)
+                if moved is None and view is not None:
+                    view.waited.add(rec.item_id)
+                item_waits += moved is None   # a closed removal guard or a missing item call: next tick (W6)
+                progressed |= bool(moved)
             elif rec.probe_pending or rec.state is RecordState.UNRESOLVED:
                 moved = (await self._probe_step(handle, rec, ctx, budget, summary) if rec.probe_pending
                          else await self._resolve_step(handle, rec, state, ctx, budget, summary))
@@ -2515,10 +3039,18 @@ class DriveIndexingService:
                 progressed |= bool(moved)
             elif rec.rescope_pending:
                 progressed |= await self._rescope_step(handle, rec, ctx, budget, summary)
+            elif rec.trim_pending:
+                moved = await self._trim_step(handle, rec, ctx, budget, summary)
+                if moved is None and view is not None:
+                    view.waited.add(rec.item_id)
+                item_waits += moved is None
+                progressed |= bool(moved)
             elif access_recheck_due(rec, now):
                 progressed |= await self._recheck_step(handle, rec, ctx, budget, summary)
             elif rec.reobserve_pending and not inaccessible(rec):
-                progressed |= await self._reobserve_step(handle, rec, ctx, budget, summary)
+                moved = await self._reobserve_step(handle, rec, ctx, budget, summary)
+                item_waits += moved is None   # the walk's share of the tick is spent: the page waits (W3)
+                progressed |= bool(moved)
             elif rec.readme_pending and not inaccessible(rec):
                 progressed |= await self._readme_step(handle, rec, ctx, budget, summary)
             elif rec.has_card and not card_eligible(rec):
@@ -2547,6 +3079,8 @@ class DriveIndexingService:
             elif not content_now:
                 await self._commit(handle, [schedule(rec, now, first_seen=False)], set())
                 progressed = True
+        if self._scope_moved():
+            return _ClassPass(progressed)   # no triage batch and no card embedding after a scope change (W11)
         if images:
             # a partial last batch waits for the next page only when this pass progresses anyway: no starvation
             others = progressed or bool(cards) or len(images) >= TRIAGE_BATCH
@@ -2557,30 +3091,90 @@ class DriveIndexingService:
             progressed = True
         return _ClassPass(progressed, waits_for_item_calls=not progressed and taken > 0 and item_waits == taken)
 
-    async def _cascade_step(self, handle: DriveHandle, folder: DriveIndexRecord, now: datetime, budget: _Budget,
-                            summary: Dict[str, int], page_ids: Set[str]) -> bool:
+    async def _cascade_step(self, handle: DriveHandle, state: DriveSyncState, folder: DriveIndexRecord,
+                            ctx: PlanContext, now: datetime, budget: _Budget, summary: Dict[str, int],
+                            page_ids: Set[str]) -> Optional[bool]:
         """Folder delete, post-order: files go, child folders become deleting, the folder goes last (§7.6).
 
         `page_ids`: the due page being worked. A folder whose children are all deleting folders waits for them;
         when none of them is in this page it steps aside behind them, or a page full of such folders would keep
-        their children from ever being worked."""
+        their children from ever being worked.
+
+        A folder that left the scope (`cascade_unstored`, DRIVE_SCOPE_WALK_RFC §5.6) is judged again before anything is
+        removed: in scope again it is revived and listed, a path folder becomes a skeleton, only a False verdict cascades,
+        and never over a child the scope keeps (its roots, the paths to them, the mirror's folders). A DELETING folder with
+        no such mark (a cascade the earlier code started, or a folder deleted on the drive) takes the same check when the
+        scope is filtered: one item read tells a live folder from a deleted one. None: it waits for the next tick (the
+        removal guard is closed, a verdict or the read has no item call left, or the restart has not run)."""
         if budget.cascade_ops <= 0:
             return False
-        kids = await self._repo.children(handle.scope, folder.item_id, None, min(budget.cascade_ops, RECORD_WRITE_BATCH))
-        if not kids:
-            await self._commit(handle, [], {folder.item_id}, gone=self._mirror_notices([folder], GONE))
+        view = _TICK_SCOPE.get()
+        unstored = folder.cascade_unstored
+        keep: FrozenSet[str] = frozenset()
+        limit = min(budget.cascade_ops, RECORD_WRITE_BATCH)
+        if view is not None and view.filtered:
+            if not await self._removal_open(handle, view):
+                return None
+            decided = await self._scope_verdict(handle, view, ctx, change_from_record(folder), {}, {}, budget)
+            if decided is None:
+                return None
+            keep = self._kept_ids(view, ctx)
+            if not unstored and not budget.item_call_allowed():
+                # the check below needs a provider read when the folder is in scope or holds a kept child: wait before
+                # reading the (many) children; the kept records are few and tell it
+                held = await self._repo.get_records(handle.scope, sorted(keep))
+                if decided is True or decided == ANCESTOR or any(
+                        r is not None and r.parent_id == folder.item_id for r in held.values()):
+                    return None
+            kids = await self._repo.children(handle.scope, folder.item_id, None, limit + len(keep))
+            if not unstored and (decided is True or decided == ANCESTOR or any(k.item_id in keep for k in kids)):
+                if not budget.item_call_allowed():
+                    return None
+                budget.item_calls -= 1
+                try:
+                    read = await self._drive.get_change(handle, folder.item_id)
+                except DriveItemNotFoundError:
+                    read = None
+                except _PER_ITEM_ERRORS as exc:
+                    logger.warning(f"[DriveIndex] folder read failed for {handle.user_id[:8]}: {exc}")
+                    return None
+                if read is not None and not read.deleted:   # live: it left the scope, it was not deleted on the drive
+                    unstored = True
+                    if decided is False:
+                        folder = replace(folder, cascade_unstored=True)
+                        await self._commit(handle, [folder], set())
+            if unstored and decided is True:
+                await self._replan_listed(handle, folder, ctx)
+                return True
+            if unstored and decided == ANCESTOR:
+                skeleton = await self._as_skeleton(handle, folder, ctx, frozenset({folder.item_id}))
+                if skeleton is None:
+                    return None
+                await self._commit(handle, [skeleton], set())
+                return True
+        else:
+            if unstored and view is not None and view.scope_key is not None and state.applied_scope != view.scope_key:
+                return None   # the restart that applies the scope has not run: it will revive what is in scope
+            kids = await self._repo.children(handle.scope, folder.item_id, None, limit)
+        why = UNSTORED if unstored else GONE
+        movable = [k for k in kids if k.item_id not in keep][:limit]
+        if not movable:   # no children, or only children the scope keeps: the folder goes alone
+            if view is not None and folder.item_id in view.scope.folder_ids:
+                view.ancestry_dirty = True   # a root left the index: the paths to it are derived again (§5.9)
+            await self._commit(handle, [], {folder.item_id}, gone=self._mirror_notices([folder], why))
             budget.cascade_ops -= 1
             summary["deleted"] = summary.get("deleted", 0) + 1
             return True
-        files = {k.item_id for k in kids if not k.is_folder}
-        dying = [_dying(k, now) for k in kids if k.is_folder and k.state is not RecordState.DELETING]
+        files = {k.item_id for k in movable if not k.is_folder}
+        dying = [replace(_dying(k, now), cascade_unstored=True) if unstored else _dying(k, now)
+                 for k in movable if k.is_folder and k.state is not RecordState.DELETING]
         if not files and not dying:   # its children are folders already deleting: their own steps do the work
-            if any(k.item_id in page_ids for k in kids):
+            if any(k.item_id in page_ids for k in movable):
                 return False   # worked in this page; the folder comes back in the next one
             await self._commit(handle, [replace(folder, due_at=now + _STEP_ASIDE)], set())
             return True
-        await self._commit(handle, dying, files, collects=_ever_read([k for k in kids if not k.is_folder]),
-                           gone=self._mirror_notices([k for k in kids if not k.is_folder], GONE))
+        await self._commit(handle, dying, files, collects=_ever_read([k for k in movable if not k.is_folder]),
+                           gone=self._mirror_notices([k for k in movable if not k.is_folder], why))
         budget.cascade_ops -= len(files) + len(dying)
         summary["deleted"] = summary.get("deleted", 0) + len(files)
         return True
@@ -2691,6 +3285,8 @@ class DriveIndexingService:
         collects: Set[str] = set()
         for rec in recs:
             plan = plan_observation(replace(change_from_record(rec), deleted=True), rec, None, None, ctx, None)
+            if plan.upsert is not None and plan.upsert.state is RecordState.DELETING:
+                plan = replace(plan, upsert=replace(plan.upsert, cascade_unstored=True))   # its cascade is re-judged
             self._fold(plan, {}, writes, deletes, collects)
         await self._commit(handle, list(writes.values()), deletes, collects=collects,
                            gone=self._mirror_notices(recs, UNSTORED))
@@ -2797,37 +3393,51 @@ class DriveIndexingService:
         return True
 
     async def _reobserve_step(self, handle: DriveHandle, folder: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
-                              summary: Dict[str, int]) -> bool:
-        """One page of a never-stored subtree (§5.2): bounded per item call, resumable by a page cursor."""
+                              summary: Dict[str, int]) -> Optional[bool]:
+        """One page of a never-stored subtree (§5.2): bounded per call, resumable by a page cursor. The pages share the
+        tick with the content classes: they list inside the walk's share of the start budget (DRIVE_SCOPE_WALK_RFC W3) and
+        use no item call. None: the share is spent, the folder waits for the next tick.
+
+        A listing that keeps failing is blocked, not dropped (W5): the folder stays pending, due again after RETRY_CAP,
+        so the subtree is never silently left out of the index."""
         if folder.scope in (Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE):
             await self._commit(handle, [_relisted(folder, None, ctx.now)], set())   # nothing of it is stored
             return True
-        if not budget.item_call_allowed():
-            return False
-        budget.item_calls -= 1
+        if not budget.walk_allowed():
+            return None
+        started = self._monotonic()
         try:
-            page = await self._drive.list_children_changes(handle, folder.item_id, limit=RELIST_PAGE,
+            page = await self._drive.list_children_changes(handle, folder.item_id, limit=WALK_PAGE,
                                                            cursor=folder.reobserve_cursor)
         except DriveItemNotFoundError:
             # §26.2: delta decides existence; the bot cannot list it. The re-listing waits for access (not due while
             # marked) and restarts from its first page
+            budget.walk_s += self._monotonic() - started
             logger.info(f"[DriveIndex] folder {folder.item_id} of {handle.user_id[:8]} cannot be listed; marked")
             await self._commit(handle, [marked_inaccessible(folder, ctx.now)], set())
             _inc(summary, "inaccessible_folders")
             await self._mark_subfolders(handle, folder, ctx.now)
             return True
         except _PER_ITEM_ERRORS as exc:
+            budget.walk_s += self._monotonic() - started
             if folder.attempts + 1 >= MAX_ATTEMPTS:
-                logger.warning(f"[DriveIndex] re-listing dropped for {handle.user_id[:8]} after {MAX_ATTEMPTS} attempts: {exc}")
-                await self._commit(handle, [_relisted(folder, None, ctx.now)], set())
+                logger.warning(f"[DriveIndex] re-listing of folder {folder.item_id} blocked for {handle.user_id[:8]} "
+                               f"after {MAX_ATTEMPTS} attempts: {exc}; retrying in {RETRY_CAP}")
+                _inc(summary, "walk_blocked_new", 1 if folder.attempts < MAX_ATTEMPTS else 0)
+                await self._commit(handle, [replace(folder, attempts=MAX_ATTEMPTS, due_at=ctx.now + RETRY_CAP,
+                                                    priority=int(Priority.RETRY))], set())
             else:
                 logger.warning(f"[DriveIndex] re-listing failed for {handle.user_id[:8]}: {exc}; backing off")
                 await self._commit(handle, [with_retry(folder, ctx.now)], set())
             return True
+        _inc(summary, "walk_pages")
+        _inc(summary, "walk_unblocked", 1 if folder.attempts >= MAX_ATTEMPTS else 0)
         await self._apply(handle, ctx, list(page.changes), budget, summary, relisting=True)   # the children first ...
         fresh = (await self._repo.get_records(handle.scope, [folder.item_id])).get(folder.item_id)
         if fresh is not None:
             await self._commit(handle, [_relisted(fresh, page.next_cursor, ctx.now)], set())   # ... marker last
+        _inc(summary, "walk_folders_listed", 1 if page.next_cursor is None else 0)
+        budget.walk_s += self._monotonic() - started
         return True
 
     async def _parent_of(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext) -> Optional[DriveIndexRecord]:
@@ -3058,7 +3668,10 @@ class DriveIndexingService:
     async def _index_step(self, handle: DriveHandle, rec: DriveIndexRecord, ctx: PlanContext, budget: _Budget,
                           summary: Dict[str, int], models: _Models) -> bool:
         """One due index run, or its deferral. False: it cannot start in this tick (the file budget, the start
-        budget, or the deadline rule of §7.1/§24.3); the record stays due for the next tick."""
+        budget, or the deadline rule of §7.1/§24.3, or a scope saved mid-tick, W11); the record stays due for the next
+        tick."""
+        if self._scope_moved():
+            return False
         now = ctx.now
         if attempt_crashed(rec, now):
             logger.warning(f"[DriveIndex] index run of item {rec.item_id} for {handle.user_id[:8]} never ended; "
@@ -3468,7 +4081,7 @@ class DriveIndexingService:
         still due; a chunk this space refuses (HTTP 400) is terminal for the space (chunks_refused, R3 F2-3); chunks that
         cannot be read back as stored, an embedding timeout or any other error send the file to a full index run,
         which counts it."""
-        if not budget.reembed_allowed():
+        if not budget.reembed_allowed() or self._scope_moved():
             return False
         readable = rec.indexed_generation
         if readable is None:
@@ -3666,6 +4279,8 @@ class DriveIndexingService:
         """Due images in batches of TRIAGE_BATCH thumbnails per call. `hold_partial`: more of this class follows
         and the pass already progressed, so a partial last batch waits for the next page and N images cost
         ⌈N / TRIAGE_BATCH⌉ calls (§16)."""
+        if self._scope_moved():
+            return False   # W11: no paid work after a scope change mid-tick
         now = ctx.now
         if not models.available(now):
             await self._commit(handle, [deferred(r, _backoff_until(models), now) for r in recs], set())
@@ -4055,7 +4670,7 @@ class DriveIndexingService:
         (the lease, the gate, a systemic store or embedding error) cancels its siblings at once (review rv_sv2_p5
         MINOR 5); what they spent is recorded (`_spend_usd` is shielded). Returns whether any record was enriched or
         re-planned."""
-        if not self._enrich_wired():
+        if not self._enrich_wired() or self._scope_moved():
             return False
         started = self._monotonic()
         total = TICK_START_BUDGET.total_seconds()
@@ -4109,7 +4724,7 @@ class DriveIndexingService:
         """A first-seen file whose profile is ready when its content commits is profiled in the same run, charged to
         the enrichment share, so its card is embedded once (§25.4.5). The profile only (review rv_sv2_p5 M3): its
         passages go through the enrichment phase, in parallel with other files and within its start window."""
-        if not self._enrich_wired():
+        if not self._enrich_wired() or self._scope_moved():
             return
         rec = (await self._repo.get_records(handle.scope, [item_id])).get(item_id)
         if rec is None or rec.profile_state != _READY or not self._jobs_now(rec, models, now)[0]:
@@ -4711,7 +5326,7 @@ class DriveIndexingService:
         """§27.3, G16: the extraction step after the due loop, in its own start window (`extraction_stop`). The stage
         re-plans due wake-ups at its start itself (Task 12), so the tick has no wake handling of its own."""
         transcription = _TICK_TRANSCRIPTION.get()
-        if self._transcripts is None or transcription is None or transcription.host is None:
+        if self._transcripts is None or transcription is None or transcription.host is None or self._scope_moved():
             return
         stop_at = budget.extraction_stop()
         if stop_at is None:
@@ -5064,12 +5679,23 @@ class DriveIndexingService:
 
     async def _has_more(self, handle: DriveHandle, state: DriveSyncState, now: datetime, *,
                         upgrade_wrote: bool = False, models: Optional[_Models] = None,
-                        idle: Optional[Set[str]] = None) -> bool:
+                        idle: Optional[Set[str]] = None, summary: Optional[Mapping[str, int]] = None) -> bool:
         notes = _TICK_NOTES.get()
         if notes is not None and notes.more:
             return True   # the notes step left a full page (DRIVE_FILE_NOTES_RFC §5.1 b step 4)
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
             return True
+        if self._scope_moved():
+            return True   # the next tick walks the new scope
+        # a scope change's removal work asks for a continuation only while it moved this tick; work that waits on a
+        # closed guard is left to the regular fan-out tick (a feed that changes a folder every tick would chain ticks)
+        view = _TICK_SCOPE.get()
+        progress = summary is not None and any(summary.get(k) for k in _SCOPE_PROGRESS)
+        if progress and state.root_item_id and state.root_item_id in state.removing_roots:
+            return True   # the drive's top-level removal goes on
+        if (state.ancestry_dirty and view is not None and view.filtered
+                and (view.ancestry_dirty or progress)):
+            return True   # the paths are derived again
         if models is not None and await self._enrichment_waiting(handle, now, models, idle):
             return True
         if self._upgrade_due(state) and (state.upgrade_cursor is not None or upgrade_wrote):
@@ -5079,7 +5705,11 @@ class DriveIndexingService:
         if models is not None and await self._transcripts_waiting(handle, models):
             return True
         # backed-off work waits for its due_at; a folder that stepped aside is due right after this tick
-        return bool(await self._repo.due_records(handle.scope, now + _STEP_ASIDE, 1))
+        waiting = view is not None and view.guard_waited and not progress
+        skip = frozenset({int(Priority.CASCADE)}) if waiting else frozenset()
+        waited = view.waited if view is not None and not progress else set()   # progress: the waiting may be over
+        due = await self._repo.due_records(handle.scope, now + _STEP_ASIDE, len(waited) + 1, skip_classes=skip)
+        return any(r.item_id not in waited for r in due)   # records left for the next tick do not ask for one
 
     async def _save_state(self, state: DriveSyncState) -> None:
         _fence()
@@ -5147,16 +5777,29 @@ class DriveIndexingService:
         logger.info(f"[DriveIndex] lease busy for {handle.user_id[:8]}; "
                     f"{'retrying in ' + str(NUDGE_RETRY_DELAY_S) + 's' if name else 'a retry is already queued'}")
 
-    async def _recheck_gate(self, handle: DriveHandle) -> None:
+    async def _recheck_gate(self, handle: DriveHandle, *, force: bool = False) -> None:
         """Before a write batch (§7.1): an opt-out (indexing off, or the connection gone) during the tick drops the
-        in-flight result."""
+        in-flight result. The same read shows a scope saved during the tick (DRIVE_SCOPE_WALK_RFC W11): no more paid work
+        starts this tick, and a guarded removal waits. `force`: read now, whatever the rate limit (a removal's guard)."""
         last = self._gate_checked.get(handle.connection_id)
-        if last is not None and self._monotonic() - last < _GATE_RECHECK_S:
+        if not force and last is not None and self._monotonic() - last < _GATE_RECHECK_S:
             return
         connection = await self._connections.get(handle.user_id, handle.connection_id)
         if connection is None or not await self._enabled(connection):
             raise _OptedOut()
         self._gate_checked[handle.connection_id] = self._monotonic()
+        view = _TICK_SCOPE.get()
+        if (view is not None and view.scope_key is not None and connection.scope_key != view.scope_key
+                and not view.scope_moved):
+            view.scope_moved = True
+            logger.info(f"[DriveIndex] scope of connection {handle.connection_id[:8]} changed mid-tick; "
+                        f"no more paid work this tick")
+
+    @staticmethod
+    def _scope_moved() -> bool:
+        """The connection's scope was saved after this tick read it (W11)."""
+        view = _TICK_SCOPE.get()
+        return view is not None and view.scope_moved
 
     async def _enabled(self, connection: DriveConnection) -> bool:
         """The connection's indexing switch, read uncached (§7.1, MULTI_DRIVE_RFC §8): on and the connection not

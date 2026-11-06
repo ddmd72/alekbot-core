@@ -51,6 +51,8 @@ _EXPECTED = {
     "find_nearest_chunks_in", "find_nearest_hints_in",
     # paid transcripts outlive a disconnect (MULTI_DRIVE_RFC §10 I8, E23)
     "retain_transcript", "transcript_retained",
+    # the scope walk (DRIVE_SCOPE_WALK_RFC §5.2, §5.9): is a walk still listing; the skeletons to re-derive
+    "has_pending_listing", "scope_ancestor_records",
 }
 
 
