@@ -206,7 +206,7 @@ async def test_a_drive_folder_gives_the_folder_line_and_no_download(world):
 async def test_a_drive_file_over_the_cap_gives_the_size_line_before_download(world):
     ref = _plant(world, "scan_0012.pdf", b"x" * (MAX_FILE_BYTES + 1), PDF)
     opened = await world.service.open(ref, "ann", "ann", deadline_at=DEADLINE)
-    assert opened.note.startswith("[System:") and "files above 5.0MB" in opened.note
+    assert opened.note.startswith("[Tool note:") and "files above 5.0MB" in opened.note
     assert world.drive.byte_downloads == 0 and world.documents.requests == []
 
 
@@ -221,14 +221,14 @@ async def test_a_drive_pdf_over_the_declared_pdf_cap_is_refused_before_download(
     ref = _plant(world, "scan_0012.pdf", b"x" * (20 * MB + 1), PDF)
     consumer = (NativeFormat(PDF, 20 * MB, 100),)
     opened = await world.service.open(ref, "ann", "ann", consumer=consumer, deadline_at=DEADLINE)
-    assert "[System:" in opened.note and "files above 20.0MB" in opened.note
+    assert "[Tool note:" in opened.note and "files above 20.0MB" in opened.note
     assert world.drive.byte_downloads == 0
 
 
 async def test_a_drive_text_over_the_export_cap_gives_the_export_note(world):
     ref = _plant(world, "log.txt", b"y" * (MAX_TEXT_EXPORT_BYTES + 1), "text/plain")
     opened = await world.service.open(ref, "ann", "ann", deadline_at=DEADLINE)
-    assert opened.note.startswith("[System:") and "files above 10.0MB" in opened.note
+    assert opened.note.startswith("[Tool note:") and "files above 10.0MB" in opened.note
     assert world.documents.requests == []
 
 

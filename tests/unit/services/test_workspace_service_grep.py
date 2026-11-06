@@ -78,7 +78,7 @@ class TestScope:
         live = store.versions_of(USER, "references/a.md")[-1]
         await store.delete(USER, live.path, live.generation, WorkspaceDeleteMeta(deleted_by="chat"))
         r = await _grep(svc, pattern="x", path="references/a.md")
-        assert r.failed and r.text == "SYSTEM: references/a.md does not exist; view it to see its history."
+        assert r.failed and r.text == "Tool note: references/a.md does not exist; view it to see its history."
 
     async def test_binary_single_file_is_refused(self):
         svc, store = _seeded()
@@ -141,7 +141,7 @@ class TestFailures:
     async def test_empty_pattern(self, pattern):
         svc, store = _seeded()
         r = await _grep(svc, pattern=pattern, path="projects/")
-        assert r.failed and r.text == "SYSTEM: grep needs a pattern: the text to search for."
+        assert r.failed and r.text == "Tool note: grep needs a pattern: the text to search for."
         assert not store.calls
 
     async def test_oversized_pattern(self):
@@ -152,7 +152,7 @@ class TestFailures:
     async def test_invalid_regex_names_the_engine_message(self):
         svc, store = _seeded()
         r = await _grep(svc, pattern="(unclosed", path="", regex=True)
-        assert r.failed and r.text.startswith("SYSTEM: invalid regex (") and "RE2 syntax" in r.text
+        assert r.failed and r.text.startswith("Tool note: invalid regex (") and "RE2 syntax" in r.text
         assert not store.calls
 
     async def test_re2_unsupported_pattern(self):
@@ -166,7 +166,7 @@ class TestFailures:
             store.seed(USER, f"projects/f{i}.md", "deadline", size=GREP_MAX_SCAN_BYTES // 2)
         r = await _grep(svc, pattern="deadline", path="")
         assert r.failed
-        assert r.text == "SYSTEM: 30.0 MB of text in scope, over the 20 MB search limit; narrow path."
+        assert r.text == "Tool note: 30.0 MB of text in scope, over the 20 MB search limit; narrow path."
         assert not [c for c in store.calls if c[0] == "read"]
         assert [c for c in store.calls] == [("list", "")]
 

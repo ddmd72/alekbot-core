@@ -49,13 +49,13 @@ class TestCopyIntoBinaryFiles:
     async def test_a_binary_file_is_refused_outside_binary_files(self):
         svc, store = _svc(_conversion(PDF))
         r = await svc.run(_call(), "copy", {"source": "lease.pdf", "path": "projects/lease.pdf"})
-        assert r.text == "SYSTEM: invalid workspace path 'projects/lease.pdf': binary files go only under binary_files/."
+        assert r.text == "Tool note: invalid workspace path 'projects/lease.pdf': binary files go only under binary_files/."
         assert store.versions_of(USER, "projects/lease.pdf") == []
 
     async def test_a_text_file_is_refused_in_binary_files_with_the_fix(self):
         svc, store = _svc(_conversion(b"plain notes"))
         r = await svc.run(_call(), "copy", {"source": "a.md", "path": "binary_files/a.md"})
-        assert r.text == ("SYSTEM: invalid workspace path 'binary_files/a.md': binary_files/ holds binary files only; "
+        assert r.text == ("Tool note: invalid workspace path 'binary_files/a.md': binary_files/ holds binary files only; "
                           "copy a text file into projects/, references/ or scratch/.")
         assert store.versions_of(USER, "binary_files/a.md") == []
 
@@ -89,7 +89,7 @@ class TestRulesUnderBinaryFiles:
         svc, store = _svc()
         store.seed(USER, "binary_files/a.pdf", PDF)
         r = await svc.run(_call(), "create", {"path": "binary_files/a.md", "content": "x"})
-        assert r.text == ("SYSTEM: invalid workspace path 'binary_files/a.md': "
+        assert r.text == ("Tool note: invalid workspace path 'binary_files/a.md': "
                           "binary_files/ holds binary files only; use copy.")
         r = await svc.run(_call(), "str_replace", {"path": "binary_files/a.md", "old_str": "x", "new_str": "y"})
         assert r.failed and "binary_files/ holds binary files only" in r.text
@@ -105,14 +105,14 @@ class TestRulesUnderBinaryFiles:
         svc, store = _svc()
         store.seed(USER, "binary_files/a.pdf", PDF)
         r = await svc.run(_call(), "rename", {"path": "binary_files/a.pdf", "new_path": "projects/a.pdf"})
-        assert r.text == ("SYSTEM: invalid workspace path 'projects/a.pdf': "
+        assert r.text == ("Tool note: invalid workspace path 'projects/a.pdf': "
                           "a file in binary_files/ stays in binary_files/.")
 
     async def test_nothing_moves_into_binary_files(self):
         svc, store = _svc()
         store.seed(USER, "scratch/a.md", "text")
         r = await svc.run(_call(), "rename", {"path": "scratch/a.md", "new_path": "binary_files/a.md"})
-        assert r.text == ("SYSTEM: invalid workspace path 'binary_files/a.md': "
+        assert r.text == ("Tool note: invalid workspace path 'binary_files/a.md': "
                           "a file may not move into binary_files/ (it holds binary files only).")
 
     async def test_the_text_cap_still_applies_to_text_copies(self):
@@ -150,13 +150,13 @@ class TestCopyFromDrive:
     async def test_a_drive_file_over_the_workspace_cap_is_refused(self):
         svc, store = _svc(_conversion(b"\xff" * (MAX_FILE_BYTES + 1)))
         r = await svc.run(_call(), "copy", {"source": self.REF, "path": "binary_files/big.pdf"})
-        assert r.text == "SYSTEM: binary_files/big.pdf: file over 10 MB."
+        assert r.text == "Tool note: binary_files/big.pdf: file over 10 MB."
         assert store.versions_of(USER, "binary_files/big.pdf") == []
 
     async def test_a_refused_ref_shows_the_drive_line(self):
         svc, _ = _svc(_conversion(DriveRefRefused("That drive link is stale; search again")))
         r = await svc.run(_call(), "copy", {"source": self.REF, "path": "binary_files/scan.pdf"})
-        assert r.text == "SYSTEM: That drive link is stale; search again."
+        assert r.text == "Tool note: That drive link is stale; search again."
 
     async def test_a_drive_that_is_not_connected(self):
         svc, _ = _svc(_conversion(DriveNotConnectedError()))
@@ -179,13 +179,13 @@ class TestCopyFromDrive:
     async def test_a_missing_drive_file(self, error):
         svc, _ = _svc(_conversion(error))
         r = await svc.run(_call(), "copy", {"source": self.REF, "path": "binary_files/scan.pdf"})
-        assert r.text == ("SYSTEM: 'drive:01ABC' not found on the user's drive — pass the file ref exactly as the "
+        assert r.text == ("Tool note: 'drive:01ABC' not found on the user's drive — pass the file ref exactly as the "
                           "drive tool returned it.")
 
     async def test_a_foreign_drive_file(self):
         svc, _ = _svc(_conversion(PermissionError("x")))
         r = await svc.run(_call(), "copy", {"source": self.REF, "path": "binary_files/scan.pdf"})
-        assert r.text == "SYSTEM: 'drive:01ABC' does not belong to this user."
+        assert r.text == "Tool note: 'drive:01ABC' does not belong to this user."
 
     async def test_skill_sources_stay_refused(self):
         conversion = _conversion(b"x")

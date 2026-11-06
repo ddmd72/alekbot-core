@@ -153,7 +153,7 @@ class TestRefusalsAndLogs:
         handle = _handler(store)
         with caplog.at_level(logging.INFO):
             r = await handle(_call(command="teleport", path=P))
-        assert r.failed and r.result_str.startswith("SYSTEM: unknown workspace command 'teleport'; use one of: view,")
+        assert r.failed and r.result_str.startswith("Tool note: unknown workspace command 'teleport'; use one of: view,")
         assert "result=refused:command" in caplog.text
         assert not (await handle(_call(command="view", path=P))).failed
 
@@ -164,7 +164,7 @@ class TestRefusalsAndLogs:
             r = await handle(ToolCall(name="workspace",
                                       args={"_parse_error": "truncated_json", "_raw_prefix": '{"command": "create'}))
         assert r.failed and r.result_str == (
-            "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create the file with the "
+            "Tool note: your arguments were cut off at the output limit; nothing was written. Create the file with the "
             "first part, then add the rest with insert at insert_line -1.")
         assert store.calls == [] and "result=refused:truncated" in caplog.text
         assert not (await handle(_call(command="view", path=P))).failed  # lock released

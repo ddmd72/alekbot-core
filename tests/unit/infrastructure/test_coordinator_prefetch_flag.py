@@ -53,7 +53,7 @@ async def test_drive_not_connected_is_a_warning_not_an_error(caplog):
     params = {"file_ref": "drive:abc"}
     with caplog.at_level(logging.DEBUG):
         await _prefetch(coord, "files", params)
-    assert "file_content" not in params and params["file_note"].startswith("[System:")
+    assert "file_content" not in params and params["file_note"].startswith("[Tool note:")
     records = [r for r in caplog.records if "drive:abc" in r.getMessage()]
     assert records and all(r.levelno == logging.WARNING for r in records)
 
@@ -65,7 +65,7 @@ async def test_other_resolver_errors_still_logged_at_error(caplog):
     params = {"file_ref": "a.txt"}
     with caplog.at_level(logging.DEBUG):
         await _prefetch(coord, "files", params)
-    assert "file_content" not in params and params["file_note"].startswith("[System:")
+    assert "file_content" not in params and params["file_note"].startswith("[Tool note:")
     records = [r for r in caplog.records if "a.txt" in r.getMessage()]
     assert records and all(r.levelno == logging.ERROR for r in records)
 

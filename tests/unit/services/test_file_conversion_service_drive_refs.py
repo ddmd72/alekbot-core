@@ -90,7 +90,7 @@ class TestDriveRefs:
     async def test_text_over_cap_refused_before_download(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
         _serve(drive, b"x" * (MAX_FILE_BYTES + 1))
-        assert (await _open(svc, "drive:a1:i1")).note.startswith("[System:")
+        assert (await _open(svc, "drive:a1:i1")).note.startswith("[Tool note:")
         drive.download.assert_not_called()
 
     async def test_folder_is_not_readable(self, svc, drive):
@@ -131,7 +131,7 @@ class TestDriveRefs:
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
         _serve(drive, b"x" * (MAX_FILE_BYTES + 1))
         out = (await _open(svc, "drive:a1:i1")).note
-        assert out.startswith("[System:")
+        assert out.startswith("[Tool note:")
         for word in ("onedrive", "microsoft", "google"):
             assert word not in out.lower()
 

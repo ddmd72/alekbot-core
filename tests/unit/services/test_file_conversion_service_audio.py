@@ -101,4 +101,4 @@ async def test_a_failing_transcriber_gives_the_conversion_alert_not_an_exception
 
     opened = await _open(_service(storage, Broken()))
 
-    assert opened.note.startswith("[System:") and "memo.m4a" in opened.note
+    assert opened.note.startswith("[Tool note:") and "memo.m4a" in opened.note

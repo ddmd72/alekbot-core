@@ -889,7 +889,7 @@ class TestDelegateQuickEdgeCases:
     async def test_no_intent_returns_error_string(self, engine, ctx):
         tc = ToolCall(name="delegate_to_specialist", args={"query": "test"})
         result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
-        assert "SYSTEM ERROR" in result.result_str
+        assert "Tool error" in result.result_str
 
     async def test_context_params_as_string_wrapped(self, engine, ctx):
         """str context_params is wrapped in {"reasoning": ...}."""
@@ -1092,7 +1092,7 @@ class TestDelegateQuickRetry:
         result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
-        assert "SYSTEM" in result.result_str
+        assert "Tool note" in result.result_str
 
 
 # =============================================================================

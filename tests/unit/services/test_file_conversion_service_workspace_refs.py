@@ -104,7 +104,7 @@ async def test_text_one_byte_over_the_limit_returns_a_view_note():
     store = InMemoryWorkspaceStore()
     store.seed(USER, "projects/a.md", _text_of(OPEN_FILE_MAX_TEXT_BYTES + 1))
     text = (await _open(_service(store), "workspace:projects/a.md")).note
-    assert text.startswith("[System: 'workspace:projects/a.md'")
+    assert text.startswith("[Tool note: 'workspace:projects/a.md'")
     assert "view" in text
     assert "projects/a.md" in text
     assert "offset" in text

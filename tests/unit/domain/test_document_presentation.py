@@ -81,7 +81,7 @@ def test_every_status_is_handled():
     for status in ReadStatus:
         if status in (ReadStatus.TEXT, ReadStatus.NATIVE):
             continue
-        assert note_for(_out(status), NAME, PDF).startswith("[System: ")
+        assert note_for(_out(status), NAME, PDF).startswith("[Tool note: ")
 
 
 # -- present_text ------------------------------------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def test_cut_note_then_shown_line_both_outside():
     outcome = _out(ReadStatus.TEXT, pages_read=3, pages_total=3, may_be_incomplete=True)
     out = present_text(body, store="chat", ref="r", label="scan_0012.pdf", nonce=NONCE, outcome=outcome)
     tail = out.split('</external_content nonce="n0nce123">\n', 1)[1].split("\n")
-    assert tail[0].startswith("[System: File 'scan_0012.pdf' was truncated")
+    assert tail[0].startswith("[Tool note: File 'scan_0012.pdf' was truncated")
     assert tail[1] == texts.shown_line("scan_0012.pdf", outcome)
 
 

@@ -158,7 +158,7 @@ async def test_stored_text_is_marked_and_cut_at_60000_with_the_note_outside(conv
     closing = re.search(r'</external_content nonce="[0-9a-f]{16}">', out.text)
     assert re.search(r'<external_content nonce="[0-9a-f]{16}" ref=', out.text) and closing
     assert "b" * 100 not in out.text and "a" * (MAX_CONVERTED_CHARS - 5) in out.text[:closing.start()]
-    assert "[System:" not in out.text[:closing.start()] and "[System:" in out.text[closing.end():]
+    assert "[Tool note:" not in out.text[:closing.start()] and "[Tool note:" in out.text[closing.end():]
 
 
 async def test_a_stored_note_is_a_failed_open_shown_as_it_is(conversion):
@@ -214,7 +214,7 @@ async def test_a_scans_reader_text_gets_the_shown_line_outside_the_wrapper(conve
     conversion.open.return_value = opened_body("scanned words", outcome)
     out = await _ops(conversion, SCAN).open(CTX, "ann", "drive:a1:s1", deadline_at=1.0)
     assert out.text.endswith(shown_line(out.items[0].path, outcome))
-    assert "</drive_document" in out.text.split("[System:")[0]
+    assert "</drive_document" in out.text.split("[Tool note:")[0]
 
 
 async def test_a_drive_pdf_the_service_returns_native_attaches_with_the_drive_reminder(conversion):

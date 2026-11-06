@@ -43,7 +43,7 @@ class TestViewFile:
         e = store.seed(USER, "binary_files/lease.pdf", b"%PDF-1.4")
         r = await svc.run(_call(), "view", {"path": "binary_files/lease.pdf"})
         assert r.failed
-        assert r.text == ("SYSTEM: binary_files/lease.pdf is binary; open it with open_file and file_ref "
+        assert r.text == ("Tool note: binary_files/lease.pdf is binary; open it with open_file and file_ref "
                           "workspace:binary_files/lease.pdf.")
         assert dict(r.generations) == {"binary_files/lease.pdf": e.generation}
         assert store.calls == [("list", "binary_files/lease.pdf")]  # metadata only, no download for a refusal
@@ -73,7 +73,7 @@ class TestViewVersion:
         svc, store = _svc()
         store.seed(USER, P, "v1")
         r = await svc.run(_call(), "view", {"path": P, "generation": "999"})
-        assert r.failed and r.text == f"SYSTEM: {P} has no version 999; history lists them."
+        assert r.failed and r.text == f"Tool note: {P} has no version 999; history lists them."
 
 
 class TestSameFire:
@@ -184,13 +184,13 @@ class TestLogAndFailures:
         store.fail_next["read"] = [RuntimeError("gcs down")]
         with caplog.at_level(logging.INFO):
             r = await svc.run(_call(), "view", {"path": P})
-        assert r.failed and r.text == "SYSTEM: the workspace is unavailable right now; nothing was changed."
+        assert r.failed and r.text == "Tool note: the workspace is unavailable right now; nothing was changed."
         assert any(rec.levelno == logging.ERROR and "result=error" in rec.getMessage() for rec in caplog.records)
 
     async def test_unknown_command(self):
         svc, _ = _svc()
         r = await svc.run(_call(), "teleport", {"path": P})
-        assert r.failed and r.text.startswith("SYSTEM: unknown command 'teleport'; use one of: view, create,")
+        assert r.failed and r.text.startswith("Tool note: unknown command 'teleport'; use one of: view, create,")
 
     async def test_refused_read_logs_at_info_with_the_reason(self, caplog):
         svc, _ = _svc()
