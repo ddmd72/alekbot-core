@@ -1,6 +1,6 @@
 # RFC: Prompt Token Snapshot — git mirror of the Firestore prompt layer
 
-**Status:** Design approved — implementation pending
+**Status:** Implemented (`prompts_snapshot/` mirror; pull and upload tools in `firestore_utils/snapshot_pull.py` and `snapshot_upload.py`)
 **Date:** 2026-05-30
 **Author:** Dmytro Deleur (brainstormed with Claude)
 **Related:** `docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md` (Bucket I — token-as-source-of-truth subsystem, surfaced by R9A.6)

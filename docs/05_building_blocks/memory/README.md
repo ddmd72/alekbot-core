@@ -349,7 +349,7 @@ refusal reads; `timeout` uses the owner's row). They differ from the consolidati
   revive gave, between 14 and 365 days (28, 56, … days). It is never replaced by a silent revive of an unrelated length and
   never "asked once and then forgotten". A fallback to `archive` is used only for noise (P2 revised; before it, also for a dated
   plan or a past `fallback_date`, which stored questions keep); a fallback to `history` writes the question's "unknown" text.
-- **A fact whose date passed becomes history (P2 revised, built, not deployed).** The review or an owner's answer sends
+- **A fact whose date passed becomes history (P2 revised, deployed).** The review or an owner's answer sends
   `as_history`: `updates {state: CURRENT, content: <the history text>, expiry: {kind: none}}`. It is a **version** in the same
   lineage (D8: `version + 1`, three vectors from the new text, `created_at` and `reported_date` kept, the dated original
   `superseded` by it in one transaction), at **`archival` priority** (out of the baseline cache, found by every search), with
@@ -855,7 +855,7 @@ They show text, domain, type and created date. Since S4 the page has three views
   only what the digest listed), newest closure first, each with its state and the actor of its last trail entry. Read-only: the Cabinet cannot bring a closed fact back. To bring one
   back, the owner tells the bot in chat that it is still true.
 - **Questions**: the open memory-review questions with answer buttons, the options of each question's kind (§5.6); since P2
-  revised (not deployed) also the group "Invoices with no payment confirmation" (Paid / Not paid, in bulk).
+  revised (deployed) also the group "Invoices with no payment confirmation" (Paid / Not paid, in bulk).
 The page holds fact ids, and a version write changes the id. A stale id still works for a delete (§5.2).
 **Pagination tie.** The browser pages by a cursor on `created_at`, ties broken by document id
 (`firestore_repo.py:266-314`). A version copies `created_at` from the document it replaces, so a fact that was versioned
@@ -1076,8 +1076,8 @@ that expire carry a different field, `purge_after` (§5.6).
 ### 5.6 The review pass, the question queue and the owner's answers (Facts S4)
 
 Decision record: `decisions/fact_review_and_owner_questions.md`. Spec: `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D6, D7 and "S4 as
-built", and "P2 revised" in §9 for what this section marks **P2** (owner, 2026-10-27; built, not deployed, and the janitor is
-not switched on before it ships). The owner's rule through all of it: **when unsure, keep the fact, and ask.** P2 adds a second:
+built", and "P2 revised" in §9 for what this section marks **P2** (owner, 2026-10-27; deployed, and the janitor was
+switched on after it shipped). The owner's rule through all of it: **when unsure, keep the fact, and ask.** P2 adds a second:
 **anything that really happened is a fact, and so is an intention**, so a fact whose date passed becomes history, never an
 archive; archive is kept for noise, an end the owner states, and the Cabinet.
 
@@ -1466,7 +1466,7 @@ consolidation run).
    Nothing is asked about it again until it falls due again.
 5. *Weekly:* what the review and the owner set aside in the week is listed in one digest message.
 
-**A plan whose date passed (P2 revised, built, not deployed)** ("the user will attend a concert on Dec 5", a `date` fact).
+**A plan whose date passed (P2 revised, deployed)** ("the user will attend a concert on Dec 5", a `date` fact).
 1. *Dec 6, 09:30:* the janitor (once switched on) stales it; the review runs the same morning.
 2. *The review decides from memory when it can:* a neighbour "sold the concert tickets" → history on evidence, "The user planned
    to attend a concert on Dec 5, 2026, and did not go."; a fact whose own text already reports the outcome (an invoice received,

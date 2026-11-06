@@ -1,6 +1,6 @@
 # RFC: Long-running turns — a chat turn may run long, and says so
 
-**Status:** Implemented (branch `feat/long-running-turns`), see `decisions/long_running_turns.md`. §7's deadline + wrap-up for `ask_alek`/`tell_alek`/background notifications is deferred, not in this branch.
+**Status:** Implemented, see `decisions/long_running_turns.md`. The rest of §7 (deadline + wrap-up for `ask_alek`, `tell_alek`, background notifications and bound/companion channels) is frozen by the owner (2026-11-06).
 **Date:** 2026-10-05 (first draft 2026-10-04)
 **Owner decisions:**
 - **Universal, not skill-specific.** Agent Skills exposed the problem; it belongs to every turn that does many tool calls or one long reasoning call.
@@ -127,7 +127,7 @@ With one deadline, Smart times out only after the mark, where §5.2 and §5.7 ow
 - **Notice window** ~90 s — from interactive turn durations.
 - **Budget** ~25 min / ~40 loop turns; **wrap-up reserve** sized from observed wrap-up calls.
 - **Queue concurrency:** `maxConcurrentDispatches 5` — each long turn holds a slot for its whole run.
-- **Resource exhaustion** (OOM on the shared 1 GiB instance) is out of scope — graceful degradation under resource pressure is its own topic. This RFC's part is only §5.7: a turn killed with its instance is reported, never silently re-run.
+- **Resource exhaustion** (OOM on the shared instance) is out of scope — graceful degradation under resource pressure is its own topic. This RFC's part is only §5.7: a turn killed with its instance is reported, never silently re-run.
 
 ## 7. Per entry point
 

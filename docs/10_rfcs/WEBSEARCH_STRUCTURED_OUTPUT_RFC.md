@@ -1,6 +1,6 @@
 # WebSearch Structured Output + Grounding (Gemini 3) RFC
 
-**Status:** Draft (POC Completed)  
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.  
 **Date:** 2026-02-04  
 **Owner:** AI Assistant  
 **Scope:** WebSearchAgent (non-legacy)

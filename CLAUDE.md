@@ -179,7 +179,7 @@ Things that break silently. The deploy-substitution and `config.get()` traps are
 
 ## Economics
 
-- 1 vCPU Cloud Run — async is mandatory.
+- 2 vCPU per Cloud Run instance (main service) — async is mandatory.
 - No binding budget cap (owner decision 2026-07-26): report cost when asked; the `daily_cost_limit` alert is advisory and
   never gates a request. Cost optimisation is complexity-driven tier selection within Smart.
 - **Prices change under you.** A provider can cut prices weeks after GA. `make check-pricing` audits `billing.py` against

@@ -361,7 +361,7 @@ not just `file_data` presence.
 
 - Bucket: `alek-media-{env}` (existing, shared with deep research / documents)
 - Prefix: `{user_id}/files/`
-- Lifecycle rule: delete objects matching `*/files/*` older than 90 days
+- Lifecycle rule: delete objects older than 30 days (the bucket's rule for everything but `email_review/`; see `docs/05_building_blocks/file_storage/README.md`)
 - Key format: `{user_id}/files/{filename}` (may include `(N)` dedup suffix)
 
 **Bucket structure convention:**

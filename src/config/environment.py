@@ -610,7 +610,7 @@ class EnvironmentConfig:
         """
         Transcripts of opened chat audio, doc id `<account_id>:<key>` (the key: content hash + transcriber model;
         EXTERNAL_FILES_RFC §4.4 P21). Fields `text`, `account_id`, `written_at`, `purge_after`; the collection's TTL
-        policy is on `purge_after` (90 days, a chat upload's life). Dev: development_audio_transcripts
+        policy is on `purge_after` (90 days; the chat upload itself is deleted by the bucket lifecycle after 30 days). Dev: development_audio_transcripts
         """
         return f"{self.firestore_collection_prefix}audio_transcripts"
 

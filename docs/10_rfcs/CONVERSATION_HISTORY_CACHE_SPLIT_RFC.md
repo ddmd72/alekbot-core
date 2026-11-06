@@ -1,6 +1,6 @@
 # RFC: Conversation History Cache Split (Pause-Based Static/Dynamic Split)
 
-**Status:** PLANNED
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.
 **Date:** 2026-03-30
 **Owner:** AI Engineering
 **Scope:** `base_agent.py`, `prompt_assembly_service.py`, `prompt_builder.py`, `prompt_builder_port.py`, `smart_response_agent.py`, `quick_response_agent.py`

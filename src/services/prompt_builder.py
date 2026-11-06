@@ -171,7 +171,7 @@ class PromptBuilder(PromptBuilderPort):
             conversation_history = []
 
         # Partition the flat cache list into named channels (single split point):
-        #   - directives (agent_directive domain)  → standing_directives block (orchestrator-only)
+        #   - directives (agent_directive domain)  → standing_directives block (every agent built with the biographical context)
         #   - query-specific (semantic_lens tag)    → query_specific_context (post-boundary)
         #   - static_bio (everything else)          → knowledge_base.biographical_context
         # Router-enriched facts are tagged "semantic_lens" via merge_enriched_context_with_biographical().

@@ -1,6 +1,6 @@
 # RFC: Execution Context & Hexagonal Architecture Cleanup
 
-**Status:** POSTPONED
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.
 **Created:** 2026-02-01
 **Scope:** Domain layer, Service layer, Dependency Injection
 

@@ -1,6 +1,6 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Accepted (owner, 2026-10-22), rev 4.6 (§0.0.3: §9 as built on `feat/drive-notes`; rev 4.5, §0.0.2, rows 8-9 of 2026-10-28); built on branch `feat/drive-specialist`; deployed: no.
+**Status:** Accepted (owner, 2026-10-22), rev 4.6 (§0.0.3: §9 as built on `feat/drive-notes`; rev 4.5, §0.0.2, rows 8-9 of 2026-10-28); implemented on `main` (`src/agents/drive_agent.py`, `DriveOperations`).
 Rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped re-review of rev 2, rev 4 the live A/B of a
 spike and the owner's decisions on it, rev 4.3 the deltas that the implementation plan recorded against the real code,
 rev 4.4 the deltas accepted in the cross-cutting review round of that plan (§0, §15), rev 4.5 the deltas of the port,

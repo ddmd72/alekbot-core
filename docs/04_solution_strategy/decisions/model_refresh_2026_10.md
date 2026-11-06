@@ -6,10 +6,12 @@
 
 | Tier | Claude | OpenAI | Gemini | Grok |
 |---|---|---|---|---|
-| ECO | haiku-4-5 | **gpt-6-luna** | 3.5-flash-lite | 4.3 |
-| BALANCED | haiku-4-5 | **gpt-6-luna** | **3.8-flash** (pinned) | 4.3 |
-| PERFORMANCE | **sonnet-5-5** | **gpt-6.1-sol** | pro-latest (3.1-pro) | **4.7** |
+| ECO | haiku-5-5 | **gpt-6-luna** | 3.5-flash-lite | 4.3 |
+| BALANCED | sonnet-5-5 | **gpt-6-luna** | **3.8-flash** (pinned) | 4.3 |
+| PERFORMANCE | **opus-5-5** | **gpt-6.1-sol** | pro-latest (3.1-pro) | **4.7** |
 | ULTRA | **fable-5-1** | **gpt-6-astra** | pro-latest (3.1-pro) | **4.7** |
+
+The Claude column is brought in line with `ClaudeAdapter.MODEL_TIERS` (`src/adapters/claude_adapter.py`); it differs from the table as first decided.
 
 ULTRA is the top model of each provider. Nothing used ULTRA in the 14 days before the change.
 
