@@ -256,6 +256,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   (a 132 000-character report in `context.file_content` was a 348K-token cache write). A tool that carries a large text takes it as a
   top-level string parameter, never inside `context`-style objects or arrays; the coordinator's `file_content` stays out of the
   model's own call (`normalize_delegate_context` returns a copy).
+- **Turn anchors and the key:** Claude and Gemini key the turn/persona anchor from `LLMRequest.turn_key`, only in a text part that starts with it; OpenAI/Grok find the anchor by exact string, so never wrap it before the adapter.
 - **xAI realtime `billable_audio_seconds`** on `response.done` is the session's running total: `XaiRealtimeAdapter` emits the
   increment (`decisions/billing_cache_write_and_voice_seconds.md`).
 - **Workspace bucket (versioned):** `GcsWorkspaceAdapter` deletes by metadata patch + delete of the live object under

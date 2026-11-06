@@ -1,6 +1,6 @@
 # RFC: System-turn fingerprint — telling the model which text in a user message came from the system
 
-**Status:** Proposed (rev 2, 2026-11-06). Not implemented.
+**Status:** Implemented (code); rule token in `prompts_snapshot/`, not uploaded (rev 2, 2026-11-06).
 **Date:** rev 1 2026-10-18; rev 2 2026-11-06 (the owner decided to build it).
 **Owner decisions (rev 1, unchanged):** per-turn random key (not a daily one); history is history (no provenance field
 in storage, persisted text unchanged); the rule goes at the start of the system prompt, the key at its end (after
@@ -47,12 +47,12 @@ Paths are under `src/`. "Orchestrator" means Smart and Quick, the two agents tha
 
 | Site | Text | Where |
 |---|---|---|
-| Turn anchor | `USER_TURN_SYSTEM_ANCHOR`, prepended to the first text part of the latest user message | `domain/llm.py:64`; `agents/base_agent.py:362`; called at `agents/core/smart_response_agent.py:493`, `agents/core/quick_response_agent.py:228` |
-| Persona anchor | `build_persona_anchor`: names the persona sections present in the prompt | `domain/llm.py:115`; Claude `adapters/claude_adapter.py:361,927` (right after the turn anchor); OpenAI `openai_adapter.py:312` and Grok `grok_adapter.py:226` (developer item); Gemini: none |
-| Wrap-up note | `WRAP_UP_NOTE` | `domain/turn_clock.py:32`; appended at `infrastructure/delegation_engine.py:319` via `_append_user_note` (`:120`) |
-| Meanwhile in chat | `MEANWHILE_HEADER` + one line per chat message since the run's snapshot (`- user: …`, `- you: …`) | `domain/turn_clock.py:33,97`; `delegation_engine.py:542` |
-| Running jobs | `RUNNING_JOBS_HEADER` + one line per running long turn, its title taken from the owner's question | `domain/turn_clock.py:34`; `infrastructure/long_turn_tools.py:21`; `smart_response_agent.py:540-542` |
-| Fallback note | `_FAILURE_NOTE` ("the assistant ran into a problem… apologize…"), appended as an extra part of Quick's current message | `services/agent_fallback_service.py:42-47,115-126`; the handler persists its own parts, not this copy |
+| Turn anchor | `USER_TURN_SYSTEM_ANCHOR`, prepended to the first text part of the latest user message | `domain/llm.py:64`; `agents/base_agent.py:362`; called at `agents/core/smart_response_agent.py:511`, `agents/core/quick_response_agent.py:240` |
+| Persona anchor | `build_persona_anchor`: names the persona sections present in the prompt | `domain/llm.py:115`; Claude `adapters/claude_adapter.py:362,928` (right after the turn anchor); OpenAI `openai_adapter.py:312` and Grok `grok_adapter.py:226` (developer item); Gemini: none |
+| Wrap-up note | `WRAP_UP_NOTE` | `domain/turn_clock.py:32`; appended at `infrastructure/delegation_engine.py:378` via `_append_user_note` (`:127`) |
+| Meanwhile in chat | `MEANWHILE_HEADER` + one line per chat message since the run's snapshot (`- user: …`, `- you: …`) | `domain/turn_clock.py:33,97,108`; `delegation_engine.py:623` |
+| Running jobs | `RUNNING_JOBS_HEADER` + one line per running long turn, its title taken from the owner's question | `domain/turn_clock.py:34`; `infrastructure/long_turn_tools.py:21,29`; `smart_response_agent.py:559` |
+| Fallback note | `_FAILURE_NOTE` ("the assistant ran into a problem… apologize…"), appended as an extra part of Quick's current message (as built: carried in `context["fallback_note"]`, appended keyed in memory by Quick) | `services/agent_fallback_service.py:44,125-126`; `quick_response_agent.py:241-245`; the handler persists its own parts, not this copy |
 | Recitation retry | `RECITATION_RETRY_DIRECTIVE` appended to the last user message | `domain/llm.py:385`; `base_agent.py:1297`; only callers `pdf_generator_agent.py:195`, `html_page_generator_agent.py:149` (specialists) |
 | Lelik commission headers | `[Asked by Lelik during a phone call with the user. …]` and `[Errand from Lelik during a phone call with the user. …]` after the query, with the last call exchanges (the caller's own words) and Lelik's note; Smart's current turn | `agents/alek_gateway_agent.py:50-71` (`_commission`) |
 
@@ -119,9 +119,9 @@ the caller (`secrets.token_hex(8)` in `infrastructure/drive_operations.py`, `age
 image: a key marks *trusted* text.
 
 **(e) Untrusted text already in the system channel** (`email_for_triage` is wrapped by this RFC, §4.11). `email_for_triage` (the daily email review's
-email data) is an `extra_static_blocks` entry of Smart's static prompt, unwrapped (`smart_response_agent.py:458-465`,
+email data) is an `extra_static_blocks` entry of Smart's static prompt, (`smart_response_agent.py:466-479`,
 fed from `handlers/worker_handler.py:1231`). `active_reminders` in the dynamic part holds reminder texts the model wrote
-earlier (`services/prompt_v3/prompt_assembly_service.py:494-538`; class B).
+earlier (`services/prompt_v3/prompt_assembly_service.py:~560-581`; class B).
 
 ### 2.2 Per-provider placement of the anchors
 
@@ -136,15 +136,15 @@ earlier (`services/prompt_v3/prompt_assembly_service.py:494-538`; class B).
 ### 2.3 Prompt layout and cache
 
 `PromptAssemblyService` (`services/prompt_v3/prompt_assembly_service.py`) renders the blueprint's classes in
-`class_order` (`:252-271`). Smart and Quick call it with `kb_preamble=True`, so the **`knowledge_base` block (and any
-`extra_static_blocks`) comes before the blueprint** (`:459-466`); then the skills catalog, then `standing_directives`
-last of the static part (`:478-489`). After `PROMPT_CACHE_BOUNDARY` (`:542`): `active_reminders`,
+`class_order` (`:267-290`). Smart and Quick call it with `kb_preamble=True`, so the **`knowledge_base` block (and any
+`extra_static_blocks`) comes before the blueprint** (`:497-515`); then the skills catalog, then `standing_directives`
+last of the static part (`:517-535`). After `PROMPT_CACHE_BOUNDARY` (`:589`): `active_reminders`,
 `current_date_time` (off by default), `query_specific_context`.
 
-Claude (`claude_adapter.py:340-356`): the system text is split at the boundary; the static block carries
+Claude (`claude_adapter.py:344-356`): the system text is split at the boundary; the static block carries
 `cache_control`, the dynamic block none and is omitted when empty. Two rolling marks sit on the last two user messages
-(`:1080-1130`), for the tool loop inside one turn; total 3 of Anthropic's 4. OpenAI and Grok replace the boundary with a
-newline and derive `prompt_cache_key` from the static part only (`openai_adapter.py:212-216`).
+(`:1085-1133`), for the tool loop inside one turn; total 3 of Anthropic's 4. OpenAI and Grok replace the boundary with a
+newline and derive `prompt_cache_key` from the static part only (`openai_adapter.py:206-210`).
 
 ## 3. Goals and non-goals
 
@@ -271,9 +271,9 @@ the count, never the key.
 
 | Path | Site | Covers |
 |---|---|---|
-| Tool-call arguments | `DelegationEngine`: each model response's tool calls are rewritten with scrubbed arguments before `build_tool_turn` and before `_execute_tool_calls` (`delegation_engine.py:670`) | coordinator delegation and fan-out (commissions), every local tool (`use_skill`, `draft_skill`, `workspace`, `propose_memory_facts`, `cancel_long_turn`), the terminal tool |
-| Smart reply | after `extract_structured_response` in `_build_smart_response` (`smart_response_agent.py:663-677`) | user text, history summary, every string of the rich content and link list |
-| Quick reply | with `_sanitize_response` (`quick_response_agent.py:387`) and its structured fields | same |
+| Tool-call arguments | `DelegationEngine`: each model response's tool calls are rewritten with scrubbed arguments before `build_tool_turn` and before `_execute_tool_calls` (`delegation_engine.py:393`, `_scrub_tool_calls` `:218`) | coordinator delegation and fan-out (commissions), every local tool (`use_skill`, `draft_skill`, `workspace`, `propose_memory_facts`, `cancel_long_turn`). Dict keys are scrubbed as well as values. The terminal tool is exempt from the engine scrub: on Claude its args are `{"response": <raw JSON string>}` (`utils/llm_response_parser.py:255-258`), which is never scrubbed as raw JSON, and the terminal call never enters the transcript (the engine returns before `build_tool_turn`, `:417-485`); the orchestrator's post-parse reply scrub covers it |
+| Smart reply | after `extract_structured_response` in `_build_smart_response` (called `smart_response_agent.py:618`, defined `:687`; `scrub_reply` `:619`) | user text, history summary, every string of the rich content (its `type` included) and link list |
+| Quick reply | with `_sanitize_response` (`quick_response_agent.py:299`, defined `:410`; `scrub_reply` `:291`) and its structured fields | same |
 
 Both reply scrubs run before the handler's output validation, delivery and persistence, and after parsing (never on
 the raw JSON text). Exempt, by construction: the notification paths that send stored or code-written text
@@ -281,6 +281,11 @@ the raw JSON text). Exempt, by construction: the notification paths that send st
 through an orchestrator are scrubbed there; the safety block is a constant; Lelik and specialists hold no key, and a
 specialist never sees the key because its commission is scrubbed. The key does reach request capture (BigQuery
 `prompt_content`, Logfire) as part of the prompt; it is dead by the time anyone reads it.
+
+**In-turn exposure, by design.** On Gemini, OpenAI and Grok, `build_tool_turn` replays the model message's
+provider-native `raw_content`, which keeps the model's original, unscrubbed tool-call arguments in the transcript sent
+back to the same model within the same turn. Dispatch and the `tool_call` parts carry the scrubbed arguments; the model
+already holds the key in that turn's system prompt; the transcript is not persisted. No action.
 
 **Trap for the build (engine side).** The tool-result hygiene in `DelegationEngine` (§4.7) neutralises look-alikes of
 the **system tag word only**. Tool results legitimately carry live `<drive_document nonce=…>` and
@@ -295,7 +300,7 @@ reuses the existing neutraliser instead of a new layer: `untrusted_text.py`'s lo
 (fullwidth and small openers, invisible characters, as for the two untrusted tag words). Applied:
 
 - `escape_text`, so every untrusted wrapper body neutralises a forged system tag for free (all three tag words);
-- in memory, to the text parts of the history the orchestrator loads, before any keyed text is added (system tag word
+- in memory, to the text parts of the history the orchestrator loads (`_load_conversation_context`: `smart_response_agent.py:749`, `quick_response_agent.py:359`; the current message is included), before any keyed text is added (system tag word
   only);
 - in `DelegationEngine`, to every tool result's text before it enters the transcript (system tag word only: see the
   trap in §4.6).
@@ -307,15 +312,15 @@ Persisted text is not rewritten.
 - `domain/system_fingerprint.py` (pure): the word list, `SYSTEM_TAG`, `wrap_system(text, key)`, `scrub(text, key)`,
   `render_session_key(key)`, key-shape validation; the look-alike pattern is shared with `untrusted_text.py`. **No
   randomness in the domain**: the caller supplies the key, as for nonces, so tests pin it.
-- Key draw, with `secrets`, once per attempt: Smart in `_run` (`smart_response_agent.py:402`, re-entered on provider
-  rotation); Quick, which has no `_run`, in its `execute` (`quick_response_agent.py:161`).
+- Key draw, with `secrets`, once per attempt: Smart in `_run` (`smart_response_agent.py:409`, draw at `:429`, re-entered on provider
+  rotation); Quick, which has no `_run`, in its `execute` (`quick_response_agent.py:168`, draw at `:188`).
 - **Carriage is explicit, no `ContextVar`.** The drawing method passes the key to `PromptBuilder.build_for_agent` →
   `PromptAssemblyService.assemble(session_key=…)`; to a new optional `LLMRequest.turn_key` that the Claude and Gemini
   adapters use to key the anchors; and to `DelegationEngine.execute(turn_key=…)` for the notes, the argument scrub and
   the tool-result hygiene. `None` (specialists, consolidation, Lelik) means no keying and no scrub. A nested specialist
   execution cannot inherit the key, which makes "specialists get no key" structural rather than a convention.
-- Adapters: Claude keys the turn anchor together with the persona anchor it inserts after it; Gemini keys the turn
-  anchor; OpenAI and Grok are unchanged. Wire tests per adapter (`docs/how_to/ADAPTER_WIRE_TESTING.md`).
+- Adapters: Claude keys the turn anchor together with the persona anchor it inserts after it (`_add_persona_anchor`, `claude_adapter.py:928`); Gemini keys the turn
+  anchor (`_key_turn_anchor`, `gemini_adapter.py:338`); OpenAI and Grok are unchanged. The anchor is keyed only in a text part that starts with it (`BaseAgent` prepends it). OpenAI and Grok find the anchor by exact string, so it is never wrapped before the adapter. Wire tests per adapter (`docs/how_to/ADAPTER_WIRE_TESTING.md`).
 - Prompt: the rule token, the blueprint class and the profile assignments ship by owner upload, not by deploy.
 
 ### 4.9 Providers and cache
@@ -346,7 +351,7 @@ Persisted text is not rewritten.
 calls trusted. This RFC wraps it: the block's email data goes through `wrap_untrusted` (`domain/untrusted_text.py`,
 store `email`, tag `external_content`, ref `"email_for_triage"`, label `"daily email review"`, a nonce drawn by the
 caller as for every other wrapper) with `EXTERNAL_REMINDER`
-before it, at the place Smart builds the block (`smart_response_agent.py:458-465`). The block stays an
+before it, at the place Smart builds the block (`smart_response_agent.py:466-479`). The block stays an
 `extra_static_blocks` entry; its text differs per run anyway, so caching is unchanged. One recorded daily-review call
 verifies that triage still works.
 
@@ -390,7 +395,7 @@ verifies that triage still works.
 | S2 | `domain/system_fingerprint.py`, the shared look-alike pattern, unit tests (wrap, scrub, hygiene, key shape). |
 | S3 | Assembly: `session_key` block, the `provenance` head rule; `LLMRequest.turn_key`; adapter keying (Claude, Gemini) with wire tests; engine notes, fallback-note carrier, scrub and hygiene sites. Deployed with the rule token **not yet uploaded**: without the rule a keyed block is only a tag the model is not told about (the §6 before/after set checks that it changes nothing). |
 | S4 | **Gate, before any upload.** Locally, on the deployed head, with the rule token, blueprint class and profile assignments served from `prompts_snapshot/` through the existing read-only overlays (`SnapshotTokenOverlay`, `SnapshotBlueprintOverlay`, `SnapshotProfileOverlay` in `scripts/consolidation/s3_dry_run_kit.py`, given the new ids): the must-pass calls of §8, then the eval (§9). Any must-pass failure, or an eval bar missed, blocks S5. |
-| S5 | Owner uploads the rule token, blueprint class and profile assignments. Code first, token second: the rule without keyed text would strip the anchors of their standing. Before the upload, confirm which profile document Smart and Quick resolve live (`smart` / `quick` or the `universal_agent_v1_SYSTEM_*` ones). The static template is cached for 24 hours per instance, so the instances are restarted after the upload for the rule to take effect at once. If live traffic shows a regression, the token assignment is removed (the code then only adds the tag). |
+| S5 | Owner uploads the rule token, blueprint class and profile assignments. Code first, token second: the rule without keyed text would strip the anchors of their standing. The live profile documents are `smart` and `quick` (`prompts_snapshot/profiles/smart.yaml`, `quick.yaml`; `FirestoreAgentProfileRepository.get_agent_profile` reads document id = `agent_type`, `firestore_agent_profile_repository.py:61-85`); the `universal_agent_v1_SYSTEM_*` files use a legacy shape this reader never reads. The static template is cached for 24 hours per instance, so the instances are restarted after the upload for the rule to take effect at once. If live traffic shows a regression, the token assignment is removed (the code then only adds the tag). |
 
 Reviewer rule applies: no existing test is edited by the implementer. The eval's cost is estimated before it runs.
 
