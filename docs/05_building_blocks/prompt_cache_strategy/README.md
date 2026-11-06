@@ -291,6 +291,7 @@ Without the split, adding `cache_control` to the entire system instruction would
 
 - **Cached:** Token assembly (5–10 kB), biography, conversation history summary — stable across requests.
 - **Not cached:** Current datetime, semantic-lens query-specific facts — changes every request.
+- **Orchestrator turns (Smart, Quick):** the dynamic block always ends with `session_key { … }`, a fresh three-word key per attempt, so it is never empty. No new cache mark; the static block, which carries the `provenance` head, and its mark are unchanged. Inside a turn the key is constant, so the rolling message marks keep working (`SYSTEM_TURN_FINGERPRINT_RFC.md` §4.9).
 
 ### Constants and Ownership
 

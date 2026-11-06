@@ -86,6 +86,7 @@ Document ID: `{blueprint_id}` (e.g., `universal_agent_v1`)
   "blueprint_id": "universal_agent_v1",
   "outer_class": "Alek extends Agent",
   "class_order": [
+    "provenance",
     "properties",
     "cognitive_process",
     "policies",
@@ -101,6 +102,10 @@ Document ID: `{blueprint_id}` (e.g., `universal_agent_v1`)
 - `outer_class` — Groovy class declaration: `class {outer_class} { ... }`
 - `class_order` — ordered list of Groovy section names. Sections are rendered in this order.
   Sections with no assigned tokens are silently skipped.
+- `provenance` (first in `universal_agent_v1`) holds the system-turn provenance rule (token `POLICY_SYSTEM_PROVENANCE`,
+  `prompts_snapshot/tokens/system/`). Only Smart and Quick assign it (`non_overridable: true`, in `profiles/smart.yaml` and
+  `profiles/quick.yaml`); every other agent leaves the class empty, so it is skipped. Assembly renders it before the
+  `knowledge_base` preamble. See `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`.
 
 **No template string. No classes dict. No default tokens.** All of that has moved to the
 token and profile.
