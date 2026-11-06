@@ -70,3 +70,12 @@ def test_the_aligned_branch_ignores_a_table_without_a_numeric_column(tmp_path):
                                       ("Total", False), ("IVA 23 %", False), ("", False)])
 def test_number_cell_accepts_only_numbers_and_amounts(cell, ok):
     assert bool(NUMBER_CELL.match(cell)) is ok
+
+
+@pytest.mark.parametrize("count", [MIN_NUMERIC_LINES, MIN_NUMERIC_LINES + 2])
+def test_every_row_of_an_aligned_table_is_a_table_row_and_none_is_repeated_as_loose_text(tmp_path, count):
+    cells = [(72, 700 - i * 20, f"Row {i + 1}") for i in range(count)] + [(300, 700 - i * 20, str(100 * (i + 1))) for i in range(count)]
+    out = _page_text(tmp_path, _text(cells), ruled=False, aligned=True)
+    assert out is not None
+    lines = out.splitlines()
+    assert lines == [f"| Row | {i + 1} | {100 * (i + 1)} |" for i in range(count)]     # all rows in the table, no loose line around it

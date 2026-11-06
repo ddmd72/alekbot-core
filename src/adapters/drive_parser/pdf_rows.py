@@ -90,4 +90,7 @@ def _pipe_row(row: Sequence[str]) -> str:
 def _text_between(page: Any, top: float, bottom: float) -> str:
     if bottom - top < 1:
         return ""
-    return str(page.crop((0, max(top, 0.0), float(page.width), min(bottom, float(page.height)))).extract_text() or "")
+    # within_bbox, not crop: crop keeps every char that merely touches the box, so a table's first and last text lines
+    # (their edge is the table's bbox edge) would be extracted again as loose text above and below the table.
+    box = (0, max(top, 0.0), float(page.width), min(bottom, float(page.height)))
+    return str(page.within_bbox(box).extract_text() or "")
