@@ -31,7 +31,7 @@ from .document_read import ReadOutcome
 def size_alert(filename: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES) -> str:
     mb = size_bytes / (1024 * 1024)
     return (
-        f"[System: User attempted to attach '{filename}' ({mb:.1f} MB). "
+        f"[Tool note: User attempted to attach '{filename}' ({mb:.1f} MB). "
         f"File exceeds the {limit_bytes // (1024 * 1024)} MB limit and was not included in this message. "
         f"Ask the user to send a smaller file or paste the content directly.]"
     )
@@ -40,7 +40,7 @@ def size_alert(filename: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES
 def conversion_alert(filename: str, mime_type: str = "") -> str:
     mime_suffix = f" ({mime_type})" if mime_type else ""
     return (
-        f"[System: User attempted to attach '{filename}'{mime_suffix}. "
+        f"[Tool note: User attempted to attach '{filename}'{mime_suffix}. "
         f"The file could not be read or is not a supported text format. "
         f"Supported formats: images, PDF, plain text, CSV, DOCX, XLSX, MP3, WAV. "
         f"Ask the user to convert the file or paste the content directly.]"
@@ -49,7 +49,7 @@ def conversion_alert(filename: str, mime_type: str = "") -> str:
 
 def audio_unavailable_note(filename: str) -> str:
     return (
-        f"[System: User attached an audio file '{filename}'. "
+        f"[Tool note: User attached an audio file '{filename}'. "
         f"Audio transcription is not available. "
         f"Ask the user to provide a text transcript or describe what they want to discuss about the audio.]"
     )
@@ -58,7 +58,7 @@ def audio_unavailable_note(filename: str) -> str:
 def cut_note(filename: str, kept: int, omitted: int) -> str:
     """The note after a cut text: only the first `kept` characters were included, `omitted` were not."""
     return (
-        f"[System: File '{filename}' was truncated — only the first {kept:,} characters "
+        f"[Tool note: File '{filename}' was truncated — only the first {kept:,} characters "
         f"were included ({omitted:,} characters omitted). "
         f"Inform the user that the file was too large for full analysis and suggest "
         f"splitting it or pasting only the relevant section.]"
@@ -66,7 +66,7 @@ def cut_note(filename: str, kept: int, omitted: int) -> str:
 
 
 def _not_in_time(name: str) -> str:
-    return (f"[System: The file '{name}' could not be read in time; try again. "
+    return (f"[Tool note: The file '{name}' could not be read in time; try again. "
             f"Do not guess what it contains.]")
 
 
@@ -81,39 +81,39 @@ def deadline_note(name: str) -> str:
 
 
 def model_unavailable_note(name: str) -> str:
-    return (f"[System: The document reader is temporarily unavailable, so '{name}' could not be read; "
+    return (f"[Tool note: The document reader is temporarily unavailable, so '{name}' could not be read; "
             f"try again later. Do not guess what it contains.]")
 
 
 def parser_unavailable_note(name: str) -> str:
-    return (f"[System: The file converter is temporarily unavailable, so '{name}' could not be read; "
+    return (f"[Tool note: The file converter is temporarily unavailable, so '{name}' could not be read; "
             f"ask the user to send it again later. Do not guess what it contains.]")
 
 
 def image_too_large_note(name: str) -> str:
-    return (f"[System: The image '{name}' is too large to view. "
+    return (f"[Tool note: The image '{name}' is too large to view. "
             f"Ask the user to send a smaller image or describe what it shows.]")
 
 
 def image_format_note(name: str) -> str:
-    return (f"[System: The image '{name}' is in a format that cannot be read. "
+    return (f"[Tool note: The image '{name}' is in a format that cannot be read. "
             f"Ask the user to send it as JPEG or PNG, or describe what it shows.]")
 
 
 def open_failed_note(ref: str) -> str:
     """An unexpected error while opening a ref: neither the file's fault nor a known outage."""
-    return f"[System: The file '{ref}' could not be opened. Do not guess what it contains.]"
+    return f"[Tool note: The file '{ref}' could not be opened. Do not guess what it contains.]"
 
 
 def storage_read_note(ref: str) -> str:
     """The file store failed while a stored file was downloaded: the file may be fine, the store is not."""
-    return (f"[System: The file '{ref}' could not be read from storage right now; try again later. "
+    return (f"[Tool note: The file '{ref}' could not be read from storage right now; try again later. "
             f"Do not guess what it contains.]")
 
 
 def folder_note(path: str) -> str:
     """A folder ref given where a file is needed (save, send): the hint to list it."""
-    return f"[System: '{path or '/'}' is a folder, not a file. List the folder to see what is inside.]"
+    return f"[Tool note: '{path or '/'}' is a folder, not a file. List the folder to see what is inside.]"
 
 
 _ACTION_WORDS = {"save": "saved to the drive", "send": "sent to the chat"}
@@ -123,7 +123,7 @@ def action_too_large_note(name: str, size_bytes: int, limit_bytes: int, action: 
     """A file above `document_limits.action_cap()` for a save or a send (EXTERNAL_FILES §4.5 "Bytes for an action").
     `name` is printed as given: the caller escapes a sender's name first."""
     mb = 1024 * 1024
-    return (f"[System: '{name}' is {size_bytes / mb:.1f} MB; a file above {limit_bytes // mb} MB cannot be "
+    return (f"[Tool note: '{name}' is {size_bytes / mb:.1f} MB; a file above {limit_bytes // mb} MB cannot be "
             f"{_ACTION_WORDS.get(action, 'used here')}.]")
 
 
@@ -152,4 +152,4 @@ def shown_line(name: str, outcome: ReadOutcome) -> str:
         parts.append("the text may be incomplete")
     if not parts:
         return ""
-    return f"[System: '{name}': {'; '.join(parts)}.]"
+    return f"[Tool note: '{name}': {'; '.join(parts)}.]"

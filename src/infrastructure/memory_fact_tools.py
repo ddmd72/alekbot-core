@@ -86,7 +86,7 @@ def make_propose_memory_facts_handler(
             logger.info("🧠 [propose_memory_facts] validation rejected: %s", reason)
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: proposal rejected — {reason}. Fix it and call {PROPOSE_MEMORY_FACTS_TOOL} again.",
+                result_str=f"Tool note: proposal rejected — {reason}. Fix it and call {PROPOSE_MEMORY_FACTS_TOOL} again.",
                 failed=True,
             )
 
@@ -96,14 +96,14 @@ def make_propose_memory_facts_handler(
             logger.info("🧠 [propose_memory_facts] rejected: %s", e)
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM: proposal rejected — {e}. Leave that fact out or reword it from the source.",
+                result_str=f"Tool note: proposal rejected — {e}. Leave that fact out or reword it from the source.",
                 failed=True,
             )
         except Exception as e:
             logger.error("❌ [propose_memory_facts] proposal could not be stored: %s", e)
             return ToolResult(
                 name=tool_call.name,
-                result_str="SYSTEM: the proposal could not be stored; nothing was saved.",
+                result_str="Tool note: the proposal could not be stored; nothing was saved.",
                 failed=True,
             )
 
@@ -111,7 +111,7 @@ def make_propose_memory_facts_handler(
         return ToolResult(
             name=tool_call.name,
             result_str=(
-                f"SYSTEM: Done. The proposal was created and the owner sees {len(draft.facts)} proposed "
+                f"Tool note: Done. The proposal was created and the owner sees {len(draft.facts)} proposed "
                 "facts with a save command. Your part is complete: do not call propose_memory_facts "
                 "again for these facts. Call it again only if the owner asks for changes. The facts go "
                 "to memory when the owner pastes the save command; that step is the owner's. Say in "

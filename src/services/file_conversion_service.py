@@ -104,7 +104,7 @@ _KIND_SUFFIX = {"docx": ".docx", "xlsx": ".xlsx", "pptx": ".pptx", "pdf": ".pdf"
 
 def _too_large_line(path: str, size_bytes: int, limit_bytes: int = MAX_FILE_BYTES) -> str:
     """The size line, naming the limit that applied (the export cap for a text file, MAX_FILE_BYTES otherwise)."""
-    return (f"[System: '{path}' is {format_size(size_bytes)}; files above "
+    return (f"[Tool note: '{path}' is {format_size(size_bytes)}; files above "
             f"{format_size(limit_bytes)} cannot be read as text yet. Long audio and video "
             f"processing is not available yet.]")
 
@@ -283,7 +283,7 @@ class FileConversionService:
         check on delivered keys), check its size on metadata before download, stage its bytes for this call only,
         read them through the document service with the consumer's native declaration and the one absolute
         `deadline_at` (epoch seconds), and answer an `OpenedFile`: today's `[File: <name>]` body (raw, unmarked,
-        uncut; the store's presenter marks and cuts it), a `[System: …]` note, or a native file for the consumer to
+        uncut; the store's presenter marks and cuts it), a `[Tool note: …]` note, or a native file for the consumer to
         attach. `consumer` empty means text only. `caller` is `CALLER_OPEN`, `CALLER_PREFETCH` or
         `CALLER_CONNECTOR` (the drive connector: the paid reader never runs, `document_read.reader_skipped`).
         Store-specific branches (folders, recordings, the drive's §29 decision, video) stay with the callers (`DriveOperations`).
@@ -314,7 +314,7 @@ class FileConversionService:
             handle, item = await self._drive_item(ref, user_id)
             if item.is_folder:
                 return _Opening(OpenedFile(None, note=(
-                    f"[System: '{item.path or '/'}' is a folder, not a file. "
+                    f"[Tool note: '{item.path or '/'}' is a folder, not a file. "
                     f"List the folder to see what is inside.]")), item.path)
             display = item.path
             declared_mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
@@ -348,7 +348,7 @@ class FileConversionService:
                     logger.warning("[FileOpen] too_large store=workspace ref=%s size=%d limit=%d",
                                    ref, len(content), OPEN_FILE_MAX_TEXT_BYTES)
                     return _Opening(OpenedFile(None, note=(
-                        f"[System: '{ref}' is {format_size(len(content))}; open_file reads a workspace text file only "
+                        f"[Tool note: '{ref}' is {format_size(len(content))}; open_file reads a workspace text file only "
                         f"up to {format_size(OPEN_FILE_MAX_TEXT_BYTES)}. Read it in parts with the workspace tool: "
                         f"command view, path {path}, offset and limit (lines).]")), display)
                 try:

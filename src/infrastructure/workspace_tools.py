@@ -167,7 +167,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
 
 
 _TRUNCATED = (
-    "SYSTEM: your arguments were cut off at the output limit; nothing was written. Create the file with the first part, "
+    "Tool note: your arguments were cut off at the output limit; nothing was written. Create the file with the first part, "
     "then add the rest with insert at insert_line -1."
 )
 
@@ -237,7 +237,7 @@ def make_workspace_handler(
                 _log_refusal(command, user_id, origin, fire_key, "command")
                 return ToolResult(
                     name=tool_call.name,
-                    result_str=f"SYSTEM: unknown workspace command '{command}'; use one of: {', '.join(COMMANDS)}.",
+                    result_str=f"Tool note: unknown workspace command '{command}'; use one of: {', '.join(COMMANDS)}.",
                     failed=True,
                 )
             call = WorkspaceCall(

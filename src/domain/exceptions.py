@@ -295,7 +295,7 @@ class AccessDeniedError(Exception):
 
 class WorkspaceRefused(Exception):
     """A workspace command broke a rule (path, folder, kind, caps, a missing source). The message is the fix the
-    model reads after `SYSTEM: `; `reason` is the short code in the `[Workspace]` log line."""
+    model reads after `Tool note: `; `reason` is the short code in the `[Workspace]` log line."""
 
     def __init__(self, message: str, reason: str = "refused") -> None:
         super().__init__(message)
@@ -387,7 +387,7 @@ class MediaStreamFailed(Exception):
 class FileNotResolved(Exception):
     """`FileConversionService.resolve_file` refused to hand over a file's bytes for an action (save, send) for a reason
     it decided itself: the action cap, a folder, or an email attachment's note (gone, missing, empty, the mailbox did
-    not answer, not connected, not configured). `line` is the honest `[System: …]` line for the model."""
+    not answer, not connected, not configured). `line` is the honest `[Tool note: …]` line for the model."""
 
     def __init__(self, line: str) -> None:
         super().__init__(line)

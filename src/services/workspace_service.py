@@ -3,7 +3,7 @@
 Stateless: the per-execution session (generations seen, the lock, the shield) lives in the tool handler
 (`infrastructure/workspace_tools.py`), which passes what it knows in a WorkspaceCall and applies the generations the
 result reports. `run` never raises for a rule, a conflict, a missing file or a store failure: each becomes a
-`SYSTEM:` result (§7.5). Every command writes exactly one `[Workspace]` line (§16) — a failed mutation at WARNING, a
+`Tool note:` result (§7.5). Every command writes exactly one `[Workspace]` line (§16) — a failed mutation at WARNING, a
 store error at ERROR, everything else at INFO. Content is never logged.
 """
 
@@ -71,9 +71,9 @@ if TYPE_CHECKING:
     from .file_conversion_service import FileConversionService
 
 _GREP_READ_CONCURRENCY = 8
-_UNAVAILABLE = "SYSTEM: the workspace is unavailable right now; nothing was changed."
+_UNAVAILABLE = "Tool note: the workspace is unavailable right now; nothing was changed."
 _CONFLICT = (
-    "SYSTEM: {path} changed since you read it (another conversation or run wrote it). "
+    "Tool note: {path} changed since you read it (another conversation or run wrote it). "
     "View it again and redo your change."
 )
 
@@ -120,14 +120,14 @@ class WorkspaceService:
             result = await self._dispatch(call, command, args, log)
         except WorkspaceRefused as e:
             log.result = f"refused:{e.reason}"
-            result = WorkspaceResult(text=f"SYSTEM: {e}.", failed=True)
+            result = WorkspaceResult(text=f"Tool note: {e}.", failed=True)
         except WorkspaceConflict:
             log.result = "conflict"
             result = WorkspaceResult(text=_CONFLICT.format(path=log.path), failed=True)
         except FileNotFoundError:
             log.result = "not_found"
             result = WorkspaceResult(
-                text=f"SYSTEM: {log.path} does not exist; view it to see its history.", failed=True,
+                text=f"Tool note: {log.path} does not exist; view it to see its history.", failed=True,
             )
         except Exception as e:
             log.result = "error"
@@ -225,7 +225,7 @@ class WorkspaceService:
     def _binary(path: str, generation: int, log: _LogFields) -> WorkspaceResult:
         log.result, log.gen = "refused:binary", str(generation)
         # Recorded: `copy` may overwrite a binary_files/ copy this execution has looked at (§7.3 copy).
-        return WorkspaceResult(text=f"SYSTEM: {binary_message(path)}.", failed=True, generations={path: generation})
+        return WorkspaceResult(text=f"Tool note: {binary_message(path)}.", failed=True, generations={path: generation})
 
     async def _view_version(
         self, call: WorkspaceCall, path: str, generation: int, args: Mapping[str, Any], log: _LogFields,
@@ -516,7 +516,7 @@ class WorkspaceService:
                 )
                 log.result, log.gen = "error", str(created.generation)
                 return WorkspaceResult(
-                    text=(f"SYSTEM: the rename was interrupted and both workspace:{src} and workspace:{dst} exist "
+                    text=(f"Tool note: the rename was interrupted and both workspace:{src} and workspace:{dst} exist "
                           "now. View both and delete the one that is not needed."),
                     failed=True,
                     generations={dst: created.generation},

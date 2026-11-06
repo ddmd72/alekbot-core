@@ -729,7 +729,7 @@ class DelegationEngine:
         )
         return ToolResult(
             name=tool_call.name,
-            result_str=f"SYSTEM ERROR: unknown tool '{tool_call.name}'. Declared tools: {', '.join(names)}.",
+            result_str=f"Tool error: unknown tool '{tool_call.name}'. Declared tools: {', '.join(names)}.",
             failed=True,
         )
 
@@ -767,7 +767,7 @@ class DelegationEngine:
         if not intent:
             return ToolResult(
                 name=tool_call.name,
-                result_str=f"SYSTEM ERROR: delegate_to_specialist called without 'intent'. args={args}",
+                result_str=f"Tool error: delegate_to_specialist called without 'intent'. args={args}",
                 failed=True,
             )
 
@@ -845,7 +845,7 @@ class DelegationEngine:
             return ToolResult(
                 name=tool_call.name,
                 result_str=(
-                    f"SYSTEM: Specialist agent rejected the request. "
+                    f"Tool note: Specialist agent rejected the request. "
                     f"Error: {response.error} "
                     f"Correct your input and try again."
                 ),
@@ -905,7 +905,7 @@ class DelegationEngine:
         First intent is primary (errors surfaced to LLM).
         Subsequent intents are secondary (failures silently skipped).
         """
-        preamble = "SYSTEM: This query was automatically dispatched to multiple specialists in parallel."
+        preamble = "Tool note: This query was automatically dispatched to multiple specialists in parallel."
         if hint:
             preamble += f"\n{hint}"
         sections: List[str] = [preamble]
@@ -935,7 +935,7 @@ class DelegationEngine:
                 )
                 if is_primary:
                     sections.append(
-                        f"[{label}]\nSYSTEM: Specialist rejected: {response.error}"
+                        f"[{label}]\nTool note: Specialist rejected: {response.error}"
                     )
                     primary_failed = True
                 continue
