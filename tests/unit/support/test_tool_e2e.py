@@ -134,7 +134,7 @@ PASSTHROUGH = [
     ("history_recent_full_turns", "history_recent_full_turns"), ("model_name", "model_name"),
     ("prompt_builder", "prompt_builder"), ("resolver", "resolver"), ("user_config", "user_config"),
     ("skill_service", "skill_service"), ("memory_fact_service", "memory_fact_service"),
-    ("workspace_service", "workspace_service"),
+    ("workspace_service", "workspace_service"), ("turn_key_source", "_turn_key_source"),
 ]
 
 
@@ -143,7 +143,7 @@ def test_every_given_keyword_reaches_the_agent(keyword, attribute):
     llm = ScriptedLLM([])
     sentinels = {"execution_context": execution_context(llm, "smart", model="given-model"),
                  "thinking_effort": "high", "user_timezone": "Europe/Helsinki", "history_recent_full_turns": 9,
-                 "model_name": "given-model"}
+                 "model_name": "given-model", "turn_key_source": lambda: "pinned-turn-key"}
     given = sentinels.get(keyword, object())
 
     agent = smart_rig(llm, **{keyword: given})
