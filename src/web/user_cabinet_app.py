@@ -29,6 +29,7 @@ from ..domain.drive_feed_scope import FeedScope
 from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
+from ..domain.drive_ancestry import Ancestry
 from ..domain.user_drive import DriveItemNotFoundError, DriveNotConnectedError
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_review_answers import deciding_answer
@@ -1495,6 +1496,10 @@ def create_user_cabinet_blueprint(
             "unreadable": {"files": [{"name": f.name, "reason": f.reason, "web_url": f.web_url}
                                      for f in status.unreadable],
                            "total": status.unreadable_total},
+            # the scope change's progress (DRIVE_SCOPE_WALK_RFC §8): one line per drive in the Cabinet
+            "scope_progress": {"removing": status.scope_removing, "removing_outside": status.scope_removing_outside,
+                               "walking": status.scope_walking, "listed": status.scope_listed,
+                               "blocked": status.scope_blocked},
         }
 
     async def _has_credential(connection: DriveConnection) -> bool:
@@ -1617,6 +1622,19 @@ def create_user_cabinet_blueprint(
             logger.warning(f"Drive card: reading a folder path failed: {exc_brief(exc)}")
             return ""
 
+    async def _scope_folder_json(connection: DriveConnection, folder: str) -> dict:
+        """A saved scope folder for the Cabinet: id and path; `missing: true` (key only then) when the drive no longer has
+        it (DRIVE_SCOPE_WALK_RFC W21); path "" when unreadable for another reason."""
+        if user_drive_service is None:
+            return {"id": folder, "path": ""}
+        try:
+            return {"id": folder, "path": (await user_drive_service.get_item(connection.handle, folder)).path}
+        except DriveItemNotFoundError:
+            return {"id": folder, "path": "", "missing": True}
+        except Exception as exc:
+            logger.warning(f"Drive card: reading a folder path failed: {exc_brief(exc)}")
+            return {"id": folder, "path": ""}
+
     async def _write_folder_json(connection: DriveConnection) -> Optional[dict]:
         if connection.write_folder_id is None:
             return None
@@ -1672,7 +1690,7 @@ def create_user_cabinet_blueprint(
             "write_folder": await _write_folder_json(connection),
             "scope": {"whole_drive": connection.scope_whole_drive,
                       "empty_means": await _empty_scope_meaning(connection),
-                      "folders": [{"id": folder, "path": await _item_path(connection, folder)}
+                      "folders": [await _scope_folder_json(connection, folder)
                                   for folder in connection.scope_folder_ids]},
             "connector_access": await _connector_access_json(connection),
             "searched_by_default": connection.searched_by_default,
@@ -1756,7 +1774,15 @@ def create_user_cabinet_blueprint(
         write = connection.write_folder_id
         write_ancestry = (await user_drive_service.ancestry(handle, write, memo=memo)
                           if write not in (None, ROOT_FOLDER) else None)
-        ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in dict.fromkeys(ids)}
+        ancestries: dict = {}
+        for i in dict.fromkeys(ids):
+            try:
+                ancestries[i] = await user_drive_service.ancestry(handle, i, memo=memo)
+            except DriveItemNotFoundError:
+                if i not in connection.scope_folder_ids:
+                    raise
+                # a saved folder the drive no longer has stays savable so it can be removed (W21)
+                ancestries[i] = Ancestry(ids=(i,), reached_root=False)
         connector = connection.connector_access
         connector_ids = connector.folder_ids if connector is not None else ()
         connector_ancestries = {i: await user_drive_service.ancestry(handle, i, memo=memo) for i in connector_ids}

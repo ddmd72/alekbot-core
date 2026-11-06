@@ -2589,6 +2589,8 @@ class DriveSearchService:
         RETRY-class lookup or parked, or a parent that is never found would keep `building` true for good."""
         if state.epoch_phase is not EpochPhase.IDLE:
             return True
+        if state.walking:      # a scope walk leaves the item set incomplete; never `has_pending_listing` (stays True for an inaccessible folder)
+            return True
         first_seen, resolving = await asyncio.gather(
             self._repo.oldest_due_at(conn.scope, int(Priority.FIRST_SEEN)),
             self._repo.has_record_in(conn.scope, RecordState.UNRESOLVED, int(Priority.CASCADE)))
@@ -2648,4 +2650,7 @@ class DriveSearchService:
             usd_caps={**USD_CAPS, UsageClass.TRANSCRIBE.value: self._transcribe_cap},
             initial_build_spent_usd=build.spent_usd, initial_build_allowance_usd=build.allowance_usd,
             initial_build_closed=build.closed_at is not None,
+            scope_removing=len([r for r in state.removing_roots if r != state.root_item_id]),
+            scope_removing_outside=bool(state.root_item_id) and state.root_item_id in state.removing_roots,
+            scope_walking=state.walking, scope_listed=state.walk_listed, scope_blocked=state.walk_blocked,
         )
