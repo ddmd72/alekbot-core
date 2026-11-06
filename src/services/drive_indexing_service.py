@@ -1582,9 +1582,14 @@ class DriveIndexingService:
             return await self._restart_for_scope(handle, state, key, new, saved)
 
         ctx = self._ctx(handle, state, now)
-        stored = await self._repo.get_records(handle.scope, sorted(set(diff.walk_roots) | set(diff.remove_roots)))
+        stored = await self._repo.get_records(
+            handle.scope, sorted(set(diff.walk_roots) | set(diff.remove_roots) | set(new.roots)))
+        # a root the applied scope covers but the index holds no record of: removed by an earlier diff whose stamp was
+        # still pending when the owner added it again (8c). It is walked like a new root, never taken for indexed
+        walk_roots = diff.walk_roots + tuple(r for r in new.roots
+                                             if r not in diff.walk_roots and stored.get(r) is None)
         complete = True
-        for item_id in diff.walk_roots:
+        for item_id in walk_roots:
             if item_id in ctx.mirror_root_ids:
                 continue
             rec = stored.get(item_id)
@@ -1627,14 +1632,14 @@ class DriveIndexingService:
             removing.append(root)
         removing_roots = tuple(dict.fromkeys(removing))
         if complete:
-            walking = state.walking or bool(diff.walk_roots)
+            walking = state.walking or bool(walk_roots)
             state = replace(state, applied_scope=key, applied_whole=new.whole, applied_roots=new.roots,
                             removing_roots=removing_roots, ancestry_dirty=True, walking=walking,
-                            walk_listed=0 if diff.walk_roots and not state.walking else state.walk_listed)
+                            walk_listed=0 if walk_roots and not state.walking else state.walk_listed)
         else:
             state = replace(state, removing_roots=removing_roots, ancestry_dirty=True)
         state = await kept(state)
-        logger.info(f"[DriveIndex] scope of connection {who} applied as a diff: walk={len(diff.walk_roots)} "
+        logger.info(f"[DriveIndex] scope of connection {who} applied as a diff: walk={len(walk_roots)} "
                     f"remove={len(diff.remove_roots) + (1 if diff.from_whole else 0)}"
                     f"{'' if complete else ' (stamp waits for the next tick)'}")
         return state
@@ -1783,6 +1788,9 @@ class DriveIndexingService:
         listing pending at all (one query per tick)."""
         blocked = max(0, state.walk_blocked + summary.get("walk_blocked_new", 0) - summary.get("walk_unblocked", 0))
         listed, walking = state.walk_listed, state.walking
+        view = _TICK_SCOPE.get()
+        if view is not None and view.ancestry_dirty and not state.ancestry_dirty:
+            state = replace(state, ancestry_dirty=True)   # set after the scope step ran (a root's cascade ended)
         if walking:
             listed += summary.get("walk_folders_listed", 0)
             if stopped_class is None or not await self._repo.has_pending_listing(handle.scope):
@@ -3041,6 +3049,8 @@ class DriveIndexingService:
         why = UNSTORED if unstored else GONE
         movable = [k for k in kids if k.item_id not in keep][:limit]
         if not movable:   # no children, or only children the scope keeps: the folder goes alone
+            if view is not None and folder.item_id in view.scope.folder_ids:
+                view.ancestry_dirty = True   # a root left the index: the paths to it are derived again (§5.9)
             await self._commit(handle, [], {folder.item_id}, gone=self._mirror_notices([folder], why))
             budget.cascade_ops -= 1
             summary["deleted"] = summary.get("deleted", 0) + 1
@@ -5567,6 +5577,9 @@ class DriveIndexingService:
             return True
         if self._scope_moved() or (state.root_item_id and state.root_item_id in state.removing_roots):
             return True   # the next tick walks the new scope / goes on with the drive's top-level removal
+        view = _TICK_SCOPE.get()
+        if state.ancestry_dirty and view is not None and view.filtered and (view.folder_changed or view.ancestry_dirty):
+            return True   # the paths wait for a tick whose feed moved no folder (self-resolving)
         if models is not None and await self._enrichment_waiting(handle, now, models, idle):
             return True
         if self._upgrade_due(state) and (state.upgrade_cursor is not None or upgrade_wrote):
