@@ -1,7 +1,7 @@
 """Render family registry: render.pdf / render.png over the browser launcher (S2 card C)."""
 import os
 
-from src.adapters.sandbox_engine.docx_render_engine import DocxRenderEngine
+from src.adapters.sandbox_engine.docx_render_engine import DOCX_MEMORY_MODE, DocxRenderEngine
 from src.adapters.sandbox_engine.html_render_engine import (
     BROWSER_MEMORY_MODE, BROWSER_NOFILE, BROWSER_NPROC, HtmlRenderEngine,
 )
@@ -45,8 +45,9 @@ def test_docx_engine_keeps_its_own_launcher_and_limits(tmp_path):
     _, registry = _registry(tmp_path)
     docx_launcher = registry[SandboxOp.RENDER_DOCX]._launcher
     assert docx_launcher is not registry[SandboxOp.RENDER_PDF]._launcher
-    assert docx_launcher._memory_mode != "data"
+    assert docx_launcher._memory_mode == DOCX_MEMORY_MODE == "data"
     assert docx_launcher._nproc != BROWSER_NPROC
+    assert docx_launcher._nofile != BROWSER_NOFILE
 
 
 def test_light_registry_has_no_render_op(tmp_path):

@@ -38,6 +38,13 @@ from ...utils.logger import logger
 from .child_launcher import ChildLauncher
 from .render_docx_child import ERROR_FILE, EXIT_BAD_REQUEST, OUTPUT_FILE
 
+# The memory rlimit of this engine's launcher (G6 / S0-f): RLIMIT_DATA, not RLIMIT_AS. Under RLIMIT_AS 1 GiB node ran
+# until its first libuv threadpool job (e.g. a script reading its spec from stdin, a file): starting the pool's four
+# threads, 8 MiB of stack each, ran out of address space, and libuv's init_threads() calls abort() with no message
+# (prod 2026-11-06: rc=-6, empty err.txt). Node reserves address space it never commits (V8 code range, per-thread malloc
+# arenas); RLIMIT_DATA counts only writable private memory, so the same 1 GiB still bounds what the script can use.
+DOCX_MEMORY_MODE = "data"
+
 _CHILD_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_docx_child.py")
 _TRUNCATION_MARKER = "\n...[truncated]"
 _COPY_CHUNK = 1024 * 1024
