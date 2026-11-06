@@ -25,6 +25,9 @@ tokens:
     order: 320
   POLICY_PRIVACY:
     order: 310
+  POLICY_SYSTEM_PROVENANCE:
+    non_overridable: true
+    order: 5
   POLICY_WITTY_ACCENTUATION:
     order: 340
   PROTOCOL_AGENT_SELECTION:
