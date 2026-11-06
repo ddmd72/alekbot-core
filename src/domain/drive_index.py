@@ -323,6 +323,10 @@ class DriveIndexRecord:
     probe_pending: bool = False
     rescope_pending: bool = False
     cascade_cursor: Optional[str] = None      # last child item_id handled by a rescope page
+    cascade_unstored: bool = False            # DRIVE_SCOPE_WALK_RFC §5.6: a DELETING folder that left the scope:
+                                              # its cascade notices `unstored`, never `gone` (plan Delta 5)
+    trim_pending: bool = False                # DRIVE_SCOPE_WALK_RFC §5.6: a path folder turned skeleton whose
+                                              # off-path children must go (pages with `cascade_cursor`)
     reobserve_pending: bool = False           # this folder's never-stored subtree must be re-listed (§5.2)
     reobserve_cursor: Optional[str] = None    # provider page cursor of an unfinished re-listing
     probed_child_count: int = 0               # childCount at the last density decision (hysteresis)
@@ -586,6 +590,15 @@ class DriveSyncState:
     # connection whose key moved on re-enumerates (`drive_index_planner.scope_restart`); "" is the default scope, which
     # every state stored before 2b was built under.
     applied_scope: str = ""
+    # DRIVE_SCOPE_WALK_RFC §5.2 (step 1): the applied scope itself beside its key (W1). The pair is valid only while
+    # `scope_key(applied_roots, applied_whole) == applied_scope` (`drive_scope_diff.shape_valid`, plan Delta 1)
+    applied_whole: bool = False               # §5.2 W1: the applied scope is the whole drive
+    applied_roots: Tuple[str, ...] = ()       # §5.2 W1: the applied folder roots (what the Cabinet saved)
+    removing_roots: Tuple[str, ...] = ()      # §5.2, §5.6: removed roots whose guarded removal still runs
+    ancestry_dirty: bool = False              # §5.2, §5.9: the skeleton paths must be re-derived (W9)
+    walking: bool = False                     # §5.2, §5.5: a diff walk runs (settled by `has_pending_listing`)
+    walk_listed: int = 0                      # §5.2, §5.5: folders listed since the current walk began (Cabinet)
+    walk_blocked: int = 0                     # §5.2, §5.5 W5: walk folders that could not be listed (Cabinet)
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

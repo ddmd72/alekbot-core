@@ -7,7 +7,8 @@ Public interface:
     PlanContext, Classification, ObservationPlan, AccessAction
     parent_scope(parent_id, parent, root_item_id, mirror_root_ids=frozenset(), scope_root_ids=frozenset(),
                  whole_drive=False, root_covered=True) -> Optional[Scope]
-    scope_ancestor_classification(change) -> Classification / scope_restart(state, scope_key) -> DriveSyncState  (RFC §11.3)
+    scope_ancestor_classification(change) -> Classification / scope_restart(state, scope_key, *, applied=None)
+        -> DriveSyncState  (RFC §11.3; DRIVE_SCOPE_WALK_RFC W12)
     mirror_root_classification(change) -> Classification                                   (§27.9.8)
     needs_probe(change, pscope, previous) -> bool
     classify(change, pscope, probe, previous) -> Classification
@@ -81,6 +82,7 @@ from .drive_index_params import (
     RETRY_MAX_DOUBLINGS,
     STALE_ALERT_AFTER, TICK_DEADLINE_S,
 )
+from .drive_scope_diff import AppliedScope
 from .drive_index_policy import (
     TRANSCRIBED_KINDS, Admission, admission, card_rank_of, content_class_of, density_still_valid, is_dense, is_dot_name,
     is_generated_dir, is_marker_child, is_readme_name, item_rule, readme_readable, searchable, size_cap,
@@ -203,11 +205,15 @@ def scope_ancestor_classification(change: DriveChange) -> Classification:
                           content_class_of(kind))
 
 
-def scope_restart(state: DriveSyncState, scope_key: str) -> DriveSyncState:
+def scope_restart(state: DriveSyncState, scope_key: str, *, applied: Optional[AppliedScope] = None) -> DriveSyncState:
     """The connection's scope changed since the stored records were enumerated (RFC §11.3): enumerate again. The
-    re-enumeration re-observes everything, the scope filter deletes what left, the epoch sweep removes the rest."""
-    return replace(state, cursor=None, epoch=state.epoch + 1, epoch_phase=EpochPhase.ENUMERATING,
-                   round_complete=False, round_started_at=None, applied_scope=scope_key)
+    re-enumeration re-observes everything, the scope filter deletes what left, the epoch sweep removes the rest.
+    `applied`: the scope itself, stamped with its key when the restart starts (DRIVE_SCOPE_WALK_RFC W12)."""
+    restarted = replace(state, cursor=None, epoch=state.epoch + 1, epoch_phase=EpochPhase.ENUMERATING,
+                        round_complete=False, round_started_at=None, applied_scope=scope_key)
+    if applied is None:
+        return restarted
+    return replace(restarted, applied_whole=applied.whole, applied_roots=tuple(applied.roots))
 
 
 def _density_decision_reusable(change: DriveChange, previous: Optional[DriveIndexRecord]) -> bool:

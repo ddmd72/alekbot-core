@@ -301,6 +301,9 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "notes_merge_version": int,
     # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
     "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
+    # DRIVE_SCOPE_WALK_RFC §5.2: Firestore returns arrays as lists; the state keeps tuples
+    "applied_roots": _strs, "removing_roots": _strs,
+    "applied_whole": bool, "ancestry_dirty": bool, "walking": bool, "walk_listed": int, "walk_blocked": int,
 }
 
 
@@ -955,6 +958,16 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .where(filter=FieldFilter("priority", "==", int(priority)))
                  .select([FieldPath.document_id()]).limit(1))
         return bool(await query.get())
+
+    async def has_pending_listing(self, scope: ConnectionScope) -> bool:
+        query = (self._conn_query(scope).where(filter=FieldFilter("reobserve_pending", "==", True))
+                 .select([FieldPath.document_id()]).limit(1))
+        return bool(await query.get())
+
+    async def scope_ancestor_records(self, scope: ConnectionScope, limit: int) -> List[DriveIndexRecord]:
+        query = (self._conn_query(scope).where(filter=FieldFilter("reason", "==", Reason.SCOPE_ANCESTOR.value))
+                 .limit(limit))
+        return await self._read(scope, query)
 
     async def children(self, scope: ConnectionScope, parent_id: str, after_item_id: Optional[str],
                        limit: int) -> List[DriveIndexRecord]:

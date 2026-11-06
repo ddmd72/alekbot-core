@@ -105,6 +105,7 @@ _APPROOT = "/me/drive/special/approot"
 # Bound on the drive-id read at connect: the OAuth callback waits for it.
 DRIVE_ID_READ_TIMEOUT_S = 10.0
 _DELTA_START = f"{_APPROOT}/delta?$top=200"   # S0a: $top paginates delta
+_CHILDREN_TOP = 200                             # children per listing page at most (DRIVE_SCOPE_WALK plan Delta 10)
 # Graph writes the same location two ways: '/drive/root:/…' (GET, children, PUT, PATCH, approot)
 # and '/drives/<drive-id>/root:/…' (POST create-folder responses). Strip either prefix (RFC §7).
 _ROOT_PREFIX_RE = re.compile(r"^(?:/drive|/drives/[^/]+)/root:")
@@ -643,9 +644,10 @@ class OneDriveAdapter(UserDrivePort):
 
     async def list_children_changes(self, handle: DriveHandle, folder_id: str, limit: int,
                                     cursor: Optional[str] = None) -> DriveChildrenPage:
-        """One page of a folder's children: `$top=limit`; `next_cursor` is Graph's nextLink, None on the
-        last page. A cursor that does not point at Graph is never followed: the listing restarts."""
-        url = f"/me/drive/items/{_q(folder_id)}/children?$top={limit}"
+        """One page of a folder's children: `$top=min(limit, _CHILDREN_TOP)` (DRIVE_SCOPE_WALK_RFC plan Delta 10: Graph's
+        children maximum is not verified, so a walk's larger page stays at 200); `next_cursor` is Graph's nextLink, None
+        on the last page. A cursor that does not point at Graph is never followed: the listing restarts."""
+        url = f"/me/drive/items/{_q(folder_id)}/children?$top={min(limit, _CHILDREN_TOP)}"
         if cursor is not None:
             if _is_graph_url(cursor):
                 url = cursor
