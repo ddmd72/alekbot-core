@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
@@ -29,6 +30,7 @@ from ...domain.messaging import SmartResponse
 from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
+from ...domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ...domain.native_format import NATIVE_FORMATS_KEY, to_plain
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from ...domain.workspace import WORKSPACE_TOOL, WorkspaceReferences
@@ -460,7 +462,13 @@ class SmartResponseAgent(BaseAgent):
             if email_for_triage:
                 extra_static_blocks = [
                     "email_for_triage {\n"
-                    + json.dumps(email_for_triage, ensure_ascii=False, indent=2)
+                    + EXTERNAL_REMINDER
+                    + "\n"
+                    + wrap_untrusted(
+                        json.dumps(email_for_triage, ensure_ascii=False, indent=2),
+                        nonce=secrets.token_hex(8), store="email", ref="email_for_triage",
+                        label="daily email review",
+                    )
                     + "\n}"
                 ]
 
