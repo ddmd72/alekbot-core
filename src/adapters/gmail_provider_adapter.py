@@ -32,6 +32,7 @@ from ..domain.email import (
     EmailMetadata,
     EmailPart,
 )
+from ..domain.link_url import link_with_url
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import (
     EmailMessageGone,
@@ -469,10 +470,17 @@ class GmailProviderAdapter(EmailProviderPort):
 
     @classmethod
     def _html_to_text(cls, html: str) -> str:
-        """HTML → plain text via BeautifulSoup: proper entity decoding, structure-aware extraction."""
+        """HTML → plain text via BeautifulSoup: proper entity decoding, structure-aware extraction.
+
+        An external link keeps its cleaned URL after its text, "Read more (https://example.org/a?id=7)", in the
+        drive parser's format (`domain/link_url.py`, owner decision O-6); any other link keeps its text only."""
         soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "head"]):
             tag.decompose()
+        for link in soup.find_all("a"):
+            shown = link_with_url(" ".join(link.get_text(" ", strip=True).split()), str(link.get("href") or ""))
+            if shown:
+                link.replace_with(f" {shown} ")
         text = soup.get_text(separator=" ")
         text = cls._strip_invisible(text)
         return " ".join(text.split())

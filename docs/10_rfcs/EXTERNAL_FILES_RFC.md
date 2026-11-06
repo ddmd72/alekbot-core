@@ -942,6 +942,7 @@ Order (D14): the document service (U0–U4, then U5) is built first; the sandbox
 | D21 | U5's drive re-read re-runs the free parser on parser-extracted files and re-embeds only the files whose extracted text changed; reader-extracted files are untouched; records store the reader family actually used (§7) | owner, 2026-11-05 |
 | O-U5-3 | Detail of D21: an upgrade re-read never calls the paid reader; the parser's text stands (`decisions/drive_reread_by_text_change.md`) | owner, 2026-11-05 |
 | O-U5-5 | `.eml` attachments are listed by name, type and size only; their contents are not read | owner, 2026-11-05 |
+| O-U5-6 | Live Gmail bodies keep their links under O-U5-2's rule: the Gmail adapter's HTML-to-text writes an external link as `text (URL)`, the drive parser's form, through one shared pure rule (`src/domain/link_url.py`); the body stays parsed in the main service (BeautifulSoup, as before), a `text/plain` part is passed as written | owner, 2026-11-05 |
 | P1 | `DocumentReadPort` + `DocumentService`, one implementation today (§4.4) | author |
 | P2 | bytes in; the service never fetches (§4.4) | author |
 | P5 | `LLMPort.native_formats(model_name)` with a text-only default; per-attempt key on a context copy (§4.3) | author, realises D3 |
