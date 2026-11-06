@@ -719,12 +719,14 @@ def schedule(rec: DriveIndexRecord, now: datetime, *, first_seen: bool) -> Drive
 
 def _works(rec: DriveIndexRecord, first_seen: bool, now: datetime) -> List[Tuple[Priority, datetime]]:
     works: List[Tuple[Priority, datetime]] = []
-    if (rec.probe_pending or rec.rescope_pending or rec.state is RecordState.DELETING
+    if (rec.probe_pending or rec.rescope_pending or rec.trim_pending or rec.state is RecordState.DELETING
             or rec.state is RecordState.UNRESOLVED or _card_drop_due(rec)):
         works.append((Priority.CASCADE, now))
     closed = inaccessible(rec)
     if rec.reobserve_pending and not closed:     # a folder the bot cannot list waits for access (§26.2)
-        works.append((Priority.FIRST_SEEN, now))   # §7.8 class 2: "re-observed subtrees"
+        # class 1 with the other structural work: a walk's listing runs before the content it brings (DRIVE_SCOPE_WALK
+        # plan Delta 2; it was class 2, "re-observed subtrees")
+        works.append((Priority.CASCADE, now))
     if rec.readme_pending and not closed:
         works.append((Priority.MAINTENANCE, now))  # an enrichment of the repository card (§5.2)
     recheck = access_recheck_at(rec)
