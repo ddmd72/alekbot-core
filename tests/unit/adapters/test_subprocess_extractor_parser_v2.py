@@ -15,11 +15,12 @@ _SCRIPT_PAGE = ("<html lang='en'><head><title>Planner</title><script>" + "var x=
                 "<body><div id='root'></div></body></html>")
 
 
-def test_parser_version_is_4():
+def test_parser_version_is_5():
     # 3: a PDF's capture signals (USER_DRIVE_INDEXING_RFC §26.3, §26.7) on top of parser@2's HTML policy
     # 4: U5's reader fixes (PDF table rows, subtitle times, the full .eml, full HTML links; EXTERNAL_FILES_RFC §7 U5)
-    assert SubprocessContentExtractor.VERSION == 4
-    assert SubprocessContentExtractor().stamp == f"{PARSER}@4"
+    # 5: a PDF table page no longer repeats the table's first/last row as loose text (re-reads parser@4 records)
+    assert SubprocessContentExtractor.VERSION == 5
+    assert SubprocessContentExtractor().stamp == f"{PARSER}@5"
 
 
 def test_outcome_has_the_flag_off_by_default():
