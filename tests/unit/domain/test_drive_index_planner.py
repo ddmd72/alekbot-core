@@ -324,10 +324,12 @@ class TestReviewARegressions:
         plan = observe(ch("a", "x.py"), stored)
         assert plan.upsert is not None and plan.upsert.due_at == NOW
 
-    def test_reobserve_is_class_two(self):
+    def test_reobserve_is_class_one(self):
+        """DRIVE_SCOPE_WALK plan Delta 2: a pending re-listing is structural work (class 1), so a walk lists before
+        the content it brings and W3's wait applies (it was class 2)."""
         rec = replace(folder_rec("f", "F"), reobserve_pending=True, has_card=True)
         rec = replace(rec, card_hash=card_hash(rec))
-        assert schedule(rec, NOW, first_seen=False).priority == Priority.FIRST_SEEN
+        assert schedule(rec, NOW, first_seen=False).priority == Priority.CASCADE
 
     def test_capped_leaves_a_deleting_record_alone(self):
         dying = replace(folder_rec("f", "F"), state=RecordState.DELETING)
