@@ -97,7 +97,7 @@ async def test_node_runs_with_the_data_limit_and_no_address_space_limit(tmp_path
     assert result.status == SandboxStatus.OK, result.detail
     with open(result.output_path, "rb") as handle:
         seen = json.loads(handle.read())
-    assert seen["data"]["soft"] == CEILING_MEMORY_BYTES // 1024
+    assert seen["data"]["soft"] == CEILING_MEMORY_BYTES   # process.report gives raw rlimit bytes despite the *_kbytes key
     assert seen["vm"]["soft"] == "unlimited"
 
 
