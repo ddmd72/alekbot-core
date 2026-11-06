@@ -358,7 +358,7 @@ async def read_parser_records(repo: Any, scope: ConnectionScope) -> Tuple[List[D
     while True:
         page = await repo.records_page(scope, after, 200)
         for rec in page:
-            if rec.extracted_by.startswith("reader@"):
+            if (rec.extracted_by or "").startswith("reader@"):      # None: never extracted, or reset by the planner
                 reads.append((rec.model_read_at, rec.pages_total or 1))
             if (rec.extracted_by == OLD_STAMP and rec.state in _PROBED_STATES and not rec.is_folder
                     and admission(rec.kind) is Admission.CONTENT and chain_for(rec.kind)[0] == PARSER):

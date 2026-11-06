@@ -365,6 +365,23 @@ def test_a_download_failure_is_an_error_of_that_file_not_of_the_run(probe):
     assert failed == 0 and sum(t.errors["KeyError"] for t in per_kind.values()) == 3
 
 
+def test_a_record_with_no_extraction_stamp_is_skipped_and_does_not_crash_the_run(probe):
+    repo, scope, records, outcomes, blobs = _world()
+    unstamped = record(item_id="item-unstamped", name="never-extracted.docx", extracted_by=None)
+    asyncio.run(repo.upsert_records(records + [unstamped]))
+    asyncio.run(repo.write_chunks(stored_of(LEASE_CHUNKED, item="item-lease-porto"), [[0.0]] * len(LEASE_CHUNKED.chunks)))
+    due, reads = asyncio.run(probe.read_parser_records(repo, scope))
+    assert "item-unstamped" not in {r.item_id for r in due}
+    assert reads == [(NOW, 1)]                          # only the reader record; the unstamped one is not counted
+    drive = _FakeDrive(blobs)
+    conn = SimpleNamespace(scope=scope, handle=SimpleNamespace())
+    _, counts, run_reads, failed = asyncio.run(probe.run(
+        [(conn, "u1")], repo=repo, drive=drive, extractor=_FakeExtractor(outcomes), space=SPACE, count=_count,
+        sample=5000, log=lambda _: None))
+    assert failed == 0 and drive.downloads == 3 and run_reads == [(NOW, 1)]
+    assert counts == {"pdf": (2, 2), "docx": (1, 1)}
+
+
 def test_the_reader_ledger_reads_the_last_months(probe):
     class Repo:
         def __init__(self):
