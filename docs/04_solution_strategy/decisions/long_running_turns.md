@@ -84,7 +84,7 @@ notifications (`UserNotificationService`) alongside chat turns. This implementat
 clocks chat turns only (`SmartResponseAgent`'s top-level engine via
 `use_turn_clock=True`; nested delegation engines do not get their own clock). Giving
 the gateway/notification paths their own `TurnClock` and budget is an explicit owner
-decision for a follow-up task, not assumed here.
+decision for a follow-up task, not assumed here. The owner froze this rest of RFC §7 on 2026-11-06.
 
 Bound and companion channels get no clock in v1 either. RFC §7 gives them deadline +
 wrap-up ("Yes") while excluding only notice + late answer; this branch gates the whole

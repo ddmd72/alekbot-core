@@ -7,7 +7,7 @@
 
 User-issued behavioral rules ("never give partial answers", "trace conditional logic before
 judging") are now a dedicated fact domain **`FactDomain.AGENT_DIRECTIVE`**, rendered as a binding
-**`standing_directives {}` block** injected into the orchestrator's system prompt on every request —
+**`standing_directives {}` block** injected on every request into the system prompt of every agent built with the biographical context (Smart, Quick, Notes, Tasks, EmailSearch, PdfGenerator); the consolidator (`include_directives=False`), Lelik and the other agents without that context do not get it —
 NOT stored as biographical `preference` facts and NOT as firing self-reminders.
 
 Three distinct persistence kinds were being collapsed into two containers; this separates them:

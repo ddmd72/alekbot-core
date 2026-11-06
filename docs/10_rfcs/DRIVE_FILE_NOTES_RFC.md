@@ -1,6 +1,6 @@
 # RFC: Owner notes on drive files
 
-**Status:** Proposed, rev 3.3 (2026-10-28): every open decision answered by the owner (D11–D21); rev 3.1 aligns the
+**Status:** Implemented, rev 3.3 (2026-10-28): every open decision answered by the owner (D11–D21); rev 3.1 aligns the
 deleted-files search and the deletion "why" with the transcripts mirror (§0.3); rev 3.2 records the owner's ruling on
 editing archived and other-drive notes (D21) and the deltas of the built S1 core (§0.4); rev 3.3 moves the write side
 from Smart into the drive specialist (`DRIVE_SPECIALIST_RFC.md` §9) and records what that build changed (§0.5). S1–S3

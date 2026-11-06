@@ -1,9 +1,9 @@
 # RFC: Untrusted-content sandbox service — one place where hostile bytes are processed, holding nothing
 
-**Status:** rev 4, in rollout (2026-11-05). Live and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
+**Status:** Implemented (rev 4, 2026-11-05). Built and accepted: the parse family in both runtimes (S3, S4; O14), `render.docx`
 (S1) and `render.pdf` (S2) as the only DOCX/PDF path of the main service (the in-process render path is removed, 2026-11-05), media for transcripts (S5, accepted 2026-11-05);
 the main service's edit-video duration probe through `media.probe` (S5b, built 2026-11-05).
-`render.png` is built and tested but not wired: widgets render in-process (O16). Remaining: S6 (the rest of the in-process paths out; the no-egress network is built: both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
+`render.png` is built and tested but not wired: widgets render in-process by owner decision O16, the one intended exception. S6 is done: the in-process parse, media, DOCX and PDF paths are removed, and the no-egress network is built (both services deploy onto a deny-all-egress VPC, §4.5). S0 ran as live checks during the rollouts, not as a separate spike (§S0). *O* items are owner decisions,
 *P* items are author proposals, *S-Δ* items are this RFC's deltas.
 **Date:** 2026-10-20 (rev 3: owner decisions O5–O11; rev 4: 2026-11-03, owner decisions O12–O13, code re-read at `2280ca78`; O15 added 2026-11-04; S5 built, O17-O18)
 **Owner decisions (2026-10-19, "we need a proper sandbox with a limited scope"):**
@@ -446,7 +446,7 @@ suites pin the observable outcomes of the sandbox adapters (S1-S5). For the rend
 
 Numbered locally (S-Δn); they do not continue the drive RFC's Δ series.
 
-- **S-Δ1. Audio stays with the caller.** `convert_file_to_text` holds an audio branch that would call `AudioTranscriptionPort` (an LLM provider call;
+- **S-Δ1. Audio stays with the caller.** `convert_file_to_text` (removed in EXTERNAL_FILES U5) held an audio branch that would call `AudioTranscriptionPort` (an LLM provider call;
   `file_conversion.py:236-252`); in production it is never given one, so it answers "transcription is not available". Whatever EXTERNAL_FILES U3 decides for
   audio stays in the caller; no `parse.*` op transcribes.
 - **S-Δ2. The plain-text fast path stays in the caller:** reading a UTF-8 file as text is not parsing (`file_conversion.py:253-268`). After EXTERNAL_FILES U5
@@ -667,7 +667,7 @@ Re-verified at `2280ca78`. Rev 3's item 7 (`/extract` reserved on the indexer) i
 
 1. **The drive's caps exceed the HTTP/1 request limit**: 45 MiB for most kinds and 100 MiB for PDFs in the indexer (`drive_index_params.py:56-57`,
    `drive_index_policy.py:159`; §4.7); the design depends on HTTP/2 being proved at 100 MiB first (S0-a, not run).
-2. **`convert_file_to_text` holds an audio branch** for an LLM provider call (`file_conversion.py:236-252`); it is never given a transcriber in production, and
+2. **`convert_file_to_text` (removed in EXTERNAL_FILES U5) held an audio branch** for an LLM provider call (`file_conversion.py:236-252`); it is never given a transcriber in production, and
    it cannot be moved whole (S-Δ1).
 3. **`ExtractionRequest` carries identity** (`user_id`, `account_id`, `item_id`, `name`; `drive_extraction.py:50-59`); a naive serialization would break I3 (S-Δ3).
 4. **The PDF page ops are outside `ContentExtractorPort`**; the reader reaches them through a Protocol in `composition/` (`drive_reader_runner.py:73`;

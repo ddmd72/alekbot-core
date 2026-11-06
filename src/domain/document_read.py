@@ -55,8 +55,8 @@ PARSE_KINDS: FrozenSet[str] = frozenset({
     "eml",
 })
 
-# P21: a chat upload lives 90 days (DriveOperations' not-found line, "files are kept for 90 days"), so its cached
-# transcript does too.
+# P21: the cached transcript lives 90 days. A chat upload itself is deleted by the media bucket's lifecycle rule after
+# 30 days, so the cache outlives its upload.
 TRANSCRIPT_CACHE_DAYS = 90
 
 

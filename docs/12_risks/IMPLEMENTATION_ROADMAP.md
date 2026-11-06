@@ -141,6 +141,145 @@ the next free id and says what is wrong, where (file and function, not line numb
   `BothProvidersUnavailableError`. Deferred when rotation shipped (`decisions/cross_provider_execution_retry.md`,
   "variant 3"): wider blast radius, since every single-call agent goes through this path.
 
+### TD-14: A specialist failure ends the turn as SUCCESS and raises no alert [P1]
+
+- `DelegationEngine` turns an `AgentResponse.failure` into an ordinary tool result ("Specialist agent rejected the
+  request … Correct your input and try again", `failed=True`, a warning log only), so the orchestrator apologises and
+  the turn finishes with status SUCCESS. `BaseAgent._on_agent_error` only logs. There is no global error reporter, so
+  a system fault (an adapter exception, a 4xx/5xx from a store or provider) is invisible to the owner.
+- Fix: split the two kinds of failure in the engine. An input error (bad arguments) goes back to the model as today so
+  it can correct itself. A system error raises an alert (the ops `AlertSinkPort`, or `UserNotificationService.notify_raw`;
+  which one is open) plus a structured log line.
+
+### TD-15: `allowed_intents` is enforced only in the tool declaration, not at dispatch [P2]
+
+- `AgentRegistry` filters the intents an agent is *shown* by `AgentDescriptor.allowed_intents`
+  (`agent_registry.py`, `get_available_intents_for`), but neither `DelegationEngine.dispatch` nor the coordinator checks it
+  when the call arrives. A model that names an intent outside its list still runs it. `LelikAgent.delegate`
+  (`/voice/delegate`) dispatches whatever the realtime model sends; Smart, Quick and Tutor are the same.
+- Fix: reject, in the engine's dispatch, any intent not in the calling descriptor's `allowed_intents` (when set), with a
+  tool result that says so. Its own small change; `LelikAgent.delegate` is the first caller to cover.
+
+### TD-16: Archived or deleted Slack channels leave their channel binding behind [P3]
+
+- Nothing in `src/` handles `channel_archive` or `channel_deleted`, so a `ChannelBinding` document (id = channel id,
+  made by `$agent <type>`) outlives its channel. `FirestoreChannelBindingAdapter._deserialize_companion_config` still
+  raises `KeyError` on a stored `companion_config` that lacks `window_threshold` or `batch_size` (the other fields fall
+  back to defaults), a trap for anything that iterates the collection.
+- Open before building: whether the Slack app receives these events with its current manifest and scopes; delete or
+  soft-delete the binding, and whether its companion records stay. A one-time cleanup of existing orphans is a separate,
+  smaller task.
+
+### TD-17: Prompt assembly drops `extra_static_blocks` when there is no knowledge base and no preamble [P2]
+
+- In `PromptAssemblyService` (`prompt_v3/prompt_assembly_service.py`), the blocks are appended only when `kb_parts` is
+  non-empty, or in the `elif extra_static_blocks and kb_preamble` branch. With `kb_parts` empty and `kb_preamble=False`
+  they are silently dropped. Smart's email-triage path calls with `kb_preamble=False`.
+- Fix: append the blocks in that case too (after the blueprint, as the postamble branch does). The code is shared by
+  every agent, so it needs its own review.
+
+### TD-18: Email search dates carry no user timezone [P3]
+
+- `EmailSearchAgent._parse_date` (`email_search_agent.py`) parses `date_from` / `date_to` with `strptime` and no
+  timezone, so the day boundaries ignore the user's timezone and a search can be off by hours at midnight.
+- Fix: parse into the user's timezone and convert for the query.
+
+### TD-19: `response_owed` is written but never read [P2]
+
+- `VoiceSessionService` (`voice_session_service.py`) sets `state.response_owed` when a late Alek answer arrives while the
+  caller is speaking under a provider-owned turn (xAI), and clears it elsewhere, but no code reads it. Nothing starts the
+  owed response, so Lelik stays silent until asked.
+- Fix: part of the voice fix batch (the reader of the flag belongs with the turn-ownership logic), not a piecemeal patch.
+
+### TD-20: `_migrate_ownership_fields` can overwrite `account_id`; `write_superseding` has no tenancy check [P3]
+
+- `FirestoreFactRepository._migrate_ownership_fields` (`firestore_repo.py`) takes the legacy branch whenever either of
+  `account_id` / `created_by_user_id` is missing and `owner_id` exists, and then overwrites a stored `account_id` with
+  `owner_id`. `write_superseding` checks no tenancy between the new version and the documents it closes.
+- No stored document is known to hit the first case. Fix: migrate only the missing field; check that a superseding
+  write stays inside one account.
+
+### TD-21: The user-facing apology on an agent failure is hard-coded English [P3]
+
+- `AgentFallbackService._APOLOGY_TEXT` (`agent_fallback_service.py`) is the text sent when Smart fails and the fallback
+  runs, whatever the user's language.
+- Fix: a `LocalizationPort` key with uk, en, fr and es strings.
+
+### TD-22: `email_indexing_jobs` grows without a cleanup [P3]
+
+- `FirestoreEmailJobRepository` (`firestore_email_job_repo.py`) writes one job document per user per run and has no
+  delete path.
+- Fix: in `create_job`, delete finished jobs older than 30 days except the latest (the Cabinet reads it).
+
+### TD-23: `SkillService._check_text` puts the full `user_id` in the security-check context [P3]
+
+- The context string `skill_{field}_user_{user_id}` (`skill_service.py`) carries the whole id into the validator's logs,
+  against the rule that logs show a short form of ids.
+- Fix: pass a shortened id (as other log lines do) or a skill name.
+
+### TD-24: `prompt_component_repo` and `component_service` are built and never read [P3]
+
+- `ServiceContainer` constructs both (`service_container.py`) and passes `component_service` to `UserAgentFactory`
+  (`user_agent_factory.py`), which stores it; nothing reads it. A wiring test that asserts on it hides an equivalent
+  mutant.
+- Fix: delete the construction and the parameter, and the test's assertion with them (a reviewer decides the test edit).
+
+### TD-25: A PDF whose text layer is one repeated letter never reaches the reader model [P2]
+
+- `garbage_share` (`domain/document_extraction.py`, used by `model_route`) counts only mojibake and `(cid:N)` patterns,
+  so a text layer with a broken font mapping (one letter repeated) passes as good text. `is_machine_text`
+  (`domain/drive_text_gate.py`, called from `DriveIndexingService._read_text`) then demotes the record to
+  `metadata_only / machine_text` with no reader attempt. Such files show in the Cabinet's "could not be read" list, not
+  to the bot.
+- Fix: route the case to the reader. Before building, measure the reader's real per-page cost on a few pages: a long
+  book may exceed the monthly reader page cap.
+
+### TD-26: A scope change re-enumerates the whole Google account (design round in progress) [P2]
+
+- On any change of a connection's folder scope, `DriveIndexingService` restarts the enumeration from zero
+  (`scope … changed; re-enumerating`, MULTI_DRIVE_RFC §11.3 and E71). The state keeps only a hash of the folder set
+  (`scope_key`), so no diff of old and new scope is possible. The restart re-walks files already walked; time and API
+  quota only, no model spend.
+- Open design, not to be built piecemeal: walk only the added folders' subtrees on a widening and drop from the index on a
+  narrowing; the cases to cover include access to a subfolder first and to its parent later, and counting scope per file
+  instead of per folder. One model that may cover all of it: the index is built by walking the chosen folders, so a feed
+  item's verdict is local (its parent is in the set). The planner already has subtree re-listing (`reobserve_pending`) and
+  a moved-folder rescope cascade a diff could reuse. Also for that round: `ITEM_CALLS_PER_TICK`
+  (`domain/drive_index_params.py`) looks redundant as a deadline guard, since `item_call_allowed` also checks the time left.
+
+### TD-27: Bot-written `[System: …]` frames reach consolidation in the user role [P2]
+
+- The late answer of a long turn (`turn_clock.py`, saved by `LongTurnService.save_late_answer`), call events, drive-note
+  events and the async-document-ready note (`user_notification_service.py`) are saved as user-role messages starting with
+  `[System: …]`. `serialize_messages_for_consolidation` sends no author, and the consolidation tokens have a rule only for
+  the memory-review frames (`CONSOLIDATION_POLICIES`). Reminders are not framed this way.
+- To check first: whether the consolidator turns a late answer's content into the owner's facts (not observed yet). If it
+  does, give the `[System:` frames an explicit rule in the consolidation tokens (the "bot never writes to memory itself"
+  rule in the root `CLAUDE.md` is the constraint).
+
+### TD-28: History tiering keeps one more full answer than its setting says [P3]
+
+- `BaseAgent._apply_history_tier` (`base_agent.py`) keeps `full_text` while `model_turns_from_end <= turns`, so a
+  setting of N keeps N+1 full model turns. Cosmetic unless a cost question arises.
+- Fix: `<` instead of `<=`, with the defaults (`history_recent_full_turns`) re-checked.
+
+### TD-29: Telegram replies drop the forum-topic id in a private chat with topics [P3]
+
+- The Bot API lets a private chat with a bot have forum topics (`is_topic_message`, `has_topics_enabled`), but the
+  docstring of `TelegramResponseChannel.send_reply` (`adapters/telegram/response_channel.py`) says topics exist only in
+  supergroups, and `send_reply`, `send_literal`, `send_late_answer` and the `update_message` fallback drop
+  `message_thread_id` while `send_message` and `send_file` pass it. Harmless until topic mode is enabled for the bot.
+- Fix: carry `thread_id` through every send path and correct the docstring.
+
+### TD-30: The drive parser child sometimes aborts at start (SIGABRT, cause unknown) [P3]
+
+- The `[DriveExtract]` log shows extractions of markdown, spreadsheet and PDF kinds ending with exit code -6 after no
+  measurable time, before any parsing, mostly on Google Docs exports. The files are retried, so none is lost. The child's
+  stderr is only hashed (`_stderr_digest`, `adapters/subprocess_content_extractor.py`), so the cause is not in the logs.
+- Suspect: the resource limits (process-count or address-space) applied before the interpreter starts. Next step:
+  reproduce in the indexer image with the same limits and read stderr there; first check whether it persists now that
+  parsing runs in the sandbox light service.
+
 ---
 
 ## Closed items

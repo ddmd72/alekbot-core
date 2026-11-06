@@ -1,8 +1,6 @@
 # RFC: User Drive search metrics
 
-**Status:** Proposed, revision 1 (2026-10-14). Nothing is built or active. The owner approved the nine decisions of
-the study (§3) on 2026-10-14; this text turns them into a design. **S0 (§12) is time-critical: it must run before
-2026-11-09 00:00 UTC** or the only pre-v2 baseline expires.
+**Status:** CLOSED — not built (owner, 2026-11-06): see `docs/04_solution_strategy/decisions/drive_search_metrics_not_built.md`. Kept for its reasoning.
 **Builds on:** [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (Search v2, §25: tiers, coverage line, D29),
 the drive building block [user_drive/README.md](../05_building_blocks/user_drive/README.md) (§6 search, §7 operations).
 **Precedents reused:** `PromptContentStore` / `BigQueryPromptContentAdapter` (best-effort hot-path capture into a
@@ -70,7 +68,7 @@ for 371k tokens; we found it by reading logs by hand. And every v2 search since 
 | 4 | **Judge = Claude Sonnet 5.5, pinned** (exact model id and effort), **on the owner's searches only**. | The indexing disclosure covers describing files, not grading searches. Sonnet avoids grading cards that its own family wrote (profiles and passage hints come from GPT-6 Luna by default). Other users need an opt-in and a disclosure first (§9). |
 | 5 | **Comparison unit: release against release** as the primary view, the weekly trend second. | At 5–26 searches a day a weekly delta under ~10 pp is noise; a release pools more n and is what a regression is attributed to. §6.4 defines "release" so that a docs-only deploy does not split a pool. |
 | 6 | **Result text allowed in the 30-day event table** (`rendered_result`, which can hold document passages). | Same data class and TTL as `prompt_content`, which already holds it inside Smart's prompt. The judge and outlier review need it. |
-| 7 | **S0 baseline copy before 2026-11-09** (planned; not executed until the owner runs it). | The drive turns start on 2026-10-10. That partition of `prompt_content`, and the log lines of those days, expire about 2026-11-09. It is the only pre-v2 baseline. |
+| 7 | **S0 baseline copy** (dropped by the owner, 2026-10-20; nothing is scheduled). | The pre-v2 partition of `prompt_content` and the log lines of those days expire on their own TTL; the owner chose not to keep that baseline. |
 | 8 | **Report via a dedicated Slack webhook** from Secret Manager. | A bot DM would enter chat history and consolidation; the ops webhook would mix a weekly review into alerts. |
 | 9 | **👍/👎 feedback (S6) after 4 weeks of judge runs.** | Its labels then serve mainly to check the judge, and it needs a `ts → trace_id` map and a Slack event subscription. |
 
@@ -494,7 +492,7 @@ The post is exactly-once per week: the task's Cloud Task name is the week key (a
 
 | Slice | Content | Effort | Depends on |
 |---|---|---|---|
-| **S0 — by 2026-11-09 00:00 UTC (target: week of 2026-10-26)** | HMAC key secret (owner); `scripts/metrics/drive_baseline_s0.py` (dry run by default, `--apply` by the owner): the counts-only turn backfill from 2026-10-10 into `drive_turn_baseline_v0`, and the `[DriveSearch]` log lines of the same window into `drive_search_baseline_v0`. Ships the `tool_calls` parser and the log-line parser with their tests; S2 reuses the first. | 0.5 d | — |
+| **S0 — dropped (owner, 2026-10-20); nothing is scheduled** | HMAC key secret (owner); `scripts/metrics/drive_baseline_s0.py` (dry run by default, `--apply` by the owner): the counts-only turn backfill from 2026-10-10 into `drive_turn_baseline_v0`, and the `[DriveSearch]` log lines of the same window into `drive_search_baseline_v0`. Ships the `tool_calls` parser and the log-line parser with their tests; S2 reuses the first. | 0.5 d | — |
 | S1 | `DriveSearchEvent`, `DriveTelemetrySink`, BigQuery and in-memory adapters, emission in `DriveSearchService`, `search_build` fingerprint, dataset/env wiring | 2–3 d | — |
 | S2 | Row model, metric registry with pin tests, turn-fact derivation, `DriveMetricsStore`, `DriveMetricsService.rollup_day`, `drive_metrics_rollup` task and scheduler job, backfill script for the 30-day window | 2–3 d | S1 |
 | S3 | Weekly report (without judge and index sections), fan-out + named Cloud Task, dedicated webhook, outliers, report marker | 1–2 d | S2 |

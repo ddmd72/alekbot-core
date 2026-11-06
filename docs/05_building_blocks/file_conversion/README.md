@@ -113,7 +113,7 @@ parsed kind; `convert_file_to_text` no longer exists.
 **Chat audio (P21).** Only a chat upload opened interactively is transcribed (`OpenAITranscriptionAdapter.
 transcribe_metered`); a prefetch never is, and drive recordings keep their own transcript-first rule. The call is
 metered: its model and usage (tokens or audio seconds) are priced (`domain/billing.py`) and booked to the account
-through the quota service. The transcript is cached per account for 90 days, the life of the upload
+through the quota service. The transcript is cached per account for 90 days (the upload itself is deleted after 30 days by the bucket lifecycle)
 (`<prefix>audio_transcripts`, doc id `<account_id>:<sha256 of the bytes>:<transcriber model>`;
 `firestore_transcript_cache.py`, `DATABASE_SCHEMA.md` §3.3), so a second open costs nothing.
 

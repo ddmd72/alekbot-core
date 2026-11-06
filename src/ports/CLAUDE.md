@@ -1,6 +1,6 @@
 # Ports
 
-ABC interfaces. Contracts between domain/services and the external world. ~93 ports.
+ABC interfaces. Contracts between domain/services and the external world. ~100 ports.
 
 ## Key Ports
 
@@ -11,7 +11,8 @@ ABC interfaces. Contracts between domain/services and the external world. ~93 po
 | `SessionStore` | `session_store.py` | FirestoreSessionStore | Sessions: history + overflow callback |
 | `EmbeddingService` | `embedding_service.py` | GeminiEmbeddingAdapter | Vector embeddings |
 | `ConsolidationQueue` | `consolidation_queue.py` | FirestoreConsolidationQueue | Consolidation queue |
-| `IAMPort` | `iam_port.py` | IAMService | Authorization: platform + user_id → AuthResult |
+| `IAMPort` | `iam_port.py` | FirestoreIAMAdapter (no caller in `src/` yet) | Account roles: `BillingAccount.iam_policy` maps user_id to a `Role` |
+| `PlatformAuthPort` | `platform_auth_port.py` | IAMService (`services/iam_service.py`) | Authorization: platform + platform user id → `IAMDecision` |
 | `QuotaService` | `quota_service.py` | FirestoreQuotaService | Billing: deduct/check quota |
 | `PromptBuilderPort` | `prompt_builder_port.py` | PromptBuilder | Agent prompt assembly |
 | `UserDrivePort` | `user_drive_port.py` | `DriveProviderRouter` (`composition/`, dispatches by `handle.kind`) over OneDriveAdapter (`adapters/microsoft/`) | User's long-term file area: list, read, write, move, delete (provider-neutral). Every method takes a `DriveHandle` (user, connection, credential, kind), never a bare `user_id` |

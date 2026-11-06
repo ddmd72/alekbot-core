@@ -1,6 +1,6 @@
 # Notification Delivery Refactor — RFC
 
-**Status:** Proposed
+**Status:** OBSOLETE (owner, 2026-11-06) — will not be built; kept for its reasoning.
 **Date:** 2026-04-30
 **Author:** Dmytro Deleur
 

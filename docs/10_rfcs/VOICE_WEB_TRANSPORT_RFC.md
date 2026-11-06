@@ -1,6 +1,6 @@
 # RFC: Voice Web Transport — call Lelik from the Cabinet over WebRTC
 
-**Status:** Implemented, pending UAT
+**Status:** Implemented
 **Date:** 2026-09-27
 **Owner:** Dmytro
 **Milestone:** Voice — second transport

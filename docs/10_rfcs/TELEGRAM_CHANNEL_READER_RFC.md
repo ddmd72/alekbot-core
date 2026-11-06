@@ -1,6 +1,6 @@
 # RFC: Telegram Channel Reader — News Retrieval via MTProto User Session
 
-**Status:** PROPOSED — implementation gated on the §4 spike
+**Status:** PROPOSED — implementation gated on the §4 spike. Wanted by the owner, not urgent (2026-11-06). The prerequisite `CipherPort` is built (`src/ports/cipher_port.py`; `SECRETS_AT_REST_RFC.md` is Implemented).
 **Date:** 2026-07-20 (revised 2026-07-22)
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — Telegram Integration Phase 1
@@ -119,7 +119,7 @@ Universality lives in the **port** (a generic "read from Telegram" boundary, reu
 messages or a specific group), never in the **LLM-facing tool surface**. The port declares only read
 methods; no write method exists in the codepath, so no injection can invoke one.
 
-### 2.6 Session storage reuses `CipherPort` — SECRETS_AT_REST_RFC ships first
+### 2.6 Session storage reuses `CipherPort` — SECRETS_AT_REST_RFC ships first (built; `CipherPort` is in `src/ports/`)
 
 Telegram has **no OAuth** for user accounts. The only ways to obtain a user session are the
 interactive phone→code→2FA login or **QR device-linking** (`auth.exportLoginToken` /
@@ -583,7 +583,7 @@ egress address.
 
 | Phase | Content | Gate |
 |-------|---------|------|
-| 0 | **SECRETS_AT_REST_RFC shipped** — `CipherPort` live, OAuth migrated + backfilled | Hard prerequisite (§2.6) |
+| 0 | **SECRETS_AT_REST_RFC shipped** — `CipherPort` live, OAuth migrated + backfilled (built) | Hard prerequisite (§2.6) |
 | 1 | **§4 spike** — QR cross-process resumption + datacenter-IP login on a real account | Pass/fail gates §6 |
 | 2 | **Reading slice** — domain VOs, port, Telethon adapter, service, agent, manifest, capabilities | On-demand works end-to-end |
 | 3 | **Connection flow** — session repo, login state store, connection service, Cabinet endpoints + UI | Multi-user connect/disconnect |

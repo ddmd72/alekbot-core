@@ -1,6 +1,6 @@
 # RFC: VideoGenerationAgent — Video Generation & Editing via grok-imagine-video-1.5
 
-**Status:** DRAFT
+**Status:** Implemented (`VideoGenerationAgent` in `src/agents/video_generation_agent.py`, `GrokVideoAdapter` in `src/adapters/grok_video_adapter.py`, intents `generate_video` / `edit_video` in `agent_manifest.py`)
 **Date:** 2026-08-23
 **Owner:** AI Engineering
 **Milestone:** Specialist Agents — new capability

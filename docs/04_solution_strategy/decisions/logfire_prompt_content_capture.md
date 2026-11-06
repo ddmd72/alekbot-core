@@ -101,6 +101,8 @@ translation bugs and cache behaviour observable — the subject of a dedicated t
 
 ## Known gap: Gemini content is not captured
 
+> **Superseded.** The conflict below was resolved by a newer logfire release that widened its OpenTelemetry pin; Gemini is instrumented through `opentelemetry-instrumentation-google-genai` (`_instrument_google_genai` in `src/utils/telemetry.py`). See `gemini_logfire_instrumentation.md`. The text below is the original analysis.
+
 `instrument_anthropic` and `instrument_openai` are built into logfire and work against the installed
 SDKs (verified by smoke test, not just mocks). `instrument_google_genai` is **blocked by a hard
 dependency conflict**:

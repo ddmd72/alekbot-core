@@ -1,6 +1,6 @@
 # RFC: Standing Directives — user-issued behavioral rules as a first-class fact domain
 
-**Status:** Approved (design), implementation in progress
+**Status:** Implemented — phases 1–3 are on `main` (domain and contract, rendering, the Stage 2b directive review); phase 4 was a one-off migration script, not tracked in the repo
 **Date:** 2026-07-08
 **Owner decision:** new `AGENT_DIRECTIVE` domain (not a tag), consolidator maintains the rulebook
 
