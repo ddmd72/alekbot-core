@@ -112,7 +112,7 @@ Send me files directly in the chat — documents, images, PDFs, spreadsheets. I 
 - Delete files when you no longer need them
 - Send any file back to the chat as a file — a chat file, a document I made, a drive file or an email attachment
 
-Chat attachments are kept for 90 days; to keep a file, ask me to remember it on your drive. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
+Chat attachments are kept for 30 days; to keep a file, ask me to remember it on your drive. Supported: anything that can be converted to text (DOCX, PDF, CSV, TXT, XLSX, etc.) plus images for visual analysis.
 
 ---
 

@@ -755,7 +755,7 @@ class DriveOperations:
             else:
                 error = (
                     f"File '{ref}' not found in storage. "
-                    f"It may have been deleted or expired (files are kept for 90 days). "
+                    f"It may have been deleted or expired (files are kept for 30 days). "
                     f"Ask the user to re-upload the file."
                 )
             return _fail(DriveOp.OPEN, error, OutcomeClass.NOT_FOUND)

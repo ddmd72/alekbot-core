@@ -112,7 +112,7 @@ steps:
 
   # Deploy Cloud Run service for the drive indexer (same image, different entry point —
   # indexer_main.py). RFC §9 "Host" and §12.5, owner decision D5: the whole drive_sync tick runs
-  # here, so alek-bot-dev (1 GiB, already at 74-90 % memory) never indexes. Same deploy discipline
+  # here, so the main service never indexes. Same deploy discipline
   # as the relay: its own env, no dual-purpose .env key.
   # --memory=2Gi + --execution-environment=gen2: the host S1 measures extraction limits on (Slice 2);
   #   those limits hold only for this pinned environment.
