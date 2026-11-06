@@ -237,7 +237,9 @@ The chat-upload alerts (download failed, storage unavailable, voice not transcri
 message and stay unkeyed. Read as the user's text they still lead to the same answer ("the file did not arrive, send
 it again"); the recorded call in §6 checks that. If it does not hold, the follow-up is the fallback-note pattern: the
 handler passes the alert as a context field and the orchestrator keys it in memory, while the persisted part keeps its
-text.
+text. An upload that arrives but is too large or unreadable is described by the shared document-open note builders
+(`FileConversionService.process_attachment` → `note_for`), so from S1 on that part of the owner's message is saved
+with the `[Tool note: …]` prefix; nothing reads that prefix, and the same unkeyed-line check covers it.
 
 No provenance field is added to `Message` / `MessagePart`; no Firestore schema change.
 
