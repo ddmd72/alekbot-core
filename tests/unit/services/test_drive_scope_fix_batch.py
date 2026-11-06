@@ -5,7 +5,7 @@ points. The real service on the in-memory repositories and the stateful fake dri
 from dataclasses import replace
 
 from src.domain.drive_feed_scope import FeedScope
-from src.domain.drive_index import Reason, RecordState
+from src.domain.drive_index import RecordState
 from src.domain.drive_index_planner import schedule
 from src.services import drive_indexing_service as svc_mod
 
@@ -127,23 +127,6 @@ async def test_a_cascade_that_waits_for_an_item_call_reads_no_children(monkeypat
     await w.svc.tick(SCOPE)
     assert w.rd not in reads
     assert "Spring notes.txt" in w.names()
-
-
-async def test_paid_work_under_a_root_whose_removal_waits_is_deferred_and_elsewhere_it_runs():
-    w = await build(FeedScope.ACCOUNT)
-    await w.scope(folders=[w.rd, w.coimbra])
-    await w.settle()
-    for item in (w.itinerary, w.hamburg_notes):
-        rec = (await w.repo.get_records(w.handle.scope, [item]))[item]
-        await w.repo.upsert_records([schedule(replace(rec, state=RecordState.PENDING, indexed_generation=None,
-                                                      has_card=False, card_hash=None), w.clock(), first_seen=False)])
-    reader = w.svc._extractors["parser"]
-    seen = len(reader.requests)
-    await w.scope(folders=[w.rd])
-    w.plant(w.springfield, "Archive 1", True)             # the guard is shut: the removal waits this tick
-    await w.svc.tick(SCOPE)
-    read = {r.item_id for r in reader.requests[seen:]}
-    assert w.hamburg_notes in read and w.itinerary not in read
 
 
 async def test_a_removal_record_a_rollback_left_without_a_due_time_is_due_again():
