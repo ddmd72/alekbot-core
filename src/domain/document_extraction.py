@@ -23,10 +23,11 @@ from typing import Any, FrozenSet, Mapping, Optional, Protocol, Tuple
 from .drive_index_params import MODEL_EXTRACT_DENSITY, MODEL_EXTRACT_GARBAGE
 
 PARSER = "parser"   # the child-process parser adapter (§24.3)
-# 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34). A bump re-extracts every
+# 2: parser@2's HTML policy (§25.3, D23); 3: a PDF's capture signals (§26.3, D34);
+# 4: U5's reader fixes; 5: PDF table pages no longer repeat the table's edge rows as loose text. A bump re-extracts every
 # parser-decided record (§25.4.8). Every parser adapter (in-process and sandbox) reports it, so switching adapters
 # never re-extracts the drive index.
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 # U5 (A-U5-2): the parser child reports the PARSER_VERSION it ran (`parser_version` in its extract result) and the
 # adapters stamp `extracted_by` from that report, never from their own constant, so a record never carries one
 # version's stamp over another version's text. A result without the key comes from a child older than the report:
