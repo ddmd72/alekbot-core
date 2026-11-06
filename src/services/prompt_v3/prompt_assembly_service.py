@@ -3,6 +3,11 @@ PromptAssemblyService - Assembles prompts from tokens, blueprints, and profiles.
 
 Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 
+SYSTEM_TURN_FINGERPRINT_RFC §4.2: the static template (with the provenance head) is cached per
+(agent_type, account_id, user_id) for 24 h and stays a plain str; the head is lifted at runtime in
+_inject_runtime_context, after the cache; session_key is runtime and never cached. An upload of the
+rule reaches a warm instance after the TTL, a restart or invalidate_cache().
+
 PERFORMANCE OPTIMIZATION (2026-02-04):
 - Added assembly cache with 24h TTL
 - Parallelized repository calls with asyncio.gather()
@@ -22,6 +27,7 @@ from src.ports.prompt_v3.blueprint_repository import BlueprintRepository
 from src.ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from src.ports.security_port import SecurityPort, TrustZone
 from src.domain.prompt_v3.token import Token, TokenId
+from src.domain.system_fingerprint import PROVENANCE_CLASS, render_session_key
 from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.slot import OwnerType
 from src.services.prompt_v3.biographical_formatter import BiographicalFactsFormatter
@@ -95,7 +101,9 @@ class PromptAssemblyService:
                 enrichment. Validated here via SecurityPort and appended after the cache
                 boundary. None if no Q-S context for this request.
             session_key: The orchestrator's key for this attempt (SYSTEM_TURN_FINGERPRINT_RFC §4.2).
-                Accepted, not rendered yet; None for every other agent.
+                Rendered as the last block of the dynamic part (after the cache boundary) via
+                render_session_key; an invalid key raises ValueError. None for every other agent
+                (no block, output unchanged).
 
         Returns:
             Assembled prompt string
@@ -141,6 +149,7 @@ class PromptAssemblyService:
             extra_static_blocks=extra_static_blocks,
             include_datetime=include_datetime,
             skills_catalog=skills_catalog,
+            session_key=session_key,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -254,9 +263,26 @@ class PromptAssemblyService:
 
         # STEP 8: Render sections in blueprint class_order
         sections = []
+        head = ""
         for class_name in blueprint.class_order:
             entries = by_class.get(class_name, [])
             if not entries:
+                continue
+
+            if class_name == PROVENANCE_CLASS:
+                # Top-level head outside the outer class (RFC §4.2); 4-space indent keeps
+                # every content line (even a bare "}") off column 0.
+                entries.sort(key=lambda x: x[0])
+                head_blocks = []
+                for _, tok in entries:
+                    head_blocks.append(
+                        "\n".join(
+                            f"    {line}" if line.strip() else ""
+                            for line in tok.content.split("\n")
+                        )
+                    )
+                head_combined = "\n\n".join(head_blocks)
+                head = f"{PROVENANCE_CLASS} {{\n\n{head_combined}\n\n}}"
                 continue
 
             entries.sort(key=lambda x: x[0])  # sort by ProfileToken.order
@@ -274,7 +300,9 @@ class PromptAssemblyService:
 
         # STEP 9: Wrap in outer class
         sections_str = "\n\n".join(sections)
-        prompt = f"class {blueprint.outer_class} {{\n\n{sections_str}\n\n}}"
+        prompt = (head + "\n\n" if head else "") + (
+            f"class {blueprint.outer_class} {{\n\n{sections_str}\n\n}}"
+        )
 
         prompt = self._normalize_whitespace(prompt)
 
@@ -312,6 +340,12 @@ class PromptAssemblyService:
                 continue
 
             override_tok = token_docs[override_tid]
+            if str(override_tok.class_) == PROVENANCE_CLASS:
+                logger.debug(
+                    f"[{level}] Skip override {override_tid}: "
+                    f"class {PROVENANCE_CLASS} is not overridable"
+                )
+                continue
             override_class = str(override_tok.class_)
             override_category = str(override_tok.category)
 
@@ -367,6 +401,7 @@ class PromptAssemblyService:
         extra_static_blocks: Optional[List[str]] = None,
         include_datetime: bool = False,
         skills_catalog: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -458,19 +493,26 @@ class PromptAssemblyService:
         if validated_convo:
             kb_parts.append(f"    conversation_history: '''\n{validated_convo}\n    '''")
 
+        # Lift the provenance head (if any) so it stays before the knowledge_base preamble.
+        head = ""
+        if kb_preamble and (kb_parts or extra_static_blocks):
+            head, prompt = self._split_provenance_head(prompt)
+            if head:
+                head += "\n\n"
+
         if kb_parts:
             kb_block = "knowledge_base {\n" + "\n\n".join(kb_parts) + "\n}"
             extra = ("\n\n" + "\n\n".join(extra_static_blocks)) if extra_static_blocks else ""
             if kb_preamble:
                 # Preamble: context first, instructions last → better recency for cognitive_process
-                prompt = kb_block + extra + "\n\n" + prompt
+                prompt = head + kb_block + extra + "\n\n" + prompt
             else:
                 # Postamble: default — knowledge_base (+ any extra_static_blocks) appended
                 # after blueprint. extra_static_blocks used to be silently dropped here —
                 # the kb_preamble=True branch above was the only one that appended them.
                 prompt = prompt + "\n\n" + kb_block + extra
         elif extra_static_blocks and kb_preamble:
-            prompt = "\n\n".join(extra_static_blocks) + "\n\n" + prompt
+            prompt = head + "\n\n".join(extra_static_blocks) + "\n\n" + prompt
 
         # Skills catalog — before directives so directives keep the last static slot (recency).
         # Pre-rendered by the orchestrator; descriptions were validated when saved.
@@ -542,9 +584,27 @@ class PromptAssemblyService:
             dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
         if query_specific_str:
             dynamic_parts.append(f"query_specific_context: '''\n{query_specific_str}\n'''")
+        if session_key:
+            dynamic_parts.append(render_session_key(session_key))
         prompt = prompt + "\n\n" + PROMPT_CACHE_BOUNDARY + "\n" + "\n\n".join(dynamic_parts)
 
         return prompt
+
+    @staticmethod
+    def _split_provenance_head(prompt: str) -> Tuple[str, str]:
+        """Split a leading provenance head off a static template.
+
+        Returns (head, rest); ("", prompt) when the template has no head. The head's closing
+        brace is the first "\\n}" (all head content is indented).
+        """
+        opener = f"{PROVENANCE_CLASS} {{\n"
+        if not prompt.startswith(opener):
+            return "", prompt
+        end = prompt.find("\n}", len(opener) - 1)
+        if end < 0:
+            return "", prompt
+        head_end = end + 2
+        return prompt[:head_end], prompt[head_end:].lstrip("\n")
 
     def _normalize_whitespace(self, prompt: str) -> str:
         """Collapse empty structural blocks and excessive blank lines.
