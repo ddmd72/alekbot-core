@@ -125,7 +125,8 @@ def full_state() -> DriveSyncState:
         applied_scope="whole",   # MULTI_DRIVE_RFC §11.3: the scope key the records were enumerated under
         # DRIVE_SCOPE_WALK_RFC §5.2: the applied scope itself and the diff's progress
         applied_whole=True, applied_roots=("f-rd", "f-coimbra"), removing_roots=("f-springfield",),
-        ancestry_dirty=True, walking=True, walk_listed=12, walk_blocked=1, top_level_cursor="1:item-9", top_level_unclean=True)
+        ancestry_dirty=True, walking=True, walk_listed=12, walk_blocked=1, top_level_cursor="1:item-9", top_level_unclean=True,
+        diff_parents=("f-coimbra\x1fitem-9",))
 
 
 def stored(value):
