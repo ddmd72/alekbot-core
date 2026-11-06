@@ -61,8 +61,9 @@ def leg_prices(model: str, prompt: int, completion: int, cached: int, written: i
 
 
 def zero_cost_legs(tokens: Dict[str, int], legs: Dict[str, float]) -> List[str]:
-    """The legs that carry tokens and cost nothing: a price missing from billing.py, never a free call."""
-    return [leg for leg, n in tokens.items() if n > 0 and legs[leg] <= 0.0]
+    """The legs that carry tokens and cost nothing: a price missing from billing.py, never a free call. A leg under
+    1 000 tokens is skipped: its dollars can round to zero at six decimals on a cheap model."""
+    return [leg for leg, n in tokens.items() if n >= 1000 and legs[leg] <= 0.0]
 
 
 def format_call(call: Dict[str, Any]) -> str:

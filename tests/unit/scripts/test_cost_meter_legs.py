@@ -49,3 +49,9 @@ def test_a_priced_model_with_all_prices_zero_is_flagged_as_a_total_bug(monkeypat
     meter = Meter()
     meter.record("smart", "free-looking-model", _usage(prompt=5, completion=5), 0.1)
     assert meter.calls[0]["zero_cost_legs"] and "COST METER BUG" in capsys.readouterr().err
+
+
+def test_a_leg_too_small_to_price_above_six_decimals_is_not_flagged():
+    from scripts.validation.drive_eval.cost_meter import zero_cost_legs
+    assert zero_cost_legs({"input": 3, "output": 2000}, {"input": 0.0, "output": 0.01}) == []
+    assert zero_cost_legs({"input": 1000}, {"input": 0.0}) == ["input"]
