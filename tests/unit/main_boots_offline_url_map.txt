@@ -7,6 +7,7 @@ DELETE /api/tasks/microsoft/disconnect
 DELETE /api/user/link-platform
 DELETE /api/user/reminders/<note_id>
 GET /
+GET /alek.jpg
 GET /api/connectors
 GET /api/drive/connections
 GET /api/drive/connections/<connection_id>/folders
