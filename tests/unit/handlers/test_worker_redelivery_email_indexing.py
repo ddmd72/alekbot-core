@@ -51,7 +51,8 @@ class ValuableClassifier(EmailClassifierPort):
     """Every email is valuable, with a fact (no LLM)."""
 
     async def classify_batch(self, emails: List[EmailMetadata], user_id: str,
-                             credentials: Optional[OAuthCredential] = None) -> List[EmailClassificationResult]:
+                             credentials: Optional[OAuthCredential] = None, *,
+                             account_id: str = "") -> List[EmailClassificationResult]:
         return [EmailClassificationResult(email_id=e.email_id, valuable=True, category="personal",
                                           fact=f"The user received '{e.subject}'.", tags=["mail"]) for e in emails]
 
