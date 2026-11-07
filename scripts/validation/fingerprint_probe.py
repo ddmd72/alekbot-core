@@ -116,6 +116,8 @@ class Injector:
     first_call: Optional[Tuple[str, Dict[str, Any]]]
     max_real: int = 1
     system_append: str = ""
+    key_sentence: str = ""
+    note: str = ""   # an already-wrapped system note, added to the request like the engine's wrap-up/meanwhile notes
     scripted: bool = False
     recorded: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -132,9 +134,22 @@ class Injector:
                 return LLMResponse(text=None, tool_calls=[ToolCall(name=name, args=args, thought_signature="probe_call_1")])
             if len(me.recorded) >= me.max_real:
                 return LLMResponse(text="(probe stop: real-call cap reached)", tool_calls=[])
+            if me.key_sentence:   # one sentence inside the session_key block, right after the printed key
+                import re as _re
+                body = request.system_instruction or ""
+                body, hits = _re.subn(r"(session_key \{\n\s*[a-z]+-[a-z]+-[a-z]+)\n(\})",
+                                      lambda m: f"{m.group(1)}\n    {me.key_sentence}\n{m.group(2)}", body)
+                if hits != 1:
+                    raise RuntimeError("session_key block not found exactly once")
+                request = request.model_copy(update={"system_instruction": body})
             if me.system_append:
                 request = request.model_copy(update={
                     "system_instruction": (request.system_instruction or "") + "\n\n" + me.system_append})
+            if me.note:   # after the user-input hygiene, as `_append_user_note` does in the delegation engine
+                from src.infrastructure.delegation_engine import _append_user_note
+                history = list(request.messages)
+                _append_user_note(history, me.note)
+                request = request.model_copy(update={"messages": history})
             entry: Dict[str, Any] = {"request_text": render_request(request)}
             me.recorded.append(entry)
             response = await original(agent, request, turn, **kwargs)
@@ -311,11 +326,15 @@ def _patch_stores(case: Case, agent: Any) -> Callable[[], None]:
     return lambda: [fn() for fn in undo] and None
 
 
+def _wrapped_note(case: Case) -> str:
+    if not case.note_text:
+        return ""
+    from src.domain.system_fingerprint import wrap_system
+    return wrap_system(case.note_text, case.note_key)
+
+
 def _message_texts(case: Case) -> List[str]:
     texts: List[str] = []
-    if case.note_text:   # a note produced the way production keys its notes
-        from src.domain.system_fingerprint import wrap_system
-        texts.append(wrap_system(case.note_text, case.note_key))
     if case.text:
         texts.append(case.text)
     return texts + (case.extra_parts() if case.extra_parts else [])
@@ -351,7 +370,8 @@ async def _notify_case(case: Case, rt: Runtime) -> Dict[str, Any]:
 async def run_case(case: Case, rt: Runtime) -> Dict[str, Any]:
     """Run one case and write its JSON; returns the result dict (also the summary line's source)."""
     mark = rt.meter.mark()
-    injector = Injector(case.agent, case.first_call, max_real=rt.max_llm_calls, system_append=case.system_append)
+    injector = Injector(case.agent, case.first_call, max_real=rt.max_llm_calls, system_append=case.system_append,
+                        note=_wrapped_note(case), key_sentence=case.key_sentence)
     stub_log: List[Dict[str, Any]] = []
     uninstall_injector = injector.install()            # outside the meter: scripted and stop turns are never metered
     undo_delegation = _patch_delegation(case, rt.live_read, stub_log)
