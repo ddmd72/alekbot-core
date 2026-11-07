@@ -81,7 +81,7 @@ from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.connector_spec import ConnectorSpec
 from ..domain import deep_research_notices as dr_notices
-from ..domain.exceptions import OAuthGrantRevokedError
+from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.notification_kind import NotificationKind
@@ -426,6 +426,10 @@ class WorkerHandler:
             logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]}: Gmail grant revoked: {exc}")
             await self._flag_gmail_reconnect(job.user_id, job.account_id)
             return {"status": "failed", "error": "gmail_reconnect_required"}, 200
+        except PROVIDER_OUTAGE_TYPES as exc:
+            # The job is still `running` and the page is not stored: a 503 releases the claim and Cloud Tasks retries.
+            logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]}: model provider unavailable, retry requested: {exc}")
+            return {"status": "retry", "error": "model_provider_unavailable"}, 503
         except Exception as exc:
             logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]} raised (status updated by service): {exc}")
             return {"status": "failed", "error": str(exc)}, 200

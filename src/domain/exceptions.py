@@ -1,4 +1,4 @@
-from typing import Dict, FrozenSet, Iterable, Optional, Type
+from typing import Dict, FrozenSet, Iterable, Optional, Tuple, Type
 
 
 class LLMError(Exception):
@@ -200,6 +200,17 @@ TRANSIENT_RETRY_TYPES: FrozenSet[Type[LLMError]] = frozenset({
     LLMRateLimitError,
     LLMUnavailableError,
 })
+
+
+# Every error that means "the model provider could not serve this call now": the failover triggers plus the two
+# terminal results of failover (both providers down, a transcript deliberately kept on its provider). Work that has
+# not changed anything yet lets these propagate so its queue retries it later; content, parse and 4xx errors are NOT
+# here (retrying the same input will not help). A tuple, so it is usable directly in ``except``.
+PROVIDER_OUTAGE_TYPES: Tuple[Type[LLMError], ...] = (
+    *FAILOVER_TRIGGER_TYPES,
+    BothProvidersUnavailableError,
+    TranscriptLockedError,
+)
 
 
 # Log label per failover-trigger type. Co-located with the trigger set so a
