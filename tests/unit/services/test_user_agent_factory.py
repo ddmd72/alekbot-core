@@ -32,7 +32,6 @@ def mock_dependencies():
         "biographical_context_service": Mock(),
         "registry": Mock(),
         "context_builder": Mock(),
-        "component_service": Mock(),
         "assembly_service": None,
         "fact_write_service": Mock(),
         # Reviewer edit (S4 T6b review M3): the factory passes this adapter as the consolidation agent's model port and
