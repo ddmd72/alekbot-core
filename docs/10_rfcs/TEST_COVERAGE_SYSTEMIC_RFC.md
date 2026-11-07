@@ -466,7 +466,8 @@ when the process dies, and the hook covers make, direct `pytest` calls and subag
 ≤ ~10 min; the repo is public, so GitHub-hosted runners cost nothing and sharding is available. After a merge to
 `main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
 review. Manual: probes. Docs-only PRs skip `make ci` (F3, `scripts/ci/docs_only.py`); the weekly cloud jobs are the
-`Mutation survivors` and `Firestore parity` workflows (artifacts, no Slack; see "Rules revised").
+`Mutation survivors`, `Firestore parity` and `Spec drift` workflows (artifacts, no Slack; see "Rules revised" and
+"Built (P18 cheap part)").
 
 **Built (P1, 2026-10-22).** `make test-affected` (one `pytest --testmon` run, `.testmondata` seeded into a new worktree),
 `make ci`, the `slow` marker and the `fcntl` suite lock (`tests/plugins/suite_lock.py`, `tests/conftest.py`, `Makefile`,
@@ -534,7 +535,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the three `MATRIX` rows are 200 (matrix card M))
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
-| P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
+| P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 | (cheap part built 2026-11-07: the spec-drift workflow and the review skill; see "Built (P18 cheap part)"; `make contract-probe` waits for P17 and the owner's sandboxes)
 | P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
 | P20 | **Field registry and spec drift**: H5 for facts (AST); H6 with the normalisation table; one Firestore database default (§1.4 item 13) and a lint test requiring `database=` in scripts | check | 1.5–2.5 | write-only fields, spec drift, wrong database | 3 |
 | P21 | **Data audit**: a pure checker per entity (invariants from the H2 inventory), unit-tested in `make check`; the owner runs it read-only against live data; output to `scripts/memory/` | check + owner | 1 | data-class defects like B9 | 3 |
@@ -958,6 +959,33 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P10-D3: `FirestoreBlueprintRepository.save` calls `doc_ref.set(data)` without `await` (`firestore_blueprint_repository.py:81`).
   - P10-D4: `FirestoreBlueprintRepository.delete` calls `doc_ref.delete()` without `await` (`:91`).
 - **Seeding.** Because of D1 and D3 the resolution tests seed tokens and blueprints as raw documents; overrides go through `set_override_tokens`.
+
+**Built (P18 cheap part, 2026-11-07).** §4a mechanisms 1 and 2, before P17. Files: `scripts/contracts/spec_drift.py` (`SOURCES`: per
+published spec, the operations our adapters call), `contracts/spec_drift/<source>.json` (the baselines), `.github/workflows/spec_drift.yml`
+(`Spec drift`: Sunday 04:00 UTC and `workflow_dispatch` with an optional `source`; artifact `spec-drift` with `spec_drift.md` and
+`spec_drift.json`, the verdict also in the step summary and as check-run annotations), `tests/unit/scripts/test_spec_drift.py` over invented
+fragments in `tests/fixtures/spec_drift/`. Deviations from §4a:
+- **No `contracts/providers/` subsets yet (P17), so the drift run diffs against its own extract.** For each source it keeps the watched
+  operations (OpenAPI `"<method> <path>"`, a discovery method id, a Telegram method or type) plus every component or schema their `$ref`s reach,
+  without documentation keys and with set-like lists sorted; the upstream version or revision is reported, never drift. This is wider than
+  "only the fields our adapters use" (a whole reached schema is watched, so additions are noisy; removals and changes are the signal). When P17
+  lands, the run diffs re-extracted subsets against `contracts/providers/` instead. A baseline is regenerated only by
+  `python -m scripts.contracts.spec_drift --update [--source NAME]`, which refuses a watched item absent upstream; a unit test fails when a
+  source has no baseline, a baseline no source, or a baseline's watch list differs from `SOURCES`.
+- **Sources:** OpenAI (`openai/openai-openapi`, OAS 3.1: `POST /responses`, `GET /responses/{response_id}`, `POST /audio/transcriptions`), Twilio
+  (`twilio-oai` v2010 Calls create; Verify v2 verification and check), Gmail and Gemini (discovery documents, read as they are: no OpenAPI
+  conversion), Telegram (the community spec; a type's own field types are not followed). **Not watched:** Microsoft Graph (the full spec takes
+  ~1 GB and an alias layer: P17), the Cloudflare SFU spec, Google OAuth (our token, revoke and v3 userinfo endpoints are not in the `oauth2`
+  discovery document), the realtime WebSocket events; the contract review covers them.
+- **No Slack, no issue, never red on drift** (owner, 2026-10-27, "Rules revised"): the verdict is the artifact and the annotations (one notice
+  with every source's status, one warning per drifted or failed source, at most 9, 4000 characters each). Red only when no source could be
+  fetched. No secret is used.
+- **The review** is the skill `provider-contract-review`, kept outside this repository with the routine that runs it (not in `src/skills/`, which
+  ships to the bot), run monthly by a scheduled cloud routine and on demand: it reads the latest `Spec drift` annotations (the baseline moves only
+  by PR, so the latest run holds all unaccepted drift), each provider's reference, changelog and deprecations, and lands one test-and-contracts
+  PR (accepted drift regenerated; a documented behaviour that today's code breaks pinned as a strict xfail `PCR-D<n>`; `src/` changes are findings
+  for the owner). Escalation is one line, only for a finding that takes effect within 30 days or a review PR open for 14 days.
+- **Not built:** `make contract-probe` (live probes, mechanism 3): it needs P17's contracts and the owner's sandboxes.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
