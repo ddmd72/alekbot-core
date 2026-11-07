@@ -143,7 +143,8 @@ batch is one execution: `classify_batch` opens a `TokenLedger` for the job's `ac
 it, and it is flushed to the account's usage at the end (also when the batch fails). The runner runs the batch with the job's
 user as the request context's user (`request_user_scope`), so each `prompt_content` row carries the job's `user_id` and
 `account_id` (`agent_type = email_classifier`, `agent_id = email_classifier_<user_id>`); the prompt is assembled for that
-account. Concurrent jobs of two accounts each bill and record to their own. An unknown user, or a classifier that cannot be
+account. Concurrent jobs of two accounts each bill and record to their own. A job with an empty `account_id` is
+classified unbilled, with one WARNING `[EmailClassifier] user <8>: … will not be billed`. An unknown user, or a classifier that cannot be
 built, fails the job (nothing classified under another configuration). Before roadmap 14b (P9 finding D2) one shared agent
 built with the default configuration ran every user's batch outside any billing scope: unbilled and absent from
 `prompt_content`.
