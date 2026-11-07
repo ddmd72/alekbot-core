@@ -1,0 +1,74 @@
+{
+ "kind": "discovery#restDescription",
+ "name": "widgets",
+ "version": "v1",
+ "revision": "20260301",
+ "description": "Invented discovery fragment for tests/unit/scripts/test_spec_drift.py (shaped like a Google discovery document).",
+ "resources": {
+  "users": {
+   "resources": {
+    "widgets": {
+     "methods": {
+      "list": {
+       "id": "widgets.users.widgets.list",
+       "httpMethod": "GET",
+       "path": "widgets/v1/users/{userId}/widgets",
+       "parameterOrder": ["userId"],
+       "parameters": {
+        "userId": {"type": "string", "location": "path", "required": true, "description": "The owner."},
+        "pageToken": {"type": "string", "location": "query"}
+       },
+       "response": {"$ref": "ListWidgetsResponse"},
+       "scopes": ["https://example.com/auth/widgets.readonly", "https://example.com/auth/widgets"]
+      },
+      "delete": {
+       "id": "widgets.users.widgets.delete",
+       "httpMethod": "DELETE",
+       "path": "widgets/v1/users/{userId}/widgets/{id}"
+      }
+     },
+     "resources": {
+      "parts": {
+       "methods": {
+        "get": {
+         "id": "widgets.users.widgets.parts.get",
+         "httpMethod": "GET",
+         "path": "widgets/v1/users/{userId}/widgets/{widgetId}/parts/{id}",
+         "response": {"$ref": "Part"}
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "schemas": {
+  "ListWidgetsResponse": {
+   "id": "ListWidgetsResponse",
+   "type": "object",
+   "properties": {
+    "widgets": {"type": "array", "items": {"$ref": "Widget"}},
+    "nextPageToken": {"type": "string"}
+   }
+  },
+  "Widget": {
+   "id": "Widget",
+   "type": "object",
+   "properties": {
+    "id": {"type": "string"},
+    "colour": {"type": "string", "enum": ["TEAL", "AMBER"], "enumDescriptions": ["Teal.", "Amber."]},
+    "parts": {"type": "array", "items": {"$ref": "Part"}}
+   }
+  },
+  "Part": {
+   "id": "Part",
+   "type": "object",
+   "properties": {
+    "name": {"type": "string"},
+    "widget": {"$ref": "Widget"}
+   }
+  },
+  "Unrelated": {"id": "Unrelated", "type": "object"}
+ }
+}

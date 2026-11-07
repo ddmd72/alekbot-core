@@ -1,0 +1,72 @@
+name: Spec drift
+
+# Weekly re-fetch of the providers' published specs (public, no secrets), diffed against the committed baseline
+# (contracts/spec_drift/, scripts/contracts/spec_drift.py). Drift is data in the `spec-drift` artifact and the
+# check-run annotations, read by the monthly provider-contract-review routine; it never turns the run red.
+# Red only when no source could be fetched at all (the run did not happen).
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "One source (a SOURCES name in scripts/contracts/spec_drift.py; empty = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: spec-drift
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        # The script needs only the standard library and PyYAML (the version requirements.txt resolves to today).
+        run: pip install PyYAML==6.0.3
+
+      - name: Diff the specs
+        env:
+          SOURCE: ${{ github.event.inputs.source }}
+        run: |
+          mkdir -p out
+          python -m scripts.contracts.spec_drift --source "$SOURCE" --out-md out/spec_drift.md --out-json out/spec_drift.json
+
+      - name: Step summary
+        if: always()
+        run: |
+          if [ -f out/spec_drift.md ]; then cat out/spec_drift.md >> "$GITHUB_STEP_SUMMARY"; else echo "no report: the run did not start" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Verdict as annotations
+        # A cloud session cannot download artifacts; it reads check-run annotations.
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f out/spec_drift.json ]; then
+            python -m scripts.contracts.spec_drift --annotations out/spec_drift.json
+          else
+            echo "::warning::out/spec_drift.json is absent: no annotations"
+          fi
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-drift
+          path: |
+            out/spec_drift.md
+            out/spec_drift.json
+          if-no-files-found: warn

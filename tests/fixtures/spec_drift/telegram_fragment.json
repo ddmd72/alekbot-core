@@ -1,0 +1,38 @@
+{
+ "version": "Bot API 1.0",
+ "release_date": "March 1, 2026",
+ "changelog": "https://example.com/changelog",
+ "methods": {
+  "sendWidget": {
+   "name": "sendWidget",
+   "href": "https://example.com/api#sendwidget",
+   "description": ["Invented method for tests/unit/scripts/test_spec_drift.py."],
+   "returns": ["Message"],
+   "fields": [
+    {"name": "chat_id", "types": ["String", "Integer"], "required": true, "description": "Target chat."},
+    {"name": "text", "types": ["String"], "required": true, "description": "Text."},
+    {"name": "parse_mode", "types": ["String"], "required": false, "description": "Mode."}
+   ]
+  },
+  "deleteWidget": {
+   "name": "deleteWidget",
+   "returns": ["Boolean"],
+   "fields": [{"name": "chat_id", "types": ["Integer"], "required": true}]
+  }
+ },
+ "types": {
+  "Widget": {
+   "name": "Widget",
+   "href": "https://example.com/api#widget",
+   "description": ["An invented type."],
+   "fields": [
+    {"name": "widget_id", "types": ["String"], "required": true, "description": "Identifier."},
+    {"name": "size", "types": ["Integer"], "required": false, "description": "Size."}
+   ]
+  },
+  "Shape": {
+   "name": "Shape",
+   "subtypes": ["ShapeCircle", "ShapeSquare"]
+  }
+ }
+}

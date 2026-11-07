@@ -1,0 +1,98 @@
+# Invented OpenAPI 3.1 fragment for tests/unit/scripts/test_spec_drift.py (shaped like a provider spec; no real API).
+openapi: 3.1.0
+info:
+  title: Widget API
+  version: 1.4.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      summary: Create a widget
+      description: Long prose that is documentation only.
+      x-oaiMeta:
+        name: Create widget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWidgetRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Widget'
+  /widgets/{widget_id}:
+    parameters:
+      - name: widget_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getWidget
+      parameters:
+        - name: include
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Widget'
+  /gadgets:
+    post:
+      operationId: createGadget
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Gadget'
+components:
+  schemas:
+    CreateWidgetRequest:
+      type: object
+      required: [size, colour]
+      properties:
+        colour:
+          type: string
+          enum: [teal, amber, plum]
+          example: teal
+        size:
+          type: integer
+          default: 3
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Part'
+    Widget:
+      type: object
+      title: Widget
+      properties:
+        id:
+          type: string
+        parts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Part'
+    Part:
+      type: object
+      properties:
+        name:
+          type: string
+        parent:
+          $ref: '#/components/schemas/Widget'
+    Gadget:
+      type: object
+      properties:
+        id:
+          type: string

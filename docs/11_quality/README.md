@@ -17,5 +17,6 @@ editing an existing test): [`tests/CLAUDE.md`](../../tests/CLAUDE.md). Which com
 **CI.** `.github/workflows/ci.yml` runs `make ci` on every push and PR and posts the result to Slack; it is the source of
 the coverage numbers. A docs-only change (defined in `scripts/ci/docs_only.py`: everything under `docs/`, root `*.md`,
 `.github/**/*.md`, `CLAUDE.md` anywhere except under `src/skills/`) skips `make ci`, also on a push to `main` and in the
-`timing` job, but still runs the doc-reading tests listed in `DOC_READING_TESTS`. Two weekly cloud workflows,
-`Mutation survivors` and `Firestore parity`, write artifacts that a scheduled routine reads; they never post to Slack.
+`timing` job, but still runs the doc-reading tests listed in `DOC_READING_TESTS`. Three weekly cloud workflows,
+`Mutation survivors`, `Firestore parity` and `Spec drift` (the providers' published specs against
+`contracts/spec_drift/`), write artifacts that a scheduled routine reads; they never post to Slack.

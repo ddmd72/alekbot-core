@@ -8,7 +8,7 @@ Which commands exist and what they do: the root `CLAUDE.md` "Commands" section. 
 
 - `tests/unit/` is offline and runs on every PR in CI; `slow` and `timing` tests are skipped unless their switch is set (see "Markers").
 - Some integration tests and all e2e tests call real services and are not part of the CI gate.
-- Two weekly cloud workflows write artifacts a scheduled routine reads (never Slack, never red for a survivor or a failed scenario): `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`, `main` only, WIF is bound to it).
+- Three weekly cloud workflows write artifacts a scheduled routine reads (never Slack, never red for a survivor, a failed scenario or a drift): `Mutation survivors` (`mutation.yml`), `Firestore parity` (`parity.yml`, `main` only, WIF is bound to it) and `Spec drift` (`spec_drift.yml`: re-fetches the providers' published specs and diffs the operations our adapters use against `contracts/spec_drift/`; the script `scripts/contracts/spec_drift.py`, its tests `tests/unit/scripts/test_spec_drift.py`; a baseline is regenerated only by `python -m scripts.contracts.spec_drift --update [--source NAME]`, never edited by hand; read monthly by the provider contract review).
 - Docs-only PRs skip the CI suite but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; the root `CLAUDE.md` "Commands" section and that file's docstring define "docs").
 
 ```

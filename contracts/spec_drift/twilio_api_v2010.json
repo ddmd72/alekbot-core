@@ -1,0 +1,447 @@
+{
+ "components": {
+  "#/components/schemas/api.v2010.account.call": {
+   "properties": {
+    "account_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^AC[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "answered_by": {
+     "nullable": true,
+     "type": "string"
+    },
+    "api_version": {
+     "nullable": true,
+     "type": "string"
+    },
+    "caller_name": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "date_created": {
+     "format": "date-time-rfc-2822",
+     "nullable": true,
+     "type": "string"
+    },
+    "date_updated": {
+     "format": "date-time-rfc-2822",
+     "nullable": true,
+     "type": "string"
+    },
+    "direction": {
+     "nullable": true,
+     "type": "string"
+    },
+    "duration": {
+     "nullable": true,
+     "type": "string"
+    },
+    "end_time": {
+     "format": "date-time-rfc-2822",
+     "nullable": true,
+     "type": "string"
+    },
+    "forwarded_from": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "from": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "from_formatted": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "group_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^GP[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "parent_call_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^CA[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "phone_number_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^PN[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "price": {
+     "nullable": true,
+     "type": "string"
+    },
+    "price_unit": {
+     "format": "currency",
+     "nullable": true,
+     "type": "string"
+    },
+    "queue_time": {
+     "nullable": true,
+     "type": "string"
+    },
+    "sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^CA[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "start_time": {
+     "format": "date-time-rfc-2822",
+     "nullable": true,
+     "type": "string"
+    },
+    "status": {
+     "$ref": "#/components/schemas/call_enum_status"
+    },
+    "stir_verstat": {
+     "nullable": true,
+     "type": "string"
+    },
+    "subresource_uris": {
+     "format": "uri-map",
+     "nullable": true,
+     "type": "object"
+    },
+    "to": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "to_formatted": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 120,
+       "handling": "standard"
+      }
+     }
+    },
+    "trunk_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^TK[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "uri": {
+     "nullable": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "#/components/schemas/call_enum_status": {
+   "enum": [
+    "busy",
+    "canceled",
+    "completed",
+    "failed",
+    "in-progress",
+    "no-answer",
+    "queued",
+    "ringing"
+   ],
+   "type": "string"
+  }
+ },
+ "items": {
+  "post /2010-04-01/Accounts/{AccountSid}/Calls.json": {
+   "operationId": "CreateCall",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "AccountSid",
+     "required": true,
+     "schema": {
+      "maxLength": 34,
+      "minLength": 34,
+      "pattern": "^AC[0-9a-fA-F]{32}$",
+      "type": "string"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/x-www-form-urlencoded": {
+      "schema": {
+       "properties": {
+        "ApplicationSid": {
+         "maxLength": 34,
+         "minLength": 34,
+         "pattern": "^AP[0-9a-fA-F]{32}$",
+         "type": "string"
+        },
+        "AsyncAmd": {
+         "type": "string"
+        },
+        "AsyncAmdStatusCallback": {
+         "format": "uri",
+         "type": "string"
+        },
+        "AsyncAmdStatusCallbackMethod": {
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "format": "http-method",
+         "type": "string"
+        },
+        "Byoc": {
+         "maxLength": 34,
+         "minLength": 34,
+         "pattern": "^BY[0-9a-fA-F]{32}$",
+         "type": "string"
+        },
+        "CallReason": {
+         "type": "string"
+        },
+        "CallToken": {
+         "type": "string"
+        },
+        "CallerId": {
+         "type": "string"
+        },
+        "ClientNotificationUrl": {
+         "format": "uri",
+         "type": "string"
+        },
+        "FallbackMethod": {
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "format": "http-method",
+         "type": "string"
+        },
+        "FallbackUrl": {
+         "format": "uri",
+         "type": "string"
+        },
+        "From": {
+         "format": "endpoint",
+         "type": "string"
+        },
+        "MachineDetection": {
+         "type": "string"
+        },
+        "MachineDetectionSilenceTimeout": {
+         "type": "integer"
+        },
+        "MachineDetectionSpeechEndThreshold": {
+         "type": "integer"
+        },
+        "MachineDetectionSpeechThreshold": {
+         "type": "integer"
+        },
+        "MachineDetectionTimeout": {
+         "type": "integer"
+        },
+        "Method": {
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "format": "http-method",
+         "type": "string"
+        },
+        "Passports": {
+         "type": "string"
+        },
+        "Record": {
+         "type": "boolean"
+        },
+        "RecordingChannels": {
+         "type": "string"
+        },
+        "RecordingConfigurationId": {
+         "type": "string"
+        },
+        "RecordingStatusCallback": {
+         "type": "string"
+        },
+        "RecordingStatusCallbackEvent": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "RecordingStatusCallbackMethod": {
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "format": "http-method",
+         "type": "string"
+        },
+        "RecordingTrack": {
+         "type": "string"
+        },
+        "SendDigits": {
+         "type": "string"
+        },
+        "SipAuthPassword": {
+         "type": "string"
+        },
+        "SipAuthUsername": {
+         "type": "string"
+        },
+        "StatusCallback": {
+         "format": "uri",
+         "type": "string"
+        },
+        "StatusCallbackEvent": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "StatusCallbackMethod": {
+         "enum": [
+          "GET",
+          "POST"
+         ],
+         "format": "http-method",
+         "type": "string"
+        },
+        "TimeLimit": {
+         "type": "integer"
+        },
+        "Timeout": {
+         "type": "integer"
+        },
+        "To": {
+         "format": "endpoint",
+         "type": "string"
+        },
+        "Trim": {
+         "type": "string"
+        },
+        "Twiml": {
+         "format": "twiml",
+         "type": "string"
+        },
+        "Url": {
+         "format": "uri",
+         "type": "string"
+        }
+       },
+       "required": [
+        "From",
+        "To"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   },
+   "responses": {
+    "201": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/api.v2010.account.call"
+       }
+      }
+     },
+     "headers": {
+      "Access-Control-Allow-Credentials": {
+       "schema": {
+        "type": "boolean"
+       }
+      },
+      "Access-Control-Allow-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Methods": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Origin": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Expose-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "accountSid_authToken": []
+    }
+   ],
+   "tags": [
+    "Api20100401Call"
+   ],
+   "x-twilio": {
+    "conditional": [
+     [
+      "url",
+      "twiml",
+      "application_sid"
+     ]
+    ]
+   }
+  }
+ },
+ "kind": "openapi",
+ "meta": {
+  "openapi": "3.0.1",
+  "version": "1.0.0"
+ },
+ "retrieved": "2026-11-07",
+ "source": "twilio_api_v2010",
+ "url": "https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json",
+ "watch": [
+  "post /2010-04-01/Accounts/{AccountSid}/Calls.json"
+ ]
+}
