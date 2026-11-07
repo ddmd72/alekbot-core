@@ -2,7 +2,7 @@ import contextlib
 import os
 import time
 from contextvars import ContextVar
-from typing import Dict, Optional, Any
+from typing import Dict, Iterator, Optional, Any
 from opentelemetry import trace, context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import Resource
@@ -234,6 +234,21 @@ def set_request_context(
         _EVENT_ID_CTX.set(event_id)
     if user_id:
         _USER_ID_CTX.set(user_id)
+
+
+@contextlib.contextmanager
+def request_user_scope(user_id: str) -> Iterator[None]:
+    """`user_id` as the request context's user for the block, the previous one restored after.
+
+    For a background unit of work done for one user inside a request that names none (an email indexing page on
+    `/worker`): what reads the request context in the block (the prompt-content row's `user_id`) sees that user.
+    Concurrent blocks (`asyncio.gather`) each run in their own context copy and see their own user.
+    """
+    token = _USER_ID_CTX.set(user_id)
+    try:
+        yield
+    finally:
+        _USER_ID_CTX.reset(token)
 
 
 def get_request_context() -> Dict[str, Optional[str]]:

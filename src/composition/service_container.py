@@ -92,9 +92,9 @@ from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
-from ..agents.email_classification_agent import EmailClassificationAgent
-from ..domain.agent import AgentConfig
-from ..domain.user import UserBotConfig
+from .email_classifier_runner import EmailClassifierRunner
+from ..ports.quota_service import QuotaService
+from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 
@@ -117,6 +117,8 @@ class ServiceContainer:
         threshold_resolver: Optional[Callable] = None,
         alert_webhook: Optional[Any] = None,
         cipher: Optional[CipherPort] = None,
+        user_repo: Optional[UserRepository] = None,
+        quota_service: Optional[QuotaService] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -353,22 +355,36 @@ class ServiceContainer:
         self.assembly_service, self.profile_repo = self._init_assembly_service(config, db_client, env_config)
 
         # ------------------------------------------------------------------
-        # Email classification + indexing pipeline
+        # LLM prompt/response content store (BigQuery, 30-day TTL).
+        # DEBUG_PROMPTS is the GLOBAL capture switch (write / don't write) — it
+        # gates whether the store is wired at all, so None propagates through the
+        # factory and BaseAgent skips the write. The wired adapter is BigQuery;
+        # the flag decides on/off, not which adapter. BIGQUERY_PROMPT_DATASET is
+        # required config for the adapter (no dataset → nothing to write to).
         # ------------------------------------------------------------------
-        _email_classifier_context = self.context_builder.build(
-            "email_classifier", UserBotConfig()
+        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
+        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
+        self.prompt_content_store = (
+            BigQueryPromptContentAdapter(
+                dataset=bq_dataset,
+                table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
+                project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
+            )
+            if capture_enabled and bq_dataset else None
         )
-        _email_prompt_builder = PromptBuilder(
-            repo=None, assembly_service=self.assembly_service
-        )
-        self.email_classifier = EmailClassificationAgent(
-            config=AgentConfig(
-                agent_id="email_classifier",
-                agent_type="email_classifier",
-            ),
-            execution_context=_email_classifier_context,
-            prompt_builder=_email_prompt_builder,
+
+        # ------------------------------------------------------------------
+        # Email classification + indexing pipeline
+        # The classifier is built per batch for the user whose mail it is (their tier and model), billed to the
+        # indexing job's account and recorded in prompt_content under it (EmailClassifierRunner).
+        # ------------------------------------------------------------------
+        self.email_classifier = EmailClassifierRunner(
+            context_builder=self.context_builder,
+            user_repo=user_repo,
+            prompt_builder=PromptBuilder(repo=None, assembly_service=self.assembly_service),
             gmail=self.gmail_provider,
+            quota_service=quota_service,
+            prompt_content_store=self.prompt_content_store,
         )
         self.email_indexing_service = EmailIndexingService(
             gmail=self.gmail_provider,
@@ -469,25 +485,6 @@ class ServiceContainer:
         self.workspace_service = (
             WorkspaceService(store=self.workspace_store, file_conversion=self.file_conversion_service)
             if self.workspace_store else None
-        )
-
-        # ------------------------------------------------------------------
-        # LLM prompt/response content store (BigQuery, 30-day TTL).
-        # DEBUG_PROMPTS is the GLOBAL capture switch (write / don't write) — it
-        # gates whether the store is wired at all, so None propagates through the
-        # factory and BaseAgent skips the write. The wired adapter is BigQuery;
-        # the flag decides on/off, not which adapter. BIGQUERY_PROMPT_DATASET is
-        # required config for the adapter (no dataset → nothing to write to).
-        # ------------------------------------------------------------------
-        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
-        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
-        self.prompt_content_store = (
-            BigQueryPromptContentAdapter(
-                dataset=bq_dataset,
-                table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
-                project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
-            )
-            if capture_enabled and bq_dataset else None
         )
 
     # ------------------------------------------------------------------

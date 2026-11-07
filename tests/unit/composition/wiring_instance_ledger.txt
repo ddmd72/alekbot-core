@@ -100,6 +100,7 @@ src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-desi
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
+src.composition.email_classifier_runner.EmailClassifierRunner 1  # by-design the email indexing service's one classifier; it builds the agent per batch for the job's user (service_container.py)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
