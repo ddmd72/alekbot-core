@@ -341,7 +341,7 @@ async def test_record_failure_called_on_real_transient_error(agent, primary_llm,
 
     await agent._call_llm(_make_request())
 
-    resilience.record_failure.assert_called_once_with("gemini")
+    resilience.record_failure.assert_called_once_with("gemini", agent_type="quick")
 
 
 @pytest.mark.asyncio
