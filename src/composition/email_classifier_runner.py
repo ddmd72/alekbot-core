@@ -6,6 +6,7 @@ Public interface:
     EmailClassifierRunner(context_builder, user_repo, prompt_builder, gmail=None, quota_service=None,
                           prompt_content_store=None)
         async classify_batch(emails, user_id, credentials=None, *, account_id) -> List[EmailClassificationResult]
+            an empty `account_id` logs one WARNING (the batch runs, unbilled: the ledger has no account to flush to);
             raises RuntimeError when the user is unknown or the classifier cannot be built (the indexing job fails
             and the page is retried; nothing is classified under another configuration)
 
@@ -62,6 +63,9 @@ class EmailClassifierRunner(EmailClassifierPort):
     ) -> List[EmailClassificationResult]:
         if not emails:
             return []
+        if not account_id:
+            logger.warning(f"[EmailClassifier] user {user_id[:8]}: the indexing job has no account_id; "
+                           f"this batch will not be billed")
         agent = await self._agent(user_id)
         with request_user_scope(user_id):
             return await agent.classify_batch(emails, user_id, credentials, account_id=account_id)
