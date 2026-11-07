@@ -129,7 +129,9 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 
 - One `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission;
   `model=` is the model that ran (from the execution's billing ledger, models joined by `+`; a cross-provider failover is
-  the `llm_fallback claude→openai` WARNING). `prompt_content` records the request's model, so it cannot show a failover.
+  the `llm_fallback claude→openai` WARNING). `prompt_content` records the model and provider that served (the fallback's after a failover).
+  Failovers per agent: `grep 'llm_fallback\|llm_no_fallback\|llm_both_open' alek_debug.log | grep 'agent=drive'`; every such line
+  and `provider_breaker_open provider=<p> agent=<tripping agent>` carry `agent=<type>` and `<from>→<to>` in the message text.
 - One `[DriveOperations] <op>: <ref or folder>` line per operation; `opened: <ref> chars=<n>` per whole-file open (before
   the bound), then `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…`, or
   for a PDF or image `opened vision: <ref> mime=… bytes=… pages=…`.

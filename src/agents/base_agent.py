@@ -981,6 +981,8 @@ class BaseAgent(ABC):
         # The model that actually served this turn — the billing basis. Rebound below
         # when a cross-provider failover re-serves the turn on the fallback model.
         served_model = request.model_name
+        served_request = request          # the request that was actually served (the fallback's after a failover)
+        served_provider = primary_name
 
         _t0 = time.perf_counter()
         _t0_ns = time.time_ns()
@@ -1002,7 +1004,7 @@ class BaseAgent(ABC):
                 and primary_name
                 and not isinstance(e, ProviderBreakerOpenError)
             ):
-                resilience.record_failure(primary_name)
+                resilience.record_failure(primary_name, agent_type=self.config.agent_type)
 
             # ── Transcript-integrity invariant: one transcript = one provider ──
             # A multi-turn transcript is provider-specific (tool_use ids, thinking
@@ -1036,8 +1038,8 @@ class BaseAgent(ABC):
                         clock = CURRENT_TURN_CLOCK.get()
                         if clock is not None and not clock.can_retry():
                             logger.warning(
-                                "llm_same_provider_retry skipped: turn budget in wrap-up reserve (%s)",
-                                primary_name,
+                                "llm_same_provider_retry skipped: turn budget in wrap-up reserve agent=%s (%s)",
+                                self.config.agent_type, primary_name,
                             )
                             break
                         backoff = policy.transient_backoff_base_seconds * (
@@ -1046,8 +1048,8 @@ class BaseAgent(ABC):
                         if policy.transient_jitter_seconds > 0:
                             backoff += random.uniform(0, policy.transient_jitter_seconds)
                         logger.warning(
-                            "llm_same_provider_retry %s attempt=%d/%d cause=%s http=%s: %s",
-                            primary_name, attempt, self._SAME_PROVIDER_RETRY_ATTEMPTS,
+                            "llm_same_provider_retry agent=%s %s attempt=%d/%d cause=%s http=%s: %s",
+                            self.config.agent_type, primary_name, attempt, self._SAME_PROVIDER_RETRY_ATTEMPTS,
                             _ERROR_TYPE_LOG_LABEL[type(retry_error)],
                             retry_error.http_status, str(retry_error)[:300],
                             extra={
@@ -1064,8 +1066,8 @@ class BaseAgent(ABC):
                             # The backoff itself ate the budget: call_timeout() would floor at 1 s,
                             # a call that cannot succeed and reads as "timeout after 1s".
                             logger.warning(
-                                "llm_same_provider_retry skipped: backoff used up the turn budget (%s)",
-                                primary_name,
+                                "llm_same_provider_retry skipped: backoff used up the turn budget agent=%s (%s)",
+                                self.config.agent_type, primary_name,
                             )
                             break
                         retry_request = request
@@ -1095,12 +1097,14 @@ class BaseAgent(ABC):
                                 and primary_name
                                 and not isinstance(retry_e, ProviderBreakerOpenError)
                             ):
-                                resilience.record_failure(primary_name)
+                                resilience.record_failure(
+                                    primary_name, agent_type=self.config.agent_type
+                                )
                 if not retried_ok:
                     logger.warning(
                         # Cause folded into the message (extra fields don't reach Cloud Logging).
-                        "llm_transcript_locked %s cause=%s http=%s turn=%d: %s",
-                        primary_name, _ERROR_TYPE_LOG_LABEL[type(retry_error)],
+                        "llm_transcript_locked agent=%s %s cause=%s http=%s turn=%d: %s",
+                        self.config.agent_type, primary_name, _ERROR_TYPE_LOG_LABEL[type(retry_error)],
                         retry_error.http_status, turn, str(retry_error)[:300],
                         extra={
                             "event": "llm_transcript_locked",
@@ -1132,9 +1136,9 @@ class BaseAgent(ABC):
                     logger.warning(
                         # Cause folded into the message: StructuredLogHandler only serializes
                         # record.labels, so `extra` fields never reach Cloud Logging.
-                        "%s %s→%s cause=%s http=%s: %s",
+                        "%s agent=%s %s→%s cause=%s http=%s: %s",
                         "llm_both_open" if fallback_open else "llm_no_fallback",
-                        primary_name, fallback_name,
+                        self.config.agent_type, primary_name, fallback_name,
                         _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
                         extra={
                             "event": "llm_both_open" if fallback_open else "llm_no_fallback",
@@ -1155,8 +1159,8 @@ class BaseAgent(ABC):
                 if clock is not None and clock.in_reserve():
                     # A failover started in the wrap-up reserve would eat the wrap-up's time.
                     logger.warning(
-                        "llm_fallback skipped: turn budget in wrap-up reserve (%s→%s)",
-                        primary_name, fallback_name,
+                        "llm_fallback skipped: turn budget in wrap-up reserve agent=%s (%s→%s)",
+                        self.config.agent_type, primary_name, fallback_name,
                     )
                     raise BothProvidersUnavailableError(
                         primary_name=primary_name,
@@ -1166,8 +1170,8 @@ class BaseAgent(ABC):
 
                 logger.warning(
                     # Cause folded into the message (extra fields don't reach Cloud Logging).
-                    "llm_fallback %s→%s cause=%s http=%s: %s",
-                    primary_name, fallback_name,
+                    "llm_fallback agent=%s %s→%s cause=%s http=%s: %s",
+                    self.config.agent_type, primary_name, fallback_name,
                     _ERROR_TYPE_LOG_LABEL[type(e)], e.http_status, str(e)[:300],
                     extra={
                         "event": "llm_fallback",
@@ -1194,16 +1198,22 @@ class BaseAgent(ABC):
                             request=fallback_request
                         )
                     served_model = fallback_request.model_name
+                    served_request = fallback_request
+                    served_provider = fallback_name or primary_name
+                    logger.info(
+                        "llm_fallback_ok agent=%s %s→%s model=%s",
+                        self.config.agent_type, primary_name, fallback_name, served_model,
+                    )
                     if isinstance(response, _LLMResponse):   # a copy: the provider's object is not ours to change
                         response = response.model_copy(update={"served_by_fallback": fallback_name or ""})
                     # Asymmetry by design — see method docstring step 5.
                 except failover_tuple as fb_e:
                     if resilience and fallback_name:
-                        resilience.record_failure(fallback_name)
+                        resilience.record_failure(fallback_name, agent_type=self.config.agent_type)
                     logger.warning(
                         # Cause folded into the message (extra fields don't reach Cloud Logging).
-                        "llm_fallback_failed %s→%s primary=%s fallback=%s: %s",
-                        primary_name, fallback_name,
+                        "llm_fallback_failed agent=%s %s→%s primary=%s fallback=%s: %s",
+                        self.config.agent_type, primary_name, fallback_name,
                         _ERROR_TYPE_LOG_LABEL[type(e)], _ERROR_TYPE_LOG_LABEL[type(fb_e)],
                         str(fb_e)[:300],
                         extra={
@@ -1226,8 +1236,8 @@ class BaseAgent(ABC):
                     # A refusal by the fallback is not the primary's refusal: name the provider that raised it
                     # (USER_DRIVE_INDEXING_RFC §25.4.4, N7). Still an LLMClientError for every other caller.
                     logger.warning(
-                        "llm_fallback_refused %s→%s http=%s: %s",
-                        primary_name, fallback_name, fb_client_e.http_status, str(fb_client_e)[:300],
+                        "llm_fallback_refused agent=%s %s→%s http=%s: %s",
+                        self.config.agent_type, primary_name, fallback_name, fb_client_e.http_status, str(fb_client_e)[:300],
                     )
                     raise LLMFallbackClientError(
                         str(fb_client_e), http_status=fb_client_e.http_status,
@@ -1252,20 +1262,20 @@ class BaseAgent(ABC):
                 "(expected only outside process())", self.agent_id
             )
         latency_ms = (time.perf_counter() - _t0) * 1000.0
-        self._emit_llm_span(request, response, turn, latency_ms, primary_name, _t0_ns)
+        self._emit_llm_span(served_request, response, turn, latency_ms, served_provider, _t0_ns)
         # Best-effort content capture. record_turn builds the record + schedules
         # the write inside the adapter and returns immediately — zero latency,
         # never raises. No-op when no store is configured.
         if self._prompt_content_store is not None:
             await self._prompt_content_store.record_turn(
-                request=request,
+                request=served_request,   # model/provider columns name what served, not what was asked
                 response=response,
                 agent_id=self.agent_id,
                 agent_type=self.agent_type,
                 account_id=ledger.account_id if ledger else None,
                 turn=turn,
                 latency_ms=latency_ms,
-                provider=primary_name,
+                provider=served_provider,
             )
         return response
 

@@ -26,11 +26,14 @@ class ProviderResiliencePort(ABC):
     """
 
     @abstractmethod
-    def record_failure(self, provider_name: str) -> None:
+    def record_failure(self, provider_name: str, agent_type: str = "") -> None:
         """Register a failure for ``provider_name`` at the current time.
 
         The threshold-th failure within the implementation's rolling
         window opens the breaker eagerly — no separate trigger call.
+
+        ``agent_type`` names the agent whose call failed; it is for the
+        breaker-open log line only and never changes breaker behaviour.
         """
 
     @abstractmethod

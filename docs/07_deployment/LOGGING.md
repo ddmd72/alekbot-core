@@ -170,6 +170,12 @@ gcloud logging read \
 
 ---
 
+### Provider failover and breaker lines
+
+`grep 'llm_fallback\|llm_no_fallback\|llm_both_open\|provider_breaker_' alek_debug.log` (add `| grep agent=<type>` per agent).
+The agent and the `<from>→<to>` providers are in the message text (`extra` fields do not reach Cloud Logging):
+`llm_fallback agent=… a→b`, `llm_fallback_ok`, `llm_fallback_failed`, `provider_breaker_open provider=… agent=<agent whose failure tripped it>`, `provider_breaker_closed`.
+
 ## Cloud Run Jobs (Deep Research)
 
 Deep research runs in Cloud Run Jobs (`job_main.py`), not in the service. Job logs use a
