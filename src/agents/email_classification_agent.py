@@ -25,7 +25,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.email import EmailClassificationResult, EmailMetadata
 from ..domain.oauth_credential import OAuthCredential
-from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
+from ..domain.exceptions import PROVIDER_OUTAGE_TYPES
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -279,9 +279,9 @@ class EmailClassificationAgent(BaseAgent):
             )
             return self._all_failed(emails, "max_turns")
 
-        except (LLMUnavailableError, LLMRateLimitError) as exc:
-            # Transient — let Cloud Tasks retry the whole page instead of silently
-            # marking all emails as failed.
+        except PROVIDER_OUTAGE_TYPES as exc:
+            # The provider could not serve now (incl. both providers down) — let Cloud Tasks
+            # retry the whole page instead of silently marking all emails as failed.
             logger.warning(
                 f"⚠️ classify_batch transient error ({type(exc).__name__}): {exc} — "
                 f"propagating for Cloud Tasks retry"

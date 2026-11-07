@@ -100,6 +100,7 @@ Chunk size: **100 emails per page** (`GMAIL_DEFAULT_QUERY` filters Primary + Upd
 1. **List:** `GmailProviderAdapter.list_emails(query, page_token)` → `[EmailMetadata]`
 2. **Exclusion pre-filter:** Skip senders/domains in `email_exclusions` collection.
 3. **Classify:** `classify_batch(emails, user_id, account_id=job.account_id)` on the classifier port → each email gets `category` + `tags` + `should_index` boolean.
+   A model-provider outage (`PROVIDER_OUTAGE_TYPES`, incl. both providers down) is not a classification failure: it propagates, the job stays `running`, `/worker` answers 503 and Cloud Tasks retries the page; when the attempts run out the job stays `running` until the watchdog (§4.4) marks it `failed`.
 4. **Filter:** Drop emails where `should_index=False` (noise).
 5. **Fetch:** `GmailProviderAdapter.get_email_content(email_id)` → full body + attachments list.
 6. **Embed:** `GeminiEmbeddingAdapter.embed_text()` × 4 vectors:

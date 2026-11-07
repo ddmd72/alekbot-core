@@ -25,6 +25,7 @@ from ..domain.email import (
     IndexingState,
 )
 from ..domain.connector_spec import ConnectorSpec
+from ..domain.exceptions import PROVIDER_OUTAGE_TYPES
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.email_exclusions_port import EmailExclusionsPort
@@ -557,6 +558,13 @@ class EmailIndexingService:
                     f"fetched={job.emails_fetched} stored={job.emails_stored}"
                 )
 
+        except PROVIDER_OUTAGE_TYPES as exc:
+            # The model provider could not serve now: nothing of this page is stored and the job stays `running`, so
+            # the retry of this task (load_job_for_execution skips any other status) re-runs the page.
+            logger.warning(
+                f"⚠️ Job {job.job_id[:8]} paused by a provider outage ({type(exc).__name__}): {exc} — page left for a retry"
+            )
+            raise
         except Exception as exc:
             error_msg = str(exc).lower()
             is_auth = any(

@@ -72,10 +72,6 @@ async def test_an_error_after_a_billed_turn_bills_that_turn_then_leaves_the_batc
     assert world.usage("acc-1")["daily_tokens"] == 1040
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="14b-R1: a 503 inside _call_llm surfaces as BothProvidersUnavailableError, which is not an "
-                          "LLMUnavailableError, so the agent's transient re-raise never fires; the page is marked "
-                          "failed instead of being retried by Cloud Tasks")
 async def test_a_provider_outage_mid_batch_bills_the_turns_made_and_propagates_for_a_retry():
     model = _Scripted(_answer("not json", 1000, 40), LLMUnavailableError("503 from the model"))
     world = await _world(model)
