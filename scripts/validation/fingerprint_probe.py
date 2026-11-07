@@ -259,10 +259,32 @@ def _patch_specialist_inputs(case: Case) -> Callable[[], None]:
     return restore
 
 
+def _patch_history(case: Case, agent: Any, session_id: str) -> Callable[[], None]:
+    """A case with `history` finds those (role, text) turns in the probe session; the store is otherwise untouched."""
+    if case.history is None or getattr(agent, "session_store", None) is None:
+        return lambda: None
+    from src.domain.llm import Message
+    from src.domain.session import Session
+    turns = [Message(role=role, parts=[MessagePart(text=text)]) for role, text in case.history()]
+    store = agent.session_store
+    original = store.load_session
+
+    async def load_session(sid: str, *a: Any, **kw: Any) -> Any:
+        if sid == session_id:
+            return Session(session_id=sid, history=list(turns))
+        return await original(sid, *a, **kw)
+    store.load_session = load_session
+
+    def undo() -> None:
+        del store.load_session
+    return undo
+
+
 def _chat_message(case: Case, rt: Runtime, agent: Any) -> AgentMessage:
     ctx: Dict[str, Any] = {"user_id": rt.user_id, "account_id": rt.account_id,
                            "session_id": f"{rt.user_id}:{PROBE_CHANNEL}",
-                           "current_message_parts": [MessagePart(text=case.text)]}
+                           "current_message_parts": [MessagePart(text=t) for t in
+                                                     ([case.text] if case.text else []) + (case.extra_parts() if case.extra_parts else [])]}
     if case.interactive:
         ctx["interactive_delivery"] = True
     return AgentMessage.create(sender="fingerprint_probe", recipient=agent.agent_id, intent=AgentIntent.QUERY,
@@ -299,7 +321,11 @@ async def run_case(case: Case, rt: Runtime) -> Dict[str, Any]:
     try:
         if case.kind == "chat":
             agent = next(a for prefix, a in rt.agents.items() if case.agent.startswith(prefix))
-            response = await agent.execute(_chat_message(case, rt, agent))
+            undo_history = _patch_history(case, agent, f"{rt.user_id}:{PROBE_CHANNEL}")
+            try:
+                response = await agent.execute(_chat_message(case, rt, agent))
+            finally:
+                undo_history()
             outcome = {"status": str(response.status),
                        "answer": str(response.result if response.result is not None else response.error)}
         elif case.kind == "drive":
