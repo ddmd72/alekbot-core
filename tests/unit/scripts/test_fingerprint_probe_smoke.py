@@ -102,9 +102,16 @@ async def test_the_case_stops_after_its_real_call_cap(tmp_path):
 def test_case_selection_and_synthetic_data_stay_inside_the_invented_universe():
     ids = [c.id for c in cases.select(["R1"])]
     assert ids == [f"R1.{n}" for n in range(1, 9)]
-    assert [c.id for c in cases.select(["R5"])] == ["R5.1"]
+    assert [c.id for c in cases.select(["R5"])] == [f"R5.{n}" for n in range(1, 9)]
+    assert [c.id for c in cases.select(["R7a", "R7b"])] == [f"R7{c}.{v}" for c in "ab" for v in "1234"]
+    assert [c.id for c in cases.select(["R8"])] == [f"R8.{n}.{c}{f}" for n in range(1, 10) for c in "ab" for f in "po"]
+    assert [c.id for c in cases.select(["R9"])] == [f"R9.{n}" for n in range(1, 5)]
+    assert [c.id for c in cases.select(["R11"])] == ["R11.1", "R11.2", "R11.3"]
+    assert [c.id for c in cases.select(["R12"])] == [f"R12.{n}" for n in range(0, 6)]
     with pytest.raises(ValueError):
-        cases.select(["R9"])
+        cases.select(["R10"])
+    with pytest.raises(ValueError):
+        cases.select(["R5.9"])
     blob = json.dumps([cases.invented_emails()]) + "".join(c.text for c in cases.ALL_CASES)
     for needed in ("Tom Baker", "FA-0137", "R&D/Tom's plan.docx"):
         assert needed in blob
