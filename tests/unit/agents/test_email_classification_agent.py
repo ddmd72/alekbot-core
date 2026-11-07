@@ -85,7 +85,7 @@ class TestEmailClassificationAgent:
              "fact": None, "tags": []},
         ])
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         assert results[0].email_id == "id1"
@@ -103,7 +103,7 @@ class TestEmailClassificationAgent:
              "fact": "Invoice paid", "tags": ["invoice"]},
         ])
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         missing = next(r for r in results if r.email_id == "id2")
@@ -116,7 +116,7 @@ class TestEmailClassificationAgent:
             text="not json at all", tool_calls=[]
         )
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
         assert results[0].valuable is False
@@ -128,14 +128,14 @@ class TestEmailClassificationAgent:
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.side_effect = RuntimeError("API error")
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         assert all(not r.valuable for r in results)
 
     async def test_classify_batch_empty_input(self, agent, mock_llm):
         """Empty input → no LLM call, empty list returned."""
-        results = await agent.classify_batch([], "user123")
+        results = await agent.classify_batch([], "user123", account_id="acc-1")
 
         assert results == []
         mock_llm.generate_content.assert_not_called()
@@ -148,7 +148,7 @@ class TestEmailClassificationAgent:
              "fact": None, "tags": []},
         ])
 
-        await agent.classify_batch(emails, "user123")
+        await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         call_args = mock_llm.generate_content.call_args
         req: LLMRequest = call_args.kwargs.get("request") or call_args.args[0]
@@ -170,7 +170,7 @@ class TestEmailClassificationAgent:
              "fact": "Flight booked", "tags": ["Flight", "RYANAIR"]},
         ])
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert results[0].tags == ["flight", "ryanair"]
 
@@ -186,7 +186,7 @@ class TestEmailClassificationAgent:
             valid_response,
         ]
 
-        results = await agent.classify_batch(emails, "user123")
+        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
         assert results[0].valuable is False
@@ -202,7 +202,7 @@ class TestEmailClassificationAgent:
         emails = [_make_meta("id1")]
 
         with pytest.raises(RuntimeError, match="prompt_builder"):
-            await agent_no_pb.classify_batch(emails, "user123")
+            await agent_no_pb.classify_batch(emails, "user123", account_id="acc-1")
 
     async def test_can_handle_always_false(self, agent):
         """can_handle() always returns False — agent is not in the delegation chain."""
@@ -270,7 +270,7 @@ class TestEmailClassificationAgent:
         ]
 
         results = await agent_with_tools.classify_batch(
-            [_make_meta("id1", subject="Booking confirmed")], "user123", credentials=credentials
+            [_make_meta("id1", subject="Booking confirmed")], "user123", credentials=credentials, account_id="acc-1"
         )
 
         assert len(results) == 1
@@ -306,7 +306,7 @@ class TestEmailClassificationAgent:
         )
 
         results = await agent_with_tools.classify_batch(
-            [_make_meta("id1")], "user123", credentials=credentials
+            [_make_meta("id1")], "user123", credentials=credentials, account_id="acc-1"
         )
 
         assert len(results) == 1

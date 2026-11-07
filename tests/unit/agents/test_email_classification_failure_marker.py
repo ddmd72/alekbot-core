@@ -43,7 +43,7 @@ async def test_all_noise_page_carries_no_failure(agent, mock_llm):
         tool_calls=[],
     )
 
-    results = await agent.classify_batch(emails, "user123")
+    results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
     assert [r.failure for r in results] == [None, None]
 
@@ -51,7 +51,7 @@ async def test_all_noise_page_carries_no_failure(agent, mock_llm):
 async def test_parse_error_is_marked(agent, mock_llm):
     mock_llm.generate_content.return_value = LLMResponse(text="not json", tool_calls=[])
 
-    results = await agent.classify_batch([_make_meta("e1"), _make_meta("e2")], "user123")
+    results = await agent.classify_batch([_make_meta("e1"), _make_meta("e2")], "user123", account_id="acc-1")
 
     assert [r.failure for r in results] == ["parse_error", "parse_error"]
     assert not any(r.valuable for r in results)
@@ -62,7 +62,7 @@ async def test_max_turns_is_marked(agent, mock_llm):
         tool_calls=[ToolCall(name="unknown_tool", args={})]
     )
 
-    results = await agent.classify_batch([_make_meta("e1")], "user123")
+    results = await agent.classify_batch([_make_meta("e1")], "user123", account_id="acc-1")
 
     assert [r.failure for r in results] == ["max_turns"]
     assert mock_llm.generate_content.call_count == MAX_TURNS
@@ -71,6 +71,6 @@ async def test_max_turns_is_marked(agent, mock_llm):
 async def test_unexpected_exception_is_marked_with_its_class(agent, mock_llm):
     mock_llm.generate_content.side_effect = RuntimeError("boom")
 
-    results = await agent.classify_batch([_make_meta("e1")], "user123")
+    results = await agent.classify_batch([_make_meta("e1")], "user123", account_id="acc-1")
 
     assert [r.failure for r in results] == ["RuntimeError"]
