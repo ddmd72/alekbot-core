@@ -14,7 +14,8 @@
 <meta name="twitter:description" content="An AI extension of memory and thinking, living in Slack, Telegram and a voice call. A solo project in daily use.">
 <meta name="twitter:image" content="https://dev.alekbot.app/og.png">
 <meta name="theme-color" content="#0a0d14">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0d14'/%3E%3Cg stroke='%235eead4' stroke-width='2'%3E%3Cpath d='M16 4v8M16 20v8M4 16h8M20 16h8'/%3E%3C/g%3E%3Crect x='12' y='12' width='8' height='8' fill='%235eead4'/%3E%3C/svg%3E">
+<link rel="icon" href="/alek.jpg">
+<link rel="apple-touch-icon" href="/alek.jpg">
 <style>
 /* Optional: self-host Archivo at /fonts/Archivo.woff2 (same origin). Falls back to system grotesk. */
 @font-face{font-family:"Archivo";src:local("Archivo"),local("Archivo Regular");font-weight:100 900;font-display:swap}
@@ -47,7 +48,7 @@ h2{font-size:clamp(28px,4vw,46px);line-height:1.08;letter-spacing:-.02em;font-we
 /* nav */
 .nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px var(--pad);background:rgba(10,13,20,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:2px solid var(--rule)}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:14px;color:var(--text);letter-spacing:.02em}
-.brand i{width:10px;height:10px;background:var(--mint);display:block}
+.brand img{display:block;width:22px;height:22px}
 .nav-links{display:flex;align-items:center;gap:24px;font-family:var(--mono);font-size:13px}
 .nav-links a{color:var(--muted)}
 .nav-links a:hover{color:var(--text)}
@@ -62,7 +63,8 @@ html{scroll-behavior:smooth}
 .hero-art{border-left:2px solid var(--rule);display:flex;align-items:center;justify-content:center;padding:32px;background:
   linear-gradient(var(--rule) 1px,transparent 1px) 0 0/40px 40px,
   linear-gradient(90deg,var(--rule) 1px,transparent 1px) 0 0/40px 40px;background-color:var(--bg)}
-.hero-art svg{width:100%;max-width:440px;height:auto;background:var(--bg)}
+.avatar{width:100%;max-width:420px;border:2px solid var(--mint);background:var(--bg);padding:10px;box-shadow:0 0 0 10px var(--bg),0 0 60px rgba(94,234,212,.12)}
+.avatar img{display:block;width:100%;height:auto}
 .live{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--live);border:2px solid var(--rule);padding:6px 12px}
 .dot{position:relative;width:8px;height:8px;background:var(--live);border-radius:50%}
 .dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--live);animation:ping 2.4s ease-out infinite}
@@ -82,12 +84,6 @@ h1{font-size:clamp(56px,10vw,120px);line-height:.92;letter-spacing:-.045em;font-
 .stack{font-family:var(--mono);font-size:13px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px 10px;padding-top:20px;border-top:2px solid var(--rule);width:100%}
 .stack span{color:var(--muted)}
 
-/* hub diagram */
-.ray{stroke:var(--rule-strong);stroke-width:1.5}
-.pulse{stroke:var(--mint);stroke-width:2;stroke-dasharray:10 300;stroke-dashoffset:10;animation:flow 3.6s linear infinite}
-@keyframes flow{to{stroke-dashoffset:-150}}
-.node{fill:var(--bg);stroke:var(--rule-strong);stroke-width:2}
-.node-lbl{font-family:var(--mono);font-size:11px;fill:var(--muted);letter-spacing:.04em}
 
 /* cycle */
 .cycle{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;background:var(--rule);border:2px solid var(--rule);margin-top:48px}
@@ -125,7 +121,7 @@ footer a:hover{color:var(--text)}
 @media (max-width:960px){
   .hero{grid-template-columns:1fr}
   .hero-art{border-left:0;border-top:2px solid var(--rule);padding:24px}
-  .hero-art svg{max-width:360px}
+  .avatar{max-width:360px}
   .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:720px){
@@ -138,8 +134,7 @@ footer a:hover{color:var(--text)}
 }
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
-  .pulse,.dot::after{animation:none}
-  .pulse{display:none}
+  .dot::after{animation:none}
 }
 </style>
 </head>
@@ -148,7 +143,7 @@ footer a:hover{color:var(--text)}
 <div class="frame">
 
 <header class="nav">
-  <a class="brand" href="/" aria-label="Alek-Core home"><i></i>alek-core</a>
+  <a class="brand" href="/" aria-label="Alek-Core home"><img src="/alek.jpg" width="22" height="22" alt="">alek-core</a>
   <nav class="nav-links" aria-label="Primary">
     <a class="opt" href="#memory">Memory</a>
     <a class="opt" href="#cycle">Cycle</a>
@@ -175,54 +170,8 @@ footer a:hover{color:var(--text)}
     <p class="stack"><span>Python</span>·<span>GCP</span>·<span>Claude / Gemini / OpenAI / Grok</span>·<span>Hexagonal</span></p>
   </div>
 
-  <div class="hero-art" aria-hidden="true">
-    <svg viewBox="0 0 400 400" role="img">
-      <circle cx="200" cy="200" r="150" fill="none" stroke="#1d2330" stroke-width="1" stroke-dasharray="2 6"></circle>
-      <circle cx="200" cy="200" r="90" fill="none" stroke="#1d2330" stroke-width="1"></circle>
-      <g class="rays">
-        <line class="ray" x1="200" y1="200" x2="200" y2="50"></line>
-        <line class="ray" x1="200" y1="200" x2="306" y2="94"></line>
-        <line class="ray" x1="200" y1="200" x2="350" y2="200"></line>
-        <line class="ray" x1="200" y1="200" x2="306" y2="306"></line>
-        <line class="ray" x1="200" y1="200" x2="200" y2="350"></line>
-        <line class="ray" x1="200" y1="200" x2="94" y2="306"></line>
-        <line class="ray" x1="200" y1="200" x2="50" y2="200"></line>
-        <line class="ray" x1="200" y1="200" x2="94" y2="94"></line>
-      </g>
-      <g>
-        <line class="pulse" x1="200" y1="200" x2="200" y2="50" style="animation-delay:0s"></line>
-        <line class="pulse" x1="200" y1="200" x2="306" y2="94" style="animation-delay:-2.1s"></line>
-        <line class="pulse" x1="200" y1="200" x2="350" y2="200" style="animation-delay:-0.9s"></line>
-        <line class="pulse" x1="200" y1="200" x2="306" y2="306" style="animation-delay:-3.0s"></line>
-        <line class="pulse" x1="200" y1="200" x2="200" y2="350" style="animation-delay:-1.5s"></line>
-        <line class="pulse" x1="200" y1="200" x2="94" y2="306" style="animation-delay:-2.6s"></line>
-        <line class="pulse" x1="200" y1="200" x2="50" y2="200" style="animation-delay:-0.4s"></line>
-        <line class="pulse" x1="200" y1="200" x2="94" y2="94" style="animation-delay:-1.9s"></line>
-      </g>
-      <g>
-        <rect class="node" x="193" y="43" width="14" height="14"></rect>
-        <rect class="node" x="299" y="87" width="14" height="14"></rect>
-        <rect class="node" x="343" y="193" width="14" height="14"></rect>
-        <rect class="node" x="299" y="299" width="14" height="14"></rect>
-        <rect class="node" x="193" y="343" width="14" height="14"></rect>
-        <rect class="node" x="87" y="299" width="14" height="14"></rect>
-        <rect class="node" x="43" y="193" width="14" height="14"></rect>
-        <rect class="node" x="87" y="87" width="14" height="14"></rect>
-      </g>
-      <g class="node-lbl">
-        <text x="200" y="32" text-anchor="middle">smart</text>
-        <text x="320" y="84">search</text>
-        <text x="364" y="186" text-anchor="end" dy="-6">email</text>
-        <text x="320" y="326">drive</text>
-        <text x="200" y="376" text-anchor="middle">docs</text>
-        <text x="80" y="326" text-anchor="end">research</text>
-        <text x="36" y="186" text-anchor="start" dy="-6">media</text>
-        <text x="80" y="84" text-anchor="end">memory</text>
-      </g>
-      <rect x="168" y="168" width="64" height="64" fill="#0a0d14" stroke="#5eead4" stroke-width="2"></rect>
-      <rect x="192" y="192" width="16" height="16" fill="#5eead4"></rect>
-      <text x="200" y="250" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#5eead4" letter-spacing=".08em">ROUTER</text>
-    </svg>
+  <div class="hero-art">
+    <figure class="avatar"><img src="/alek.jpg" width="650" height="650" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to."></figure>
   </div>
 </section>
 

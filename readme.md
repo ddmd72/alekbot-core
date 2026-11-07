@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/web/static/alek.jpg" width="220" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to.">
+</p>
+
 # Alek-Core — Personal Exocortex
 
 An AI extension of memory and thinking that lives in Slack and Telegram, with a voice companion on the phone and in the
