@@ -22,9 +22,6 @@ from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from ..adapters.firestore_repo import FirestoreFactRepository
 from ..adapters.firestore_session_store import FirestoreSessionStore
-from ..adapters.firestore_prompt_repository import FirestorePromptComponentRepository
-from ..adapters.groovy_prompt_assembler import GroovyPromptAssembler
-from ..adapters.xml_prompt_assembler import XmlPromptAssembler
 from ..adapters.fact_management_adapter import FactManagementAdapter
 from ..adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from ..domain.deduplication_service import SmartDeduplication
@@ -38,7 +35,6 @@ from ..services.alerting_llm_proxy import AlertingLLMProxy
 from ..services.provider_breaker_alerter import ProviderBreakerAlerter
 from ..services.caching_llm_proxy import CachingLLMProxy
 from ..services.prompt_cache_strategy import PromptCacheStrategy
-from ..services.prompt_component_service import PromptComponentService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.email_search_service import EmailSearchService
 from ..services.email_indexing_service import EmailIndexingService
@@ -352,19 +348,6 @@ class ServiceContainer:
         )
 
         # ------------------------------------------------------------------
-        # Prompt v2 component infrastructure
-        # ------------------------------------------------------------------
-        self.prompt_component_repo = FirestorePromptComponentRepository(
-            db_client=db_client,
-            collection_name=f"{env_config.firestore_collection_prefix}prompt_components",
-        )
-        self.component_service = PromptComponentService(
-            repository=self.prompt_component_repo,
-            assembler={"groovy": GroovyPromptAssembler(), "xml": XmlPromptAssembler()},
-            cache_ttl=3600,
-        )
-
-        # ------------------------------------------------------------------
         # Prompt v3 design system (optional — graceful fallback to None)
         # ------------------------------------------------------------------
         self.assembly_service, self.profile_repo = self._init_assembly_service(config, db_client, env_config)
@@ -525,7 +508,6 @@ class ServiceContainer:
             "biographical_context_service": self.biographical_context_service,
             "registry": self.registry,
             "context_builder": self.context_builder,
-            "component_service": self.component_service,
             "assembly_service": self.assembly_service,
             "fact_write_service": self.fact_write_service,
             "fact_management_adapter_factory": self.create_fact_management_adapter,

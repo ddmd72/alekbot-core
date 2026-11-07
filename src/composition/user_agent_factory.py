@@ -49,7 +49,6 @@ from ..services.provider_registry import ProviderRegistry
 from ..services.agent_context_builder import AgentContextBuilder
 from ..ports.llm_port import AgentExecutionContext
 from ..services.configuration_service import ConfigurationService
-from ..services.prompt_component_service import PromptComponentService
 from ..infrastructure.agent_config import (
     MEMORY_SEARCH as MEMORY_SEARCH_CFG,
     WEB_SEARCH as WEB_SEARCH_CFG,
@@ -175,7 +174,6 @@ class UserAgentFactory(AgentFactoryPort):
         biographical_context_service: BiographicalContextService,
         registry: ProviderRegistry,
         context_builder: AgentContextBuilder,
-        component_service: Optional[PromptComponentService],
         assembly_service,
         fact_write_service: FactWritePort,
         fact_management_adapter_factory: Callable,
@@ -229,7 +227,6 @@ class UserAgentFactory(AgentFactoryPort):
         self.biographical_context_service = biographical_context_service
         self.registry = registry
         self.context_builder = context_builder
-        self.component_service = component_service
         self.assembly_service = assembly_service
         self.fact_write_service = fact_write_service
         self.fact_management_adapter_factory = fact_management_adapter_factory

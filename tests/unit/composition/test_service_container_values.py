@@ -23,12 +23,10 @@ def test_the_claude_and_openai_adapters_hold_the_configured_keys(variant_graph):
     assert app.container.openai_service.client.api_key == config["OPENAI_API_KEY"]
 
 
-async def test_the_prompt_components_and_the_sessions_live_in_the_environments_collections(prod_graph):
+async def test_the_sessions_live_in_the_environments_collection(prod_graph):
     app = prod_graph.app
     env_config = app.agent_factory.env_config
 
-    assert app.container.prompt_component_repo.collection.name == f"{env_config.firestore_collection_prefix}prompt_components"
-    assert app.container.prompt_component_repo.collection.name != "prompt_components"
     assert app.container.session_store.collection_name == env_config.sessions_collection
 
 
