@@ -115,6 +115,7 @@ class Injector:
     agent_prefix: str
     first_call: Optional[Tuple[str, Dict[str, Any]]]
     max_real: int = 1
+    system_append: str = ""
     scripted: bool = False
     recorded: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -131,6 +132,9 @@ class Injector:
                 return LLMResponse(text=None, tool_calls=[ToolCall(name=name, args=args, thought_signature="probe_call_1")])
             if len(me.recorded) >= me.max_real:
                 return LLMResponse(text="(probe stop: real-call cap reached)", tool_calls=[])
+            if me.system_append:
+                request = request.model_copy(update={
+                    "system_instruction": (request.system_instruction or "") + "\n\n" + me.system_append})
             entry: Dict[str, Any] = {"request_text": render_request(request)}
             me.recorded.append(entry)
             response = await original(agent, request, turn, **kwargs)
@@ -198,6 +202,7 @@ class Runtime:
     out_dir: Path
     live_read: bool = False
     max_llm_calls: int = 1
+    no_key: bool = False
 
 
 # ---------------------------------------------------------------------------------------------------------- one case
@@ -280,11 +285,46 @@ def _patch_history(case: Case, agent: Any, session_id: str) -> Callable[[], None
     return undo
 
 
+def _patch_stores(case: Case, agent: Any) -> Callable[[], None]:
+    """A case's seeded workspace files answer a workspace `view`; its extra skills join the user's skill list."""
+    undo: List[Callable[[], None]] = []
+    if case.workspace_files and getattr(agent, "workspace_service", None) is not None:
+        from src.domain.workspace import WorkspaceResult
+        ws = agent.workspace_service
+        original_run = ws.run
+
+        async def run(call: Any, command: str, args: Mapping[str, Any]) -> Any:
+            path = str(args.get("path", ""))
+            if command == "view" and path in case.workspace_files:
+                return WorkspaceResult(text=case.workspace_files[path])
+            return await original_run(call, command, args)
+        ws.run = run
+        undo.append(lambda: ws.__dict__.pop("run", None))
+    if case.extra_skills is not None and getattr(agent, "skill_service", None) is not None:
+        skills = agent.skill_service
+        original_list = skills.list_skills
+
+        async def list_skills(user_id: str) -> Any:
+            return list(await original_list(user_id)) + case.extra_skills()   # type: ignore[misc]
+        skills.list_skills = list_skills
+        undo.append(lambda: skills.__dict__.pop("list_skills", None))
+    return lambda: [fn() for fn in undo] and None
+
+
+def _message_texts(case: Case) -> List[str]:
+    texts: List[str] = []
+    if case.note_text:   # a note produced the way production keys its notes
+        from src.domain.system_fingerprint import wrap_system
+        texts.append(wrap_system(case.note_text, case.note_key))
+    if case.text:
+        texts.append(case.text)
+    return texts + (case.extra_parts() if case.extra_parts else [])
+
+
 def _chat_message(case: Case, rt: Runtime, agent: Any) -> AgentMessage:
     ctx: Dict[str, Any] = {"user_id": rt.user_id, "account_id": rt.account_id,
                            "session_id": f"{rt.user_id}:{PROBE_CHANNEL}",
-                           "current_message_parts": [MessagePart(text=t) for t in
-                                                     ([case.text] if case.text else []) + (case.extra_parts() if case.extra_parts else [])]}
+                           "current_message_parts": [MessagePart(text=t) for t in _message_texts(case)]}
     if case.interactive:
         ctx["interactive_delivery"] = True
     return AgentMessage.create(sender="fingerprint_probe", recipient=agent.agent_id, intent=AgentIntent.QUERY,
@@ -311,13 +351,20 @@ async def _notify_case(case: Case, rt: Runtime) -> Dict[str, Any]:
 async def run_case(case: Case, rt: Runtime) -> Dict[str, Any]:
     """Run one case and write its JSON; returns the result dict (also the summary line's source)."""
     mark = rt.meter.mark()
-    injector = Injector(case.agent, case.first_call, max_real=rt.max_llm_calls)
+    injector = Injector(case.agent, case.first_call, max_real=rt.max_llm_calls, system_append=case.system_append)
     stub_log: List[Dict[str, Any]] = []
     uninstall_injector = injector.install()            # outside the meter: scripted and stop turns are never metered
     undo_delegation = _patch_delegation(case, rt.live_read, stub_log)
     undo_inputs = _patch_specialist_inputs(case)
     outcome: Dict[str, Any] = {}
     error = ""
+    seeded = next((a for prefix, a in rt.agents.items() if case.agent.startswith(prefix)), None)
+    undo_key = lambda: None   # noqa: E731
+    if case.turn_key and seeded is not None and not rt.no_key:
+        previous = seeded._turn_key_source
+        seeded._turn_key_source = lambda: case.turn_key
+        undo_key = lambda: setattr(seeded, "_turn_key_source", previous)   # noqa: E731
+    undo_stores = _patch_stores(case, seeded) if seeded is not None else (lambda: None)
     try:
         if case.kind == "chat":
             agent = next(a for prefix, a in rt.agents.items() if case.agent.startswith(prefix))
@@ -337,6 +384,8 @@ async def run_case(case: Case, rt: Runtime) -> Dict[str, Any]:
     except Exception as exc:   # a case that fails is reported and recorded, never hidden
         error = f"{type(exc).__name__}: {exc}"
     finally:
+        undo_stores()
+        undo_key()
         undo_inputs()
         undo_delegation()
         uninstall_injector()
@@ -443,6 +492,24 @@ async def build_runtime(args: argparse.Namespace, out_dir: Path) -> Tuple[Runtim
     env_config = settings["ENVIRONMENT_CONFIG"]
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     user_repo = FirestoreUserRepository(db, env_config, account_repo)
+    if args.smart_model:   # in memory only: the owner's stored config is never written
+        provider, _, model = args.smart_model.partition(":")
+        if not provider or not model:
+            raise SystemExit("--smart-model is provider:model, e.g. openai:gpt-6-luna")
+        real_get_user = user_repo.get_user
+
+        async def get_user_forced(uid: str) -> Any:
+            profile = await real_get_user(uid)
+            if profile is None:
+                return profile
+            config = profile.config.model_copy(deep=True)
+            config.agent_providers = {**(config.agent_providers or {}), "smart": provider}
+            config.model_overrides = {**config.model_overrides, "smart": model}
+            for override in config.complexity_settings_overrides.values():   # a stored per-complexity provider would win
+                if override.provider_override:
+                    override.provider_override = provider
+            return profile.model_copy(update={"config": config})
+        user_repo.get_user = get_user_forced   # type: ignore[method-assign]
     container = ServiceContainer(config=settings, db_client=db, env_config=env_config, account_repo=account_repo)
     registry = AgentRegistry()
     for descriptor in ALL_DESCRIPTORS:
@@ -456,6 +523,14 @@ async def build_runtime(args: argparse.Namespace, out_dir: Path) -> Tuple[Runtim
         rule_line = "rule: ON, " + install_rule_overlay(container.assembly_service, Path(args.rule_token))
     cache = await factory.ensure_agents_for_user(user_id)
     agents = {"smart_response": cache["smart_agent"], "quick_response": cache["quick_agent"]}
+    if args.no_key:   # the NOKEY arm: no turn key anywhere (no session_key block, no key on any wrapper), as before the fingerprint
+        import src.agents.core.smart_response_agent as smart_module
+        keyed = smart_module.keyed_header
+        smart_module.keyed_header = lambda header, lines, key: (   # type: ignore[assignment]
+            keyed(header, lines, key) if key else "\n".join([header, *lines]))
+        for agent in agents.values():
+            agent._turn_key_source = lambda: None
+        rule_line = "NOKEY: turn-key source patched to None (no session_key, no key on wrappers); " + rule_line
     for agent in agents.values():   # the dry-run stores of the other evals: nothing is ever saved
         if getattr(agent, "skill_service", None) is not None:
             agent.skill_service = DryRunSkills(agent.skill_service)
@@ -464,7 +539,7 @@ async def build_runtime(args: argparse.Namespace, out_dir: Path) -> Tuple[Runtim
         agent.memory_fact_service = RecordingMemoryFacts()
     rt = Runtime(agents=agents, coordinator=coordinator, user_id=user_id, account_id=account_id,
                  meter=Meter(max_usd=args.max_usd), out_dir=out_dir, live_read=args.live_read,
-                 max_llm_calls=args.max_llm_calls)
+                 max_llm_calls=args.max_llm_calls, no_key=args.no_key)
     return rt, uninstall_guard, blocked, rule_line
 
 
@@ -477,6 +552,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-usd", type=float, default=None, help="REQUIRED hard stop on the estimated spend")
     ap.add_argument("--rule-token", default=None,
                     help="a token file or snapshot-shaped directory served as the rule (default: rule off)")
+    ap.add_argument("--smart-model", default=None,
+                    help="force Smart onto provider:model in memory (e.g. openai:gpt-6-luna, claude:claude-haiku-5-5)")
+    ap.add_argument("--no-key", action="store_true",
+                    help="NOKEY arm: the orchestrators draw no turn key (combine with no --rule-token)")
     ap.add_argument("--live-read", action="store_true", help="run the cases' read-only live delegations (Gmail) for real")
     ap.add_argument("--max-llm-calls", type=int, default=1, help="real LLM calls per case (default 1)")
     return ap
