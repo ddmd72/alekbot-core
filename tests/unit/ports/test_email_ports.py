@@ -252,7 +252,7 @@ class TestEmailClassifierPortContract:
 
     def test_classify_batch_signature(self):
         params = _params(EmailClassifierPort, "classify_batch")
-        assert params == ["self", "emails", "user_id", "credentials"]
+        assert params == ["self", "emails", "user_id", "credentials", "account_id"]
 
     def test_classify_batch_credentials_default_none(self):
         import inspect
