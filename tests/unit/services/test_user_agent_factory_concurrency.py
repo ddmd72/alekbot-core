@@ -38,7 +38,6 @@ def _make_factory():
         biographical_context_service=MagicMock(),
         registry=MagicMock(),
         context_builder=MagicMock(),
-        component_service=MagicMock(),
         assembly_service=None,
         fact_write_service=MagicMock(),
         fact_management_adapter_factory=MagicMock(return_value=MagicMock()),

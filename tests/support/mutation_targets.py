@@ -268,6 +268,13 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.domain.voice_ticket_keys", "tests/unit/domain/voice_ticket_keys_equivalent_mutants.txt"),
     # Secrets at rest, slice S5: invite codes (normalisation, grouping, hint); header-only equivalent file.
     MutationTarget("src.domain.invite_code", "tests/unit/domain/invite_code_equivalent_mutants.txt"),
+    # P10 prompt stores: the three v3 prompt repositories; header-only equivalent files.
+    MutationTarget("src.adapters.prompt_v3.firestore_token_repository",
+                   "tests/unit/adapters/prompt_v3_firestore_token_repository_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.prompt_v3.firestore_blueprint_repository",
+                   "tests/unit/adapters/prompt_v3_firestore_blueprint_repository_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.prompt_v3.firestore_agent_profile_repository",
+                   "tests/unit/adapters/prompt_v3_firestore_agent_profile_repository_equivalent_mutants.txt"),
 )
 
 

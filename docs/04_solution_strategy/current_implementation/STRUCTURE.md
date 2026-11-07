@@ -57,7 +57,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── firestore_invite_code_repo.py # Invite code storage
 │   ├── firestore_notification_state_adapter.py # 🆕 Last active messaging channel per user
 │   ├── firestore_oauth_credentials_adapter.py # 🆕 Gmail OAuth token storage
-│   ├── firestore_prompt_repository.py # 🆕 Firestore PromptComponent storage
 │   ├── firestore_quota_service.py # Firestore QuotaService implementation
 │   ├── firestore_repo.py # Google Firestore Implementation (SCD Type 2)
 │   ├── firestore_session_store.py # Session persistence for HTTP mode (90-day TTL)
@@ -69,7 +68,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── gcs_media_adapter.py # 🆕 GCS bucket adapter for public media URLs (map images, Deep Research HTML reports)
 │   ├── grok_adapter.py     # 🆕 Grok (xAI) LLMPort implementation
 │   ├── gmail_provider_adapter.py # 🆕 Gmail API — list_emails, batch_get_full_content, token refresh
-│   ├── groovy_prompt_assembler.py # 🆕 Groovy DSL prompt assembler
 │   ├── sandbox_engine/  # 🆕 Sandbox service engine side: child_launcher.py (uid, rlimits, group kill), limits_exec.py,
 │   │                    #    docx_render_engine.py (render.docx engine), render_docx_child.py (the child that runs node)
 │   ├── sandbox_client/  # 🆕 Sandbox caller side: sandbox_http_client.py, sandbox_docx_runner.py (DocxRunnerPort),
@@ -167,7 +165,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                   #    consolidation serializer (overflow callback + $consolidate path).
 │   ├── messaging.py    # Messaging DTOs & Protocols
 │   ├── notification.py # 🆕 NotificationChannel (last active platform channel per user)
-│   ├── prompt.py       # 🆕 Prompt Component models (OwnerType, ComponentScope)
+│   ├── prompt.py       # Prompt ownership level (OwnerType) and the anonymous/system context ids
 │   ├── search.py       # 🆕 Enriched search context models (EnrichedFact, EnrichedContext)
 │   ├── session.py      # 🆕 Session model with Sliding Window logic
 │   ├── settings.py     # 🆕 SearchConfig dataclass (moved from config/ for hexagonal purity)
@@ -249,8 +247,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── media_storage_port.py # 🆕 MediaStoragePort ABC (upload_bytes → public URL)
 │   ├── puppeteer_runner_port.py # 🆕 PuppeteerRunnerPort ABC + PuppeteerRunnerError — system
 │   │                            #    boundary for Node.js Puppeteer subprocess (HTML → PDF bytes)
-│   ├── prompt_assembler.py # Prompt assembly port
-│   ├── prompt_component_repository.py # Prompt component storage port
 │   ├── prompt_cache_strategy_port.py # 🆕 PromptCacheStrategyPort — resolve cache config for agent type
 │   ├── email_provider_port.py # 🆕 EmailProviderPort — list_emails, batch_get_full_content, refresh_token
 │   ├── email_classifier_port.py # 🆕 EmailClassifierPort — classify_batch(emails, credentials)
@@ -274,7 +270,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── embedding_service.py # Google Text Embeddings
 │   ├── file_upload_service.py # 🆕 File management implementation
 │   ├── prompt_builder.py    # Compositional Prompt Builder + UserPromptBuilder (merged)
-│   ├── prompt_component_service.py # 🆕 3-level component resolution service
 │   ├── provider_registry.py # 🆕 LLM Provider Service Locator
 │   ├── email_embedding_repair_service.py # 🆕 Async repair job for emails stored without vectors
 │   ├── email_indexing_service.py # 🆕 Paginated inbox-to-Firestore pipeline (fetch → classify → store)
@@ -450,8 +445,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`call_control_plane_port.py`**: 🆕 `CallControlPlanePort` ABC — the relay's only edge to the main service: `fetch_session_config(ticket)` and `submit_transcript(...)`. Adapter: `HttpCallControlPlaneAdapter`. No retry on submit failure by design (fail loudly, never re-run a call's billing).
 
 **Prompt v3 Ports:**
--   **`prompt_assembler.py`**: `PromptAssembler` ABC. Format-agnostic prompt assembly. Adapter: `GroovyPromptAssembler`.
--   **`prompt_component_repository.py`**: Port for prompt component storage (defaults, user overrides, agent-specific). Adapter: `FirestorePromptComponentRepository`.
 -   **`prompt_v3/token_repository.py`**: Port for token (prompt fragment) storage with categorization. Adapter: `FirestoreTokenRepository`.
 -   **`prompt_v3/blueprint_repository.py`**: Port for blueprint (prompt template) storage. Adapter: `FirestoreBlueprintRepository`.
 -   **`prompt_v3/agent_profile_repository.py`**: Port for agent profile storage with 4-level priority resolution. Adapter: `FirestoreAgentProfileRepository`.

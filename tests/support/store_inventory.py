@@ -118,6 +118,12 @@ KITS: Dict[str, Tuple[str, ...]] = {
         _A + "test_fact_lifecycle_counters.py", _A + "test_fact_lifecycle_counters_typed.py"),
     _STORE + "firestore_memory_write_lease.FirestoreMemoryWriteLease": (_A + "test_firestore_memory_write_lease.py",),
     _STORE + "firestore_fact_review_store.FirestoreFactReviewStore": (_A + "test_firestore_fact_review_store.py",),
+    # P10 prompt stores
+    _STORE + "prompt_v3.firestore_token_repository.FirestoreTokenRepository": (_A + "test_prompt_token_store_kit.py",),
+    _STORE + "prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository": (
+        _A + "test_prompt_blueprint_store_kit.py",),
+    _STORE + "prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository": (
+        _A + "test_prompt_profile_store_kit.py",),
     # Drive repositories: the evaluating-fake suites (the mirror's contract suite runs one case list against the in-memory
     # reference and the adapter; the index repository's parity suite does the same for the v2 methods)
     _STORE + "firestore_drive_mirror_repo.FirestoreDriveMirrorRepository": (_A + "test_drive_mirror_repo_contract.py",),

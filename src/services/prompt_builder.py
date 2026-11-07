@@ -320,18 +320,10 @@ class PromptBuilder(PromptBuilderPort):
 
 class UserPromptBuilder(PromptBuilder):
     """
-    Extends PromptBuilder to support per-user prompt component overrides.
+    PromptBuilder bound to one user: it carries the user's id and bot config.
 
-    SESSION_26: Now supports component_service for 3-level priority resolution.
-
-    Lookup order (NEW with component_service):
-    1. USER level (owner_type=USER, owner_value=user_id)
-    2. AGENT level (owner_type=AGENT, owner_value=agent_type)
-    3. SYSTEM level (owner_type=SYSTEM)
-
-    Legacy lookup order (without component_service):
-    1. User's custom component (if defined in UserBotConfig)
-    2. Default SYSTEM component
+    It adds no behaviour of its own. Per-user prompt overrides are resolved by the
+    assembly service (USER > ACCOUNT > AGENT profile > SYSTEM), not here.
     """
 
     def __init__(

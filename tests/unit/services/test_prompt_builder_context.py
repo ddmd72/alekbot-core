@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from src.services.prompt_builder import PromptBuilder
-from src.domain.prompt import TEMPLATE_FULL
 from src.ports.repository import FactRepository
 from src.ports.llm_port import ProviderCapabilities
 from src.domain.agent import RoutingMetadata

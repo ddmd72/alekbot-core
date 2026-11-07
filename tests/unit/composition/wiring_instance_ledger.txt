@@ -37,7 +37,6 @@ src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-desi
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
 src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as _memory_write_lease in application_graph.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
-src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository 1  # by-design single instance
 src.adapters.firestore_quota_service.FirestoreQuotaService 1  # by-design single instance
 src.adapters.firestore_repo.FirestoreFactRepository 1  # by-design single instance
 src.adapters.firestore_session_store.FirestoreSessionStore 1  # by-design single instance
@@ -63,7 +62,6 @@ src.adapters.google.google_drive_tokens.GoogleDriveTokenProvider 1  # by-design 
 src.adapters.grok_adapter.GrokAdapter 1  # by-design single instance
 src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
 src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance
-src.adapters.groovy_prompt_assembler.GroovyPromptAssembler 1  # by-design single instance
 src.adapters.in_memory_provider_resilience.InMemoryProviderResilience 1  # by-design single instance
 src.adapters.microsoft.graph_auth.MicrosoftGraphTokenProvider 2  # by-design one per Graph integration, To Do (todo_adapter.py:110) and OneDrive (onedrive_adapter.py:231), each with its own credentials record and token cache (graph_auth.py:46-47)
 src.adapters.microsoft.microsoft_oauth_provider.MicrosoftOAuthProvider 1  # by-design the Microsoft realm's one OAuth edge, held by the ConnectorRegistry (oauth_connect_setup.py build_oauth_edges, MULTI_DRIVE_RFC 5.1)
@@ -97,7 +95,6 @@ src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single i
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
 src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
-src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
@@ -162,7 +159,6 @@ src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single
 src.services.prompt_builder.PromptBuilder 2  # by-design two plain repo=None builders over the one assembly service: the email classifier's (service_container.py:378) and the document service reader's (document_service_setup.py:41), not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
-src.services.prompt_component_service.PromptComponentService 1  # by-design single instance
 src.services.prompt_v3.biographical_formatter.BiographicalFactsFormatter 1  # by-design single instance
 src.services.prompt_v3.context_formatter.ContextFormatter 1  # by-design single instance
 src.services.prompt_v3.prompt_assembly_service.PromptAssemblyService 1  # by-design single instance
