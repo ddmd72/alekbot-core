@@ -45,7 +45,7 @@ Query side (SmartAgent delegation):
 | `IndexedEmailRepository` | `FirestoreIndexedEmailRepository` |
 | `EmailExclusionsPort` | `FirestoreEmailExclusionsAdapter` |
 | `EmailIndexingJobRepository` | `FirestoreEmailJobRepository` |
-| `EmailClassifierPort` | `EmailClassificationAgent` |
+| `EmailClassifierPort` | `EmailClassifierRunner` (`src/composition/`), which builds `EmailClassificationAgent` per batch |
 | `NotificationStatePort` | `FirestoreNotificationStateAdapter` |
 | `NotificationChannelFactoryPort` | `NotificationChannelFactory` |
 
@@ -99,7 +99,7 @@ Chunk size: **100 emails per page** (`GMAIL_DEFAULT_QUERY` filters Primary + Upd
 
 1. **List:** `GmailProviderAdapter.list_emails(query, page_token)` → `[EmailMetadata]`
 2. **Exclusion pre-filter:** Skip senders/domains in `email_exclusions` collection.
-3. **Classify:** `EmailClassificationAgent.classify_batch(emails)` → each email gets `category` + `tags` + `should_index` boolean.
+3. **Classify:** `classify_batch(emails, user_id, account_id=job.account_id)` on the classifier port → each email gets `category` + `tags` + `should_index` boolean.
 4. **Filter:** Drop emails where `should_index=False` (noise).
 5. **Fetch:** `GmailProviderAdapter.get_email_content(email_id)` → full body + attachments list.
 6. **Embed:** `GeminiEmbeddingAdapter.embed_text()` × 4 vectors:
@@ -135,13 +135,27 @@ See [../../07_deployment/SCHEDULERS.md](../../07_deployment/SCHEDULERS.md) for s
 
 ## 5. EmailClassificationAgent
 
-The classifier is a **shared singleton** in `ServiceContainer` (not per-user). It is the explicit exception to the `OUTPUT_FORMAT` token rule:
+**How it is built and billed.** `EmailIndexingService` holds `EmailClassifierRunner` (one per process, in `ServiceContainer`),
+not the agent: services/ cannot import agents/. Per batch the runner reads the job user's `UserBotConfig`, builds the agent
+through `AgentContextBuilder` (the user's tier and model overrides for `email_classifier`; the provider stays Gemini, the only
+allowed one) and sets the quota service and the prompt-content store on it, as `UserAgentFactory` does for its agents. The
+batch is one execution: `classify_batch` opens a `TokenLedger` for the job's `account_id`, every turn of the tool loop lands in
+it, and it is flushed to the account's usage at the end (also when the batch fails). The runner runs the batch with the job's
+user as the request context's user (`request_user_scope`), so each `prompt_content` row carries the job's `user_id` and
+`account_id` (`agent_type = email_classifier`, `agent_id = email_classifier_<user_id>`); the prompt is assembled for that
+account. Concurrent jobs of two accounts each bill and record to their own. A job with an empty `account_id` is
+classified unbilled, with one WARNING `[EmailClassifier] user <8>: … will not be billed`. An unknown user, or a classifier that cannot be
+built, fails the job (nothing classified under another configuration). Before roadmap 14b (P9 finding D2) one shared agent
+built with the default configuration ran every user's batch outside any billing scope: unbilled and absent from
+`prompt_content`.
+
+The classifier is the explicit exception to the `OUTPUT_FORMAT` token rule:
 
 - **Reason:** Gemini cannot combine `response_mime_type="application/json"` with function calling (tool use) in a single request. The classifier uses tool calling, so JSON mode is unavailable.
 - **Instead:** Output format instructions are embedded in the cognitive process prompt. `_parse_response()` extracts JSON from markdown code blocks (`re.search`).
 - **This is the only agent** in the codebase where regex fallback in `_parse_response` is permitted. All other agents use `json.loads()` directly.
 
-**Tier:** BALANCED (Gemini Flash). Single LLM call per batch. Returns `EmailClassificationResult` per email.
+**Tier:** BALANCED (Gemini Flash) by default, the user's `agent_tiers["email_classifier"]` when set. Single LLM call per batch. Returns `EmailClassificationResult` per email.
 
 ---
 
@@ -236,7 +250,8 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/adapters/firestore_credential_store.py`: encrypted credential store.
 - `src/services/user_notification_service.py`: System alert delivery.
 - `src/agents/email_search_agent.py`: Specialist agent (3 intents).
-- `src/agents/email_classification_agent.py`: Batch classifier (shared singleton).
+- `src/agents/email_classification_agent.py`: Batch classifier (built per batch).
+- `src/composition/email_classifier_runner.py`: `EmailClassifierPort` — builds the classifier per batch for the job's user and account.
 - `src/handlers/worker_handler.py`: Cloud Tasks dispatcher.
 - `src/adapters/gmail_provider_adapter.py`: Gmail API client.
 - `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.

@@ -110,6 +110,22 @@ def build_oauth_credentials(google_creds, user_id: str) -> "OAuthCredential":
     )
 
 
+class _TierOverride:
+    """The user repository, with the classifier's tier replaced by --tier on the user read."""
+
+    def __init__(self, users, tier) -> None:
+        self._users = users
+        self._tier = tier
+
+    async def get_user(self, user_id: str):
+        user = await self._users.get_user(user_id)
+        if user is None:
+            return None
+        tiers = dict(user.config.agent_tiers or {})
+        tiers["email_classifier"] = self._tier
+        return user.model_copy(update={"config": user.config.model_copy(update={"agent_tiers": tiers})})
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -126,9 +142,12 @@ async def main(args):
     from src.adapters.gemini_adapter import GeminiAdapter
     from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
     from src.adapters.claude_adapter import ClaudeAdapter
-    from src.agents.email_classification_agent import EmailClassificationAgent
-    from src.domain.agent import AgentConfig
-    from src.domain.user import PerformanceTier, UserBotConfig
+    from src.adapters.firestore_account_repo import FirestoreAccountRepository
+    from src.adapters.firestore_quota_service import FirestoreQuotaService
+    from src.adapters.firestore_user_repo import FirestoreUserRepository
+    from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+    from src.composition.email_classifier_runner import EmailClassifierRunner
+    from src.domain.user import PerformanceTier
     from src.composition.connector_registry import GMAIL, ConnectorRegistry
     from src.services.email_indexing_service import EmailIndexingService, GMAIL_DEFAULT_QUERY
     from src.services.provider_registry import ProviderRegistry
@@ -225,24 +244,27 @@ async def main(args):
     registry = ProviderRegistry()
     registry.register("gemini", llm)
     registry.register("claude", claude_llm)
-    context_builder = AgentContextBuilder(registry, cache_strategy=None)
+    context_builder = AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience(), cache_strategy=None)
 
     tier_map = {
         "eco": PerformanceTier.ECO,
         "balanced": PerformanceTier.BALANCED,
         "performance": PerformanceTier.PERFORMANCE,
     }
-    # Pass tier via UserBotConfig so context_builder resolves it correctly.
-    email_config = UserBotConfig(agent_tiers={"email_classifier": tier_map[args.tier]})
-    email_context = context_builder.build("email_classifier", email_config)
+    # The user's own configuration, with --tier as the classifier's tier for this run.
+    account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
+    users = _TierOverride(FirestoreUserRepository(db, env_config, account_repo), tier_map[args.tier])
 
-    # --- Agents + Services ---
-    classifier = EmailClassificationAgent(
-        config=AgentConfig(agent_id="email_classifier", agent_type="email_classifier"),
-        execution_context=email_context,
+    # --- Classifier + Services ---
+    # The runner composition uses: built per batch for the job's user, billed to DEV_ACCOUNT_ID through the real
+    # quota service. No prompt-content store: this script writes no prompt_content rows.
+    classifier = EmailClassifierRunner(
+        context_builder=context_builder,
+        user_repo=users,
         prompt_builder=prompt_builder,
         gmail=gmail,
-        user_id=user_id,
+        quota_service=FirestoreQuotaService(account_repo),
+        prompt_content_store=None,
     )
     indexer = EmailIndexingService(
         gmail=gmail,

@@ -26,7 +26,6 @@ from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.email import EmailClassificationResult, EmailMetadata
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
-from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -37,9 +36,12 @@ MAX_TURNS = EMAIL_CLASSIFICATION.max_turns
 MAX_PARSE_RETRIES = EMAIL_CLASSIFICATION.max_parse_retries
 
 
-class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
+class EmailClassificationAgent(BaseAgent):
     """
     Classifies a batch of email metadata via Gemini Flash with function calling.
+
+    Not an EmailClassifierPort itself: the port's implementation is EmailClassifierRunner (composition), which
+    builds this agent per batch for the job's user and passes the job's account.
 
     When gmail + credentials are provided, uses a multi-turn agentic loop
     (MAX_TURNS=4) where the LLM can call get_email_details() for ambiguous emails.
@@ -94,6 +96,8 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
         emails: List[EmailMetadata],
         user_id: str,
         credentials: Optional[OAuthCredential] = None,
+        *,
+        account_id: str,
     ) -> List[EmailClassificationResult]:
         """
         Classify up to 100 emails in an agentic tool-calling loop.
@@ -102,11 +106,25 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
         The LLM calls get_email_details() for uncertain emails to inspect
         body text and attachment filenames before deciding.
         credentials: required for get_email_details tool calls.
+        account_id: the account whose mail this is. The batch is one execution: every model call of it goes into one
+        TokenLedger billed to this account (flushed at the end, also on failure) and is recorded under it.
         """
         if not emails:
             return []
+        with self._execution_billing_scope(account_id):
+            try:
+                return await self._classify(emails, user_id, credentials, account_id)
+            finally:
+                await self._flush_billing()
 
-        prompt = await self._build_prompt(user_id)
+    async def _classify(
+        self,
+        emails: List[EmailMetadata],
+        user_id: str,
+        credentials: Optional[OAuthCredential],
+        account_id: str,
+    ) -> List[EmailClassificationResult]:
+        prompt = await self._build_prompt(user_id, account_id)
         emails_json = self._format_emails(emails)
 
         # Embed emails into system instruction before the cache boundary so they
@@ -277,7 +295,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
     # Private helpers
     # ------------------------------------------------------------------
 
-    async def _build_prompt(self, user_id: str) -> str:
+    async def _build_prompt(self, user_id: str, account_id: Optional[str] = None) -> str:
         """Return assembled prompt from PromptBuilder (Firestore). Crashes if unavailable."""
         if not self._prompt_builder:
             raise RuntimeError(
@@ -287,7 +305,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
         prompt = await self._prompt_builder.build_for_agent(
             agent_type="email_classifier",
             user_id=user_id or self._user_id,
-            account_id=None,
+            account_id=account_id,
             include_biographical=False,
         )
         logger.debug("classify_batch: prompt assembled from Firestore")

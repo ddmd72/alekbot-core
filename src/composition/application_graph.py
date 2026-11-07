@@ -369,6 +369,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         threshold_resolver=companion_window_resolver.resolve,
         alert_webhook=_alert_webhook,
         cipher=cipher,
+        user_repo=user_repo,          # the email classifier reads the user's configuration per batch
+        quota_service=quota_service,  # and bills the indexing job's account
     )
     # The document service (EXTERNAL_FILES_RFC §4.4): the sandbox parse adapter, the reader over the main context builder and
     # the graph's one quota service, attached to the file conversion service as soon as the container has built it.
@@ -619,7 +621,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
     # include_biographical=False, and PromptBuilder only touches self.repo when
     # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
-    # as ServiceContainer's _email_prompt_builder for EmailClassificationAgent.
+    # as ServiceContainer's prompt builder for EmailClassifierRunner.
     companion_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
     companion_extractor_runner = CompanionExtractorRunner(
         context_builder=container.context_builder,

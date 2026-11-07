@@ -18,9 +18,13 @@ class EmailClassifierPort(ABC):
         emails: List[EmailMetadata],
         user_id: str,
         credentials: Optional[OAuthCredential] = None,
+        *,
+        account_id: str,
     ) -> List[EmailClassificationResult]:
         """
         Classify a batch of email metadata.
         Returns one result per input email (including valuable=False).
         credentials: optional, used to fetch full email content for ambiguous cases.
+        account_id: the account whose mail is indexed (the indexing job's); the model calls are billed to it and
+        recorded under it.
         """

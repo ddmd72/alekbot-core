@@ -280,6 +280,20 @@ the next free id and says what is wrong, where (file and function, not line numb
   reproduce in the indexer image with the same limits and read stderr there; first check whether it persists now that
   parsing runs in the sandbox light service.
 
+### TD-31: Per-user agents outside the factory each repeat the billing and capture wiring [P3]
+
+- Three composition runners, `DriveReaderRunner`, `CompanionExtractorRunner` and `EmailClassifierRunner`
+  (`src/composition/`), each repeat one sequence: load the user, build the execution context through
+  `AgentContextBuilder`, construct the agent, then set the private `_quota_service` and `_prompt_content_store` on it.
+  `UserAgentFactory` repeats the same post-construction step for its agents. A runner that forgets a line bills nothing
+  or records nothing, silently (the email classifier did both until roadmap 14b).
+- `DriveReaderRunner` has no `request_user_scope`, so its rows carry no `user_id` (a `/worker` request names no user).
+  It sets no prompt-content store today by decision (verbatim scans stay out of BigQuery), so this bites the moment one is wired.
+- Trigger: the next per-user agent that is not a delegation agent, or any change to how billing or capture is attached
+  to an agent.
+- Fix: one composition helper that builds a per-user agent with billing, capture and the user scope, used by the three
+  runners and the factory.
+
 ---
 
 ## Closed items

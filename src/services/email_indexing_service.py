@@ -419,7 +419,7 @@ class EmailIndexingService:
                 classifications: List[EmailClassificationResult] = []
                 if filtered:
                     classifications = await self._classifier.classify_batch(
-                        filtered, job.user_id, credentials=credentials
+                        filtered, job.user_id, credentials=credentials, account_id=account_id
                     )
                 valuable = [
                     c for c in classifications if c.valuable and c.fact
