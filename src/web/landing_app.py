@@ -1,5 +1,5 @@
 """
-Public front door: the landing page at `/`, its share image and `robots.txt`.
+Public front door: the landing page at `/`, its share image, the Alek avatar and `robots.txt`.
 
 `/` used to redirect everyone to the login. A visitor without a session now gets a static page
 (it is the GitHub repo's homepage); a signed-in owner still lands in the Cabinet. Nothing here
@@ -38,6 +38,11 @@ def create_landing_blueprint(session_service) -> Blueprint:
     @bp.route("/og.png", methods=["GET"])
     async def og_image():
         return await send_file(os.path.join(static_dir, "og.png"), mimetype="image/png")
+
+    # The brand avatar: the landing hero, nav mark and favicon (the main app has no static folder).
+    @bp.route("/alek.jpg", methods=["GET"])
+    async def avatar():
+        return await send_file(os.path.join(static_dir, "alek.jpg"), mimetype="image/jpeg")
 
     # `Allow: /$` is the exact-root match (Google and Bing honour `$`); everything else stays closed.
     @bp.route("/robots.txt", methods=["GET"])

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/web/static/alek.jpg" width="220" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to.">
+</p>
+
 # Alek-Core — Personal Exocortex
 
 An AI extension of memory and thinking that lives in Slack and Telegram, with a voice companion on the phone and in the
@@ -6,6 +10,26 @@ browser. Not a chatbot: a system that remembers, works in the background, and an
 **Solo project, in daily use. One live environment on GCP (Cloud Run + Firestore).**
 It is also a reference for how I build: multi-agent orchestration, hexagonal architecture, and an engineering system
 designed for AI-assisted development.
+
+---
+
+## What makes it different
+
+- **Memory that learns from you, not from itself.** The bot never writes its own memory: facts are extracted only from
+  the owner's words, and a fact from a document waits for the owner's confirmation. Every fact is versioned; a stale
+  fact is marked, never deleted ([decision](docs/04_solution_strategy/decisions/memory_facts_owner_confirmed.md)).
+- **Architecture the AI can't bend.** The code is written in AI pair-programming. Layer rules are AST tests that open
+  with a policy addressed to AI assistants, and whoever writes the code never edits a failing test: a reviewer decides
+  whether the spec changed or the code is wrong ([the rules](tests/unit/test_req_arch_01_hexagonal_isolation.py)).
+- **Tested at the wire, not on mocks.** Adapter tests check the payload each provider SDK actually receives, a weekly
+  job diffs it against the providers' published specs, and a package is done only when every semantic mutant is killed
+  ([how](docs/how_to/ADAPTER_WIRE_TESTING.md)).
+- **Untrusted content can't act.** Scripts a model writes for documents run in a separate service with no IAM role and
+  no secret; text from files and email reaches the model wrapped as untrusted data
+  ([decision](docs/04_solution_strategy/decisions/sandbox_render_service.md)).
+- **The intelligence is spent once, at indexing.** Each file of a connected drive is read and described when it is
+  indexed; a search then costs one query embedding and never waits on a generative model
+  ([design](docs/05_building_blocks/user_drive/README.md)).
 
 ---
 
@@ -19,7 +43,7 @@ designed for AI-assisted development.
 - **Voice companion.** A phone call or a browser call with a companion that shares the assistant's character and memory;
   realtime voice runs on more than one provider.
 - **Your drive, searchable.** Google Drive and OneDrive connections are indexed once (documents, scans, photos, audio and
-  video transcripts), so search and answers from file content need no model call per query. Owner notes on files are
+  video transcripts), so a search costs one embedding, not a model call. Owner notes on files are
   merged into search.
 - **Email as memory.** Gmail is indexed passively; an opt-in daily review triages the inbox into an HTML report.
 - **Connectors for Claude.** Memory and a read-only view of the drive are exposed as remote MCP servers, usable as custom

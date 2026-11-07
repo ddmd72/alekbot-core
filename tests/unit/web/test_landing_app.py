@@ -60,6 +60,27 @@ async def test_share_image_is_a_public_png():
 
 
 @pytest.mark.asyncio
+async def test_avatar_is_a_public_jpeg():
+    resp = await _app().test_client().get("/alek.jpg")
+
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    assert (await resp.get_data())[:3] == b"\xff\xd8\xff"
+
+
+def test_every_root_relative_asset_on_the_page_is_served_by_the_blueprint():
+    import re
+    from pathlib import Path
+    html = Path("src/web/static/landing.html").read_text()
+    rules = {r.rule for r in _app().url_map.iter_rules()}
+
+    assets = set(re.findall(r'(?:src|href)="(/[^"#]+\.(?:png|jpg|webp|svg|ico))"', html))
+
+    assert assets, "the page references no root-relative image"
+    assert assets <= rules, f"not served: {sorted(assets - rules)}"
+
+
+@pytest.mark.asyncio
 async def test_robots_opens_only_the_root():
     resp = await _app().test_client().get("/robots.txt")
 

@@ -14,7 +14,8 @@
 <meta name="twitter:description" content="An AI extension of memory and thinking, living in Slack, Telegram and a voice call. A solo project in daily use.">
 <meta name="twitter:image" content="https://dev.alekbot.app/og.png">
 <meta name="theme-color" content="#0a0d14">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230a0d14'/%3E%3Cg stroke='%235eead4' stroke-width='2'%3E%3Cpath d='M16 4v8M16 20v8M4 16h8M20 16h8'/%3E%3C/g%3E%3Crect x='12' y='12' width='8' height='8' fill='%235eead4'/%3E%3C/svg%3E">
+<link rel="icon" href="/alek.jpg">
+<link rel="apple-touch-icon" href="/alek.jpg">
 <style>
 /* Optional: self-host Archivo at /fonts/Archivo.woff2 (same origin). Falls back to system grotesk. */
 @font-face{font-family:"Archivo";src:local("Archivo"),local("Archivo Regular");font-weight:100 900;font-display:swap}
@@ -43,11 +44,14 @@ p,h1,h2,h3{text-wrap:pretty}
 .label b{color:var(--mint);font-weight:500}
 h2{font-size:clamp(28px,4vw,46px);line-height:1.08;letter-spacing:-.02em;font-weight:700;max-width:22ch;color:#fff}
 .body{color:var(--muted);font-size:clamp(17px,1.5vw,19px);max-width:62ch}
+.memory{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,300px);gap:32px 56px;align-items:center}
+.avatar{border:2px solid var(--mint);padding:8px;background:var(--bg);box-shadow:0 0 60px rgba(94,234,212,.10)}
+.avatar img{display:block;width:100%;height:auto}
 
 /* nav */
 .nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px var(--pad);background:rgba(10,13,20,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:2px solid var(--rule)}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:14px;color:var(--text);letter-spacing:.02em}
-.brand i{width:10px;height:10px;background:var(--mint);display:block}
+.brand img{display:block;width:22px;height:22px}
 .nav-links{display:flex;align-items:center;gap:24px;font-family:var(--mono);font-size:13px}
 .nav-links a{color:var(--muted)}
 .nav-links a:hover{color:var(--text)}
@@ -112,8 +116,9 @@ h1{font-size:clamp(56px,10vw,120px);line-height:.92;letter-spacing:-.045em;font-
 .rows{margin-top:48px;border-top:2px solid var(--rule-strong)}
 .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,3fr);gap:12px 48px;padding:28px 0;border-bottom:2px solid var(--rule)}
 .row .tag{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--mint);padding-top:6px}
-.row p{font-size:clamp(18px,2vw,23px);line-height:1.4;color:var(--muted);letter-spacing:-.005em}
-.row p strong{color:#fff;font-weight:600}
+.row p{font-size:clamp(16px,1.4vw,18px);line-height:1.55;color:var(--muted);max-width:68ch}
+.row p strong{display:block;margin-bottom:10px;font-size:clamp(21px,2.4vw,28px);line-height:1.2;letter-spacing:-.01em;color:#fff;font-weight:700}
+.row .proof{font-family:var(--mono);font-size:13px;letter-spacing:.02em;white-space:nowrap;margin-left:6px}
 .more{display:inline-flex;margin-top:36px;font-family:var(--mono);font-size:15px;border-bottom:2px solid var(--mint);padding-bottom:4px}
 
 /* footer */
@@ -129,7 +134,8 @@ footer a:hover{color:var(--text)}
   .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:720px){
-  .split,.row{grid-template-columns:1fr}
+  .split,.row,.memory{grid-template-columns:1fr}
+  .avatar{max-width:320px}
   .cycle,.grid{grid-template-columns:1fr}
   .row{gap:8px}
   .nav-links .opt{display:none}
@@ -148,12 +154,12 @@ footer a:hover{color:var(--text)}
 <div class="frame">
 
 <header class="nav">
-  <a class="brand" href="/" aria-label="Alek-Core home"><i></i>alek-core</a>
+  <a class="brand" href="/" aria-label="Alek-Core home"><img src="/alek.jpg" width="22" height="22" alt="">alek-core</a>
   <nav class="nav-links" aria-label="Primary">
+    <a class="opt" href="#different">Different</a>
     <a class="opt" href="#memory">Memory</a>
     <a class="opt" href="#cycle">Cycle</a>
     <a class="opt" href="#inside">Inside</a>
-    <a class="opt" href="#engineering">Engineering</a>
     <a class="opt" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Docs</a>
     <a href="https://github.com/ddmd72/alekbot-core" target="_blank" rel="noopener noreferrer">GitHub</a>
     <a class="signin" href="/auth/login">Sign in</a>
@@ -226,17 +232,35 @@ footer a:hover{color:var(--text)}
   </div>
 </section>
 
+<section class="sec eng" id="different" aria-labelledby="s0">
+  <div class="split">
+    <p class="label"><b>01</b> / Different</p>
+    <h2 id="s0">What makes it different.</h2>
+  </div>
+  <div class="rows">
+    <div class="row"><span class="tag">Memory</span><p><strong>Memory that learns from you, not from itself.</strong> The bot never writes its own memory: facts are extracted only from the owner's words, and a fact from a document waits for the owner's confirmation. Every fact is versioned; a stale fact is marked, never deleted. <a class="proof" href="https://github.com/ddmd72/alekbot-core/blob/main/docs/04_solution_strategy/decisions/memory_facts_owner_confirmed.md" target="_blank" rel="noopener noreferrer">proof →</a></p></div>
+    <div class="row"><span class="tag">AI-built</span><p><strong>Architecture the AI can't bend.</strong> The code is written in AI pair-programming. Layer rules are AST tests that open with a policy addressed to AI assistants, and whoever writes the code never edits a failing test: a reviewer decides whether the spec changed or the code is wrong. <a class="proof" href="https://github.com/ddmd72/alekbot-core/blob/main/tests/unit/test_req_arch_01_hexagonal_isolation.py" target="_blank" rel="noopener noreferrer">proof →</a></p></div>
+    <div class="row"><span class="tag">Contracts</span><p><strong>Tested at the wire, not on mocks.</strong> Adapter tests check the payload each provider SDK actually receives, a weekly job diffs it against the providers' published specs, and a package is done only when every semantic mutant is killed. <a class="proof" href="https://github.com/ddmd72/alekbot-core/blob/main/docs/how_to/ADAPTER_WIRE_TESTING.md" target="_blank" rel="noopener noreferrer">proof →</a></p></div>
+    <div class="row"><span class="tag">Sandbox</span><p><strong>Untrusted content can't act.</strong> Scripts a model writes for documents run in a separate service with no IAM role and no secret; text from files and email reaches the model wrapped as untrusted data. <a class="proof" href="https://github.com/ddmd72/alekbot-core/blob/main/docs/04_solution_strategy/decisions/sandbox_render_service.md" target="_blank" rel="noopener noreferrer">proof →</a></p></div>
+    <div class="row"><span class="tag">Drive</span><p><strong>The intelligence is spent once, at indexing.</strong> Each file of your drive is read and described when it is indexed; a search then costs one query embedding and never waits on a generative model. <a class="proof" href="https://github.com/ddmd72/alekbot-core/blob/main/docs/05_building_blocks/user_drive/README.md" target="_blank" rel="noopener noreferrer">proof →</a></p></div>
+  </div>
+  <a class="more" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Read the architecture →</a>
+</section>
+
 <section class="sec split" id="memory" aria-labelledby="s1">
-  <p class="label"><b>01</b> / Memory</p>
-  <div style="display:flex;flex-direction:column;gap:24px">
-    <h2 id="s1">Not a chatbot. A system that remembers.</h2>
-    <p class="body">Every conversation produces facts: preferences, events, decisions, principles. Alek-Core extracts them in the background, deduplicates them against what it already knows, and uses them in every future answer. The more you talk to it, the less you have to explain.</p>
+  <p class="label"><b>02</b> / Memory</p>
+  <div class="memory">
+    <div style="display:flex;flex-direction:column;gap:24px">
+      <h2 id="s1">Not a chatbot. A system that remembers.</h2>
+      <p class="body">Every conversation produces facts: preferences, events, decisions, principles. Alek-Core extracts them in the background, deduplicates them against what it already knows, and uses them in every future answer. The more you talk to it, the less you have to explain.</p>
+    </div>
+    <figure class="avatar"><img src="/alek.jpg" width="650" height="650" loading="lazy" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to."></figure>
   </div>
 </section>
 
 <section class="sec" id="cycle" aria-labelledby="s2">
   <div class="split">
-    <p class="label"><b>02</b> / The cycle</p>
+    <p class="label"><b>03</b> / The cycle</p>
     <h2 id="s2">The cycle</h2>
   </div>
   <div class="cycle">
@@ -264,7 +288,7 @@ footer a:hover{color:var(--text)}
 
 <section class="sec" id="inside" aria-labelledby="s3">
   <div class="split">
-    <p class="label"><b>03</b> / Components</p>
+    <p class="label"><b>04</b> / Components</p>
     <h2 id="s3">What's inside</h2>
   </div>
   <div class="grid">
@@ -272,28 +296,12 @@ footer a:hover{color:var(--text)}
     <article class="cell"><span class="k">b.</span><h3>Long-term memory</h3><p>Multi-vector retrieval with Reciprocal Rank Fusion, versioned facts with full history, number-aware deduplication (<span class="mono" style="color:var(--text)">64 kg ≠ 66 kg</span>).</p></article>
     <article class="cell"><span class="k">c.</span><h3>Provider-agnostic</h3><p>Claude, Gemini, OpenAI and Grok are swappable per agent and per user, with complexity-driven model tiers.</p></article>
     <article class="cell"><span class="k">d.</span><h3>Voice</h3><p>A phone call and a web call with a voice companion that shares the character and memory of the text assistant.</p></article>
-    <article class="cell"><span class="k">e.</span><h3>Drive search</h3><p>Google Drive and OneDrive, indexed once: documents, scans, photos and recordings are described at indexing, so search needs no model call.</p></article>
+    <article class="cell"><span class="k">e.</span><h3>Drive search</h3><p>Google Drive and OneDrive, indexed once: documents, scans, photos and recordings are described at indexing, so a search costs one embedding, not a model call.</p></article>
     <article class="cell"><span class="k">f.</span><h3>Email as memory</h3><p>Gmail is indexed passively; a daily review triages the inbox into an HTML report.</p></article>
     <article class="cell"><span class="k">g.</span><h3>Connectors for Claude</h3><p>Memory and a read-only view of the drive, served as remote MCP servers for claude.ai, behind OAuth 2.1.</p></article>
     <article class="cell"><span class="k">h.</span><h3>Agent skills</h3><p>Named procedures the assistant loads on demand. Drafted from chat, inactive until you confirm the save.</p></article>
     <article class="cell"><span class="k">i.</span><h3>Untrusted-content sandbox</h3><p>Model-written document scripts render in a separate service with no IAM role and no secret.</p></article>
   </div>
-</section>
-
-<section class="sec eng" id="engineering" aria-labelledby="s4">
-  <div class="split">
-    <p class="label"><b>04</b> / Engineering</p>
-    <h2 id="s4">Built to stay coherent under AI-assisted development.</h2>
-  </div>
-  <div class="rows">
-    <div class="row"><span class="tag">Architecture</span><p><strong>Hexagonal architecture enforced by AST-based tests</strong>, not by documentation.</p></div>
-    <div class="row"><span class="tag">Contracts</span><p><strong>Adapter tests check the payload sent to each provider SDK</strong>, not the text a model returns; a weekly job compares the providers' published specs with them.</p></div>
-    <div class="row"><span class="tag">Test quality</span><p><strong>Mutation testing and per-layer coverage floors</strong> that only rise: a package is done when every mutant is killed.</p></div>
-    <div class="row"><span class="tag">Reviewer rule</span><p><strong>Whoever writes the code never edits a test to make it pass.</strong> A failing test goes to a reviewer, who decides whether the spec changed or the code is wrong.</p></div>
-    <div class="row"><span class="tag">Decisions</span><p><strong>RFCs and short decision records</strong> with rejected alternatives, so a choice is not re-litigated in the next session.</p></div>
-    <div class="row"><span class="tag">Prompts</span><p><strong>Prompts are data:</strong> assembled from versioned tokens at runtime, no inline fallbacks.</p></div>
-  </div>
-  <a class="more" href="https://github.com/ddmd72/alekbot-core/tree/main/docs" target="_blank" rel="noopener noreferrer">Read the architecture →</a>
 </section>
 
 <footer>
