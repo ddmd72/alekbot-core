@@ -245,6 +245,7 @@ FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
 PUBLIC: Dict[Tuple[str, str, str], str] = {
     ("create_landing_blueprint", "GET", "/"): "the public landing page (a valid session only redirects to /cabinet)",
     ("create_landing_blueprint", "GET", "/og.png"): "share image for link previews",
+    ("create_landing_blueprint", "GET", "/alek.jpg"): "brand avatar on the public landing page (hero, nav, favicon)",
     ("create_landing_blueprint", "GET", "/robots.txt"): "crawler policy",
     ("create_user_cabinet_blueprint", "GET", "/health"): "health check, no data",
     ("create_user_cabinet_blueprint", "GET", "/cabinet"): "static Cabinet shell; every datum comes from the gated API",
