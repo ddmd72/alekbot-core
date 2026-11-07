@@ -44,6 +44,9 @@ p,h1,h2,h3{text-wrap:pretty}
 .label b{color:var(--mint);font-weight:500}
 h2{font-size:clamp(28px,4vw,46px);line-height:1.08;letter-spacing:-.02em;font-weight:700;max-width:22ch;color:#fff}
 .body{color:var(--muted);font-size:clamp(17px,1.5vw,19px);max-width:62ch}
+.memory{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,300px);gap:32px 56px;align-items:center}
+.avatar{border:2px solid var(--mint);padding:8px;background:var(--bg);box-shadow:0 0 60px rgba(94,234,212,.10)}
+.avatar img{display:block;width:100%;height:auto}
 
 /* nav */
 .nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px var(--pad);background:rgba(10,13,20,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:2px solid var(--rule)}
@@ -63,8 +66,7 @@ html{scroll-behavior:smooth}
 .hero-art{border-left:2px solid var(--rule);display:flex;align-items:center;justify-content:center;padding:32px;background:
   linear-gradient(var(--rule) 1px,transparent 1px) 0 0/40px 40px,
   linear-gradient(90deg,var(--rule) 1px,transparent 1px) 0 0/40px 40px;background-color:var(--bg)}
-.avatar{width:100%;max-width:420px;border:2px solid var(--mint);background:var(--bg);padding:10px;box-shadow:0 0 0 10px var(--bg),0 0 60px rgba(94,234,212,.12)}
-.avatar img{display:block;width:100%;height:auto}
+.hero-art svg{width:100%;max-width:440px;height:auto;background:var(--bg)}
 .live{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--live);border:2px solid var(--rule);padding:6px 12px}
 .dot{position:relative;width:8px;height:8px;background:var(--live);border-radius:50%}
 .dot::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--live);animation:ping 2.4s ease-out infinite}
@@ -84,6 +86,12 @@ h1{font-size:clamp(56px,10vw,120px);line-height:.92;letter-spacing:-.045em;font-
 .stack{font-family:var(--mono);font-size:13px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px 10px;padding-top:20px;border-top:2px solid var(--rule);width:100%}
 .stack span{color:var(--muted)}
 
+/* hub diagram */
+.ray{stroke:var(--rule-strong);stroke-width:1.5}
+.pulse{stroke:var(--mint);stroke-width:2;stroke-dasharray:10 300;stroke-dashoffset:10;animation:flow 3.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-150}}
+.node{fill:var(--bg);stroke:var(--rule-strong);stroke-width:2}
+.node-lbl{font-family:var(--mono);font-size:11px;fill:var(--muted);letter-spacing:.04em}
 
 /* cycle */
 .cycle{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;background:var(--rule);border:2px solid var(--rule);margin-top:48px}
@@ -121,11 +129,12 @@ footer a:hover{color:var(--text)}
 @media (max-width:960px){
   .hero{grid-template-columns:1fr}
   .hero-art{border-left:0;border-top:2px solid var(--rule);padding:24px}
-  .avatar{max-width:360px}
+  .hero-art svg{max-width:360px}
   .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:720px){
-  .split,.row{grid-template-columns:1fr}
+  .split,.row,.memory{grid-template-columns:1fr}
+  .avatar{max-width:320px}
   .cycle,.grid{grid-template-columns:1fr}
   .row{gap:8px}
   .nav-links .opt{display:none}
@@ -134,7 +143,8 @@ footer a:hover{color:var(--text)}
 }
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
-  .dot::after{animation:none}
+  .pulse,.dot::after{animation:none}
+  .pulse{display:none}
 }
 </style>
 </head>
@@ -170,16 +180,65 @@ footer a:hover{color:var(--text)}
     <p class="stack"><span>Python</span>·<span>GCP</span>·<span>Claude / Gemini / OpenAI / Grok</span>·<span>Hexagonal</span></p>
   </div>
 
-  <div class="hero-art">
-    <figure class="avatar"><img src="/alek.jpg" width="650" height="650" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to."></figure>
+  <div class="hero-art" aria-hidden="true">
+    <svg viewBox="0 0 400 400" role="img">
+      <circle cx="200" cy="200" r="150" fill="none" stroke="#1d2330" stroke-width="1" stroke-dasharray="2 6"></circle>
+      <circle cx="200" cy="200" r="90" fill="none" stroke="#1d2330" stroke-width="1"></circle>
+      <g class="rays">
+        <line class="ray" x1="200" y1="200" x2="200" y2="50"></line>
+        <line class="ray" x1="200" y1="200" x2="306" y2="94"></line>
+        <line class="ray" x1="200" y1="200" x2="350" y2="200"></line>
+        <line class="ray" x1="200" y1="200" x2="306" y2="306"></line>
+        <line class="ray" x1="200" y1="200" x2="200" y2="350"></line>
+        <line class="ray" x1="200" y1="200" x2="94" y2="306"></line>
+        <line class="ray" x1="200" y1="200" x2="50" y2="200"></line>
+        <line class="ray" x1="200" y1="200" x2="94" y2="94"></line>
+      </g>
+      <g>
+        <line class="pulse" x1="200" y1="200" x2="200" y2="50" style="animation-delay:0s"></line>
+        <line class="pulse" x1="200" y1="200" x2="306" y2="94" style="animation-delay:-2.1s"></line>
+        <line class="pulse" x1="200" y1="200" x2="350" y2="200" style="animation-delay:-0.9s"></line>
+        <line class="pulse" x1="200" y1="200" x2="306" y2="306" style="animation-delay:-3.0s"></line>
+        <line class="pulse" x1="200" y1="200" x2="200" y2="350" style="animation-delay:-1.5s"></line>
+        <line class="pulse" x1="200" y1="200" x2="94" y2="306" style="animation-delay:-2.6s"></line>
+        <line class="pulse" x1="200" y1="200" x2="50" y2="200" style="animation-delay:-0.4s"></line>
+        <line class="pulse" x1="200" y1="200" x2="94" y2="94" style="animation-delay:-1.9s"></line>
+      </g>
+      <g>
+        <rect class="node" x="193" y="43" width="14" height="14"></rect>
+        <rect class="node" x="299" y="87" width="14" height="14"></rect>
+        <rect class="node" x="343" y="193" width="14" height="14"></rect>
+        <rect class="node" x="299" y="299" width="14" height="14"></rect>
+        <rect class="node" x="193" y="343" width="14" height="14"></rect>
+        <rect class="node" x="87" y="299" width="14" height="14"></rect>
+        <rect class="node" x="43" y="193" width="14" height="14"></rect>
+        <rect class="node" x="87" y="87" width="14" height="14"></rect>
+      </g>
+      <g class="node-lbl">
+        <text x="200" y="32" text-anchor="middle">smart</text>
+        <text x="320" y="84">search</text>
+        <text x="364" y="186" text-anchor="end" dy="-6">email</text>
+        <text x="320" y="326">drive</text>
+        <text x="200" y="376" text-anchor="middle">docs</text>
+        <text x="80" y="326" text-anchor="end">research</text>
+        <text x="36" y="186" text-anchor="start" dy="-6">media</text>
+        <text x="80" y="84" text-anchor="end">memory</text>
+      </g>
+      <rect x="168" y="168" width="64" height="64" fill="#0a0d14" stroke="#5eead4" stroke-width="2"></rect>
+      <rect x="192" y="192" width="16" height="16" fill="#5eead4"></rect>
+      <text x="200" y="250" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#5eead4" letter-spacing=".08em">ROUTER</text>
+    </svg>
   </div>
 </section>
 
 <section class="sec split" id="memory" aria-labelledby="s1">
   <p class="label"><b>01</b> / Memory</p>
-  <div style="display:flex;flex-direction:column;gap:24px">
-    <h2 id="s1">Not a chatbot. A system that remembers.</h2>
-    <p class="body">Every conversation produces facts: preferences, events, decisions, principles. Alek-Core extracts them in the background, deduplicates them against what it already knows, and uses them in every future answer. The more you talk to it, the less you have to explain.</p>
+  <div class="memory">
+    <div style="display:flex;flex-direction:column;gap:24px">
+      <h2 id="s1">Not a chatbot. A system that remembers.</h2>
+      <p class="body">Every conversation produces facts: preferences, events, decisions, principles. Alek-Core extracts them in the background, deduplicates them against what it already knows, and uses them in every future answer. The more you talk to it, the less you have to explain.</p>
+    </div>
+    <figure class="avatar"><img src="/alek.jpg" width="650" height="650" loading="lazy" alt="Alek, a robot with a visible brain; its visor reads: I remember it so you don't have to."></figure>
   </div>
 </section>
 
