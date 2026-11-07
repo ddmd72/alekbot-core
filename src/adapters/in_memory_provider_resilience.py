@@ -20,6 +20,7 @@ from time import monotonic
 from typing import Callable, Deque, Dict, Optional
 
 from ..ports.provider_resilience_port import ProviderResiliencePort
+from ..utils.logger import logger
 
 
 class InMemoryProviderResilience(ProviderResiliencePort):
@@ -66,7 +67,7 @@ class InMemoryProviderResilience(ProviderResiliencePort):
         self._failures: Dict[str, Deque[float]] = {}
         self._opened_at: Dict[str, float] = {}
 
-    def record_failure(self, provider_name: str) -> None:
+    def record_failure(self, provider_name: str, agent_type: str = "") -> None:
         now = self._now()
         window = self._failures.setdefault(provider_name, deque())
         window.append(now)
@@ -76,6 +77,11 @@ class InMemoryProviderResilience(ProviderResiliencePort):
             and len(window) >= self._failure_threshold
         ):
             self._opened_at[provider_name] = now
+            logger.warning(
+                "provider_breaker_open provider=%s agent=%s failures=%d window=%ds cooldown=%ds",
+                provider_name, agent_type or "unknown", len(window),
+                int(self._window_seconds), int(self._cooldown_seconds),
+            )
             # Fire AFTER the OPEN marker is set so the breaker state is already
             # consistent if the callback re-enters. Once per transition: the
             # marker guard above ensures further failures while OPEN do not
@@ -86,7 +92,8 @@ class InMemoryProviderResilience(ProviderResiliencePort):
 
     def record_success(self, provider_name: str) -> None:
         self._failures.pop(provider_name, None)
-        self._opened_at.pop(provider_name, None)
+        if self._opened_at.pop(provider_name, None) is not None:
+            logger.info("provider_breaker_closed provider=%s", provider_name)
 
     def is_provider_open(self, provider_name: str) -> bool:
         opened_at = self._opened_at.get(provider_name)
