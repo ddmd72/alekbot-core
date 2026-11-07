@@ -105,7 +105,9 @@ Document ID: `{blueprint_id}` (e.g., `universal_agent_v1`)
 - `provenance` (first in `universal_agent_v1`) holds the system-turn provenance rule (token `POLICY_SYSTEM_PROVENANCE`,
   `prompts_snapshot/tokens/system/`). Only Smart and Quick assign it (`non_overridable: true`, in `profiles/smart.yaml` and
   `profiles/quick.yaml`); every other agent leaves the class empty, so it is skipped. Assembly renders it before the
-  `knowledge_base` preamble. See `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`.
+  `knowledge_base` preamble. This describes the snapshot. The live store does not hold the token, the class or the
+  assignments (not uploaded, owner decision), so the live prompt has no provenance section. See
+  `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md` §7.
 
 **No template string. No classes dict. No default tokens.** All of that has moved to the
 token and profile.

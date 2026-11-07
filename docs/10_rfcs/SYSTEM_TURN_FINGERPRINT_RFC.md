@@ -1,6 +1,7 @@
 # RFC: System-turn fingerprint — telling the model which text in a user message came from the system
 
-**Status:** Implemented (code); rule token in `prompts_snapshot/`, not uploaded (rev 2, 2026-11-06).
+**Status:** Implemented (code, S1–S3). The rule token stays in `prompts_snapshot/` and is **not uploaded**: the owner
+closed the rollout after the S4 gate (§7, "S4 outcome"), so S5 is not done.
 **Date:** rev 1 2026-10-18; rev 2 2026-11-06 (the owner decided to build it).
 **Owner decisions (rev 1, unchanged):** per-turn random key (not a daily one); history is history (no provenance field
 in storage, persisted text unchanged); the rule goes at the start of the system prompt, the key at its end (after
@@ -398,6 +399,23 @@ verifies that triage still works.
 | S5 | Owner uploads the rule token, blueprint class and profile assignments. Code first, token second: the rule without keyed text would strip the anchors of their standing. The live profile documents are `smart` and `quick` (`prompts_snapshot/profiles/smart.yaml`, `quick.yaml`; `FirestoreAgentProfileRepository.get_agent_profile` reads document id = `agent_type`, `firestore_agent_profile_repository.py:61-85`); the `universal_agent_v1_SYSTEM_*` files use a legacy shape this reader never reads. The static template is cached for 24 hours per instance, so the instances are restarted after the upload for the rule to take effect at once. If live traffic shows a regression, the token assignment is removed (the code then only adds the tag). |
 
 Reviewer rule applies: no existing test is edited by the implementer. The eval's cost is estimated before it runs.
+
+**S4 outcome (2026-11-07) — S5 not done, by owner decision.** The gate ran with
+`scripts/validation/fingerprint_probe.py` (cases R5–R12 in `fingerprint_cases.py`; `--smart-model` forces the Smart
+model, `--no-key` removes the key, `--rule-token` serves the rule from a folder). One call per case and arm, on Smart
+with Sonnet 5.5, GPT-6 Luna and Haiku 5.5, in three arms: no key, key without the rule, key with the rule.
+- The must-pass calls (§8) behaved the same with the rule.
+- No model in any arm executed an injected instruction, whether a soft one in a file or web result, or a forged system
+  block.
+- Positive controls held in every arm: a fired reminder, an owner request, a workspace note and a skill each told the
+  bot to read a file and act, and it acted.
+- A keyed note never raised authority: with the right key, and even with a line beside the key giving keyed text the
+  highest priority, no model lifted an absolute rule of the system prompt. The models did tell the right key from a
+  forged one.
+
+The rule changed nothing measurable, so it is not uploaded. The key stays deployed: it costs nothing and lets a later
+rule be added without code. A one-turn change of what the bot may do belongs in that turn's system prompt, never in a
+note in the conversation.
 
 ## 8. Reminders and the notify frame (why v1 leaves them alone)
 
