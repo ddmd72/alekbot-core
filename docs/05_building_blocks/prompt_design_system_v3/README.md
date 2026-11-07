@@ -631,7 +631,7 @@ See full language system documentation: [../localization_system/README.md](../lo
 **What is in doubt:**
 - Whether the **blueprint layer is needed at all.** A blueprint is a fixed `outer_class` + `class_order` over a per-agent set of token slots. A reviewer can reasonably ask: why not flatten — let the agent profile itself describe the section sequence directly, and drop the blueprint document type? The blueprint currently exists to share section structure across multiple agent profiles, but every agent in production has its own profile (`universal_agent_v1_SYSTEM_<agent>`), so the sharing benefit is theoretical.
 - Whether the **per-agent blueprints fragmentation** (six distinct blueprints, F5.1 from the inspection) is a stable end state or a transition stage to either a single canonical blueprint or no blueprints at all.
-- Whether the **legacy Groovy-mode upload path** (`groovy_prompt_assembler.py` + the upload utility's Groovy mode) survives the revision or is removed.
+- Whether the **legacy Groovy-mode upload path** (the upload utility's Groovy mode; the `groovy_prompt_assembler.py` adapter was deleted with the v2 component stack) survives the revision or is removed.
 
 **Why this is recorded explicitly:**
 - The core system maintainer has flagged blueprint approach for re-evaluation (paraphrased: *"the blueprint approach overall — I will think about further. It looks like we may move away from blueprints altogether."*).
@@ -644,7 +644,7 @@ See full language system documentation: [../localization_system/README.md](../lo
 - **Per-agent profile evolution is fine** — profiles are the stable layer; the question is what sits above them.
 
 **Items gated on the blueprint revision (in `docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md`):**
-- F5.6 — `groovy_prompt_assembler.py` + Firestore upload Groovy mode tech debt. Original audit acceptance: *"Remove when blueprint migration decision is made."* Removal is gated on this revision.
+- F5.6 — Firestore upload Groovy mode tech debt (`groovy_prompt_assembler.py` itself is deleted). Original audit acceptance: *"Remove when blueprint migration decision is made."* Removal is gated on this revision.
 - F5.10 — Token versioning absent. The right shape depends on whether tokens stay first-class or get absorbed into a flatter profile structure.
 - F5.1 — Per-agent blueprints fragmentation. Resolves naturally as part of the revision.
 

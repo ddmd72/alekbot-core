@@ -20,8 +20,9 @@ drive. This page says where to look, so it does not copy field lists that would 
 - **Domain collections carry a schema version** (`domain_users_v2`, `domain_facts_v2`, `domain_prompt_*_v3`, …).
   Infrastructure collections do not (`sessions`, `event_dedup`, …).
 - **The names are defined in `src/config/environment.py`** (`EnvironmentConfig.*_collection`). The exceptions are four
-  names their adapters build from the prefix: `channel_bindings`, `short_links`, `user_primary_channel` and
-  `prompt_components`.
+  names their adapters build from the prefix: `channel_bindings`, `short_links` and `user_primary_channel`.
+  The `{p}prompt_components` collection of the removed v2 prompt-component store has no reader or writer in code; its
+  data was left in place.
 
 ## 2. Indexes and TTL
 
@@ -95,7 +96,6 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 | `{p}domain_prompt_blueprints_v3` | blueprints: outer class and section order | `blueprint_id` | `src/domain/prompt_v3/blueprint.py` |
 | `{p}domain_prompt_profiles_v3` | agent profiles: the blueprint and the tokens of one agent | `agent_id` | `src/domain/prompt_v3/agent_profile.py` |
 | `{p}domain_prompt_overrides_v3` | account and user token overrides | `{OWNER_TYPE}_{owner_id}` | `src/adapters/prompt_v3/firestore_agent_profile_repository.py` |
-| `{p}prompt_components` | the v2 prompt component store, still wired in `ServiceContainer` | auto id | `src/adapters/firestore_prompt_repository.py` |
 
 How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 

@@ -948,6 +948,17 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Mutation.** Eight modules are registered, each with an empty equivalent file next to the e2e file that tests it: `notes_agent`, `tasks_agent`, `file_management_agent`, `fact_management_adapter`, `fact_review_scope`,
   `memory_fact_tools`, `skill_tools`, `workspace_tools` (`consolidation_agent` already was). Every one is reached through `tests/` imports, so `--tests-for` needs no `extra` for them.
 
+**Built (P10, 2026-11-07).** Prompt stores. Scope delta: the row names `firestore_prompt_repository` (the component repository), but that stack (`PromptComponentService`, `FirestorePromptComponentRepository`, the Groovy/XML assemblers, their ports) was constructed in `ServiceContainer` and never read, so it was deleted and the live resolution (`PromptAssemblyService` over the `prompt_v3` stores) was tested.
+- **Deleted (src).** The six modules above, their `ServiceContainer` / `UserAgentFactory` wiring, the unused `PromptComponent`, `PromptTemplate`, `ComponentScope` and `TEMPLATE_*` of `src/domain/prompt.py` (`OwnerType` and the context ids stay) and `scripts/prompt/test_3level_resolution.py`; the tests of the deleted classes went with them.
+- **Kits (3).** `test_prompt_token_store_kit.py` (24 + 5 xfail), `test_prompt_blueprint_store_kit.py` (10 + 3), `test_prompt_profile_store_kit.py` (20) on `EvalDb`, registered in `KITS` and as mutation targets (header-only equivalent files).
+- **Resolution.** `tests/unit/services/prompt_v3/test_prompt_resolution_over_stores.py` (25): the real `PromptAssemblyService` from `build_prompt_assembly_service` over the three real stores; the four levels, fall-back on removal, tenancy (user and account), ignored overrides, `non_overridable`, and what a write does to the next assembly (cache, `invalidate_cache`, TTL).
+- **Defects pinned as strict xfails (4).**
+  - P10-D1: `FirestoreTokenRepository.save` calls `doc_ref.set(data)` without `await`; on the async client the token is never written (`firestore_token_repository.py:317`).
+  - P10-D2: `FirestoreTokenRepository.delete` calls `doc_ref.delete()` without `await` (`:333`, `:341`); nothing is deleted, and the method returns as if it had been.
+  - P10-D3: `FirestoreBlueprintRepository.save` calls `doc_ref.set(data)` without `await` (`firestore_blueprint_repository.py:81`).
+  - P10-D4: `FirestoreBlueprintRepository.delete` calls `doc_ref.delete()` without `await` (`:91`).
+- **Seeding.** Because of D1 and D3 the resolution tests seed tokens and blueprints as raw documents; overrides go through `set_override_tokens`.
+
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
 without his attention. Everything that can run in the cloud runs in the cloud; the two weekly workflows never report to Slack (the CI, timing and PII-gate notifications are unchanged); artifacts are read by a
