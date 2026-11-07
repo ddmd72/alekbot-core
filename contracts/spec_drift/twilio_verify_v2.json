@@ -1,0 +1,562 @@
+{
+ "components": {
+  "#/components/schemas/verification_check_enum_channel": {
+   "enum": [
+    "call",
+    "email",
+    "sms",
+    "sna",
+    "whatsapp"
+   ],
+   "type": "string"
+  },
+  "#/components/schemas/verification_enum_channel": {
+   "enum": [
+    "call",
+    "email",
+    "sms",
+    "sna",
+    "whatsapp"
+   ],
+   "type": "string"
+  },
+  "#/components/schemas/verification_enum_risk_check": {
+   "enum": [
+    "disable",
+    "enable"
+   ],
+   "type": "string"
+  },
+  "#/components/schemas/verify.v2.service.verification": {
+   "properties": {
+    "account_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^AC[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "amount": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 1,
+       "handling": "sensitive"
+      }
+     }
+    },
+    "channel": {
+     "$ref": "#/components/schemas/verification_enum_channel"
+    },
+    "date_created": {
+     "format": "date-time",
+     "nullable": true,
+     "type": "string"
+    },
+    "date_updated": {
+     "format": "date-time",
+     "nullable": true,
+     "type": "string"
+    },
+    "lookup": {
+     "nullable": true
+    },
+    "payee": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 1,
+       "handling": "sensitive"
+      }
+     }
+    },
+    "send_code_attempts": {
+     "items": {},
+     "nullable": true,
+     "type": "array"
+    },
+    "service_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^VA[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^VE[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "sna": {
+     "nullable": true
+    },
+    "status": {
+     "nullable": true,
+     "type": "string"
+    },
+    "to": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 30,
+       "handling": "standard"
+      }
+     }
+    },
+    "url": {
+     "format": "uri",
+     "nullable": true,
+     "type": "string"
+    },
+    "valid": {
+     "nullable": true,
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "#/components/schemas/verify.v2.service.verification_check": {
+   "properties": {
+    "account_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^AC[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "amount": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 1,
+       "handling": "sensitive"
+      }
+     }
+    },
+    "channel": {
+     "$ref": "#/components/schemas/verification_check_enum_channel"
+    },
+    "date_created": {
+     "format": "date-time",
+     "nullable": true,
+     "type": "string"
+    },
+    "date_updated": {
+     "format": "date-time",
+     "nullable": true,
+     "type": "string"
+    },
+    "payee": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 1,
+       "handling": "sensitive"
+      }
+     }
+    },
+    "service_sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^VA[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "sid": {
+     "maxLength": 34,
+     "minLength": 34,
+     "nullable": true,
+     "pattern": "^VE[0-9a-fA-F]{32}$",
+     "type": "string"
+    },
+    "sna_attempts_error_codes": {
+     "items": {},
+     "nullable": true,
+     "type": "array"
+    },
+    "status": {
+     "nullable": true,
+     "type": "string"
+    },
+    "to": {
+     "nullable": true,
+     "type": "string",
+     "x-twilio": {
+      "pii": {
+       "deleteSla": 30,
+       "handling": "standard"
+      }
+     }
+    },
+    "valid": {
+     "nullable": true,
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "items": {
+  "post /v2/Services/{ServiceSid}/VerificationCheck": {
+   "operationId": "CreateVerificationCheck",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "ServiceSid",
+     "required": true,
+     "schema": {
+      "maxLength": 34,
+      "minLength": 34,
+      "pattern": "^VA[0-9a-fA-F]{32}$",
+      "type": "string"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/x-www-form-urlencoded": {
+      "schema": {
+       "properties": {
+        "Amount": {
+         "type": "string"
+        },
+        "Code": {
+         "type": "string"
+        },
+        "Payee": {
+         "type": "string"
+        },
+        "SnaClientToken": {
+         "type": "string"
+        },
+        "To": {
+         "type": "string"
+        },
+        "VerificationSid": {
+         "maxLength": 34,
+         "minLength": 34,
+         "pattern": "^VE[0-9a-fA-F]{32}$",
+         "type": "string"
+        }
+       },
+       "type": "object"
+      }
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/verify.v2.service.verification_check"
+       }
+      }
+     },
+     "headers": {
+      "Access-Control-Allow-Credentials": {
+       "schema": {
+        "type": "boolean"
+       }
+      },
+      "Access-Control-Allow-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Methods": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Origin": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Expose-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "201": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/verify.v2.service.verification_check"
+       }
+      }
+     },
+     "headers": {
+      "Access-Control-Allow-Credentials": {
+       "schema": {
+        "type": "boolean"
+       }
+      },
+      "Access-Control-Allow-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Methods": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Origin": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Expose-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "accountSid_authToken": []
+    },
+    {
+     "access_token_bearer": []
+    }
+   ],
+   "tags": [
+    "VerifyV2VerificationCheck"
+   ]
+  },
+  "post /v2/Services/{ServiceSid}/Verifications": {
+   "operationId": "CreateVerification",
+   "parameters": [
+    {
+     "in": "path",
+     "name": "ServiceSid",
+     "required": true,
+     "schema": {
+      "maxLength": 34,
+      "minLength": 34,
+      "pattern": "^VA[0-9a-fA-F]{32}$",
+      "type": "string"
+     }
+    }
+   ],
+   "requestBody": {
+    "content": {
+     "application/x-www-form-urlencoded": {
+      "schema": {
+       "properties": {
+        "Amount": {
+         "type": "string"
+        },
+        "AppHash": {
+         "type": "string"
+        },
+        "Channel": {
+         "type": "string"
+        },
+        "ChannelConfiguration": {},
+        "CustomCode": {
+         "type": "string"
+        },
+        "CustomFriendlyName": {
+         "type": "string"
+        },
+        "CustomMessage": {
+         "deprecated": true,
+         "type": "string"
+        },
+        "DeviceIp": {
+         "type": "string"
+        },
+        "EnableSnaClientToken": {
+         "type": "boolean"
+        },
+        "Locale": {
+         "type": "string"
+        },
+        "Payee": {
+         "type": "string"
+        },
+        "RateLimits": {},
+        "RiskCheck": {
+         "$ref": "#/components/schemas/verification_enum_risk_check"
+        },
+        "SendDigits": {
+         "type": "string"
+        },
+        "Tags": {
+         "type": "string"
+        },
+        "TemplateCustomSubstitutions": {
+         "type": "string"
+        },
+        "TemplateSid": {
+         "maxLength": 34,
+         "minLength": 34,
+         "pattern": "^HJ[0-9a-fA-F]{32}$",
+         "type": "string"
+        },
+        "Templates": {
+         "type": "string"
+        },
+        "To": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "Channel",
+        "To"
+       ],
+       "type": "object"
+      }
+     }
+    }
+   },
+   "responses": {
+    "201": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/verify.v2.service.verification"
+       }
+      }
+     },
+     "headers": {
+      "Access-Control-Allow-Credentials": {
+       "schema": {
+        "type": "boolean"
+       }
+      },
+      "Access-Control-Allow-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Methods": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Origin": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Expose-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Retry-After": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Twilio-Reached-Rate-Limit": {
+       "schema": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "429": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "code": {
+          "format": "int32",
+          "type": "integer"
+         },
+         "message": {
+          "type": "string"
+         },
+         "more_info": {
+          "type": "string"
+         },
+         "status": {
+          "format": "int32",
+          "type": "integer"
+         }
+        },
+        "type": "object"
+       }
+      }
+     },
+     "headers": {
+      "Access-Control-Allow-Credentials": {
+       "schema": {
+        "type": "boolean"
+       }
+      },
+      "Access-Control-Allow-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Methods": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Allow-Origin": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Access-Control-Expose-Headers": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Retry-After": {
+       "schema": {
+        "type": "string"
+       }
+      },
+      "Twilio-Reached-Rate-Limit": {
+       "schema": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "accountSid_authToken": []
+    },
+    {
+     "access_token_bearer": []
+    }
+   ],
+   "tags": [
+    "VerifyV2Verification"
+   ]
+  }
+ },
+ "kind": "openapi",
+ "meta": {
+  "openapi": "3.0.1",
+  "version": "1.0.0"
+ },
+ "retrieved": "2026-11-07",
+ "source": "twilio_verify_v2",
+ "url": "https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_verify_v2.json",
+ "watch": [
+  "post /v2/Services/{ServiceSid}/Verifications",
+  "post /v2/Services/{ServiceSid}/VerificationCheck"
+ ]
+}

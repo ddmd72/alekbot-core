@@ -1,0 +1,316 @@
+{
+ "components": {
+  "ClassificationLabelFieldValue": {
+   "id": "ClassificationLabelFieldValue",
+   "properties": {
+    "fieldId": {
+     "type": "string"
+    },
+    "selection": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ClassificationLabelValue": {
+   "id": "ClassificationLabelValue",
+   "properties": {
+    "fields": {
+     "items": {
+      "$ref": "ClassificationLabelFieldValue"
+     },
+     "type": "array"
+    },
+    "labelId": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ListMessagesResponse": {
+   "id": "ListMessagesResponse",
+   "properties": {
+    "messages": {
+     "items": {
+      "$ref": "Message"
+     },
+     "type": "array"
+    },
+    "nextPageToken": {
+     "type": "string"
+    },
+    "resultSizeEstimate": {
+     "format": "uint32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "Message": {
+   "id": "Message",
+   "properties": {
+    "classificationLabelValues": {
+     "items": {
+      "$ref": "ClassificationLabelValue"
+     },
+     "type": "array"
+    },
+    "historyId": {
+     "format": "uint64",
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "internalDate": {
+     "format": "int64",
+     "type": "string"
+    },
+    "labelIds": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "payload": {
+     "$ref": "MessagePart"
+    },
+    "raw": {
+     "annotations": {
+      "required": [
+       "gmail.users.messages.insert",
+       "gmail.users.messages.send"
+      ]
+     },
+     "format": "byte",
+     "type": "string"
+    },
+    "sizeEstimate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "snippet": {
+     "type": "string"
+    },
+    "threadId": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "MessagePart": {
+   "id": "MessagePart",
+   "properties": {
+    "body": {
+     "$ref": "MessagePartBody"
+    },
+    "filename": {
+     "type": "string"
+    },
+    "headers": {
+     "items": {
+      "$ref": "MessagePartHeader"
+     },
+     "type": "array"
+    },
+    "mimeType": {
+     "type": "string"
+    },
+    "partId": {
+     "type": "string"
+    },
+    "parts": {
+     "items": {
+      "$ref": "MessagePart"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "MessagePartBody": {
+   "id": "MessagePartBody",
+   "properties": {
+    "attachmentId": {
+     "type": "string"
+    },
+    "data": {
+     "format": "byte",
+     "type": "string"
+    },
+    "size": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "MessagePartHeader": {
+   "id": "MessagePartHeader",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "items": {
+  "gmail.users.messages.attachments.get": {
+   "flatPath": "gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+   "httpMethod": "GET",
+   "id": "gmail.users.messages.attachments.get",
+   "parameterOrder": [
+    "id",
+    "messageId",
+    "userId"
+   ],
+   "parameters": {
+    "id": {
+     "location": "path",
+     "required": true,
+     "type": "string"
+    },
+    "messageId": {
+     "location": "path",
+     "required": true,
+     "type": "string"
+    },
+    "userId": {
+     "default": "me",
+     "location": "path",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
+   "response": {
+    "$ref": "MessagePartBody"
+   },
+   "scopes": [
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly"
+   ]
+  },
+  "gmail.users.messages.get": {
+   "flatPath": "gmail/v1/users/{userId}/messages/{id}",
+   "httpMethod": "GET",
+   "id": "gmail.users.messages.get",
+   "parameterOrder": [
+    "id",
+    "userId"
+   ],
+   "parameters": {
+    "format": {
+     "default": "full",
+     "enum": [
+      "full",
+      "metadata",
+      "minimal",
+      "raw"
+     ],
+     "location": "query",
+     "type": "string"
+    },
+    "id": {
+     "location": "path",
+     "required": true,
+     "type": "string"
+    },
+    "metadataHeaders": {
+     "location": "query",
+     "repeated": true,
+     "type": "string"
+    },
+    "userId": {
+     "default": "me",
+     "location": "path",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "gmail/v1/users/{userId}/messages/{id}",
+   "response": {
+    "$ref": "Message"
+   },
+   "scopes": [
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/gmail.metadata",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly"
+   ]
+  },
+  "gmail.users.messages.list": {
+   "flatPath": "gmail/v1/users/{userId}/messages",
+   "httpMethod": "GET",
+   "id": "gmail.users.messages.list",
+   "parameterOrder": [
+    "userId"
+   ],
+   "parameters": {
+    "includeSpamTrash": {
+     "default": "false",
+     "location": "query",
+     "type": "boolean"
+    },
+    "labelIds": {
+     "location": "query",
+     "repeated": true,
+     "type": "string"
+    },
+    "maxResults": {
+     "default": "100",
+     "format": "uint32",
+     "location": "query",
+     "type": "integer"
+    },
+    "pageToken": {
+     "location": "query",
+     "type": "string"
+    },
+    "q": {
+     "location": "query",
+     "type": "string"
+    },
+    "userId": {
+     "default": "me",
+     "location": "path",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "gmail/v1/users/{userId}/messages",
+   "response": {
+    "$ref": "ListMessagesResponse"
+   },
+   "scopes": [
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/gmail.metadata",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly"
+   ]
+  }
+ },
+ "kind": "discovery",
+ "meta": {
+  "revision": "20261102",
+  "version": "v1"
+ },
+ "retrieved": "2026-11-07",
+ "source": "gmail",
+ "url": "https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest",
+ "watch": [
+  "gmail.users.messages.list",
+  "gmail.users.messages.get",
+  "gmail.users.messages.attachments.get"
+ ]
+}

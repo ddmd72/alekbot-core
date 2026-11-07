@@ -1,0 +1,2763 @@
+{
+ "components": {
+  "AttributionSourceId": {
+   "id": "AttributionSourceId",
+   "properties": {
+    "groundingPassage": {
+     "$ref": "GroundingPassageId"
+    },
+    "semanticRetrieverChunk": {
+     "$ref": "SemanticRetrieverChunk"
+    }
+   },
+   "type": "object"
+  },
+  "AudioResponseFormat": {
+   "id": "AudioResponseFormat",
+   "properties": {
+    "bitRate": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "delivery": {
+     "enum": [
+      "DELIVERY_UNSPECIFIED",
+      "INLINE",
+      "URI"
+     ],
+     "type": "string"
+    },
+    "mimeType": {
+     "enum": [
+      "AUDIO_ALAW",
+      "AUDIO_L16",
+      "AUDIO_MP3",
+      "AUDIO_MULAW",
+      "AUDIO_OGG_OPUS",
+      "AUDIO_WAV",
+      "MIME_TYPE_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "sampleRate": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "AudioTranscription": {
+   "id": "AudioTranscription",
+   "properties": {
+    "speakerLabel": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    },
+    "words": {
+     "items": {
+      "$ref": "WordInfo"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "AudioTranscriptionConfig": {
+   "id": "AudioTranscriptionConfig",
+   "properties": {
+    "adaptationPhrases": {
+     "deprecated": true,
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "customVocabulary": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "diarization": {
+     "type": "boolean"
+    },
+    "languageAuto": {
+     "$ref": "LanguageAuto",
+     "deprecated": true
+    },
+    "languageCodes": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "languageHints": {
+     "$ref": "LanguageHints",
+     "deprecated": true
+    },
+    "mode": {
+     "enum": [
+      "MODE_UNSPECIFIED",
+      "SMART",
+      "VERBATIM"
+     ],
+     "type": "string"
+    },
+    "sourceText": {
+     "type": "string"
+    },
+    "wordTimestamp": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "BatchGenerateContentRequest": {
+   "id": "BatchGenerateContentRequest",
+   "properties": {
+    "batch": {
+     "$ref": "GenerateContentBatch"
+    }
+   },
+   "type": "object"
+  },
+  "BatchStats": {
+   "id": "BatchStats",
+   "properties": {
+    "failedRequestCount": {
+     "format": "int64",
+     "readOnly": true,
+     "type": "string"
+    },
+    "pendingRequestCount": {
+     "format": "int64",
+     "readOnly": true,
+     "type": "string"
+    },
+    "requestCount": {
+     "format": "int64",
+     "readOnly": true,
+     "type": "string"
+    },
+    "successfulRequestCount": {
+     "format": "int64",
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Blob": {
+   "id": "Blob",
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string"
+    },
+    "displayName": {
+     "type": "string"
+    },
+    "mimeType": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Candidate": {
+   "id": "Candidate",
+   "properties": {
+    "avgLogprobs": {
+     "format": "double",
+     "readOnly": true,
+     "type": "number"
+    },
+    "citationMetadata": {
+     "$ref": "CitationMetadata",
+     "readOnly": true
+    },
+    "content": {
+     "$ref": "Content",
+     "readOnly": true
+    },
+    "continuationToken": {
+     "format": "byte",
+     "type": "string"
+    },
+    "finishMessage": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "finishReason": {
+     "enum": [
+      "BLOCKLIST",
+      "CONTINUATION",
+      "ESCALATION",
+      "FINISH_REASON_UNSPECIFIED",
+      "IMAGE_OTHER",
+      "IMAGE_PROHIBITED_CONTENT",
+      "IMAGE_RECITATION",
+      "IMAGE_SAFETY",
+      "LANGUAGE",
+      "MALFORMED_FUNCTION_CALL",
+      "MALFORMED_RESPONSE",
+      "MAX_TOKENS",
+      "MISSING_THOUGHT_SIGNATURE",
+      "NO_IMAGE",
+      "OTHER",
+      "PROHIBITED_CONTENT",
+      "PUP_LIMITED_DISABLED",
+      "RECITATION",
+      "SAFETY",
+      "SPII",
+      "STOP",
+      "TOO_MANY_TOOL_CALLS",
+      "UNEXPECTED_TOOL_CALL"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "groundingAttributions": {
+     "items": {
+      "$ref": "GroundingAttribution"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "groundingMetadata": {
+     "$ref": "GroundingMetadata",
+     "readOnly": true
+    },
+    "index": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "logprobsResult": {
+     "$ref": "LogprobsResult",
+     "readOnly": true
+    },
+    "safetyRatings": {
+     "items": {
+      "$ref": "SafetyRating"
+     },
+     "type": "array"
+    },
+    "tokenCount": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "urlContextMetadata": {
+     "$ref": "UrlContextMetadata",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "CitationMetadata": {
+   "id": "CitationMetadata",
+   "properties": {
+    "citationSources": {
+     "items": {
+      "$ref": "CitationSource"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "CitationSource": {
+   "id": "CitationSource",
+   "properties": {
+    "endIndex": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "license": {
+     "type": "string"
+    },
+    "startIndex": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "CodeExecution": {
+   "id": "CodeExecution",
+   "properties": {},
+   "type": "object"
+  },
+  "CodeExecutionResult": {
+   "id": "CodeExecutionResult",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "outcome": {
+     "enum": [
+      "OUTCOME_DEADLINE_EXCEEDED",
+      "OUTCOME_FAILED",
+      "OUTCOME_OK",
+      "OUTCOME_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "output": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ComputerUse": {
+   "id": "ComputerUse",
+   "properties": {
+    "disabledSafetyPolicies": {
+     "items": {
+      "enum": [
+       "ACCOUNT_CREATION",
+       "COMMUNICATION_TOOL",
+       "DATA_MODIFICATION",
+       "FINANCIAL_TRANSACTIONS",
+       "LEGAL_TERMS_AND_AGREEMENTS",
+       "SAFETY_POLICY_UNSPECIFIED",
+       "SENSITIVE_DATA_MODIFICATION",
+       "USER_CONSENT_MANAGEMENT"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "enablePromptInjectionDetection": {
+     "type": "boolean"
+    },
+    "environment": {
+     "enum": [
+      "ENVIRONMENT_BROWSER",
+      "ENVIRONMENT_DESKTOP",
+      "ENVIRONMENT_MOBILE",
+      "ENVIRONMENT_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "excludedPredefinedFunctions": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "Content": {
+   "id": "Content",
+   "properties": {
+    "parts": {
+     "items": {
+      "$ref": "Part"
+     },
+     "type": "array"
+    },
+    "role": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ContentEmbedding": {
+   "id": "ContentEmbedding",
+   "properties": {
+    "shape": {
+     "items": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "type": "array"
+    },
+    "values": {
+     "items": {
+      "format": "float",
+      "type": "number"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "CreateFileRequest": {
+   "id": "CreateFileRequest",
+   "properties": {
+    "file": {
+     "$ref": "File"
+    }
+   },
+   "type": "object"
+  },
+  "CreateFileResponse": {
+   "id": "CreateFileResponse",
+   "properties": {
+    "file": {
+     "$ref": "File"
+    }
+   },
+   "type": "object"
+  },
+  "DynamicRetrievalConfig": {
+   "id": "DynamicRetrievalConfig",
+   "properties": {
+    "dynamicThreshold": {
+     "format": "float",
+     "type": "number"
+    },
+    "mode": {
+     "enum": [
+      "MODE_DYNAMIC",
+      "MODE_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "EmbedContentConfig": {
+   "id": "EmbedContentConfig",
+   "properties": {
+    "audioTrackExtraction": {
+     "type": "boolean"
+    },
+    "autoTruncate": {
+     "type": "boolean"
+    },
+    "documentOcr": {
+     "type": "boolean"
+    },
+    "outputDimensionality": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "taskType": {
+     "enum": [
+      "CLASSIFICATION",
+      "CLUSTERING",
+      "CODE_RETRIEVAL_QUERY",
+      "FACT_VERIFICATION",
+      "QUESTION_ANSWERING",
+      "RETRIEVAL_DOCUMENT",
+      "RETRIEVAL_QUERY",
+      "SEMANTIC_SIMILARITY",
+      "TASK_TYPE_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "EmbedContentRequest": {
+   "id": "EmbedContentRequest",
+   "properties": {
+    "content": {
+     "$ref": "Content"
+    },
+    "embedContentConfig": {
+     "$ref": "EmbedContentConfig"
+    },
+    "model": {
+     "type": "string"
+    },
+    "outputDimensionality": {
+     "deprecated": true,
+     "format": "int32",
+     "type": "integer"
+    },
+    "taskType": {
+     "deprecated": true,
+     "enum": [
+      "CLASSIFICATION",
+      "CLUSTERING",
+      "CODE_RETRIEVAL_QUERY",
+      "FACT_VERIFICATION",
+      "QUESTION_ANSWERING",
+      "RETRIEVAL_DOCUMENT",
+      "RETRIEVAL_QUERY",
+      "SEMANTIC_SIMILARITY",
+      "TASK_TYPE_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "EmbedContentResponse": {
+   "id": "EmbedContentResponse",
+   "properties": {
+    "embedding": {
+     "$ref": "ContentEmbedding",
+     "readOnly": true
+    },
+    "usageMetadata": {
+     "$ref": "EmbeddingUsageMetadata",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "EmbeddingUsageMetadata": {
+   "id": "EmbeddingUsageMetadata",
+   "properties": {
+    "promptTokenCount": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "promptTokenDetails": {
+     "items": {
+      "$ref": "ModalityTokenCount"
+     },
+     "readOnly": true,
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "Empty": {
+   "id": "Empty",
+   "properties": {},
+   "type": "object"
+  },
+  "ExecutableCode": {
+   "id": "ExecutableCode",
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "language": {
+     "enum": [
+      "LANGUAGE_UNSPECIFIED",
+      "PYTHON"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "File": {
+   "id": "File",
+   "properties": {
+    "createTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    },
+    "displayName": {
+     "type": "string"
+    },
+    "downloadUri": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "error": {
+     "$ref": "Status",
+     "readOnly": true
+    },
+    "expirationTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    },
+    "mimeType": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "sha256Hash": {
+     "format": "byte",
+     "readOnly": true,
+     "type": "string"
+    },
+    "sizeBytes": {
+     "format": "int64",
+     "readOnly": true,
+     "type": "string"
+    },
+    "source": {
+     "enum": [
+      "GENERATED",
+      "REGISTERED",
+      "SOURCE_UNSPECIFIED",
+      "UPLOADED"
+     ],
+     "type": "string"
+    },
+    "state": {
+     "enum": [
+      "ACTIVE",
+      "FAILED",
+      "PROCESSING",
+      "STATE_UNSPECIFIED"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "updateTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    },
+    "uri": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "videoMetadata": {
+     "$ref": "VideoFileMetadata",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "FileData": {
+   "id": "FileData",
+   "properties": {
+    "displayName": {
+     "type": "string"
+    },
+    "fileUri": {
+     "type": "string"
+    },
+    "mimeType": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "FileSearch": {
+   "id": "FileSearch",
+   "properties": {
+    "fileSearchStoreNames": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "metadataFilter": {
+     "type": "string"
+    },
+    "topK": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionCall": {
+   "id": "FunctionCall",
+   "properties": {
+    "args": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionCallingConfig": {
+   "id": "FunctionCallingConfig",
+   "properties": {
+    "allowedFunctionNames": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "mode": {
+     "enum": [
+      "ANY",
+      "AUTO",
+      "MODE_UNSPECIFIED",
+      "NONE",
+      "VALIDATED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionDeclaration": {
+   "id": "FunctionDeclaration",
+   "properties": {
+    "behavior": {
+     "enum": [
+      "BLOCKING",
+      "NON_BLOCKING",
+      "UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "parameters": {
+     "$ref": "Schema"
+    },
+    "parametersJsonSchema": {
+     "type": "any"
+    },
+    "response": {
+     "$ref": "Schema"
+    },
+    "responseJsonSchema": {
+     "type": "any"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionResponse": {
+   "id": "FunctionResponse",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "parts": {
+     "items": {
+      "$ref": "FunctionResponsePart"
+     },
+     "type": "array"
+    },
+    "response": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "scheduling": {
+     "enum": [
+      "INTERRUPT",
+      "SCHEDULING_UNSPECIFIED",
+      "SILENT",
+      "WHEN_IDLE"
+     ],
+     "type": "string"
+    },
+    "willContinue": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionResponseBlob": {
+   "id": "FunctionResponseBlob",
+   "properties": {
+    "data": {
+     "format": "byte",
+     "type": "string"
+    },
+    "displayName": {
+     "type": "string"
+    },
+    "mimeType": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionResponseFileData": {
+   "id": "FunctionResponseFileData",
+   "properties": {
+    "displayName": {
+     "type": "string"
+    },
+    "fileUri": {
+     "type": "string"
+    },
+    "mimeType": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "FunctionResponsePart": {
+   "id": "FunctionResponsePart",
+   "properties": {
+    "fileData": {
+     "$ref": "FunctionResponseFileData"
+    },
+    "inlineData": {
+     "$ref": "FunctionResponseBlob"
+    },
+    "mediaProcessing": {
+     "enum": [
+      "AGENTIC",
+      "MEDIA_PROCESSING_UNSPECIFIED",
+      "STATIC"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "GenerateContentBatch": {
+   "id": "GenerateContentBatch",
+   "properties": {
+    "batchStats": {
+     "$ref": "BatchStats",
+     "readOnly": true
+    },
+    "createTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    },
+    "displayName": {
+     "type": "string"
+    },
+    "endTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    },
+    "inputConfig": {
+     "$ref": "InputConfig"
+    },
+    "model": {
+     "type": "string"
+    },
+    "name": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "output": {
+     "$ref": "GenerateContentBatchOutput",
+     "readOnly": true
+    },
+    "priority": {
+     "format": "int64",
+     "type": "string"
+    },
+    "state": {
+     "enum": [
+      "BATCH_STATE_CANCELLED",
+      "BATCH_STATE_EXPIRED",
+      "BATCH_STATE_FAILED",
+      "BATCH_STATE_PENDING",
+      "BATCH_STATE_RUNNING",
+      "BATCH_STATE_SUCCEEDED",
+      "BATCH_STATE_UNSPECIFIED"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "updateTime": {
+     "format": "google-datetime",
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "GenerateContentBatchOutput": {
+   "id": "GenerateContentBatchOutput",
+   "properties": {
+    "inlinedResponses": {
+     "$ref": "InlinedResponses",
+     "readOnly": true
+    },
+    "responsesFile": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "GenerateContentRequest": {
+   "id": "GenerateContentRequest",
+   "properties": {
+    "cachedContent": {
+     "type": "string"
+    },
+    "contents": {
+     "items": {
+      "$ref": "Content"
+     },
+     "type": "array"
+    },
+    "continuationToken": {
+     "format": "byte",
+     "type": "string"
+    },
+    "generationConfig": {
+     "$ref": "GenerationConfig"
+    },
+    "labels": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "model": {
+     "type": "string"
+    },
+    "safetySettings": {
+     "items": {
+      "$ref": "SafetySetting"
+     },
+     "type": "array"
+    },
+    "serviceTier": {
+     "enum": [
+      "flex",
+      "priority",
+      "standard",
+      "unspecified"
+     ],
+     "type": "string"
+    },
+    "store": {
+     "type": "boolean"
+    },
+    "systemInstruction": {
+     "$ref": "Content"
+    },
+    "toolConfig": {
+     "$ref": "ToolConfig"
+    },
+    "tools": {
+     "items": {
+      "$ref": "Tool"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "GenerateContentResponse": {
+   "id": "GenerateContentResponse",
+   "properties": {
+    "candidates": {
+     "items": {
+      "$ref": "Candidate"
+     },
+     "type": "array"
+    },
+    "modelStatus": {
+     "$ref": "ModelStatus",
+     "readOnly": true
+    },
+    "modelVersion": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "promptFeedback": {
+     "$ref": "PromptFeedback"
+    },
+    "responseId": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "usageMetadata": {
+     "$ref": "UsageMetadata",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "GenerationConfig": {
+   "id": "GenerationConfig",
+   "properties": {
+    "_responseJsonSchema": {
+     "deprecated": true,
+     "type": "any"
+    },
+    "audioTranscriptionConfig": {
+     "$ref": "AudioTranscriptionConfig"
+    },
+    "candidateCount": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "enableAffectiveDialog": {
+     "type": "boolean"
+    },
+    "enableEnhancedCivicAnswers": {
+     "type": "boolean"
+    },
+    "frequencyPenalty": {
+     "format": "float",
+     "type": "number"
+    },
+    "imageConfig": {
+     "$ref": "ImageConfig"
+    },
+    "logprobs": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "maxOutputTokens": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "mediaResolution": {
+     "enum": [
+      "MEDIA_RESOLUTION_HIGH",
+      "MEDIA_RESOLUTION_LOW",
+      "MEDIA_RESOLUTION_MEDIUM",
+      "MEDIA_RESOLUTION_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "presencePenalty": {
+     "format": "float",
+     "type": "number"
+    },
+    "responseFormat": {
+     "$ref": "ResponseFormatConfig"
+    },
+    "responseJsonSchema": {
+     "type": "any"
+    },
+    "responseLogprobs": {
+     "type": "boolean"
+    },
+    "responseMimeType": {
+     "type": "string"
+    },
+    "responseModalities": {
+     "items": {
+      "enum": [
+       "AUDIO",
+       "IMAGE",
+       "MODALITY_UNSPECIFIED",
+       "TEXT"
+      ],
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "responseSchema": {
+     "$ref": "Schema",
+     "deprecated": true
+    },
+    "seed": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "speechConfig": {
+     "$ref": "SpeechConfig"
+    },
+    "stopSequences": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "temperature": {
+     "format": "float",
+     "type": "number"
+    },
+    "thinkingConfig": {
+     "$ref": "ThinkingConfig"
+    },
+    "topK": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "topP": {
+     "format": "float",
+     "type": "number"
+    },
+    "translationConfig": {
+     "$ref": "TranslationConfig"
+    }
+   },
+   "type": "object"
+  },
+  "GoogleAiGenerativelanguageV1betaGroundingSupport": {
+   "id": "GoogleAiGenerativelanguageV1betaGroundingSupport",
+   "properties": {
+    "confidenceScores": {
+     "items": {
+      "format": "float",
+      "type": "number"
+     },
+     "type": "array"
+    },
+    "groundingChunkIndices": {
+     "items": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "type": "array"
+    },
+    "renderedParts": {
+     "items": {
+      "format": "int32",
+      "type": "integer"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "segment": {
+     "$ref": "GoogleAiGenerativelanguageV1betaSegment"
+    }
+   },
+   "type": "object"
+  },
+  "GoogleAiGenerativelanguageV1betaSegment": {
+   "id": "GoogleAiGenerativelanguageV1betaSegment",
+   "properties": {
+    "endIndex": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "partIndex": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "startIndex": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "GoogleMaps": {
+   "id": "GoogleMaps",
+   "properties": {
+    "enableWidget": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "GoogleSearch": {
+   "id": "GoogleSearch",
+   "properties": {
+    "searchTypes": {
+     "$ref": "SearchTypes"
+    },
+    "timeRangeFilter": {
+     "$ref": "Interval"
+    }
+   },
+   "type": "object"
+  },
+  "GoogleSearchRetrieval": {
+   "id": "GoogleSearchRetrieval",
+   "properties": {
+    "dynamicRetrievalConfig": {
+     "$ref": "DynamicRetrievalConfig"
+    }
+   },
+   "type": "object"
+  },
+  "GroundingAttribution": {
+   "id": "GroundingAttribution",
+   "properties": {
+    "content": {
+     "$ref": "Content"
+    },
+    "sourceId": {
+     "$ref": "AttributionSourceId",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "GroundingChunk": {
+   "id": "GroundingChunk",
+   "properties": {
+    "image": {
+     "$ref": "Image"
+    },
+    "maps": {
+     "$ref": "Maps"
+    },
+    "retrievedContext": {
+     "$ref": "RetrievedContext"
+    },
+    "web": {
+     "$ref": "Web"
+    }
+   },
+   "type": "object"
+  },
+  "GroundingChunkCustomMetadata": {
+   "id": "GroundingChunkCustomMetadata",
+   "properties": {
+    "key": {
+     "type": "string"
+    },
+    "numericValue": {
+     "format": "float",
+     "type": "number"
+    },
+    "stringListValue": {
+     "$ref": "GroundingChunkStringList"
+    },
+    "stringValue": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "GroundingChunkStringList": {
+   "id": "GroundingChunkStringList",
+   "properties": {
+    "values": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "GroundingMetadata": {
+   "id": "GroundingMetadata",
+   "properties": {
+    "googleMapsWidgetContextToken": {
+     "type": "string"
+    },
+    "groundingChunks": {
+     "items": {
+      "$ref": "GroundingChunk"
+     },
+     "type": "array"
+    },
+    "groundingSupports": {
+     "items": {
+      "$ref": "GoogleAiGenerativelanguageV1betaGroundingSupport"
+     },
+     "type": "array"
+    },
+    "imageSearchQueries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "retrievalMetadata": {
+     "$ref": "RetrievalMetadata"
+    },
+    "searchEntryPoint": {
+     "$ref": "SearchEntryPoint"
+    },
+    "webSearchQueries": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "GroundingPassageId": {
+   "id": "GroundingPassageId",
+   "properties": {
+    "partIndex": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "passageId": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Image": {
+   "id": "Image",
+   "properties": {
+    "domain": {
+     "type": "string"
+    },
+    "imageUri": {
+     "type": "string"
+    },
+    "sourceUri": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ImageConfig": {
+   "id": "ImageConfig",
+   "properties": {
+    "aspectRatio": {
+     "type": "string"
+    },
+    "imageSize": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ImageResponseFormat": {
+   "id": "ImageResponseFormat",
+   "properties": {
+    "aspectRatio": {
+     "enum": [
+      "ASPECT_RATIO_EIGHT_BY_ONE",
+      "ASPECT_RATIO_FIVE_BY_FOUR",
+      "ASPECT_RATIO_FOUR_BY_FIVE",
+      "ASPECT_RATIO_FOUR_BY_ONE",
+      "ASPECT_RATIO_FOUR_BY_THREE",
+      "ASPECT_RATIO_NINE_BY_SIXTEEN",
+      "ASPECT_RATIO_ONE_BY_EIGHT",
+      "ASPECT_RATIO_ONE_BY_FOUR",
+      "ASPECT_RATIO_ONE_BY_ONE",
+      "ASPECT_RATIO_SIXTEEN_BY_NINE",
+      "ASPECT_RATIO_THREE_BY_FOUR",
+      "ASPECT_RATIO_THREE_BY_TWO",
+      "ASPECT_RATIO_TWENTY_ONE_BY_NINE",
+      "ASPECT_RATIO_TWO_BY_THREE",
+      "ASPECT_RATIO_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "delivery": {
+     "enum": [
+      "DELIVERY_UNSPECIFIED",
+      "INLINE",
+      "URI"
+     ],
+     "type": "string"
+    },
+    "imageSize": {
+     "enum": [
+      "IMAGE_SIZE_FIVE_TWELVE",
+      "IMAGE_SIZE_FOUR_K",
+      "IMAGE_SIZE_ONE_K",
+      "IMAGE_SIZE_TWO_K",
+      "IMAGE_SIZE_UNSPECIFIED"
+     ],
+     "type": "string"
+    },
+    "mimeType": {
+     "enum": [
+      "IMAGE_JPEG",
+      "MIME_TYPE_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ImageSearch": {
+   "id": "ImageSearch",
+   "properties": {},
+   "type": "object"
+  },
+  "InlinedRequest": {
+   "id": "InlinedRequest",
+   "properties": {
+    "metadata": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "request": {
+     "$ref": "GenerateContentRequest"
+    }
+   },
+   "type": "object"
+  },
+  "InlinedRequests": {
+   "id": "InlinedRequests",
+   "properties": {
+    "requests": {
+     "items": {
+      "$ref": "InlinedRequest"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "InlinedResponse": {
+   "id": "InlinedResponse",
+   "properties": {
+    "error": {
+     "$ref": "Status",
+     "readOnly": true
+    },
+    "metadata": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "readOnly": true,
+     "type": "object"
+    },
+    "response": {
+     "$ref": "GenerateContentResponse",
+     "readOnly": true
+    }
+   },
+   "type": "object"
+  },
+  "InlinedResponses": {
+   "id": "InlinedResponses",
+   "properties": {
+    "inlinedResponses": {
+     "items": {
+      "$ref": "InlinedResponse"
+     },
+     "readOnly": true,
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "InputConfig": {
+   "id": "InputConfig",
+   "properties": {
+    "fileName": {
+     "type": "string"
+    },
+    "requests": {
+     "$ref": "InlinedRequests"
+    }
+   },
+   "type": "object"
+  },
+  "Interval": {
+   "id": "Interval",
+   "properties": {
+    "endTime": {
+     "format": "google-datetime",
+     "type": "string"
+    },
+    "startTime": {
+     "format": "google-datetime",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "LanguageAuto": {
+   "deprecated": true,
+   "id": "LanguageAuto",
+   "properties": {},
+   "type": "object"
+  },
+  "LanguageHints": {
+   "deprecated": true,
+   "id": "LanguageHints",
+   "properties": {
+    "languageCodes": {
+     "deprecated": true,
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "LatLng": {
+   "id": "LatLng",
+   "properties": {
+    "latitude": {
+     "format": "double",
+     "type": "number"
+    },
+    "longitude": {
+     "format": "double",
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "ListOperationsResponse": {
+   "id": "ListOperationsResponse",
+   "properties": {
+    "nextPageToken": {
+     "type": "string"
+    },
+    "operations": {
+     "items": {
+      "$ref": "Operation"
+     },
+     "type": "array"
+    },
+    "unreachable": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "LogprobsResult": {
+   "id": "LogprobsResult",
+   "properties": {
+    "chosenCandidates": {
+     "items": {
+      "$ref": "LogprobsResultCandidate"
+     },
+     "type": "array"
+    },
+    "logProbabilitySum": {
+     "format": "float",
+     "type": "number"
+    },
+    "topCandidates": {
+     "items": {
+      "$ref": "TopCandidates"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "LogprobsResultCandidate": {
+   "id": "LogprobsResultCandidate",
+   "properties": {
+    "logProbability": {
+     "format": "float",
+     "type": "number"
+    },
+    "token": {
+     "type": "string"
+    },
+    "tokenId": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "Maps": {
+   "id": "Maps",
+   "properties": {
+    "placeAnswerSources": {
+     "$ref": "PlaceAnswerSources"
+    },
+    "placeId": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "McpServer": {
+   "id": "McpServer",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "streamableHttpTransport": {
+     "$ref": "StreamableHttpTransport"
+    }
+   },
+   "type": "object"
+  },
+  "ModalityTokenCount": {
+   "id": "ModalityTokenCount",
+   "properties": {
+    "modality": {
+     "enum": [
+      "AUDIO",
+      "DOCUMENT",
+      "IMAGE",
+      "MODALITY_UNSPECIFIED",
+      "TEXT",
+      "VIDEO"
+     ],
+     "type": "string"
+    },
+    "tokenCount": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "ModelStatus": {
+   "id": "ModelStatus",
+   "properties": {
+    "message": {
+     "type": "string"
+    },
+    "modelStage": {
+     "enum": [
+      "DEPRECATED",
+      "EXPERIMENTAL",
+      "LEGACY",
+      "MODEL_STAGE_UNSPECIFIED",
+      "PREVIEW",
+      "RETIRED",
+      "STABLE",
+      "UNSTABLE_EXPERIMENTAL"
+     ],
+     "enumDeprecated": [
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+     ],
+     "type": "string"
+    },
+    "retirementTime": {
+     "format": "google-datetime",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "MultiSpeakerVoiceConfig": {
+   "id": "MultiSpeakerVoiceConfig",
+   "properties": {
+    "speakerVoiceConfigs": {
+     "items": {
+      "$ref": "SpeakerVoiceConfig"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "Operation": {
+   "id": "Operation",
+   "properties": {
+    "done": {
+     "type": "boolean"
+    },
+    "error": {
+     "$ref": "Status"
+    },
+    "metadata": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "name": {
+     "type": "string"
+    },
+    "response": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "Part": {
+   "id": "Part",
+   "properties": {
+    "audioTranscription": {
+     "$ref": "AudioTranscription"
+    },
+    "codeExecutionResult": {
+     "$ref": "CodeExecutionResult"
+    },
+    "executableCode": {
+     "$ref": "ExecutableCode"
+    },
+    "fileData": {
+     "$ref": "FileData"
+    },
+    "functionCall": {
+     "$ref": "FunctionCall"
+    },
+    "functionResponse": {
+     "$ref": "FunctionResponse"
+    },
+    "inlineData": {
+     "$ref": "Blob"
+    },
+    "mediaProcessing": {
+     "enum": [
+      "AGENTIC",
+      "MEDIA_PROCESSING_UNSPECIFIED",
+      "STATIC"
+     ],
+     "type": "string"
+    },
+    "mediaResolution": {
+     "$ref": "V1mainMediaResolution"
+    },
+    "partMetadata": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "speechMetadata": {
+     "$ref": "SpeechMetadata"
+    },
+    "text": {
+     "type": "string"
+    },
+    "thought": {
+     "type": "boolean"
+    },
+    "thoughtSignature": {
+     "format": "byte",
+     "type": "string"
+    },
+    "toolCall": {
+     "$ref": "ToolCall"
+    },
+    "toolResponse": {
+     "$ref": "ToolResponse"
+    },
+    "videoMetadata": {
+     "$ref": "VideoMetadata"
+    }
+   },
+   "type": "object"
+  },
+  "PlaceAnswerSources": {
+   "id": "PlaceAnswerSources",
+   "properties": {
+    "reviewSnippets": {
+     "items": {
+      "$ref": "ReviewSnippet"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "PrebuiltVoiceConfig": {
+   "id": "PrebuiltVoiceConfig",
+   "properties": {
+    "voiceName": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "PromptFeedback": {
+   "id": "PromptFeedback",
+   "properties": {
+    "blockReason": {
+     "enum": [
+      "BLOCKLIST",
+      "BLOCK_REASON_UNSPECIFIED",
+      "IMAGE_SAFETY",
+      "OTHER",
+      "PROHIBITED_CONTENT",
+      "SAFETY"
+     ],
+     "type": "string"
+    },
+    "safetyRatings": {
+     "items": {
+      "$ref": "SafetyRating"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "ResponseFormatConfig": {
+   "id": "ResponseFormatConfig",
+   "properties": {
+    "audio": {
+     "$ref": "AudioResponseFormat"
+    },
+    "image": {
+     "$ref": "ImageResponseFormat"
+    },
+    "text": {
+     "$ref": "TextResponseFormat"
+    }
+   },
+   "type": "object"
+  },
+  "RetrievalConfig": {
+   "id": "RetrievalConfig",
+   "properties": {
+    "languageCode": {
+     "type": "string"
+    },
+    "latLng": {
+     "$ref": "LatLng"
+    }
+   },
+   "type": "object"
+  },
+  "RetrievalMetadata": {
+   "id": "RetrievalMetadata",
+   "properties": {
+    "googleSearchDynamicRetrievalScore": {
+     "format": "float",
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "RetrievedContext": {
+   "id": "RetrievedContext",
+   "properties": {
+    "customMetadata": {
+     "items": {
+      "$ref": "GroundingChunkCustomMetadata"
+     },
+     "type": "array"
+    },
+    "fileSearchStore": {
+     "type": "string"
+    },
+    "mediaId": {
+     "type": "string"
+    },
+    "pageNumber": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "text": {
+     "type": "string"
+    },
+    "uri": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ReviewSnippet": {
+   "id": "ReviewSnippet",
+   "properties": {
+    "googleMapsUri": {
+     "type": "string"
+    },
+    "reviewId": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "SafetyRating": {
+   "id": "SafetyRating",
+   "properties": {
+    "blocked": {
+     "type": "boolean"
+    },
+    "category": {
+     "enum": [
+      "HARM_CATEGORY_CIVIC_INTEGRITY",
+      "HARM_CATEGORY_DANGEROUS",
+      "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "HARM_CATEGORY_DEROGATORY",
+      "HARM_CATEGORY_HARASSMENT",
+      "HARM_CATEGORY_HATE_SPEECH",
+      "HARM_CATEGORY_JAILBREAK",
+      "HARM_CATEGORY_MEDICAL",
+      "HARM_CATEGORY_SEXUAL",
+      "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "HARM_CATEGORY_TOXICITY",
+      "HARM_CATEGORY_UNSPECIFIED",
+      "HARM_CATEGORY_VIOLENCE"
+     ],
+     "enumDeprecated": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+     ],
+     "type": "string"
+    },
+    "probability": {
+     "enum": [
+      "HARM_PROBABILITY_UNSPECIFIED",
+      "HIGH",
+      "LOW",
+      "MEDIUM",
+      "NEGLIGIBLE"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "SafetySetting": {
+   "id": "SafetySetting",
+   "properties": {
+    "category": {
+     "enum": [
+      "HARM_CATEGORY_CIVIC_INTEGRITY",
+      "HARM_CATEGORY_DANGEROUS",
+      "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "HARM_CATEGORY_DEROGATORY",
+      "HARM_CATEGORY_HARASSMENT",
+      "HARM_CATEGORY_HATE_SPEECH",
+      "HARM_CATEGORY_JAILBREAK",
+      "HARM_CATEGORY_MEDICAL",
+      "HARM_CATEGORY_SEXUAL",
+      "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "HARM_CATEGORY_TOXICITY",
+      "HARM_CATEGORY_UNSPECIFIED",
+      "HARM_CATEGORY_VIOLENCE"
+     ],
+     "enumDeprecated": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+     ],
+     "type": "string"
+    },
+    "threshold": {
+     "enum": [
+      "BLOCK_LOW_AND_ABOVE",
+      "BLOCK_MEDIUM_AND_ABOVE",
+      "BLOCK_NONE",
+      "BLOCK_ONLY_HIGH",
+      "HARM_BLOCK_THRESHOLD_UNSPECIFIED",
+      "OFF"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Schema": {
+   "id": "Schema",
+   "properties": {
+    "anyOf": {
+     "items": {
+      "$ref": "Schema"
+     },
+     "type": "array"
+    },
+    "default": {
+     "type": "any"
+    },
+    "enum": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "format": {
+     "type": "string"
+    },
+    "items": {
+     "$ref": "Schema"
+    },
+    "maxItems": {
+     "format": "int64",
+     "type": "string"
+    },
+    "maxLength": {
+     "format": "int64",
+     "type": "string"
+    },
+    "maxProperties": {
+     "format": "int64",
+     "type": "string"
+    },
+    "maximum": {
+     "format": "double",
+     "type": "number"
+    },
+    "minItems": {
+     "format": "int64",
+     "type": "string"
+    },
+    "minLength": {
+     "format": "int64",
+     "type": "string"
+    },
+    "minProperties": {
+     "format": "int64",
+     "type": "string"
+    },
+    "minimum": {
+     "format": "double",
+     "type": "number"
+    },
+    "nullable": {
+     "type": "boolean"
+    },
+    "pattern": {
+     "type": "string"
+    },
+    "properties": {
+     "additionalProperties": {
+      "$ref": "Schema"
+     },
+     "type": "object"
+    },
+    "propertyOrdering": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "required": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "type": {
+     "enum": [
+      "ARRAY",
+      "BOOLEAN",
+      "INTEGER",
+      "NULL",
+      "NUMBER",
+      "OBJECT",
+      "STRING",
+      "TYPE_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "SearchEntryPoint": {
+   "id": "SearchEntryPoint",
+   "properties": {
+    "renderedContent": {
+     "type": "string"
+    },
+    "sdkBlob": {
+     "format": "byte",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "SearchTypes": {
+   "id": "SearchTypes",
+   "properties": {
+    "imageSearch": {
+     "$ref": "ImageSearch"
+    },
+    "webSearch": {
+     "$ref": "WebSearch"
+    }
+   },
+   "type": "object"
+  },
+  "SemanticRetrieverChunk": {
+   "id": "SemanticRetrieverChunk",
+   "properties": {
+    "chunk": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "source": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "SpeakerVoiceConfig": {
+   "id": "SpeakerVoiceConfig",
+   "properties": {
+    "speaker": {
+     "type": "string"
+    },
+    "voiceConfig": {
+     "$ref": "VoiceConfig"
+    }
+   },
+   "type": "object"
+  },
+  "SpeechConfig": {
+   "id": "SpeechConfig",
+   "properties": {
+    "languageCode": {
+     "type": "string"
+    },
+    "multiSpeakerVoiceConfig": {
+     "$ref": "MultiSpeakerVoiceConfig"
+    },
+    "voiceConfig": {
+     "$ref": "VoiceConfig"
+    }
+   },
+   "type": "object"
+  },
+  "SpeechMetadata": {
+   "id": "SpeechMetadata",
+   "properties": {
+    "speaker": {
+     "type": "string"
+    },
+    "style": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Status": {
+   "id": "Status",
+   "properties": {
+    "code": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "details": {
+     "items": {
+      "additionalProperties": {
+       "type": "any"
+      },
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "message": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "StreamableHttpTransport": {
+   "id": "StreamableHttpTransport",
+   "properties": {
+    "headers": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "sseReadTimeout": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "terminateOnClose": {
+     "type": "boolean"
+    },
+    "timeout": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "TextResponseFormat": {
+   "id": "TextResponseFormat",
+   "properties": {
+    "mimeType": {
+     "enum": [
+      "APPLICATION_JSON",
+      "MIME_TYPE_UNSPECIFIED",
+      "TEXT_PLAIN"
+     ],
+     "type": "string"
+    },
+    "schema": {
+     "type": "any"
+    }
+   },
+   "type": "object"
+  },
+  "ThinkingConfig": {
+   "id": "ThinkingConfig",
+   "properties": {
+    "includeThoughts": {
+     "type": "boolean"
+    },
+    "thinkingBudget": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "thinkingLevel": {
+     "enum": [
+      "HIGH",
+      "LOW",
+      "MEDIUM",
+      "MINIMAL",
+      "THINKING_LEVEL_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Tool": {
+   "id": "Tool",
+   "properties": {
+    "codeExecution": {
+     "$ref": "CodeExecution"
+    },
+    "computerUse": {
+     "$ref": "ComputerUse"
+    },
+    "fileSearch": {
+     "$ref": "FileSearch"
+    },
+    "functionDeclarations": {
+     "items": {
+      "$ref": "FunctionDeclaration"
+     },
+     "type": "array"
+    },
+    "googleMaps": {
+     "$ref": "GoogleMaps"
+    },
+    "googleSearch": {
+     "$ref": "GoogleSearch"
+    },
+    "googleSearchRetrieval": {
+     "$ref": "GoogleSearchRetrieval"
+    },
+    "mcpServers": {
+     "items": {
+      "$ref": "McpServer"
+     },
+     "type": "array"
+    },
+    "urlContext": {
+     "$ref": "UrlContext"
+    }
+   },
+   "type": "object"
+  },
+  "ToolCall": {
+   "id": "ToolCall",
+   "properties": {
+    "args": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "id": {
+     "type": "string"
+    },
+    "toolName": {
+     "type": "string"
+    },
+    "toolType": {
+     "enum": [
+      "FILE_SEARCH",
+      "GOOGLE_MAPS",
+      "GOOGLE_SEARCH_IMAGE",
+      "GOOGLE_SEARCH_WEB",
+      "MEDIA_PROCESSING",
+      "TOOL_TYPE_UNSPECIFIED",
+      "URL_CONTEXT"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ToolConfig": {
+   "id": "ToolConfig",
+   "properties": {
+    "functionCallingConfig": {
+     "$ref": "FunctionCallingConfig"
+    },
+    "includeServerSideToolInvocations": {
+     "type": "boolean"
+    },
+    "retrievalConfig": {
+     "$ref": "RetrievalConfig"
+    }
+   },
+   "type": "object"
+  },
+  "ToolResponse": {
+   "id": "ToolResponse",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "response": {
+     "additionalProperties": {
+      "type": "any"
+     },
+     "type": "object"
+    },
+    "toolType": {
+     "enum": [
+      "FILE_SEARCH",
+      "GOOGLE_MAPS",
+      "GOOGLE_SEARCH_IMAGE",
+      "GOOGLE_SEARCH_WEB",
+      "MEDIA_PROCESSING",
+      "TOOL_TYPE_UNSPECIFIED",
+      "URL_CONTEXT"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "TopCandidates": {
+   "id": "TopCandidates",
+   "properties": {
+    "candidates": {
+     "items": {
+      "$ref": "LogprobsResultCandidate"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "TranslationConfig": {
+   "id": "TranslationConfig",
+   "properties": {
+    "echoTargetLanguage": {
+     "type": "boolean"
+    },
+    "targetLanguageCode": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "UrlContext": {
+   "id": "UrlContext",
+   "properties": {},
+   "type": "object"
+  },
+  "UrlContextMetadata": {
+   "id": "UrlContextMetadata",
+   "properties": {
+    "urlMetadata": {
+     "items": {
+      "$ref": "UrlMetadata"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "UrlMetadata": {
+   "id": "UrlMetadata",
+   "properties": {
+    "retrievedUrl": {
+     "type": "string"
+    },
+    "urlRetrievalStatus": {
+     "enum": [
+      "URL_RETRIEVAL_STATUS_ERROR",
+      "URL_RETRIEVAL_STATUS_PAYWALL",
+      "URL_RETRIEVAL_STATUS_SUCCESS",
+      "URL_RETRIEVAL_STATUS_UNSAFE",
+      "URL_RETRIEVAL_STATUS_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "UsageMetadata": {
+   "id": "UsageMetadata",
+   "properties": {
+    "cacheTokensDetails": {
+     "items": {
+      "$ref": "ModalityTokenCount"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "cachedContentTokenCount": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "candidatesTokenCount": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "candidatesTokensDetails": {
+     "items": {
+      "$ref": "ModalityTokenCount"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "promptTokenCount": {
+     "format": "int32",
+     "type": "integer"
+    },
+    "promptTokensDetails": {
+     "items": {
+      "$ref": "ModalityTokenCount"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "serviceTier": {
+     "enum": [
+      "flex",
+      "priority",
+      "standard",
+      "unspecified"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "thoughtsTokenCount": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "toolUsePromptTokenCount": {
+     "format": "int32",
+     "readOnly": true,
+     "type": "integer"
+    },
+    "toolUsePromptTokensDetails": {
+     "items": {
+      "$ref": "ModalityTokenCount"
+     },
+     "readOnly": true,
+     "type": "array"
+    },
+    "totalTokenCount": {
+     "format": "int32",
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "V1mainMediaResolution": {
+   "id": "V1mainMediaResolution",
+   "properties": {
+    "level": {
+     "enum": [
+      "MEDIA_RESOLUTION_HIGH",
+      "MEDIA_RESOLUTION_LOW",
+      "MEDIA_RESOLUTION_MEDIUM",
+      "MEDIA_RESOLUTION_ULTRA_HIGH",
+      "MEDIA_RESOLUTION_UNSPECIFIED"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "VideoFileMetadata": {
+   "id": "VideoFileMetadata",
+   "properties": {
+    "videoDuration": {
+     "format": "google-duration",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "VideoMetadata": {
+   "id": "VideoMetadata",
+   "properties": {
+    "endOffset": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "fps": {
+     "format": "double",
+     "type": "number"
+    },
+    "startOffset": {
+     "format": "google-duration",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "VoiceConfig": {
+   "id": "VoiceConfig",
+   "properties": {
+    "prebuiltVoiceConfig": {
+     "$ref": "PrebuiltVoiceConfig"
+    },
+    "voice": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "Web": {
+   "id": "Web",
+   "properties": {
+    "uri": {
+     "readOnly": true,
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "WebSearch": {
+   "id": "WebSearch",
+   "properties": {},
+   "type": "object"
+  },
+  "WordInfo": {
+   "id": "WordInfo",
+   "properties": {
+    "endOffset": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "startOffset": {
+     "format": "google-duration",
+     "type": "string"
+    },
+    "word": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "items": {
+  "generativelanguage.batches.get": {
+   "flatPath": "v1beta/batches/{batchesId}",
+   "httpMethod": "GET",
+   "id": "generativelanguage.batches.get",
+   "parameterOrder": [
+    "name"
+   ],
+   "parameters": {
+    "name": {
+     "location": "path",
+     "pattern": "^batches/[^/]+$",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "v1beta/{+name}",
+   "response": {
+    "$ref": "Operation"
+   }
+  },
+  "generativelanguage.batches.list": {
+   "flatPath": "v1beta/batches",
+   "httpMethod": "GET",
+   "id": "generativelanguage.batches.list",
+   "parameterOrder": [
+    "name"
+   ],
+   "parameters": {
+    "filter": {
+     "location": "query",
+     "type": "string"
+    },
+    "name": {
+     "location": "path",
+     "pattern": "^batches$",
+     "required": true,
+     "type": "string"
+    },
+    "pageSize": {
+     "format": "int32",
+     "location": "query",
+     "type": "integer"
+    },
+    "pageToken": {
+     "location": "query",
+     "type": "string"
+    },
+    "returnPartialSuccess": {
+     "location": "query",
+     "type": "boolean"
+    }
+   },
+   "path": "v1beta/{+name}",
+   "response": {
+    "$ref": "ListOperationsResponse"
+   }
+  },
+  "generativelanguage.files.delete": {
+   "flatPath": "v1beta/files/{filesId}",
+   "httpMethod": "DELETE",
+   "id": "generativelanguage.files.delete",
+   "parameterOrder": [
+    "name"
+   ],
+   "parameters": {
+    "name": {
+     "location": "path",
+     "pattern": "^files/[^/]+$",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "v1beta/{+name}",
+   "response": {
+    "$ref": "Empty"
+   },
+   "scopes": [
+    "https://www.googleapis.com/auth/devstorage.read_only"
+   ]
+  },
+  "generativelanguage.media.upload": {
+   "flatPath": "v1beta/files",
+   "httpMethod": "POST",
+   "id": "generativelanguage.media.upload",
+   "mediaUpload": {
+    "accept": [
+     "*/*"
+    ],
+    "maxSize": "2147483648",
+    "protocols": {
+     "resumable": {
+      "multipart": true,
+      "path": "/resumable/upload/v1beta/files"
+     },
+     "simple": {
+      "multipart": true,
+      "path": "/upload/v1beta/files"
+     }
+    }
+   },
+   "parameterOrder": [],
+   "parameters": {},
+   "path": "v1beta/files",
+   "request": {
+    "$ref": "CreateFileRequest"
+   },
+   "response": {
+    "$ref": "CreateFileResponse"
+   },
+   "scopes": [
+    "https://www.googleapis.com/auth/devstorage.read_only"
+   ],
+   "supportsMediaUpload": true
+  },
+  "generativelanguage.models.batchGenerateContent": {
+   "flatPath": "v1beta/models/{modelsId}:batchGenerateContent",
+   "httpMethod": "POST",
+   "id": "generativelanguage.models.batchGenerateContent",
+   "parameterOrder": [
+    "model"
+   ],
+   "parameters": {
+    "model": {
+     "location": "path",
+     "pattern": "^models/[^/]+$",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "v1beta/{+model}:batchGenerateContent",
+   "request": {
+    "$ref": "BatchGenerateContentRequest"
+   },
+   "response": {
+    "$ref": "Operation"
+   }
+  },
+  "generativelanguage.models.embedContent": {
+   "flatPath": "v1beta/models/{modelsId}:embedContent",
+   "httpMethod": "POST",
+   "id": "generativelanguage.models.embedContent",
+   "parameterOrder": [
+    "model"
+   ],
+   "parameters": {
+    "model": {
+     "location": "path",
+     "pattern": "^models/[^/]+$",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "v1beta/{+model}:embedContent",
+   "request": {
+    "$ref": "EmbedContentRequest"
+   },
+   "response": {
+    "$ref": "EmbedContentResponse"
+   }
+  },
+  "generativelanguage.models.generateContent": {
+   "flatPath": "v1beta/models/{modelsId}:generateContent",
+   "httpMethod": "POST",
+   "id": "generativelanguage.models.generateContent",
+   "parameterOrder": [
+    "model"
+   ],
+   "parameters": {
+    "model": {
+     "location": "path",
+     "pattern": "^models/[^/]+$",
+     "required": true,
+     "type": "string"
+    }
+   },
+   "path": "v1beta/{+model}:generateContent",
+   "request": {
+    "$ref": "GenerateContentRequest"
+   },
+   "response": {
+    "$ref": "GenerateContentResponse"
+   }
+  }
+ },
+ "kind": "discovery",
+ "meta": {
+  "revision": "20261106",
+  "version": "v1beta"
+ },
+ "retrieved": "2026-11-07",
+ "source": "gemini",
+ "url": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
+ "watch": [
+  "generativelanguage.models.generateContent",
+  "generativelanguage.models.embedContent",
+  "generativelanguage.models.batchGenerateContent",
+  "generativelanguage.batches.get",
+  "generativelanguage.batches.list",
+  "generativelanguage.media.upload",
+  "generativelanguage.files.delete"
+ ]
+}
