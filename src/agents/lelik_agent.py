@@ -38,6 +38,7 @@ from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
+from ..utils.logger import logger
 from .base_agent import BaseAgent
 
 if TYPE_CHECKING:
@@ -122,7 +123,7 @@ class LelikAgent(BaseAgent):
             include_datetime=True,
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
-        native_search = self._native_web_search and self._voice_profile.builtin_web_search
+        native_search = self._native_search_active()
         if native_search:
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
@@ -131,6 +132,18 @@ class LelikAgent(BaseAgent):
             tools.append(_send_to_chat_tool_declaration())
         session = replace(self._voice_profile.session, builtin_search=native_search)
         return {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
+
+    def _native_search_active(self) -> bool:
+        return bool(self._native_web_search and self._voice_profile.builtin_web_search)
+
+    def permitted_intents(self) -> frozenset:
+        """The intents a live call may delegate: what session_config declares (LELIK.allowed_intents, minus
+        search_web_light when the provider searches natively) plus the errand intent of the send_to_chat tool.
+        The declaration only shapes what the model is told; this is what /voice/delegate enforces."""
+        allowed = set(LELIK.allowed_intents or ()) | {Intent.SEND_TO_CHAT}
+        if self._native_search_active():
+            allowed.discard(Intent.SEARCH_WEB_LIGHT)
+        return frozenset(allowed)
 
     async def delegate(
         self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
@@ -144,6 +157,12 @@ class LelikAgent(BaseAgent):
     ) -> VoiceDelegationOutcome:
         """`delegate`, plus whether the result is a failure: /voice/delegate keeps an answer
         for chat only when it is a real one (a failure's text is an error string)."""
+        intent = arguments.get("intent")
+        if not isinstance(intent, str) or intent not in self.permitted_intents():
+            # Enum-like names only in the log: the argument is model output, never echoed as content.
+            shown = intent[:40] if isinstance(intent, str) and intent.isidentifier() else "<invalid>"
+            logger.warning(f"voice delegate refused: intent {shown!r} is outside the voice allowlist")
+            return VoiceDelegationOutcome(text="Tool error: this request is not available in a voice call.", failed=True)
         context: Dict[str, Any] = {
             "user_id": user_id,
             "account_id": account_id,
