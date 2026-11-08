@@ -818,7 +818,7 @@
           if (body.state === "ended") {
             // The relay ended the call, but only hangup closes the SFU adapters (otherwise
             // Cloudflare keeps retrying egress) and deletes the record. Hangup is idempotent.
-            await endCall(true);
+            await endCall(true, "status_ended");
             setState(t("state.ended"));
             renderButton("idle");
           }
@@ -827,7 +827,7 @@
         }
       }
 
-      async function endCall(notifyServer) {
+      async function endCall(notifyServer, trigger = "button") {
         stopRingback();
         // Unconditional, not only via stopRingback(): stopRingback() no-ops once ringback has
         // already stopped (audible detection, or the Live-time fallback/cap below), but the
@@ -850,6 +850,8 @@
             await fetch(`/api/voice/web-call/${endingCallId}/hangup`, {
               method: "POST",
               credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trigger }),
             });
           } catch (e) {
             // best effort — nothing more to do client-side
@@ -986,6 +988,8 @@
               method: "POST",
               keepalive: true,
               credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trigger: "superseded" }),
             });
             return;
           }
@@ -1042,7 +1046,7 @@
           if (!handledState) {
             setState(t("state.could_not_connect"));
           }
-          await endCall(Boolean(callId));
+          await endCall(Boolean(callId), "start_failed");
           renderButton("idle");
         }
       }
@@ -1064,14 +1068,8 @@
       });
 
       window.addEventListener("pagehide", () => {
+        // No hangup here: a backgrounded page keeps its call (VOICE_CALL_CONTROL_CHANNEL_RFC §7.2).
         stopRingback();
-        if (callId) {
-          fetch(`/api/voice/web-call/${callId}/hangup`, {
-            method: "POST",
-            keepalive: true,
-            credentials: "same-origin",
-          });
-        }
       });
 
       applyTranslations();
