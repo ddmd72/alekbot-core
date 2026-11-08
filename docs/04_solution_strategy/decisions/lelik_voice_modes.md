@@ -48,7 +48,9 @@ with a system note: those words are for Lelik (setup such as where they are or w
 clarify), and he answers the caller in their language instead of translating. The button stays pressed until
 Lelik's answer ends; a second press before speaking cancels it; it releases itself after 60 s without speech.
 This replaces the name trigger ("Lelik, …"), which failed live on the first utterance and whenever the name was
-not the first word, and the rule for the other person speaking to Lelik directly. The prompt change ships as a
+not the first word, and the rule for the other person speaking to Lelik directly. Since the live test (2026-11-08),
+every utterance the button does not mark, from either side, also carries a silent translate note, because without
+the button the model still answered phrases it took for questions to it. The prompt change ships as a
 token upload after the relay with the button is live (RFC §12).
 
 ## Alternatives rejected
