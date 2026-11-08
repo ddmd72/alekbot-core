@@ -24,7 +24,8 @@ single-purpose call with its own prompt profile, started from its own page. Mode
 - **Profiles.** `lelik_xai_interpreter` and `lelik_xai_tutor` are `lelik_xai` with the `voice_persona`
   token swapped (`VOICE_PERSONA_INTERPRETER`, `VOICE_PERSONA_TUTOR_ES`) and `LANG_ROLE_FIRST` in the
   `output_language` slot. Both are `non_overridable`, so a user's fixed-language override never reaches
-  a mode, while chat keeps it.
+  a mode, while chat keeps it. Tokens that serve only the plain call's MCP tools (`VOICE_TOOL_DATA_LELIK`,
+  `LELIK_VOICE_MCP_RFC.md` §6) are left out of the mode profiles: a mode gets no MCP tools (O7).
 - **Providers.** Only xAI has `mode_profiles`. OpenAI has no `voice_persona` slot, so
   `prompt_profile_for` raises `UnsupportedVoiceMode`; `prepare` releases the marker and ticket without
   an alert and the route answers 409 `mode_unavailable` (the page shows a distinct message).

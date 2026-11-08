@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Sequence, Set
 
 from src.domain.llm import build_persona_anchor
-from src.domain.log_redaction import redact_for_log
+from src.domain.log_redaction import redact_exception, redact_for_log
 from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.request_context import RequestContext
-from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, session_servers
+from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, pair_session_servers
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
@@ -71,6 +71,12 @@ _WAITING_NOTE = "[Still waiting for the answer to your request.]"
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
 _CANCELLED_TOOL_CALL = "Not run: the caller interrupted before this request was complete."
+
+
+def _config_tokens(config: object) -> tuple:
+    """The call's tokens still on a raw session config, for redaction only; () when there are none."""
+    tokens = config.get(VOICE_MCP_TOKENS_FIELD) if isinstance(config, dict) else None
+    return tuple(t for t in tokens.values() if isinstance(t, str)) if isinstance(tokens, dict) else ()
 
 
 def _request_label(arguments: dict) -> str:
@@ -201,18 +207,45 @@ class VoiceSessionService:
     ) -> None:
         """`playback` is fed by the transport (bytes sent, marks echoed back); this
         loop only reads it. `send_cue_audio` plays filler that playback never counts."""
-        config = await self._control_plane.fetch_session_config(ticket)
-        # The call's remote MCP servers with their tokens (LELIK_VOICE_MCP_RFC §4): paired here, then the tokens leave
-        # the config, so the only holder for the call's life is the session object (the call state never has one).
-        mcp_servers = session_servers(config)
-        config = {key: value for key, value in config.items() if key != VOICE_MCP_TOKENS_FIELD}
-        spec = VoiceSessionSpec.from_dict(config["voice"]) if config.get("voice") else LEGACY_VOICE_SESSION
-        relay_owned = spec.turn_ownership is TurnOwnership.RELAY
-        state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
-                           persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
-        async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
+        config = fetched = await self._control_plane.fetch_session_config(ticket)
+        # From here on the call has tokens (minted at the fetch): every path ends in submit_transcript, which also
+        # revokes them (LELIK_VOICE_MCP_RFC §5.3). Until _run_call takes over, a failure is reported here.
+        try:
+            # The call's remote MCP servers with their tokens (§4): paired and bound here, then the tokens leave the
+            # config, so the only holders for the call's life are the session object and its redaction.
+            mcp_servers, dropped = pair_session_servers(config)
+            config = {key: value for key, value in config.items() if key != VOICE_MCP_TOKENS_FIELD}
+            for label in dropped:
+                logger.warning(f"voice call {fingerprint(ticket)}: remote tool server {label} dropped")
+            spec = VoiceSessionSpec.from_dict(config["voice"]) if config.get("voice") else LEGACY_VOICE_SESSION
+            relay_owned = spec.turn_ownership is TurnOwnership.RELAY
+            state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
+                               persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
+            context = RequestContext(user_id=config["user_id"], account_id=config["account_id"])
+        except Exception as exc:
+            logger.error(f"voice call {fingerprint(ticket)}: session config unusable: "
+                         f"{redact_exception(exc, secrets=_config_tokens(fetched))}")
+            await self._report_unopened_call(ticket, fetched)
+            raise
+        # The fetched config still holds the tokens: not kept for the call's life.
+        del fetched
+        async with context:
             await self._run_call(ticket, config, spec, inbound_audio, send_outbound_audio, clear_outbound_audio,
                                  state, send_cue_audio, mcp_servers=mcp_servers)
+
+    async def _report_unopened_call(self, ticket: str, config: dict) -> None:
+        """The call end for a call that failed before its session existed: the main side releases the one-call marker
+        and revokes the call's tokens. Its own failure is logged and swallowed, so the original error propagates."""
+        try:
+            await self._control_plane.submit_transcript(
+                call_id=ticket,
+                user_id=str(config.get("user_id") or ""),
+                account_id=str(config.get("account_id") or ""),
+                buffer=VoiceCallBuffer(call_id=ticket),
+            )
+        except Exception as exc:
+            logger.error(f"voice call {fingerprint(ticket)}: reporting the failed call end failed: "
+                         f"{type(exc).__name__}")
 
     async def _run_call(
         self,
@@ -227,15 +260,19 @@ class VoiceSessionService:
         *,
         mcp_servers: Sequence[RemoteToolServer] = (),
     ) -> None:
-        session = self._session_factory(spec)
         buffer = VoiceCallBuffer(call_id=ticket)
+        session: Optional[RealtimeSessionPort] = None
         forward_task: Optional[asyncio.Task] = None
         consume_task: Optional[asyncio.Task] = None
         watchdog_task: Optional[asyncio.Task] = None
         cue_task: Optional[asyncio.Task] = None
         control_link: Optional["CallControlLink"] = None
+        # The call's tokens, only to scrub them by value from provider and exception text (§5.4).
+        secrets = tuple(server.token for server in mcp_servers if server.token)
 
         try:
+            # Inside the try: a factory that raises must still reach submit_transcript (the revoke) below.
+            session = self._session_factory(spec)
             # First, so the page's control socket can attach while the provider session opens. No feature is
             # offered yet: the channel is a skeleton until "Ask Lelik" (RFC §11 slice 4).
             if self._control_hub is not None and config.get("control_token_sha256"):
@@ -258,7 +295,7 @@ class VoiceSessionService:
             except Exception as exc:
                 # Type and a redacted message: an exception text may carry a URL, a header or a token (§5.4).
                 logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: "
-                             f"{type(exc).__name__}: {redact_for_log(exc)}")
+                             f"{redact_exception(exc, secrets=secrets)}")
                 raise
 
             # Inbound forwarding and outbound event consumption are two independent
@@ -279,7 +316,8 @@ class VoiceSessionService:
 
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
             consume_task = asyncio.ensure_future(
-                self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state)
+                self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state,
+                                     secrets=secrets)
             )
             # The watchdog never ends on its own; the call ends with the audio streams.
             if state.turn_ownership is TurnOwnership.RELAY:
@@ -295,7 +333,7 @@ class VoiceSessionService:
             loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
             if state.pending_barge_in is not None:
                 loops.append(state.pending_barge_in)
-            await self._cancel_all(ticket, loops)
+            await self._cancel_all(ticket, loops, secrets=secrets)
             # The page learns the call ended (`bye{call_ended}`); its token is forgotten. Never raises.
             if control_link is not None and self._control_hub is not None:
                 await self._control_hub.close(control_link)
@@ -315,7 +353,8 @@ class VoiceSessionService:
             #    call's voice MCP tokens (LELIK_VOICE_MCP_RFC §5.3), so a close that raises must not
             #    skip it: logged here, re-raised after the report.
             try:
-                await session.close()
+                if session is not None:
+                    await session.close()
             except Exception as exc:
                 logger.error(f"voice call {fingerprint(ticket)}: closing the realtime session failed: "
                              f"{type(exc).__name__}", exc_info=True)
@@ -328,7 +367,7 @@ class VoiceSessionService:
                     buffer=buffer,
                 )
 
-    async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task]) -> None:
+    async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task], *, secrets: Sequence[str] = ()) -> None:
         for task in tasks:
             if not task.done():
                 task.cancel()
@@ -344,7 +383,7 @@ class VoiceSessionService:
             # itself, and still needs to be visible in logs.
             if isinstance(result, Exception):
                 logger.error(f"voice call {fingerprint(ticket)}: session loop crashed: "
-                             f"{type(result).__name__}: {redact_for_log(result)}")
+                             f"{redact_exception(result, secrets=secrets)}")
 
     async def _consume_events(
         self,
@@ -355,6 +394,8 @@ class VoiceSessionService:
         send_outbound_audio: Callable[[AudioFrame], Awaitable[None]],
         clear_outbound_audio: Callable[[], Awaitable[None]],
         state: _CallState,
+        *,
+        secrets: Sequence[str] = (),
     ) -> None:
         turn_start: Optional[datetime] = None
         pending_request_text = ""
@@ -479,10 +520,10 @@ class VoiceSessionService:
                 # without them. The label only, and the provider's text with any URL or token stripped (§5.4).
                 logger.warning(f"voice call {fingerprint(ticket)}: remote tool server {event.payload.get('label')} "
                                f"unavailable, the call goes on without it: "
-                               f"{redact_for_log(event.payload.get('reason', ''))}")
+                               f"{redact_for_log(event.payload.get('reason', ''), secrets=secrets)}")
             elif event.type == "error":
                 # The provider may echo the session payload: redacted again here, whatever the adapter did.
-                message = redact_for_log(event.payload.get("message"))
+                message = redact_for_log(event.payload.get("message"), secrets=secrets)
                 logger.error(f"voice call {fingerprint(ticket)}: provider error {message}")
                 await self._alert_sink.post(f"Voice call {fingerprint(ticket)} provider error: {message}")
                 return
@@ -524,7 +565,8 @@ class VoiceSessionService:
             try:
                 await self._barge_in(session, state, clear_outbound_audio)
             except Exception as exc:
-                logger.error(f"voice call {fingerprint(state.ticket)}: barge-in failed: {exc}", exc_info=True)
+                logger.error(f"voice call {fingerprint(state.ticket)}: barge-in failed: {redact_exception(exc)}",
+                             exc_info=True)
                 raise
 
     async def _reply_to_turn(self, session: RealtimeSessionPort, state: _CallState, reason: str) -> None:
@@ -692,7 +734,8 @@ class VoiceSessionService:
             raise
         except Exception as exc:
             # Nothing gathers a finished delegation task, so an error here is logged or lost.
-            logger.error(f"voice call {fingerprint(ticket)}: answer to delegation {call_id} not delivered: {exc}", exc_info=True)
+            logger.error(f"voice call {fingerprint(ticket)}: answer to delegation {call_id} not delivered: "
+                         f"{redact_exception(exc)}", exc_info=True)
 
     async def _fetch_answer(
         self, ticket: str, config: dict, state: _CallState, call_id: str, arguments: dict, call_context: list,
@@ -715,7 +758,7 @@ class VoiceSessionService:
             return _DELEGATION_TIMED_OUT
         except Exception as exc:
             # No retry: it re-runs the whole pipeline (double spend, double chat copy).
-            logger.error(f"voice call {fingerprint(ticket)}: delegation {call_id} failed: {exc}")
+            logger.error(f"voice call {fingerprint(ticket)}: delegation {call_id} failed: {redact_exception(exc)}")
             return _DELEGATION_FAILED
         finally:
             # The answer (or its failure) is in the relay's hands: nothing left to abandon.
@@ -727,7 +770,8 @@ class VoiceSessionService:
         try:
             await asyncio.wait_for(self._control_plane.abandon_delegation(ticket, call_id), _ABANDON_TIMEOUT_S)
         except Exception as exc:
-            logger.warning(f"voice call {fingerprint(ticket)}: abandoning delegation {call_id} failed: {exc!r}")
+            logger.warning(f"voice call {fingerprint(ticket)}: abandoning delegation {call_id} failed: "
+                           f"{redact_exception(exc)}")
 
     async def _resolve_late_answer(
         self, session: RealtimeSessionPort, state: _CallState, answer: _Answer, elapsed_ms: int,

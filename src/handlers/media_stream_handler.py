@@ -17,6 +17,7 @@ import asyncio
 import json
 from typing import AsyncIterator
 
+from src.domain.log_redaction import redact_traceback
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.services.voice_session_service import VoiceSessionService
@@ -131,8 +132,10 @@ class MediaStreamHandler:
                     playback.record_played(msg["mark"]["name"])
                 elif event == "stop":
                     break
-        except Exception:
-            logger.error(f"media stream for ticket={fingerprint(ticket or '')} failed", exc_info=True)
+        except Exception as exc:
+            # A redacted traceback instead of exc_info: the error may come from the session open, whose text can
+            # carry a URL, a header or a call's token (LELIK_VOICE_MCP_RFC §5.4).
+            logger.error(f"media stream for ticket={fingerprint(ticket or '')} failed: {redact_traceback(exc)}")
             raise
         finally:
             await inbound_queue.put(None)

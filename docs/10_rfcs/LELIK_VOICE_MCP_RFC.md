@@ -208,6 +208,18 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
   as text input, the priced leg already read from `response.done` (`xai_realtime_adapter.py:41-60`); re-billing on
   later turns is unknown. Saved: the `MemorySearchAgent` LLM call and the Smart chain per question.
 - **Latency** (*unknown*): expected low seconds per call versus seconds (memory) and tens of seconds (drive) today.
+- **For phase B to check (not built in S3).** (a) A mid-call provider switch: the servers and tokens are fixed at
+  `session.update`; what a provider change during a live call does to them is not handled. (b) Whether xAI reports an
+  MCP call as `response.function_call_arguments.done` named after an MCP tool (as it does for its built-in searches):
+  the adapter does not filter MCP tool names there, so such an event would reach the relay as a delegation it cannot run.
+- **Hardening after the S3 review (built).** The relay scrubs the call's exact tokens (and each token's payload and
+  signature segment) from provider and exception text before the shape rules, with a dotted-pair backstop; each token
+  is bound to its server (its unverified `aud` must be `voice:` + the descriptor's URL; one descriptor per label; a
+  mismatch drops that server with a WARNING naming the label); every exception line of the session loop logs the type
+  and a redacted message, and the two stream handlers log a redacted traceback instead of `exc_info`; a failure before
+  the session exists still reports the call end, so the tokens are revoked. Three session-loop lines (session close,
+  barge-in, answer delivery) still add `exc_info`, whose traceback is not redacted: none of them handles provider
+  text that carries a token, and one is pinned by a test.
 
 ## 9. Probe (two phases; cents)
 

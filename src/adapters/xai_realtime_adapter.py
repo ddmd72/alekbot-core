@@ -1,5 +1,5 @@
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Tuple
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -133,6 +133,8 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._server_labels: frozenset = frozenset()
         # item_id of an mcp_list_tools conversation item -> its server label, for list events that name the item only.
         self._list_items: Dict[str, str] = {}
+        # The call's exact tokens, held only to scrub them by value from provider text before it is logged.
+        self._secrets: Tuple[str, ...] = ()
 
     @property
     def _socket(self) -> ClientConnection:
@@ -162,6 +164,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         # even with built-ins alone. Nothing here is logged: the mcp entries carry the call's bearer tokens.
         builtins = list(_BUILTIN_TOOLS) if self._builtin_search else []
         self._server_labels = frozenset(server.label for server in mcp_servers)
+        self._secrets = tuple(server.token for server in mcp_servers if server.token)
         if builtins or tools or mcp_servers:
             session["tools"] = [*builtins, *({"type": "function", **tool} for tool in tools),
                                 *(_mcp_entry(server) for server in mcp_servers)]
@@ -231,7 +234,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             return None
         if event_type == "error":
             # xAI may echo what it was sent (the session payload with the mcp entries' tokens): redacted, never raw.
-            message = redact_for_log(event.get("error", event))
+            message = redact_for_log(event.get("error", event), secrets=self._secrets)
             logger.error(f"xAI realtime error event: {message}")
             return RealtimeSessionEvent(type="error", payload={"message": message})
         # Everything else, response.mcp_call.* included, is not needed by the session loop: dropped, never logged.
@@ -256,7 +259,8 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         label = self._server_label(event)
         if event_type == _LIST_TOOLS_FAILED:
             error = event.get("error")
-            reason = redact_for_log((error.get("message") if isinstance(error, dict) else error) or "no error text")
+            reason = redact_for_log((error.get("message") if isinstance(error, dict) else error) or "no error text",
+                                    secrets=self._secrets)
             return RealtimeSessionEvent(type="remote_tools_failed", payload={"label": label, "reason": reason})
         if event_type == _LIST_TOOLS_COMPLETED:
             logger.info(f"xAI realtime MCP tools listed: server={label}")
