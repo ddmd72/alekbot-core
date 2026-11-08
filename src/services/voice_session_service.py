@@ -39,7 +39,10 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 # one left both sides silent for 10-20 s on every live call (2026-09-23).
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 # The web page (VOICE_WEB_TRANSPORT_RFC §5.3 #6): the caller pressed "call"; Lelik still opens.
-_WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Speak first.]"
+# "Greet them in one short sentence": with "Speak first." alone the provider answered a bare one-word "listening"
+# (owner, 2026-11-08: a short greeting sentence, as before).
+_WEB_PICKUP_NOTE = ("[The caller has just connected to you from the web page. Speak first: greet them in one short "
+                    "sentence.]")
 # "Ask Lelik" (VOICE_CALL_CONTROL_CHANNEL_RFC §5.3, owner Q2): the caller pressed the button on the interpreter page,
 # and this note goes in when their next words start, so it lands right before the turn it marks. A system-role item
 # like the pickup note; it never enters a user message, and it is not deleted afterwards (a delete of a missing item
