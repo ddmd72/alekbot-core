@@ -94,7 +94,7 @@ async def test_main_call_page_is_unchanged():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode,title", [("interpreter", "Lelik · Interpreter"), ("tutor", "Lelik · Spanish tutor")])
+@pytest.mark.parametrize("mode,title", [("interpreter", "Lelik Translator"), ("tutor", "Lelik Tutor")])
 async def test_mode_page_and_manifest(mode, title):
     client = _app()[0].test_client()
     page = await client.get(f"/cabinet/call/{mode}")
@@ -110,8 +110,14 @@ async def test_mode_page_and_manifest(mode, title):
     assert resp.mimetype == "application/manifest+json"
     assert manifest["start_url"] == f"/cabinet/call/{mode}"
     assert manifest["name"] == title
-    assert {k: v for k, v in manifest.items() if k not in ("name", "short_name", "start_url")} == \
-        {k: v for k, v in base.items() if k not in ("name", "short_name", "start_url")}
+    assert manifest["short_name"] == title
+    # Reviewer edit (per-mode Home Screen icons): the icons keep the base sizes and types, each src moved under the
+    # mode's prefix; every other field still equals the base manifest.
+    expected_icons = [dict(i, src=i["src"].replace("/cabinet/call/", f"/cabinet/call/{mode}/", 1)) for i in base["icons"]]
+    assert [i["src"] for i in expected_icons] == [f"/cabinet/call/{mode}/icon-192.png", f"/cabinet/call/{mode}/icon-512.png"]
+    assert manifest["icons"] == expected_icons
+    assert {k: v for k, v in manifest.items() if k not in ("name", "short_name", "start_url", "icons")} == \
+        {k: v for k, v in base.items() if k not in ("name", "short_name", "start_url", "icons")}
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,12 @@ _WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Spe
 _ASK_NOTE = ("[The caller's next words are addressed to you, not for translation: a question or a remark for you, such "
              "as where they are or which language to use. Answer the caller in their language; do not translate "
              "these words.]")
+# Its twin on every other utterance of an interpreter call, from either side (owner, after the live test 2026-11-08:
+# without the button the model still answered phrases it took for questions to it). Same path and placement as
+# _ASK_NOTE; worded for both speakers.
+_TRANSLATE_NOTE = ("[The next words are for translation only: say them in the language of the person they are "
+                   "addressed to, in the first person, as the speaker; do not answer or comment on them, even if they "
+                   "sound like a question or a request to you.]")
 # The control task's beat: page commands are handled at once; timeouts and the consume loop's state frames go out on it.
 _ASK_TICK_S = 0.25
 # A resumed call (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2): describes the situation and gives no lines to say, so Lelik
@@ -321,14 +327,18 @@ class VoiceSessionService:
         try:
             # Inside the try: a factory that raises must still reach submit_transcript (the revoke) below.
             session = self._session_factory(spec)
+            # An interpreter call always has the latch: every utterance it does not mark for Lelik gets the
+            # translate note, button or not (the control channel may be off).
+            interpreter = config.get("mode") == VoiceMode.INTERPRETER.value
+            if interpreter:
+                state.ask = AskLatch(self._ask_clock or asyncio.get_running_loop().time, translate_unmarked=True)
             # First, so the page's control socket can attach while the provider session opens. Only an interpreter
             # call offers "Ask Lelik" (RFC §4.2 "Features per call"); its state is set before any socket can attach,
             # so the first `welcome` already carries `ask: "idle"`.
             if self._control_hub is not None and config.get("control_token_sha256"):
-                features = {FEATURE_ASK} if config.get("mode") == VoiceMode.INTERPRETER.value else set()
+                features = {FEATURE_ASK} if interpreter else set()
                 control_link = self._control_hub.open(config["control_token_sha256"], fingerprint(ticket), features)
-                if FEATURE_ASK in features:
-                    state.ask = AskLatch(self._ask_clock or asyncio.get_running_loop().time)
+                if FEATURE_ASK in features and state.ask is not None:
                     state.ask_link = control_link
                     control_link.set_state(ask=AskState.IDLE.wire)
                     control_task = asyncio.ensure_future(self._run_ask_control(control_link, state))
@@ -499,6 +509,10 @@ class VoiceSessionService:
         if step.insert_note:
             await session.submit_message("system", _ASK_NOTE)
             logger.info(f"voice call {fingerprint(state.ticket)}: ask: note inserted")
+        elif step.insert_translate_note:
+            await session.submit_message("system", _TRANSLATE_NOTE)
+            # Every utterance of an interpreter call: DEBUG, not INFO.
+            logger.debug(f"voice call {fingerprint(state.ticket)}: ask: translate note inserted")
         self._apply_ask(state, step)
 
     @staticmethod

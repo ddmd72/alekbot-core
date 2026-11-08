@@ -14,8 +14,11 @@ single-purpose call with its own prompt profile, started from its own page. Mode
   (`/cabinet/call/<mode>/manifest.webmanifest`, `start_url` = that page), so a Home Screen icon opens
   that mode directly. `/cabinet/call/modes` lists the modes (own manifest too). The mode page is
   `call.html` with the manifest link swapped and `window.VOICE_MODE` set; after a login it returns to
-  itself. The main call page `/cabinet/call` is unchanged. All of these routes are public like the
-  existing manifest and icons; the API calls behind them need the Cabinet JWT.
+  itself. Each mode page also has its own Home Screen icon (`/cabinet/call/<mode>/icon-<size>.png`:
+  the call robot with the visor screen in the mode's colour, so installed icons differ at a glance) and
+  name (Lelik / Lelik Translator / Lelik Tutor); the apple-touch-icon and the title meta are swapped
+  with the manifest link. The main call page `/cabinet/call` is unchanged. All of these routes are
+  public like the existing manifest and icons; the API calls behind them need the Cabinet JWT.
 - **Request path.** `POST /api/voice/web-call` takes an optional `mode` in the body (default `lelik`).
   An unknown value answers 400 `unknown_mode`. The mode goes through
   `VoiceCallSetupService.prepare` to `LelikAgent.session_config(mode=...)`, which builds the prompt
@@ -45,7 +48,9 @@ with a system note: those words are for Lelik (setup such as where they are or w
 clarify), and he answers the caller in their language instead of translating. The button stays pressed until
 Lelik's answer ends; a second press before speaking cancels it; it releases itself after 60 s without speech.
 This replaces the name trigger ("Lelik, …"), which failed live on the first utterance and whenever the name was
-not the first word, and the rule for the other person speaking to Lelik directly. The prompt change ships as a
+not the first word, and the rule for the other person speaking to Lelik directly. Since the live test (2026-11-08),
+every utterance the button does not mark, from either side, also carries a silent translate note, because without
+the button the model still answered phrases it took for questions to it. The prompt change ships as a
 token upload after the relay with the button is live (RFC §12).
 
 ## Alternatives rejected
