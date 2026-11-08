@@ -398,6 +398,8 @@ async def main():
                         response = await client.get(_relay_http_url)
                     return response.status_code
 
+                from src.services.voice_resume_service import VoiceResumeService
+
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
@@ -415,6 +417,7 @@ async def main():
                         digest_key=app.digest_key,
                         voice_mcp_tokens=voice_mcp_tokens,
                         voice_mcp_minting=voice_mcp_tools_enabled(),
+                        resume_service=VoiceResumeService(voice_ephemeral_store),
                     )
                 )
                 logger.info(

@@ -13,6 +13,7 @@ from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
+from src.domain.voice_resume import RESUME_CONFIG_FIELD
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.alert_sink import AlertSinkPort
@@ -30,6 +31,10 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 # The web page (VOICE_WEB_TRANSPORT_RFC §5.3 #6): the caller pressed "call"; Lelik still opens.
 _WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Speak first.]"
+# A resumed call (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2): describes the situation and gives no lines to say, so Lelik
+# opens in his own words and shows he is still in the topic.
+_RESUME_NOTE = ("[The call dropped and the caller has just dialled back. The conversation above is the same one, "
+                "continuing. Speak first, in your own words, and show you know where it stopped.]")
 _WATCHDOG_TICK_S = 0.25
 # Thinking cue: 20 ms μ-law frames, paced in real time with a short lead, so stopping it
 # never leaves more than ~100 ms queued in front of Lelik's first word.
@@ -119,6 +124,8 @@ class _CallState:
     # send_to_chat errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
     # nothing waits for them, so no dispatch filler, no waiting notes, no abandon.
     errands: Set[asyncio.Task] = field(default_factory=set)
+    # The provider's conversation id (xAI), reported with the transcript so a re-dial can resume.
+    resume_handle: Optional[str] = None
 
 
 class VoiceSessionService:
@@ -223,10 +230,13 @@ class VoiceSessionService:
             # and submit_transcript() below - otherwise the relay's one-call-per-user
             # marker (RFC §3) only releases via TTL instead of immediately, and the
             # failure leaves no record on the main-service side.
+            resume_handle = (config.get(RESUME_CONFIG_FIELD) or {}).get("handle")
             try:
+                # The handle goes only when there is one: a provider without resumption never sees the argument.
                 await session.open(instructions=config["instructions"],
                                    reasoning_effort=self._reasoning_effort or spec.reasoning_effort,
-                                   tools=config.get("tools", []))
+                                   tools=config.get("tools", []),
+                                   **({"resume_handle": resume_handle} if resume_handle else {}))
             except Exception as exc:
                 logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: {exc}")
                 raise
@@ -239,12 +249,23 @@ class VoiceSessionService:
             # loop exit never gives the forwarding task a chance to actually run
             # if nothing in the receive loop truly suspends the event loop first -
             # asyncio.wait() below is what forces that handoff.
-            if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
-                # A user turn, not system text: live, the caller's own request changed how
-                # Lelik spoke where the same rule as system text did not (2026-09-25).
-                await session.submit_message("user", self._caller_opening)
-            pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
-            await session.submit_message("system", pickup_note)
+            resumed = bool(resume_handle) and session.resumed
+            if resume_handle:
+                if resumed:
+                    logger.info(f"voice call {fingerprint(ticket)}: resumed the earlier conversation")
+                else:
+                    # An unknown or expired id raises no error on the provider: the call is simply fresh.
+                    logger.warning(f"voice call {fingerprint(ticket)}: resume: not honoured, opening fresh")
+            if resumed:
+                # The earlier conversation, caller opening included, is already in the provider's context.
+                await session.submit_message("system", _RESUME_NOTE)
+            else:
+                if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
+                    # A user turn, not system text: live, the caller's own request changed how
+                    # Lelik spoke where the same rule as system text did not (2026-09-25).
+                    await session.submit_message("user", self._caller_opening)
+                pickup_note = _WEB_PICKUP_NOTE if config.get("call_kind") == "web" else _PICKUP_NOTE
+                await session.submit_message("system", pickup_note)
             await self._reply_to_turn(session, state, "pickup")
 
             forward_task = asyncio.ensure_future(self._forward_inbound(session, inbound_audio))
@@ -293,6 +314,9 @@ class VoiceSessionService:
                     user_id=config["user_id"],
                     account_id=config["account_id"],
                     buffer=buffer,
+                    # Only a provider that issued a handle adds the arguments (other calls report exactly as before).
+                    **({"resume_handle": state.resume_handle, "resume_provider": spec.provider}
+                       if state.resume_handle else {}),
                 )
 
     async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task]) -> None:
@@ -378,6 +402,9 @@ class VoiceSessionService:
                     state.pending_barge_in = None
                     state.speech_dismissed = True
                     logger.info(f"voice call {fingerprint(ticket)}: speech too short to interrupt, Lelik keeps talking")
+            elif event.type == "resume_handle":
+                # Kept for the end-of-call report, never logged (VOICE_CALL_CONTROL_CHANNEL_RFC §9).
+                state.resume_handle = event.payload["handle"]
             elif event.type == "turn_committed":
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     # The provider is already replying (it starts before the commit arrives).
