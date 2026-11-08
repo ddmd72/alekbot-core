@@ -69,3 +69,32 @@ async def test_modes_manifest_keeps_the_call_icons():
     resp = await app.test_client().get("/cabinet/call/modes/manifest.webmanifest")
     assert [i["src"] for i in json.loads(await resp.get_data())["icons"]] == [
         "/cabinet/call/icon-192.png", "/cabinet/call/icon-512.png"]
+
+
+NAMES = {"interpreter": "Lelik Translator", "tutor": "Lelik Tutor"}
+TITLE_META = '<meta name="apple-mobile-web-app-title" content="{}" />'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", MODES)
+async def test_mode_page_title_meta_is_the_mode_name(mode):
+    html = (await (await _app()[0].test_client().get(f"/cabinet/call/{mode}")).get_data()).decode()
+    assert TITLE_META.format(NAMES[mode]) in html
+    assert TITLE_META.format("Lelik") not in html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", MODES)
+async def test_mode_manifest_names_are_the_mode_name(mode):
+    resp = await _app()[0].test_client().get(f"/cabinet/call/{mode}/manifest.webmanifest")
+    manifest = json.loads(await resp.get_data())
+    assert manifest["name"] == manifest["short_name"] == NAMES[mode]
+
+
+@pytest.mark.asyncio
+async def test_main_call_page_and_manifest_keep_the_name_lelik():
+    client = _app()[0].test_client()
+    html = (await (await client.get("/cabinet/call")).get_data()).decode()
+    manifest = json.loads(await (await client.get("/cabinet/call/manifest.webmanifest")).get_data())
+    assert TITLE_META.format("Lelik") in html
+    assert manifest["short_name"] == "Lelik"

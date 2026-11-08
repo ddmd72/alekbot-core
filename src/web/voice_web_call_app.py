@@ -27,8 +27,8 @@ from src.web.cabinet_auth import make_auth_required
 
 _TICKET_TTL_S = 300
 _ICON_SIZES = (180, 192, 512)
-# Modes with their own page; the page title doubles as the Home Screen short name.
-_MODE_PAGES = {VoiceMode.INTERPRETER: "Interpreter", VoiceMode.TUTOR: "Spanish tutor"}
+# Modes with their own page, mapped to their Home Screen name (manifest name and short_name, title meta).
+_MODE_PAGES = {VoiceMode.INTERPRETER: "Lelik Translator", VoiceMode.TUTOR: "Lelik Tutor"}
 
 
 # Closed set of /hangup triggers the page may report (VOICE_CALL_CONTROL_CHANNEL_RFC §7.1).
@@ -71,12 +71,14 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
 
     # Mode pages: call.html with the mode injected (its manifest link swapped, a one-line script
     # setting the mode). Explicit routes per mode: a catch-all would shadow the icon/manifest routes.
-    def _mode_page(mode: VoiceMode):
+    def _mode_page(mode: VoiceMode, title: str):
         async def view():
             with open(os.path.join(static_dir, "call.html"), encoding="utf-8") as f:
                 html = f.read()
             html = html.replace("/cabinet/call/manifest.webmanifest", f"/cabinet/call/{mode.value}/manifest.webmanifest", 1)
             html = html.replace("/cabinet/call/icon-180.png", f"/cabinet/call/{mode.value}/icon-180.png", 1)
+            html = html.replace('<meta name="apple-mobile-web-app-title" content="Lelik" />',
+                                f'<meta name="apple-mobile-web-app-title" content="{title}" />', 1)
             html = html.replace("</head>", f'<script>window.VOICE_MODE = "{mode.value}";</script>\n  </head>', 1)
             return Response(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
         return view
@@ -100,9 +102,9 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         return view
 
     for _mode, _title in _MODE_PAGES.items():
-        bp.add_url_rule(f"/cabinet/call/{_mode.value}", f"call_page_{_mode.value}", _mode_page(_mode))
+        bp.add_url_rule(f"/cabinet/call/{_mode.value}", f"call_page_{_mode.value}", _mode_page(_mode, _title))
         bp.add_url_rule(f"/cabinet/call/{_mode.value}/manifest.webmanifest", f"call_manifest_{_mode.value}",
-                        _manifest(f"/cabinet/call/{_mode.value}", f"Lelik · {_title}", _title,
+                        _manifest(f"/cabinet/call/{_mode.value}", _title, _title,
                                   icon_prefix=f"/cabinet/call/{_mode.value}"))
         bp.add_url_rule(f"/cabinet/call/{_mode.value}/icon-<int:size>.png", f"call_icon_{_mode.value}",
                         _mode_icon(_mode))
