@@ -121,6 +121,9 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
                 html = f.read()
             html = html.replace("/cabinet/call/manifest.webmanifest", f"/cabinet/call/{mode.value}/manifest.webmanifest", 1)
             html = html.replace("/cabinet/call/icon-180.png", f"/cabinet/call/{mode.value}/icon-180.png", 1)
+            # The avatar in the page itself shows the mode's icon too, not Lelik's (owner, 2026-11-08).
+            html = html.replace('id="avatar" src="/cabinet/call/icon-192.png"',
+                                f'id="avatar" src="/cabinet/call/{mode.value}/icon-192.png"', 1)
             html = html.replace('<meta name="apple-mobile-web-app-title" content="Lelik" />',
                                 f'<meta name="apple-mobile-web-app-title" content="{title}" />', 1)
             html = html.replace("</head>", f'<script>window.VOICE_MODE = "{mode.value}";</script>\n  </head>', 1)
