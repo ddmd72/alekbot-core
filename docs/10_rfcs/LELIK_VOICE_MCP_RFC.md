@@ -84,6 +84,13 @@ wraps every tool as `{"type": "function", **tool}` (`src/adapters/xai_realtime_a
    session sent, else `unknown`; the error text redacted); the relay logs one WARNING with the label and the call goes on.
    `mcp_list_tools.completed` is one INFO line with the label; `mcp_list_tools.in_progress` and `response.mcp_call.*` are
    dropped without logging their payload. The descriptions are `domain/voice_mcp_servers._DESCRIPTIONS`.
+   *Amended (fix/voice-speak-tool-results):* the response that makes an MCP call can end (`response.done`) before the
+   call finishes, and xAI starts no follow-up response: a live call left the results unspoken until the caller asked
+   again (the OpenAI Realtime MCP guide says the same of its API). The adapter now reads the call events: `response_done`
+   carries `remote_tools` (which calls are still running, whether the response spoke after them) and each finished call
+   is one `remote_tool_done` event with its label. The relay sends `response.create` once every call has finished and
+   the floor is free (`VoiceSessionService._reply_if_owed`), or after `_REMOTE_TOOL_WAIT_S` when a call is never
+   reported finished. Log lines carry labels and durations only, never a payload.
 
 **Allowed tools** (O2; sent as `allowed_tools` *and* carried in the token, §5.3, so xAI's filter is not the guarantee):
 
