@@ -24,6 +24,11 @@ tools take `wide`, `find_passages` also `batch` (§14.2), and both declare `maxR
 E17); their arguments go to the result's paging lines (`ConnectorPaging`). The query and question are never logged; the ref or folder label is logged as `DriveOperations._call` logs it in chat (§9). Input is liberal (`src/composition/CLAUDE.md`): flat strings, defaults, normalising
 validators; an empty required ref is a correctable line, not a protocol error.
 
+A voice token (LELIK_VOICE_MCP_RFC §5.3): the verifier routes a `voice-mcp` kid to the voice token service only. A
+verified voice token's call refuses a tool outside its `tools` claim with the neutral REFUSED line before any read, runs
+with the drive audience unset (the chat's own reads, O3: the Cabinet's "Connector access" does not apply), is cut at
+`VOICE_RESULT_MAX_CHARS`, and its span and log line carry `client=voice`. Every other token runs as above.
+
 `get_note` (`read_note_for_connector`, the chat's rules and refusal classes): `drive:` refs only, any other ref answers
 the neutral refusal; a `drive:` ref's item is read under the connector audience first (§7.5). A ref that is not a drive
 ref (on `open_drive_file` too), an item outside connector access and an item that does not exist answer the same
@@ -38,6 +43,7 @@ never logged.
 
 import asyncio
 import time
+from contextlib import nullcontext
 from typing import Annotated, Any, Awaitable, Callable, Dict, Optional, Tuple, Union
 from urllib.parse import urlparse
 
@@ -66,8 +72,9 @@ from ..domain.drive_wide_batch import parse_batch, parse_wide
 from ..domain.drive_withheld import Withheld
 from ..domain.exceptions import ConnectorTextsUnavailable, DriveLinkFolder, DriveLinkRefused
 from ..domain.mcp import normalize_phrase
-from ..domain.mcp_resource import DRIVE_PATH, drive_resource_uri
+from ..domain.mcp_resource import DRIVE_PATH, MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
+from ..domain.voice_mcp_token import VOICE_RESULT_MAX_CHARS, McpTokenKind, tool_permitted
 from ..domain.user_drive import (
     DriveAccessRefused,
     DriveItemNotFoundError,
@@ -76,11 +83,12 @@ from ..domain.user_drive import (
     DriveRefRefused,
 )
 from ..services.mcp_authorization_service import MCPAuthorizationService
+from ..services.voice_mcp_token_service import VoiceMcpTokenService, is_voice_token
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..infrastructure.drive_note_tools import read_note_for_connector
 from .drive_connector_tools import DriveConnectorTools
-from .mcp_sdk_oauth_provider import AlekAccessToken
+from .mcp_sdk_oauth_provider import AlekAccessToken, verify_voice_token
 from .mcp_setup import DRIVE_SCOPE, build_transport_security
 from .token_text_fastmcp import TokenTextFastMCP
 
@@ -112,13 +120,19 @@ _Joined = Annotated[str, BeforeValidator(_joined)]
 
 
 class DriveTokenVerifier:
-    """Satisfies mcp.server.auth.provider.TokenVerifier for the drive resource."""
+    """Satisfies mcp.server.auth.provider.TokenVerifier for the drive resource. Routes on the unverified header
+    (LELIK_VOICE_MCP_RFC §5.3): a `voice-mcp` kid goes to the voice verifier only (`voice_tokens`; None refuses every
+    voice token), anything else to the OAuth verifier only."""
 
-    def __init__(self, service: MCPAuthorizationService, resource_uri: str) -> None:
+    def __init__(self, service: MCPAuthorizationService, resource_uri: str,
+                 voice_tokens: Optional[VoiceMcpTokenService] = None) -> None:
         self._service = service
         self._resource_uri = resource_uri
+        self._voice_tokens = voice_tokens
 
     async def verify_token(self, token: str) -> Optional[AlekAccessToken]:
+        if is_voice_token(token):
+            return await verify_voice_token(self._voice_tokens, token, MCPResource.DRIVE)
         verified = self._service.verify_access_token(token, resource=self._resource_uri)
         if verified is None:
             return None
@@ -136,16 +150,16 @@ class DriveTokenVerifier:
 
 def build_drive_mcp_app(
     *, authorization_service: MCPAuthorizationService, auth_config: AuthConfig,
-    tools: Optional[DriveConnectorTools] = None,
+    tools: Optional[DriveConnectorTools] = None, voice_tokens: Optional[VoiceMcpTokenService] = None,
 ) -> FastMCP:
-    """The drive app; `tools` None (the knob off) lists no tool. Raises when a registered tool strays from the
-    contract (its name, its parameters)."""
+    """The drive app; `tools` None (the knob off) lists no tool; `voice_tokens` None refuses every voice token. Raises
+    when a registered tool strays from the contract (its name, its parameters)."""
     drive_uri = drive_resource_uri(auth_config.mcp_resource_uri)
     parsed = urlparse(auth_config.mcp_resource_uri)
     issuer_root = f"{parsed.scheme}://{parsed.netloc}"
     settings: Dict[str, Any] = dict(
         name="alekbot-drive",
-        token_verifier=DriveTokenVerifier(authorization_service, drive_uri),
+        token_verifier=DriveTokenVerifier(authorization_service, drive_uri, voice_tokens),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(issuer_root),
             resource_server_url=AnyHttpUrl(drive_uri),
@@ -253,27 +267,41 @@ class _Caller:
         """`paging`: a search's or a find's `wide`, batch and arguments, for the result's paging lines and the
         span's and log line's paging fields (§14.7)."""
         started = time.monotonic()
-        user_id, account_id, _ = _token_user(ctx, tool)
+        token = _access_token(ctx, tool)
+        user_id, account_id = token.user_id, token.account_id
+        # Keyed on the verified token's kind, OAuth the default: only a verified voice token runs with the audience
+        # unset (the chat's own reads, LELIK_VOICE_MCP_RFC §5.3, O3) and under the voice result cap (§8, O5).
+        voice = token.kind is McpTokenKind.VOICE
+        client = " client=voice" if voice else ""
         with start_span(f"mcp.drive.{tool}", {"tool": tool}) as span:
+            if voice:
+                span.set_attribute("client", "voice")
             try:
                 texts = await self._app.current_texts()
             except ConnectorTextsUnavailable:
-                logger.error(f"[DriveMCP] tool={tool} user={user_id[:8]} status=no_texts")
+                logger.error(f"[DriveMCP] tool={tool} user={user_id[:8]} status=no_texts{client}")
                 span.set_attribute("status", "no_texts")
                 return _error_result("The drive connector's texts are not available; try again later.")
-            context = {"user_id": user_id, "account_id": account_id, "run_origin": RUN_ORIGIN}
-            with RequestContext(user_id=user_id, account_id=account_id), connector_audience():
-                answered = await _outcome(tool, op, run, context, user_id, account_id)
+            answered: Union[DriveOutcome, ConnectorCall]
+            if not tool_permitted(token.kind, token.tools, tool):
+                # Outside the token's tools claim: the neutral refusal, before any read (§5.3).
+                answered = DriveOutcome(op=op, cls=OutcomeClass.REFUSED, text="", success=False)
+            else:
+                context = {"user_id": user_id, "account_id": account_id, "run_origin": RUN_ORIGIN}
+                audience = nullcontext() if voice else connector_audience()
+                with RequestContext(user_id=user_id, account_id=account_id), audience:
+                    answered = await _outcome(tool, op, run, context, user_id, account_id)
             outcome, link = (answered.outcome, answered.link) if isinstance(answered, ConnectorCall) else (answered, None)
+            limit = VOICE_RESULT_MAX_CHARS if voice else RESULT_MAX_CHARS
             text = cap_result(compose_connector_result(outcome, texts, link=link, paging=paging),
-                              texts.results[contract.OVER_SIZE], limit=RESULT_MAX_CHARS)
+                              texts.results[contract.OVER_SIZE], limit=limit)
             status = _status(outcome)
             ms = int((time.monotonic() - started) * 1000)
             fields = _paging_fields(outcome, paging)
             for key, value in (("status", status), ("chars", len(text)), ("ms", ms), *fields):
                 span.set_attribute(key, value)
         extra = "".join(f" {key}={value}" for key, value in fields)
-        logger.info(f"[DriveMCP] tool={tool} user={user_id[:8]} status={status} chars={len(text)} ms={ms}{extra}")
+        logger.info(f"[DriveMCP] tool={tool} user={user_id[:8]} status={status} chars={len(text)} ms={ms}{extra}{client}")
         return CallToolResult(content=[TextContent(type="text", text=text)], isError=False)
 
 
@@ -322,12 +350,18 @@ def _refused() -> DriveOutcome:
 def _token_user(ctx: Context, tool: str) -> Tuple[str, str, Optional[str]]:
     """The verified access token's user, account and grant id (`gid`; None on a token minted before it existed), as
     the facts tool reads the first two (`mcp_setup.get_user_context`)."""
+    access_token = _access_token(ctx, tool)
+    return access_token.user_id, access_token.account_id, access_token.grant_id
+
+
+def _access_token(ctx: Context, tool: str) -> AlekAccessToken:
+    """The request's verified access token; ToolError when there is none."""
     request = ctx.request_context.request
     access_token = getattr(getattr(request, "user", None), "access_token", None)
     if not isinstance(access_token, AlekAccessToken):
         logger.warning(f"[DriveMCP] tool={tool}: no verified access token on the request")
         raise ToolError("Authentication failed: no user context on this request.")
-    return access_token.user_id, access_token.account_id, access_token.grant_id
+    return access_token
 
 
 def _error_result(text: str) -> CallToolResult:

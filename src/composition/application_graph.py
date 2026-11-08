@@ -5,7 +5,7 @@
 """
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from anthropic import AsyncAnthropic
@@ -57,7 +57,7 @@ from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
-from src.composition import cipher_setup
+from src.composition import cipher_setup, voice_mcp_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.document_service_setup import build_document_service
@@ -182,6 +182,9 @@ class ApplicationGraph:
     billing_agent: BillingAgent
     logger_agent: LoggerAgent
     html_renderer: Optional[HtmlRendererPort]
+    # The voice MCP token kind's key (LELIK_VOICE_MCP_RFC §5.2), validated before anything else is built; consumed by
+    # main()'s voice and MCP wiring. None: no key, every voice token refused. Never in a repr.
+    voice_mcp_signing_key: Optional[str] = field(default=None, repr=False)
 
     async def start(self) -> None:
         """Create the agent-task queue if there is one, then start the billing and logger agents and the agent factory."""
@@ -213,6 +216,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # build, whose errors main() swallows.
     cipher = cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY"))
     secret_digest_key = cipher_setup.digest_key(config.get("SECRET_DIGEST_KEY"))
+    # The voice MCP token kind's own key (LELIK_VOICE_MCP_RFC §5.2, O8): the VOICE_MCP_TOOLS knob on without it, or a
+    # bad key, refuses the start here, for the same reason.
+    voice_mcp_key = voice_mcp_setup.signing_key(
+        config.get(voice_mcp_setup.KEY_NAME), oauth_secret=voice_mcp_setup.effective_oauth_secret(config),
+        tools_enabled=voice_mcp_setup.voice_mcp_tools_enabled())
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
     # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
@@ -1144,6 +1152,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         billing_agent=billing_agent,
         logger_agent=logger_agent,
         html_renderer=html_renderer,
+        voice_mcp_signing_key=voice_mcp_key,
     )
 
 

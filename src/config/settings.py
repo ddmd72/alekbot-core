@@ -81,6 +81,10 @@ def load_settings():
         # too (local dev uses the real key, §2.7).
         "KMS_CRYPTO_KEY": os.getenv("KMS_CRYPTO_KEY"),
         "SECRET_DIGEST_KEY": os.getenv("SECRET_DIGEST_KEY"),
+        # The voice MCP token kind's own HS256 key (LELIK_VOICE_MCP_RFC §5.2, O8), used for nothing else. Absent: no
+        # voice token verifies and none is minted; with the VOICE_MCP_TOOLS knob on, the composition root refuses to
+        # start without it. Never replaced by OAUTH_SESSION_SECRET.
+        "VOICE_MCP_SIGNING_KEY": os.getenv("VOICE_MCP_SIGNING_KEY"),
         # The sandbox light (parse) service URL: required configuration, every document is parsed through it. Empty
         # refuses the start, locally too (UNTRUSTED_CONTENT_SANDBOX_RFC §4.10).
         "SANDBOX_PARSE_URL": os.getenv("SANDBOX_PARSE_URL"),
