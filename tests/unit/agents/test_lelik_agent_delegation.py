@@ -104,7 +104,7 @@ async def test_delegate_seeds_identity_primary_session_and_call_chain():
     agent, _, _, coordinator = _agent(channel=channel)
     output = await agent.delegate(
         user_id="u1", account_id="a1",
-        arguments={"intent": "search_web", "query": "weather Springfield"},
+        arguments={"intent": "search_web_light", "query": "weather Springfield"},
         call_context=[{"role": "user", "text": "what's the weather"}],
     )
     first = coordinator.handle_delegation.await_args_list[0].kwargs

@@ -24,6 +24,10 @@ _ICON_SIZES = (180, 192, 512)
 _MODE_PAGES = {VoiceMode.INTERPRETER: "Interpreter", VoiceMode.TUTOR: "Spanish tutor"}
 
 
+# Closed set of /hangup triggers the page may report (VOICE_CALL_CONTROL_CHANNEL_RFC §7.1).
+_HANGUP_TRIGGERS = frozenset({"button", "status_ended", "start_failed", "superseded"})
+
+
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes) -> Blueprint:
@@ -185,6 +189,12 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         record = await _owned(call_id)
         if record is None:
             return jsonify({"error": "not found"}), 404
+        # The body is optional: pages from before the trigger existed send none.
+        body = await request.get_json(silent=True)
+        trigger = body.get("trigger") if isinstance(body, dict) else None
+        if trigger not in _HANGUP_TRIGGERS:
+            trigger = "unknown"
+        logger.info(f"web call {call_id}: hangup trigger={trigger}")
         await media_room.close(record.get("adapter_ids", []))
         # Ticket still unredeemed = the relay never started: nothing will release the marker.
         ticket = await _ticket_of(call_id, record)
