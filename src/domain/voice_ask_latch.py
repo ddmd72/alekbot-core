@@ -33,6 +33,14 @@ Two readings the table leaves open, decided here:
 A page command that changes nothing (`arm` while armed, `disarm` while Lelik is answering, either while idle) still
 gets the current state back with its `seq`: the page rolls a tap back unless an `ask_state` answers it within 2 s,
 and `disarm` while active/awaiting must show the button busy (§5.3).
+
+**Translate notes** (`translate_unmarked=True`, interpreter calls; owner, after the live test 2026-11-08: without the
+button the model still answered phrases it took for questions to it). Every `speech_started` the latch does not mark
+for Lelik asks for the translate note instead (`insert_translate_note`), so each caller or other-person turn carries an
+explicit instruction either way. One `speech_started` yields at most one of the two notes. A translate note is given
+once per utterance: a second `speech_started` for the same item id, or before the utterance's `speech_stopped`, gets
+none (a VAD restart inside one utterance). A pause long enough to end the utterance starts a new item, which gets its
+own note, as on the Ask path, since each committed turn needs the instruction right before it.
 """
 from dataclasses import dataclass
 from enum import Enum
@@ -79,6 +87,7 @@ class AskStep:
 
     insert_note: bool = False
     report: Optional[AskReport] = None
+    insert_translate_note: bool = False  # never together with insert_note
 
 
 _NOTHING = AskStep()
@@ -88,8 +97,14 @@ class AskLatch:
     """One call's "Ask Lelik" latch. `clock` is monotonic seconds (the relay passes the event loop's time)."""
 
     def __init__(self, clock: Callable[[], float], armed_timeout_s: float = ASK_ARMED_TIMEOUT_S,
-                 reply_timeout_s: float = ASK_REPLY_TIMEOUT_S, runaway_reply_s: float = ASK_RUNAWAY_REPLY_S) -> None:
+                 reply_timeout_s: float = ASK_REPLY_TIMEOUT_S, runaway_reply_s: float = ASK_RUNAWAY_REPLY_S,
+                 translate_unmarked: bool = False) -> None:
+        """`translate_unmarked`: speech the latch does not mark for Lelik asks for the translate note (module
+        docstring)."""
         self._clock = clock
+        self._translate_unmarked = translate_unmarked
+        self._translated_item: Optional[str] = None
+        self._translating = False  # a translate note went in and its utterance has not stopped yet
         self._armed_timeout_s = armed_timeout_s
         self._reply_timeout_s = reply_timeout_s
         self._runaway_reply_s = runaway_reply_s
@@ -132,9 +147,10 @@ class AskLatch:
         if self._state is AskState.AWAITING_REPLY and not self._reply_audible:
             # A pause split the question before any answer was heard: the rest of it is marked too.
             return self._mark(item_id)
-        return _NOTHING
+        return self._translate(item_id)
 
     def speech_stopped(self, item_id: Optional[str]) -> AskStep:
+        self._translating = False
         if self._state is not AskState.ACTIVE:
             return _NOTHING
         if item_id is not None and self._item_id is not None and item_id != self._item_id:
@@ -196,6 +212,15 @@ class AskLatch:
         self._reply_audible = False
         report = AskReport(AskState.ACTIVE.wire) if was.wire != AskState.ACTIVE.wire else None
         return AskStep(insert_note=True, report=report)
+
+    def _translate(self, item_id: Optional[str]) -> AskStep:
+        if not self._translate_unmarked or self._translating:
+            return _NOTHING
+        if item_id is not None and item_id == self._translated_item:
+            return _NOTHING
+        self._translating = True
+        self._translated_item = item_id
+        return AskStep(insert_translate_note=True)
 
     def _release(self, reason: AskReason, seq: Optional[int] = None) -> AskStep:
         self._state = AskState.IDLE

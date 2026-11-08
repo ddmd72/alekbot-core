@@ -217,22 +217,6 @@ def create_voice_control_plane_blueprint(
         config = await ephemeral_store.get_and_delete(ticket_key(digest_key, ticket))
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
-        # The one-call-per-user marker was written at the short setup-window TTL
-        # (`VoiceCallSetupService.claim`, e.g. 300s) so a caller who never gets this far never
-        # locks themselves out for an hour. The call is *actually* live only once the relay
-        # redeems the ticket here, so this is where the marker earns its full-call TTL. Best
-        # effort: a failure here must never turn a working call into a failed session-config
-        # response — the marker just keeps its short TTL and, worst case, expires mid-call
-        # (recoverable by the user; a stuck long-lived marker from a bug here would not be).
-        try:
-            user_id = config.get("user_id")
-            marker_key = f"voice_one_call:{user_id}"
-            marker = await ephemeral_store.get(marker_key)
-            if marker is not None:
-                await ephemeral_store.set(marker_key, marker, ttl_s=one_call_ttl_s)
-        except Exception:
-            logger.error(f"voice session-config: extending the one-call marker failed for ticket {fingerprint(ticket)}",
-                        exc_info=True)
         # Minted here, at redemption, never at prepare (O1): the ticket record in the store never
         # holds a token, and the tokens leave only in this OIDC-authenticated response.
         mcp_tokens = await _voice_mcp_tokens_for(ticket, config)
@@ -243,6 +227,25 @@ def create_voice_control_plane_blueprint(
         resume_handle = await _resume_handle_for(config)
         if resume_handle is not None:
             config = {**config, RESUME_CONFIG_FIELD: {"handle": resume_handle}}
+        # The one-call-per-user marker was written at the short setup-window TTL
+        # (`VoiceCallSetupService.claim`, e.g. 300s) so a caller who never gets this far never
+        # locks themselves out for an hour. The call is *actually* live only once the relay
+        # redeems the ticket here, so this is where the marker earns its full-call TTL. Best
+        # effort: a failure here must never turn a working call into a failed session-config
+        # response — the marker just keeps its short TTL and, worst case, expires mid-call
+        # (recoverable by the user; a stuck long-lived marker from a bug here would not be).
+        # It sits last, right before the success response: a failed token mint answers 500, the relay then
+        # sends no end-of-call report and the ticket is gone, so nothing would release a full-TTL marker
+        # (an hour of "busy"). A failed session-config must leave the marker its short setup TTL.
+        try:
+            user_id = config.get("user_id")
+            marker_key = f"voice_one_call:{user_id}"
+            marker = await ephemeral_store.get(marker_key)
+            if marker is not None:
+                await ephemeral_store.set(marker_key, marker, ttl_s=one_call_ttl_s)
+        except Exception:
+            logger.error(f"voice session-config: extending the one-call marker failed for ticket {fingerprint(ticket)}",
+                        exc_info=True)
         return jsonify(config), 200
 
     @bp.route("/voice/submit-transcript", methods=["POST"])
