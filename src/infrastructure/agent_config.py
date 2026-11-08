@@ -424,7 +424,7 @@ NOTES = NotesAgentConfig()
 @dataclass
 class TasksAgentConfig:
     max_tokens: int = 1024        # Tool-calling loop: tool calls + final text response
-    timeout_ms: int = 30_000      # Multi-turn: up to 2 tool calls + final synthesis
+    timeout_ms: int = 30_000      # The run's budget: tool turns stop 8 s before it, then one answer turn (tasks_agent.py)
 
 
 TASKS = TasksAgentConfig()

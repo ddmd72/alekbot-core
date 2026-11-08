@@ -258,7 +258,8 @@ up to 3 retries per task. Failed individual tasks are dropped (not fatal).
 
 **list_tasks across lists:** Graph API has no cross-list endpoint. When `list_id=None`,
 the adapter resolves the primary list and fetches its tasks. Multi-list listing follows
-the same per-list pattern.
+the same per-list pattern. The list's name (for `Task.list_name`) is read concurrently with
+the first page of tasks, so a listing of up to one Graph page costs one round trip.
 
 **Checklist diff on update:** Full array replace destroys `checked_at` timestamps.
 Instead: diff desired vs. existing by `item_id`, then PATCH changed items, DELETE removed
@@ -386,7 +387,7 @@ Specialist agent for task management. Intent: `manage_user_tasks`.
 
 ### 8.1 Agent Loop
 
-Tool-calling loop, up to `_MAX_TURNS = 4`:
+Tool-calling loop, up to `_MAX_TURNS = 6`, inside the agent's time budget:
 
 1. Build system prompt with biographical context via `PromptBuilderPort` (`agent_type="tasks"`).
    On prompt build failure: log warning, proceed without biographical context (non-fatal).
@@ -394,23 +395,31 @@ Tool-calling loop, up to `_MAX_TURNS = 4`:
 3. Execute each tool call and append results to message history.
 4. Repeat until LLM produces a final text response (no tool calls).
 
-When `_MAX_TURNS` is reached without a final text response, a forced formatting call is
-made with `tools=[]` and the instruction "Summarise the results concisely."
+**Time budget.** The run's budget is its timeout (`TASKS.timeout_ms`, 30 s). No tool turn runs past the
+budget minus `_ANSWER_RESERVE_S` (8 s): the turn is bounded by `asyncio.wait_for`, and no new one starts once
+the reserve is reached. When the turn cap or the budget stops the loop, one tool-less turn answers
+(`_FORCE_ANSWER`, bounded to `_FINAL_MARGIN_S` before the timeout); when that turn cannot run, runs out of
+time or returns no text, the answer is the tool results themselves (a `Tool note:` for the orchestrator).
+A run with tool results never ends as a timeout. A run whose first turn did not finish has no facts and
+fails as before.
+
+A lookup over one page of tasks is two model turns (the `list_tasks` call, then the answer) and one Graph
+round trip (§5.1: the list name and the first page of tasks are read concurrently).
 
 ### 8.2 Tools
 
 | Tool | Description |
 |---|---|
-| `list_tasks` | Return all tasks from the primary list. `show_completed=true` for completed tasks. |
-| `search_tasks` | Semantic search via `TaskIndexingService.search()` + `batch_get_tasks()`. Returns matching tasks with their `ref` (short_id). |
+| `list_tasks` | The lookup tool: one page (`_PAGE_SIZE = 20`) of the primary list's tasks, tasks with a due date first (soonest first), then undated tasks (newest first). Optional `page` (from 1), `due_from` / `due_to` (ISO-8601; a date alone is the whole day; undated tasks are left out when either is set; an unreadable date is a tool error), `show_completed` (completed tasks too). The result adds `total`, `page`, `pages` and a `note` that says whether these are all the tasks or which page comes next. Graph's To Do list call documents no `$orderby`/`$top`/date `$filter`, so filter, order and paging run in the agent over the adapter's full fetch. |
+| `search_tasks` | Semantic search via `TaskIndexingService.search()` + `batch_get_tasks()`, for long lists only (more than one page). Returns matching tasks with their `ref` (short_id); a miss returns a `note` saying another wording will not find more. |
 | `create_task` | Create via Graph API, then index. Supports title, body, due_datetime, importance, tags, recurrence. |
-| `update_task` | PATCH via Graph API, then re-index. Requires `task_ref` from prior `search_tasks` or `list_tasks` result. |
+| `update_task` | PATCH via Graph API, then re-index. Requires `task_ref` from prior `list_tasks` or `search_tasks` result. |
 | `delete_task` | DELETE via Graph API, then deindex. Requires `task_ref`. |
 
-### 8.3 search-before-mutate
+### 8.3 list-before-mutate
 
-`update_task` and `delete_task` require `task_ref` (short_id). The LLM must call
-`search_tasks` or `list_tasks` first to obtain `ref` values, then use them in mutation
+`update_task` and `delete_task` require `task_ref` (short_id). The LLM calls `list_tasks`
+(or, on a long list, `search_tasks`) first to obtain `ref` values, then uses them in mutation
 calls. The agent never accepts a raw MS task ID from the user.
 
 `resolve_short_id` translates the `task_ref` back to `(list_id, task_id)` before Graph API

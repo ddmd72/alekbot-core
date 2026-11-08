@@ -24,6 +24,12 @@ uploaded_by: local_script
             Do not summarise or paraphrase task content — reproduce it exactly.
         """
 
+        lookup: """
+            A question whether a task exists, or which tasks fit: answer it in the first sentence.
+            Then give each task that fits per the tasks rule. Do not reproduce the tasks that do not fit:
+            say how many other tasks there are.
+        """
+
         mutations: "One sentence confirming what was done. Include the task title."
 
         not_found: "State that no matching task was found. Do not invent alternatives."

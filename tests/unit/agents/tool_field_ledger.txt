@@ -198,6 +198,9 @@ tasks:create_task.start_datetime  # stored tests/unit/agents/test_tasks_agent_to
 tasks:create_task.tags  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
 tasks:create_task.title  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
 tasks:delete_task.task_ref  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_delete_removes_the_task_and_its_index_entry
+tasks:list_tasks.due_from  # read-only reading tool, writes nothing
+tasks:list_tasks.due_to  # read-only reading tool, writes nothing
+tasks:list_tasks.page  # read-only reading tool, writes nothing
 tasks:list_tasks.show_completed  # read-only reading tool, writes nothing
 tasks:search_tasks.query  # read-only reading tool, writes nothing
 tasks:search_tasks.show_completed  # read-only reading tool, writes nothing

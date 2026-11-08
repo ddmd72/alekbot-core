@@ -9,9 +9,18 @@ Tool-calling loop:
   2. Pass 5 CRUD tool declarations to the LLM.
   3. LLM selects tool(s).
   4. Execute each tool call — CRUD via TasksProviderPort, search via TaskIndexingService.
-  5. Repeat until LLM produces a final text response or MAX_TURNS reached.
+  5. Repeat until LLM produces a final text response, MAX_TURNS is reached, or the run's time budget
+     (the agent's timeout minus _ANSWER_RESERVE_S) is spent. Then one tool-less turn answers from the
+     tool results gathered so far; if even that does not fit, the tool results are returned as they are.
+     The timeout never cancels a run that already has facts.
 
-search_tasks flow:
+list_tasks flow (the lookup tool):
+  tasks_provider.list_tasks() → filter by due period → sort (due soonest first, undated newest first)
+  → one page of _PAGE_SIZE with total / page / pages and a note saying whether more remain.
+  Graph's To Do list call documents no $orderby/$top/$filter on due dates, so sorting, the period
+  filter and paging run here, over the list the adapter has already fetched.
+
+search_tasks flow (long lists only):
   task_indexing.search() → List[TaskSearchEntry] → batch_get_tasks() → full Task objects
 
 create_task flow:
@@ -24,10 +33,12 @@ update_task / delete_task:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import time
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
@@ -50,6 +61,26 @@ if TYPE_CHECKING:
 from ..utils.logger import logger
 
 _MAX_TURNS = 6
+# Tasks per list_tasks page: a lookup over a small list is one call and one answer.
+_PAGE_SIZE = 20
+# Seconds of the run's budget kept for the final, tool-less answer: no tool turn runs past the budget minus this.
+_ANSWER_RESERVE_S = 8.0
+# The final answer stops this many seconds before the agent's own timeout would cancel the run.
+_FINAL_MARGIN_S = 1.0
+# The text of the final, tool-less turn (turn cap or time budget reached).
+_FORCE_ANSWER = "Answer the delegation now from the tool results above. Call no more tools."
+# Characters of tool results kept in the answer when no model turn is left to write one.
+_FACTS_MAX_CHARS = 6000
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """An aware UTC datetime for ordering and comparing; a naive value is read as UTC (Graph sends UTC wall times)."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
 
 # ---------------------------------------------------------------------------
 # Tool declarations
@@ -59,16 +90,40 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "list_tasks",
         "description": (
-            "Return all tasks from the user's task list. "
-            "Use show_completed=true to include completed tasks. "
-            "Default: active tasks only."
+            "The first tool for every lookup ('is X in my tasks', 'what do I have', 'what is due this week') and for "
+            "finding a task to change: returns one page of the user's tasks (20 per page), tasks with a due date "
+            "first (soonest first), then tasks without one (newest first). The result says how many tasks there are "
+            "and whether more pages remain. When it says these are all the tasks, answer from them: judge yourself "
+            "which task the request means, its words need not match. Each task carries its `ref` "
+            "(pass it as task_ref to update_task / delete_task)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
+                "page": {
+                    "type": "integer",
+                    "description": (
+                        "Page number, from 1 (the default). Ask for the next page only when the result says "
+                        "more pages remain and the answer is not on this one."
+                    ),
+                },
+                "due_from": {
+                    "type": "string",
+                    "description": (
+                        "Only tasks due on or after this date/time (ISO-8601, e.g. 2026-11-09). Tasks without a "
+                        "due date are left out when due_from or due_to is set. Omit for all tasks."
+                    ),
+                },
+                "due_to": {
+                    "type": "string",
+                    "description": (
+                        "Only tasks due on or before this date/time (ISO-8601; a date alone includes that whole "
+                        "day). Omit for all tasks."
+                    ),
+                },
                 "show_completed": {
                     "type": "boolean",
-                    "description": "If true, return completed tasks instead of active ones.",
+                    "description": "If true, completed tasks are listed too. Default: open tasks only.",
                 },
             },
             "required": [],
@@ -77,10 +132,11 @@ _TOOL_DECLARATIONS: List[Dict[str, Any]] = [
     {
         "name": "search_tasks",
         "description": (
-            "Search the user's tasks by semantic similarity. "
-            "Use this instead of list_tasks when the delegation mentions a specific topic, "
-            "name, or description. Returns matching tasks, each with its `ref` "
-            "(pass it as task_ref to update_task / delete_task)."
+            "Semantic search of the user's tasks, for a long task list only: use it when list_tasks reports more "
+            "than one page and the delegation names a topic. With one page of tasks, list_tasks already shows "
+            "every task: do not search. One search per topic: a miss means no task is close to it, and other "
+            "words for the same topic will not find more (page through list_tasks instead). Returns matching "
+            "tasks, each with its `ref` (pass it as task_ref to update_task / delete_task)."
         ),
         "parameters": {
             "type": "object",
@@ -339,6 +395,7 @@ class TasksAgent(BaseAgent):
         tasks_provider: TasksProviderPort,
         task_indexing: TaskIndexingService,
         user_id: Optional[str] = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__(config)
         self._set_execution_context(execution_context)
@@ -349,6 +406,7 @@ class TasksAgent(BaseAgent):
         self._tasks = tasks_provider
         self._indexing = task_indexing
         self.user_id = user_id
+        self._monotonic = monotonic
 
         logger.info(
             f"📋 TasksAgent initialized "
@@ -391,8 +449,16 @@ class TasksAgent(BaseAgent):
         ]
 
         final_text = ""
+        answered = False
+        tool_turns = 0
+        timeout_ms = message.timeout_ms if message.timeout_ms is not None else self.config.timeout_ms
+        end: Optional[float] = None if timeout_ms is None else self._monotonic() + timeout_ms / 1000
 
         for turn in range(_MAX_TURNS):
+            tool_budget = self._seconds_left(end, _ANSWER_RESERVE_S)
+            if tool_budget is not None and tool_budget <= 0:
+                logger.warning(f"📋 TasksAgent: time budget spent after {tool_turns} tool turn(s), answering now")
+                break
             request = LLMRequest(
                 model_name=self.model_name,
                 system_instruction=system_prompt,
@@ -401,10 +467,15 @@ class TasksAgent(BaseAgent):
                 max_tokens=self.MAX_TOKENS,
                 disable_safety=True,
             )
-            response = await self._call_llm(request, turn=turn + 1)
+            try:
+                response = await asyncio.wait_for(self._call_llm(request, turn=turn + 1), timeout=tool_budget)
+            except asyncio.TimeoutError:
+                logger.warning(f"📋 TasksAgent: turn {turn + 1} ran past the time budget, answering now")
+                break
 
             if not response.tool_calls:
                 final_text = response.text or ""
+                answered = True
                 break
 
             messages.append(Message(
@@ -430,21 +501,13 @@ class TasksAgent(BaseAgent):
                 )
 
             messages.append(Message(role="user", parts=tool_result_parts))
+            tool_turns += 1
 
         else:
             logger.warning(f"📋 TasksAgent: max turns ({_MAX_TURNS}) reached, forcing format")
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=messages + [
-                    Message(role="user", parts=[MessagePart(text="Summarise the results concisely.")])
-                ],
-                tools=[],
-                max_tokens=self.MAX_TOKENS,
-                disable_safety=True,
-            )
-            response = await self._call_llm(request, turn=_MAX_TURNS + 1)
-            final_text = response.text or ""
+
+        if not answered and tool_turns:
+            final_text = await self._final_answer(system_prompt, messages, end, turn=tool_turns + 1)
 
         duration_ms = int((time.time() - start_time) * 1000)
 
@@ -469,6 +532,47 @@ class TasksAgent(BaseAgent):
         )
 
     # ------------------------------------------------------------------
+    # Time budget and the final answer
+    # ------------------------------------------------------------------
+
+    def _seconds_left(self, end: Optional[float], reserve: float) -> Optional[float]:
+        """Seconds until `end - reserve`; None when the run has no timeout."""
+        return None if end is None else end - reserve - self._monotonic()
+
+    async def _final_answer(
+        self, system_prompt: str, messages: List[Message], end: Optional[float], turn: int,
+    ) -> str:
+        """One tool-less turn that answers from the tool results so far, bounded by the time left; when it cannot
+        run, times out or returns nothing, the tool results themselves are the answer (never a failure)."""
+        left = self._seconds_left(end, _FINAL_MARGIN_S)
+        if left is None or left > 0:
+            request = LLMRequest(
+                model_name=self.model_name,
+                system_instruction=system_prompt,
+                messages=messages + [Message(role="user", parts=[MessagePart(text=_FORCE_ANSWER)])],
+                tools=[],
+                max_tokens=self.MAX_TOKENS,
+                disable_safety=True,
+            )
+            try:
+                response = await asyncio.wait_for(self._call_llm(request, turn=turn), timeout=left)
+                if response.text:
+                    return response.text
+                logger.warning("📋 TasksAgent: the final answer turn returned no text, returning the tool results")
+            except asyncio.TimeoutError:
+                logger.warning("📋 TasksAgent: the final answer turn ran out of time, returning the tool results")
+        return self._facts_answer(messages)
+
+    @staticmethod
+    def _facts_answer(messages: List[Message]) -> str:
+        """The tool results of the run, latest last, as a code-written note for the orchestrator."""
+        results = [part.tool_response for m in messages for part in m.parts if part.tool_response]
+        facts = json.dumps(results, ensure_ascii=False, default=str)
+        if len(facts) > _FACTS_MAX_CHARS:
+            facts = facts[:_FACTS_MAX_CHARS] + " …(cut)"
+        return f"Tool note: the task lookup reached its time limit before a summary was written. Tool results: {facts}"
+
+    # ------------------------------------------------------------------
     # Tool execution
     # ------------------------------------------------------------------
 
@@ -478,7 +582,7 @@ class TasksAgent(BaseAgent):
                 user_id=user_id,
                 show_completed=args.get("show_completed", False),
             )
-            return self._format_task_list(tasks)
+            return self._list_page(tasks, args)
 
         if name == "search_tasks":
             entries = await self._indexing.search(
@@ -487,7 +591,14 @@ class TasksAgent(BaseAgent):
                 show_completed=args.get("show_completed", False),
             )
             if not entries:
-                return {"tasks": [], "count": 0}
+                return {
+                    "tasks": [],
+                    "count": 0,
+                    "note": (
+                        f"No task is close to '{args['query']}'. Another wording of the same topic will not find "
+                        "more: answer that no matching task was found, or read the tasks with list_tasks."
+                    ),
+                }
             refs: List[Tuple[str, str]] = [(e.list_id, e.task_id) for e in entries]
             tasks = await self._tasks.batch_get_tasks(user_id=user_id, task_refs=refs)
             return self._format_task_list(tasks)
@@ -589,6 +700,59 @@ class TasksAgent(BaseAgent):
             )
             return auto, True
         return None, False
+
+    def _list_page(self, tasks: List[Task], args: Dict[str, Any]) -> Dict[str, Any]:
+        """One page of `tasks` for list_tasks: the due-period filter, the order, the page and the counts that tell the
+        model whether it has seen every task (module docstring, list_tasks flow)."""
+        bounds: Dict[str, Optional[datetime]] = {}
+        for key in ("due_from", "due_to"):
+            raw = args.get(key)
+            bounds[key] = self._parse_datetime(raw) if raw else None
+            if raw and bounds[key] is None:
+                return {"error": f"{key} is not an ISO-8601 date or date-time: {raw!r}"}
+        start, stop = _as_utc(bounds["due_from"]), _as_utc(bounds["due_to"])
+        if stop is not None and len(str(args["due_to"]).strip()) == 10:   # a date alone: that whole day
+            stop = stop + timedelta(days=1) - timedelta(microseconds=1)
+        filtered = start is not None or stop is not None
+        def due(t: Task) -> datetime:
+            return _as_utc(t.due_datetime) or _EPOCH
+
+        if filtered:
+            tasks = [
+                t for t in tasks
+                if t.due_datetime is not None
+                and (start is None or due(t) >= start)
+                and (stop is None or due(t) <= stop)
+            ]
+        dated = sorted((t for t in tasks if t.due_datetime is not None), key=due)
+        undated = sorted((t for t in tasks if t.due_datetime is None),
+                         key=lambda t: _as_utc(t.created_at) or _EPOCH, reverse=True)
+        ordered = dated + undated
+
+        total = len(ordered)
+        pages = max(1, math.ceil(total / _PAGE_SIZE))
+        try:
+            page = max(1, int(args.get("page") or 1))
+        except (TypeError, ValueError):
+            page = 1
+        chunk = ordered[(page - 1) * _PAGE_SIZE: page * _PAGE_SIZE]
+
+        which = "tasks, open and completed" if args.get("show_completed") else "open tasks"
+        scope = " due in that period" if filtered else ""
+        if total == 0:
+            note = f"There are no {which}{scope}."
+        elif page > pages:
+            note = f"Page {page} is past the last page ({pages}) of the {total} {which}{scope}."
+        elif pages == 1:
+            note = f"These are all {total} {which}{scope}: there is nothing more to list or search."
+        elif page < pages:
+            note = (f"Page {page} of {pages}: {total} {which}{scope}. list_tasks with page={page + 1} "
+                    f"returns the next {_PAGE_SIZE}.")
+        else:
+            note = f"Page {page} of {pages}, the last: {total} {which}{scope}."
+        result = self._format_task_list(chunk)
+        result.update({"total": total, "page": page, "pages": pages, "note": note})
+        return result
 
     @staticmethod
     def _short_id(task_id: str) -> str:

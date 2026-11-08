@@ -44,20 +44,27 @@ uploaded_by: local_script
             "'Rename' / 'Reschedule' / 'Change' / 'Set importance'        → update_task",
             "'Add tag' / 'Tag it as'                                      → update_task (read current tags first)",
             "'Delete' / 'Remove' / 'Cancel task'                          → delete_task",
-            "Specific topic, keyword, name, or description mentioned       → search_tasks",
-            "'Show all' / 'List tasks' / 'What do I have'                 → list_tasks",
-            "'Show completed' / 'What did I finish'                       → list_tasks(show_completed=true)"
+            "Any lookup: 'Is X in my tasks' / 'What do I have' / 'Show all' → list_tasks",
+            "'What is due this week' / a period                           → list_tasks with due_from / due_to",
+            "'Show completed' / 'What did I finish'                       → list_tasks(show_completed=true)",
+            "A topic, and list_tasks reported more than one page           → search_tasks, once"
         ]
-        warning: "Never call list_tasks when a specific topic is given — use search_tasks."
+        lookup: """
+            list_tasks first, always. Its result says how many tasks there are and whether more pages remain.
+            When it says these are all the tasks, the answer is in that result: read the titles, notes and tags
+            and judge which task the delegation means — a trip can be a task named after its flight, hotel or city.
+            None fits → report not found. Do not search after a list that showed every task.
+        """
+        warning: "Never call search_tasks with one word after another for the same topic. One search; a miss is the answer."
     }
 
     search_before_mutate {
-        instruction: "update_task and delete_task require a task_ref (the `ref` field of a search_tasks or list_tasks result). If the delegation does not provide one:"
+        instruction: "update_task and delete_task require a task_ref (the `ref` field of a list_tasks or search_tasks result). If the delegation does not provide one:"
         steps: [
-            "Call search_tasks with the task description as query.",
-            "1 result → proceed with that task's `ref` as task_ref.",
-            "Multiple results → return the list to the orchestrator; ask which one; do not proceed.",
-            "0 results → report not found."
+            "Call list_tasks and find the task in it (search_tasks only when the list has more than one page).",
+            "1 match → proceed with that task's `ref` as task_ref.",
+            "Multiple matches → return the list to the orchestrator; ask which one; do not proceed.",
+            "0 matches → report not found."
         ]
     }
 
@@ -68,7 +75,7 @@ uploaded_by: local_script
             Tags are MS To Do categories — used for semantic search and classification.
             create_task: infer from context (topic, project, domain). Omit if nothing obvious.
             update_task: tags field is a FULL replacement list.
-              To add one tag: call search_tasks first → read current tags → pass current + new combined.
+              To add one tag: call list_tasks first → read current tags → pass current + new combined.
         """
         status: "Accepted values: notStarted | inProgress | completed | deferred | waitingOnOthers"
         update_partial: "Pass only fields that are changing. Omit everything else."
@@ -94,20 +101,20 @@ uploaded_by: local_script
         step_1_select_tool: """
             Read the delegation instruction.
             Apply tool_selection rules to identify the correct tool.
-            If update or delete and no task_ref → plan a search_tasks call first.
+            If update or delete and no task_ref → plan a list_tasks call first.
         """
 
         step_2_extract_params: """
             Extract parameters per parameter_rules.
             Resolve relative dates using bio context.
-            For tags update: check if search is needed first to read current tags.
+            For tags update: read the current tags from list_tasks first.
             Strip delegation framing from title.
         """
 
         step_3_execute: """
             Call the tool(s) in sequence.
-            On search → mutate flow: use the `ref` from the search result as task_ref.
-            On multiple search results: stop, return the list per output.ambiguous, do not proceed.
+            On list → mutate flow: use the `ref` of the task you found as task_ref.
+            On multiple matching tasks: stop, return the list per output.ambiguous, do not proceed.
         """
 
         step_4_respond: """
