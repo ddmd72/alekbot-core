@@ -221,6 +221,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     voice_mcp_key = voice_mcp_setup.signing_key(
         config.get(voice_mcp_setup.KEY_NAME), oauth_secret=voice_mcp_setup.effective_oauth_secret(config),
         tools_enabled=voice_mcp_setup.voice_mcp_tools_enabled())
+    # The Cabinet session secret and the OAuth callback are checked here too, for the same reason: a placeholder secret or a
+    # localhost callback on Cloud Run refuses the start before anything is built.
+    auth_config = AuthConfig(config)
+    auth_config.validate()
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
     # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
@@ -485,8 +489,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # File access: capability tokens + link builder for private file storage.
     # Reuses the same HS256 secret as the Cabinet session service. Constructed
     # here (before delivery services) so DocumentDeliveryService can mint links.
-    _file_secret = config.get("OAUTH_SESSION_SECRET") or "dev-secret-change-in-production-must-be-32-chars-long"
-    file_token_service = FileAccessTokenService(secret_key=_file_secret)
+    file_token_service = FileAccessTokenService(secret_key=auth_config.oauth_session_secret)
     file_link_service = (
         FileLinkService(
             token_service=file_token_service,
@@ -652,7 +655,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Note: Blueprints registered after slack_adapter creation
     # ====================================================================
     logger.info("🔐 Initializing OAuth + Cabinet Services...")
-    auth_config = AuthConfig(config)  # Pass config with secrets from Secret Manager
     firebase_adapter = FirebaseAuthAdapter(
         project_id=auth_config.firebase_project_id,
         web_api_key=auth_config.firebase_web_api_key,
