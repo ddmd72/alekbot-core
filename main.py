@@ -433,6 +433,16 @@ async def main():
                 # already-constructed instances: user_repo, the alert sink,
                 # notification_service, agent_factory.
 
+                # The web call's SFU (Cabinet web call below), built only when the web call is configured. The
+                # webhook gets it too: a phone dial ends the user's running web call through it
+                # (VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4).
+                voice_media_room = None
+                if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
+                        and config.get("VOICE_RELAY_STREAM_URL"):
+                    from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
+                    voice_media_room = CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"],
+                                                            config["CLOUDFLARE_SFU_APP_SECRET"])
+
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
                         user_repository=app.user_repo,
@@ -445,6 +455,7 @@ async def main():
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
                         cipher=app.cipher,
                         digest_key=app.digest_key,
+                        media_room=voice_media_room,
                     )
                 )
                 logger.info(
@@ -462,10 +473,8 @@ async def main():
                 # configured it is None, and a failed `VoiceCallSetupService.prepare` releases
                 # the ticket and marker first, then crashes on `None.post` — the request ends in
                 # a 500 instead of its handled error response, but nothing stays held.
-                if config.get("CLOUDFLARE_SFU_APP_ID") and config.get("CLOUDFLARE_SFU_APP_SECRET") \
-                        and config.get("VOICE_RELAY_STREAM_URL"):
+                if voice_media_room is not None:
                     from urllib.parse import urlsplit
-                    from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
                     from src.services.voice_call_setup_service import VoiceCallSetupService
                     from src.web.voice_web_call_app import create_voice_web_call_blueprint
 
@@ -476,7 +485,7 @@ async def main():
                             voice_ephemeral_store, app.alert_sink, app.agent_factory.get_lelik,
                             digest_key=app.digest_key,
                         ),
-                        media_room=CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"]),
+                        media_room=voice_media_room,
                         ephemeral_store=voice_ephemeral_store,
                         relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
                         cipher=app.cipher,

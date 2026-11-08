@@ -14,7 +14,9 @@ latch exists on every interpreter call whether or not the control channel is on,
 Slice 6 (dead-peer watchdog) built: N = 10 minutes (§13.8), knob `VOICE_DEAD_PEER_TIMEOUT_S`; the watchdog is armed at
 pairing, so a paired call whose browser never sends a packet is caught too. Slice 7 (a new call replaces the running
 one) built: the start waits up to 30 s for the replaced call's marker (§7.5.2 says why); the replaced call's record
-stays, so a page still showing it learns `ended` from its status poll.
+stays, so a page still showing it learns `ended` from its status poll. Slice 7b (a phone dial replaces a web call,
+§7.5.4) built: the dial waits up to 4 s, then takes the marker over; the marker names its call (`owner`), so the
+replaced call's late release leaves it.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
@@ -308,7 +310,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
    refuses when `voice_one_call:{user_id}` exists (`voice_call_setup_service.py:49-52`) and the route answers 409
    "a call is already in progress" (`:113`). The marker holds `{call_id}` (`:112`), readable by `holder`
    (`voice_call_setup_service.py:56`). The phone dial-in path has its own check on the same key
-   (`voice_webhook_app.py:123-126`, reject).
+   (`/voice/auth` in `voice_webhook_app.py`; §7.5.4).
 2. **New behaviour.** When the claim is refused and the holder is a web call of the same user, the start route ends that
    call instead of answering 409: it loads `voice_web_call:{call_id}` and closes its SFU adapters
    (`media_room.close(record["adapter_ids"])`, as `/hangup` does at `:188`). The relay sees the egress gone, ends the
@@ -323,8 +325,59 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
    new call is the re-dial that consumes it (§6.2.3). Order matters: `prepare` reads `voice_resume` only after the old
    call's `submit-transcript` has stored it, which is why the start waits for the marker release (the release is the last
    step of that route). A button-ended call stores nothing, so a new call after the button starts fresh, as decided.
-4. **Scope.** Web start replaces a web call. A phone dial-in meeting a running web call, and the reverse, are not
-   designed here: the phone path keeps rejecting (`voice_webhook_app.py:124-126`).
+4. **Scope: a phone dial replaces a web call; nothing replaces a phone call (owner, 2026-11-08).** The phone is the
+   urgent fallback, and a hung web call (the page swiped away without "end call") must never block it.
+   - *Web start meets a web call*: replaced as in 7.5.2.
+   - *Web start meets a phone call*: 409 as before. A phone call's marker names no web call (`call_id`), and a phone
+     call has no media the main service could close.
+   - *Phone dial meets a phone call*: rejected as before (`<Reject/>`), marker untouched.
+   - *Phone dial meets a web call* (`/voice/auth`): the route closes that call's media exactly as the web path does
+     (`WebCallMedia`, `src/web/voice_web_call_media.py`, shared by both blueprints; a call whose ticket the relay never
+     redeemed is released at once), waits for the marker to clear, and then goes on with the normal phone flow, which
+     writes the phone call's marker. The wait is bounded at **4 s** (`_PHONE_REPLACE_WAIT_S`), not 30 s: Twilio gives the
+     webhook about 15 s before it fails the dial, and the user lookup, the store writes and a cold start come out of the
+     same budget. A call already ending (button pressed just before the dial) releases within it; a live one does not
+     (the 5 s re-attach window alone is longer). The close is part of that one budget, not added to it: it is capped at
+     1.5 s (`_PHONE_REPLACE_CLOSE_S`, and never more than what is left), because the SFU's own request timeout is 15 s;
+     `CloudflareSfuAdapter.close` closes the legs concurrently, so a hung SFU costs one timeout, not one per leg. A close
+     past its cap is abandoned (WARNING) and the wait gets what remains. **Past the bound the dial takes the marker
+     over** (it is never refused for a web call), as it does when closing the media fails or times out, when the wait
+     itself fails on a store error (WARNING), or when the web call is not deployed. The dial logs
+     `voice auth: phone dial of <user> replaces the running web call <call_id>` at INFO (no number, no ticket). The CallSid
+     check now runs before the marker check, so a dial refused anyway never ends a web call. Resumption is unaffected: the
+     replaced call is not a button hangup, and the phone call reads `voice_resume` only at its own session config, after
+     its callback is answered, well after the old call's report.
+   - *The replaced call's late release.* After a takeover, the old web call's end-of-call report
+     (`/voice/submit-transcript`) and any release by its ticket (`VoiceCallSetupService.release`: a failed web start, an
+     unredeemed ticket) would delete the phone call's marker. So the marker names its call: `owner` =
+     `one_call_owner(digest_key, ticket)` (a keyed digest, never the ticket), written by the web claim, `/voice/auth` and
+     `/voice/inbound-status`, and kept by the session config's TTL extension (it rewrites the value it read). Both release
+     paths go through `release_one_call_marker`, which deletes the marker only when it names the releasing call; a marker
+     without `owner` (written before this field) or one that cannot be read is deleted as before (a stuck marker locks the
+     user out; a lost one only loosens the limit). The store has no compare-and-delete (the same gap as P11-G1-1), so a
+     takeover landing between a release's read and its delete is still lost. `/voice/inbound-status` rewrites the phone
+     call's marker whole, owner included, when the inbound dial ends (after "Calling you back"), which usually repairs
+     that. Not always: the old web call's report can land about 5 s after the close (the re-attach window), which is
+     around when the inbound dial ends, so the read-then-delete window can also straddle that rewrite. The live phone
+     call then runs without a marker: no lockout (nothing is held), only the one-call limit is off for that call. The
+     window is one store round trip wide. The phone path's own releases (`/voice/status`, the AMD branch, the
+     inbound-status failure branches) stay unconditional: nothing replaces a phone call, so its marker is always its own.
+   - *A replaced call the relay redeems late.* `/voice/session-config` reads the marker once, right after it consumes the
+     ticket: a marker naming another owner means the call was replaced before the relay got to it (a web call still in
+     setup or mid-`/connect` when the dial arrived, or one whose close was abandoned before its unredeemed ticket was
+     released). It answers 404, mints no voice MCP tokens, takes no resume handle, and leaves the other call's marker
+     and its TTL alone, so the replaced call never starts and never extends the phone call's marker to the call TTL.
+     The same ticket's owner is the one the relay presents: the phone ticket minted at `/voice/auth` rides the callback
+     to `/voice/answer` and the stream; the web ticket minted at the start rides the SFU URLs. A marker without `owner`
+     or one that cannot be read leaves the redemption as before. The extension at the end rewrites the value read at
+     the start, so a takeover landing during the token mint and the resume read is overwritten (the same class of window
+     as above; `/voice/inbound-status` rewrites it).
+   - *Remaining edge*: a web call whose ticket the relay redeemed just before the dial, while `/connect` was still
+     attaching the relay (its record lists no adapters yet), has nothing to close and stays live alongside the phone
+     call until either ends; a window of about one SFU attach. Neither release removes the other's marker.
+   - *Open point (not changed here)*: the claim itself is check-then-set (`VoiceCallSetupService.claim` and the
+     `/voice/auth` check), so two simultaneous starts can both pass it (P11-G1-1, a strict xfail in
+     `test_voice_call_setup_service_store_pins.py`); the fix is a conditional write in the store port.
 5. **Not a security change.** The marker is per user and `/web-call` is authenticated; the caller can only end their
    own call.
 
@@ -370,6 +423,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 | 2 | No hangup on hide + gap log | §7.2, shipped with slice 1, all pages. Also the relay logs inbound-audio gaps per call (§7.4.2): gap start, gap end, duration, call fingerprint only, no content; a gap is logged above a small floor (about 2 s) so normal jitter stays out. The hangup trigger is already logged by slice 1. This is the measurement for P5 | gap detector: gap logged at start and end with duration, none below the floor, no content in the line; otherwise a live app-switch call |
 | 6 | Dead-peer watchdog | §7.4, N chosen from P5 data | idle for N s ends the call through the end path (transcript submitted, marker released); a packet resets the timer; not armed before pairing |
 | 7 | New call replaces the running one | §7.5 | claim refused + web holder → adapters closed, wait for release, claim; marker never released within the bound → 409; button-ended call stores no handle, replaced one does |
+| 7b | A phone dial replaces a web call | §7.5.4 | web holder → its media closed, the dial goes on (not a reject) and the marker is the phone call's; released within the bound / not (taken over) / nothing to close / close fails / web call not deployed; phone holder → rejected at once, marker untouched; the old call's late report leaves the phone call's marker; inbound-status restores a marker a racing release deleted; a web start still 409s against that phone call; `release_one_call_marker` own / foreign / legacy / unreadable; a hung close abandoned at its cap inside the one budget; a failing wait takes over; session-config refuses a replaced ticket and leaves the phone marker; a phone call's own ticket redeems and extends its marker end to end; the SFU closes legs concurrently |
 | 3 | Channel skeleton | §4: token mint + digest in ticket, `/connect` returns `control`, hub, `/ctl` handler, hello/welcome/ping/bye, page connects on the interpreter page | hub (attach, replace, unknown digest, teardown); handler (hello deadline, bad token, frame cap, rate cap); `/connect` shape; token never logged |
 | 4 | Ask Lelik | §5: adapter `item_id`, `AskLatch`, service wiring, button, then token upload after P1 | latch table row by row; service: note sent on `speech_started` while armed and before the user item, no note on cancel, release on the right `response_done` (not the interrupted reply's); adapter wire tests for `item_id` both providers |
 | 5 | Resumption | §6.2 | adapter URL and `resumption` field, `resume_handle` event; service passes handle to `submit_transcript`; main stores/reads/deletes `voice_resume`, mode and provider match, TTL; a button-ended call stores no handle; resume note; refused handle reopens fresh |
@@ -415,5 +469,5 @@ the change intended.
    page's call well below the one-hour request timeout.
 9. (2026-11-08, owner: "a new call replacing the old one: long overdue".) A new call from the same user ends the running one instead
    of answering 409, and starts; the replaced call is resumable unless it ended by the button (§7.5).
-   Replacement is web-start-replaces-web-call only (§7.5.4); extending it to the phone dial-in path is an open owner
-   question, not decided.
+   Extended the same day (owner: the phone is the urgent fallback; a hung web call must never block it): a phone dial
+   replaces a running web call, and nothing replaces a phone call (§7.5.4).

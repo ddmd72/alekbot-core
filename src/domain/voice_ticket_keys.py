@@ -28,6 +28,12 @@ def button_end_key(key: bytes, ticket: str) -> str:
     return f"voice_button_end:{keyed_digest(key, 'voice_button_end', ticket)}"
 
 
+def one_call_owner(key: bytes, ticket: str) -> str:
+    """Not a store key: the value a one-call marker carries to name the call that holds it, so a call releases the marker
+    only while it is still its own (VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4)."""
+    return keyed_digest(key, "voice_one_call_owner", ticket)
+
+
 def result_key(key: bytes, ticket: str, call_id: str) -> str:
     """A delegation answer kept for the chat."""
     return f"voice_delegation_result:{keyed_digest(key, 'voice_delegation_result', ticket + _SEP + call_id)}"
