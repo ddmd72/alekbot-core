@@ -50,18 +50,29 @@ _LIST_TOOLS_COMPLETED = "mcp_list_tools.completed"
 _LIST_TOOLS_EVENTS = frozenset({_LIST_TOOLS_FAILED, _LIST_TOOLS_COMPLETED, "mcp_list_tools.in_progress"})
 _ITEM_EVENTS = frozenset({"conversation.item.added", "conversation.item.created", "conversation.item.done"})
 _UNKNOWN_SERVER = "unknown"
-# Remote MCP calls: xAI runs them itself, and the response that made them can end (`response.done`, its output holding
-# the `mcp_call` items) before they finish. Nothing speaks the results until a `response.create`: the server starts no
-# follow-up response on its own (a live call: no response between the MCP results and the caller's next words; the
-# OpenAI Realtime MCP guide, whose event names xAI follows, says the same). The adapter reports each finished call
-# (`remote_tool_done`) and, on `response_done`, which of the response's calls are still running; the session loop sends
-# the `response.create`. A call counts as finished on a completed/failed event, or on an `mcp_call` item that carries
-# its output, its error or a final status, whichever comes first; each is reported once.
+# Remote MCP calls: xAI runs them itself, and the response that made them ends (`response.done`) before they finish.
+# Nothing speaks the results until a `response.create`: the server starts no follow-up response on its own. The adapter
+# reports each finished call (`remote_tool_done`) and, on `response_done`, which of the response's calls still run; the
+# session loop sends the `response.create`.
+# xAI's wire (live probe with a public no-auth MCP server, grok-voice-3.0): every event names the call by `call_id`;
+# the call's items are `function_call` items named `<server_label>.<tool>` (never an `mcp_call` item, no
+# `server_label` field). In order: `response.mcp_call_arguments.delta`/`.done` (item_id, call_id, name),
+# `response.mcp_call.in_progress` (call_id, name), `response.output_item.added` + `conversation.item.added` (the
+# function_call item, in_progress), `response.done` (the function_call items, before any result), then per call
+# `conversation.item.added` of a `function_call_output` item (call_id, output) and `response.mcp_call.completed`
+# (call_id, name, output). Parallel calls interleave the same way. The OpenAI Realtime MCP shapes (`mcp_call` items
+# keyed by item id) are accepted as aliases. A call counts as finished on the first of: a completed/failed event, its
+# function_call_output item, an `mcp_call` item carrying its output, error or a final status; it is reported once.
 _MCP_CALL = "mcp_call"
+_FUNCTION_CALL = "function_call"
+_FUNCTION_CALL_OUTPUT = "function_call_output"
 _MCP_FINISHED_EVENTS = {"response.mcp_call.completed": True, "response.mcp_call.failed": False}
 _MCP_STARTED_EVENTS = frozenset({"response.mcp_call.in_progress", "response.mcp_call_arguments.done"})
-_MCP_ITEM_EVENTS = frozenset({*_ITEM_EVENTS, "response.output_item.added", "response.output_item.done"})
+_OUTPUT_ITEM_EVENTS = frozenset({"response.output_item.added", "response.output_item.done"})
+_MCP_ITEM_EVENTS = frozenset({*_ITEM_EVENTS, *_OUTPUT_ITEM_EVENTS})
 _MCP_FINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
+# Item types the adapter knows; any other in a response's output is logged by its type (a renamed shape shows up).
+_KNOWN_ITEM_TYPES = frozenset({"message", _FUNCTION_CALL, _FUNCTION_CALL_OUTPUT, _MCP_CALL, "mcp_list_tools"})
 # A call duration the provider may report itself; when it reports none, the adapter measures from the call's first event.
 _MCP_REPORTED_MS_KEYS = ("duration_ms", "latency_ms")
 
@@ -139,9 +150,17 @@ def _builtin_tool_calls(response: dict) -> Dict[str, int]:
     return counts
 
 
-def _mcp_item(event: dict) -> Optional[dict]:
+def _event_item(event: dict) -> Optional[dict]:
     item = event.get("item")
-    return item if isinstance(item, dict) and item.get("type") == _MCP_CALL else None
+    return item if isinstance(item, dict) else None
+
+
+def _call_key(source: dict, id_field: str) -> Optional[str]:
+    """A call's key: xAI's `call_id`, else the OpenAI-style item id (`item_id` on events, `id` on items)."""
+    for candidate in (source.get("call_id"), source.get(id_field)):
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
 
 
 def _mcp_item_finished(item: dict) -> Optional[bool]:
@@ -204,6 +223,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._mcp_seen: Dict[str, float] = {}
         self._mcp_labels: Dict[str, str] = {}
         self._mcp_finished: Set[str] = set()
+        # Calls first seen since the last response.created: response.done reports them even when its output does not
+        # show them as MCP calls (the safety net for a shape this adapter does not know yet).
+        self._response_calls: List[str] = []
 
     @property
     def _socket(self) -> ClientConnection:
@@ -299,6 +321,10 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 type="audio_delta", payload={"frame": frame, "item_id": event.get("item_id")}
             )
         if event_type == "response.function_call_arguments.done":
+            if self._is_mcp_call(event.get("name"), _call_key(event, "item_id")):
+                # A remote MCP call xAI runs itself: never a tool call for the relay to answer.
+                self._note_mcp_call(_call_key(event, "item_id"), event)
+                return None
             if event.get("name") in _BUILTIN_TOOL_LEGS:
                 # xAI ran it server-side; it is counted for billing on response.done.
                 logger.info(f"xAI realtime built-in tool call: {event.get('name')}")
@@ -313,6 +339,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 return None
             return RealtimeSessionEvent(type="resume_handle", payload={"handle": handle})
         if event_type == "response.created":
+            self._response_calls = []
             return RealtimeSessionEvent(type="response_created", payload={})
         if event_type == "response.done":
             # Usage sits at the event's top level on xAI, not under `response`.
@@ -346,18 +373,18 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         if event_type in _LIST_TOOLS_EVENTS:
             return self._list_tools_event(event_type, event)
         if event_type in _MCP_FINISHED_EVENTS:
-            return self._mcp_call_finished(event.get("item_id"), _MCP_FINISHED_EVENTS[event_type], event)
+            return self._mcp_call_finished(_call_key(event, "item_id"), _MCP_FINISHED_EVENTS[event_type], event)
         if event_type in _MCP_STARTED_EVENTS:
-            self._note_mcp_call(event.get("item_id"), event)
+            self._note_mcp_call(_call_key(event, "item_id"), event)
             return None
-        item = _mcp_item(event) if event_type in _MCP_ITEM_EVENTS else None
+        item = _event_item(event) if event_type in _MCP_ITEM_EVENTS else None
         if item is not None:
-            self._note_mcp_call(item.get("id"), event)
-            finished = _mcp_item_finished(item)
-            return None if finished is None else self._mcp_call_finished(item.get("id"), finished, event)
-        if event_type in _ITEM_EVENTS:
-            self._remember_list_item(event.get("item"))
-            return None
+            if event_type in _OUTPUT_ITEM_EVENTS:
+                self._log_unknown_item_type(item)
+            done = self._mcp_item_event(item, event)
+            if event_type in _ITEM_EVENTS:
+                self._remember_list_item(item)
+            return done
         if event_type == "error":
             # xAI may echo what it was sent (the session payload with the mcp entries' tokens): redacted, never raw.
             message = redact_for_log(event.get("error", event), secrets=self._secrets)
@@ -369,63 +396,100 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         # Everything else is not needed by the session loop: dropped, never logged.
         return None
 
-    def _note_mcp_call(self, item_id: Any, event: dict) -> None:
-        if not isinstance(item_id, str):
+    def _mcp_label_of_name(self, name: Any) -> Optional[str]:
+        """xAI names an MCP call `<server_label>.<tool>`: the label when it is one of the session's, else None."""
+        if not isinstance(name, str) or "." not in name:
+            return None
+        label = name.split(".", 1)[0]
+        return label if label in self._server_labels else None
+
+    def _is_mcp_call(self, name: Any, key: Optional[str]) -> bool:
+        return self._mcp_label_of_name(name) is not None or (key is not None and key in self._mcp_seen)
+
+    def _is_mcp_item(self, item: dict) -> bool:
+        if item.get("type") == _MCP_CALL:
+            return True
+        return item.get("type") == _FUNCTION_CALL and self._is_mcp_call(item.get("name"), _call_key(item, "id"))
+
+    def _log_unknown_item_type(self, item: dict) -> None:
+        item_type = item.get("type")
+        if item_type not in _KNOWN_ITEM_TYPES:
+            logger.info(f"xAI realtime output item type not read: {redact_for_log(str(item_type))[:40]}")
+
+    def _mcp_item_event(self, item: dict, event: dict) -> Optional[RealtimeSessionEvent]:
+        """An item event: an MCP call's item notes the call (and finishes an OpenAI-style `mcp_call` item that carries
+        its result); a `function_call_output` item of a known MCP call is its result: the call has finished."""
+        if self._is_mcp_item(item):
+            key = _call_key(item, "id")
+            self._note_mcp_call(key, event)
+            finished = _mcp_item_finished(item) if item.get("type") == _MCP_CALL else None
+            return None if finished is None else self._mcp_call_finished(key, finished, event)
+        if item.get("type") == _FUNCTION_CALL_OUTPUT:
+            key = _call_key(item, "id")
+            if key is not None and key in self._mcp_seen:
+                return self._mcp_call_finished(key, not item.get("error"), event)
+        return None
+
+    def _note_mcp_call(self, key: Optional[str], event: dict) -> None:
+        if key is None:
             return
-        self._mcp_seen.setdefault(item_id, time.monotonic())
+        if key not in self._mcp_seen:
+            self._mcp_seen[key] = time.monotonic()
+            self._response_calls.append(key)
         label = self._server_label(event)
         if label != _UNKNOWN_SERVER:
-            self._mcp_labels.setdefault(item_id, label)
+            self._mcp_labels.setdefault(key, label)
 
-    def _mcp_call_finished(self, item_id: Any, succeeded: bool, event: dict) -> Optional[RealtimeSessionEvent]:
+    def _mcp_call_finished(self, key: Optional[str], succeeded: bool, event: dict) -> Optional[RealtimeSessionEvent]:
         """One `remote_tool_done` per call, with one INFO line: the server label and the duration, never a payload."""
-        if not isinstance(item_id, str) or item_id in self._mcp_finished:
+        if key is None or key in self._mcp_finished:
             return None
-        self._note_mcp_call(item_id, event)
-        self._mcp_finished.add(item_id)
-        label = self._mcp_labels.get(item_id, _UNKNOWN_SERVER)
-        reported = _reported_ms(event, _mcp_item(event))
+        self._note_mcp_call(key, event)
+        self._mcp_finished.add(key)
+        label = self._mcp_labels.get(key, _UNKNOWN_SERVER)
+        reported = _reported_ms(event, _event_item(event))
         if reported is not None:
             duration = f"ms={reported} (xai)"
         else:
-            duration = f"ms={round((time.monotonic() - self._mcp_seen[item_id]) * 1000)} (since first event)"
+            duration = f"ms={round((time.monotonic() - self._mcp_seen[key]) * 1000)} (since first event)"
         logger.info(f"xAI realtime mcp call completed: server={label} {duration} ok={succeeded}")
-        return RealtimeSessionEvent(type="remote_tool_done",
-                                    payload={"item_id": item_id, "label": label, "ok": succeeded})
+        return RealtimeSessionEvent(type="remote_tool_done", payload={"item_id": key, "label": label, "ok": succeeded})
 
     def _remote_tools_of(self, response: dict) -> Optional[Dict[str, Any]]:
-        """The response's MCP calls for `response_done`, None when it made none: `pending` - item ids of calls not yet
+        """The response's MCP calls for `response_done`, None when it made none: `pending` - keys of calls not yet
         finished; `finished` - labels of calls first seen finished here (reported only in this payload);
         `continued` - the response went on to a message after its last call (it already spoke the results);
-        `cancelled` - the response was cut (the caller talked over it)."""
+        `cancelled` - the response was cut (the caller talked over it). The calls are those its output shows plus
+        those first seen since its response.created."""
         output = [item for item in response.get("output") or [] if isinstance(item, dict)]
-        calls = [(index, item) for index, item in enumerate(output) if item.get("type") == _MCP_CALL]
-        if not calls:
-            return None
-        pending: List[str] = []
+        for item in output:
+            self._log_unknown_item_type(item)
+        calls = [(index, item) for index, item in enumerate(output) if self._is_mcp_item(item)]
+        keys: List[str] = []
         finished: List[str] = []
         for _, item in calls:
-            item_id = item.get("id")
-            if not isinstance(item_id, str):
+            key = _call_key(item, "id")
+            if key is None or key in keys:
                 continue
-            self._note_mcp_call(item_id, {"item": item})
-            state = _mcp_item_finished(item)
-            if item_id in self._mcp_finished:
-                continue
-            if state is None:
-                pending.append(item_id)
-            elif self._mcp_call_finished(item_id, state, {"item": item}) is not None:
-                finished.append(self._mcp_labels.get(item_id, _UNKNOWN_SERVER))
-        last_call = calls[-1][0]
-        continued = any(item.get("type") == "message" for item in output[last_call + 1:])
-        return {"calls": len(calls), "pending": pending, "finished": finished, "continued": continued,
-                "cancelled": response.get("status") == "cancelled"}
+            keys.append(key)
+            self._note_mcp_call(key, {"item": item})
+            state = _mcp_item_finished(item) if item.get("type") == _MCP_CALL else None
+            if state is not None and self._mcp_call_finished(key, state, {"item": item}) is not None:
+                finished.append(self._mcp_labels.get(key, _UNKNOWN_SERVER))
+        keys += [key for key in self._response_calls if key not in keys]
+        self._response_calls = []
+        if not keys:
+            return None
+        continued = bool(calls) and any(item.get("type") == "message" for item in output[calls[-1][0] + 1:])
+        return {"calls": len(keys), "pending": [key for key in keys if key not in self._mcp_finished],
+                "finished": finished, "continued": continued, "cancelled": response.get("status") == "cancelled"}
 
     def _server_label(self, event: dict) -> str:
         """The event's server label when it is one of the session's, else "unknown": a label the provider made up or
         echoed from elsewhere never reaches an event or a log line."""
         item = event.get("item") if isinstance(event.get("item"), dict) else {}
-        for candidate in (event.get("server_label"), item.get("server_label"), self._list_items.get(event.get("item_id"))):
+        for candidate in (event.get("server_label"), item.get("server_label"), self._list_items.get(event.get("item_id")),
+                          self._mcp_label_of_name(event.get("name")), self._mcp_label_of_name(item.get("name"))):
             if isinstance(candidate, str) and candidate in self._server_labels:
                 return candidate
         return _UNKNOWN_SERVER
