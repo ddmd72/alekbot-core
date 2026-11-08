@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
 
+from src.domain.voice_mode import VoiceMode
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.voice_tickets import open_ticket, seal_ticket, ticket_key as ticket_key_of
 
@@ -287,7 +288,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     assert "wss://relay.example.com/" in body
     assert "t1" in body
     persona_factory.assert_awaited_once_with("u1")
-    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
+    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1", mode=VoiceMode.LELIK)
     set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
     assert set_calls[ticket_key_of("t1")]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
 
