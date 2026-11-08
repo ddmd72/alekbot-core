@@ -194,31 +194,46 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
   later turns is unknown. Saved: the `MemorySearchAgent` LLM call and the Smart chain per question.
 - **Latency** (*unknown*): expected low seconds per call versus seconds (memory) and tens of seconds (drive) today.
 
-## 9. Probe (after S1, with a real voice token; cents)
+## 9. Probe (two phases; cents)
 
-O9: no standard MCP token is ever sent to xAI. S1 ships the token kind; then a local helper (not deployed) mints a voice
-token through S1's code with the dedicated key for the dev user, writes its live-call record with a 10-minute TTL, and
-deletes the record when the probe ends, exercising revocation live. The probe extends
+O9 and O10: no standard MCP token is ever sent to xAI, and the voice signing key never leaves Secret Manager or the main
+service. A voice token is minted only by `/voice/session-config` on the main service. The probe extends
 `scripts/voice/test_xai_realtime_protocol_poc.py` (the reference for xAI wire shapes): a text-driven session
-(`conversation.item.create` + `response.create`), one run per server, against the live service. Drive questions target
-an invented test file inside an indexed folder. Answer:
+(`conversation.item.create` + `response.create`) against the live service. Drive questions target an invented test file
+inside an indexed folder.
 
-1. Does `session.update` accept two `mcp` entries plus functions; is `authorization` sent as given or with `Bearer `?
-2. When does xAI call `tools/list` (at `session.update`? per response?), and does it honour `allowed_tools`?
-3. Which events reach the socket during an MCP call; does `response.created`…`response.done` span it (the relay's
-   silence watchdog treats `response_active` as busy, `voice_session_service.py:505-535`)?
-4. Latency per call (our server's `ms` vs. time to first audio), and `text_input_tokens` per result (sets O5's cap).
-5. Does Grok call memory unprompted when the warm prompt lacks the answer (the owner's "in the background")?
-6. After the record is deleted: does the next call get 401, and how does Grok surface it?
+**Phase A: protocol shape, invalid token** (`scripts/voice/test_xai_mcp_shape_probe.py`). The probe sends a JWT-shaped
+token (`kid=voice-mcp`, the §5.2 claims, `sub=usr-probe`) signed with a throwaway random key that is never saved, so
+the voice verifier must refuse it on the signature. It settles questions 1, 2, 3 and 6 as far as a refused token
+allows, and the refusal lines on our side show what xAI sent.
+
+**Phase B: a real token, inside the owner's UAT call.** The first real voice token exists only in the call that S4
+runs: minted by `/voice/session-config` on the main service, held by the relay and xAI, dead at call end. It settles
+questions 4 and 5 and the success half of 2 (does `allowed_tools` filter what xAI shows the model), and the revocation
+half of 6 (the record deleted, the next call refused) by the §10 S4 revoked-after-call check.
+
+Questions:
+
+1. Does `session.update` accept two `mcp` entries plus functions; is `authorization` sent as given or with `Bearer `? (A)
+2. When does xAI call `tools/list` (at `session.update`? per response?), and does it honour `allowed_tools`? (A: when;
+   B: the filter)
+3. Which events reach the socket during an MCP call; does `response.created`...`response.done` span it (the relay's
+   silence watchdog treats `response_active` as busy, `voice_session_service.py:505-535`)? (A: the list-tools events;
+   B: the call events)
+4. Latency per call (our server's `ms` vs. time to first audio), and `text_input_tokens` per result (sets O5's cap). (B)
+5. Does Grok call memory unprompted when the warm prompt lacks the answer (the owner's "in the background")? (B)
+6. How does Grok surface a 401; after the record is deleted, does the next call get 401? (A: the 401; B: revocation)
+
+---
 
 ## 10. Slices
 
 | Slice | Content | Gate |
 |---|---|---|
 | S1 | Token kind: dedicated key in `load_settings()`, mint, live-call record, `kid` routing and the voice verifier in both resources, tool claim, audience by token kind, voice result cap, submit-transcript revoke, voice log rules | unit + arch tests, `make ci` |
-| S2 | Probe §9 with a real voice token; findings into a decision record; O5's cap set | owner OK on the spend |
+| S2 | Probe §9 phase A (invalid token, no key involved); findings into a decision record | owner OK on the spend |
 | S3 | `RemoteToolServer`, `session_config`, session-config splice, port + xAI adapter, `search_memory` filter, prompt line (token upload before deploy), knob `VOICE_MCP_TOOLS` (`os.getenv`, main service, default off) | wire tests, `make ci` |
-| S4 | Live UAT calls with the knob on: memory and drive questions, a revoked-after-call check | owner |
+| S4 | Live UAT calls with the knob on: memory and drive questions, a revoked-after-call check; the probe §9 phase B runs here, in the owner's first call; O5's cap set from its token counts | owner |
 | S5 | Docs: VOICE_COMPANION_RFC §4.15, the `remote_mcp_server` building block, deploy keys | — |
 
 ## 11. Tests
@@ -247,4 +262,5 @@ log record along mint → relay open → MCP verify contains the token.
 | O6 | Providers | xAI only; others when the need arises. |
 | O7 | Modes | The plain companion call only. Owner: the interpreter must not be overloaded with instructions, its focus would blur. |
 | O8 | Signing | A dedicated key (new secret) and a distinct token type and audience; the OAuth verifier rejects voice tokens and the voice verifier rejects OAuth tokens. |
-| O9 | Probe | Build the token slice first, then probe with a real voice token; no standard MCP token is sent to xAI. |
+| O9 | Probe | No standard MCP token is sent to xAI. Superseded in part by O10: the real-token probe moves into the UAT call. |
+| O10 | Where a real voice token may exist | "Stricter: the key never leaves the cloud" (owner, 2026-11-08). The voice signing key never leaves Secret Manager or the main service; the first real voice token exists only inside the owner's UAT call after S3, minted by `/voice/session-config`. Probe phase A runs earlier with an invalid token; phase B is part of S4. |
