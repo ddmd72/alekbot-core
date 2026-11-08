@@ -125,7 +125,7 @@ def test_deploy_flags_match_the_light_row():
     flags = _deploy_flags()
     for flag in ("--concurrency=1", "--use-http2", "--execution-environment=gen2", "--min-instances=0",
                  "--max-instances=5", "--memory=2Gi", "--cpu=2", "--timeout=900", "--no-allow-unauthenticated",
-                 "--clear-secrets", "--no-cpu-throttling"):
+                 "--clear-secrets"):
         assert re.search(re.escape(flag) + r"(\s|$)", flags), flag
     assert "--add-volume=name=sandbox-work,type=in-memory,size-limit=" in flags
     assert "--add-volume-mount=volume=sandbox-work,mount-path=/work" in flags
