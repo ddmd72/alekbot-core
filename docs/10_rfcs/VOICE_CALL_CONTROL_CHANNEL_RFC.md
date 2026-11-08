@@ -359,7 +359,7 @@ Order: 1–2 are a few lines and give the evidence P4 and P5 need; 3 before 4 (4
 3–4. 6 waits for the P5 data (it fixes N); 7 needs 5 (it relies on resumption) and is otherwise independent.
 **Existing tests:** `tests/unit/adapters/test_xai_realtime_adapter.py:198` asserts `speech_started` maps to `{}`; slice 4
 changes that on purpose, so a reviewer decides that edit (reviewer rule). Slice 7 likewise changes on purpose what
-`tests/unit/web/test_voice_web_call_app.py::test_second_call_while_live_is_409_and_leaves_the_first_intact` asserts
+`tests/unit/web/test_voice_web_call_app.py::test_a_web_call_while_a_phone_call_is_live_is_409_and_leaves_it_intact` asserts
 (a second start of the same user's web call is now a replacement, 201); a reviewer decides that edit too. No other
 existing test is expected to change;
 no main-service route is added (`/ctl` is on the relay; `/connect` only gains a field).
