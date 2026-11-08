@@ -158,7 +158,7 @@ SECRET_VALUES: Dict[str, str] = {
     # as the deploy's; the KMS client itself is the SDK-shaped fake `install_offline_services` installs
     "KMS_CRYPTO_KEY": "projects/p9-test-project/locations/us-central1/keyRings/r-test/cryptoKeys/k-test",
     "SECRET_DIGEST_KEY": "5e" * 32,
-    # the voice MCP token kind's own HS256 key (LELIK_VOICE_MCP_RFC §5.2): at least 32 characters, not the OAuth secret
+    # the voice MCP token kind's own HS256 key (LELIK_VOICE_MCP_RFC §5.2): at least 48 characters, not the OAuth secret
     "VOICE_MCP_SIGNING_KEY": "v" * 48,
 }
 
