@@ -168,7 +168,7 @@ def test_speech_over_the_audible_answer_is_not_marked_and_the_answer_still_relea
     assert latch.response_done().report == AskReport("idle", reason=AskReason.ANSWERED)
 
 
-# ---------------------------------------------------------------- active/awaiting | 20 s from speech_stopped -> timeout
+# ---------------------------------------------------------------- reply never starts (20 s) or never ends (90 s runaway cap) -> timeout
 
 def test_awaiting_reply_times_out_twenty_seconds_after_speech_stopped(latch, clock):
     _awaiting(latch)
