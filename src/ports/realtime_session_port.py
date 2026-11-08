@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List
+from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List, Sequence
 
+from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
 
@@ -29,9 +30,13 @@ class RealtimeSessionPort(ABC):
     supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]
 
     @abstractmethod
-    async def open(self, instructions: str, reasoning_effort: str, tools: List[Any]) -> None:
+    async def open(self, instructions: str, reasoning_effort: str, tools: List[Any],
+                   mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
         """Connect and send the initial session.update. `instructions` must
-        already have PROMPT_CACHE_BOUNDARY stripped by the caller."""
+        already have PROMPT_CACHE_BOUNDARY stripped by the caller.
+        `mcp_servers` (LELIK_VOICE_MCP_RFC §4): remote MCP servers the provider calls by itself, each with the call's
+        bearer token. An adapter whose provider does not take them refuses a non-empty list (ValueError). Neither the
+        servers nor their tokens are ever logged."""
 
     @abstractmethod
     async def send_audio(self, frame: AudioFrame) -> None:
@@ -50,7 +55,10 @@ class RealtimeSessionPort(ABC):
         id, so callers can label usage without hardcoding a provider-specific
         model string), user_transcript (payload: text - final transcript of
         the caller's speech), model_transcript (payload: text - final
-        transcript of the model's spoken response), error (payload: message)."""
+        transcript of the model's spoken response), error (payload: message, already redacted for a log line),
+        remote_tools_failed (payload: label - one of the session's `mcp_servers` labels or "unknown", reason - the
+        provider's error text redacted for a log line: the provider could not list that server's tools, so the session
+        runs without them; the session itself goes on)."""
 
     @abstractmethod
     async def submit_tool_result(self, call_id: str, output: str) -> None:

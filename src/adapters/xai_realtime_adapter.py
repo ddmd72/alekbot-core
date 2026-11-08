@@ -1,10 +1,12 @@
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence
 
 import websockets
 from websockets.asyncio.client import ClientConnection
 
 from src.domain.billing import REALTIME_WEB_SEARCH_CALLS, REALTIME_X_SEARCH_CALLS
+from src.domain.log_redaction import redact_for_log
+from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -33,6 +35,16 @@ _TURN_DETECTION = {
 _BUILTIN_TOOLS = ({"type": "web_search"}, {"type": "x_search"})
 # Built-in tool name -> the per-call usage leg its calls are counted in (priced in domain.billing).
 _BUILTIN_TOOL_LEGS = {"web_search": REALTIME_WEB_SEARCH_CALLS, "x_search": REALTIME_X_SEARCH_CALLS}
+# Remote MCP servers (LELIK_VOICE_MCP_RFC §4; live probe phase A, 2026-11-08). session.update takes one `mcp` entry per
+# server next to the function tools; `authorization` goes raw (xAI adds `Bearer ` itself and does not double an
+# existing prefix); session.updated echoes the entries without it. xAI calls tools/list once per server, at
+# session.update and before session.updated, and never again. A failed list (a 401 among others) arrives only as
+# `mcp_list_tools.failed` with an opaque error: no `error` event, and the session goes on without that server's tools.
+_LIST_TOOLS_FAILED = "mcp_list_tools.failed"
+_LIST_TOOLS_COMPLETED = "mcp_list_tools.completed"
+_LIST_TOOLS_EVENTS = frozenset({_LIST_TOOLS_FAILED, _LIST_TOOLS_COMPLETED, "mcp_list_tools.in_progress"})
+_ITEM_EVENTS = frozenset({"conversation.item.added", "conversation.item.created", "conversation.item.done"})
+_UNKNOWN_SERVER = "unknown"
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -65,6 +77,17 @@ def _flatten_usage(usage: dict) -> Dict[str, float]:
         "text_input_tokens": input_details.get("text_tokens", 0),
         "text_output_tokens": output_details.get("text_tokens", 0),
         "billable_audio_seconds": usage.get("billable_audio_seconds", 0),
+    }
+
+
+def _mcp_entry(server: RemoteToolServer) -> Dict[str, Any]:
+    return {
+        "type": "mcp",
+        "server_url": server.url,
+        "server_label": server.label,
+        "server_description": server.description,
+        "allowed_tools": list(server.allowed_tools),
+        "authorization": server.token,
     }
 
 
@@ -106,6 +129,10 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         # Highest running total of billable_audio_seconds seen this session. One adapter
         # per call (relay_main), so this is the call's billed time so far.
         self._billed_audio_seconds: float = 0
+        # The labels of the session's MCP servers: the only server names an event or a log line may carry.
+        self._server_labels: frozenset = frozenset()
+        # item_id of an mcp_list_tools conversation item -> its server label, for list events that name the item only.
+        self._list_items: Dict[str, str] = {}
 
     @property
     def _socket(self) -> ClientConnection:
@@ -113,7 +140,8 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             raise RuntimeError("realtime session is not open")
         return self._ws
 
-    async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
+    async def open(self, instructions: str, reasoning_effort: str, tools: List[dict],
+                   mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
         url = f"wss://api.x.ai/v1/realtime?model={self._model}"
         self._ws = await self._connect(url, additional_headers={"Authorization": f"Bearer {self._api_key}"})
         session: Dict[str, Any] = {
@@ -130,10 +158,13 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         if clashing:
             # Calls of a function named after a built-in are taken for xAI's own and never answered.
             raise ValueError(f"function tools named like xAI built-in tools: {clashing}")
-        # Built-ins go bare; our own tools are functions. tool_choice is sent even with built-ins alone.
+        # Built-ins go bare; our own tools are functions; remote MCP servers are `mcp` entries. tool_choice is sent
+        # even with built-ins alone. Nothing here is logged: the mcp entries carry the call's bearer tokens.
         builtins = list(_BUILTIN_TOOLS) if self._builtin_search else []
-        if builtins or tools:
-            session["tools"] = [*builtins, *({"type": "function", **tool} for tool in tools)]
+        self._server_labels = frozenset(server.label for server in mcp_servers)
+        if builtins or tools or mcp_servers:
+            session["tools"] = [*builtins, *({"type": "function", **tool} for tool in tools),
+                                *(_mcp_entry(server) for server in mcp_servers)]
             session["tool_choice"] = "auto"
         await self._socket.send(json.dumps({"type": "session.update", "session": session}))
 
@@ -193,9 +224,42 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="speech_started", payload={})
         if event_type == "input_audio_buffer.speech_stopped":
             return RealtimeSessionEvent(type="speech_stopped", payload={})
+        if event_type in _LIST_TOOLS_EVENTS:
+            return self._list_tools_event(event_type, event)
+        if event_type in _ITEM_EVENTS:
+            self._remember_list_item(event.get("item"))
+            return None
         if event_type == "error":
-            logger.error(f"xAI realtime error event: {event.get('error', event)}")
-            return RealtimeSessionEvent(type="error", payload={"message": str(event.get("error", event))})
+            # xAI may echo what it was sent (the session payload with the mcp entries' tokens): redacted, never raw.
+            message = redact_for_log(event.get("error", event))
+            logger.error(f"xAI realtime error event: {message}")
+            return RealtimeSessionEvent(type="error", payload={"message": message})
+        # Everything else, response.mcp_call.* included, is not needed by the session loop: dropped, never logged.
+        return None
+
+    def _server_label(self, event: dict) -> str:
+        """The event's server label when it is one of the session's, else "unknown": a label the provider made up or
+        echoed from elsewhere never reaches an event or a log line."""
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        for candidate in (event.get("server_label"), item.get("server_label"), self._list_items.get(event.get("item_id"))):
+            if isinstance(candidate, str) and candidate in self._server_labels:
+                return candidate
+        return _UNKNOWN_SERVER
+
+    def _remember_list_item(self, item: Any) -> None:
+        if isinstance(item, dict) and item.get("type") == "mcp_list_tools" and isinstance(item.get("id"), str):
+            label = item.get("server_label")
+            if isinstance(label, str) and label in self._server_labels:
+                self._list_items[item["id"]] = label
+
+    def _list_tools_event(self, event_type: str, event: dict) -> Optional[RealtimeSessionEvent]:
+        label = self._server_label(event)
+        if event_type == _LIST_TOOLS_FAILED:
+            error = event.get("error")
+            reason = redact_for_log((error.get("message") if isinstance(error, dict) else error) or "no error text")
+            return RealtimeSessionEvent(type="remote_tools_failed", payload={"label": label, "reason": reason})
+        if event_type == _LIST_TOOLS_COMPLETED:
+            logger.info(f"xAI realtime MCP tools listed: server={label}")
         return None
 
     async def submit_tool_result(self, call_id: str, output: str) -> None:
