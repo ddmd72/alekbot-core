@@ -36,6 +36,9 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl
 
 from ..domain.mcp import MCPClient
+from ..domain.mcp_resource import MCPResource
+from ..domain.voice_mcp_token import VOICE_MCP_CLIENT, McpTokenKind
+from ..services.voice_mcp_token_service import VerifiedVoiceToken, VoiceMcpTokenService, is_voice_token
 from ..services.mcp_authorization_service import (
     AuthorizationParams,
     MCPAuthError,
@@ -70,6 +73,36 @@ class AlekAccessToken(SDKAccessToken):
     user_id: str
     account_id: str
     grant_id: Optional[str] = None  # the `gid` claim: the drive connector's one-time link stores it
+    # Which verifier accepted it (LELIK_VOICE_MCP_RFC §5.3); OAuth unless a verified voice token.
+    kind: McpTokenKind = McpTokenKind.OAUTH
+    # The tools it may call; None (an OAuth token) is every tool of its resource (`voice_mcp_token.tool_permitted`).
+    tools: Optional[List[str]] = None
+
+
+def voice_access_token(verified: VerifiedVoiceToken) -> AlekAccessToken:
+    """The SDK-shaped carrier of a verified voice token: kind VOICE, its tools claim, no grant id."""
+    return AlekAccessToken(
+        token=verified.token,
+        client_id=VOICE_MCP_CLIENT,
+        scopes=list(verified.scopes),
+        expires_at=verified.expires_at,
+        resource=verified.resource,
+        user_id=verified.user_id,
+        account_id=verified.account_id,
+        kind=McpTokenKind.VOICE,
+        tools=list(verified.tools),
+    )
+
+
+async def verify_voice_token(voice_tokens: Optional[VoiceMcpTokenService], token: str,
+                             resource: MCPResource) -> Optional[AlekAccessToken]:
+    """A token routed to the voice verifier (its `kid` is `voice-mcp`): verified for `resource`, or None. With no
+    voice token service (no `VOICE_MCP_SIGNING_KEY`) every voice token is refused."""
+    if voice_tokens is None:
+        logger.info(f"[VoiceMCP] token refused: resource={resource.value} reason=voice_tokens_off client=voice")
+        return None
+    verified = await voice_tokens.verify(token, resource)
+    return voice_access_token(verified) if verified is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +169,11 @@ class MCPSdkOAuthProvider(
         AlekAuthorizationCode, AlekRefreshToken, AlekAccessToken
     ]
 ):
-    def __init__(self, service: MCPAuthorizationService):
+    def __init__(self, service: MCPAuthorizationService, voice_tokens: Optional[VoiceMcpTokenService] = None):
+        """`voice_tokens`: the voice token kind's verifier (LELIK_VOICE_MCP_RFC §5.3); None refuses every voice
+        token."""
         self._service = service
+        self._voice_tokens = voice_tokens
 
     # -----------------------------------------------------------------
     # Client (DCR + /token client auth lookup)
@@ -279,6 +315,10 @@ class MCPSdkOAuthProvider(
     # -----------------------------------------------------------------
 
     async def load_access_token(self, token: str) -> Optional[AlekAccessToken]:
+        # Routed on the unverified header (LELIK_VOICE_MCP_RFC §5.3): a `voice-mcp` kid goes to the voice verifier
+        # only, anything else to the OAuth verifier only; never both. A forged kid changes only who refuses it.
+        if is_voice_token(token):
+            return await verify_voice_token(self._voice_tokens, token, MCPResource.FACTS)
         verified = self._service.verify_access_token(token)
         if verified is None:
             return None
