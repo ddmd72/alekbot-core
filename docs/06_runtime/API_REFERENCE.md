@@ -80,7 +80,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `GET` | `/og.png`, `/robots.txt`, `/favicon.ico` | none | Landing assets: the share image, and a `robots.txt` that allows only `/$` and closes everything else |
 | `GET` | `/cabinet` | none (its API calls need JWT) | Cabinet SPA; on a touch device it opens `/cabinet/call` |
 | `GET` | `/cabinet/call` (+ `manifest.webmanifest`, `icon-<size>.png`) | none (its API calls need JWT) | Voice call page, installable |
-| `GET` | `/cabinet/call/modes`, `/cabinet/call/<mode>` (`interpreter`, `tutor`) (+ `<path>/manifest.webmanifest`) | none (its API calls need JWT) | Voice modes list and one page per mode, each installable with its own manifest (`decisions/lelik_voice_modes.md`) |
+| `GET` | `/cabinet/call/modes`, `/cabinet/call/<mode>` (`interpreter`, `tutor`) (+ `<path>/manifest.webmanifest`, and for a mode `<path>/icon-<size>.png`) | none (its API calls need JWT) | Voice modes list and one page per mode, each installable with its own manifest (`decisions/lelik_voice_modes.md`) |
 | `GET` | `/join?code=…` | cookie / redirect | Team invite deep link |
 | `GET` | `/cabinet/docs[/<path>]` | owner | The `docs/` tree, rendered |
 | `GET` | `/f/<token>`, `/f/<token>/raw` | capability token | Private file access (`src/web/file_access_app.py`) |
