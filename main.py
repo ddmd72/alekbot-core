@@ -28,6 +28,7 @@ from src.composition.mcp_setup import build_mcp_components
 from src.composition.drive_connector_tools import build_drive_connector_tools_from_container
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.composition.drive_link_setup import build_drive_link_service
+from src.composition.voice_mcp_setup import build_voice_mcp_tokens, voice_mcp_tools_enabled
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.domain.mcp_resource import DRIVE_PATH
 
@@ -57,11 +58,13 @@ def mcp_owner(path: str) -> Optional[str]:
     return "facts" if _is_mcp_path(path) else None
 
 
-def build_drive_mcp_or_none(authorization_service, auth_config, tools=None):
+def build_drive_mcp_or_none(authorization_service, auth_config, tools=None, voice_tokens=None):
     """The drive connector's app, or None when its build fails: the facts connector must keep running. `tools` None:
-    the app lists no tool (only the auth-seam tests build it so; `main()` always passes the tools)."""
+    the app lists no tool (only the auth-seam tests build it so; `main()` always passes the tools). `voice_tokens`
+    None: every voice MCP token is refused (no `VOICE_MCP_SIGNING_KEY`)."""
     try:
-        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools)
+        return build_drive_mcp_app(authorization_service=authorization_service, auth_config=auth_config, tools=tools,
+                                   voice_tokens=voice_tokens)
     except Exception as drive_err:
         logger.error(f"❌ Failed to initialize drive MCP connector: {drive_err}", exc_info=True)
         logger.warning("🤖 Bot will continue without the drive connector")
@@ -286,6 +289,18 @@ async def main():
                 voice_ephemeral_store = FirestoreEphemeralStore(
                     db_client, collection=env_config.voice_tickets_collection
                 )
+                # The voice MCP token kind (LELIK_VOICE_MCP_RFC §5): minted and revoked by the control
+                # plane, verified by both MCP resources; its live-call records share the voice tickets
+                # store. None without VOICE_MCP_SIGNING_KEY (the graph already refused a knob-on start).
+                voice_mcp_tokens = build_voice_mcp_tokens(
+                    key=app.voice_mcp_signing_key,
+                    store=voice_ephemeral_store,
+                    digest_key=app.digest_key,
+                    auth_config=app.auth_config,
+                    user_repo=app.user_repo,
+                    whitelist_repo=app.whitelist_repo,
+                    alert_sink=app.alert_sink,
+                )
 
                 # Accepted: the invoker identity, the relay's runtime SA (it posts here with its own
                 # metadata-server token) and the optional transition list (IAM migration). Empty set:
@@ -398,6 +413,8 @@ async def main():
                         late_answer_sink=_voice_late_answer_sink,
                         relay_warmup=_relay_warmup if _relay_http_url else None,
                         digest_key=app.digest_key,
+                        voice_mcp_tokens=voice_mcp_tokens,
+                        voice_mcp_minting=voice_mcp_tools_enabled(),
                     )
                 )
                 logger.info(
@@ -590,6 +607,7 @@ async def main():
                         digest_key=app.digest_key,
                         user_repo=app.user_repo,
                         whitelist_repo=app.whitelist_repo,
+                        voice_tokens=voice_mcp_tokens,
                     )
                     # Consent blueprint is built in main.py (not in
                     # composition/) because composition must not depend
@@ -621,7 +639,7 @@ async def main():
                         logger.warning("🤖 Bot will continue without the drive connector")
                     else:
                         drive_mcp = build_drive_mcp_or_none(mcp_components.authorization_service, app.auth_config,
-                                                            tools=drive_tools)
+                                                            tools=drive_tools, voice_tokens=voice_mcp_tokens)
                         if drive_mcp is not None:
                             main_app.register_blueprint(create_drive_link_blueprint(drive_links))
                 except Exception as mcp_err:

@@ -359,6 +359,35 @@ Neither is stored in Firestore:
   `/authorize` and `/mcp/consent`. Claims: all `AuthorizationParams` fields plus
   `aud=mcp-consent`, `iat`, `exp`. TTL 10min. Verified on GET and POST of `/mcp/consent`.
 
+### 5.4.1 Voice token kind
+
+A second access-token kind for Lelik's own calls ([LELIK_VOICE_MCP_RFC](../../10_rfcs/LELIK_VOICE_MCP_RFC.md) §5):
+per call, read-only, bound to one user, dead at call end. Code: `src/services/voice_mcp_token_service.py` (mint,
+verify, revoke), rules in `src/domain/voice_mcp_token.py`, key and knob in `src/composition/voice_mcp_setup.py`.
+
+- **Key and claims.** HS256 under its own secret `VOICE_MCP_SIGNING_KEY`, never the OAuth secret (the start is refused
+  when the two are equal). Header `kid=voice-mcp`; `type=voice_mcp_access`; `aud=voice:<canonical resource URI>`;
+  `sub`, `account_id`, `scope` (the resource's own), `tools` (facts: `get_user_context`; drive: `search_drive`,
+  `find_passages`, `read_passages`), `cid` (keyed digest of the call ticket, purpose `voice_mcp`), `iat`, `exp` =
+  `iat` + 3600.
+- **Mint.** At `/voice/session-config` only (never at prepare, never stored), with the `VOICE_MCP_TOOLS` knob on, for
+  the plain companion call on xAI; the whitelist is re-read first (a refused user gets the call without tokens and an
+  alert). The live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` goes to the voice tickets store with
+  the token's TTL; the two tokens go back to the relay in the response field `voice_mcp_tokens` (`{"facts", "drive"}`).
+- **Verify.** Both resources route on the unverified header: `kid=voice-mcp` → the voice verifier only, anything else →
+  the OAuth verifier only; each refuses the other's tokens on key, type and audience. The voice verifier also reads the
+  live-call record on every call (missing, another user or another account → 401); OAuth tokens read no record. A
+  verified voice token is `AlekAccessToken(kind=VOICE, tools=[…])`, its tools the server's set for the resource
+  narrowed by the claim (a claim never adds a tool); OAuth tokens are `kind=OAUTH, tools=None`.
+- **At the tools.** A tool outside the claim gets the neutral refusal before any read (drive: the REFUSED line; facts:
+  one "Refused" line). A drive call runs with the drive audience unset, so Lelik reads what chat reads (the Cabinet's
+  "Connector access" does not apply); OAuth calls always run under the connector audience. Results are cut at
+  `VOICE_RESULT_MAX_CHARS` (8 000) instead of 100 000.
+- **Revoke.** `/voice/submit-transcript` deletes the live-call record (whatever the knob), so both tokens stop verifying;
+  a relay that dies leaves it to its TTL.
+- **Logs.** No token, ticket or `Authorization` header in any line; refusals log the reason only; voice lines carry
+  `client=voice`; the facts tool logs counts, never the query, for a voice token.
+
 ### 5.5 No composite indexes
 
 Every query in the adapter is a doc-id lookup (`.document(...)`). No `.where()`, no
@@ -551,6 +580,8 @@ async def get_user_context(
   Set in `cloudbuild-dev.yaml` via the `$_SERVICE_URL/mcp` substitution.
   Not yet in `cloudbuild-prod.yaml` — add when ready to promote. The drive resource URI is derived from it
   (same host, path `/drive-mcp`).
+- `VOICE_MCP_SIGNING_KEY` (secret) and `VOICE_MCP_TOOLS` (knob): the voice token kind (§5.4.1,
+  `docs/07_deployment/README.md`).
 
 ### 10.2 Firestore
 
