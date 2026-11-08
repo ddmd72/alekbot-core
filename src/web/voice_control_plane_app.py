@@ -61,9 +61,15 @@ from src.domain.voice_amd import is_voicemail
 from src.domain.secret_digest import fingerprint
 from src.domain.voice_mode import VOICE_MODES_WITH_CALL_SUMMARY, VoiceMode
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
+from src.domain.voice_mcp_token import voice_mcp_eligible
 from src.domain.voice_ticket_keys import abandoned_key, amd_key, call_kind_key, result_key, ticket_key
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
+
+# The session-config response field that carries a call's two voice MCP tokens, `{"facts": <jwt>,
+# "drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay ignores it until slice S3 splices the tokens
+# into the session's `mcp` tools; nothing logs it.
+VOICE_MCP_TOKENS_FIELD = "voice_mcp_tokens"
 
 # Long enough to cover the relay's 300 s wait plus a slow delegation finishing after it.
 _LATE_ANSWER_TTL_S = 900
@@ -88,6 +94,7 @@ def _forget_delegation(task: asyncio.Task) -> None:
 
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
+    from src.services.voice_mcp_token_service import VoiceMcpTokenService
 
 
 def create_voice_control_plane_blueprint(
@@ -103,11 +110,34 @@ def create_voice_control_plane_blueprint(
     relay_warmup: Optional[Callable[[], Awaitable[int]]] = None,
     *,
     digest_key: bytes,
+    voice_mcp_tokens: Optional["VoiceMcpTokenService"] = None,
+    voice_mcp_minting: bool = False,
 ) -> Blueprint:
     """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
     relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
-    is empty (its error text is never kept). Without a sink such answers are kept, never posted."""
+    is empty (its error text is never kept). Without a sink such answers are kept, never posted.
+
+    `voice_mcp_tokens` (LELIK_VOICE_MCP_RFC §5): the voice MCP token kind. With `voice_mcp_minting`
+    (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's two tokens
+    on xAI and returns them under `VOICE_MCP_TOKENS_FIELD`; `/voice/submit-transcript` deletes the
+    call's live-call record whatever the knob, so every token of the call stops verifying."""
     bp = Blueprint("voice_control_plane", __name__)
+
+    async def _voice_mcp_tokens_for(ticket: str, config: dict) -> Optional[dict]:
+        """The call's tokens on the wire (`{"facts", "drive"}`), or None: the knob off, no key, a call
+        other than the plain companion call on xAI (O6, O7), or a user the whitelist now refuses (the
+        service alerts). A store error propagates: the session-config fails, closed."""
+        if voice_mcp_tokens is None or not voice_mcp_minting:
+            return None
+        if not voice_mcp_eligible(config.get("mode"), (config.get("voice") or {}).get("provider")):
+            return None
+        try:
+            tokens = await voice_mcp_tokens.mint(ticket, config["user_id"], config["account_id"])
+        except Exception as exc:
+            logger.error(f"voice session-config: voice MCP token mint failed for ticket {fingerprint(ticket)}: "
+                         f"{type(exc).__name__}")
+            raise
+        return tokens.to_wire() if tokens is not None else None
 
     async def _post_claimed(ticket: str, call_id: str) -> None:
         # The only claim: two racing callers cannot both get the record back.
@@ -167,6 +197,11 @@ def create_voice_control_plane_blueprint(
         except Exception:
             logger.error(f"voice session-config: extending the one-call marker failed for ticket {fingerprint(ticket)}",
                         exc_info=True)
+        # Minted here, at redemption, never at prepare (O1): the ticket record in the store never
+        # holds a token, and the tokens leave only in this OIDC-authenticated response.
+        mcp_tokens = await _voice_mcp_tokens_for(ticket, config)
+        if mcp_tokens is not None:
+            config = {**config, VOICE_MCP_TOKENS_FIELD: mcp_tokens}
         return jsonify(config), 200
 
     @bp.route("/voice/submit-transcript", methods=["POST"])
@@ -299,6 +334,15 @@ def create_voice_control_plane_blueprint(
                 await prompt_content_store.flush()
             except Exception:
                 logger.error(f"voice call {fingerprint(call_id)}: prompt content flush failed", exc_info=True)
+            # The call ended: delete its voice MCP live-call record (the relay's call_id is the
+            # ticket), so both of its tokens stop verifying now, not at their exp (LELIK_VOICE_MCP_RFC
+            # §5.3). Whatever the knob: a token minted while it was on must still die with the call.
+            if voice_mcp_tokens is not None:
+                try:
+                    await voice_mcp_tokens.revoke(call_id)
+                except Exception:
+                    logger.error(f"voice call {fingerprint(call_id)}: voice MCP call record not deleted, "
+                                 f"its tokens live to their exp", exc_info=True)
             # Release the one-call-per-user marker (written by the auth webhook
             # before dialing out) regardless of usage-recording or
             # summary-consumer outcome — a stuck marker would permanently lock
