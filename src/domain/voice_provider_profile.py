@@ -1,6 +1,7 @@
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Dict, Mapping, Optional
 
+from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.domain.voice_turn_ownership import TurnOwnership
 
@@ -12,6 +13,16 @@ class VoiceProviderProfile:
 
     prompt_profile: str
     session: VoiceSessionSpec
+    # Prompt profile per non-default mode; a provider without an entry does not offer that mode.
+    mode_profiles: Mapping[VoiceMode, str] = field(default_factory=dict)
+
+    def prompt_profile_for(self, mode: VoiceMode) -> str:
+        if mode == VoiceMode.LELIK:
+            return self.prompt_profile
+        try:
+            return self.mode_profiles[mode]
+        except KeyError:
+            raise UnsupportedVoiceMode(f"voice mode {mode.value!r} is not available for provider {self.session.provider!r}") from None
 
 
 VOICE_PROVIDER_PROFILES: Dict[str, VoiceProviderProfile] = {
@@ -20,6 +31,7 @@ VOICE_PROVIDER_PROFILES: Dict[str, VoiceProviderProfile] = {
     "xai": VoiceProviderProfile(
         prompt_profile="lelik_xai",
         session=VoiceSessionSpec("xai", TurnOwnership.PROVIDER, voice="castor", reasoning_effort="high"),
+        mode_profiles={VoiceMode.INTERPRETER: "lelik_xai_interpreter", VoiceMode.TUTOR: "lelik_xai_tutor"},
     ),
     # Lelik as tuned through 2026-09-29 (VOICE_COMPANION_RFC §4.15).
     "openai": VoiceProviderProfile(

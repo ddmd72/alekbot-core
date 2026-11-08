@@ -80,6 +80,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `GET` | `/og.png`, `/robots.txt`, `/favicon.ico` | none | Landing assets: the share image, and a `robots.txt` that allows only `/$` and closes everything else |
 | `GET` | `/cabinet` | none (its API calls need JWT) | Cabinet SPA; on a touch device it opens `/cabinet/call` |
 | `GET` | `/cabinet/call` (+ `manifest.webmanifest`, `icon-<size>.png`) | none (its API calls need JWT) | Voice call page, installable |
+| `GET` | `/cabinet/call/modes`, `/cabinet/call/<mode>` (`interpreter`, `tutor`) (+ `<path>/manifest.webmanifest`) | none (its API calls need JWT) | Voice modes list and one page per mode, each installable with its own manifest (`decisions/lelik_voice_modes.md`) |
 | `GET` | `/join?code=…` | cookie / redirect | Team invite deep link |
 | `GET` | `/cabinet/docs[/<path>]` | owner | The `docs/` tree, rendered |
 | `GET` | `/f/<token>`, `/f/<token>/raw` | capability token | Private file access (`src/web/file_access_app.py`) |
@@ -90,8 +91,8 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/voice/auth`, `/voice/inbound-status`, `/voice/answer`, `/voice/status` | Twilio signature | Phone-call webhooks (`src/web/voice_webhook_app.py`) |
-| `POST` | `/voice/session-config`, `/voice/submit-transcript`, `/voice/delegate`, `/voice/delegate/abandon`, `/voice/relay-warmup` | OIDC | Control plane for the voice relay (`src/web/voice_control_plane_app.py`) |
-| `POST` | `/api/voice/web-call` | JWT | Start a web call (Cloudflare SFU) |
+| `POST` | `/voice/session-config`, `/voice/submit-transcript`, `/voice/delegate`, `/voice/delegate/abandon`, `/voice/relay-warmup` | OIDC | Control plane for the voice relay (`src/web/voice_control_plane_app.py`); `/voice/submit-transcript` skips the after-call summary for modes outside `VOICE_MODES_WITH_CALL_SUMMARY` |
+| `POST` | `/api/voice/web-call` | JWT | Start a web call (Cloudflare SFU). Optional body field `mode` (`lelik` default, `interpreter`, `tutor`); 400 `unknown_mode`, 409 `mode_unavailable` (provider has no profile for the mode; 409 also when a call is in progress) |
 | `POST` | `/api/voice/web-call/<call_id>/connect`, `/renegotiate`, `/hangup` | JWT | Web call signalling |
 | `GET` | `/api/voice/web-call/<call_id>/status` | JWT | Web call state |
 

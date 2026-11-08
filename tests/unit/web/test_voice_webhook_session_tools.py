@@ -30,7 +30,7 @@ async def test_answer_stores_instructions_and_tools_on_the_ticket():
     client = _app(store, AsyncMock(return_value=agent)).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
     stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}[ticket_key("t1")]
-    assert stored == {"user_id": "u1", "account_id": "a1", "instructions": "PROMPT", "tools": [_TOOL], "call_kind": "phone"}
+    assert stored == {"user_id": "u1", "account_id": "a1", "instructions": "PROMPT", "tools": [_TOOL], "call_kind": "phone", "mode": "lelik"}
 
 
 @pytest.mark.asyncio

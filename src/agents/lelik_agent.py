@@ -29,6 +29,7 @@ from ..domain.messaging import session_id_for
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..domain.voice_errand import SEND_TO_CHAT, SEND_TO_CHAT_REQUEST
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
+from ..domain.voice_mode import VoiceMode
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
@@ -99,12 +100,12 @@ class LelikAgent(BaseAgent):
             task_id=str(uuid4()), agent_id=self.agent_id, result={"call_sid": call_sid, "purpose": purpose},
         )
 
-    async def session_config(self, user_id: str, account_id: str) -> Dict[str, Any]:
+    async def session_config(self, user_id: str, account_id: str, mode: VoiceMode = VoiceMode.LELIK) -> Dict[str, Any]:
         """Instructions + tools for the realtime session. Raises on failure: no call
         opens on an empty context."""
         context = await self._persona.assemble(user_id, account_id)
         instructions = await self._prompt_builder.build_for_agent(
-            agent_type=self._voice_profile.prompt_profile,
+            agent_type=self._voice_profile.prompt_profile_for(mode),
             user_id=user_id,
             account_id=account_id,
             biographical_facts=context.biographical_facts,

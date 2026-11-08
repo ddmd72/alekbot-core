@@ -39,8 +39,8 @@ async def test_prepare_stores_session_identity_and_kind_on_the_ticket():
     await service.prepare("t1", "u1", "a1", "web")
     writes = {c.args[0]: c.args[1] for c in store.set.await_args_list}
     assert writes[ticket_key("t1")] == {"instructions": "you are Lelik", "tools": [],
-                                          "user_id": "u1", "account_id": "a1", "call_kind": "web"}
-    assert writes[call_kind_key("t1")] == {"call_kind": "web"}
+                                          "user_id": "u1", "account_id": "a1", "call_kind": "web", "mode": "lelik"}
+    assert writes[call_kind_key("t1")] == {"call_kind": "web", "mode": "lelik"}
 
 
 @pytest.mark.asyncio

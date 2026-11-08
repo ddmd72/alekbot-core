@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
 
+from src.domain.voice_mode import VoiceMode
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.voice_tickets import ticket_key
 
@@ -76,7 +77,7 @@ async def test_answer_webhook_builds_the_persona_for_the_ticket_identity():
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
 
     factory.assert_awaited_once_with("u1")
-    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
+    agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1", mode=VoiceMode.LELIK)
 
 
 @pytest.mark.asyncio

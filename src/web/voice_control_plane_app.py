@@ -59,8 +59,9 @@ from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.domain.request_context import RequestContext
 from src.domain.voice_amd import is_voicemail
 from src.domain.secret_digest import fingerprint
+from src.domain.voice_mode import VOICE_MODES_WITH_CALL_SUMMARY, VoiceMode
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
-from src.domain.voice_ticket_keys import abandoned_key, amd_key, result_key, ticket_key
+from src.domain.voice_ticket_keys import abandoned_key, amd_key, call_kind_key, result_key, ticket_key
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -203,8 +204,19 @@ def create_voice_control_plane_blueprint(
             if voicemail:
                 # RFC §4.6: a voicemail greeting must never become a memory.
                 logger.info(f"voice call {fingerprint(call_id)}: voicemail ({answered_by}), summary skipped")
+            call_mode = VoiceMode.LELIK
             try:
-                if not voicemail:
+                # The relay's call_id is the ticket, so the record `prepare` wrote is reachable from here.
+                # Missing, expired or unknown = the companion call (summary as before).
+                kind_record = await ephemeral_store.get(call_kind_key(digest_key, call_id))
+                call_mode = VoiceMode((kind_record or {}).get("mode", VoiceMode.LELIK.value))
+            except Exception:
+                logger.warning(f"voice call {fingerprint(call_id)}: call mode lookup failed, treated as lelik", exc_info=True)
+            summarised = call_mode in VOICE_MODES_WITH_CALL_SUMMARY
+            if not summarised:
+                logger.info(f"[Voice] call summary skipped: mode={call_mode.value}")
+            try:
+                if not voicemail and summarised:
                     await summary_consumer(
                         call_id=call_id,
                         user_id=user_id,

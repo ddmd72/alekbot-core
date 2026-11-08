@@ -5,11 +5,13 @@ The page never sees the call ticket: it holds a separate `call_id`, and every ro
 call record's owner against the Cabinet JWT. The relay is reached only by the SFU, which dials the
 ticket-carrying `/sfu/*` URLs this blueprint hands it.
 """
+import json
 import os
 import uuid
 
-from quart import Blueprint, g, jsonify, request, send_file
+from quart import Blueprint, Response, g, jsonify, request, send_file
 
+from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_ticket_keys import ticket_key
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
@@ -18,6 +20,8 @@ from src.web.cabinet_auth import make_auth_required
 
 _TICKET_TTL_S = 300
 _ICON_SIZES = (180, 192, 512)
+# Modes with their own page; the page title doubles as the Home Screen short name.
+_MODE_PAGES = {VoiceMode.INTERPRETER: "Interpreter", VoiceMode.TUTOR: "Spanish tutor"}
 
 
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
@@ -44,6 +48,39 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         response.headers["Cache-Control"] = "no-cache"
         return response
 
+    # Mode pages: call.html with the mode injected (its manifest link swapped, a one-line script
+    # setting the mode). Explicit routes per mode: a catch-all would shadow the icon/manifest routes.
+    def _mode_page(mode: VoiceMode):
+        async def view():
+            with open(os.path.join(static_dir, "call.html"), encoding="utf-8") as f:
+                html = f.read()
+            html = html.replace("/cabinet/call/manifest.webmanifest", f"/cabinet/call/{mode.value}/manifest.webmanifest", 1)
+            html = html.replace("</head>", f'<script>window.VOICE_MODE = "{mode.value}";</script>\n  </head>', 1)
+            return Response(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
+        return view
+
+    def _manifest(start_url: str, name: str, short_name: str):
+        async def view():
+            with open(os.path.join(static_dir, "call.webmanifest"), encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest.update(name=name, short_name=short_name, start_url=start_url)
+            return Response(json.dumps(manifest), mimetype="application/manifest+json")
+        return view
+
+    for _mode, _title in _MODE_PAGES.items():
+        bp.add_url_rule(f"/cabinet/call/{_mode.value}", f"call_page_{_mode.value}", _mode_page(_mode))
+        bp.add_url_rule(f"/cabinet/call/{_mode.value}/manifest.webmanifest", f"call_manifest_{_mode.value}",
+                        _manifest(f"/cabinet/call/{_mode.value}", f"Lelik · {_title}", _title))
+
+    @bp.route("/cabinet/call/modes")
+    async def call_modes_page():
+        response = await send_file(os.path.join(static_dir, "call_modes.html"))
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    bp.add_url_rule("/cabinet/call/modes/manifest.webmanifest", "call_modes_manifest",
+                    _manifest("/cabinet/call/modes", "Lelik · Modes", "Modes"))
+
     # Home Screen install (the app has no static folder, so these are explicit routes). Public
     # on purpose: iOS fetches the manifest and icons without the session cookie.
     @bp.route("/cabinet/call/manifest.webmanifest")
@@ -67,11 +104,18 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         if (not isinstance(body, dict) or not isinstance(body.get("sdp"), str) or not body.get("sdp")
                 or body.get("mid") is None):
             return jsonify({"error": "invalid request"}), 400
+        try:
+            mode = VoiceMode(body.get("mode", VoiceMode.LELIK.value))
+        except ValueError:
+            return jsonify({"error": "unknown_mode"}), 400
         call_id, ticket = uuid.uuid4().hex, str(uuid.uuid4())
         if not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S):
             return jsonify({"error": "a call is already in progress"}), 409
         try:
-            await call_setup.prepare(ticket, g.user_id, g.account_id, "web")
+            await call_setup.prepare(ticket, g.user_id, g.account_id, "web", mode)
+        except UnsupportedVoiceMode:
+            # prepare has already released the marker and ticket, exactly as for its other failures.
+            return jsonify({"error": "mode_unavailable"}), 409
         except VoiceCallSetupError:
             return jsonify({"error": "could not prepare the call"}), 503
         # One try around both the SFU call and the record write: an SFU timeout/network error

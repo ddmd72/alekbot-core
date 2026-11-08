@@ -13,6 +13,7 @@ apart.
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from src.domain.secret_digest import fingerprint
+from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_ticket_keys import call_kind_key, ticket_key
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.ephemeral_store import EphemeralStore
@@ -55,7 +56,8 @@ class VoiceCallSetupService:
     async def holder(self, user_id: str) -> Optional[dict]:
         return await self._store.get(self._marker_key(user_id))
 
-    async def prepare(self, ticket: str, user_id: str, account_id: str, call_kind: str) -> None:
+    async def prepare(self, ticket: str, user_id: str, account_id: str, call_kind: str,
+                      mode: VoiceMode = VoiceMode.LELIK) -> None:
         # The ticket writes sit inside the same failure handling as the persona assembly: on the
         # phone path the marker is already at its full call TTL here, so a store failure that
         # escaped without a release would lock the owner out of calling for an hour.
@@ -63,12 +65,17 @@ class VoiceCallSetupService:
             agent = await self._lelik(user_id)
             if agent is None:
                 raise RuntimeError("voice companion is not configured on this deployment")
-            session = await agent.session_config(user_id=user_id, account_id=account_id)
+            session = await agent.session_config(user_id=user_id, account_id=account_id, mode=mode)
             # identity wins over anything the session carried: /voice/delegate trusts these ids.
             await self._store.set(ticket_key(self._digest_key, ticket), {
-                **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind,
+                **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind, "mode": mode.value,
             }, ttl_s=self._ticket_ttl_s)
-            await self._store.set(call_kind_key(self._digest_key, ticket), {"call_kind": call_kind}, ttl_s=self._one_call_ttl_s)
+            await self._store.set(call_kind_key(self._digest_key, ticket), {"call_kind": call_kind, "mode": mode.value}, ttl_s=self._one_call_ttl_s)
+        except UnsupportedVoiceMode:
+            # A refusal, not a fault: free the marker and ticket, no alert; the caller answers 409.
+            logger.warning(f"voice setup: mode {mode.value!r} unavailable for {user_id}")
+            await self.release(ticket, user_id)
+            raise
         except Exception as exc:
             logger.error(f"voice setup: call preparation failed for {user_id} (ticket {fingerprint(ticket)}): {exc}",
                          exc_info=True)
