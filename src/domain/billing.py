@@ -483,6 +483,22 @@ _REALTIME_PRICING_PER_SECOND: Dict[str, Dict[str, float]] = {
         "billable_audio_seconds": 0.08 / 60,
     },
 }
+# Per-call realtime legs: xAI's server-side search tools in a voice session. XaiRealtimeAdapter counts the
+# function_call items named web_search / x_search in each response.done's output (live probe 2026-11-08).
+REALTIME_WEB_SEARCH_CALLS = "web_search_calls"
+REALTIME_X_SEARCH_CALLS = "x_search_calls"
+# Rate card docs.x.ai/developers/pricing, checked 2026-11-08: web_search $5 / 1k calls; x_search $5 / 1k posts and
+# $10 / 1k profiles, billed per item fetched, not per call. The voice section does not say whether tool prices apply
+# to voice sessions; they are treated as applying. APPROXIMATION: the response carries no item count, so an x_search
+# call is priced as this many items at the profile rate, the higher of the two (an upper estimate, not a measurement).
+_XAI_X_SEARCH_ASSUMED_ITEMS_PER_CALL = 10
+_REALTIME_PRICING_PER_CALL: Dict[str, Dict[str, float]] = {
+    "grok-voice-3.0": {
+        REALTIME_WEB_SEARCH_CALLS: 5.0 / 1000,
+        REALTIME_X_SEARCH_CALLS: _XAI_X_SEARCH_ASSUMED_ITEMS_PER_CALL * 10.0 / 1000,
+    },
+}
+_PER_CALL_LEG_SUFFIX = "_calls"
 
 
 def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
@@ -497,16 +513,34 @@ def calculate_realtime_cost(model: str, usage: Dict[str, int]) -> float:
     step (RFC §4.3/§6: reasoning bills as text output) — this function has no
     reasoning-specific logic of its own.
 
+    Per-call legs (``web_search_calls``, ``x_search_calls``: xAI's server-side
+    search tools) are priced per call; ``unpriced_realtime_legs`` names a
+    non-zero per-call leg this function would bill at $0.
+
     Returns 0.0 for an unpriced model, same fail-open contract as
     ``calculate_cost``/``calculate_external_cost``.
     """
     token_rates = _REALTIME_PRICING_PER_MILLION_TOKENS.get(model)
     second_rates = _REALTIME_PRICING_PER_SECOND.get(model, {})
-    if token_rates is None and not second_rates:
+    call_rates = _REALTIME_PRICING_PER_CALL.get(model, {})
+    if token_rates is None and not second_rates and not call_rates:
         return 0.0
     total = sum(usage.get(leg, 0) * rate_per_million / 1_000_000 for leg, rate_per_million in (token_rates or {}).items())
     total += sum(usage.get(leg, 0) * rate_per_second for leg, rate_per_second in second_rates.items())
+    total += sum(usage.get(leg, 0) * rate_per_call for leg, rate_per_call in call_rates.items())
     return round(total, 6)
+
+
+def unpriced_realtime_legs(model: str, usage: Dict[str, float]) -> List[str]:
+    """The per-call legs (``*_calls``) with a non-zero count that ``model`` has no price for, sorted.
+
+    ``calculate_realtime_cost`` bills such a leg at $0 without a word (its fail-open
+    contract); the caller reports a non-empty answer, so a new built-in tool or a model
+    bump without a price shows up in the logs instead of as a free call.
+    """
+    call_rates = _REALTIME_PRICING_PER_CALL.get(model, {})
+    return sorted(leg for leg, value in usage.items()
+                  if leg.endswith(_PER_CALL_LEG_SUFFIX) and value and leg not in call_rates)
 
 
 def realtime_token_count(usage: Dict[str, float]) -> int:

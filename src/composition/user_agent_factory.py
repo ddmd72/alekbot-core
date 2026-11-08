@@ -135,6 +135,13 @@ def _voice_profile_for(user_id: str, config: "UserBotConfig") -> VoiceProviderPr
     return resolve_voice_profile(config.voice_provider)
 
 
+def _lelik_xai_native_search() -> bool:
+    """The LELIK_XAI_NATIVE_SEARCH switch, an optional knob read here with os.getenv (not load_settings).
+    "on": xAI calls get xAI's own web_search/x_search in place of the delegated search_web_light.
+    Anything else, or unset: off, the delegated search only."""
+    return os.getenv("LELIK_XAI_NATIVE_SEARCH", "").strip().lower() == "on"
+
+
 @dataclass
 class _UserContext:
     """Per-user shared context cached for lazy agent creation."""
@@ -1006,6 +1013,7 @@ class UserAgentFactory(AgentFactoryPort):
             ),
             notifications=self.notification_service,
             voice_profile=_voice_profile_for(user_id, ctx.user_profile.config),
+            native_web_search=_lelik_xai_native_search(),
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:

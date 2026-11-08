@@ -15,6 +15,11 @@ class VoiceProviderProfile:
     session: VoiceSessionSpec
     # Prompt profile per non-default mode; a provider without an entry does not offer that mode.
     mode_profiles: Mapping[VoiceMode, str] = field(default_factory=dict)
+    # The provider can run a web search of its own inside the session (xAI's server-side `web_search`,
+    # XaiRealtimeAdapter). Used only when the LELIK_XAI_NATIVE_SEARCH switch is on: Lelik is then not offered the
+    # delegated light web search, one search path rather than two (owner decision 2026-11-08; native vs delegated is
+    # decided by a side-by-side quality comparison).
+    builtin_web_search: bool = False
 
     def prompt_profile_for(self, mode: VoiceMode) -> str:
         if mode == VoiceMode.LELIK:
@@ -32,6 +37,7 @@ VOICE_PROVIDER_PROFILES: Dict[str, VoiceProviderProfile] = {
         prompt_profile="lelik_xai",
         session=VoiceSessionSpec("xai", TurnOwnership.PROVIDER, voice="castor", reasoning_effort="high"),
         mode_profiles={VoiceMode.INTERPRETER: "lelik_xai_interpreter", VoiceMode.TUTOR: "lelik_xai_tutor"},
+        builtin_web_search=True,
     ),
     # Lelik as tuned through 2026-09-29 (VOICE_COMPANION_RFC §4.15).
     "openai": VoiceProviderProfile(

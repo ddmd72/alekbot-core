@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 import websockets
 from websockets.asyncio.client import ClientConnection
 
+from src.domain.billing import REALTIME_WEB_SEARCH_CALLS, REALTIME_X_SEARCH_CALLS
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -25,6 +26,13 @@ _TURN_DETECTION = {
     "create_response": True,
     "interrupt_response": True,
 }
+# xAI's server-side search tools (live probe 2026-11-08, grok-voice-3.0), offered when the call's spec switches them
+# on (VoiceSessionSpec.builtin_search): declared bare in session.tools, run by xAI itself, and reported back as
+# ordinary function_call items named after the tool, at the end of the response. The client never answers them: no
+# tool_call event, no function_call_output. Their calls are filtered and counted whether or not they were offered.
+_BUILTIN_TOOLS = ({"type": "web_search"}, {"type": "x_search"})
+# Built-in tool name -> the per-call usage leg its calls are counted in (priced in domain.billing).
+_BUILTIN_TOOL_LEGS = {"web_search": REALTIME_WEB_SEARCH_CALLS, "x_search": REALTIME_X_SEARCH_CALLS}
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -60,6 +68,22 @@ def _flatten_usage(usage: dict) -> Dict[str, float]:
     }
 
 
+def _builtin_tool_calls(response: dict) -> Dict[str, int]:
+    """Calls of xAI's built-in tools in one response, as per-call usage legs.
+
+    Counted from `response.done`'s `response.output`, where each search is a function_call item
+    named after the tool; `usage` has no counter of its own. A leg is present only when non-zero.
+    """
+    counts: Dict[str, int] = {}
+    for item in response.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "function_call":
+            continue
+        leg = _BUILTIN_TOOL_LEGS.get(item.get("name"))
+        if leg:
+            counts[leg] = counts.get(leg, 0) + 1
+    return counts
+
+
 class XaiRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against xAI's Voice Agent API (OpenAI-GA-compatible events;
     probed live 2026-09-29, decisions/voice_xai_protocol_probe.md). Provider-owned turns:
@@ -69,8 +93,11 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     supported_turn_ownership = frozenset({TurnOwnership.PROVIDER})
 
     def __init__(self, api_key: str, model: str = _MODEL, voice: str = _VOICE,
-                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K) -> None:
+                 ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K,
+                 builtin_search: bool = False) -> None:
+        """builtin_search: offer xAI's own web_search and x_search in the session."""
         self._api_key = api_key
+        self._builtin_search = builtin_search
         self._model = model
         self._voice = voice
         self._connect = ws_connect
@@ -99,8 +126,14 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             },
             "reasoning": {"effort": reasoning_effort},
         }
-        if tools:
-            session["tools"] = [{"type": "function", **tool} for tool in tools]
+        clashing = sorted(tool["name"] for tool in tools if tool.get("name") in _BUILTIN_TOOL_LEGS)
+        if clashing:
+            # Calls of a function named after a built-in are taken for xAI's own and never answered.
+            raise ValueError(f"function tools named like xAI built-in tools: {clashing}")
+        # Built-ins go bare; our own tools are functions. tool_choice is sent even with built-ins alone.
+        builtins = list(_BUILTIN_TOOLS) if self._builtin_search else []
+        if builtins or tools:
+            session["tools"] = [*builtins, *({"type": "function", **tool} for tool in tools)]
             session["tool_choice"] = "auto"
         await self._socket.send(json.dumps({"type": "session.update", "session": session}))
 
@@ -127,6 +160,10 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 type="audio_delta", payload={"frame": frame, "item_id": event.get("item_id")}
             )
         if event_type == "response.function_call_arguments.done":
+            if event.get("name") in _BUILTIN_TOOL_LEGS:
+                # xAI ran it server-side; it is counted for billing on response.done.
+                logger.info(f"xAI realtime built-in tool call: {event.get('name')}")
+                return None
             return RealtimeSessionEvent(
                 type="tool_call",
                 payload={"call_id": event.get("call_id"), "name": event.get("name"), "arguments": event.get("arguments")},
@@ -141,8 +178,10 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             running_total = usage["billable_audio_seconds"]
             usage["billable_audio_seconds"] = max(running_total - self._billed_audio_seconds, 0)
             self._billed_audio_seconds = max(self._billed_audio_seconds, running_total)
+            builtin_calls = _builtin_tool_calls(event.get("response") or {})
+            usage.update(builtin_calls)
             logger.info(f"xAI realtime usage: running billable_audio_seconds={running_total} "
-                        f"delta={usage['billable_audio_seconds']}")
+                        f"delta={usage['billable_audio_seconds']} builtin_calls={builtin_calls}")
             return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
         if event_type == "conversation.item.input_audio_transcription.completed":
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})

@@ -8,9 +8,11 @@ execute() places the callback (§4.6), session_config() feeds the session at pic
 (§4.8), delegate() runs one tool call from the live session through DelegationEngine.
 
 The session has two tools (§4.15.2, revised 2026-10-29): delegate_to_specialist over
-LELIK.allowed_intents, and send_to_chat, a channel rather than a worker — the caller's chat. The
-relay turns a send_to_chat call into the errand intent of the same name (domain/voice_errand.py),
-so delegate() runs both the same way.
+LELIK.allowed_intents, and send_to_chat, a channel rather than a worker — the caller's chat. With the
+LELIK_XAI_NATIVE_SEARCH switch on, a provider with a web search of its own (VoiceProviderProfile.builtin_web_search:
+xAI) gets that search in the session, and search_web_light leaves delegate_to_specialist. The relay turns a
+send_to_chat call into the errand intent of the same name (domain/voice_errand.py), so delegate() runs both the
+same way.
 
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
@@ -19,6 +21,7 @@ delegate() posts nothing to chat (VOICE_COMPANION_RFC §4.15.3, owner decision 2
 automatic link copy of §4.10 rule 2 filled the chat with every search's links. When the caller
 wants something in chat, Lelik calls send_to_chat, and Alek decides what is worth posting.
 """
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -59,11 +62,15 @@ class LelikAgent(BaseAgent):
         persona: "LelikPersonaService",
         notifications: "UserNotificationService",
         voice_profile: VoiceProviderProfile,
+        native_web_search: bool = False,
     ) -> None:
         """voice_profile: the user's realtime provider — which prompt profile the session
         instructions are built from, and the spec the relay runs the call with
-        (VOICE_MULTI_PROVIDER_RFC §4.2)."""
+        (VOICE_MULTI_PROVIDER_RFC §4.2).
+        native_web_search: the LELIK_XAI_NATIVE_SEARCH switch. On a provider whose profile has
+        builtin_web_search, the session offers the provider's own search instead of search_web_light."""
         super().__init__(config)
+        self._native_web_search = native_web_search
         self._telephony = telephony
         self._from_number = from_number
         self._status_callback_url = status_callback_url
@@ -115,10 +122,15 @@ class LelikAgent(BaseAgent):
             include_datetime=True,
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
+        native_search = self._native_web_search and self._voice_profile.builtin_web_search
+        if native_search:
+            # The provider searches the web itself inside the session; the delegated light search would be a second path.
+            available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         tools = [self._build_delegate_tool_declaration(available)] if available else []
         if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
             tools.append(_send_to_chat_tool_declaration())
-        return {"instructions": instructions, "tools": tools, "voice": self._voice_profile.session.to_dict()}
+        session = replace(self._voice_profile.session, builtin_search=native_search)
+        return {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
 
     async def delegate(
         self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
