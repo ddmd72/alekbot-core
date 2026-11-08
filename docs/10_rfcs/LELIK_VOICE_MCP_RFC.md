@@ -1,6 +1,8 @@
 # RFC: Lelik reads memory and drive himself — our MCP servers as xAI server-side tools
 
-**Status:** Accepted (accepted for build 2026-11-08; owner decisions recorded in §12). Not built.
+**Status:** Accepted (accepted for build 2026-11-08; owner decisions recorded in §12). S1 built (token kind); S2 phase A
+run 2026-11-08 (findings in §9); S3 built on branch `feat/voice-mcp-tools` (knob default off; the token
+`VOICE_TOOL_DATA_LELIK` is not uploaded yet). S4 open.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — faster answers from the owner's own data
@@ -68,11 +70,20 @@ wraps every tool as `{"type": "function", **tool}` (`src/adapters/xai_realtime_a
    allowed_tools)`, **only** when the knob is on, the provider is xAI (O6) and the mode is `LELIK` (O7). URLs are the
    existing resource URIs (`MCP_RESOURCE_URI`, the drive URI derived from it, building block §10.1): no new URL key.
    No token at this step.
-2. `/voice/session-config` mints the tokens at redemption (§5.2, O1) and sets `authorization` on each entry before
-   returning. The ticket record in Firestore never holds a token.
+2. `/voice/session-config` mints the tokens at redemption (§5.2, O1) and returns them next to the descriptors, in the
+   field `voice_mcp_tokens` (`{"facts", "drive"}`, built in S1). The ticket record in Firestore never holds a token.
+   *As built (S3):* the relay pairs each descriptor with its resource's token (`domain/voice_mcp_servers.session_servers`,
+   by label; the call's mode and provider are checked again), then drops the tokens from the config it keeps: the
+   session object is their only holder for the call's life. A descriptor without a token (whitelist refusal at mint, no
+   key) is not offered.
 3. `RealtimeSessionPort.open` takes `mcp_servers` (default empty). `XaiRealtimeAdapter` appends one
    `{"type": "mcp", "server_url", "server_label", "server_description", "allowed_tools", "authorization"}` per server
-   to `session.tools`. `OpenAIRealtimeAdapter` never receives any (O6). The relay passes them through untouched.
+   to `session.tools`, the token raw in `authorization` (§9 finding 1). `OpenAIRealtimeAdapter` refuses a non-empty list
+   before it connects (O6).
+4. *As built (S3):* the adapter surfaces `mcp_list_tools.failed` as the port event `remote_tools_failed` (a label the
+   session sent, else `unknown`; the error text redacted); the relay logs one WARNING with the label and the call goes on.
+   `mcp_list_tools.completed` is one INFO line with the label; `mcp_list_tools.in_progress` and `response.mcp_call.*` are
+   dropped without logging their payload. The descriptions are `domain/voice_mcp_servers._DESCRIPTIONS`.
 
 **Allowed tools** (O2; sent as `allowed_tools` *and* carried in the token, §5.3, so xAI's filter is not the guarantee):
 
@@ -183,7 +194,11 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
 - **Keep** `search_web_light`, `ask_alek`, `send_to_chat`.
 - **`search_memory` (O4).** When the session carries `mcp_servers`, `session_config` leaves `search_memory` out of the
   delegate tool's intent list, so the model has one memory path. The manifest keeps it for sessions without MCP (knob
-  off, whitelist refusal at mint).
+  off, interpreter, tutor, OpenAI). *As built (S3):* `LelikAgent.permitted_intents(mode)` drops it in the same case, and
+  `/voice/delegate` (knob on) reads the call's mode from the record `prepare` wrote, so a model that still names it is
+  refused. The choice is made at `prepare`, before the mint: a user the whitelist refuses at redemption gets a call with
+  neither the servers nor `search_memory` for that one call (the mint's alert names it). Open for the owner: accept
+  this edge, or move the declaration choice to redemption.
 - **Providers (O6).** xAI only. OpenAI's Realtime API documents the same `mcp` tool shape (with `require_approval` and
   `mcp_list_tools.*` events); it is added when a need arises, by its own change.
 - **Result cap (O5).** A voice token's results are cut at a voice cap instead of the connector's 100 000 characters:
@@ -224,6 +239,14 @@ Questions:
 5. Does Grok call memory unprompted when the warm prompt lacks the answer (the owner's "in the background")? (B)
 6. How does Grok surface a 401; after the record is deleted, does the next call get 401? (A: the 401; B: revocation)
 
+**Phase A findings (2026-11-08; S3 builds on them, they override §4 where they differ).**
+1. `session.update` accepts two `mcp` entries plus function tools. `authorization` goes raw: xAI adds `Bearer ` itself
+   and does not double an existing prefix. `session.updated` echoes the entries without `authorization`.
+2. xAI calls `tools/list` once per server, at `session.update`, before `session.updated`, and never lists again.
+3. A failed list (the 401 of the invalid token) arrives only as `mcp_list_tools.failed` with an opaque error ("Cancelled
+   by cancel scope"): no `error` event, and the session goes on without that server's tools. Hence the
+   `remote_tools_failed` port event and the relay's WARNING (§4 step 4).
+
 ---
 
 ## 10. Slices
@@ -232,7 +255,7 @@ Questions:
 |---|---|---|
 | S1 | Token kind: dedicated key in `load_settings()`, mint, live-call record, `kid` routing and the voice verifier in both resources, tool claim, audience by token kind, voice result cap, submit-transcript revoke, voice log rules | unit + arch tests, `make ci` |
 | S2 | Probe §9 phase A (invalid token, no key involved); findings into a decision record | owner OK on the spend |
-| S3 | `RemoteToolServer`, `session_config`, session-config splice, port + xAI adapter, `search_memory` filter, prompt line (token upload before deploy), knob `VOICE_MCP_TOOLS` (`os.getenv`, main service, default off) | wire tests, `make ci` |
+| S3 | `RemoteToolServer`, `session_config`, session-config splice, port + xAI adapter, `search_memory` filter, prompt line (token upload before deploy), knob `VOICE_MCP_TOOLS` (`os.getenv`, main service, default off). *Built:* the splice is on the relay (§4 step 2); the prompt line is `VOICE_TOOL_DATA_LELIK` in `lelik_xai` only; the relay redacts provider and exception text in its logs (`domain/log_redaction.py`) | wire tests, `make ci` |
 | S4 | Live UAT calls with the knob on: memory and drive questions, a revoked-after-call check; the probe §9 phase B runs here, in the owner's first call; O5's cap set from its token counts | owner |
 | S5 | Docs: VOICE_COMPANION_RFC §4.15, the `remote_mcp_server` building block, deploy keys | — |
 
