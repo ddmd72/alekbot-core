@@ -131,6 +131,10 @@
         object-fit: cover;
         box-shadow: var(--shadow-lg);
       }
+      /* Mode pages show a square app icon: rounded like an iOS Home Screen icon, not cut into a circle. */
+      .avatar.app-icon {
+        border-radius: 22.5%;
+      }
       .avatar.live {
         animation: pulse 2s ease-in-out infinite;
       }
