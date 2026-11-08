@@ -4,13 +4,19 @@ Cabinet web call — the browser side of VOICE_WEB_TRANSPORT_RFC §5.2.
 The page never sees the call ticket: it holds a separate `call_id`, and every route checks the
 call record's owner against the Cabinet JWT. The relay is reached only by the SFU, which dials the
 ticket-carrying `/sfu/*` URLs this blueprint hands it.
+
+The page reaches the relay directly only on the control channel (VOICE_CALL_CONTROL_CHANNEL_RFC §4.1): a per-call
+token minted at start, its SHA-256 on the ticket record, the token itself encrypted on the call record and handed out
+by `/connect` as `control: {url, token}` while the `VOICE_CONTROL_CHANNEL` knob is on. The token is never logged.
 """
 import json
 import os
+import secrets
 import uuid
 
 from quart import Blueprint, Response, g, jsonify, request, send_file
 
+from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_ticket_keys import ticket_key
 from src.ports.media_room_port import MediaRoomError
@@ -28,6 +34,12 @@ _MODE_PAGES = {VoiceMode.INTERPRETER: "Interpreter", VoiceMode.TUTOR: "Spanish t
 _HANGUP_TRIGGERS = frozenset({"button", "status_ended", "start_failed", "superseded"})
 
 
+def _control_channel_on() -> bool:
+    """Kill switch of the control channel (RFC §9, §12): an optional knob, read per request. Off (the default) means
+    `/connect` hands out no `control`, so the page never opens the socket."""
+    return os.getenv("VOICE_CONTROL_CHANNEL", "off").strip().lower() == "on"
+
+
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes) -> Blueprint:
@@ -42,6 +54,10 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
 
     async def _ticket_of(call_id: str, record: dict) -> str:
         return await cipher.decrypt(record["ticket_ct"], aad=f"voice/voice_web_call:{call_id}")
+
+    def _control_aad(call_id: str) -> str:
+        # Its own AAD: the two ciphertexts of one record cannot stand in for each other.
+        return f"voice/voice_web_call:{call_id}/control"
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -113,10 +129,15 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         except ValueError:
             return jsonify({"error": "unknown_mode"}), 400
         call_id, ticket = uuid.uuid4().hex, str(uuid.uuid4())
+        # Minted at start, not at connect: the SFU dials the relay during attach_agent and the relay redeems the
+        # ticket at once, so the digest must already be on the ticket record (RFC §4.1). Minted whatever the knob
+        # says, so turning the knob on or off acts at /connect alone.
+        control_token = secrets.token_urlsafe(32)
         if not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S):
             return jsonify({"error": "a call is already in progress"}), 409
         try:
-            await call_setup.prepare(ticket, g.user_id, g.account_id, "web", mode)
+            await call_setup.prepare(ticket, g.user_id, g.account_id, "web", mode,
+                                     control_token_sha256=control_token_digest(control_token))
         except UnsupportedVoiceMode:
             # prepare has already released the marker and ticket, exactly as for its other failures.
             return jsonify({"error": "mode_unavailable"}), 409
@@ -131,6 +152,7 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             await ephemeral_store.set(f"voice_web_call:{call_id}", {
                 "user_id": g.user_id, "account_id": g.account_id, "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/voice_web_call:{call_id}"),
                 "session_id": leg.session_id, "adapter_ids": [],
+                "control_ct": await cipher.encrypt(control_token, aad=_control_aad(call_id)),
             }, ttl_s=call_ttl_s)
         except Exception:
             logger.error(f"web call: could not start the call for {g.user_id}", exc_info=True)
@@ -168,7 +190,13 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             return jsonify({"error": "not found"}), 404
         await ephemeral_store.set(f"voice_web_call:{call_id}", {**record, "adapter_ids": leg.adapter_ids},
                                   ttl_s=call_ttl_s)
-        return jsonify({"sdp": leg.offer_sdp})
+        body = {"sdp": leg.offer_sdp}
+        # Same relay base as the SFU URLs above: the page's socket reaches the process that runs this call.
+        # A record from before the token existed has no `control_ct`, and gets no channel.
+        if _control_channel_on() and record.get("control_ct"):
+            body["control"] = {"url": f"{relay_base_url}/ctl",
+                               "token": await cipher.decrypt(record["control_ct"], aad=_control_aad(call_id))}
+        return jsonify(body)
 
     @bp.route("/api/voice/web-call/<call_id>/renegotiate", methods=["POST"])
     @auth_required
