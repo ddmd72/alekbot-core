@@ -98,6 +98,10 @@ THRESHOLDS: Dict[str, float] = {
     "src/adapters/gcp_kms_cipher_adapter.py":       100.0,
     "src/domain/secret_digest.py":                  100.0,
     "src/composition/cipher_setup.py":              100.0,
+    # Lelik voice MCP S1 (P7): the voice token kind's rules, its mint/verify/revoke and its fail-closed key setup.
+    "src/domain/voice_mcp_token.py":                100.0,
+    "src/services/voice_mcp_token_service.py":      100.0,
+    "src/composition/voice_mcp_setup.py":           100.0,
 }
 
 
