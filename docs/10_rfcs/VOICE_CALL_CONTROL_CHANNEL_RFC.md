@@ -2,7 +2,11 @@
 
 **Status:** Accepted (owner decisions recorded 2026-11-08, §13). Slice 3 (channel skeleton) built: the knob
 `VOICE_CONTROL_CHANNEL` defaults to **off** until slice 4 is live-checked (§9 below says "default on" for the finished
-feature); welcome offers no feature yet.
+feature). Slice 4 ("Ask Lelik") built: adapter `item_id`, `AskLatch` (`src/domain/voice_ask_latch.py`), the relay's
+control task and note (`_ASK_NOTE`), the button on the interpreter page, the P1/P2 probe
+(`scripts/voice/ask_note_probe.py`), and the edited `VOICE_PERSONA_INTERPRETER` in `prompts_snapshot/` (not uploaded:
+§5.6, §12 — after P1 passes and the relay is live). Readings of §5.3 the latch fixes: a command that changes nothing
+echoes the current state with its `seq`; speech over Lelik's audible answer is not marked again.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
