@@ -41,11 +41,13 @@ GET /cabinet
 GET /cabinet/call
 GET /cabinet/call/icon-<int:size>.png
 GET /cabinet/call/interpreter
+GET /cabinet/call/interpreter/icon-<int:size>.png
 GET /cabinet/call/interpreter/manifest.webmanifest
 GET /cabinet/call/manifest.webmanifest
 GET /cabinet/call/modes
 GET /cabinet/call/modes/manifest.webmanifest
 GET /cabinet/call/tutor
+GET /cabinet/call/tutor/icon-<int:size>.png
 GET /cabinet/call/tutor/manifest.webmanifest
 GET /cabinet/docs
 GET /cabinet/docs/

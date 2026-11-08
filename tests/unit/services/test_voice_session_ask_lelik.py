@@ -15,7 +15,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
 from src.services.call_control_hub import CallControlHub
-from src.services.voice_session_service import _ASK_NOTE, _WEB_PICKUP_NOTE, VoiceSessionService
+from src.services.voice_session_service import _ASK_NOTE, _TRANSLATE_NOTE, _WEB_PICKUP_NOTE, VoiceSessionService
 from tests.support.control_socket_fake import FakeControlSocket
 
 TOKEN = "token-0001-invented"
@@ -174,17 +174,17 @@ async def test_the_note_goes_in_on_speech_started_while_armed_and_before_the_cal
 
 
 @pytest.mark.asyncio
-async def test_without_a_press_no_note_is_sent():
+async def test_without_a_press_only_the_translate_note_is_sent():
     call = await _interpreter_call()
     await call.provider_says("speech_started", item_id="item-u1")
     await call.provider_says("speech_stopped", item_id="item-u1")
     await call.provider_says("turn_committed", item_id="item-u1")
     await call.end()
-    assert call.notes() == [_WEB_PICKUP_NOTE] and call.ask_states() == []
+    assert call.notes() == [_WEB_PICKUP_NOTE, _TRANSLATE_NOTE] and call.ask_states() == []
 
 
 @pytest.mark.asyncio
-async def test_a_cancel_before_speaking_sends_nothing_to_the_model():
+async def test_a_cancel_before_speaking_sends_no_ask_note():
     call = await _interpreter_call()
     await call.page_says({"type": "ask_arm", "seq": 1})
     await call.page_says({"type": "ask_disarm", "seq": 2})
@@ -193,7 +193,7 @@ async def test_a_cancel_before_speaking_sends_nothing_to_the_model():
     await call.provider_says("turn_committed", item_id="item-u1")
     await call.end()
 
-    assert call.notes() == [_WEB_PICKUP_NOTE]
+    assert call.notes() == [_WEB_PICKUP_NOTE, _TRANSLATE_NOTE]
     assert call.ask_states() == [{"type": "ask_state", "state": "armed", "seq": 1},
                                  {"type": "ask_state", "state": "idle", "seq": 2, "reason": "cancelled"}]
 
@@ -230,7 +230,7 @@ async def test_an_armed_button_releases_itself_after_sixty_seconds_without_speec
 
     await call.provider_says("speech_started", item_id="item-u1")  # too late: the words are translated
     await call.end()
-    assert call.notes() == [_WEB_PICKUP_NOTE]
+    assert call.notes() == [_WEB_PICKUP_NOTE, _TRANSLATE_NOTE]
 
 
 @pytest.mark.asyncio
