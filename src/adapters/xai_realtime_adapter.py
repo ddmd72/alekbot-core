@@ -1,7 +1,8 @@
 import asyncio
 import json
+import time
 from collections import deque
-from typing import Any, AsyncIterator, Callable, Deque, Dict, List, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Callable, Deque, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
 import websockets
@@ -49,6 +50,20 @@ _LIST_TOOLS_COMPLETED = "mcp_list_tools.completed"
 _LIST_TOOLS_EVENTS = frozenset({_LIST_TOOLS_FAILED, _LIST_TOOLS_COMPLETED, "mcp_list_tools.in_progress"})
 _ITEM_EVENTS = frozenset({"conversation.item.added", "conversation.item.created", "conversation.item.done"})
 _UNKNOWN_SERVER = "unknown"
+# Remote MCP calls: xAI runs them itself, and the response that made them can end (`response.done`, its output holding
+# the `mcp_call` items) before they finish. Nothing speaks the results until a `response.create`: the server starts no
+# follow-up response on its own (a live call: no response between the MCP results and the caller's next words; the
+# OpenAI Realtime MCP guide, whose event names xAI follows, says the same). The adapter reports each finished call
+# (`remote_tool_done`) and, on `response_done`, which of the response's calls are still running; the session loop sends
+# the `response.create`. A call counts as finished on a completed/failed event, or on an `mcp_call` item that carries
+# its output, its error or a final status, whichever comes first; each is reported once.
+_MCP_CALL = "mcp_call"
+_MCP_FINISHED_EVENTS = {"response.mcp_call.completed": True, "response.mcp_call.failed": False}
+_MCP_STARTED_EVENTS = frozenset({"response.mcp_call.in_progress", "response.mcp_call_arguments.done"})
+_MCP_ITEM_EVENTS = frozenset({*_ITEM_EVENTS, "response.output_item.added", "response.output_item.done"})
+_MCP_FINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
+# A call duration the provider may report itself; when it reports none, the adapter measures from the call's first event.
+_MCP_REPORTED_MS_KEYS = ("duration_ms", "latency_ms")
 
 
 # Session resumption (live probe P3, 2026-11-08; VOICE_CALL_CONTROL_CHANNEL_RFC §6.1): `resumption.enabled` is sent on
@@ -124,6 +139,32 @@ def _builtin_tool_calls(response: dict) -> Dict[str, int]:
     return counts
 
 
+def _mcp_item(event: dict) -> Optional[dict]:
+    item = event.get("item")
+    return item if isinstance(item, dict) and item.get("type") == _MCP_CALL else None
+
+
+def _mcp_item_finished(item: dict) -> Optional[bool]:
+    """True/False (succeeded/failed) for an mcp_call item that carries its result, None while it still runs."""
+    if item.get("error"):
+        return False
+    if item.get("output") is not None:
+        return True
+    status = item.get("status")
+    if status in _MCP_FINAL_STATUSES:
+        return status == "completed"
+    return None
+
+
+def _reported_ms(*sources: Optional[dict]) -> Optional[int]:
+    for source in sources:
+        for key in _MCP_REPORTED_MS_KEYS:
+            value = (source or {}).get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return round(value)
+    return None
+
+
 class XaiRealtimeAdapter(RealtimeSessionPort):
     """RealtimeSessionPort against xAI's Voice Agent API (OpenAI-GA-compatible events;
     probed live 2026-09-29, decisions/voice_xai_protocol_probe.md). Provider-owned turns:
@@ -131,6 +172,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     (VOICE_MULTI_PROVIDER_RFC §4.3/§4.4)."""
 
     supported_turn_ownership = frozenset({TurnOwnership.PROVIDER})
+    # Live probe: after the caller spoke since the call, Grok repeated its last line over a late answer sent as a system
+    # note and spoke the same answer sent as the call's function_call_output (VOICE_COMPANION_RFC §4.7 amendment).
+    late_tool_result_after_caller_turn = True
 
     def __init__(self, api_key: str, model: str = _MODEL, voice: str = _VOICE,
                  ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K,
@@ -155,6 +199,11 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         # Events read while open() waited for session.updated on a resume; receive_events yields them first.
         self._early: Deque[RealtimeSessionEvent] = deque()
         self._resumed = False
+        # MCP calls by item id: when the adapter first saw each (for the call's duration), its server label, and the
+        # calls already reported finished (each is reported once, whichever event shows it first).
+        self._mcp_seen: Dict[str, float] = {}
+        self._mcp_labels: Dict[str, str] = {}
+        self._mcp_finished: Set[str] = set()
 
     @property
     def _socket(self) -> ClientConnection:
@@ -277,7 +326,11 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             usage.update(builtin_calls)
             logger.info(f"xAI realtime usage: running billable_audio_seconds={running_total} "
                         f"delta={usage['billable_audio_seconds']} builtin_calls={builtin_calls}")
-            return RealtimeSessionEvent(type="response_done", payload={"usage": usage, "model": self._model})
+            payload: Dict[str, Any] = {"usage": usage, "model": self._model}
+            remote_tools = self._remote_tools_of(event.get("response") or {})
+            if remote_tools is not None:
+                payload["remote_tools"] = remote_tools
+            return RealtimeSessionEvent(type="response_done", payload=payload)
         if event_type == "conversation.item.input_audio_transcription.completed":
             return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "response.output_audio_transcript.done":
@@ -292,6 +345,16 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="speech_stopped", payload={"item_id": event.get("item_id")})
         if event_type in _LIST_TOOLS_EVENTS:
             return self._list_tools_event(event_type, event)
+        if event_type in _MCP_FINISHED_EVENTS:
+            return self._mcp_call_finished(event.get("item_id"), _MCP_FINISHED_EVENTS[event_type], event)
+        if event_type in _MCP_STARTED_EVENTS:
+            self._note_mcp_call(event.get("item_id"), event)
+            return None
+        item = _mcp_item(event) if event_type in _MCP_ITEM_EVENTS else None
+        if item is not None:
+            self._note_mcp_call(item.get("id"), event)
+            finished = _mcp_item_finished(item)
+            return None if finished is None else self._mcp_call_finished(item.get("id"), finished, event)
         if event_type in _ITEM_EVENTS:
             self._remember_list_item(event.get("item"))
             return None
@@ -300,8 +363,63 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             message = redact_for_log(event.get("error", event), secrets=self._secrets)
             logger.error(f"xAI realtime error event: {message}")
             return RealtimeSessionEvent(type="error", payload={"message": message})
-        # Everything else, response.mcp_call.* included, is not needed by the session loop: dropped, never logged.
+        if isinstance(event_type, str) and "mcp" in event_type and not event_type.endswith(".delta"):
+            # An MCP event this adapter does not read: its type only, so a renamed completion event shows in the log.
+            logger.info(f"xAI realtime MCP event not read: {event_type}")
+        # Everything else is not needed by the session loop: dropped, never logged.
         return None
+
+    def _note_mcp_call(self, item_id: Any, event: dict) -> None:
+        if not isinstance(item_id, str):
+            return
+        self._mcp_seen.setdefault(item_id, time.monotonic())
+        label = self._server_label(event)
+        if label != _UNKNOWN_SERVER:
+            self._mcp_labels.setdefault(item_id, label)
+
+    def _mcp_call_finished(self, item_id: Any, succeeded: bool, event: dict) -> Optional[RealtimeSessionEvent]:
+        """One `remote_tool_done` per call, with one INFO line: the server label and the duration, never a payload."""
+        if not isinstance(item_id, str) or item_id in self._mcp_finished:
+            return None
+        self._note_mcp_call(item_id, event)
+        self._mcp_finished.add(item_id)
+        label = self._mcp_labels.get(item_id, _UNKNOWN_SERVER)
+        reported = _reported_ms(event, _mcp_item(event))
+        if reported is not None:
+            duration = f"ms={reported} (xai)"
+        else:
+            duration = f"ms={round((time.monotonic() - self._mcp_seen[item_id]) * 1000)} (since first event)"
+        logger.info(f"xAI realtime mcp call completed: server={label} {duration} ok={succeeded}")
+        return RealtimeSessionEvent(type="remote_tool_done",
+                                    payload={"item_id": item_id, "label": label, "ok": succeeded})
+
+    def _remote_tools_of(self, response: dict) -> Optional[Dict[str, Any]]:
+        """The response's MCP calls for `response_done`, None when it made none: `pending` - item ids of calls not yet
+        finished; `finished` - labels of calls first seen finished here (reported only in this payload);
+        `continued` - the response went on to a message after its last call (it already spoke the results);
+        `cancelled` - the response was cut (the caller talked over it)."""
+        output = [item for item in response.get("output") or [] if isinstance(item, dict)]
+        calls = [(index, item) for index, item in enumerate(output) if item.get("type") == _MCP_CALL]
+        if not calls:
+            return None
+        pending: List[str] = []
+        finished: List[str] = []
+        for _, item in calls:
+            item_id = item.get("id")
+            if not isinstance(item_id, str):
+                continue
+            self._note_mcp_call(item_id, {"item": item})
+            state = _mcp_item_finished(item)
+            if item_id in self._mcp_finished:
+                continue
+            if state is None:
+                pending.append(item_id)
+            elif self._mcp_call_finished(item_id, state, {"item": item}) is not None:
+                finished.append(self._mcp_labels.get(item_id, _UNKNOWN_SERVER))
+        last_call = calls[-1][0]
+        continued = any(item.get("type") == "message" for item in output[last_call + 1:])
+        return {"calls": len(calls), "pending": pending, "finished": finished, "continued": continued,
+                "cancelled": response.get("status") == "cancelled"}
 
     def _server_label(self, event: dict) -> str:
         """The event's server label when it is one of the session's, else "unknown": a label the provider made up or
