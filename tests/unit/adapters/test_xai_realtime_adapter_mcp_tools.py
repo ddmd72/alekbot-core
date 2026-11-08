@@ -127,7 +127,9 @@ class TestListToolsFailed:
 
         assert event.payload["label"] == "unknown"
 
-    async def test_in_progress_completed_and_mcp_call_events_reach_no_port_event_and_no_payload_log(self, caplog):
+    async def test_list_tools_events_reach_no_port_event_a_finished_call_one_and_no_payload_is_logged(self, caplog):
+        # The call events carry no server_label and no mcp_call item names one: the call's label is "unknown" (the
+        # adapter never borrows the list-tools label: the session has two servers).
         events = [
             {"type": "mcp_list_tools.in_progress", "item_id": "i1", "server_label": "alek_memory"},
             {"type": "mcp_list_tools.completed", "item_id": "i1", "server_label": "alek_memory",
@@ -140,8 +142,10 @@ class TestListToolsFailed:
         adapter, _ = await _opened(events)
 
         with caplog.at_level(logging.DEBUG):
-            assert await _events(adapter) == []
+            received = await _events(adapter)
 
+        assert [(event.type, event.payload) for event in received] == [
+            ("remote_tool_done", {"item_id": "c1", "label": "unknown", "ok": True})]
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "Garage space" not in text and "garage" not in text
         assert "server=alek_memory" in text
