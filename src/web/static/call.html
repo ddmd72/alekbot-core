@@ -800,6 +800,95 @@
         });
       }
 
+      // Control channel to the relay (VOICE_CALL_CONTROL_CHANNEL_RFC §4): a websocket to the
+      // relay process that runs the call, opened only on the interpreter page in v1 and only
+      // when /connect hands out `control` (the VOICE_CONTROL_CHANNEL knob). The token goes in
+      // the first frame, never in the URL. No UI yet: "Ask Lelik" (slice 4) builds on
+      // `control.features`. The call itself never depends on this socket.
+      const CONTROL_PING_MS = 20000;
+      const CONTROL_BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
+      let control = null;
+
+      function wantsControlChannel() {
+        return window.VOICE_MODE === "interpreter";
+      }
+
+      function openControl(handout, owner) {
+        closeControl();
+        if (!handout || typeof handout.url !== "string" || typeof handout.token !== "string") return;
+        control = { url: handout.url, token: handout.token, owner, ws: null, ping: null, retry: null,
+                    attempt: 0, done: false, features: [] };
+        dialControl(control);
+      }
+
+      function dialControl(ch) {
+        if (ch !== control || ch.done || ch.owner !== callToken) return;
+        let ws;
+        try {
+          ws = new WebSocket(ch.url);
+        } catch (e) {
+          retryControl(ch);
+          return;
+        }
+        ch.ws = ws;
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: "hello", v: 1, token: ch.token }));
+        };
+        ws.onmessage = (ev) => {
+          if (ws !== ch.ws) return;
+          let msg;
+          try {
+            msg = JSON.parse(ev.data);
+          } catch (e) {
+            return;
+          }
+          if (!msg || typeof msg !== "object") return;
+          if (msg.type === "welcome") {
+            ch.attempt = 0;
+            ch.features = Array.isArray(msg.features) ? msg.features : [];
+            clearInterval(ch.ping);
+            ch.ping = setInterval(() => {
+              if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+            }, CONTROL_PING_MS);
+          } else if (msg.type === "bye") {
+            // version / auth / call_ended / replaced: the relay will not take this token again
+            // on this socket's behalf; stop redialling.
+            ch.done = true;
+          }
+          // Unknown types are ignored (forward-compatible).
+        };
+        ws.onclose = () => {
+          if (ws !== ch.ws) return;
+          clearInterval(ch.ping);
+          ch.ping = null;
+          ch.ws = null;
+          ch.features = [];
+          retryControl(ch);
+        };
+      }
+
+      function retryControl(ch) {
+        if (ch !== control || ch.done || !inCall || ch.owner !== callToken) return;
+        const delay = CONTROL_BACKOFF_MS[Math.min(ch.attempt, CONTROL_BACKOFF_MS.length - 1)];
+        ch.attempt += 1;
+        ch.retry = setTimeout(() => dialControl(ch), delay);
+      }
+
+      function closeControl() {
+        if (!control) return;
+        const ch = control;
+        control = null;
+        ch.done = true;
+        clearInterval(ch.ping);
+        clearTimeout(ch.retry);
+        if (ch.ws) {
+          try {
+            ch.ws.close();
+          } catch (e) {}
+          ch.ws = null;
+        }
+      }
+
       function stopStatusPolling() {
         if (statusTimer) {
           clearInterval(statusTimer);
@@ -842,6 +931,7 @@
         }
         setAudioSessionType("auto");
         stopStatusPolling();
+        closeControl();
         inCall = false;
         const endingCallId = callId;
         callId = null;
@@ -1026,6 +1116,7 @@
           setState(t("state.live"));
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
+          if (wantsControlChannel() && connectBody.control) openControl(connectBody.control, myToken);
 
           // Ringback safety net: if nothing ever started watching for Lelik's first sound
           // (neither the analyser nor the receiver's stats are available), don't ring
