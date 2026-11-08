@@ -219,7 +219,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The voice MCP token kind's own key (LELIK_VOICE_MCP_RFC §5.2, O8): the VOICE_MCP_TOOLS knob on without it, or a
     # bad key, refuses the start here, for the same reason.
     voice_mcp_key = voice_mcp_setup.signing_key(
-        config.get(voice_mcp_setup.KEY_NAME), oauth_secret=config.get("OAUTH_SESSION_SECRET"),
+        config.get(voice_mcp_setup.KEY_NAME), oauth_secret=voice_mcp_setup.effective_oauth_secret(config),
         tools_enabled=voice_mcp_setup.voice_mcp_tools_enabled())
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")

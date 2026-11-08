@@ -12,14 +12,16 @@ Public interface:
 
 Mint (§5.2, O1): at ticket redemption only. The whitelist is re-read as the OAuth refresh path reads it (the user
 exists, has an email and the email is allowed); a refused user gets no tokens, a warning and an alert, never an error.
-Then the live-call record `voice_mcp_call:{cid}` → `{user_id}` is written with the token's TTL, and two HS256 JWTs are
-encoded in memory under the dedicated key, one per resource; nothing stores a token. A store or repository error
-propagates (the caller fails the session-config: fail closed).
+Then the live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` is written with the token's TTL, and two
+HS256 JWTs are encoded in memory under the dedicated key, one per resource; nothing stores a token. A store or
+repository error propagates (the caller fails the session-config: fail closed).
 
 Verify (§5.3): the key, `kid`, `type`, `aud` (`voice:` + this resource), `exp`, the claims' shapes, then the live-call
-record, whose `user_id` must equal `sub`. Any failure is None and one log line with the reason only; a store error is
-a refusal too (logged by type). The OAuth verifier never sees a voice token and this one never an OAuth token: the
-callers route on `is_voice_token`.
+record, whose `user_id` must equal `sub` and whose `account_id` must equal the `account_id` claim: the tenant comes
+from the server's record, never from the token alone. The verified tools are the server's set for the resource
+(`VOICE_ALLOWED_TOOLS`) narrowed by the claim: a claim can only take tools away, never add one. Any failure is None and
+one log line with the reason only; a store error is a refusal too (logged by type). The OAuth verifier never sees a
+voice token and this one never an OAuth token: the callers route on `is_voice_token`.
 
 Logging (§5.4): no line carries a token, a ticket or an `Authorization` header; the call is named by `fingerprint(cid)`,
 the user by the first 8 characters of the id, and every line carries `client=voice`.
@@ -48,7 +50,7 @@ from ..ports.whitelist_repository import WhitelistRepository
 from ..utils.logger import logger
 
 _JWT_ALG = "HS256"
-SIGNING_KEY_MIN_CHARS = 32
+SIGNING_KEY_MIN_CHARS = 48
 _REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud"]
 
 
@@ -100,7 +102,7 @@ class VoiceMcpTokenService:
         ttl_s: int = VOICE_MCP_TOKEN_TTL_S,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        """`signing_key`: `VOICE_MCP_SIGNING_KEY`, at least 32 characters, used for nothing else (O8); raises
+        """`signing_key`: `VOICE_MCP_SIGNING_KEY`, at least 48 characters, used for nothing else (O8); raises
         ValueError when shorter. `resource_uris` / `scope_of`: each resource's URI and its one scope (the scope strings
         live in composition). `store`: the voice tickets store the live-call record goes to. `alert_sink`: told of a
         whitelist refusal at mint; None logs only."""
@@ -132,7 +134,7 @@ class VoiceMcpTokenService:
             await self._alert(f"Voice MCP: no memory or drive tools for call {fingerprint(cid)} "
                               f"(user {user_id[:8]}): {reason}")
             return None
-        await self._store.set(voice_call_key(cid), {"user_id": user_id}, ttl_s=self._ttl_s)
+        await self._store.set(voice_call_key(cid), {"user_id": user_id, "account_id": account_id}, ttl_s=self._ttl_s)
         now = int(self._clock())
         tokens = VoiceMcpTokens(
             facts=self._encode(MCPResource.FACTS, user_id, account_id, cid, now),
@@ -166,6 +168,10 @@ class VoiceMcpTokenService:
         if record.get("user_id") != user_id:
             self._log_refusal(resource, "other_user", cid)
             return None
+        if record.get("account_id") != payload["account_id"]:
+            self._log_refusal(resource, "other_account", cid)
+            return None
+        claimed = set(payload["tools"])
         return VerifiedVoiceToken(
             token=token,
             user_id=user_id,
@@ -173,7 +179,8 @@ class VoiceMcpTokenService:
             scopes=payload["scope"].split(),
             resource=payload["aud"],
             expires_at=int(payload["exp"]),
-            tools=list(payload["tools"]),
+            # The server's set, narrowed by the claim: a token signed with the key cannot add a tool.
+            tools=[tool for tool in VOICE_ALLOWED_TOOLS[resource] if tool in claimed],
             cid=cid,
         )
 

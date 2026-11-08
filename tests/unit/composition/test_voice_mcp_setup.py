@@ -16,6 +16,9 @@ from src.services.voice_mcp_token_service import VoiceMcpTokenService
 from tests.support import prod_env
 from tests.support.voice_mcp_kit import AUTH_CONFIG, DIGEST_KEY, OAUTH_SECRET, VOICE_KEY, Kit
 
+# An OAuth secret long enough to be a valid voice key (48+), so the equality check is what refuses it, not the length.
+LONG_OAUTH_SECRET = "oauth-session-secret-" + "0123456789abcdef" * 2 + "-test"
+
 
 class UntouchableDb:
     """A Firestore client the graph must not reach: any attribute access fails the test."""
@@ -36,12 +39,13 @@ class TestSigningKey:
 
     @pytest.mark.parametrize("tools_enabled", [False, True])
     def test_a_short_key_refuses(self, tools_enabled):
-        with pytest.raises(ValueError, match="at least 32 characters"):
-            voice_mcp_setup.signing_key("k" * 31, oauth_secret=OAUTH_SECRET, tools_enabled=tools_enabled)
+        with pytest.raises(ValueError, match="at least 48 characters"):
+            voice_mcp_setup.signing_key("k" * 47, oauth_secret=OAUTH_SECRET, tools_enabled=tools_enabled)
 
     def test_the_oauth_secret_is_never_the_voice_key(self):
+        assert len(LONG_OAUTH_SECRET) >= 48
         with pytest.raises(ValueError, match="must differ from OAUTH_SESSION_SECRET"):
-            voice_mcp_setup.signing_key(OAUTH_SECRET + "\n", oauth_secret=OAUTH_SECRET, tools_enabled=True)
+            voice_mcp_setup.signing_key(LONG_OAUTH_SECRET + "\n", oauth_secret=LONG_OAUTH_SECRET, tools_enabled=True)
 
     def test_a_valid_key_is_stripped(self):
         assert voice_mcp_setup.signing_key(f" {VOICE_KEY}\n", oauth_secret=None, tools_enabled=True) == VOICE_KEY
@@ -86,6 +90,7 @@ class TestGraph:
 
     def test_a_key_equal_to_the_oauth_secret_refuses_the_start(self, monkeypatch):
         config, _ = prod_env.prod_settings(monkeypatch)
+        config["OAUTH_SESSION_SECRET"] = LONG_OAUTH_SECRET
         config["VOICE_MCP_SIGNING_KEY"] = config["OAUTH_SESSION_SECRET"]
         with pytest.raises(ValueError, match="must differ from OAUTH_SESSION_SECRET"):
             build_application_graph(config, UntouchableDb())

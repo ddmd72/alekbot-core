@@ -372,12 +372,13 @@ verify, revoke), rules in `src/domain/voice_mcp_token.py`, key and knob in `src/
   `iat` + 3600.
 - **Mint.** At `/voice/session-config` only (never at prepare, never stored), with the `VOICE_MCP_TOOLS` knob on, for
   the plain companion call on xAI; the whitelist is re-read first (a refused user gets the call without tokens and an
-  alert). The live-call record `voice_mcp_call:{cid}` → `{user_id}` goes to the voice tickets store with the token's
-  TTL; the two tokens go back to the relay in the response field `voice_mcp_tokens` (`{"facts", "drive"}`).
+  alert). The live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` goes to the voice tickets store with
+  the token's TTL; the two tokens go back to the relay in the response field `voice_mcp_tokens` (`{"facts", "drive"}`).
 - **Verify.** Both resources route on the unverified header: `kid=voice-mcp` → the voice verifier only, anything else →
   the OAuth verifier only; each refuses the other's tokens on key, type and audience. The voice verifier also reads the
-  live-call record on every call (missing or another user → 401); OAuth tokens read no record. A verified voice token
-  is `AlekAccessToken(kind=VOICE, tools=[…])`; OAuth tokens are `kind=OAUTH, tools=None`.
+  live-call record on every call (missing, another user or another account → 401); OAuth tokens read no record. A
+  verified voice token is `AlekAccessToken(kind=VOICE, tools=[…])`, its tools the server's set for the resource
+  narrowed by the claim (a claim never adds a tool); OAuth tokens are `kind=OAUTH, tools=None`.
 - **At the tools.** A tool outside the claim gets the neutral refusal before any read (drive: the REFUSED line; facts:
   one "Refused" line). A drive call runs with the drive audience unset, so Lelik reads what chat reads (the Cabinet's
   "Connector access" does not apply); OAuth calls always run under the connector audience. Results are cut at

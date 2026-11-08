@@ -278,13 +278,22 @@ class VoiceSessionService:
                 await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
             # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
             await self._cancel_all(ticket, list(state.delegations) + list(state.errands))
-            await session.close()
-            await self._control_plane.submit_transcript(
-                call_id=ticket,
-                user_id=config["user_id"],
-                account_id=config["account_id"],
-                buffer=buffer,
-            )
+            # 4. Close the provider session, then report the call end. The report also revokes the
+            #    call's voice MCP tokens (LELIK_VOICE_MCP_RFC §5.3), so a close that raises must not
+            #    skip it: logged here, re-raised after the report.
+            try:
+                await session.close()
+            except Exception as exc:
+                logger.error(f"voice call {fingerprint(ticket)}: closing the realtime session failed: "
+                             f"{type(exc).__name__}", exc_info=True)
+                raise
+            finally:
+                await self._control_plane.submit_transcript(
+                    call_id=ticket,
+                    user_id=config["user_id"],
+                    account_id=config["account_id"],
+                    buffer=buffer,
+                )
 
     async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task]) -> None:
         for task in tasks:

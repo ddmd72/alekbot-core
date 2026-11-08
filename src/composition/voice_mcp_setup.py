@@ -12,6 +12,7 @@
 import os
 from typing import Optional
 
+from ..config.auth import _DEV_DEFAULT_SESSION_SECRET as DEV_DEFAULT_SESSION_SECRET
 from ..config.auth import AuthConfig
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..ports.alert_sink import AlertSinkPort
@@ -31,10 +32,17 @@ def voice_mcp_tools_enabled() -> bool:
     return os.getenv(KNOB, "").strip().lower() == "on"
 
 
+def effective_oauth_secret(config: dict) -> Optional[str]:
+    """The OAuth session secret in effect: what `AuthConfig` resolves from `config` (the dev placeholder when the
+    setting is unset), never the raw setting alone."""
+    return AuthConfig(config).oauth_session_secret
+
+
 def signing_key(raw: Optional[str], *, oauth_secret: Optional[str], tools_enabled: bool) -> Optional[str]:
-    """The stripped key, or None when it is absent and the knob is off. Raises ValueError (refuse to start) when the knob
-    is on and the key is absent, when a present key is under 32 characters, or when it equals the OAuth session secret
-    (the two kinds never share a key, O8)."""
+    """The stripped key, or None when it is absent and the knob is off. `oauth_secret`: the OAuth session secret in
+    effect (`effective_oauth_secret`). Raises ValueError (refuse to start) when the knob is on and the key is absent,
+    when a present key is under 48 characters, equals the OAuth secret in effect, or equals the public dev placeholder
+    secret (the two kinds never share a key, O8)."""
     key = (raw or "").strip()
     if not key:
         if tools_enabled:
@@ -42,6 +50,8 @@ def signing_key(raw: Optional[str], *, oauth_secret: Optional[str], tools_enable
         return None
     if len(key) < SIGNING_KEY_MIN_CHARS:
         raise ValueError(f"{KEY_NAME} must be at least {SIGNING_KEY_MIN_CHARS} characters. Refusing to start.")
+    if key == DEV_DEFAULT_SESSION_SECRET:
+        raise ValueError(f"{KEY_NAME} must not be the public dev placeholder secret. Refusing to start.")
     if oauth_secret and key == oauth_secret.strip():
         raise ValueError(f"{KEY_NAME} must differ from OAUTH_SESSION_SECRET. Refusing to start.")
     return key

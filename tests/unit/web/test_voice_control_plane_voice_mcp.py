@@ -90,7 +90,8 @@ class TestSessionConfigMints:
         after = w.dump()
         for token in body[VOICE_MCP_TOKENS_FIELD].values():
             assert token not in after
-        assert json.loads(after)[voice_call_key(voice_call_id(DIGEST_KEY, TICKET))]["value"] == {"user_id": USER}
+        record = json.loads(after)[voice_call_key(voice_call_id(DIGEST_KEY, TICKET))]["value"]
+        assert record == {"user_id": USER, "account_id": ACCOUNT}
 
     @pytest.mark.parametrize("mode, voice", [
         pytest.param(VoiceMode.INTERPRETER, XAI, id="interpreter"),

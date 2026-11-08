@@ -374,8 +374,8 @@ Keep the digest key's value out of tracked files and chat; it is not derivable f
 
 **Voice MCP token kind (`docs/10_rfcs/LELIK_VOICE_MCP_RFC.md` §5).** The main service mounts `VOICE_MCP_SIGNING_KEY`, the
 HS256 key of Lelik's per-call MCP tokens and nothing else. **Create it before the first deploy that mounts it** (the deploy
-fails otherwise): at least 32 random characters (`openssl rand -hex 32`, stored with `printf '%s'`), never the value of
-`OAUTH_SESSION_SECRET` (the start is refused when they are equal), `secretmanager.secretAccessor` for the main service's
+fails otherwise): at least 48 characters (`openssl rand -hex 32` gives 64, stored with `printf '%s'`), never the OAuth
+session secret in effect nor the public dev placeholder (the start is refused for either), `secretmanager.secretAccessor` for the main service's
 account only. Rotating it ends every live voice token at once (calls in flight lose their memory and drive tools).
 The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off; `on` turns it on) lets `/voice/session-config`
 mint a call's tokens; with it on and the key missing the main service refuses to start. With it off nothing is minted and

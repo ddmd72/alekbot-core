@@ -73,10 +73,10 @@ class TestMint:
         assert claims(tokens.facts)["cid"] == CID == keyed_digest(DIGEST_KEY, "voice_mcp", TICKET)
         assert TICKET not in tokens.facts + tokens.drive and TICKET not in str(kit.docs)
 
-    async def test_the_live_call_record_holds_the_user_only_for_the_token_ttl(self, kit):
+    async def test_the_live_call_record_holds_the_user_and_account_only_for_the_token_ttl(self, kit):
         await kit.voice.mint(TICKET, USER, ACCOUNT)
         doc = kit.docs[voice_call_key(CID)]
-        assert doc["value"] == {"user_id": USER}
+        assert doc["value"] == {"user_id": USER, "account_id": ACCOUNT}
         remaining = (doc["expires_at"].timestamp() - time.time())
         assert 3590 < remaining <= 3600
 
@@ -245,8 +245,8 @@ class TestRevoke:
 
 class TestKeyAndRouting:
     def test_a_short_key_refuses_to_build(self, kit):
-        with pytest.raises(ValueError, match="at least 32"):
-            VoiceMcpTokenService(signing_key="k" * 31, store=kit.store, digest_key=DIGEST_KEY, resource_uris=URIS,
+        with pytest.raises(ValueError, match="at least 48"):
+            VoiceMcpTokenService(signing_key="k" * 47, store=kit.store, digest_key=DIGEST_KEY, resource_uris=URIS,
                                  scope_of={}, user_repo=kit.user_repo, whitelist_repo=kit.whitelist_repo,
                                  alert_sink=None)
 
