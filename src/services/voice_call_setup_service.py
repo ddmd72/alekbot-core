@@ -39,7 +39,8 @@ async def release_one_call_marker(store: EphemeralStore, digest_key: bytes, user
     A phone dial takes the marker over from a web call that has not released it yet (VOICE_CALL_CONTROL_CHANNEL_RFC
     §7.5.4), so that call's late end-of-call report must leave the new owner's marker alone. The store has no
     compare-and-delete: a takeover landing between this read and the delete is still lost; the phone path rewrites its
-    marker when the dial ends (`/voice/inbound-status`), which heals that window. A marker that cannot be read is
+    marker when the dial ends (`/voice/inbound-status`), which usually repairs it (RFC §7.5.4 says when it does not:
+    the phone call then runs without a marker, nothing is locked). A marker that cannot be read is
     deleted, as before: a stuck marker locks the user out, a lost one only loosens the one-call limit."""
     key = one_call_marker_key(user_id)
     try:

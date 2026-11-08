@@ -44,6 +44,7 @@ dial never got as far as our answer — release the ticket and marker. If
 origination raises, both are released and an alert posted. If no status ever
 arrives, the short TTLs release everything within `_TICKET_TTL_S`.
 """
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
@@ -70,6 +71,11 @@ _TICKET_TTL_S = 300
 # is the urgent fallback and is never refused because of a web call.
 _PHONE_REPLACE_WAIT_S = 4.0
 _PHONE_REPLACE_POLL_S = 0.25
+# The share of that budget the media close may take. The SFU's own request timeout is 15 s (one for all legs, which
+# close concurrently): a hung SFU must not spend the whole budget, and a close that has not finished by then is
+# abandoned and the dial goes on. A web call left running then ends on its own (page, dead-peer watchdog); its release
+# leaves the phone call's marker, and its ticket, if still unredeemed, is refused at session-config.
+_PHONE_REPLACE_CLOSE_S = 1.5
 
 # Twilio's `CallStatus` values that mean the call leg is over for good (as
 # opposed to the non-terminal `initiated` / `ringing` / `in-progress` it also
@@ -98,6 +104,7 @@ def create_voice_webhook_blueprint(
     media_room=None,
     replace_wait_s: float = _PHONE_REPLACE_WAIT_S,
     replace_poll_s: float = _PHONE_REPLACE_POLL_S,
+    replace_close_s: float = _PHONE_REPLACE_CLOSE_S,
 ) -> Blueprint:
     """Build the Twilio-facing voice webhook blueprint.
 
@@ -127,18 +134,35 @@ def create_voice_webhook_blueprint(
         if not isinstance(web_call_id, str) or not web_call_id:
             return False
         logger.info(f"voice auth: phone dial of {user_id} replaces the running web call {web_call_id}")
-        # No record: the web call was hung up and is only finishing, or is still in setup; nothing to close.
-        record = await web_calls.record(web_call_id, user_id) if web_calls is not None else None
-        if record is not None:
+        # One budget for the close and the wait together: neither may push the answer past Twilio's deadline.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + replace_wait_s
+        if web_calls is not None:
             try:
-                await web_calls.close(record, await web_calls.ticket(web_call_id, record), user_id)
+                await asyncio.wait_for(_close_web_call(web_call_id, user_id),
+                                       timeout=min(replace_close_s, replace_wait_s))
+            except asyncio.TimeoutError:
+                logger.warning(f"voice auth: closing the replaced web call {web_call_id} took over "
+                               f"{min(replace_close_s, replace_wait_s):.1f}s, the dial goes on")
             except Exception:
                 logger.error(f"voice auth: closing the replaced web call {web_call_id} failed, the dial goes on",
                              exc_info=True)
-        if not await call_setup.wait_released(user_id, replace_wait_s, replace_poll_s):
+        try:
+            released = await call_setup.wait_released(user_id, max(0.0, deadline - loop.time()), replace_poll_s)
+        except Exception:
+            logger.warning(f"voice auth: waiting for web call {web_call_id} to release failed, the phone call "
+                           f"takes the marker over", exc_info=True)
+            return True
+        if not released:
             logger.info(f"voice auth: web call {web_call_id} still holds the marker after {replace_wait_s:.0f}s, "
                         f"the phone call takes it over")
         return True
+
+    async def _close_web_call(web_call_id: str, user_id: str) -> None:
+        # No record: the web call was hung up and is only finishing, or is still in setup; nothing to close.
+        record = await web_calls.record(web_call_id, user_id)
+        if record is not None:
+            await web_calls.close(record, await web_calls.ticket(web_call_id, record), user_id)
 
     async def _reject_if_unsigned(form) -> Optional[Response]:
         """403 unless the request carries a valid Twilio signature.

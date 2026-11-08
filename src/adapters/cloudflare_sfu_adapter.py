@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 
 import httpx
@@ -112,15 +113,19 @@ class CloudflareSfuAdapter(MediaRoomPort):
     async def close(self, adapter_ids: List[str]) -> None:
         # Best-effort cleanup: a close failure never blocks hangup, and it logs exactly once (at
         # WARNING, not ERROR) — `log_errors=False` stops `_call` from also logging the same
-        # failure at ERROR before it gets here.
-        for adapter_id in adapter_ids:
-            try:
-                await self._call("POST", "/adapters/websocket/close", {"tracks": [{"adapterId": adapter_id}]},
-                                 log_errors=False)
-            except _SfuStatusError as exc:
-                if exc.status_code in _ALREADY_CLOSED:
-                    logger.info(f"[CloudflareSfu] adapter {adapter_id} was already closed")
-                else:
-                    logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {exc}")
-            except Exception as exc:
-                logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {type(exc).__name__}: {exc}")
+        # failure at ERROR before it gets here. The legs close concurrently: a hung SFU costs one
+        # request timeout, not one per leg (a phone dial replacing a web call closes under Twilio's
+        # webhook deadline, VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4).
+        await asyncio.gather(*(self._close_one(adapter_id) for adapter_id in adapter_ids))
+
+    async def _close_one(self, adapter_id: str) -> None:
+        try:
+            await self._call("POST", "/adapters/websocket/close", {"tracks": [{"adapterId": adapter_id}]},
+                             log_errors=False)
+        except _SfuStatusError as exc:
+            if exc.status_code in _ALREADY_CLOSED:
+                logger.info(f"[CloudflareSfu] adapter {adapter_id} was already closed")
+            else:
+                logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {exc}")
+        except Exception as exc:
+            logger.warning(f"[CloudflareSfu] closing adapter {adapter_id} failed: {type(exc).__name__}: {exc}")

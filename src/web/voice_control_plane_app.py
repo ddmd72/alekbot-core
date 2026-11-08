@@ -65,8 +65,10 @@ from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.domain.voice_mcp_servers import VOICE_MCP_TOKENS_FIELD
 from src.domain.voice_mcp_token import voice_mcp_eligible
 from src.domain.voice_resume import RESUME_CONFIG_FIELD, resume_applies
-from src.domain.voice_ticket_keys import abandoned_key, amd_key, button_end_key, call_kind_key, result_key, ticket_key
-from src.services.voice_call_setup_service import release_one_call_marker
+from src.domain.voice_ticket_keys import (
+    abandoned_key, amd_key, button_end_key, call_kind_key, one_call_owner, result_key, ticket_key,
+)
+from src.services.voice_call_setup_service import ONE_CALL_OWNER_FIELD, release_one_call_marker
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -219,6 +221,22 @@ def create_voice_control_plane_blueprint(
         config = await ephemeral_store.get_and_delete(ticket_key(digest_key, ticket))
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
+        # The one-call marker, read once: checked here, extended last (below). A marker naming another call means this
+        # call was replaced before the relay redeemed it (a phone dial took the marker over from this web call,
+        # VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4): refused, with no tokens minted, no resume handle taken and the other
+        # call's marker untouched. A marker without an owner (written before the field) or one that cannot be read
+        # leaves the call as before.
+        marker_key = f"voice_one_call:{config.get('user_id')}"
+        try:
+            marker = await ephemeral_store.get(marker_key)
+        except Exception:
+            logger.error(f"voice session-config: reading the one-call marker failed for ticket {fingerprint(ticket)}",
+                         exc_info=True)
+            marker = None
+        owner = marker.get(ONE_CALL_OWNER_FIELD) if isinstance(marker, dict) else None
+        if isinstance(owner, str) and owner != one_call_owner(digest_key, ticket):
+            logger.warning(f"voice session-config: ticket {fingerprint(ticket)} belongs to a replaced call, refused")
+            return jsonify({"error": "the call was replaced"}), 404
         # Minted here, at redemption, never at prepare (O1): the ticket record in the store never
         # holds a token, and the tokens leave only in this OIDC-authenticated response.
         mcp_tokens = await _voice_mcp_tokens_for(ticket, config)
@@ -240,9 +258,6 @@ def create_voice_control_plane_blueprint(
         # sends no end-of-call report and the ticket is gone, so nothing would release a full-TTL marker
         # (an hour of "busy"). A failed session-config must leave the marker its short setup TTL.
         try:
-            user_id = config.get("user_id")
-            marker_key = f"voice_one_call:{user_id}"
-            marker = await ephemeral_store.get(marker_key)
             if marker is not None:
                 await ephemeral_store.set(marker_key, marker, ttl_s=one_call_ttl_s)
         except Exception:
