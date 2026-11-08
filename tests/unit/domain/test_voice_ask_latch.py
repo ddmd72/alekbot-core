@@ -5,6 +5,7 @@ import pytest
 from src.domain.voice_ask_latch import (
     ASK_ARMED_TIMEOUT_S,
     ASK_REPLY_TIMEOUT_S,
+    ASK_RUNAWAY_REPLY_S,
     AskLatch,
     AskReason,
     AskReport,
@@ -181,7 +182,7 @@ def test_awaiting_reply_times_out_twenty_seconds_after_speech_stopped(latch, clo
 def test_a_started_reply_that_never_ends_times_out_too(latch, clock):
     _awaiting(latch)
     latch.response_created()
-    clock.now += ASK_REPLY_TIMEOUT_S
+    clock.now += ASK_RUNAWAY_REPLY_S
     assert latch.tick().report == AskReport("idle", reason=AskReason.TIMEOUT)
 
 
