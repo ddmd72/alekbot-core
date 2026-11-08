@@ -11,6 +11,11 @@ synthesized utterance streamed in real time. In the "note" cases the production 
 utterance and the production note (`_ASK_NOTE`) is sent on every `speech_started` the latch says to mark, exactly as
 `VoiceSessionService` does.
 
+--translate-note runs the no-note cases the way the relay runs them since the owner's decision of 2026-11-08: the
+latch is built with `translate_unmarked=True` and the production `_TRANSLATE_NOTE` goes in on every `speech_started`
+it does not mark for Lelik (cases named `...+translate-note`). The ask+note case is unchanged by the flag (a pressed
+button gets only `_ASK_NOTE`).
+
 Cases, each repeated --runs times:
   ask+note           an `ask:` sample with the button pressed   (P1: Lelik answers the caller, does not translate)
   ask-no-note        the same sample without the note           (P1: Lelik translates it, whatever it says)
@@ -32,7 +37,7 @@ Spoken Content > System voice > Manage Voices) and `afconvert` to G.711 mu-law 8
 Usage:
   python scripts/voice/ask_note_probe.py --lang pt-PT --caller-language Portuguese --other-language English \
       --samples scripts/memory/ask_samples_pt.txt [--voice NAME] [--runs 3] [--pause-s 1.5] \
-      [--out scripts/memory/ask_probe_pt.json] [--dry-run]
+      [--out scripts/memory/ask_probe_pt.json] [--translate-note] [--dry-run]
 --dry-run synthesizes the audio, prints the plan and the cost estimate, and connects to nothing.
 Cost: xAI bills $0.08 per audio minute; the estimate is printed before any session opens.
 """
@@ -56,7 +61,7 @@ sys.path.append(str(ROOT))
 from src.adapters.xai_realtime_adapter import _MODEL, _TURN_DETECTION  # noqa: E402
 from src.domain.voice_ask_latch import AskLatch  # noqa: E402
 from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES  # noqa: E402
-from src.services.voice_session_service import _ASK_NOTE, _WEB_PICKUP_NOTE  # noqa: E402
+from src.services.voice_session_service import _ASK_NOTE, _TRANSLATE_NOTE, _WEB_PICKUP_NOTE  # noqa: E402
 
 URL = f"wss://api.x.ai/v1/realtime?model={_MODEL}"
 PERSONA_TOKEN = ROOT / "prompts_snapshot" / "tokens" / "user" / "VOICE_PERSONA_INTERPRETER.groovy"
@@ -163,19 +168,21 @@ def plan(samples: List[Sample], runs: int) -> List[Tuple[int, Sample, bool]]:
     return cases
 
 
-def case_name(sample: Sample, with_note: bool) -> str:
-    if sample.kind == "ask":
-        return "ask+note" if with_note else "ask-no-note"
-    return "translate-no-note"
+def case_name(sample: Sample, with_note: bool, translate_note: bool = False) -> str:
+    if sample.kind == "ask" and with_note:
+        return "ask+note"
+    return f"{sample.kind}{'+translate-note' if translate_note else '-no-note'}"
 
 
 class Case:
     """One session: the events it saw, in order, reduced to what P1 and P2 read."""
 
-    def __init__(self, ws: Any, with_note: bool) -> None:
+    def __init__(self, ws: Any, with_note: bool, translate_note: bool = False) -> None:
         self.ws = ws
         self.t0 = time.monotonic()
-        self.latch = AskLatch(time.monotonic) if with_note else None
+        self.latch = (AskLatch(time.monotonic, translate_unmarked=translate_note)
+                      if with_note or translate_note else None)
+        self.translate_notes_sent = 0
         self.speech_started = 0
         self.speech_stopped = 0
         self.committed: List[Dict[str, Any]] = []
@@ -198,10 +205,13 @@ class Case:
     async def send(self, event: Dict[str, Any]) -> None:
         await self.ws.send(json.dumps(event))
 
-    async def note(self) -> None:
+    async def note(self, text: str = _ASK_NOTE) -> None:
         await self.send({"type": "conversation.item.create", "item": {
-            "type": "message", "role": "system", "content": [{"type": "input_text", "text": _ASK_NOTE}]}})
-        self.notes_sent += 1
+            "type": "message", "role": "system", "content": [{"type": "input_text", "text": text}]}})
+        if text == _TRANSLATE_NOTE:
+            self.translate_notes_sent += 1
+        else:
+            self.notes_sent += 1
         self.awaiting_note_item += 1
 
     async def handle(self, event: Dict[str, Any]) -> None:
@@ -210,8 +220,11 @@ class Case:
             print(f"  [{self.now():6.2f}s] {kind}")
         if kind == "input_audio_buffer.speech_started":
             self.speech_started += 1
-            if self.latch is not None and self.latch.speech_started(event.get("item_id")).insert_note:
-                await self.note()
+            step = self.latch.speech_started(event.get("item_id")) if self.latch is not None else None
+            if step is not None and step.insert_note:
+                await self.note(_ASK_NOTE)
+            elif step is not None and step.insert_translate_note:
+                await self.note(_TRANSLATE_NOTE)
         elif kind == "input_audio_buffer.speech_stopped":
             self.speech_stopped += 1
             self.last_speech_stopped_at = self.now()
@@ -254,7 +267,8 @@ class Case:
         preceded = [entry["previous_item_id"] in self.note_item_ids for entry in self.committed]
         return {
             "speech_started": self.speech_started, "speech_stopped": self.speech_stopped,
-            "committed": len(self.committed), "notes_sent": self.notes_sent, "note_item_ids": self.note_item_ids,
+            "committed": len(self.committed), "notes_sent": self.notes_sent,
+            "translate_notes_sent": self.translate_notes_sent, "note_item_ids": self.note_item_ids,
             "committed_preceded_by_note": preceded, "latch_release": self.release,
             "user_transcripts": self.user_transcripts, "replies": self.replies,
             "response_statuses": self.response_statuses, "billable_audio_seconds": self.billable_audio_seconds,
@@ -285,12 +299,13 @@ async def stream(case: Case, audio: bytes) -> None:
         await asyncio.sleep(0.02)
 
 
-async def run_case(key: str, prompt: str, audio: bytes, with_note: bool) -> Dict[str, Any]:
+async def run_case(key: str, prompt: str, audio: bytes, with_note: bool,
+                   translate_note: bool = False) -> Dict[str, Any]:
     import websockets
 
     spec = VOICE_PROVIDER_PROFILES["xai"].session
     ws = await websockets.connect(URL, additional_headers={"Authorization": f"Bearer {key}"}, max_size=None)
-    case = Case(ws, with_note)
+    case = Case(ws, with_note, translate_note)
     try:
         await case.send({"type": "session.update", "session": {
             "voice": spec.voice, "instructions": prompt, "turn_detection": _TURN_DETECTION,
@@ -304,7 +319,7 @@ async def run_case(key: str, prompt: str, audio: bytes, with_note: bool) -> Dict
         await recv_until(case, lambda e: e.get("type") in ("response.done", "error"), _REPLY_WAIT_S)
         opening = list(case.replies)
         case.replies.clear()
-        if case.latch is not None:
+        if case.latch is not None and with_note:
             case.latch.arm(1)  # the caller pressed "Ask Lelik"
         streamer = asyncio.ensure_future(stream(case, audio))
         while not streamer.done():
@@ -334,6 +349,8 @@ async def main() -> None:
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--pause-s", type=float, default=1.5, help="pause at ' | ' inside a sample")
     parser.add_argument("--out", type=Path, help="write the results as JSON here (keep it in a gitignored path)")
+    parser.add_argument("--translate-note", action="store_true",
+                        help="send _TRANSLATE_NOTE on unmarked speech, as the relay does (no-note cases)")
     parser.add_argument("--dry-run", action="store_true", help="synthesize and estimate only; no session is opened")
     args = parser.parse_args()
 
@@ -345,7 +362,8 @@ async def main() -> None:
     print(f"model {_MODEL}, voice {voice!r}, {len(samples)} samples, {len(cases)} sessions, "
           f"estimate ~${estimate_usd([audio[sample] for _, sample, _ in cases])}")
     for _, sample, with_note in cases[:len(cases) // max(args.runs, 1)]:
-        print(f"  {case_name(sample, with_note):18} {len(audio[sample]) / 8000:5.1f} s  {sample.text}")
+        print(f"  {case_name(sample, with_note, args.translate_note):24} {len(audio[sample]) / 8000:5.1f} s  "
+              f"{sample.text}")
     if args.dry_run:
         return
 
@@ -356,23 +374,24 @@ async def main() -> None:
         raise SystemExit("XAI_API_KEY is not set")
     results = []
     for run, sample, with_note in cases:
-        name = case_name(sample, with_note)
+        name = case_name(sample, with_note, args.translate_note)
         print(f"\n===== run {run}: {name}: {sample.text}")
         try:
-            outcome = await run_case(key, prompt, audio[sample], with_note)
+            outcome = await run_case(key, prompt, audio[sample], with_note, args.translate_note)
         except Exception as exc:
             outcome = {"exception": repr(exc)}
-        results.append({"run": run, "case": name, "kind": sample.kind, "note": with_note, "sample": sample.text,
-                        **outcome})
+        results.append({"run": run, "case": name, "kind": sample.kind, "note": with_note,
+                        "translate_note": args.translate_note and not with_note, "sample": sample.text, **outcome})
         print(json.dumps(results[-1], ensure_ascii=False, indent=2))
 
     print("\n===== SUMMARY (P2: speech_started / committed / committed turns preceded by the note) =====")
     for entry in results:
         if "exception" in entry:
-            print(f"run {entry['run']} {entry['case']:18} EXCEPTION {entry['exception']}")
+            print(f"run {entry['run']} {entry['case']:24} EXCEPTION {entry['exception']}")
             continue
-        print(f"run {entry['run']} {entry['case']:18} started={entry['speech_started']} "
+        print(f"run {entry['run']} {entry['case']:24} started={entry['speech_started']} "
               f"committed={entry['committed']} notes={entry['notes_sent']} "
+              f"translate_notes={entry['translate_notes_sent']} "
               f"preceded={entry['committed_preceded_by_note']} release={entry['latch_release']} "
               f"errors={len(entry['errors'])}")
         for reply in entry["replies"]:
