@@ -2,7 +2,7 @@
 
 **Status:** Accepted (owner decisions recorded 2026-11-08, §13). Slice 3 (channel skeleton) built: the knob
 `VOICE_CONTROL_CHANNEL` defaults to **off** until slice 4 is live-checked (§9 below says "default on" for the finished
-feature); welcome offers no feature yet.
+feature); welcome offers no feature yet. Slice 5 (resumption) built; §6 follows the live probe P3.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
@@ -177,29 +177,47 @@ relay with the latch is live, or the name trigger disappears before the button e
 
 ## 6. B — Session resumption (xAI)
 
-### 6.1 Provider facts (docs.x.ai, voice-agent, read 2026-11-08)
+### 6.1 Provider facts (docs.x.ai, voice-agent, read 2026-11-08; live probe P3, 2026-11-08, grok-voice-3.0)
 
-Opt in with `resumption.enabled: true` on `session.update` (default false), on the first session and again on the
-resuming one. Keep `conversation.created.conversation.id`; reconnect with `?conversation_id=<id>`. Replayed (echoed as
-`conversation.item.created` before the first new turn): user and assistant transcripts, tool calls, `function_call_output`.
-Not said: instructions, tools, system items, billing of the replay. History is dropped after 30 min of inactivity.
+The probe overrides the docs where they differ.
+
+- **Opt-in:** `session.update` with `session.resumption = {"enabled": true}`, sent on every connection, resumes included.
+- **Handle:** `conversation.created.conversation.id`, a plain UUID, sent right on connect, before any `session.update`.
+  A resumed connection gets the same value back.
+- **Resume:** the WebSocket URL carries `conversation_id=<id>` next to `model=...`.
+- **Replay:** `conversation.item.added` events with `"replayed": true` (live items carry `replayed: false`), NOT
+  `conversation.item.created`. They arrive BEFORE `session.updated`. Only assistant items were seen replayed for
+  text-sent user turns; the model still had the user context. Not said: instructions, tools, system items.
+- **A bogus or expired id gets no error.** The session opens fresh, `conversation.created` echoes the sent id, and nothing
+  arrives with `replayed: true`. "Resumed" therefore means: at least one replayed item before `session.updated`.
+- xAI lets an id be resumed repeatedly; "one resume per handle" (§6.2) is our own rule. History is dropped after 30 min
+  of inactivity (docs).
+- The replay's billing does not show in `usage` (no extra `billable_audio_seconds` on the first resumed reply).
 
 ### 6.2 Design (re-dial resumes)
 
 1. **Adapter.** `open()` always sends `resumption.enabled`; it takes an optional `resume_handle` and adds it as
-   `conversation_id` to the URL (`xai_realtime_adapter.py:89-105`). It surfaces `conversation.created` as a new event
-   `resume_handle {handle}`. OpenAI emits none.
-2. **Relay → main.** The service keeps the handle and sends it with `submit_transcript` (already in the teardown
-   `finally`, `voice_session_service.py:282-287`).
+   `conversation_id` to the URL. It surfaces `conversation.created` as a new event `resume_handle {handle}` (OpenAI emits
+   none). With a handle it reads on to `session.updated` (bounded wait) and sets `resumed` = a replayed item was seen
+   before it; replayed items are history and produce no event. No replay: it logs `resume: not honoured` and the call is
+   fresh.
+2. **Relay → main.** The service keeps the handle from the event and sends it, with the provider, in
+   `submit_transcript` (the teardown `finally`).
 3. **Main (owner, Q3).** Only a call that did **not** end by the hang-up button resumes, within 25 min (under xAI's 30 min
-   idle, counted from call end), in the same mode. `/hangup` with `trigger=button` (§7) writes a short-lived marker keyed
-   by a digest of the ticket (a new purpose in `src/domain/voice_ticket_keys.py`); `/voice/submit-transcript` skips the
-   handle when it finds it, else stores `voice_resume:{user_id}:{mode}` = `{handle}`, TTL 25 min. `prepare` reads it
-   (same user and mode, xAI only), puts `resume: {handle}` into the session config and deletes it (one resume per handle).
+   idle, counted from call end), in the same mode and on the same provider. `/hangup` with `trigger=button` (§7) writes a
+   short-lived marker keyed by a digest of the ticket (`button_end_key` in `src/domain/voice_ticket_keys.py`);
+   `/voice/submit-transcript` skips the handle when it finds the marker, else stores `voice_resume:{user_id}` =
+   `{handle, mode, provider}` (no transcript content), through the ephemeral store with TTL 25 min (the store reads an
+   expired value as absent). `/voice/session-config` reads it at ticket redemption (not at `prepare`, so the stored ticket
+   never holds a handle and an unredeemed ticket does not burn it), requires user, mode and provider to match, puts
+   `resume: {handle}` into the config and deletes the record (one resume per handle). A mismatching record is left to its TTL.
 4. **Greeting (owner, Q4).** Lelik speaks first, in his own words, and makes clear he knows where the conversation
-   stopped. A resume note replaces `_WEB_PICKUP_NOTE`: it describes the situation (the call dropped, the caller dialled
-   back, the conversation above is the same one) and gives no lines to say. Instructions are re-sent fresh.
-5. **Resume refused** (unknown or expired id; unverified, P3): the adapter reopens without the handle and logs a warning.
+   stopped. A resume note replaces the pickup note (and the caller opening, already in the provider's context): a bracketed
+   silent system item like the pickup note, describing the situation (the call dropped, the caller dialled back, the
+   conversation above is the same one) with no lines to say. Instructions are re-sent fresh. The note is sent only when
+   the session resumed.
+5. **Not honoured** (unknown or expired id; no error from xAI, see §6.1): the service logs `resume: not honoured` and
+   behaves as a fresh call (the ordinary pickup note, caller opening included).
 
 ### 6.3 Limits
 
@@ -287,7 +305,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 | Reply never ends | button stuck busy | 20 s after `speech_stopped` → `timeout` release |
 | Model ignores the note | Lelik translates the question | P1 gates the prompt change; the button still releases on `response_done` |
 | Relay restart | call ends (SFU legs die) | page sees `status: ended`; re-dial resumes (B) |
-| Resume handle rejected | fresh session | adapter reopens without it, warning logged |
+| Resume handle unknown or expired | fresh session (xAI raises no error) | no replayed item before `session.updated` → `resume: not honoured` logged, ordinary pickup note |
 | Page closed (app swiped away) | call runs on until N s without inbound audio | dead-peer watchdog ends it (§7.4); a re-dial replaces it sooner (§7.5); 3600 s remains the hard cap |
 
 ## 9. Security and logging
@@ -306,7 +324,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 |---|---|---|---|
 | P1 | Does grok-voice-3.0 honour the note on **Portuguese** speech, and still translate without it? | Probe script (lands in `scripts/voice/` with slice 4) with the new interpreter line; recorded Portuguese question with note, same without; a Portuguese sentence for translation with no note; 3 runs each | ~$0.10 |
 | P2 | Is `speech_started` reliable enough (every utterance, before commit)? | Same runs: count `speech_started` vs committed items; also with a short pause mid-question | in P1 |
-| P3 | Resumption: replay shape, rejected/expired id, replay billing | Two sessions with `resumption.enabled`, reconnect with the id; a bogus id; compare `usage` on the first resumed reply | ~$0.05 |
+| P3 (done 2026-11-08, results in §6.1) | Resumption: replay shape, rejected/expired id, replay billing | Two sessions with `resumption.enabled`, reconnect with the id; a bogus id; compare `usage` on the first resumed reply | ~$0.05 |
 | P5 (measurement, picks N) | Does iOS keep the microphone and outgoing RTP flowing for the home-screen web app in the background and on screen lock? (Owner saw no drop on lock; the background drops were our own `pagehide` hangup.) | After slice 2: an iPhone (home-screen web app), one call each: background ~10 s, ~1 min, ~5 min, screen lock; read the relay's gap log (§11 slice 2) | $0.08 per audio minute, a few minutes |
 | P4 (later) | After slices 1–2: does a call survive app switch and screen lock; how long a swiped-away page's call runs, and does xAI bill it | an iPhone (home-screen web app): switch away and back, lock and unlock; then swipe the app away and time the relay's "call closed" and the billed seconds | ≤ $1 (bounded by the 1 h cap) |
 
