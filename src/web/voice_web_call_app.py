@@ -10,10 +10,11 @@ token minted at start, its SHA-256 on the ticket record, the token itself encryp
 by `/connect` as `control: {url, token}` while the `VOICE_CONTROL_CHANNEL` knob is on. The token is never logged.
 
 A start that meets the user's own running web call replaces it (RFC §7.5): that call's media legs are closed as
-`/hangup` closes them, but without the button marker, so the relay's end-of-call report keeps its resume handle; the
-start waits for the one-call marker to be released and then claims it, so the new call's session config resumes.
+`/hangup` closes them (`WebCallMedia`, shared with the phone dial-in, which replaces a web call too), but without the
+button marker, so the relay's end-of-call report keeps its resume handle; the start waits for the one-call marker to be
+released and then claims it, so the new call's session config resumes. The marker names its call (`owner`), so a
+replaced call releases it only while it is still its own.
 """
-import asyncio
 import json
 import os
 import secrets
@@ -24,11 +25,12 @@ from quart import Blueprint, Response, g, jsonify, request, send_file
 from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_resume import BUTTON_END_TTL_S
-from src.domain.voice_ticket_keys import button_end_key, ticket_key
+from src.domain.voice_ticket_keys import button_end_key
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
 from src.utils.logger import logger
 from src.web.cabinet_auth import make_auth_required
+from src.web.voice_web_call_media import WebCallMedia
 
 _TICKET_TTL_S = 300
 _ICON_SIZES = (180, 192, 512)
@@ -60,29 +62,23 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
                                     replace_poll_s: float = _REPLACE_POLL_S) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(session_service)
+    web_calls = WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
 
     async def _owned(call_id: str):
-        record = await ephemeral_store.get(f"voice_web_call:{call_id}")
-        if record is None or record.get("user_id") != g.user_id:
-            return None
-        return record
+        return await web_calls.record(call_id, g.user_id)
 
     async def _ticket_of(call_id: str, record: dict) -> str:
-        return await cipher.decrypt(record["ticket_ct"], aad=f"voice/voice_web_call:{call_id}")
+        return await web_calls.ticket(call_id, record)
 
     def _control_aad(call_id: str) -> str:
         # Its own AAD: the two ciphertexts of one record cannot stand in for each other.
         return f"voice/voice_web_call:{call_id}/control"
 
     async def _close_media(record: dict, ticket: str) -> None:
-        """End a call's media: the relay sees its egress gone and runs the normal end path. Shared by `/hangup` and
-        the replacing start; neither the button marker nor the record is touched here."""
-        await media_room.close(record.get("adapter_ids", []))
-        # Ticket still unredeemed = the relay never started: nothing will release the marker.
-        if await ephemeral_store.get(ticket_key(digest_key, ticket)) is not None:
-            await call_setup.release(ticket, g.user_id)
+        """End a call's media (`WebCallMedia.close`). Shared by `/hangup` and the replacing start."""
+        await web_calls.close(record, ticket, g.user_id)
 
-    async def _replace_running_call(call_id: str) -> bool:
+    async def _replace_running_call(call_id: str, holder_fields: dict) -> bool:
         """The claim for `call_id` was refused. When the holder is this user's own web call, end it and claim once its
         marker is released (RFC §7.5); True when claimed. A phone call (its marker names no web call) is never
         replaced. The marker is per user, so the holder is always this user's call.
@@ -91,7 +87,7 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         `status_ended`, which writes no button marker either."""
         holder = await call_setup.holder(g.user_id)
         if holder is None:  # ended between the refused claim and this read
-            return await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
+            return await call_setup.claim(g.user_id, holder_fields, ttl_s=_TICKET_TTL_S)
         old_call_id = holder.get("call_id")
         record = await _owned(old_call_id) if isinstance(old_call_id, str) and old_call_id else None
         if record is None:
@@ -102,15 +98,11 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         except Exception:
             logger.error(f"web call {old_call_id}: closing the replaced call failed", exc_info=True)
             return False
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + replace_wait_s
-        while await call_setup.holder(g.user_id) is not None:
-            if loop.time() >= deadline:
-                logger.warning(f"web call {old_call_id}: still running {replace_wait_s:.0f}s after it was replaced, "
-                               f"the new call is refused")
-                return False
-            await asyncio.sleep(replace_poll_s)
-        return await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
+        if not await call_setup.wait_released(g.user_id, replace_wait_s, replace_poll_s):
+            logger.warning(f"web call {old_call_id}: still running {replace_wait_s:.0f}s after it was replaced, "
+                           f"the new call is refused")
+            return False
+        return await call_setup.claim(g.user_id, holder_fields, ttl_s=_TICKET_TTL_S)
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -186,8 +178,11 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # ticket at once, so the digest must already be on the ticket record (RFC §4.1). Minted whatever the knob
         # says, so turning the knob on or off acts at /connect alone.
         control_token = secrets.token_urlsafe(32)
-        if (not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
-                and not await _replace_running_call(call_id)):
+        # The marker names this call (its ticket's owner digest): a phone dial that later takes the marker over is
+        # never released by this call's end-of-call report (RFC §7.5.4).
+        holder_fields = {"call_id": call_id, **call_setup.owner_of(ticket)}
+        if (not await call_setup.claim(g.user_id, holder_fields, ttl_s=_TICKET_TTL_S)
+                and not await _replace_running_call(call_id, holder_fields)):
             return jsonify({"error": "a call is already in progress"}), 409
         try:
             await call_setup.prepare(ticket, g.user_id, g.account_id, "web", mode,

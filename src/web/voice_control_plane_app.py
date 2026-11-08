@@ -21,7 +21,8 @@ Three Quart routes consumed by the relay side (`CallControlPlanePort` /
   (`voice_one_call:{user_id}`) written by the auth webhook before dialing
   out — this MUST happen even if usage recording or the summary consumer
   raises, since a stuck marker would permanently lock the user out of ever
-  calling again.
+  calling again. Released only while it still names this call: a phone dial
+  may have taken it over from a replaced web call (`release_one_call_marker`).
 - `POST /voice/delegate` — relay forwards one `delegate_to_specialist` tool
   call raised inside the live realtime session (RFC §4.7). Runs it through
   `LelikAgent.delegate` (the same `DelegationEngine` path a text orchestrator
@@ -65,6 +66,7 @@ from src.domain.voice_mcp_servers import VOICE_MCP_TOKENS_FIELD
 from src.domain.voice_mcp_token import voice_mcp_eligible
 from src.domain.voice_resume import RESUME_CONFIG_FIELD, resume_applies
 from src.domain.voice_ticket_keys import abandoned_key, amd_key, button_end_key, call_kind_key, result_key, ticket_key
+from src.services.voice_call_setup_service import release_one_call_marker
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -394,8 +396,11 @@ def create_voice_control_plane_blueprint(
             # the user out of ever calling again. Covers the whole
             # post-authentication body, not just the summary_consumer call, so
             # e.g. a malformed usage_by_model payload or a future QuotaService
-            # that raises can never leave the marker stuck either.
-            await ephemeral_store.delete(f"voice_one_call:{user_id}")
+            # that raises can never leave the marker stuck either. Only while the
+            # marker is still this call's (the relay's call_id is the ticket): a
+            # phone dial may have taken it over from this web call
+            # (VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4).
+            await release_one_call_marker(ephemeral_store, digest_key, user_id, call_id)
             # voice_amd:{call_id} is left to its TTL: nothing reads it after this point.
 
         return jsonify({"ok": True}), 200

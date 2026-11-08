@@ -21,8 +21,16 @@ under a second) and the user got a missed-call SMS instead of Lelik.
    the dial and post an operational alert. No ticket, no marker, no callback
    is ever produced for an unbound caller.
 2. Enforce the RFC §3 one-call-per-user limit via the shared `EphemeralStore`
-   marker at `voice_one_call:{user_id}`. A caller with a call already in
-   flight or pending is rejected.
+   marker at `voice_one_call:{user_id}`. A caller with a phone call already in
+   flight or pending is rejected. A running WEB call of the same user is
+   replaced instead (VOICE_CALL_CONTROL_CHANNEL_RFC §7.5.4; the phone is the
+   urgent fallback, and a web page swiped away without "end call" must never
+   block it): its media legs are closed as the web path closes them
+   (`WebCallMedia`), the dial waits up to `_PHONE_REPLACE_WAIT_S` for the old
+   call to release the marker, and goes on either way; step 3 then writes the
+   phone call's marker over whatever is left. The marker names its call
+   (`owner`), so the replaced call's late end-of-call report leaves the phone
+   call's marker alone (`release_one_call_marker`).
 3. Mint a short-TTL ticket (its keyed digest is the store key) carrying the resolved
    identity, take the marker at the ticket's short TTL, and park the callback
    under the inbound `CallSid` (`voice_pending_callback:{CallSid}`). Answer
@@ -47,11 +55,21 @@ from src.domain.voice_auth_decision import AuthDecision
 from src.domain.voice_ticket_keys import amd_key, ticket_key
 from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
 from src.utils.logger import logger
+from src.web.voice_web_call_media import WebCallMedia
 
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
 
 _TICKET_TTL_S = 300
+
+# How long a phone dial waits for a replaced web call to release the one-call marker (VOICE_CALL_CONTROL_CHANNEL_RFC
+# §7.5.4). Twilio gives `/voice/auth` about 15 s to answer before it fails the dial, and the user lookup, the store
+# writes and a cold start come out of the same budget, so the web path's 30 s is impossible here. A web call already
+# ending (the button pressed just before the dial, the relay finishing its report) releases within this bound; a live
+# one does not (the relay's 5 s re-attach window alone is longer), and the dial then takes the marker over: the phone
+# is the urgent fallback and is never refused because of a web call.
+_PHONE_REPLACE_WAIT_S = 4.0
+_PHONE_REPLACE_POLL_S = 0.25
 
 # Twilio's `CallStatus` values that mean the call leg is over for good (as
 # opposed to the non-terminal `initiated` / `ringing` / `in-progress` it also
@@ -77,6 +95,9 @@ def create_voice_webhook_blueprint(
     *,
     cipher,
     digest_key: bytes,
+    media_room=None,
+    replace_wait_s: float = _PHONE_REPLACE_WAIT_S,
+    replace_poll_s: float = _PHONE_REPLACE_POLL_S,
 ) -> Blueprint:
     """Build the Twilio-facing voice webhook blueprint.
 
@@ -88,10 +109,36 @@ def create_voice_webhook_blueprint(
     NOT optional-with-a-default — an authentication gate that silently
     disappears when a caller forgets to wire it is the exact failure class
     CLAUDE.md's `config.get()` note warns about.
+
+    `media_room` is the web call's SFU (the one the web-call blueprint gets): a phone dial closes a running web call's
+    media legs through it. None where the web call is not deployed; a web call's marker is then only waited for and
+    taken over.
     """
     bp = Blueprint("voice_webhook", __name__)
     call_setup = VoiceCallSetupService(ephemeral_store, alert_sink, lelik_agent_provider, digest_key=digest_key,
                                        ticket_ttl_s=_TICKET_TTL_S, one_call_ttl_s=one_call_ttl_s)
+    web_calls = (WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
+                 if media_room is not None else None)
+
+    async def _replace_web_call(user_id: str, holder: dict) -> bool:
+        """The dial met a one-call marker. True when it may go on: the holder is this user's web call, which is ended
+        (RFC §7.5.4). A phone holder (its marker names no web call) is never replaced: False, the dial is refused."""
+        web_call_id = holder.get("call_id")
+        if not isinstance(web_call_id, str) or not web_call_id:
+            return False
+        logger.info(f"voice auth: phone dial of {user_id} replaces the running web call {web_call_id}")
+        # No record: the web call was hung up and is only finishing, or is still in setup; nothing to close.
+        record = await web_calls.record(web_call_id, user_id) if web_calls is not None else None
+        if record is not None:
+            try:
+                await web_calls.close(record, await web_calls.ticket(web_call_id, record), user_id)
+            except Exception:
+                logger.error(f"voice auth: closing the replaced web call {web_call_id} failed, the dial goes on",
+                             exc_info=True)
+        if not await call_setup.wait_released(user_id, replace_wait_s, replace_poll_s):
+            logger.info(f"voice auth: web call {web_call_id} still holds the marker after {replace_wait_s:.0f}s, "
+                        f"the phone call takes it over")
+        return True
 
     async def _reject_if_unsigned(form) -> Optional[Response]:
         """403 unless the request carries a valid Twilio signature.
@@ -120,14 +167,16 @@ def create_voice_webhook_blueprint(
             await alert_sink.post(f"Voice: refused dial from unbound number {caller}")
             return _twiml_reject()
 
-        marker_key = f"voice_one_call:{profile.user_id}"
-        if await ephemeral_store.get(marker_key) is not None:
-            logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
-            return _twiml_reject()
-
+        # Checked before the marker: a dial that is refused anyway must not end a running web call.
         inbound_call_sid = (form.get("CallSid") or "").strip()
         if not inbound_call_sid:
             logger.warning(f"voice auth: dial from {profile.user_id} carried no CallSid, rejecting")
+            return _twiml_reject()
+
+        marker_key = f"voice_one_call:{profile.user_id}"
+        holder = await ephemeral_store.get(marker_key)
+        if holder is not None and not await _replace_web_call(profile.user_id, holder):
+            logger.warning(f"voice auth: refused - {profile.user_id} already has a call in flight")
             return _twiml_reject()
 
         decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
@@ -139,7 +188,9 @@ def create_voice_webhook_blueprint(
         )
         # Short TTL while the callback is only parked: if Twilio never reports the
         # inbound dial as ended, the caller is locked out for minutes, not an hour.
-        await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=_TICKET_TTL_S)
+        # Unconditional: after a replaced web call this is the takeover. The marker names
+        # this call, so that web call's late release leaves it alone.
+        await ephemeral_store.set(marker_key, {"in_flight": True, **call_setup.owner_of(ticket)}, ttl_s=_TICKET_TTL_S)
         pending_key = _pending_key(inbound_call_sid)
         await ephemeral_store.set(
             pending_key,
@@ -187,7 +238,10 @@ def create_voice_webhook_blueprint(
             await ephemeral_store.delete(marker_key)
             return Response("", status=200)
 
-        await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=one_call_ttl_s)
+        # Rewritten whole, owner included: this also restores the marker if a replaced web call's release deleted it
+        # in the instant between its ownership read and its delete (`release_one_call_marker`).
+        await ephemeral_store.set(marker_key, {"in_flight": True, **call_setup.owner_of(pending_ticket)},
+                                  ttl_s=one_call_ttl_s)
         try:
             agent = await lelik_agent_provider(pending["user_id"])
             if agent is None:
