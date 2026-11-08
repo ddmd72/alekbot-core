@@ -31,10 +31,16 @@ PING_INTERVAL_S = 20.0
 # Feature names offered in `welcome.features`. Only features a call actually serves are offered.
 FEATURE_ASK = "ask"  # slice 4: the "Ask Lelik" latch, interpreter mode only (RFC §5)
 
+# "Ask Lelik" frames (RFC §4.2): the page presses (`ask_arm {seq}`) or presses again before speaking
+# (`ask_disarm {seq}`); the relay answers every transition with `ask_state {state, seq?, reason?}`.
+ASK_ARM = "ask_arm"
+ASK_DISARM = "ask_disarm"
+ASK_STATE = "ask_state"
+
 # Page -> relay command types each feature accepts; the hub queues only these for the session (slice 4 onward).
 # Everything else the page sends, apart from the core frames, is ignored.
 FEATURE_COMMANDS: Mapping[str, FrozenSet[str]] = {
-    FEATURE_ASK: frozenset({"ask_arm", "ask_disarm"}),
+    FEATURE_ASK: frozenset({ASK_ARM, ASK_DISARM}),
 }
 
 # Core frame types, handled by the `/ctl` handler itself and never queued.
@@ -101,6 +107,25 @@ def bye_frame(reason: ByeReason) -> Dict[str, Any]:
 
 def pong_frame() -> Dict[str, Any]:
     return {"type": PONG}
+
+
+def ask_state_frame(state: str, seq: Optional[int] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+    """`ask_state {state, seq?, reason?}`: `state` is idle|armed|active; `seq` echoes the page command it answers;
+    `reason` says why it went idle (answered, cancelled, timeout, call_ended)."""
+    frame: Dict[str, Any] = {"type": ASK_STATE, "state": state}
+    if seq is not None:
+        frame["seq"] = seq
+    if reason is not None:
+        frame["reason"] = reason
+    return frame
+
+
+def command_seq(frame: Mapping[str, Any]) -> Optional[int]:
+    """The page's `seq` of a command frame, or None when it is missing or not a non-negative integer."""
+    seq = frame.get("seq")
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+        return None
+    return seq
 
 
 def accepted_commands(features: Iterable[str]) -> FrozenSet[str]:

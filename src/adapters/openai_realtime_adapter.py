@@ -257,10 +257,12 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="model_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "input_audio_buffer.committed":
             return RealtimeSessionEvent(type="turn_committed", payload={"item_id": event.get("item_id")})
+        # item_id names the caller's turn this speech becomes once committed; carried for port honesty (the "Ask
+        # Lelik" latch reads it, VOICE_CALL_CONTROL_CHANNEL_RFC §5.4), though modes run on xAI only.
         if event_type == "input_audio_buffer.speech_started":
-            return RealtimeSessionEvent(type="speech_started", payload={})
+            return RealtimeSessionEvent(type="speech_started", payload={"item_id": event.get("item_id")})
         if event_type == "input_audio_buffer.speech_stopped":
-            return RealtimeSessionEvent(type="speech_stopped", payload={})
+            return RealtimeSessionEvent(type="speech_stopped", payload={"item_id": event.get("item_id")})
         if event_type == "error":
             logger.error(f"OpenAI realtime error event: {event.get('error', event)}")
             return RealtimeSessionEvent(type="error", payload={"message": str(event.get("error", event))})

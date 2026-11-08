@@ -219,6 +219,58 @@
         color: var(--text-main);
       }
 
+      /* "Ask Lelik": created by script on the interpreter page only, so /cabinet/call is unchanged. */
+      .ask-btn {
+        width: 280px;
+        max-width: 100%;
+        min-height: 72px;
+        margin-top: 20px;
+        padding: 14px 24px;
+        border-radius: 36px;
+        border: 2px solid var(--accent);
+        background: var(--bg-panel-solid);
+        color: var(--accent);
+        font-family: var(--font-sans);
+        font-size: 20px;
+        font-weight: 700;
+        box-shadow: var(--shadow-md);
+        cursor: pointer;
+        transition: var(--transition-fast);
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      .ask-btn[hidden] {
+        display: none;
+      }
+      .ask-btn:active:not(:disabled) {
+        transform: scale(0.97);
+      }
+      .ask-btn.armed {
+        background: var(--accent);
+        color: #fff;
+        box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.3);
+        font-size: 17px;
+      }
+      .ask-btn.busy {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-size: 17px;
+        cursor: default;
+        animation: ask-busy 1.4s ease-in-out infinite;
+      }
+      .ask-btn:disabled:not(.busy) {
+        opacity: 0.45;
+        cursor: default;
+      }
+      @keyframes ask-busy {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ask-btn.busy { animation: none; }
+      }
+
       .mic-settings {
         width: 100%;
         margin-top: 16px;
@@ -316,6 +368,9 @@
           "state.mode_unavailable": "This mode is not available",
           "button.call": "Call",
           "button.hangup": "Hang up",
+          "ask.button": "Ask Lelik",
+          "ask.armed": "Speak now · tap to cancel",
+          "ask.busy": "Lelik is answering…",
           "mic.label": "Microphone",
           "mic.default": "Default microphone",
           "mic.unnamed": "Microphone",
@@ -337,6 +392,9 @@
           "state.mode_unavailable": "Цей режим недоступний",
           "button.call": "Подзвонити",
           "button.hangup": "Завершити",
+          "ask.button": "Спитати Леліка",
+          "ask.armed": "Говоріть · натисніть, щоб скасувати",
+          "ask.busy": "Лелік відповідає…",
           "mic.label": "Мікрофон",
           "mic.default": "Мікрофон за замовчуванням",
           "mic.unnamed": "Мікрофон",
@@ -358,6 +416,9 @@
           "state.mode_unavailable": "Ce mode n'est pas disponible",
           "button.call": "Appeler",
           "button.hangup": "Raccrocher",
+          "ask.button": "Demander à Lelik",
+          "ask.armed": "Parlez · touchez pour annuler",
+          "ask.busy": "Lelik répond…",
           "mic.label": "Microphone",
           "mic.default": "Microphone par défaut",
           "mic.unnamed": "Microphone",
@@ -379,6 +440,9 @@
           "state.mode_unavailable": "Este modo no está disponible",
           "button.call": "Llamar",
           "button.hangup": "Colgar",
+          "ask.button": "Preguntar a Lelik",
+          "ask.armed": "Habla · toca para cancelar",
+          "ask.busy": "Lelik está respondiendo…",
           "mic.label": "Micrófono",
           "mic.default": "Micrófono predeterminado",
           "mic.unnamed": "Micrófono",
@@ -803,14 +867,35 @@
       // Control channel to the relay (VOICE_CALL_CONTROL_CHANNEL_RFC §4): a websocket to the
       // relay process that runs the call, opened only on the interpreter page in v1 and only
       // when /connect hands out `control` (the VOICE_CONTROL_CHANNEL knob). The token goes in
-      // the first frame, never in the URL. No UI yet: "Ask Lelik" (slice 4) builds on
-      // `control.features`. The call itself never depends on this socket.
+      // the first frame, never in the URL. No UI here: a feature ("Ask Lelik" below) registers
+      // with onControl() and hears every frame, and null when the socket is down; it sends with
+      // sendControl(). The call itself never depends on this socket.
       const CONTROL_PING_MS = 20000;
       const CONTROL_BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
       let control = null;
+      const controlListeners = [];
 
       function wantsControlChannel() {
         return window.VOICE_MODE === "interpreter";
+      }
+
+      function onControl(listener) {
+        controlListeners.push(listener);
+      }
+
+      function notifyControl(msg) {
+        controlListeners.forEach((listener) => {
+          try {
+            listener(msg);
+          } catch (e) {}
+        });
+      }
+
+      function sendControl(frame) {
+        const ws = control && control.ws;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(frame));
+        return true;
       }
 
       function openControl(handout, owner) {
@@ -855,7 +940,8 @@
             // on this socket's behalf; stop redialling.
             ch.done = true;
           }
-          // Unknown types are ignored (forward-compatible).
+          // Every frame goes to the features; a type nobody knows is ignored (forward-compatible).
+          notifyControl(msg);
         };
         ws.onclose = () => {
           if (ws !== ch.ws) return;
@@ -863,6 +949,7 @@
           ch.ping = null;
           ch.ws = null;
           ch.features = [];
+          notifyControl(null);
           retryControl(ch);
         };
       }
@@ -887,6 +974,7 @@
           } catch (e) {}
           ch.ws = null;
         }
+        notifyControl(null);
       }
 
       function stopStatusPolling() {
@@ -895,6 +983,101 @@
           statusTimer = null;
         }
       }
+
+      /* ── Ask Lelik ───────────────────────────────────── */
+      // Interpreter page only (VOICE_CALL_CONTROL_CHANNEL_RFC §5.5): a press marks the caller's
+      // next words as addressed to Lelik; pressing again before speaking cancels. The button is
+      // created only when a call hands out the control channel, so /cabinet/call never has one.
+      // Views: hidden (no call), disabled (channel down, or the call offers no `ask`), idle,
+      // armed (pressed), busy (Lelik is answering). The relay is authoritative: a tap shows its
+      // result at once and rolls back unless an `ask_state` answers within 2 s.
+      const ASK_ROLLBACK_MS = 2000;
+      const ask = { view: "hidden", offered: false, seq: 0, rollback: null, btn: null };
+
+      function askViewFor(state) {
+        if (state === "armed") return "armed";
+        if (state === "active") return "busy";
+        return "idle";
+      }
+
+      function setAskView(view) {
+        ask.view = view;
+        renderAsk();
+      }
+
+      function clearAskRollback() {
+        clearTimeout(ask.rollback);
+        ask.rollback = null;
+      }
+
+      function onAskFrame(msg) {
+        if (ask.view === "hidden") return;
+        if (msg === null || msg.type === "bye") {
+          clearAskRollback();
+          ask.offered = false;
+          setAskView("disabled");
+        } else if (msg.type === "welcome") {
+          clearAskRollback();
+          ask.offered = Array.isArray(msg.features) && msg.features.includes("ask");
+          setAskView(ask.offered ? askViewFor(msg.ask) : "disabled");
+        } else if (msg.type === "ask_state" && ask.offered) {
+          clearAskRollback();
+          setAskView(askViewFor(msg.state));
+        }
+      }
+
+      function pressAsk() {
+        if (ask.view !== "idle" && ask.view !== "armed") return;
+        const previous = ask.view;
+        const next = previous === "idle" ? "armed" : "idle";
+        ask.seq += 1;
+        if (!sendControl({ type: next === "armed" ? "ask_arm" : "ask_disarm", seq: ask.seq })) return;
+        if (next === "armed" && typeof navigator.vibrate === "function") {
+          try {
+            navigator.vibrate(30);
+          } catch (e) {}
+        }
+        clearAskRollback();
+        setAskView(next);
+        ask.rollback = setTimeout(() => {
+          ask.rollback = null;
+          if (ask.view === next) setAskView(previous);
+        }, ASK_ROLLBACK_MS);
+      }
+
+      function showAsk() {
+        if (window.VOICE_MODE !== "interpreter") return;
+        ask.offered = false;
+        setAskView("disabled");
+      }
+
+      function hideAsk() {
+        clearAskRollback();
+        ask.offered = false;
+        if (ask.view !== "hidden") setAskView("hidden");
+      }
+
+      function renderAsk() {
+        if (!ask.btn) {
+          if (ask.view === "hidden") return;
+          const btnEl = document.createElement("button");
+          btnEl.id = "ask-btn";
+          btnEl.type = "button";
+          btnEl.className = "ask-btn";
+          btnEl.addEventListener("click", pressAsk);
+          document.querySelector(".controls").append(btnEl);
+          ask.btn = btnEl;
+        }
+        const view = ask.view;
+        ask.btn.hidden = view === "hidden";
+        ask.btn.disabled = view === "disabled" || view === "busy";
+        ask.btn.classList.toggle("armed", view === "armed");
+        ask.btn.classList.toggle("busy", view === "busy");
+        ask.btn.setAttribute("aria-pressed", String(view === "armed"));
+        ask.btn.textContent = t(view === "armed" ? "ask.armed" : view === "busy" ? "ask.busy" : "ask.button");
+      }
+
+      onControl(onAskFrame);
 
       async function pollStatus() {
         if (!callId) return;
@@ -932,6 +1115,7 @@
         setAudioSessionType("auto");
         stopStatusPolling();
         closeControl();
+        hideAsk();
         inCall = false;
         const endingCallId = callId;
         callId = null;
@@ -1117,6 +1301,8 @@
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
           if (wantsControlChannel() && connectBody.control) openControl(connectBody.control, myToken);
+          // Shown disabled; the control channel's `welcome` enables it when the call offers `ask`.
+          if (wantsControlChannel() && connectBody.control) showAsk();
 
           // Ringback safety net: if nothing ever started watching for Lelik's first sound
           // (neither the analyser nor the receiver's stats are available), don't ring

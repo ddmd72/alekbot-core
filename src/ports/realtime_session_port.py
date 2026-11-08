@@ -53,8 +53,10 @@ class RealtimeSessionPort(ABC):
         needed to truncate it on barge-in),
         resume_handle (payload: handle - the provider's id of this conversation, kept to resume it after a drop;
         only a provider that supports resumption emits it),
-        tool_call (payload: call_id, name, arguments), speech_started,
-        speech_stopped, turn_committed (payload: item_id - the caller's turn is
+        tool_call (payload: call_id, name, arguments), speech_started and
+        speech_stopped (payload: item_id - the provider's id for the caller's
+        turn this speech becomes once committed; None when the provider sends
+        none), turn_committed (payload: item_id - the caller's turn is
         now a conversation item; under RELAY ownership the provider does not reply
         on its own and the caller of this port starts the reply), response_created, response_done (payload: usage -
         provider-native token usage dict, model - the provider's own model
