@@ -517,7 +517,7 @@ before step 1.
 ([`../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md`](../10_rfcs/UNTRUSTED_CONTENT_SANDBOX_RFC.md) §4, §11 light row). It is
 `sandbox_main.py` in the same image file as the render service (`Dockerfile.sandbox`, target `light`; an explicit COPY
 allowlist, no `.env`, no key file): gen2, 2 GiB, 2 CPU, concurrency 1, min 0, max 5 (a cost guard), timeout 900 s,
-`--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
+`--cpu-throttling` (request-based billing: idle warm instances cost nothing), `--use-http2`, `--no-allow-unauthenticated`, an in-memory volume at `/work` (320Mi by default: request body up to 101 MiB +
 response windows up to 101 MiB + one child file up to 64 MiB; fixed in `scripts/infrastructure/cloudbuild_sandbox_light.sh`,
 changed by editing that script). The instance stays warm after a normal request and is recycled only after an abnormal one (`SANDBOX_RECYCLE=abnormal`, light only; RFC §4.6), `SANDBOX_SERVICE=light`. Both runtimes parse only through it:
 the deploy target refuses an empty `SANDBOX_LIGHT_URL_DEV`, and the main service and the indexer refuse to start without

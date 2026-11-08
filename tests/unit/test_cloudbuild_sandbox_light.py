@@ -134,6 +134,14 @@ def test_deploy_flags_match_the_light_row():
     assert "--target light" in _script_code()
 
 
+def test_light_deploy_bills_per_request():
+    """Warm idle and deploy-rollout instances must cost nothing: request-based billing, stated explicitly because a
+    deploy keeps the service's previous CPU setting (decisions/sandbox_render_service.md)."""
+    flags = _deploy_flags()
+    assert re.search(r"(^|\s)--cpu-throttling(\s|$)", flags)
+    assert "--no-cpu-throttling" not in flags
+
+
 def test_env_has_exactly_the_light_names():
     env = re.search(r"--set-env-vars=\"?([^\s\"]+)", _deploy_flags()).group(1)
     pairs = dict(p.split("=", 1) for p in env.split(","))

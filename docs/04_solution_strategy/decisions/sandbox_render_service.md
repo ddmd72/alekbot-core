@@ -78,6 +78,15 @@ max 3 instances, timeout 300 s; in-memory work volume at `/work`, **256Mi placeh
   the response) is not stalled by request-based CPU throttling. Measure the drain time with these exact flags and size the
   client's recycling retry window to it; the client makes one retry (`MAX_RECYCLING_ATTEMPTS` = 2 attempts,
   `src/adapters/sandbox_client/sandbox_http_client.py`), so a call arriving during a longer drain ends as unavailable.
+  **The light service runs with `--cpu-throttling` (request-based billing).** Under `abnormal` it recycles only after an
+  abnormal request; a normal one ends with `slot.release()` in the handler task's done-callback, a few instructions, and
+  the workdir is removed before the response. With CPU always allocated, each warm instance (after every normal request)
+  and each deploy-rollout instance was billed for its 15 idle minutes, ~30 min per deploy across both services. A stalled
+  drain does not weaken isolation: `slot.drain()` is set before the response, so the instance answers any later request
+  with 503 `recycling`; the client retries once, then a parse ends as `ParserUnavailable` (systemic, the file is not
+  charged and the next drive tick retries it). The render service keeps `--no-cpu-throttling`: under `always` every
+  request drains, and it never idles warm (its only idle cost is the deploy-rollout instance). Trigger to revisit render:
+  a measured drain under throttling short enough that back-to-back renders see no added `unavailable`.
 - **Work volume size** (256Mi placeholder) against the real 64 MiB file ceilings.
 - **Real Cloud Run status for an instance killed mid-request** (OOM or crash): a bare 503 would make a poison input look
   like a systemic outage and be retried; the client's 5xx rule depends on the recorded answer.
