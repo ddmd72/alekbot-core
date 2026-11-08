@@ -90,7 +90,7 @@ _WAITING_NOTE = "[Still waiting for the answer to your request.]"
 _CANCELLED_TOOL_CALL = "Not run: the caller interrupted before this request was complete."
 
 
-def _config_tokens(config: object) -> tuple:
+def _config_secrets(config: object) -> tuple:
     """The call's tokens still on a raw session config, for redaction only; () when there are none."""
     tokens = config.get(VOICE_MCP_TOKENS_FIELD) if isinstance(config, dict) else None
     return tuple(t for t in tokens.values() if isinstance(t, str)) if isinstance(tokens, dict) else ()
@@ -254,7 +254,7 @@ class VoiceSessionService:
             context = RequestContext(user_id=config["user_id"], account_id=config["account_id"])
         except Exception as exc:
             logger.error(f"voice call {fingerprint(ticket)}: session config unusable: "
-                         f"{redact_exception(exc, secrets=_config_tokens(fetched))}")
+                         f"{redact_exception(exc, secrets=_config_secrets(fetched))}")
             await self._report_unopened_call(ticket, fetched)
             raise
         # The fetched config still holds the tokens: not kept for the call's life.
