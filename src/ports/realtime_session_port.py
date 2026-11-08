@@ -70,7 +70,11 @@ class RealtimeSessionPort(ABC):
         on its own and the caller of this port starts the reply), response_created, response_done (payload: usage -
         provider-native token usage dict, model - the provider's own model
         id, so callers can label usage without hardcoding a provider-specific
-        model string), user_transcript (payload: text - final transcript of
+        model string; remote_tools - only when the response made remote MCP calls: calls (count), pending (ids of
+        calls not finished yet), finished (labels of calls first seen finished in this response), continued (the
+        response spoke after its last call), cancelled (the response was cut)),
+        remote_tool_done (payload: item_id, label, ok - one remote MCP call the provider ran has finished; the
+        provider does not speak its result until request_response()), user_transcript (payload: text - final transcript of
         the caller's speech), model_transcript (payload: text - final
         transcript of the model's spoken response), error (payload: message, already redacted for a log line),
         remote_tools_failed (payload: label - one of the session's `mcp_servers` labels or "unknown", reason - the

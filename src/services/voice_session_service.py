@@ -88,6 +88,9 @@ _WAITING_NOTE = "[Still waiting for the answer to your request.]"
 # later (live, 2026-09-24 09:29:09) — the function_call item still needs an output or it is left
 # dangling for the next turn, but running it would spend ~30s of Smart on half a question.
 _CANCELLED_TOOL_CALL = "Not run: the caller interrupted before this request was complete."
+# The provider runs remote MCP calls itself and normally reports each one finished; a call it never reports must not
+# leave its result unspoken for good. Our MCP servers answer in seconds.
+_REMOTE_TOOL_WAIT_S = 15.0
 
 
 def _config_secrets(config: object) -> tuple:
@@ -137,7 +140,16 @@ class _CallState:
     # Per call (VOICE_MULTI_PROVIDER_RFC §4.3): one relay serves users on different providers.
     turn_ownership: TurnOwnership = TurnOwnership.RELAY
     caller_turns: int = 0  # speech_started count: "did the caller speak since dispatch?"
-    response_owed: bool = False
+    # A tool result (a delegation answer, a remote MCP call) is in the provider's context and no reply has started
+    # since: the loop time it landed; None when nothing is owed. No provider speaks a tool result by itself, so an owed
+    # reply is started as soon as the floor is free (no response active, the caller not speaking).
+    reply_owed_since: Optional[float] = None
+    # The reply that took up an owed result: its first audio is logged as the tool round trip, then this is cleared.
+    reply_after_tool_since: Optional[float] = None
+    # Remote (MCP) calls of an ended response that the provider has not reported finished: the owed reply waits for
+    # them, at most remote_tool_wait_s (the deadline task).
+    remote_tools_pending: Set[str] = field(default_factory=set)
+    remote_tools_deadline: Optional[asyncio.Task] = None
     # Answers being injected and not yet replied to: the watchdog holds off, or its note takes the slot.
     answers_in_flight: int = 0
     queued_answers: List[_Answer] = field(default_factory=list)
@@ -179,6 +191,7 @@ class VoiceSessionService:
         control_hub: Optional["CallControlHub"] = None,
         ask_clock: Optional[Callable[[], float]] = None,
         ask_tick_s: float = _ASK_TICK_S,
+        remote_tool_wait_s: float = _REMOTE_TOOL_WAIT_S,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -192,7 +205,10 @@ class VoiceSessionService:
         `control_hub` (web calls only, VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
         `control_token_sha256` opens its control link there for the call's life. An interpreter call's link offers
         "Ask Lelik" (RFC §5): `ask_clock` is the latch's clock (the event loop's time when None; tests pass their
-        own), `ask_tick_s` the control task's beat."""
+        own), `ask_tick_s` the control task's beat.
+
+        `remote_tool_wait_s`: how long the reply after a response's remote MCP calls waits for the provider to report
+        them finished before it starts anyway."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -209,6 +225,7 @@ class VoiceSessionService:
         self._control_hub = control_hub
         self._ask_clock = ask_clock
         self._ask_tick_s = ask_tick_s
+        self._remote_tool_wait_s = remote_tool_wait_s
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -388,6 +405,8 @@ class VoiceSessionService:
                      if task is not None]
             if state.pending_barge_in is not None:
                 loops.append(state.pending_barge_in)
+            if state.remote_tools_deadline is not None:
+                loops.append(state.remote_tools_deadline)
             await self._cancel_all(ticket, loops, secrets=secrets)
             # A pressed or busy "Ask Lelik" button is released (`ask_state{idle, call_ended}`) before the `bye`.
             if state.ask is not None and control_link is not None:
@@ -526,6 +545,12 @@ class VoiceSessionService:
                     state.response_reason = "provider"
                     state.response_audible = False
                     state.response_started_at = asyncio.get_running_loop().time()
+                    if state.reply_owed_since is not None and not state.remote_tools_pending:
+                        # Its own reply (to the caller's turn) has the result in context: nothing left to trigger.
+                        logger.info(f"voice call {fingerprint(ticket)}: reply started by the provider after tool "
+                                    f"result (waited {self._owed_for(state):.1f}s)")
+                        state.reply_after_tool_since = state.reply_owed_since
+                        state.reply_owed_since = None
                 turn_start = datetime.now(timezone.utc)
                 state.response_active = True
                 state.response_cancelled = False
@@ -592,6 +617,8 @@ class VoiceSessionService:
                     logger.info(f"voice call {fingerprint(ticket)}: short turn over Lelik not answered")
                 else:
                     await self._reply_to_turn(session, state, "turn")
+                # A result that landed while the caller spoke is replied to after their turn, when nothing took it up.
+                await self._reply_if_owed(session, state)
             elif event.type == "audio_delta":
                 if not state.response_audible:
                     state.response_audible = True
@@ -599,6 +626,10 @@ class VoiceSessionService:
                         state.greeting_audible_at = asyncio.get_running_loop().time()
                     elapsed_ms =round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
                     logger.info(f"voice call {fingerprint(ticket)}: first audio after {elapsed_ms} ms ({state.response_reason})")
+                    if state.reply_after_tool_since is not None:
+                        after_tool_s = asyncio.get_running_loop().time() - state.reply_after_tool_since
+                        logger.info(f"voice call {fingerprint(ticket)}: first audio after tool result: {after_tool_s:.1f}s")
+                        state.reply_after_tool_since = None
                     if self._cue_tail_queued(state):
                         # Only cue audio can be queued here (the cue plays only once playback caught up).
                         await clear_outbound_audio()
@@ -647,7 +678,12 @@ class VoiceSessionService:
                 # turn's own acknowledgement ("checking") already tells the caller, and the extra
                 # reply voiced a second "it's on its way". A long wait still gets the watchdog's
                 # _WAITING_NOTE after _silence_timeout_s.
+                # Remote calls first: when their results are in, the queued answers' reply speaks them too.
+                self._note_remote_tools(session, state, event.payload.get("remote_tools"))
                 await self._flush_answers(session, state)
+                await self._reply_if_owed(session, state)
+            elif event.type == "remote_tool_done":
+                await self._remote_tool_done(session, state, event.payload)
             elif event.type == "remote_tools_failed":
                 # The provider could not list one server's tools (a refused token among others): the call goes on
                 # without them. The label only, and the provider's text with any URL or token stripped (§5.4).
@@ -720,7 +756,10 @@ class VoiceSessionService:
             logger.warning(f"voice call {fingerprint(state.ticket)}: a response is already active, not starting another ({reason})")
             return
         state.response_active = True
-        state.response_owed = False
+        if state.reply_owed_since is not None:
+            # Any reply the relay starts carries the results already in context.
+            state.reply_after_tool_since = state.reply_owed_since
+            state.reply_owed_since = None
         state.response_reason = reason
         state.response_audible = False
         state.response_started_at = asyncio.get_running_loop().time()
@@ -946,13 +985,87 @@ class VoiceSessionService:
             channel = "function_call_output"
         logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} injected as {channel}, "
                     f"{len(answer.output)} chars")
+        logger.info(f"voice call {fingerprint(state.ticket)}: tool result submitted: kind=function call={answer.call_id}")
 
     async def _reply_or_owe(self, session: RealtimeSessionPort, state: _CallState) -> None:
-        # A caller mid-sentence keeps the floor; their committed turn starts the reply.
-        if state.caller_speaking:
-            state.response_owed = True
+        """The reply to answers just injected. Owed, not started, while the floor is taken: a caller mid-sentence keeps
+        it (the reply follows their turn); a response the provider started while the answers went in is not cut (the
+        reply follows its response_done)."""
+        self._owe_reply(state)
+        if state.caller_speaking or state.response_active:
             return
+        await self._trigger_owed_reply(session, state)
+
+    @staticmethod
+    def _owe_reply(state: _CallState) -> None:
+        if state.reply_owed_since is None:
+            state.reply_owed_since = asyncio.get_running_loop().time()
+
+    @staticmethod
+    def _owed_for(state: _CallState) -> float:
+        since = state.reply_owed_since
+        return 0.0 if since is None else asyncio.get_running_loop().time() - since
+
+    async def _trigger_owed_reply(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        logger.info(f"voice call {fingerprint(state.ticket)}: reply triggered after tool result "
+                    f"(waited {self._owed_for(state):.1f}s)")
         await self._reply_to_turn(session, state, "answer")
+
+    async def _reply_if_owed(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        """Start the owed reply once the floor is free: nothing pending on the provider, no response active, the
+        caller not speaking, and no answer delivery mid-way (it starts its own reply)."""
+        if state.reply_owed_since is None or state.remote_tools_pending or state.answers_in_flight:
+            return
+        if state.response_active or state.caller_speaking:
+            return
+        await self._trigger_owed_reply(session, state)
+
+    def _note_remote_tools(self, session: RealtimeSessionPort, state: _CallState, remote: Optional[dict]) -> None:
+        """A response ended holding remote MCP calls (the provider ran them): their results need a reply of their own,
+        unless the response went on to speak after them, or the caller cut it (their own turn gets the reply)."""
+        if not remote or not remote.get("calls"):
+            return
+        for label in remote.get("finished") or ():
+            logger.info(f"voice call {fingerprint(state.ticket)}: tool result submitted: kind=mcp server={label}")
+        if remote.get("continued") or remote.get("cancelled"):
+            return
+        state.remote_tools_pending.update(remote.get("pending") or ())
+        if not state.remote_tools_pending:
+            self._owe_reply(state)
+        elif state.remote_tools_deadline is None:
+            state.remote_tools_deadline = asyncio.ensure_future(self._await_remote_tools(session, state))
+
+    async def _remote_tool_done(self, session: RealtimeSessionPort, state: _CallState, payload: dict) -> None:
+        logger.info(f"voice call {fingerprint(state.ticket)}: tool result submitted: kind=mcp "
+                    f"server={payload.get('label')}")
+        item_id = payload.get("item_id")
+        # A call that finished before its response ended is not pending: that response_done owes the reply.
+        if item_id not in state.remote_tools_pending:
+            return
+        state.remote_tools_pending.discard(item_id)
+        if state.remote_tools_pending:
+            return
+        if state.remote_tools_deadline is not None:
+            state.remote_tools_deadline.cancel()
+            state.remote_tools_deadline = None
+        self._owe_reply(state)
+        await self._reply_if_owed(session, state)
+
+    async def _await_remote_tools(self, session: RealtimeSessionPort, state: _CallState) -> None:
+        await asyncio.sleep(self._remote_tool_wait_s)
+        state.remote_tools_deadline = None
+        if not state.remote_tools_pending:
+            return
+        logger.warning(f"voice call {fingerprint(state.ticket)}: {len(state.remote_tools_pending)} remote tool calls "
+                       f"not reported finished after {self._remote_tool_wait_s:.0f}s, replying anyway")
+        state.remote_tools_pending.clear()
+        self._owe_reply(state)
+        try:
+            await self._reply_if_owed(session, state)
+        except Exception as exc:
+            logger.error(f"voice call {fingerprint(state.ticket)}: reply after remote tools failed: "
+                         f"{redact_exception(exc)}", exc_info=True)
+            raise
 
     async def _flush_answers(self, session: RealtimeSessionPort, state: _CallState) -> None:
         if not state.queued_answers:

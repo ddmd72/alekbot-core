@@ -257,6 +257,9 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   top-level string parameter, never inside `context`-style objects or arrays; the coordinator's `file_content` stays out of the
   model's own call (`normalize_delegate_context` returns a copy).
 - **Turn anchors and the key:** Claude and Gemini key the turn/persona anchor from `LLMRequest.turn_key`, only in a text part that starts with it; OpenAI/Grok find the anchor by exact string, so never wrap it before the adapter.
+- **No realtime provider speaks a tool result by itself:** after a `function_call_output`, and after remote MCP calls
+  (xAI ends the response before they finish), nothing is said until `response.create`. `XaiRealtimeAdapter` reports MCP
+  calls as `remote_tools` on `response_done` and `remote_tool_done`; `VoiceSessionService` sends the reply.
 - **xAI realtime `billable_audio_seconds`** on `response.done` is the session's running total: `XaiRealtimeAdapter` emits the
   increment (`decisions/billing_cache_write_and_voice_seconds.md`).
 - **Workspace bucket (versioned):** `GcsWorkspaceAdapter` deletes by metadata patch + delete of the live object under
