@@ -195,8 +195,8 @@ async def test_caller_side_events_are_normalized():
     events = await _events(adapter)
 
     assert [(e.type, e.payload) for e in events] == [
-        ("speech_started", {}),
-        ("speech_stopped", {}),
+        ("speech_started", {"item_id": "u1"}),
+        ("speech_stopped", {"item_id": "u1"}),
         ("turn_committed", {"item_id": "u1"}),
         ("user_transcript", {"text": "Привет"}),
     ]

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
 from src.domain.voice_call_buffer import VoiceCallBuffer
@@ -14,7 +14,8 @@ class CallControlPlanePort(ABC):
         webhook stashed (persona instructions, resolved identity)."""
 
     @abstractmethod
-    async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer) -> None:
+    async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer,
+                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None) -> None:
         """Flush the call-scoped buffer at call end. No retry on failure
         (RFC §4.7 corner-case table: transport failure fails loudly, does
         not re-run).
@@ -22,6 +23,10 @@ class CallControlPlanePort(ABC):
         user_id/account_id identify which user the call belongs to, needed
         by later Slice 1 work (end-of-call summary delivery, one-call-marker
         release) that consumes the submitted payload on the main-service side.
+
+        `resume_handle` is the provider's conversation id, when the provider has one: the main service keeps it
+        for a re-dial within the resume window, unless the call ended by the hang-up button (RFC §6.2).
+        `resume_provider` names the provider that issued it; only a later call on the same provider uses it.
         """
 
     @abstractmethod

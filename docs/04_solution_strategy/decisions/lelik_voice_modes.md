@@ -38,8 +38,15 @@ single-purpose call with its own prompt profile, started from its own page. Mode
 ### Interpreter behaviour
 
 Universal: the caller's language is the one they speak on the call, and the other language is learned
-from the other person's first words. What the caller says after Lelik's name is for Lelik (setup,
-repeat, clarify); everything else is translated.
+from the other person's first words. Without a press of the **"Ask Lelik"** button Lelik only translates:
+everything either side says, even nonsense, even words that sound meant for him (owner, 2026-11-08). The
+button (interpreter page only, `VOICE_CALL_CONTROL_CHANNEL_RFC.md` §5) marks the caller's **next utterance**
+with a system note: those words are for Lelik (setup such as where they are or which language to use, repeat,
+clarify), and he answers the caller in their language instead of translating. The button stays pressed until
+Lelik's answer ends; a second press before speaking cancels it; it releases itself after 60 s without speech.
+This replaces the name trigger ("Lelik, …"), which failed live on the first utterance and whenever the name was
+not the first word, and the rule for the other person speaking to Lelik directly. The prompt change ships as a
+token upload after the relay with the button is live (RFC §12).
 
 ## Alternatives rejected
 
@@ -57,6 +64,15 @@ repeat, clarify); everything else is translated.
 - The tutor's lesson plan made outside the call and fed back from it.
 - Periodic pace reminders.
 - Modes as agent skills.
+
+## Resumption (xAI only)
+
+A call that drops (not one ended with the hang-up button) can be continued by a re-dial within 25 minutes in the same mode on
+the same provider: the relay reports xAI's conversation id with the transcript, the main service keeps it per user
+(`voice_resume:{user_id}`: handle, mode, provider; no transcript), and the next call's session config carries it, so the
+adapter reconnects with `conversation_id` and Lelik opens with a resume note, in his own words and showing he is in the topic.
+xAI raises no error for an unknown or expired id; the adapter detects an honoured resume by replayed items before
+`session.updated`, else the call is fresh. Details and probe facts: `VOICE_CALL_CONTROL_CHANNEL_RFC.md` §6.
 
 ## Triggers to revise
 

@@ -38,7 +38,8 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
         response.raise_for_status()
         return response.json()
 
-    async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer) -> None:
+    async def submit_transcript(self, call_id: str, user_id: str, account_id: str, buffer: VoiceCallBuffer,
+                                resume_handle: Optional[str] = None, resume_provider: Optional[str] = None) -> None:
         payload = {
             "call_id": call_id,
             "user_id": user_id,
@@ -56,6 +57,9 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
                 for t in buffer.turns
             ],
         }
+        if resume_handle:
+            payload["resume_handle"] = resume_handle
+            payload["resume_provider"] = resume_provider
         response = await self._client.post(
             f"{self._base_url}/voice/submit-transcript", json=payload, headers=await self._headers(),
             timeout=_SUBMIT_TRANSCRIPT_TIMEOUT_S,

@@ -1,8 +1,12 @@
+import asyncio
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence, Tuple
+from collections import deque
+from typing import Any, AsyncIterator, Callable, Deque, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import quote
 
 import websockets
 from websockets.asyncio.client import ClientConnection
+from websockets.exceptions import ConnectionClosed
 
 from src.domain.billing import REALTIME_WEB_SEARCH_CALLS, REALTIME_X_SEARCH_CALLS
 from src.domain.log_redaction import redact_for_log
@@ -45,6 +49,19 @@ _LIST_TOOLS_COMPLETED = "mcp_list_tools.completed"
 _LIST_TOOLS_EVENTS = frozenset({_LIST_TOOLS_FAILED, _LIST_TOOLS_COMPLETED, "mcp_list_tools.in_progress"})
 _ITEM_EVENTS = frozenset({"conversation.item.added", "conversation.item.created", "conversation.item.done"})
 _UNKNOWN_SERVER = "unknown"
+
+
+# Session resumption (live probe P3, 2026-11-08; VOICE_CALL_CONTROL_CHANNEL_RFC §6.1): `resumption.enabled` is sent on
+# every connection, a resume adds `conversation_id=<id>` to the URL, and the server replays the earlier items as
+# `conversation.item.added` with `replayed: true` BEFORE `session.updated`. A bogus or expired id gets no error: the
+# session opens fresh, so "resumed" means "a replayed item arrived before session.updated".
+_RESUME_WAIT_S = 5.0
+
+
+def _is_replayed(event: dict) -> bool:
+    item = event.get("item")
+    return event.get("type") == "conversation.item.added" and bool(
+        event.get("replayed") or (item.get("replayed") if isinstance(item, dict) else False))
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -135,6 +152,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         self._list_items: Dict[str, str] = {}
         # The call's exact tokens, held only to scrub them by value from provider text before it is logged.
         self._secrets: Tuple[str, ...] = ()
+        # Events read while open() waited for session.updated on a resume; receive_events yields them first.
+        self._early: Deque[RealtimeSessionEvent] = deque()
+        self._resumed = False
 
     @property
     def _socket(self) -> ClientConnection:
@@ -142,9 +162,15 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             raise RuntimeError("realtime session is not open")
         return self._ws
 
+    @property
+    def resumed(self) -> bool:
+        return self._resumed
+
     async def open(self, instructions: str, reasoning_effort: str, tools: List[dict],
-                   mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
+                   resume_handle: Optional[str] = None, mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
         url = f"wss://api.x.ai/v1/realtime?model={self._model}"
+        if resume_handle:
+            url += f"&conversation_id={quote(resume_handle, safe='')}"
         self._ws = await self._connect(url, additional_headers={"Authorization": f"Bearer {self._api_key}"})
         session: Dict[str, Any] = {
             "voice": self._voice,
@@ -155,6 +181,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 "output": {"format": _wire_format(self._audio_format)},
             },
             "reasoning": {"effort": reasoning_effort},
+            "resumption": {"enabled": True},
         }
         clashing = sorted(tool["name"] for tool in tools if tool.get("name") in _BUILTIN_TOOL_LEGS)
         if clashing:
@@ -170,12 +197,41 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                                 *(_mcp_entry(server) for server in mcp_servers)]
             session["tool_choice"] = "auto"
         await self._socket.send(json.dumps({"type": "session.update", "session": session}))
+        if resume_handle:
+            await self._read_until_session_updated()
+
+    async def _read_until_session_updated(self) -> None:
+        """A resume: read up to session.updated to learn whether the server honoured the id (it replays items
+        before that event; an unknown or expired id replays nothing and raises no error). The events read are kept
+        for receive_events, replayed items excepted: they are history, not new turns."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _RESUME_WAIT_S
+        replayed = False
+        while True:
+            try:
+                raw = await asyncio.wait_for(self._socket.recv(), max(deadline - loop.time(), 0.01))
+            except (asyncio.TimeoutError, ConnectionClosed):
+                break
+            event = json.loads(raw)
+            if _is_replayed(event):
+                replayed = True
+                continue
+            normalized = self._normalize(event)
+            if normalized is not None:
+                self._early.append(normalized)
+            if event.get("type") == "session.updated":
+                break
+        self._resumed = replayed
+        if not replayed:
+            logger.warning("xAI realtime resume: not honoured, the call opens fresh")
 
     async def send_audio(self, frame: AudioFrame) -> None:
         payload = frame.payload if isinstance(frame.payload, str) else frame.payload.decode("ascii")
         await self._socket.send(json.dumps({"type": "input_audio_buffer.append", "audio": payload}))
 
     async def receive_events(self) -> AsyncIterator[RealtimeSessionEvent]:
+        while self._early:
+            yield self._early.popleft()
         async for raw in self._socket:
             normalized = self._normalize(json.loads(raw))
             if normalized is not None:
@@ -202,6 +258,11 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 type="tool_call",
                 payload={"call_id": event.get("call_id"), "name": event.get("name"), "arguments": event.get("arguments")},
             )
+        if event_type == "conversation.created":
+            handle = (event.get("conversation") or {}).get("id")
+            if not handle:
+                return None
+            return RealtimeSessionEvent(type="resume_handle", payload={"handle": handle})
         if event_type == "response.created":
             return RealtimeSessionEvent(type="response_created", payload={})
         if event_type == "response.done":
@@ -223,10 +284,12 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             return RealtimeSessionEvent(type="model_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "input_audio_buffer.committed":
             return RealtimeSessionEvent(type="turn_committed", payload={"item_id": event.get("item_id")})
+        # item_id names the caller's turn this speech becomes once committed: the "Ask Lelik" latch marks that turn
+        # (VOICE_CALL_CONTROL_CHANNEL_RFC §5.4).
         if event_type == "input_audio_buffer.speech_started":
-            return RealtimeSessionEvent(type="speech_started", payload={})
+            return RealtimeSessionEvent(type="speech_started", payload={"item_id": event.get("item_id")})
         if event_type == "input_audio_buffer.speech_stopped":
-            return RealtimeSessionEvent(type="speech_stopped", payload={})
+            return RealtimeSessionEvent(type="speech_stopped", payload={"item_id": event.get("item_id")})
         if event_type in _LIST_TOOLS_EVENTS:
             return self._list_tools_event(event_type, event)
         if event_type in _ITEM_EVENTS:

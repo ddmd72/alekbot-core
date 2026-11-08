@@ -18,7 +18,8 @@ from quart import Blueprint, Response, g, jsonify, request, send_file
 
 from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
-from src.domain.voice_ticket_keys import ticket_key
+from src.domain.voice_resume import BUTTON_END_TTL_S
+from src.domain.voice_ticket_keys import button_end_key, ticket_key
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
 from src.utils.logger import logger
@@ -223,9 +224,13 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         if trigger not in _HANGUP_TRIGGERS:
             trigger = "unknown"
         logger.info(f"web call {call_id}: hangup trigger={trigger}")
+        ticket = await _ticket_of(call_id, record)
+        if trigger == "button":
+            # Written before the legs close: the relay's end-of-call report follows and must find it. A call ended by
+            # the button is never resumed (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2).
+            await ephemeral_store.set(button_end_key(digest_key, ticket), {"button": True}, ttl_s=BUTTON_END_TTL_S)
         await media_room.close(record.get("adapter_ids", []))
         # Ticket still unredeemed = the relay never started: nothing will release the marker.
-        ticket = await _ticket_of(call_id, record)
         if await ephemeral_store.get(ticket_key(digest_key, ticket)) is not None:
             await call_setup.release(ticket, g.user_id)
         # The record goes last: a connect still attaching re-reads it and cleans up after itself.
