@@ -100,7 +100,9 @@ def _realtime_session_factory(api_keys: Dict[str, str],
         adapter_cls = _ADAPTERS[spec.provider]
         if spec.turn_ownership not in adapter_cls.supported_turn_ownership:
             raise ValueError(f"{adapter_cls.__name__} does not implement {spec.turn_ownership.value} turn ownership")
-        return adapter_cls(api_key=api_keys[spec.provider], audio_format=audio_format, voice=spec.voice)
+        # Only a spec that switches built-in search on passes the keyword: an adapter without it fails loudly.
+        extra = {"builtin_search": True} if spec.builtin_search else {}
+        return adapter_cls(api_key=api_keys[spec.provider], audio_format=audio_format, voice=spec.voice, **extra)
     return build
 
 
