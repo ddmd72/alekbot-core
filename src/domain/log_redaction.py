@@ -45,9 +45,7 @@ def _secret_values(secrets: Iterable[str]) -> List[str]:
     return sorted(values, key=len, reverse=True)
 
 
-def redact_for_log(text: object, max_chars: int = _MAX_CHARS, secrets: Iterable[str] = ()) -> str:
-    """`str(text)` with the exact `secrets` (and their payload and signature segments), then tokens, `Bearer` values,
-    `authorization` values and URLs replaced; cut at `max_chars`."""
+def _redacted(text: object, secrets: Iterable[str]) -> str:
     value = str(text)
     for secret in _secret_values(secrets):
         value = value.replace(secret, REDACTED)
@@ -55,7 +53,13 @@ def redact_for_log(text: object, max_chars: int = _MAX_CHARS, secrets: Iterable[
     value = _DOTTED_PAIR.sub(REDACTED, value)
     value = _BEARER.sub(f"Bearer {REDACTED}", value)
     value = _AUTH_FIELD.sub(lambda m: f"{m.group(1)}{REDACTED}", value)
-    value = _URL.sub(URL_REDACTED, value)
+    return _URL.sub(URL_REDACTED, value)
+
+
+def redact_for_log(text: object, max_chars: int = _MAX_CHARS, secrets: Iterable[str] = ()) -> str:
+    """`str(text)` with the exact `secrets` (and their payload and signature segments), then tokens, `Bearer` values,
+    `authorization` values and URLs replaced; cut at `max_chars` (the start kept)."""
+    value = _redacted(text, secrets)
     if len(value) > max_chars:
         value = value[:max_chars] + "…"
     return value
@@ -67,7 +71,11 @@ def redact_exception(exc: BaseException, secrets: Iterable[str] = ()) -> str:
 
 
 def redact_traceback(exc: BaseException, secrets: Iterable[str] = ()) -> str:
-    """The exception's whole traceback (chained causes included), redacted like a message, cut at 4 000 characters:
-    what `exc_info=True` would print, minus anything a message or a source line could carry."""
-    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    return redact_for_log(text, max_chars=_TRACEBACK_MAX_CHARS, secrets=secrets)
+    """The exception's whole traceback (chained causes included), redacted like a message: what `exc_info=True` would
+    print, minus anything a message or a source line could carry. Over 4 000 characters it keeps its first line and
+    its end, where the innermost frames and the exception's type and message are printed."""
+    value = _redacted("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), secrets)
+    if len(value) <= _TRACEBACK_MAX_CHARS:
+        return value
+    first = value.split("\n", 1)[0][:200]
+    return f"{first}\n…\n{value[-(_TRACEBACK_MAX_CHARS - len(first) - 3):]}"
