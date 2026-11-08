@@ -126,6 +126,12 @@ it). Wire format (POC-verified): each WS binary message is protobuf
   marks everything sent as played (same end state as Twilio's echoed marks after `clear`).
 - **Thinking cue** is μ-law-only and off in production; the SFU transport passes no
   `send_cue_audio`. Cue pacing constants stay μ-law (explicit deferral, §8).
+- **A third path, `/ctl`** (`VOICE_CALL_CONTROL_CHANNEL_RFC.md` §4): the page's own control socket,
+  routed by `relay_main.py` beside `/sfu/*` to `CallControlHandler`. It carries no ticket: its first
+  frame is `hello {v, token}`, and the token's SHA-256 (on the ticket record, so in the session
+  config) names the call in the process's `CallControlHub`. The main service builds the `/ctl` URL
+  from the same relay base as the two `/sfu/*` URLs, so the pairing argument above covers it too
+  (and any shard choice must pick one base per call for all three).
 
 ### 5.5 Main-service side
 
