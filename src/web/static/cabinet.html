@@ -1245,6 +1245,9 @@
           <button class="nav-item" onclick="location.href='/cabinet/call'" id="nav-call">
             Call
           </button>
+          <button class="nav-item" onclick="location.href='/cabinet/call/modes'" id="nav-modes">
+            Modes
+          </button>
         </nav>
 
         <div class="user-profile">
@@ -1289,6 +1292,10 @@
         <button class="nav-item call-tab" onclick="location.href='/cabinet/call'" id="nav-mobile-call">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
           <span class="tab-label">Call</span>
+        </button>
+        <button class="nav-item" onclick="location.href='/cabinet/call/modes'" id="nav-mobile-modes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="currentColor"/><circle cx="15" cy="12" r="2" fill="currentColor"/><circle cx="8" cy="18" r="2" fill="currentColor"/></svg>
+          <span class="tab-label">Modes</span>
         </button>
       </nav>
 
@@ -1758,6 +1765,7 @@
           "nav.team": "Team",
           "nav.settings": "Settings",
           "nav.call": "Call",
+          "nav.modes": "Modes",
           "memory.title": "Your Memory",
           "memory.subtitle": "Search, manage, and refine the knowledge base Alek uses to assist you.",
           "memory.search_btn": "Search",
@@ -2062,6 +2070,7 @@
           "nav.team": "Команда",
           "nav.settings": "Налаштування",
           "nav.call": "Дзвінок",
+          "nav.modes": "Режими",
           "memory.title": "Ваша пам\u2019ять",
           "memory.subtitle": "Шукайте, керуйте та вдосконалюйте базу знань, яку Alek використовує для вашої допомоги.",
           "memory.search_btn": "Пошук",
@@ -2366,6 +2375,7 @@
           "nav.team": "\u00c9quipe",
           "nav.settings": "Param\u00e8tres",
           "nav.call": "Appel",
+          "nav.modes": "Modes",
           "memory.title": "Votre m\u00e9moire",
           "memory.subtitle": "Recherchez, g\u00e9rez et affinez la base de connaissances qu'Alek utilise.",
           "memory.search_btn": "Rechercher",
@@ -2670,6 +2680,7 @@
           "nav.team": "Equipo",
           "nav.settings": "Ajustes",
           "nav.call": "Llamar",
+          "nav.modes": "Modos",
           "memory.title": "Tu memoria",
           "memory.subtitle": "Busca, gestiona y perfecciona la base de conocimiento que usa Alek.",
           "memory.search_btn": "Buscar",
@@ -2982,6 +2993,8 @@
         "#nav-mobile-settings .tab-label":       "nav.settings",
         "#nav-call":                  "nav.call",
         "#nav-mobile-call .tab-label":           "nav.call",
+        "#nav-modes":                 "nav.modes",
+        "#nav-mobile-modes .tab-label":          "nav.modes",
         "#memory-title":              "memory.title",
         "#memory-subtitle":           "memory.subtitle",
         "#memory-search-btn":         "memory.search_btn",
