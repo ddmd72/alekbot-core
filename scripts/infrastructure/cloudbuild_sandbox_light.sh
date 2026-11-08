@@ -61,6 +61,10 @@ RENDER_IMAGE="gcr.io/${PROJECT_ID}/alek-bot-sandbox-render-dev:latest"
 # process, the instance stays under 2 GiB. A fuller volume ends as the child's `error` outcome.
 WORK_VOLUME_SIZE="${SANDBOX_WORK_VOLUME_SIZE:-320Mi}"
 
+# --cpu-throttling (request-based billing), stated explicitly because a deploy keeps the service's previous setting.
+# The instance stays warm after a normal request, and with CPU always allocated every warm and every deploy-rollout
+# instance was billed for its 15 idle minutes. Only the rare recycle after an abnormal request runs after the response;
+# a stalled one still refuses the next request with 503 `recycling` (decisions/sandbox_render_service.md).
 case "$mode" in
   pull)
     docker pull "$IMAGE" || true   # first deploy has no image to cache from
@@ -82,7 +86,7 @@ case "$mode" in
       --service-account="$SANDBOX_LIGHT_SA" \
       --no-allow-unauthenticated \
       --clear-secrets \
-      --no-cpu-throttling \
+      --cpu-throttling \
       --use-http2 \
       --execution-environment=gen2 \
       --concurrency=1 \
