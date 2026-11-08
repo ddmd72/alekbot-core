@@ -14,7 +14,7 @@ single-purpose call with its own prompt profile, started from its own page. Mode
   (`/cabinet/call/<mode>/manifest.webmanifest`, `start_url` = that page), so a Home Screen icon opens
   that mode directly. `/cabinet/call/modes` lists the modes (own manifest too). The mode page is
   `call.html` with the manifest link swapped and `window.VOICE_MODE` set; after a login it returns to
-  itself. The main call page `/cabinet/call` is unchanged. All of these routes are public like the
+  itself. Each mode page also has its own Home Screen icon (`/cabinet/call/<mode>/icon-<size>.png`, the call robot with the visor in the mode's colour); the apple-touch-icon is swapped along with the manifest link. The main call page `/cabinet/call` is unchanged. All of these routes are public like the
   existing manifest and icons; the API calls behind them need the Cabinet JWT.
 - **Request path.** `POST /api/voice/web-call` takes an optional `mode` in the body (default `lelik`).
   An unknown value answers 400 `unknown_mode`. The mode goes through
