@@ -61,15 +61,16 @@ from src.domain.voice_amd import is_voicemail
 from src.domain.secret_digest import fingerprint
 from src.domain.voice_mode import VOICE_MODES_WITH_CALL_SUMMARY, VoiceMode
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
+from src.domain.voice_mcp_servers import VOICE_MCP_TOKENS_FIELD
 from src.domain.voice_mcp_token import voice_mcp_eligible
 from src.domain.voice_ticket_keys import abandoned_key, amd_key, call_kind_key, result_key, ticket_key
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
-# The session-config response field that carries a call's two voice MCP tokens, `{"facts": <jwt>,
-# "drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay ignores it until slice S3 splices the tokens
-# into the session's `mcp` tools; nothing logs it.
-VOICE_MCP_TOKENS_FIELD = "voice_mcp_tokens"
+# `VOICE_MCP_TOKENS_FIELD` (re-exported from the domain): the session-config response field that carries a call's two
+# voice MCP tokens, `{"facts": <jwt>, "drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay pairs them with the
+# ticket's `mcp_servers` descriptors into the session's `mcp` tools (slice S3); nothing logs it.
+__all__ = ["VOICE_MCP_TOKENS_FIELD", "create_voice_control_plane_blueprint"]
 
 # Long enough to cover the relay's 300 s wait plus a slow delegation finishing after it.
 _LATE_ANSWER_TTL_S = 900
@@ -377,6 +378,21 @@ def create_voice_control_plane_blueprint(
             # The relay may still be waiting: its answer must not turn into an error.
             logger.error(f"voice call {fingerprint(ticket)}: keeping/posting the answer to {call_id} failed", exc_info=True)
 
+    async def _call_mode(ticket: Optional[str]) -> VoiceMode:
+        """The call's mode from the record `prepare` wrote (the allowlist depends on it, LELIK_VOICE_MCP_RFC §8, O4).
+        Read only with the VOICE_MCP_TOOLS knob on, the one case where the mode changes the allowlist; missing,
+        unreadable or unknown = the companion call."""
+        if not ticket:
+            return VoiceMode.LELIK
+        try:
+            record = await ephemeral_store.get(call_kind_key(digest_key, ticket))
+        except Exception as exc:
+            logger.warning(f"voice call {fingerprint(ticket)}: call mode lookup for a delegation failed "
+                           f"({type(exc).__name__}), treated as lelik")
+            return VoiceMode.LELIK
+        mode = record.get("mode") if isinstance(record, dict) else None
+        return VoiceMode(mode) if mode in {m.value for m in VoiceMode} else VoiceMode.LELIK
+
     async def _run_delegation(body: dict, user_id: str, account_id: str) -> str:
         arguments = body.get("arguments") or {}
         # Groups one phone-call tool call's delegation spans under a named root in Logfire.
@@ -389,9 +405,11 @@ def create_voice_control_plane_blueprint(
                     agent = await lelik_agent_provider(user_id) if lelik_agent_provider else None
                     if agent is None:
                         raise _LelikNotConfigured()
+                    mode_kwargs = {"mode": await _call_mode(body.get("ticket"))} if voice_mcp_minting else {}
                     outcome = await agent.delegate_outcome(
                         user_id=user_id, account_id=account_id,
                         arguments=arguments, call_context=body.get("call_context") or [],
+                        **mode_kwargs,
                     )
             except _LelikNotConfigured:
                 raise
