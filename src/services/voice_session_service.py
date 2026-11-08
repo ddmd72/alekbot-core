@@ -8,8 +8,11 @@ from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, List
 
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
+from src.domain.voice_ask_latch import AskLatch, AskReason, AskState, AskStep
 from src.domain.voice_audio_frame import AudioFrame
+from src.domain.voice_control_protocol import ASK_ARM, ASK_DISARM, FEATURE_ASK, ask_state_frame, command_seq
 from src.domain.voice_errand import delegation_arguments, is_errand
+from src.domain.voice_mode import VoiceMode
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
@@ -33,6 +36,15 @@ _SILENCE_NOTE = "[The caller has been silent for {seconds} seconds.]"
 _PICKUP_NOTE = "[The caller has just picked up the phone you called. Speak first.]"
 # The web page (VOICE_WEB_TRANSPORT_RFC §5.3 #6): the caller pressed "call"; Lelik still opens.
 _WEB_PICKUP_NOTE = "[The caller has just connected to you from the web page. Speak first.]"
+# "Ask Lelik" (VOICE_CALL_CONTROL_CHANNEL_RFC §5.3, owner Q2): the caller pressed the button on the interpreter page,
+# and this note goes in when their next words start, so it lands right before the turn it marks. A system-role item
+# like the pickup note; it never enters a user message, and it is not deleted afterwards (a delete of a missing item
+# is a call-ending provider error).
+_ASK_NOTE = ("[The caller's next words are addressed to you, not for translation: a question or a remark for you, such "
+             "as where they are or which language to use. Answer the caller in their language; do not translate "
+             "these words.]")
+# The control task's beat: page commands are handled at once; timeouts and the consume loop's state frames go out on it.
+_ASK_TICK_S = 0.25
 _WATCHDOG_TICK_S = 0.25
 # Thinking cue: 20 ms μ-law frames, paced in real time with a short lead, so stopping it
 # never leaves more than ~100 ms queued in front of Lelik's first word.
@@ -122,6 +134,11 @@ class _CallState:
     # send_to_chat errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
     # nothing waits for them, so no dispatch filler, no waiting notes, no abandon.
     errands: Set[asyncio.Task] = field(default_factory=set)
+    # "Ask Lelik" (interpreter calls with a control link only): the latch, its link, and the `ask_state` frames the
+    # consume loop produced for the control task to send (the consume loop never waits on the page's socket).
+    ask: Optional[AskLatch] = None
+    ask_link: Optional["CallControlLink"] = None
+    ask_outbox: List[dict] = field(default_factory=list)
 
 
 class VoiceSessionService:
@@ -144,6 +161,8 @@ class VoiceSessionService:
         waiting_gap_max_s: Optional[float] = None,
         greeting_guard_s: float = 0.0,
         control_hub: Optional["CallControlHub"] = None,
+        ask_clock: Optional[Callable[[], float]] = None,
+        ask_tick_s: float = _ASK_TICK_S,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -155,7 +174,9 @@ class VoiceSessionService:
         and delivers delegation answers.
 
         `control_hub` (web calls only, VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
-        `control_token_sha256` opens its control link there for the call's life."""
+        `control_token_sha256` opens its control link there for the call's life. An interpreter call's link offers
+        "Ask Lelik" (RFC §5): `ask_clock` is the latch's clock (the event loop's time when None; tests pass their
+        own), `ask_tick_s` the control task's beat."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -170,6 +191,8 @@ class VoiceSessionService:
         self._waiting_gap_max_s = waiting_gap_max_s
         self._greeting_guard_s = greeting_guard_s
         self._control_hub = control_hub
+        self._ask_clock = ask_clock
+        self._ask_tick_s = ask_tick_s
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -224,13 +247,21 @@ class VoiceSessionService:
         consume_task: Optional[asyncio.Task] = None
         watchdog_task: Optional[asyncio.Task] = None
         cue_task: Optional[asyncio.Task] = None
+        control_task: Optional[asyncio.Task] = None
         control_link: Optional["CallControlLink"] = None
 
         try:
-            # First, so the page's control socket can attach while the provider session opens. No feature is
-            # offered yet: the channel is a skeleton until "Ask Lelik" (RFC §11 slice 4).
+            # First, so the page's control socket can attach while the provider session opens. Only an interpreter
+            # call offers "Ask Lelik" (RFC §4.2 "Features per call"); its state is set before any socket can attach,
+            # so the first `welcome` already carries `ask: "idle"`.
             if self._control_hub is not None and config.get("control_token_sha256"):
-                control_link = self._control_hub.open(config["control_token_sha256"], fingerprint(ticket))
+                features = {FEATURE_ASK} if config.get("mode") == VoiceMode.INTERPRETER.value else set()
+                control_link = self._control_hub.open(config["control_token_sha256"], fingerprint(ticket), features)
+                if FEATURE_ASK in features:
+                    state.ask = AskLatch(self._ask_clock or asyncio.get_running_loop().time)
+                    state.ask_link = control_link
+                    control_link.set_state(ask=AskState.IDLE.wire)
+                    control_task = asyncio.ensure_future(self._run_ask_control(control_link, state))
             # open() is inside the try/finally, not before it: a failed open (e.g. a
             # transient connection error to the provider) must still reach close()
             # and submit_transcript() below - otherwise the relay's one-call-per-user
@@ -275,10 +306,15 @@ class VoiceSessionService:
         finally:
             # 1. The call's own loops first, so nothing (the watchdog, a flush) starts a response
             #    on a call that is ending.
-            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task) if task is not None]
+            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task, control_task)
+                     if task is not None]
             if state.pending_barge_in is not None:
                 loops.append(state.pending_barge_in)
             await self._cancel_all(ticket, loops)
+            # A pressed or busy "Ask Lelik" button is released (`ask_state{idle, call_ended}`) before the `bye`.
+            if state.ask is not None and control_link is not None:
+                self._apply_ask(state, state.ask.end())
+                await self._flush_ask(control_link, state)
             # The page learns the call ended (`bye{call_ended}`); its token is forgotten. Never raises.
             if control_link is not None and self._control_hub is not None:
                 await self._control_hub.close(control_link)
@@ -328,6 +364,62 @@ class VoiceSessionService:
             if isinstance(result, Exception):
                 logger.error(f"voice call {fingerprint(ticket)}: session loop crashed: {result}")
 
+    # ------------------------------------------------------------------ "Ask Lelik" (VOICE_CALL_CONTROL_CHANNEL_RFC §5)
+
+    async def _run_ask_control(self, link: "CallControlLink", state: _CallState) -> None:
+        """The control task of an interpreter call: page commands drive the latch, its timeouts are checked on every
+        beat, and every `ask_state` (its own and the consume loop's) goes to the page. Never ends on its own; the
+        call's teardown cancels it."""
+        latch = state.ask
+        if latch is None:
+            return
+        while True:
+            try:
+                command: Optional[dict] = await asyncio.wait_for(link.commands.get(), timeout=self._ask_tick_s)
+            except asyncio.TimeoutError:
+                command = None
+            if command is not None:
+                before = latch.state
+                seq = command_seq(command)
+                if command.get("type") == ASK_ARM:
+                    step = latch.arm(seq)
+                elif command.get("type") == ASK_DISARM:
+                    step = latch.disarm(seq)
+                else:
+                    step = AskStep()
+                if before is AskState.IDLE and latch.state is AskState.ARMED:
+                    logger.info(f"voice call {fingerprint(state.ticket)}: ask: armed")
+                self._apply_ask(state, step)
+            self._apply_ask(state, latch.tick())
+            await self._flush_ask(link, state)
+
+    async def _mark_ask(self, session: RealtimeSessionPort, state: _CallState, step: AskStep) -> None:
+        if step.insert_note:
+            await session.submit_message("system", _ASK_NOTE)
+            logger.info(f"voice call {fingerprint(state.ticket)}: ask: note inserted")
+        self._apply_ask(state, step)
+
+    @staticmethod
+    def _apply_ask(state: _CallState, step: AskStep) -> None:
+        """Record a step's report for the page: the state a reconnecting page gets in `welcome`, and an `ask_state`
+        frame for the control task to send. Synchronous: the consume loop never waits on the page's socket."""
+        report = step.report
+        if report is None or state.ask_link is None:
+            return
+        state.ask_link.set_state(ask=report.state)
+        reason = report.reason.value if report.reason is not None else None
+        state.ask_outbox.append(ask_state_frame(report.state, seq=report.seq, reason=reason))
+        if report.reason is AskReason.CANCELLED:
+            logger.info(f"voice call {fingerprint(state.ticket)}: ask: cancelled")
+        elif report.reason is not None:
+            logger.info(f"voice call {fingerprint(state.ticket)}: ask: released ({reason})")
+
+    @staticmethod
+    async def _flush_ask(link: "CallControlLink", state: _CallState) -> None:
+        frames, state.ask_outbox = state.ask_outbox, []
+        for frame in frames:
+            await link.send(frame)  # never raises; a frame lost with the socket is re-synced by the next `welcome`
+
     async def _consume_events(
         self,
         ticket: str,
@@ -353,7 +445,13 @@ class VoiceSessionService:
                 state.response_active = True
                 state.response_cancelled = False
                 tool_called = False
+                if state.ask is not None:
+                    self._apply_ask(state, state.ask.response_created())
             elif event.type == "speech_started":
+                if state.ask is not None:
+                    # First, before anything else is sent: a note created now lands right before the caller's turn
+                    # (xAI probe, RFC §5.2), which is committed a second or more later.
+                    await self._mark_ask(session, state, state.ask.speech_started(event.payload.get("item_id")))
                 state.caller_turns += 1
                 state.caller_speaking = True
                 state.silence_prompted = False
@@ -384,6 +482,8 @@ class VoiceSessionService:
                     await clear_outbound_audio()
                 state.cue_tail_until = 0.0
             elif event.type == "speech_stopped":
+                if state.ask is not None:
+                    self._apply_ask(state, state.ask.speech_stopped(event.payload.get("item_id")))
                 state.caller_speaking = False
                 if state.speech_in_greeting_guard:
                     state.speech_in_greeting_guard = False
@@ -419,6 +519,8 @@ class VoiceSessionService:
                 if item_id != state.item_id:
                     state.item_id = item_id
                     state.item_start_bytes = state.playback.sent_bytes
+                if state.ask is not None:
+                    self._apply_ask(state, state.ask.reply_audio())
                 await send_outbound_audio(event.payload["frame"])
             elif event.type == "tool_call":
                 tool_called = True
@@ -434,6 +536,8 @@ class VoiceSessionService:
                 pending_response_text += event.payload["text"]
             elif event.type == "response_done":
                 state.response_active = False
+                if state.ask is not None:
+                    self._apply_ask(state, state.ask.response_done())
                 usage = event.payload.get("usage", {})
                 if usage:
                     # The provider labels its own usage - VoiceSessionService is
