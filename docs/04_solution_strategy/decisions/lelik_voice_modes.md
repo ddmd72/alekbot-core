@@ -57,6 +57,15 @@ repeat, clarify); everything else is translated.
 - Periodic pace reminders.
 - Modes as agent skills.
 
+## Resumption (xAI only)
+
+A call that drops (not one ended with the hang-up button) can be continued by a re-dial within 25 minutes in the same mode on
+the same provider: the relay reports xAI's conversation id with the transcript, the main service keeps it per user
+(`voice_resume:{user_id}`: handle, mode, provider; no transcript), and the next call's session config carries it, so the
+adapter reconnects with `conversation_id` and Lelik opens with a resume note, in his own words and showing he is in the topic.
+xAI raises no error for an unknown or expired id; the adapter detects an honoured resume by replayed items before
+`session.updated`, else the call is fresh. Details and probe facts: `VOICE_CALL_CONTROL_CHANNEL_RFC.md` §6.
+
 ## Triggers to revise
 
 A third mode, a second provider with a voice-persona slot, or a mode that should be remembered
