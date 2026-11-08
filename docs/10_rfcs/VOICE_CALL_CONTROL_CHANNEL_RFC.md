@@ -1,6 +1,8 @@
 # RFC: Voice call control channel — page ↔ relay, and its first three features
 
-**Status:** Accepted (owner decisions recorded 2026-11-08, §13). Not built.
+**Status:** Accepted (owner decisions recorded 2026-11-08, §13). Slice 3 (channel skeleton) built: the knob
+`VOICE_CONTROL_CHANNEL` defaults to **off** until slice 4 is live-checked (§9 below says "default on" for the finished
+feature); welcome offers no feature yet.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls

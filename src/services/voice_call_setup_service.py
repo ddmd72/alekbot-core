@@ -57,7 +57,10 @@ class VoiceCallSetupService:
         return await self._store.get(self._marker_key(user_id))
 
     async def prepare(self, ticket: str, user_id: str, account_id: str, call_kind: str,
-                      mode: VoiceMode = VoiceMode.LELIK) -> None:
+                      mode: VoiceMode = VoiceMode.LELIK, *, control_token_sha256: Optional[str] = None) -> None:
+        """`control_token_sha256` (web calls, VOICE_CALL_CONTROL_CHANNEL_RFC §4.1) rides on the ticket record, so the
+        relay gets it with the session config; only the digest, never the token."""
+        control = {"control_token_sha256": control_token_sha256} if control_token_sha256 else {}
         # The ticket writes sit inside the same failure handling as the persona assembly: on the
         # phone path the marker is already at its full call TTL here, so a store failure that
         # escaped without a release would lock the owner out of calling for an hour.
@@ -69,6 +72,7 @@ class VoiceCallSetupService:
             # identity wins over anything the session carried: /voice/delegate trusts these ids.
             await self._store.set(ticket_key(self._digest_key, ticket), {
                 **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind, "mode": mode.value,
+                **control,
             }, ttl_s=self._ticket_ttl_s)
             await self._store.set(call_kind_key(self._digest_key, ticket), {"call_kind": call_kind, "mode": mode.value}, ttl_s=self._one_call_ttl_s)
         except UnsupportedVoiceMode:

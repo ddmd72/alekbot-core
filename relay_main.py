@@ -47,6 +47,7 @@ import os
 import signal
 from pathlib import Path
 from typing import Callable, Dict, Type
+from urllib.parse import urlsplit
 
 import websockets
 
@@ -57,9 +58,11 @@ from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
 from src.domain.voice_session_spec import VoiceSessionSpec
+from src.handlers.call_control_handler import CallControlHandler
 from src.handlers.media_stream_handler import MediaStreamHandler
 from src.handlers.sfu_stream_handler import SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
+from src.services.call_control_hub import CallControlHub
 from src.services.voice_session_service import VoiceSessionService
 from src.utils.logger import logger, quiet_third_party_loggers
 
@@ -171,6 +174,7 @@ async def main() -> None:
     # provider it runs on, and must be a value that provider accepts.
     web_reasoning = os.environ.get("VOICE_WEB_REASONING_EFFORT") or None
     web_opening = _CALLER_OPENING if os.environ.get("VOICE_WEB_CALLER_OPENING", "on").strip().lower() == "on" else None
+    control_hub = CallControlHub()
     web_session_service = VoiceSessionService(
         realtime_session_factory=_realtime_session_factory(api_keys, PCM16_24K),
         control_plane=control_plane,
@@ -183,13 +187,20 @@ async def main() -> None:
         greeting_guard_s=3.0,
         # Owner's call 2026-09-28: same 300 s as the phone path.
         delegation_timeout_s=300.0,
+        # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
+        control_hub=control_hub,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service)
+    control_handler = CallControlHandler(control_hub)
 
     async def route(connection):
         path = connection.request.path
         if path.startswith("/sfu/"):
             await sfu_handler.handle_connection(connection, path)
+        elif urlsplit(path).path == "/ctl":
+            # The page's control socket: same process as the call's SFU sockets (max-instances=1), matched to
+            # its call by the token in its first frame, never by the URL.
+            await control_handler.handle_connection(connection)
         else:
             await handler.handle_connection(connection)
 
