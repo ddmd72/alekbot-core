@@ -91,6 +91,19 @@ wraps every tool as `{"type": "function", **tool}` (`src/adapters/xai_realtime_a
    is one `remote_tool_done` event with its label. The relay sends `response.create` once every call has finished and
    the floor is free (`VoiceSessionService._reply_if_owed`), or after `_REMOTE_TOOL_WAIT_S` when a call is never
    reported finished. Log lines carry labels and durations only, never a payload.
+   *Amended (fix/voice-xai-mcp-event-names):* that first build read the OpenAI shapes (`mcp_call` items keyed by item
+   id), which xAI does not send, so a live call still went silent and the relay logged nothing. A probe with a public
+   no-auth MCP server (no token of ours) recorded xAI's real sequence: per call `response.mcp_call_arguments.delta` /
+   `.done` (`item_id`, `call_id`, `name`) and `response.mcp_call.in_progress` (`call_id`, `name`); the call items are
+   `function_call` items named `<server_label>.<tool>` (`response.output_item.added`, `conversation.item.added`), with no
+   `server_label` field; `response.done` holds them, status `in_progress` → `completed`, before any result; then per call
+   a `function_call_output` conversation item and `response.mcp_call.completed` (`call_id`, `name`, `output`). Parallel
+   calls interleave the same way. No response follows until `response.create`. The adapter now keys calls by `call_id`,
+   takes the label from the name's prefix (a session label, else `unknown`), finishes a call on the first of
+   `response.mcp_call.completed`/`.failed` or its `function_call_output` item, never turns an MCP-named function call
+   into a relay tool call, and reports on `response_done` every call first seen since `response.created` even when
+   the output shows it in an unknown shape. The OpenAI shapes stay accepted. Safety net: an output item type the adapter
+   does not know (in `response.output_item.*` or `response.done`) is logged at INFO by its type only.
 
 **Allowed tools** (O2; sent as `allowed_tools` *and* carried in the token, §5.3, so xAI's filter is not the guarantee):
 
