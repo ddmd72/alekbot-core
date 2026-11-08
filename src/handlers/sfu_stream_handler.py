@@ -12,6 +12,7 @@ sockets of a ticket reach this process.
 """
 import asyncio
 import base64
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -41,6 +42,25 @@ _FRAME_SAMPLES = PCM16_48K_STEREO.sample_rate_hz * _FRAME_MS // 1000  # 960, the
 # `/sfu/*` is public: any socket naming an unknown ticket opens a registry entry that lives for
 # the pair timeout. Bounding the not-yet-paired entries keeps junk connections from piling up.
 _MAX_UNPAIRED_CALLS = 32
+# Dead-peer watchdog (VOICE_CALL_CONTROL_CHANNEL_RFC §7.4): a paired call with no inbound packet for this long ends
+# through the normal end path (transcript submitted, one-call marker released, resumable). Ten minutes, because the
+# owner's background tests showed iOS pausing the home-screen web app's outgoing audio for seconds up to about half a
+# minute while the call went on normally: the watchdog is there to end calls of pages that are really gone (app swiped
+# away), never a backgrounded call, so it sits far above any pause seen live. A re-dial ends a dead call much sooner
+# anyway (§7.5). The knob VOICE_DEAD_PEER_TIMEOUT_S overrides it (seconds).
+_DEAD_PEER_TIMEOUT_S = 600.0
+
+
+def _dead_peer_timeout_s() -> float:
+    """The optional knob, read at its call site (root CLAUDE.md: optional knobs are `os.getenv`, never settings). An
+    unparsable or non-positive value keeps the default rather than disabling the watchdog."""
+    raw = os.getenv("VOICE_DEAD_PEER_TIMEOUT_S", "").strip()
+    try:
+        value = float(raw) if raw else _DEAD_PEER_TIMEOUT_S
+    except ValueError:
+        logger.warning("sfu stream: VOICE_DEAD_PEER_TIMEOUT_S is not a number, using the default")
+        return _DEAD_PEER_TIMEOUT_S
+    return value if value > 0 else _DEAD_PEER_TIMEOUT_S
 
 
 def parse_sfu_path(path: str) -> Optional[Tuple[str, str]]:
@@ -88,7 +108,8 @@ class SfuStreamHandler:
     def __init__(self, session_service: VoiceSessionService, pair_timeout_s: float = 15.0,
                  egress_reattach_s: float = 5.0, frame_interval_s: float = _FRAME_MS / 1000,
                  max_unpaired_calls: int = _MAX_UNPAIRED_CALLS, gap_poll_s: float = 0.5,
-                 clock=time.monotonic) -> None:
+                 clock=time.monotonic, dead_peer_timeout_s: Optional[float] = None) -> None:
+        """`dead_peer_timeout_s` None = the knob or the default (§7.4); tests pass it."""
         self._session_service = session_service
         self._pair_timeout_s = pair_timeout_s
         self._egress_reattach_s = egress_reattach_s
@@ -96,6 +117,7 @@ class SfuStreamHandler:
         self._max_unpaired_calls = max_unpaired_calls
         self._gap_poll_s = gap_poll_s
         self._clock = clock
+        self._dead_peer_timeout_s = dead_peer_timeout_s if dead_peer_timeout_s is not None else _dead_peer_timeout_s()
         self._calls: Dict[str, _SfuCall] = {}
 
     async def handle_connection(self, ws, path: str) -> None:
@@ -180,11 +202,24 @@ class SfuStreamHandler:
             logger.info(f"sfu stream {fingerprint(call.ticket)}: inbound audio gap ended after {duration:.1f}s")
 
     async def _watch_gaps(self, call: _SfuCall) -> None:
+        # Started by `_run` once the call is paired, so the dead-peer watchdog (§7.4) is armed from pairing: a call
+        # whose browser never sends a packet is caught too. It keys on packets, not on what they carry: if the SFU
+        # forwarded silence or comfort noise for a stalled microphone, this never fires (§7.4.5).
+        armed_at = self._clock()
         while not call.ended.is_set():
             await asyncio.sleep(self._gap_poll_s)
-            if call.gaps.gap_started(self._clock()):
+            now = self._clock()
+            if call.gaps.gap_started(now):
                 logger.info(f"sfu stream {fingerprint(call.ticket)}: inbound audio gap started "
                             f"(no packets for {call.gaps.floor_s:.1f}s)")
+            last = call.gaps.last_packet_at
+            if now - (armed_at if last is None else max(last, armed_at)) >= self._dead_peer_timeout_s:
+                logger.info(f"sfu stream {fingerprint(call.ticket)}: dead peer: no inbound audio for "
+                            f"{self._dead_peer_timeout_s:.0f}s, ending call")
+                # The normal end path: the inbound stream ends, the session's teardown submits the transcript, the
+                # main side releases the one-call marker. Not a button hangup, so the call stays resumable.
+                call.end()
+                return
 
     async def _serve_egress(self, call: _SfuCall, ws) -> None:
         call.egress_ws = ws

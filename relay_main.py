@@ -35,7 +35,12 @@ Environment variables (static — set at relay deploy time, Task 14):
                            Optional knob (default "on"); "off" disables the
                            owner's-first-turn opening on web calls only, same
                            text as the phone path (_CALLER_OPENING).
-  PORT                    Cloud Run injects this; defaults to 8080 locally.
+  VOICE_DEAD_PEER_TIMEOUT_S
+                           Optional knob (default 600): seconds without an inbound
+                           packet after which a web call ends itself
+                           (VOICE_CALL_CONTROL_CHANNEL_RFC §7.4). Read by
+                           SfuStreamHandler when it is built.
+  PORT                  Cloud Run injects this; defaults to 8080 locally.
 
 This is wiring, like `job_main.py` — no dedicated unit test file (confirmed
 precedent: `job_main.py` has none either). Verified by manual read-through +
