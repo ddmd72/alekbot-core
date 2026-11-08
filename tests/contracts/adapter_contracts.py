@@ -562,6 +562,32 @@ XAI_REALTIME_BUILTIN_SEARCH_TOOLS = ContractRule(
 )
 
 
+_XAI_MCP_KEYS = {"type", "server_url", "server_label", "server_description", "allowed_tools", "authorization"}
+
+
+def _check_xai_realtime_mcp_tools(kw: dict) -> None:
+    entries = [t for t in kw["session"].get("tools") or [] if t.get("type") == "mcp"]
+    _eq(entries, kw["expected_mcp_entries"],
+        "xai_realtime: session.tools must carry one mcp entry per server, verbatim and in order")
+    for entry in entries:
+        _eq(set(entry), _XAI_MCP_KEYS, "xai_realtime: an mcp entry carries exactly the six probed keys")
+        _true(not entry["authorization"].lower().startswith("bearer "),
+              "xai_realtime: authorization is the raw token (xAI adds 'Bearer ' itself)")
+    _eq(kw["session"].get("tool_choice"), "auto", "xai_realtime: tool_choice must be 'auto' when mcp tools are offered")
+
+
+XAI_REALTIME_MCP_TOOLS = ContractRule(
+    name="XAI_REALTIME_MCP_TOOLS",
+    description=(
+        "XaiRealtimeAdapter.open() offers each remote MCP server as one session.tools entry {type: 'mcp', server_url, "
+        "server_label, server_description, allowed_tools, authorization}, next to the function tools, with the call's "
+        "token raw in `authorization` (live probe phase A, 2026-11-08: xAI adds 'Bearer ' itself; LELIK_VOICE_MCP_RFC "
+        "§4). Input: captured session.update message {type: str, session: dict} plus `expected_mcp_entries`."
+    ),
+    validators={"xai_realtime": _check_xai_realtime_mcp_tools},
+)
+
+
 def _text_follows_function_output(items) -> bool:
     """OpenAI/Grok Responses API: items are a flat list, not nested message blocks.
     True iff a user-role item with non-empty text content appears after the first

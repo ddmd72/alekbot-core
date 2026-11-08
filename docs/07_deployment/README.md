@@ -380,9 +380,14 @@ HS256 key of Lelik's per-call MCP tokens and nothing else. **Create it before th
 fails otherwise): at least 48 characters (`openssl rand -hex 32` gives 64, stored with `printf '%s'`), never the OAuth
 session secret in effect nor the public dev placeholder (the start is refused for either), `secretmanager.secretAccessor` for the main service's
 account only. Rotating it ends every live voice token at once (calls in flight lose their memory and drive tools).
-The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off; `on` turns it on) lets `/voice/session-config`
-mint a call's tokens; with it on and the key missing the main service refuses to start. With it off nothing is minted and
-tokens made elsewhere with the key (a probe) still verify until their call record is deleted.
+The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off; `on` turns it on) wires the tools: the plain
+companion call on xAI gets the memory and drive MCP servers as session tools (their URLs come from `MCP_RESOURCE_URI`,
+no new key), loses its `search_memory` delegation, and `/voice/session-config` mints the call's tokens; with it on and
+the key missing the main service refuses to start. The relay needs no knob: it offers a server only when the session
+config carries both its descriptor and its token. **Upload `VOICE_TOOL_DATA_LELIK` and the `lelik_xai` profile before
+the deploy that turns the knob on** (`prompts_snapshot/`, token upload). With the knob off nothing is minted, no call
+carries the servers, `search_memory` stays, and tokens made elsewhere with the key (a probe) still verify until their
+call record is deleted.
 
 ---
 

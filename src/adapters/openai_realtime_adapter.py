@@ -1,9 +1,10 @@
 import json
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence
 
 import websockets
 from websockets.asyncio.client import ClientConnection
 
+from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.voice_audio_format import MULAW_8K, AudioFormat
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -179,7 +180,11 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             raise RuntimeError("realtime session is not open")
         return self._ws
 
-    async def open(self, instructions: str, reasoning_effort: str, tools: List[dict]) -> None:
+    async def open(self, instructions: str, reasoning_effort: str, tools: List[dict],
+                   mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
+        if mcp_servers:
+            # xAI only (LELIK_VOICE_MCP_RFC O6): refused before any connection, so no token reaches OpenAI.
+            raise ValueError("OpenAI realtime sessions carry no remote MCP servers")
         url = f"wss://api.openai.com/v1/realtime?model={self._model}"
         self._ws = await self._connect(url, additional_headers={"Authorization": f"Bearer {self._api_key}"})
         session: Dict[str, Any] = {

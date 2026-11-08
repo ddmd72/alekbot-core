@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 from websockets.exceptions import ConnectionClosed
 
 from src.domain.inbound_gap_tracker import InboundGapTracker
+from src.domain.log_redaction import redact_traceback
 from src.domain.paced_audio_outlet import PacedAudioOutlet
 from src.domain.pcm_downsampler import PcmDownsampler
 from src.domain.pcm_upsampler import PcmUpsampler
@@ -142,8 +143,10 @@ class SfuStreamHandler:
                 )
             finally:
                 gap_watch.cancel()
-        except Exception:
-            logger.error(f"sfu stream {fingerprint(call.ticket)}: call failed", exc_info=True)
+        except Exception as exc:
+            # A redacted traceback instead of exc_info: the error may come from the session open, whose text can
+            # carry a URL, a header or a call's token (LELIK_VOICE_MCP_RFC §5.4).
+            logger.error(f"sfu stream {fingerprint(call.ticket)}: call failed: {redact_traceback(exc)}")
         finally:
             call.end()
             for ws in (call.ingest_ws, call.egress_ws):

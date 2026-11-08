@@ -1,6 +1,8 @@
 # RFC: Lelik reads memory and drive himself — our MCP servers as xAI server-side tools
 
-**Status:** Accepted (accepted for build 2026-11-08; owner decisions recorded in §12). Not built.
+**Status:** Accepted (accepted for build 2026-11-08; owner decisions recorded in §12). S1 built (token kind); S2 phase A
+run 2026-11-08 (findings in §9); S3 built on branch `feat/voice-mcp-tools` (knob default off; the token
+`VOICE_TOOL_DATA_LELIK` is not uploaded yet). S4 open.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — faster answers from the owner's own data
@@ -68,11 +70,20 @@ wraps every tool as `{"type": "function", **tool}` (`src/adapters/xai_realtime_a
    allowed_tools)`, **only** when the knob is on, the provider is xAI (O6) and the mode is `LELIK` (O7). URLs are the
    existing resource URIs (`MCP_RESOURCE_URI`, the drive URI derived from it, building block §10.1): no new URL key.
    No token at this step.
-2. `/voice/session-config` mints the tokens at redemption (§5.2, O1) and sets `authorization` on each entry before
-   returning. The ticket record in Firestore never holds a token.
+2. `/voice/session-config` mints the tokens at redemption (§5.2, O1) and returns them next to the descriptors, in the
+   field `voice_mcp_tokens` (`{"facts", "drive"}`, built in S1). The ticket record in Firestore never holds a token.
+   *As built (S3):* the relay pairs each descriptor with its resource's token (`domain/voice_mcp_servers.session_servers`,
+   by label; the call's mode and provider are checked again), then drops the tokens from the config it keeps: the
+   session object is their only holder for the call's life. A descriptor without a token (whitelist refusal at mint, no
+   key) is not offered.
 3. `RealtimeSessionPort.open` takes `mcp_servers` (default empty). `XaiRealtimeAdapter` appends one
    `{"type": "mcp", "server_url", "server_label", "server_description", "allowed_tools", "authorization"}` per server
-   to `session.tools`. `OpenAIRealtimeAdapter` never receives any (O6). The relay passes them through untouched.
+   to `session.tools`, the token raw in `authorization` (§9 finding 1). `OpenAIRealtimeAdapter` refuses a non-empty list
+   before it connects (O6).
+4. *As built (S3):* the adapter surfaces `mcp_list_tools.failed` as the port event `remote_tools_failed` (a label the
+   session sent, else `unknown`; the error text redacted); the relay logs one WARNING with the label and the call goes on.
+   `mcp_list_tools.completed` is one INFO line with the label; `mcp_list_tools.in_progress` and `response.mcp_call.*` are
+   dropped without logging their payload. The descriptions are `domain/voice_mcp_servers._DESCRIPTIONS`.
 
 **Allowed tools** (O2; sent as `allowed_tools` *and* carried in the token, §5.3, so xAI's filter is not the guarantee):
 
@@ -183,7 +194,11 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
 - **Keep** `search_web_light`, `ask_alek`, `send_to_chat`.
 - **`search_memory` (O4).** When the session carries `mcp_servers`, `session_config` leaves `search_memory` out of the
   delegate tool's intent list, so the model has one memory path. The manifest keeps it for sessions without MCP (knob
-  off, whitelist refusal at mint).
+  off, interpreter, tutor, OpenAI). *As built (S3):* `LelikAgent.permitted_intents(mode)` drops it in the same case, and
+  `/voice/delegate` (knob on) reads the call's mode from the record `prepare` wrote, so a model that still names it is
+  refused. The choice is made at `prepare`, before the mint: a user the whitelist refuses at redemption gets a call with
+  neither the servers nor `search_memory` for that one call (the mint's alert names it). Open for the owner: accept
+  this edge, or move the declaration choice to redemption.
 - **Providers (O6).** xAI only. OpenAI's Realtime API documents the same `mcp` tool shape (with `require_approval` and
   `mcp_list_tools.*` events); it is added when a need arises, by its own change.
 - **Result cap (O5).** A voice token's results are cut at a voice cap instead of the connector's 100 000 characters:
@@ -193,32 +208,67 @@ owner's lever over what can be read; the knob switches it all off. Memory facts 
   as text input, the priced leg already read from `response.done` (`xai_realtime_adapter.py:41-60`); re-billing on
   later turns is unknown. Saved: the `MemorySearchAgent` LLM call and the Smart chain per question.
 - **Latency** (*unknown*): expected low seconds per call versus seconds (memory) and tens of seconds (drive) today.
+- **For phase B to check (not built in S3).** (a) A mid-call provider switch: the servers and tokens are fixed at
+  `session.update`; what a provider change during a live call does to them is not handled. (b) Whether xAI reports an
+  MCP call as `response.function_call_arguments.done` named after an MCP tool (as it does for its built-in searches):
+  the adapter does not filter MCP tool names there, so such an event would reach the relay as a delegation it cannot run.
+- **Hardening after the S3 review (built).** The relay scrubs the call's exact tokens (and each token's payload and
+  signature segment) from provider and exception text before the shape rules, with a dotted-pair backstop; each token
+  is bound to its server (its unverified `aud` must be `voice:` + the descriptor's URL; one descriptor per label; a
+  mismatch drops that server with a WARNING naming the label); every exception line of the session loop logs the type
+  and a redacted message, and the two stream handlers log a redacted traceback instead of `exc_info`; a failure before
+  the session exists still reports the call end, so the tokens are revoked. Three session-loop lines (session close,
+  barge-in, answer delivery) still add `exc_info`, whose traceback is not redacted: none of them handles provider
+  text that carries a token, and one is pinned by a test.
 
-## 9. Probe (after S1, with a real voice token; cents)
+## 9. Probe (two phases; cents)
 
-O9: no standard MCP token is ever sent to xAI. S1 ships the token kind; then a local helper (not deployed) mints a voice
-token through S1's code with the dedicated key for the dev user, writes its live-call record with a 10-minute TTL, and
-deletes the record when the probe ends, exercising revocation live. The probe extends
+O9 and O10: no standard MCP token is ever sent to xAI, and the voice signing key never leaves Secret Manager or the main
+service. A voice token is minted only by `/voice/session-config` on the main service. The probe extends
 `scripts/voice/test_xai_realtime_protocol_poc.py` (the reference for xAI wire shapes): a text-driven session
-(`conversation.item.create` + `response.create`), one run per server, against the live service. Drive questions target
-an invented test file inside an indexed folder. Answer:
+(`conversation.item.create` + `response.create`) against the live service. Drive questions target an invented test file
+inside an indexed folder.
 
-1. Does `session.update` accept two `mcp` entries plus functions; is `authorization` sent as given or with `Bearer `?
-2. When does xAI call `tools/list` (at `session.update`? per response?), and does it honour `allowed_tools`?
-3. Which events reach the socket during an MCP call; does `response.created`…`response.done` span it (the relay's
-   silence watchdog treats `response_active` as busy, `voice_session_service.py:505-535`)?
-4. Latency per call (our server's `ms` vs. time to first audio), and `text_input_tokens` per result (sets O5's cap).
-5. Does Grok call memory unprompted when the warm prompt lacks the answer (the owner's "in the background")?
-6. After the record is deleted: does the next call get 401, and how does Grok surface it?
+**Phase A: protocol shape, invalid token** (`scripts/voice/test_xai_mcp_shape_probe.py`). The probe sends a JWT-shaped
+token (`kid=voice-mcp`, the §5.2 claims, `sub=usr-probe`) signed with a throwaway random key that is never saved, so
+the voice verifier must refuse it on the signature. It settles questions 1, 2, 3 and 6 as far as a refused token
+allows, and the refusal lines on our side show what xAI sent.
+
+**Phase B: a real token, inside the owner's UAT call.** The first real voice token exists only in the call that S4
+runs: minted by `/voice/session-config` on the main service, held by the relay and xAI, dead at call end. It settles
+questions 4 and 5 and the success half of 2 (does `allowed_tools` filter what xAI shows the model), and the revocation
+half of 6 (the record deleted, the next call refused) by the §10 S4 revoked-after-call check.
+
+Questions:
+
+1. Does `session.update` accept two `mcp` entries plus functions; is `authorization` sent as given or with `Bearer `? (A)
+2. When does xAI call `tools/list` (at `session.update`? per response?), and does it honour `allowed_tools`? (A: when;
+   B: the filter)
+3. Which events reach the socket during an MCP call; does `response.created`...`response.done` span it (the relay's
+   silence watchdog treats `response_active` as busy, `voice_session_service.py:505-535`)? (A: the list-tools events;
+   B: the call events)
+4. Latency per call (our server's `ms` vs. time to first audio), and `text_input_tokens` per result (sets O5's cap). (B)
+5. Does Grok call memory unprompted when the warm prompt lacks the answer (the owner's "in the background")? (B)
+6. How does Grok surface a 401; after the record is deleted, does the next call get 401? (A: the 401; B: revocation)
+
+**Phase A findings (2026-11-08; S3 builds on them, they override §4 where they differ).**
+1. `session.update` accepts two `mcp` entries plus function tools. `authorization` goes raw: xAI adds `Bearer ` itself
+   and does not double an existing prefix. `session.updated` echoes the entries without `authorization`.
+2. xAI calls `tools/list` once per server, at `session.update`, before `session.updated`, and never lists again.
+3. A failed list (the 401 of the invalid token) arrives only as `mcp_list_tools.failed` with an opaque error ("Cancelled
+   by cancel scope"): no `error` event, and the session goes on without that server's tools. Hence the
+   `remote_tools_failed` port event and the relay's WARNING (§4 step 4).
+
+---
 
 ## 10. Slices
 
 | Slice | Content | Gate |
 |---|---|---|
 | S1 | Token kind: dedicated key in `load_settings()`, mint, live-call record, `kid` routing and the voice verifier in both resources, tool claim, audience by token kind, voice result cap, submit-transcript revoke, voice log rules | unit + arch tests, `make ci` |
-| S2 | Probe §9 with a real voice token; findings into a decision record; O5's cap set | owner OK on the spend |
-| S3 | `RemoteToolServer`, `session_config`, session-config splice, port + xAI adapter, `search_memory` filter, prompt line (token upload before deploy), knob `VOICE_MCP_TOOLS` (`os.getenv`, main service, default off) | wire tests, `make ci` |
-| S4 | Live UAT calls with the knob on: memory and drive questions, a revoked-after-call check | owner |
+| S2 | Probe §9 phase A (invalid token, no key involved); findings into a decision record | owner OK on the spend |
+| S3 | `RemoteToolServer`, `session_config`, session-config splice, port + xAI adapter, `search_memory` filter, prompt line (token upload before deploy), knob `VOICE_MCP_TOOLS` (`os.getenv`, main service, default off). *Built:* the splice is on the relay (§4 step 2); the prompt line is `VOICE_TOOL_DATA_LELIK` in `lelik_xai` only; the relay redacts provider and exception text in its logs (`domain/log_redaction.py`) | wire tests, `make ci` |
+| S4 | Live UAT calls with the knob on: memory and drive questions, a revoked-after-call check; the probe §9 phase B runs here, in the owner's first call; O5's cap set from its token counts | owner |
 | S5 | Docs: VOICE_COMPANION_RFC §4.15, the `remote_mcp_server` building block, deploy keys | — |
 
 ## 11. Tests
@@ -247,4 +297,5 @@ log record along mint → relay open → MCP verify contains the token.
 | O6 | Providers | xAI only; others when the need arises. |
 | O7 | Modes | The plain companion call only. Owner: the interpreter must not be overloaded with instructions, its focus would blur. |
 | O8 | Signing | A dedicated key (new secret) and a distinct token type and audience; the OAuth verifier rejects voice tokens and the voice verifier rejects OAuth tokens. |
-| O9 | Probe | Build the token slice first, then probe with a real voice token; no standard MCP token is sent to xAI. |
+| O9 | Probe | No standard MCP token is sent to xAI. Superseded in part by O10: the real-token probe moves into the UAT call. |
+| O10 | Where a real voice token may exist | "Stricter: the key never leaves the cloud" (owner, 2026-11-08). The voice signing key never leaves Secret Manager or the main service; the first real voice token exists only inside the owner's UAT call after S3, minted by `/voice/session-config`. Probe phase A runs earlier with an invalid token; phase B is part of S4. |

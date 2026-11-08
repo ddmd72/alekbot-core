@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List, Optional
+from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List, Optional, Sequence
 
+from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
 
@@ -30,12 +31,20 @@ class RealtimeSessionPort(ABC):
 
     @abstractmethod
     async def open(self, instructions: str, reasoning_effort: str, tools: List[Any],
-                   resume_handle: Optional[str] = None) -> None:
+                   resume_handle: Optional[str] = None, mcp_servers: Sequence[RemoteToolServer] = ()) -> None:
         """Connect and send the initial session.update. `instructions` must
         already have PROMPT_CACHE_BOUNDARY stripped by the caller.
 
         `resume_handle` asks a provider that supports it to continue an earlier conversation (VOICE_CALL_CONTROL_CHANNEL_RFC
-        §6); the caller passes it only to such a provider. After open(), `resumed` says whether the provider honoured it."""
+        §6); the caller passes it only to such a provider. After open(), `resumed` says whether the provider honoured it.
+
+        `mcp_servers` (LELIK_VOICE_MCP_RFC §4): remote MCP servers the provider calls by itself, each with the call's
+        bearer token. They are sent in the session.update of every open, a resumed one included (the session.update
+        follows the replay). An adapter whose provider does not take them refuses a non-empty list (ValueError).
+        Neither the servers nor their tokens are ever logged.
+
+        Speech events carry `item_id` (see receive_events): the caller's turn the speech becomes, which the "Ask
+        Lelik" latch marks (VOICE_CALL_CONTROL_CHANNEL_RFC §5.4)."""
 
     @property
     def resumed(self) -> bool:
@@ -63,7 +72,10 @@ class RealtimeSessionPort(ABC):
         id, so callers can label usage without hardcoding a provider-specific
         model string), user_transcript (payload: text - final transcript of
         the caller's speech), model_transcript (payload: text - final
-        transcript of the model's spoken response), error (payload: message)."""
+        transcript of the model's spoken response), error (payload: message, already redacted for a log line),
+        remote_tools_failed (payload: label - one of the session's `mcp_servers` labels or "unknown", reason - the
+        provider's error text redacted for a log line: the provider could not list that server's tools, so the session
+        runs without them; the session itself goes on)."""
 
     @abstractmethod
     async def submit_tool_result(self, call_id: str, output: str) -> None:

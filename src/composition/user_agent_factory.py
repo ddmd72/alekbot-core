@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from .sandbox_client_setup import docx_runner_factory, pdf_runner_factory
+from .voice_mcp_setup import voice_mcp_servers
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
@@ -1014,6 +1015,7 @@ class UserAgentFactory(AgentFactoryPort):
             notifications=self.notification_service,
             voice_profile=_voice_profile_for(user_id, ctx.user_profile.config),
             native_web_search=_lelik_xai_native_search(),
+            mcp_servers=voice_mcp_servers(self.config),
         )
 
     def _build_alek_gateway(self, user_id: str, ctx: _UserContext) -> Optional[AlekGatewayAgent]:

@@ -14,6 +14,11 @@ xAI) gets that search in the session, and search_web_light leaves delegate_to_sp
 send_to_chat call into the errand intent of the same name (domain/voice_errand.py), so delegate() runs both the
 same way.
 
+With the VOICE_MCP_TOOLS knob on, the plain companion call on xAI also carries the memory and drive MCP servers
+(LELIK_VOICE_MCP_RFC §4): session_config puts their descriptors (no token) under `mcp_servers`, and such a call has
+no search_memory delegation, neither declared nor permitted (O4). The relay pairs the descriptors with the tokens
+/voice/session-config mints at redemption.
+
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
 
@@ -22,16 +27,19 @@ automatic link copy of §4.10 rule 2 filled the chat with every search's links. 
 wants something in chat, Lelik calls send_to_chat, and Alek decides what is worth posting.
 """
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
 from urllib.parse import urlencode
 from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
 from ..domain.messaging import session_id_for
+from ..domain.remote_tool_server import RemoteToolServer
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..domain.voice_errand import SEND_TO_CHAT, SEND_TO_CHAT_REQUEST
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
+from ..domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD
+from ..domain.voice_mcp_token import voice_mcp_eligible
 from ..domain.voice_mode import VoiceMode
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
@@ -64,14 +72,19 @@ class LelikAgent(BaseAgent):
         notifications: "UserNotificationService",
         voice_profile: VoiceProviderProfile,
         native_web_search: bool = False,
+        mcp_servers: Sequence[RemoteToolServer] = (),
     ) -> None:
         """voice_profile: the user's realtime provider — which prompt profile the session
         instructions are built from, and the spec the relay runs the call with
         (VOICE_MULTI_PROVIDER_RFC §4.2).
         native_web_search: the LELIK_XAI_NATIVE_SEARCH switch. On a provider whose profile has
-        builtin_web_search, the session offers the provider's own search instead of search_web_light."""
+        builtin_web_search, the session offers the provider's own search instead of search_web_light.
+        mcp_servers: the memory and drive MCP server descriptors (no token), given when the VOICE_MCP_TOOLS knob is on
+        (LELIK_VOICE_MCP_RFC §4). Only an eligible call carries them (the plain companion call on xAI, O6/O7), and
+        such a call has no search_memory delegation (O4)."""
         super().__init__(config)
         self._native_web_search = native_web_search
+        self._mcp_servers = tuple(mcp_servers)
         self._telephony = telephony
         self._from_number = from_number
         self._status_callback_url = status_callback_url
@@ -127,38 +140,58 @@ class LelikAgent(BaseAgent):
         if native_search:
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
+        mcp_servers = self._mcp_servers_for(mode)
+        if mcp_servers:
+            # The session reads memory through the MCP server itself: one memory path, not two (O4).
+            available = [intent for intent in available if intent["name"] != Intent.SEARCH_MEMORY]
         tools = [self._build_delegate_tool_declaration(available)] if available else []
         if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
             tools.append(_send_to_chat_tool_declaration())
         session = replace(self._voice_profile.session, builtin_search=native_search)
-        return {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
+        config: Dict[str, Any] = {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
+        if mcp_servers:
+            # Descriptors only: the tokens are minted at ticket redemption and never stored (O1).
+            config[VOICE_MCP_SERVERS_FIELD] = [server.to_dict() for server in mcp_servers]
+        return config
 
     def _native_search_active(self) -> bool:
         return bool(self._native_web_search and self._voice_profile.builtin_web_search)
 
-    def permitted_intents(self) -> frozenset:
-        """The intents a live call may delegate: what session_config declares (LELIK.allowed_intents, minus
-        search_web_light when the provider searches natively) plus the errand intent of the send_to_chat tool.
-        The declaration only shapes what the model is told; this is what /voice/delegate enforces."""
+    def _mcp_servers_for(self, mode: VoiceMode) -> Tuple[RemoteToolServer, ...]:
+        """The MCP servers a call in `mode` carries: all of them for an eligible call, none otherwise."""
+        if voice_mcp_eligible(mode.value, self._voice_profile.session.provider):
+            return self._mcp_servers
+        return ()
+
+    def permitted_intents(self, mode: VoiceMode = VoiceMode.LELIK) -> frozenset:
+        """The intents a live call in `mode` may delegate: what session_config declares (LELIK.allowed_intents, minus
+        search_web_light when the provider searches natively, minus search_memory when the call carries the MCP
+        servers) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
+        this is what /voice/delegate enforces."""
         allowed = set(LELIK.allowed_intents or ()) | {Intent.SEND_TO_CHAT}
         if self._native_search_active():
             allowed.discard(Intent.SEARCH_WEB_LIGHT)
+        if self._mcp_servers_for(mode):
+            allowed.discard(Intent.SEARCH_MEMORY)
         return frozenset(allowed)
 
     async def delegate(
         self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
+        mode: VoiceMode = VoiceMode.LELIK,
     ) -> str:
         """One delegate_to_specialist call from the live session, run exactly as a text
         orchestrator's would be."""
-        return (await self.delegate_outcome(user_id, account_id, arguments, call_context)).text
+        return (await self.delegate_outcome(user_id, account_id, arguments, call_context, mode=mode)).text
 
     async def delegate_outcome(
         self, user_id: str, account_id: str, arguments: Dict[str, Any], call_context: List[Dict[str, str]],
+        mode: VoiceMode = VoiceMode.LELIK,
     ) -> VoiceDelegationOutcome:
         """`delegate`, plus whether the result is a failure: /voice/delegate keeps an answer
-        for chat only when it is a real one (a failure's text is an error string)."""
+        for chat only when it is a real one (a failure's text is an error string). `mode`: the call's mode, which
+        decides the allowlist (`permitted_intents`)."""
         intent = arguments.get("intent")
-        if not isinstance(intent, str) or intent not in self.permitted_intents():
+        if not isinstance(intent, str) or intent not in self.permitted_intents(mode):
             # Enum-like names only in the log: the argument is model output, never echoed as content.
             shown = intent[:40] if isinstance(intent, str) and intent.isidentifier() else "<invalid>"
             logger.warning(f"voice delegate refused: intent {shown!r} is outside the voice allowlist")

@@ -74,6 +74,9 @@ quiet_third_party_loggers()
 # weekly ERRORs). Quieted here, not in src/utils/logger.py, since only this raw-websockets
 # entrypoint triggers it.
 logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
+# At DEBUG the client logs every frame it sends; the session.update to xAI carries the call's voice MCP tokens
+# (LELIK_VOICE_MCP_RFC §5.4: never logged). The root logger is at DEBUG (the local debug file), so this is not inert.
+logging.getLogger("websockets.client").setLevel(logging.INFO)
 
 # Breath-pulse filler played while Lelik thinks or waits (owner pick B2, 2026-09-24).
 _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "thinking_cue.ulaw"

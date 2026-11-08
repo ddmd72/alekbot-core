@@ -387,6 +387,15 @@ verify, revoke), rules in `src/domain/voice_mcp_token.py`, key and knob in `src/
   a relay that dies leaves it to its TTL.
 - **Logs.** No token, ticket or `Authorization` header in any line; refusals log the reason only; voice lines carry
   `client=voice`; the facts tool logs counts, never the query, for a voice token.
+- **The voice consumer (slice S3).** Grok calls both resources itself, server-side, from Lelik's xAI session. With
+  `VOICE_MCP_TOOLS` on, `LelikAgent.session_config` puts two descriptors under `mcp_servers` for the plain companion
+  call on xAI (`alek_memory` at the facts URI with `get_user_context`; `alek_drive` at the drive URI with the three
+  drive reads; `src/domain/voice_mcp_servers.py`) and drops its `search_memory` delegation. The relay pairs each
+  descriptor with its token from `voice_mcp_tokens` and sends one `mcp` entry per server in `session.update`, the token
+  raw in `authorization` (xAI adds `Bearer `). xAI lists each server's tools once, at `session.update`; a refused list
+  (a 401) arrives only as `mcp_list_tools.failed`, which the relay logs as one WARNING with the server label, and the
+  call goes on without that server. Server-side, a voice call is a normal MCP request with a voice token
+  (`client=voice` on its lines).
 
 ### 5.5 No composite indexes
 

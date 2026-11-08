@@ -23,4 +23,7 @@ tokens:
     order: 20
   VOICE_TEMPERAMENT_LELIK:
     order: 50
+  VOICE_TOOL_DATA_LELIK:
+    non_overridable: true
+    order: 70
 uploaded_by: local_script

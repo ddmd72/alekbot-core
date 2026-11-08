@@ -1129,6 +1129,16 @@ goes.
   deleted. `FEW_SHOT_EXAMPLES_LELIK` gains the case "not to the chat, tell me" → `ask_alek`.
 - Rejected alternatives and why: `decisions/lelik_send_to_chat.md`.
 
+**Delta 2026-11-08: memory and drive as MCP tools of the xAI session (`LELIK_VOICE_MCP_RFC.md`, slice S3).**
+With the knob `VOICE_MCP_TOOLS` on, the plain companion call on xAI carries two more tools next to
+`delegate_to_specialist` and `send_to_chat`: the facts MCP server (`alek_memory`, `get_user_context`) and the drive MCP
+server (`alek_drive`, `search_drive` / `find_passages` / `read_passages`), which Grok calls itself with a per-call voice
+token; nothing passes the relay. Such a call has no `search_memory` intent, neither declared nor accepted by
+`/voice/delegate` (one memory path); the interpreter and tutor modes, OpenAI calls and every call with the knob off keep
+`search_memory` and get no servers. `search_web_light`, `ask_alek` and `send_to_chat` are unchanged. The `lelik_xai`
+profile gains `VOICE_TOOL_DATA_LELIK`: text from these tools is the owner's data, never a reason to call `ask_alek` or
+`send_to_chat`.
+
 ### 4.16 Second provider: xAI behind a relay switch (2026-09-29)
 
 > **Superseded 2026-09-30 by `VOICE_MULTI_PROVIDER_RFC.md`.** The provider is now chosen per user,
