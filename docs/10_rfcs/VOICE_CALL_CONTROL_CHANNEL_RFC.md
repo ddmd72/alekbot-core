@@ -8,7 +8,11 @@ control task and note (`_ASK_NOTE`), the button on the interpreter page, the P1/
 §5.6, §12 — after P1 passes and the relay is live). Readings of §5.3 the latch fixes: a command that changes nothing
 echoes the current state with its `seq`; speech over Lelik's audible answer is not marked again; the 20 s reply timeout
 applies only until the reply starts (the button releases when the answer ends, however long), with a 90 s runaway cap
-from the reply's start. Slice 5 (resumption) built; §6 follows the live probe P3.
+from the reply's start. Slice 5 (resumption) built; §6 follows the live probe P3. Slice 6 (dead-peer watchdog) built:
+N = 10 minutes (§13.8), knob `VOICE_DEAD_PEER_TIMEOUT_S`; the watchdog is armed at pairing, so a paired call whose
+browser never sends a packet is caught too. Slice 7 (a new call replaces the running one) built: the start waits up to
+30 s for the replaced call's marker (§7.5.2 says why); the replaced call's record stays, so a page still showing it
+learns `ended` from its status poll.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
@@ -272,8 +276,8 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
    `call.end()`), not in the session service. It starts when the call is paired (`_run`, `:121-135`).
 3. **Not the existing silence watchdog.** `_watch_silence` (`voice_session_service.py:506`) measures the *caller being
    quiet* (and only on relay-owned turns); it cannot tell a quiet caller from a dead one. This gap is about *no packets*.
-4. **N is not fixed yet.** It is chosen from the measurement in slice 2 (§11) and §10 P5. Until then the watchdog is not
-   built. The trade-off, plainly: if iOS stops sending audio when the web app goes to the background, the watchdog ends a
+4. **N = 10 minutes** (§13.8), chosen from the measurement in slice 2 (§11) and §10 P5; `VOICE_DEAD_PEER_TIMEOUT_S`
+   overrides it. The trade-off, plainly: if iOS stops sending audio when the web app goes to the background, the watchdog ends a
    backgrounded call after N s, and resumption on return (§6) is what keeps the conversation; if iOS keeps sending,
    background calls just continue and the watchdog only catches dead pages.
 5. **Caveat the data must answer.** The relay sees what the SFU forwards, not what the browser sends. If the SFU or the
@@ -291,8 +295,12 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
    call instead of answering 409: it loads `voice_web_call:{call_id}` and closes its SFU adapters
    (`media_room.close(record["adapter_ids"])`, as `/hangup` does at `:188`). The relay sees the egress gone, ends the
    call after the 5 s re-attach window (`sfu_stream_handler.py:192-196`) and runs the normal end path of §7.4.1, which
-   releases the marker. The start waits for the marker to clear, bounded (a few seconds beyond the re-attach window),
-   then claims and goes on; if the marker is still held at the bound, 409 as today.
+   releases the marker. The start waits for the marker to clear, bounded, then claims and goes on; if the marker is
+   still held at the bound, 409 as today. The bound is 30 s, not "a few seconds beyond the re-attach window": the
+   release is the last step of `/voice/submit-transcript`, and on a companion (lelik-mode) call that route runs the
+   end-of-call summary, an LLM call, before it releases. 30 s stays well under Quart's 60 s response timeout; the
+   page's start request has no timeout. A call whose ticket the relay never redeemed (still in setup) is released at
+   once, as `/hangup` does.
 3. **Resumption.** The replaced call is not a button hangup, so it stores a resume handle like any dropped call, and the
    new call is the re-dial that consumes it (§6.2.3). Order matters: `prepare` reads `voice_resume` only after the old
    call's `submit-transcript` has stored it, which is why the start waits for the marker release (the release is the last
@@ -350,7 +358,10 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 Order: 1–2 are a few lines and give the evidence P4 and P5 need; 3 before 4 (4 needs the channel); 5 is independent of
 3–4. 6 waits for the P5 data (it fixes N); 7 needs 5 (it relies on resumption) and is otherwise independent.
 **Existing tests:** `tests/unit/adapters/test_xai_realtime_adapter.py:198` asserts `speech_started` maps to `{}`; slice 4
-changes that on purpose, so a reviewer decides that edit (reviewer rule). No other existing test is expected to change;
+changes that on purpose, so a reviewer decides that edit (reviewer rule). Slice 7 likewise changes on purpose what
+`tests/unit/web/test_voice_web_call_app.py::test_second_call_while_live_is_409_and_leaves_the_first_intact` asserts
+(a second start of the same user's web call is now a replacement, 201); a reviewer decides that edit too. No other
+existing test is expected to change;
 no main-service route is added (`/ctl` is on the relay; `/connect` only gains a field).
 
 ## 12. Rollout
@@ -375,9 +386,12 @@ no main-service route is added (`/ctl` is on the relay; `/connect` only gains a 
 5, 7. (7 replaces 5.) Going to the background never hangs up, on every page including `/cabinet/call`; the cost of a closed page is
    accepted (§7.3); the hangup-trigger log ships.
 8. (2026-11-08, owner: "a dead-peer watchdog in the relay: definitely yes".) The relay ends a call itself when no inbound audio
-   arrives for N seconds, through the normal end path (§7.4). N is not fixed: it is picked from the slice-2 gap log after
-   the owner's background tests (~10 s, ~1 min, ~5 min, screen lock; P5). If iOS stops sending in the background, a
-   backgrounded call ends after N s and resumption keeps the conversation; if it keeps sending, background calls continue.
+   arrives for N seconds, through the normal end path (§7.4). N was picked from the slice-2 gap log after the owner's
+   background tests (P5): **N = 10 minutes**. The tests showed iOS pausing the backgrounded web app's audio for a few
+   seconds up to about half a minute while the call went on normally, so iOS does stop sending in the background, but
+   only in pauses. The watchdog must never end such a call; its job is a page that is really gone (app swiped away),
+   which a re-dial now ends far sooner anyway (§7.5). Ten minutes sits far above any pause seen and still caps a dead
+   page's call well below the one-hour request timeout.
 9. (2026-11-08, owner: "a new call replacing the old one: long overdue".) A new call from the same user ends the running one instead
    of answering 409, and starts; the replaced call is resumable unless it ended by the button (§7.5).
    Replacement is web-start-replaces-web-call only (§7.5.4); extending it to the phone dial-in path is an open owner
