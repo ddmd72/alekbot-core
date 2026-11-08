@@ -254,6 +254,17 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
         "Home Screen install: iOS fetches it without the session cookie",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call/icon-<int:size>.png"):
         "Home Screen icon, fetched without the cookie; sizes are an allowlist (test_voice_web_call_install)",
+    # reviewer edit, Lelik voice modes v1: each mode page is the static call page with a fixed mode constant injected,
+    # and each mode manifest is the static manifest with a fixed name/start_url; the call API stays gated.
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/interpreter"): "static call page (interpreter mode); the call API is gated",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/tutor"): "static call page (tutor mode); the call API is gated",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/modes"): "static mode picker page; the call API is gated",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/interpreter/manifest.webmanifest"):
+        "Home Screen install: iOS fetches it without the session cookie",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/tutor/manifest.webmanifest"):
+        "Home Screen install: iOS fetches it without the session cookie",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/modes/manifest.webmanifest"):
+        "Home Screen install: iOS fetches it without the session cookie",
     ("create_oauth_blueprint", "GET", "/auth/login"): "starts sign-in: only redirects to the provider",
     ("create_oauth_blueprint", "POST", "/auth/logout"): "only clears the caller's own cookies",
     ("create_indexer_worker_blueprint", "GET", "/health"): "health check, no data",
