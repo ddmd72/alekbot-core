@@ -386,42 +386,44 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
         show_completed: bool,
         list_name: Optional[str] = None,
     ) -> List[Task]:
-        """Fetch tasks for a single list with pagination."""
-        if list_name is None:
-            # Resolve list name if not provided
-            try:
-                lst_data = await self._get(user_id, f"/me/todo/lists/{list_id}")
-                list_name = lst_data.get("displayName", "")
-            except Exception:
-                list_name = ""
+        """Fetch tasks for a single list with pagination.
 
+        When the list name is not given it is read concurrently with the first page: a lookup costs one Graph round
+        trip, not two (a task lookup must answer in seconds)."""
         url = f"/me/todo/lists/{list_id}/tasks"
         params: Dict[str, str] = {}
         if not show_completed:
             params["$filter"] = "status ne 'completed'"
+        first_path = url + (f"?{self._build_params(params)}" if params else "")
+
+        async def _list_name() -> str:
+            try:
+                lst_data = await self._get(user_id, f"/me/todo/lists/{list_id}")
+                return str(lst_data.get("displayName", ""))
+            except Exception as exc:
+                logger.warning(f"⚠️ MS: could not read the name of list {list_id[:8]}: {exc}")
+                return ""
+
+        if list_name is None:
+            list_name, data = await asyncio.gather(_list_name(), self._get(user_id, first_path))
+        else:
+            data = await self._get(user_id, first_path)
 
         tasks: List[Task] = []
-        next_link: Optional[str] = None
-
         while True:
-            if next_link:
-                # next_link is a full URL from Graph API
-                headers = await self._get_headers(user_id)
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(next_link, headers=headers) as resp:
-                        if not resp.ok:
-                            break
-                        data = await resp.json()
-            else:
-                path = url + (f"?{self._build_params(params)}" if params else "")
-                data = await self._get(user_id, path)
-
             for item in data.get("value", []):
                 tasks.append(self._task_from_ms(item, list_id, list_name, user_id))
 
-            next_link = data.get("@odata.nextLink")
+            next_link: Optional[str] = data.get("@odata.nextLink")
             if not next_link:
                 break
+            # next_link is a full URL from Graph API
+            headers = await self._get_headers(user_id)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(next_link, headers=headers) as resp:
+                    if not resp.ok:
+                        break
+                    data = await resp.json()
 
         return tasks
 
