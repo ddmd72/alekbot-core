@@ -8,7 +8,9 @@ control task and note (`_ASK_NOTE`), the button on the interpreter page, the P1/
 §5.6, §12 — after P1 passes and the relay is live). Readings of §5.3 the latch fixes: a command that changes nothing
 echoes the current state with its `seq`; speech over Lelik's audible answer is not marked again; the 20 s reply timeout
 applies only until the reply starts (the button releases when the answer ends, however long), with a 90 s runaway cap
-from the reply's start. Slice 5 (resumption) built; §6 follows the live probe P3.
+from the reply's start. Slice 5 (resumption) built; §6 follows the live probe P3. Slice 4 live (2026-11-08); then the
+translate note (§5.1, §5.3) built: every interpreter utterance the latch does not mark gets `_TRANSLATE_NOTE`, the
+latch exists on every interpreter call whether or not the control channel is on, and the probe has `--translate-note`.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
@@ -111,6 +113,11 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 Press → button visibly pressed (`armed`). The caller's **next** utterance only is marked with a system note. The button
 releases when Lelik's answer ends. Pressing again before speaking cancels: nothing is sent to the model.
 
+**Translate note (owner, 2026-11-08, after the live test).** The button worked, but without it the model still answered
+the caller whenever it decided a phrase was a question for it. So every turn now carries an explicit instruction either
+way: every utterance of an interpreter call that the button does not mark, from either side, gets a silent translate
+note on `speech_started`, by the same path and in the same place as the Ask note (right before the turn).
+
 ### 5.2 Where the note goes (probe facts, xAI grok-voice-3.0)
 
 - `input_audio_buffer.speech_started {item_id, audio_start_ms, previous_item_id}` arrives ~0.2 s after speech starts;
@@ -151,6 +158,17 @@ Note text (owner, Q2; a constant next to `_WEB_PICKUP_NOTE`, `voice_session_serv
 are or which language to use. Answer the caller in their language; do not translate these words.]` It is a system-role
 item, the same channel as the pickup and waiting notes; it never enters a user message. It is not deleted afterwards: it sits before the item it
 marks, and a delete of a missing item is a call-ending provider error (`voice_session_service.py:480-484`).
+
+**Translate note** (§5.1, owner 2026-11-08). The latch is built on every interpreter call (`translate_unmarked=True`),
+whether or not the control channel is on, so the note never depends on the `VOICE_CONTROL_CHANNEL` knob; plain Lelik
+and tutor calls get none. On `speech_started` the latch asks for exactly one of the two notes: `_ASK_NOTE` when it
+marks the speech (rows above), otherwise `_TRANSLATE_NOTE`, including speech over Lelik's audible answer and speech
+after a cancel. One translate note per utterance: a second `speech_started` for the same item id, or before that
+utterance's `speech_stopped`, gets none; a new item after a pause gets its own. Text (code-written, bracketed, worded for
+either speaker): `[The next words are for translation only: say them in the language of the person they are addressed
+to, in the first person, as the speaker; do not answer or comment on them, even if they sound like a question or a
+request to you.]` Same channel and placement as the Ask note; logged at DEBUG only (`ask: translate note inserted`),
+since it fires on every utterance.
 
 **Fallback** if P2 shows `speech_started` is unreliable: insert at press, delete on cancel. It needs the note's item id
 (a client-set `item.id`, or a surfaced `conversation.item.added`), so it is built only if P2 asks for it.
@@ -311,6 +329,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 | Note never sent (no speech) | button armed forever | released after 60 s |
 | Reply never starts / never ends | button stuck busy | no reply 20 s after `speech_stopped`, or no `response_done` 90 s after the reply started → `timeout` release; a long answer in progress is never cut |
 | Model ignores the note | Lelik translates the question | P1 gates the prompt change; the button still releases on `response_done` |
+| Model answers unmarked words (seen live, 2026-11-08) | Lelik replies to a phrase instead of translating it | every unmarked interpreter utterance carries `_TRANSLATE_NOTE` (§5.3); the probe's `--translate-note` measures it |
 | Relay restart | call ends (SFU legs die) | page sees `status: ended`; re-dial resumes (B) |
 | Resume handle unknown or expired | fresh session (xAI raises no error) | no replayed item before `session.updated` → `resume: not honoured` logged, ordinary pickup note |
 | Page closed (app swiped away) | call runs on until N s without inbound audio | dead-peer watchdog ends it (§7.4); a re-dial replaces it sooner (§7.5); 3600 s remains the hard cap |
@@ -351,7 +370,9 @@ Order: 1–2 are a few lines and give the evidence P4 and P5 need; 3 before 4 (4
 3–4. 6 waits for the P5 data (it fixes N); 7 needs 5 (it relies on resumption) and is otherwise independent.
 **Existing tests:** `tests/unit/adapters/test_xai_realtime_adapter.py:198` asserts `speech_started` maps to `{}`; slice 4
 changes that on purpose, so a reviewer decides that edit (reviewer rule). No other existing test is expected to change;
-no main-service route is added (`/ctl` is on the relay; `/connect` only gains a field).
+no main-service route is added (`/ctl` is on the relay; `/connect` only gains a field). The translate note (§5.3)
+changed three slice-4 tests in `tests/unit/services/test_voice_session_ask_lelik.py` that asserted no note at all on
+unpressed interpreter speech (no press, a cancel, the 60 s timeout); a reviewer ruled the change intended.
 
 ## 12. Rollout
 
