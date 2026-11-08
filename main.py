@@ -29,6 +29,7 @@ from src.composition.drive_connector_tools import build_drive_connector_tools_fr
 from src.composition.drive_mcp_setup import build_drive_mcp_app
 from src.composition.drive_link_setup import build_drive_link_service
 from src.composition.voice_mcp_setup import build_voice_mcp_tokens, voice_mcp_tools_enabled
+from src.composition.voice_resume_setup import build_voice_resume_service
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.domain.mcp_resource import DRIVE_PATH
 
@@ -398,8 +399,6 @@ async def main():
                         response = await client.get(_relay_http_url)
                     return response.status_code
 
-                from src.services.voice_resume_service import VoiceResumeService
-
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
@@ -417,7 +416,7 @@ async def main():
                         digest_key=app.digest_key,
                         voice_mcp_tokens=voice_mcp_tokens,
                         voice_mcp_minting=voice_mcp_tools_enabled(),
-                        resume_service=VoiceResumeService(voice_ephemeral_store),
+                        resume_service=build_voice_resume_service(store=voice_ephemeral_store),
                     )
                 )
                 logger.info(
