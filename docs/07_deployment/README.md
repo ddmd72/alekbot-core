@@ -157,6 +157,10 @@ relay; only the main service needs credentials, to mint SFU sessions.
 5. One optional main-service knob, read with `os.getenv` per request: `VOICE_CONTROL_CHANNEL` (`on`/`off`, default
    `off`), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). Off,
    `/connect` hands out no `control` and the page opens no socket; the relay needs no knob.
+6. One optional relay knob for the dead-peer watchdog, read with `os.getenv` when the SFU handler is built:
+   `VOICE_DEAD_PEER_TIMEOUT_S` (seconds, default `600`). A web call with no inbound audio packet for that long ends
+   itself through the normal end path (`VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4); a value that is not a positive number
+   keeps the default. Lowering it far risks ending backgrounded calls: iOS pauses the web app's audio in the background.
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.

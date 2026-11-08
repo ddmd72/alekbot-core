@@ -19,6 +19,11 @@ class InboundGapTracker:
     def floor_s(self) -> float:
         return self._floor_s
 
+    @property
+    def last_packet_at(self) -> Optional[float]:
+        """When the last packet arrived; None before the first one (the dead-peer watchdog's reference, §7.4)."""
+        return self._last
+
     def packet(self, now: float) -> Optional[float]:
         """Record a packet. Returns the gap duration in seconds when this packet ends a gap that
         reached the floor, else None."""

@@ -35,7 +35,12 @@ Environment variables (static — set at relay deploy time, Task 14):
                            Optional knob (default "on"); "off" disables the
                            owner's-first-turn opening on web calls only, same
                            text as the phone path (_CALLER_OPENING).
-  PORT                    Cloud Run injects this; defaults to 8080 locally.
+  VOICE_DEAD_PEER_TIMEOUT_S
+                           Optional knob (default 600): seconds without an inbound
+                           packet after which a web call ends itself
+                           (VOICE_CALL_CONTROL_CHANNEL_RFC §7.4). Read here
+                           (_dead_peer_timeout_s) and passed to SfuStreamHandler.
+  PORT                  Cloud Run injects this; defaults to 8080 locally.
 
 This is wiring, like `job_main.py` — no dedicated unit test file (confirmed
 precedent: `job_main.py` has none either). Verified by manual read-through +
@@ -60,7 +65,7 @@ from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.handlers.call_control_handler import CallControlHandler
 from src.handlers.media_stream_handler import MediaStreamHandler
-from src.handlers.sfu_stream_handler import SfuStreamHandler
+from src.handlers.sfu_stream_handler import DEAD_PEER_TIMEOUT_S, SfuStreamHandler
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.services.call_control_hub import CallControlHub
 from src.services.voice_session_service import VoiceSessionService
@@ -86,6 +91,19 @@ _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "think
 # sentence" because the greeting's first seconds cannot be interrupted (greeting_guard_s). The language
 # reminder matters: this English item is the first input, and LANG_MIRROR would otherwise mirror it.
 _CALLER_OPENING = "Welcome the user in one short sentence. Do not forget to follow language settings"
+
+
+def _dead_peer_timeout_s() -> float:
+    """VOICE_DEAD_PEER_TIMEOUT_S, an optional knob read here, at the relay's entry point (root CLAUDE.md: optional knobs
+    are `os.getenv`, never settings; REQ-ARCH-01: never inside a core layer). An unparsable or non-positive value keeps
+    the default rather than disabling the watchdog."""
+    raw = os.getenv("VOICE_DEAD_PEER_TIMEOUT_S", "").strip()
+    try:
+        value = float(raw) if raw else DEAD_PEER_TIMEOUT_S
+    except ValueError:
+        logger.warning("relay: VOICE_DEAD_PEER_TIMEOUT_S is not a number, using the default")
+        return DEAD_PEER_TIMEOUT_S
+    return value if value > 0 else DEAD_PEER_TIMEOUT_S
 
 
 def _load_thinking_cue() -> bytes:
@@ -193,7 +211,7 @@ async def main() -> None:
         # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
         control_hub=control_hub,
     )
-    sfu_handler = SfuStreamHandler(session_service=web_session_service)
+    sfu_handler = SfuStreamHandler(session_service=web_session_service, dead_peer_timeout_s=_dead_peer_timeout_s())
     control_handler = CallControlHandler(control_hub)
 
     async def route(connection):
