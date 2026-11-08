@@ -203,6 +203,20 @@ def test_with_the_service_account_set_build_and_deploy_carry_the_light_values(tm
         assert token in calls, token
 
 
+def test_the_render_image_is_a_cache_source_for_the_render_stage_the_light_build_passes(tmp_path):
+    # The classic builder builds `render` on the way to `--target light`; without the render image as a cache source that
+    # stage was rebuilt on every deploy.
+    render = "gcr.io/proj/alek-bot-sandbox-render-dev:latest"
+    light = "gcr.io/proj/alek-bot-sandbox-light-dev:latest"
+    proc, calls = _run("pull", tmp_path, {"SANDBOX_LIGHT_SA": _SA})
+    assert proc.returncode == 0
+    assert calls.splitlines() == [f"docker pull {light}", f"docker pull {render}"]
+    (tmp_path / "calls.log").unlink()
+    proc, calls = _run("build", tmp_path, {"SANDBOX_LIGHT_SA": _SA})
+    assert proc.returncode == 0
+    assert f"--cache-from {render} --cache-from {light}" in calls
+
+
 def test_unknown_mode_fails(tmp_path):
     proc, _ = _run("explode", tmp_path, {"SANDBOX_LIGHT_SA": _SA})
     assert proc.returncode == 2
