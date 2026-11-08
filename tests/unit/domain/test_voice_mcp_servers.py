@@ -3,6 +3,7 @@
 Descriptors carry no token; the relay offers a server only when the call is eligible (plain companion call on xAI) and
 the session config holds that server's token.
 """
+import base64
 import json
 
 import pytest
@@ -17,7 +18,17 @@ from src.domain.voice_mcp_servers import (
 
 XAI = {"provider": "xai", "turn_ownership": "provider", "voice": "castor", "reasoning_effort": "high"}
 OPENAI = {"provider": "openai", "turn_ownership": "relay", "voice": "verse", "reasoning_effort": "medium"}
-TOKENS = {"facts": "eyJh.facts-token.sig", "drive": "eyJh.drive-token.sig"}
+
+
+def _token(aud: str, sig: str) -> str:
+    """Unsigned and JWT-shaped: the relay reads the audience without the key, to bind each token to its server."""
+    payload = base64.urlsafe_b64encode(json.dumps({"aud": aud}).encode()).decode().rstrip("=")
+    return f"eyJh.{payload}.{sig}"
+
+
+# Each token carries the audience of its own server (`voice:` + the canonical URL of the descriptors below).
+TOKENS = {"facts": _token("voice:https://mcp.example.test/mcp", "facts-sig"),
+          "drive": _token("voice:https://mcp.example.test/drive-mcp", "drive-sig")}
 
 
 def _config(**over) -> dict:
