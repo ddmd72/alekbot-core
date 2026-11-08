@@ -8,7 +8,12 @@ ticket-carrying `/sfu/*` URLs this blueprint hands it.
 The page reaches the relay directly only on the control channel (VOICE_CALL_CONTROL_CHANNEL_RFC §4.1): a per-call
 token minted at start, its SHA-256 on the ticket record, the token itself encrypted on the call record and handed out
 by `/connect` as `control: {url, token}` while the `VOICE_CONTROL_CHANNEL` knob is on. The token is never logged.
+
+A start that meets the user's own running web call replaces it (RFC §7.5): that call's media legs are closed as
+`/hangup` closes them, but without the button marker, so the relay's end-of-call report keeps its resume handle; the
+start waits for the one-call marker to be released and then claims it, so the new call's session config resumes.
 """
+import asyncio
 import json
 import os
 import secrets
@@ -34,6 +39,14 @@ _MODE_PAGES = {VoiceMode.INTERPRETER: "Interpreter", VoiceMode.TUTOR: "Spanish t
 # Closed set of /hangup triggers the page may report (VOICE_CALL_CONTROL_CHANNEL_RFC §7.1).
 _HANGUP_TRIGGERS = frozenset({"button", "status_ended", "start_failed", "superseded"})
 
+# How long a replacing start waits for the running call's one-call marker to be released (RFC §7.5.2). The release is
+# the last step of the relay's end-of-call report: the SFU re-attach window (5 s) passes first, then the relay's
+# teardown and the report itself, and on a companion (lelik-mode) call the report runs the end-of-call summary, an LLM
+# call, before it releases. Thirty seconds covers that with room and stays well under Quart's 60 s response timeout;
+# the page's start request has no timeout of its own. Past the bound the start answers 409 as before.
+_REPLACE_WAIT_S = 30.0
+_REPLACE_POLL_S = 0.25
+
 
 def _control_channel_on() -> bool:
     """Kill switch of the control channel (RFC §9, §12): an optional knob, read per request. Off (the default) means
@@ -43,7 +56,8 @@ def _control_channel_on() -> bool:
 
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
-                                    digest_key: bytes) -> Blueprint:
+                                    digest_key: bytes, replace_wait_s: float = _REPLACE_WAIT_S,
+                                    replace_poll_s: float = _REPLACE_POLL_S) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(session_service)
 
@@ -59,6 +73,44 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
     def _control_aad(call_id: str) -> str:
         # Its own AAD: the two ciphertexts of one record cannot stand in for each other.
         return f"voice/voice_web_call:{call_id}/control"
+
+    async def _close_media(record: dict, ticket: str) -> None:
+        """End a call's media: the relay sees its egress gone and runs the normal end path. Shared by `/hangup` and
+        the replacing start; neither the button marker nor the record is touched here."""
+        await media_room.close(record.get("adapter_ids", []))
+        # Ticket still unredeemed = the relay never started: nothing will release the marker.
+        if await ephemeral_store.get(ticket_key(digest_key, ticket)) is not None:
+            await call_setup.release(ticket, g.user_id)
+
+    async def _replace_running_call(call_id: str) -> bool:
+        """The claim for `call_id` was refused. When the holder is this user's own web call, end it and claim once its
+        marker is released (RFC §7.5); True when claimed. A phone call (its marker names no web call) is never
+        replaced. The marker is per user, so the holder is always this user's call.
+
+        The replaced call's record stays: a page still showing it sees `ended` on its status poll and hangs up with
+        `status_ended`, which writes no button marker either."""
+        holder = await call_setup.holder(g.user_id)
+        if holder is None:  # ended between the refused claim and this read
+            return await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
+        old_call_id = holder.get("call_id")
+        record = await _owned(old_call_id) if isinstance(old_call_id, str) and old_call_id else None
+        if record is None:
+            return False
+        logger.info(f"web call: replacing the running call {old_call_id} of {g.user_id} with {call_id}")
+        try:
+            await _close_media(record, await _ticket_of(old_call_id, record))
+        except Exception:
+            logger.error(f"web call {old_call_id}: closing the replaced call failed", exc_info=True)
+            return False
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + replace_wait_s
+        while await call_setup.holder(g.user_id) is not None:
+            if loop.time() >= deadline:
+                logger.warning(f"web call {old_call_id}: still running {replace_wait_s:.0f}s after it was replaced, "
+                               f"the new call is refused")
+                return False
+            await asyncio.sleep(replace_poll_s)
+        return await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -134,7 +186,8 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # ticket at once, so the digest must already be on the ticket record (RFC §4.1). Minted whatever the knob
         # says, so turning the knob on or off acts at /connect alone.
         control_token = secrets.token_urlsafe(32)
-        if not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S):
+        if (not await call_setup.claim(g.user_id, {"call_id": call_id}, ttl_s=_TICKET_TTL_S)
+                and not await _replace_running_call(call_id)):
             return jsonify({"error": "a call is already in progress"}), 409
         try:
             await call_setup.prepare(ticket, g.user_id, g.account_id, "web", mode,
@@ -229,10 +282,7 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             # Written before the legs close: the relay's end-of-call report follows and must find it. A call ended by
             # the button is never resumed (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2).
             await ephemeral_store.set(button_end_key(digest_key, ticket), {"button": True}, ttl_s=BUTTON_END_TTL_S)
-        await media_room.close(record.get("adapter_ids", []))
-        # Ticket still unredeemed = the relay never started: nothing will release the marker.
-        if await ephemeral_store.get(ticket_key(digest_key, ticket)) is not None:
-            await call_setup.release(ticket, g.user_id)
+        await _close_media(record, ticket)
         # The record goes last: a connect still attaching re-reads it and cleans up after itself.
         await ephemeral_store.delete(f"voice_web_call:{call_id}")
         return jsonify({"ok": True})
