@@ -4,10 +4,13 @@ import json
 import random
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Sequence, Set
 
 from src.domain.llm import build_persona_anchor
+from src.domain.log_redaction import redact_for_log
+from src.domain.remote_tool_server import RemoteToolServer
 from src.domain.request_context import RequestContext
+from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, session_servers
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
@@ -199,13 +202,17 @@ class VoiceSessionService:
         """`playback` is fed by the transport (bytes sent, marks echoed back); this
         loop only reads it. `send_cue_audio` plays filler that playback never counts."""
         config = await self._control_plane.fetch_session_config(ticket)
+        # The call's remote MCP servers with their tokens (LELIK_VOICE_MCP_RFC §4): paired here, then the tokens leave
+        # the config, so the only holder for the call's life is the session object (the call state never has one).
+        mcp_servers = session_servers(config)
+        config = {key: value for key, value in config.items() if key != VOICE_MCP_TOKENS_FIELD}
         spec = VoiceSessionSpec.from_dict(config["voice"]) if config.get("voice") else LEGACY_VOICE_SESSION
         relay_owned = spec.turn_ownership is TurnOwnership.RELAY
         state = _CallState(playback=playback, ticket=ticket, turn_ownership=spec.turn_ownership,
                            persona_anchor=build_persona_anchor(config["instructions"]) if relay_owned else None)
         async with RequestContext(user_id=config["user_id"], account_id=config["account_id"]):
             await self._run_call(ticket, config, spec, inbound_audio, send_outbound_audio, clear_outbound_audio,
-                                 state, send_cue_audio)
+                                 state, send_cue_audio, mcp_servers=mcp_servers)
 
     async def _run_call(
         self,
@@ -217,6 +224,8 @@ class VoiceSessionService:
         clear_outbound_audio: Callable[[], Awaitable[None]],
         state: _CallState,
         send_cue_audio: Optional[Callable[[AudioFrame], Awaitable[None]]] = None,
+        *,
+        mcp_servers: Sequence[RemoteToolServer] = (),
     ) -> None:
         session = self._session_factory(spec)
         buffer = VoiceCallBuffer(call_id=ticket)
@@ -236,12 +245,20 @@ class VoiceSessionService:
             # and submit_transcript() below - otherwise the relay's one-call-per-user
             # marker (RFC §3) only releases via TTL instead of immediately, and the
             # failure leaves no record on the main-service side.
+            # Labels only: a server's URL and token are never logged (LELIK_VOICE_MCP_RFC §5.4).
+            if mcp_servers:
+                logger.info(f"voice call {fingerprint(ticket)}: remote tool servers offered: "
+                            f"{', '.join(server.label for server in mcp_servers)}")
+            elif config.get(VOICE_MCP_SERVERS_FIELD):
+                logger.info(f"voice call {fingerprint(ticket)}: remote tool servers not offered (no call tokens)")
             try:
                 await session.open(instructions=config["instructions"],
                                    reasoning_effort=self._reasoning_effort or spec.reasoning_effort,
-                                   tools=config.get("tools", []))
+                                   tools=config.get("tools", []), mcp_servers=mcp_servers)
             except Exception as exc:
-                logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: {exc}")
+                # Type and a redacted message: an exception text may carry a URL, a header or a token (§5.4).
+                logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: "
+                             f"{type(exc).__name__}: {redact_for_log(exc)}")
                 raise
 
             # Inbound forwarding and outbound event consumption are two independent
@@ -326,7 +343,8 @@ class VoiceSessionService:
             # failures; this only catches an unexpected bug in the loop
             # itself, and still needs to be visible in logs.
             if isinstance(result, Exception):
-                logger.error(f"voice call {fingerprint(ticket)}: session loop crashed: {result}")
+                logger.error(f"voice call {fingerprint(ticket)}: session loop crashed: "
+                             f"{type(result).__name__}: {redact_for_log(result)}")
 
     async def _consume_events(
         self,
@@ -456,9 +474,17 @@ class VoiceSessionService:
                 # reply voiced a second "it's on its way". A long wait still gets the watchdog's
                 # _WAITING_NOTE after _silence_timeout_s.
                 await self._flush_answers(session, state)
+            elif event.type == "remote_tools_failed":
+                # The provider could not list one server's tools (a refused token among others): the call goes on
+                # without them. The label only, and the provider's text with any URL or token stripped (§5.4).
+                logger.warning(f"voice call {fingerprint(ticket)}: remote tool server {event.payload.get('label')} "
+                               f"unavailable, the call goes on without it: "
+                               f"{redact_for_log(event.payload.get('reason', ''))}")
             elif event.type == "error":
-                logger.error(f"voice call {fingerprint(ticket)}: provider error {event.payload.get('message')}")
-                await self._alert_sink.post(f"Voice call {fingerprint(ticket)} provider error: {event.payload.get('message')}")
+                # The provider may echo the session payload: redacted again here, whatever the adapter did.
+                message = redact_for_log(event.payload.get("message"))
+                logger.error(f"voice call {fingerprint(ticket)}: provider error {message}")
+                await self._alert_sink.post(f"Voice call {fingerprint(ticket)} provider error: {message}")
                 return
 
     async def _barge_in(
