@@ -62,7 +62,8 @@ from src.domain.secret_digest import fingerprint
 from src.domain.voice_mode import VOICE_MODES_WITH_CALL_SUMMARY, VoiceMode
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.domain.voice_mcp_token import voice_mcp_eligible
-from src.domain.voice_ticket_keys import abandoned_key, amd_key, call_kind_key, result_key, ticket_key
+from src.domain.voice_resume import RESUME_CONFIG_FIELD, resume_applies
+from src.domain.voice_ticket_keys import abandoned_key, amd_key, button_end_key, call_kind_key, result_key, ticket_key
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -95,6 +96,7 @@ def _forget_delegation(task: asyncio.Task) -> None:
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
     from src.services.voice_mcp_token_service import VoiceMcpTokenService
+    from src.services.voice_resume_service import VoiceResumeService
 
 
 def create_voice_control_plane_blueprint(
@@ -112,6 +114,7 @@ def create_voice_control_plane_blueprint(
     digest_key: bytes,
     voice_mcp_tokens: Optional["VoiceMcpTokenService"] = None,
     voice_mcp_minting: bool = False,
+    resume_service: Optional["VoiceResumeService"] = None,
 ) -> Blueprint:
     """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
     relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
@@ -120,7 +123,11 @@ def create_voice_control_plane_blueprint(
     `voice_mcp_tokens` (LELIK_VOICE_MCP_RFC §5): the voice MCP token kind. With `voice_mcp_minting`
     (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's two tokens
     on xAI and returns them under `VOICE_MCP_TOKENS_FIELD`; `/voice/submit-transcript` deletes the
-    call's live-call record whatever the knob, so every token of the call stops verifying."""
+    call's live-call record whatever the knob, so every token of the call stops verifying.
+
+    `resume_service` (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2): without it no call resumes. `/voice/submit-transcript` keeps
+    the handle a finished call reports (never after a button hangup); `/voice/session-config` hands a matching handle
+    to the next call of the same user, mode and provider and consumes it."""
     bp = Blueprint("voice_control_plane", __name__)
 
     async def _voice_mcp_tokens_for(ticket: str, config: dict) -> Optional[dict]:
@@ -138,6 +145,34 @@ def create_voice_control_plane_blueprint(
                          f"{type(exc).__name__}")
             raise
         return tokens.to_wire() if tokens is not None else None
+
+    async def _resume_handle_for(config: dict) -> Optional[str]:
+        mode, provider = config.get("mode"), (config.get("voice") or {}).get("provider")
+        if resume_service is None or not resume_applies(mode, provider):
+            return None
+        try:
+            return await resume_service.take(config["user_id"], mode, provider)
+        except Exception:
+            logger.error(f"voice session-config: reading the resume record failed for {config.get('user_id')}, "
+                         f"call opens fresh", exc_info=True)
+            return None
+
+    async def _keep_resume_handle(call_id: str, user_id: str, call_mode: VoiceMode, mode_known: bool, body: dict) -> None:
+        """Keep the handle of an ended call for a re-dial, unless the caller hung up with the button."""
+        handle = body.get("resume_handle")
+        if resume_service is None or not isinstance(handle, str) or not handle:
+            return
+        provider = body.get("resume_provider")
+        try:
+            if not mode_known or not resume_applies(call_mode.value, provider):
+                return
+            if await ephemeral_store.get(button_end_key(digest_key, call_id)) is not None:
+                logger.info(f"voice call {fingerprint(call_id)}: ended by the button, no resume handle kept")
+                return
+            await resume_service.keep(user_id, handle, call_mode.value, provider)
+            logger.info(f"voice call {fingerprint(call_id)}: resume handle kept")
+        except Exception:
+            logger.error(f"voice call {fingerprint(call_id)}: keeping the resume handle failed", exc_info=True)
 
     async def _post_claimed(ticket: str, call_id: str) -> None:
         # The only claim: two racing callers cannot both get the record back.
@@ -202,6 +237,11 @@ def create_voice_control_plane_blueprint(
         mcp_tokens = await _voice_mcp_tokens_for(ticket, config)
         if mcp_tokens is not None:
             config = {**config, VOICE_MCP_TOKENS_FIELD: mcp_tokens}
+        # Read here, at redemption (not at prepare): the stored ticket never holds a handle, and a ticket that is never
+        # redeemed does not burn it. A failure only means a fresh call.
+        resume_handle = await _resume_handle_for(config)
+        if resume_handle is not None:
+            config = {**config, RESUME_CONFIG_FIELD: {"handle": resume_handle}}
         return jsonify(config), 200
 
     @bp.route("/voice/submit-transcript", methods=["POST"])
@@ -244,13 +284,17 @@ def create_voice_control_plane_blueprint(
                 # RFC §4.6: a voicemail greeting must never become a memory.
                 logger.info(f"voice call {fingerprint(call_id)}: voicemail ({answered_by}), summary skipped")
             call_mode = VoiceMode.LELIK
+            mode_known = False
             try:
                 # The relay's call_id is the ticket, so the record `prepare` wrote is reachable from here.
                 # Missing, expired or unknown = the companion call (summary as before).
                 kind_record = await ephemeral_store.get(call_kind_key(digest_key, call_id))
                 call_mode = VoiceMode((kind_record or {}).get("mode", VoiceMode.LELIK.value))
+                mode_known = kind_record is not None
             except Exception:
                 logger.warning(f"voice call {fingerprint(call_id)}: call mode lookup failed, treated as lelik", exc_info=True)
+            if not voicemail:
+                await _keep_resume_handle(call_id, user_id, call_mode, mode_known, body)
             summarised = call_mode in VOICE_MODES_WITH_CALL_SUMMARY
             if not summarised:
                 logger.info(f"[Voice] call summary skipped: mode={call_mode.value}")
