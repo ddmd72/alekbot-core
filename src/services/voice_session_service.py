@@ -970,8 +970,11 @@ class VoiceSessionService:
             state.answers_in_flight -= 1
 
     async def _inject_answer(self, session: RealtimeSessionPort, state: _CallState, answer: _Answer) -> None:
-        # Spike 0.1: after the caller spoke, OpenAI drops a late function_call_output silently.
-        if state.caller_turns > answer.dispatched_at:
+        # A late answer (the caller spoke since dispatch) takes the channel the provider speaks (RFC §4.7 amendment):
+        # OpenAI drops a late function_call_output silently (spike 0.1), so it gets a system note; xAI ignores a late
+        # system note and speaks the call's function_call_output, so it gets that, the timeout and failure texts too.
+        late = state.caller_turns > answer.dispatched_at
+        if late and getattr(type(session), "late_tool_result_after_caller_turn", False) is not True:
             if answer.output == _DELEGATION_TIMED_OUT:
                 note = _LATE_TIMEOUT_NOTE.format(request=answer.request)
             elif answer.output == _DELEGATION_FAILED:
@@ -982,7 +985,7 @@ class VoiceSessionService:
             channel = "system note"
         else:
             await session.submit_tool_result(answer.call_id, answer.output)
-            channel = "function_call_output"
+            channel = "late function_call_output" if late else "function_call_output"
         logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} injected as {channel}, "
                     f"{len(answer.output)} chars")
         logger.info(f"voice call {fingerprint(state.ticket)}: tool result submitted: kind=function call={answer.call_id}")

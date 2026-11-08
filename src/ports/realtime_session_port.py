@@ -28,6 +28,11 @@ class RealtimeSessionPort(ABC):
     itself."""
 
     supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]
+    # Whether the provider speaks a tool result submitted after the caller spoke since its tool call (a late answer,
+    # VOICE_COMPANION_RFC §4.7 amendment). False: the late answer goes in as a fresh system message instead, because the
+    # provider drops such a function_call_output silently (spike 0.1, OpenAI). True: it goes in as the call's
+    # function_call_output, because the provider ignores a late system note and speaks the tool result (xAI probe).
+    late_tool_result_after_caller_turn: ClassVar[bool] = False
 
     @abstractmethod
     async def open(self, instructions: str, reasoning_effort: str, tools: List[Any],
@@ -84,12 +89,14 @@ class RealtimeSessionPort(ABC):
     @abstractmethod
     async def submit_tool_result(self, call_id: str, output: str) -> None:
         """Submit a function_call_output for call_id, including late (RFC
-        §4.7). Does not itself call request_response()."""
+        §4.7): after the caller spoke since the call only when the adapter declares
+        late_tool_result_after_caller_turn. Does not itself call request_response()."""
 
     @abstractmethod
     async def submit_message(self, role: str, text: str) -> None:
         """Inject a fresh conversation item not tied to any tool call - the
-        resolve_late_answer fresh-message branch (RFC §4.7)."""
+        resolve_late_answer fresh-message branch (RFC §4.7), taken only by an adapter
+        without late_tool_result_after_caller_turn."""
 
     @abstractmethod
     async def request_response(self) -> None:

@@ -566,7 +566,7 @@ intent runs in its declared mode. References to `mode: "later"` below are histor
 |---|---|
 | Call ends while the answer is in flight | **Superseded 2026-09-28:** the answer is posted to the caller's chat, exactly once — see `VOICE_WEB_TRANSPORT_RFC.md` §12. (Originally: discard it.) |
 | Model is mid-response when the answer arrives | `response.create` while a response is active is an error. Track `response.created`/`response.done`; queue the injection until idle. |
-| **Caller speaks again while the answer is still being fetched, before it arrives** | `resolve_late_answer` (above) takes the fresh-message branch, not `function_call_output` — confirmed via spike 0.1 that OpenAI silently drops the latter in this exact case. |
+| **Caller speaks again while the answer is still being fetched, before it arrives** | `resolve_late_answer` (above) takes the fresh-message branch, not `function_call_output` — confirmed via spike 0.1 that OpenAI silently drops the latter in this exact case. On xAI the late answer is the `function_call_output` (amendment 2026-11-08 below). |
 | User barges in during injection itself (after `resolve_late_answer` has already queued something) | Submit the queued item immediately (harmless — it is a conversation item either way), defer `response.create` to the next idle moment. |
 | Two delegations in flight | Match by `call_id`; serialize `response.create` so they cannot collide. |
 | Main service slow or hung | Hard relay-side timeout — 300 s since 2026-09-28, with the late answer going to chat (`VOICE_WEB_TRANSPORT_RFC.md` §12); originally 90s — Router → Smart with delegation is the cost, not cold start. On expiry inject a `function_call_output` saying Alek did not answer, so Lelik says so aloud. **Silent non-delivery is the worst outcome.** |
@@ -581,6 +581,17 @@ premise holds there. With an interruption, only xAI does (and that signal came f
 audio-transcript channel, not text — see the decision record's own caveat on that asymmetry);
 OpenAI does not, which is exactly the gap `resolve_late_answer` above exists to close. Full data:
 `docs/04_solution_strategy/decisions/voice_spike_01_late_function_call_output.md`.
+
+**Amendment 2026-11-08 (owner-approved): the late channel is per provider.** On xAI (`grok-voice-3.0`, provider-owned
+turns) the fresh-message branch fails the same way the tool result fails on OpenAI. A live probe sent the same late
+answer both ways, after a caller turn the model had already replied to, each followed by `response.create`: as a
+system note Grok repeated its previous line and never gave the answer (3 of 3 runs); as the call's
+`function_call_output` it spoke the answer (3 of 3), which matches spike 0.1's xAI result. A live call showed the same
+symptom: the answer arrived after the caller spoke, went in as a note, and the caller did not hear it. So
+`RealtimeSessionPort.late_tool_result_after_caller_turn` picks the branch: `XaiRealtimeAdapter` declares it, and a late
+answer (the timeout and failure texts too) goes in as the original call's `function_call_output` followed by the usual
+reply (`response.create` when no response is active and the caller is not speaking). `OpenAIRealtimeAdapter` does not,
+and keeps the system note (spike 0.1).
 
 ### 4.8 Lelik's context at call start
 

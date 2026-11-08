@@ -172,6 +172,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
     (VOICE_MULTI_PROVIDER_RFC §4.3/§4.4)."""
 
     supported_turn_ownership = frozenset({TurnOwnership.PROVIDER})
+    # Live probe: after the caller spoke since the call, Grok repeated its last line over a late answer sent as a system
+    # note and spoke the same answer sent as the call's function_call_output (VOICE_COMPANION_RFC §4.7 amendment).
+    late_tool_result_after_caller_turn = True
 
     def __init__(self, api_key: str, model: str = _MODEL, voice: str = _VOICE,
                  ws_connect: Callable = websockets.connect, audio_format: AudioFormat = MULAW_8K,
