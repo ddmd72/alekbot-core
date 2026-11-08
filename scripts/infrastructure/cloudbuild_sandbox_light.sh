@@ -51,6 +51,10 @@ if [ "$mode" = "deploy" ]; then
 fi
 SERVICE="alek-bot-sandbox-light-dev"
 IMAGE="gcr.io/${PROJECT_ID}/${SERVICE}:latest"
+# The classic builder builds every stage of Dockerfile.sandbox up to the target, so `--target light` also builds the
+# `render` stage before it. Without the render image as a second cache source that stage (Node, npm, puppeteer's Chromium)
+# was rebuilt on every deploy (~4 min). A missing image is no error: the build just runs without that cache.
+RENDER_IMAGE="gcr.io/${PROJECT_ID}/alek-bot-sandbox-render-dev:latest"
 # Size of the in-memory work volume. Instance memory is 2Gi and the volume counts against it. Worst case on the volume:
 # the request body (<= REQUEST_CAP_BYTES, 101 MiB) + the response windows (<= RESPONSE_CAP_BYTES, 101 MiB) + one child
 # output file (<= 64 MiB FSIZE) = 266 MiB, rounded to 320Mi. With the 101 MiB copy-out, the 1 GiB child and the server
@@ -60,9 +64,10 @@ WORK_VOLUME_SIZE="${SANDBOX_WORK_VOLUME_SIZE:-320Mi}"
 case "$mode" in
   pull)
     docker pull "$IMAGE" || true   # first deploy has no image to cache from
+    docker pull "$RENDER_IMAGE" || true   # cache for the render stage the classic builder builds on the way
     ;;
   build)
-    docker build -f Dockerfile.sandbox --target light --cache-from "$IMAGE" -t "$IMAGE" .
+    docker build -f Dockerfile.sandbox --target light --cache-from "$RENDER_IMAGE" --cache-from "$IMAGE" -t "$IMAGE" .
     ;;
   push)
     docker push "$IMAGE"
