@@ -207,6 +207,12 @@
         transform: rotate(135deg);
       }
 
+      .mode-label {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+
       #call-label {
         font-size: 15px;
         font-weight: 600;
@@ -305,6 +311,9 @@
           "state.busy": "Busy — a call is already in progress",
           "state.mic_blocked": "Microphone blocked",
           "state.could_not_connect": "Could not connect",
+          "mode.interpreter": "Interpreter",
+          "mode.tutor": "Spanish tutor",
+          "state.mode_unavailable": "This mode is not available",
           "button.call": "Call",
           "button.hangup": "Hang up",
           "mic.label": "Microphone",
@@ -323,6 +332,9 @@
           "state.busy": "Зайнято — дзвінок вже триває",
           "state.mic_blocked": "Мікрофон заблоковано",
           "state.could_not_connect": "Не вдалося з'єднатися",
+          "mode.interpreter": "Перекладач",
+          "mode.tutor": "Репетитор іспанської",
+          "state.mode_unavailable": "Цей режим недоступний",
           "button.call": "Подзвонити",
           "button.hangup": "Завершити",
           "mic.label": "Мікрофон",
@@ -341,6 +353,9 @@
           "state.busy": "Occupé — un appel est déjà en cours",
           "state.mic_blocked": "Microphone bloqué",
           "state.could_not_connect": "Connexion impossible",
+          "mode.interpreter": "Interprète",
+          "mode.tutor": "Tuteur d'espagnol",
+          "state.mode_unavailable": "Ce mode n'est pas disponible",
           "button.call": "Appeler",
           "button.hangup": "Raccrocher",
           "mic.label": "Microphone",
@@ -359,6 +374,9 @@
           "state.busy": "Ocupado — ya hay una llamada en curso",
           "state.mic_blocked": "Micrófono bloqueado",
           "state.could_not_connect": "No se pudo conectar",
+          "mode.interpreter": "Intérprete",
+          "mode.tutor": "Tutor de español",
+          "state.mode_unavailable": "Este modo no está disponible",
           "button.call": "Llamar",
           "button.hangup": "Colgar",
           "mic.label": "Micrófono",
@@ -378,7 +396,21 @@
         return (LANG_DICT[_currentLang] || LANG_DICT.en)[key] || key;
       }
 
+      // Set by the server only on a mode page (interpreter / tutor); absent on /cabinet/call.
+      function renderModeLabel() {
+        if (!window.VOICE_MODE) return;
+        let el = document.getElementById("mode-label");
+        if (!el) {
+          el = document.createElement("div");
+          el.id = "mode-label";
+          el.className = "mode-label";
+          document.querySelector(".controls").prepend(el);
+        }
+        el.textContent = t(`mode.${window.VOICE_MODE}`);
+      }
+
       function applyTranslations() {
+        renderModeLabel();
         document.title = t("app.title");
         document.getElementById("back-link").textContent = t("back.cabinet");
         document.getElementById("mic-summary").textContent = `⚙ ${t("mic.label")}`;
@@ -460,7 +492,9 @@
       // expired session goes to login and comes back here, instead of failing the call later
       // with a bare "Could not connect".
       function goToLogin() {
-        window.location.replace("/auth/login?next=/cabinet/call");
+        // A mode page returns to itself after login; the main call page keeps its own path.
+        const next = window.VOICE_MODE ? window.location.pathname : "/cabinet/call";
+        window.location.replace(`/auth/login?next=${next}`);
       }
 
       async function ensureSession() {
@@ -917,7 +951,11 @@
             method: "POST",
             credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sdp: pc.localDescription.sdp, mid: tx.mid }),
+            body: JSON.stringify(
+              window.VOICE_MODE
+                ? { sdp: pc.localDescription.sdp, mid: tx.mid, mode: window.VOICE_MODE }
+                : { sdp: pc.localDescription.sdp, mid: tx.mid },
+            ),
           });
           if (startResp.status === 401) {
             // Session expired while the page was open — release everything, then log in.
@@ -927,7 +965,8 @@
           }
           if (startResp.status === 409) {
             handledState = true;
-            setState(t("state.busy"));
+            const conflict = await startResp.json().catch(() => ({}));
+            setState(t(conflict.error === "mode_unavailable" ? "state.mode_unavailable" : "state.busy"));
             throw new Error("busy");
           }
           if (!startResp.ok) {

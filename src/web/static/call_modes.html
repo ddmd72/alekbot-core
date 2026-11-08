@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Lelik modes</title>
+    <link rel="manifest" href="/cabinet/call/modes/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/cabinet/call/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Lelik modes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-app: #f2f2f7;
+        --bg-panel-solid: #ffffff;
+        --text-main: #000000;
+        --text-muted: #86868b;
+        --border-light: rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+        --radius-lg: 24px;
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        --transition-fast: 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-app: #000000;
+          --bg-panel-solid: #1c1c1e;
+          --text-main: #f5f5f7;
+          --border-light: rgba(255, 255, 255, 0.12);
+          --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.6);
+        }
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        background-color: var(--bg-app);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        letter-spacing: -0.01em;
+      }
+
+      body {
+        min-height: 100%;
+        position: relative;
+      }
+
+      .back-link {
+        position: absolute;
+        top: calc(12px + env(safe-area-inset-top));
+        left: 16px;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--text-muted);
+        text-decoration: none;
+        padding: 8px 4px;
+      }
+      .back-link:hover {
+        color: var(--text-main);
+      }
+
+      .screen {
+        width: 100%;
+        max-width: 420px;
+        margin: 0 auto;
+        padding: calc(64px + env(safe-area-inset-top)) 24px
+          calc(24px + env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      h1 {
+        font-size: 28px;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 8px;
+      }
+
+      .card {
+        display: block;
+        padding: 20px;
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        color: var(--text-main);
+        text-decoration: none;
+        transition: var(--transition-fast);
+        -webkit-tap-highlight-color: transparent;
+      }
+      .card:active {
+        transform: scale(0.98);
+      }
+      .card h2 {
+        font-size: 19px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .card p {
+        font-size: 15px;
+        line-height: 1.4;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <a class="back-link" href="/cabinet?tab=integrations" id="back-link">← Cabinet</a>
+
+    <main class="screen">
+      <h1 id="title">Lelik modes</h1>
+      <a class="card" href="/cabinet/call/interpreter">
+        <h2 id="interpreter-title">Interpreter</h2>
+        <p id="interpreter-desc">Speak, and Lelik translates aloud between two languages.</p>
+      </a>
+      <a class="card" href="/cabinet/call/tutor">
+        <h2 id="tutor-title">Spanish tutor</h2>
+        <p id="tutor-desc">Practise Spanish out loud with a patient tutor.</p>
+      </a>
+    </main>
+
+    <script>
+      const LANG_DICT = {
+        en: {
+          "app.title": "Lelik modes",
+          "back.cabinet": "← Cabinet",
+          "mode.interpreter.title": "Interpreter",
+          "mode.interpreter.desc": "Speak, and Lelik translates aloud between two languages.",
+          "mode.tutor.title": "Spanish tutor",
+          "mode.tutor.desc": "Practise Spanish out loud with a patient tutor.",
+        },
+        uk: {
+          "app.title": "Режими Леліка",
+          "back.cabinet": "← Кабінет",
+          "mode.interpreter.title": "Перекладач",
+          "mode.interpreter.desc": "Говоріть, а Лелік перекладає вголос між двома мовами.",
+          "mode.tutor.title": "Репетитор іспанської",
+          "mode.tutor.desc": "Практикуйте іспанську вголос із терплячим репетитором.",
+        },
+        fr: {
+          "app.title": "Modes de Lelik",
+          "back.cabinet": "← Cabinet",
+          "mode.interpreter.title": "Interprète",
+          "mode.interpreter.desc": "Parlez, et Lelik traduit à voix haute entre deux langues.",
+          "mode.tutor.title": "Tuteur d'espagnol",
+          "mode.tutor.desc": "Pratiquez l'espagnol à voix haute avec un tuteur patient.",
+        },
+        es: {
+          "app.title": "Modos de Lelik",
+          "back.cabinet": "← Panel",
+          "mode.interpreter.title": "Intérprete",
+          "mode.interpreter.desc": "Habla y Lelik traduce en voz alta entre dos idiomas.",
+          "mode.tutor.title": "Tutor de español",
+          "mode.tutor.desc": "Practica español en voz alta con un tutor paciente.",
+        },
+      };
+
+      const _currentLang = (() => {
+        const code = (navigator.language || "en").slice(0, 2).toLowerCase();
+        return LANG_DICT[code] ? code : "en";
+      })();
+
+      function t(key) {
+        return (LANG_DICT[_currentLang] || LANG_DICT.en)[key] || key;
+      }
+
+      document.title = t("app.title");
+      document.getElementById("title").textContent = t("app.title");
+      document.getElementById("back-link").textContent = t("back.cabinet");
+      for (const mode of ["interpreter", "tutor"]) {
+        document.getElementById(`${mode}-title`).textContent = t(`mode.${mode}.title`);
+        document.getElementById(`${mode}-desc`).textContent = t(`mode.${mode}.desc`);
+      }
+
+      // Same session rule as the call page: an expired Cabinet session goes to login and comes back here.
+      (async () => {
+        try {
+          const resp = await fetch("/auth/me", { credentials: "same-origin" });
+          if (resp.status === 401) {
+            window.location.replace("/auth/login?next=/cabinet/call/modes");
+          }
+        } catch (e) {
+          /* offline: the links still work, the call page checks again */
+        }
+      })();
+    </script>
+  </body>
+</html>
