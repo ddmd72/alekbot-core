@@ -154,6 +154,9 @@ relay; only the main service needs credentials, to mint SFU sessions.
    path in `main.py` applies only to local runs without them.
 4. Two optional relay knobs, read with `os.environ.get`, both defaulting to the phone path's values:
    `VOICE_WEB_REASONING_EFFORT` (default `medium`) and `VOICE_WEB_CALLER_OPENING` (`on`/`off`, default `on`).
+5. One optional main-service knob, read with `os.getenv` per request: `VOICE_CONTROL_CHANNEL` (`on`/`off`, default
+   `off`), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). Off,
+   `/connect` hands out no `control` and the page opens no socket; the relay needs no knob.
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.

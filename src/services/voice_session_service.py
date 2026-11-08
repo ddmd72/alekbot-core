@@ -4,7 +4,7 @@ import json
 import random
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, Optional, Set
 
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
@@ -21,6 +21,9 @@ from src.ports.call_control_plane_port import CallControlPlanePort
 from src.ports.realtime_session_port import RealtimeSessionPort
 from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
+
+if TYPE_CHECKING:  # type-only: services/ do not import each other at runtime (REQ-ARCH-22)
+    from src.services.call_control_hub import CallControlHub, CallControlLink
 
 _UNKNOWN_MODEL_LABEL = "unknown"
 # SPOKEN_DELIVERY's `silence` rule reacts to this exact kind of note.
@@ -147,6 +150,7 @@ class VoiceSessionService:
         caller_opening: Optional[str] = None,
         waiting_gap_max_s: Optional[float] = None,
         greeting_guard_s: float = 0.0,
+        control_hub: Optional["CallControlHub"] = None,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -155,7 +159,10 @@ class VoiceSessionService:
         Under PROVIDER turn ownership the provider replies to the caller and stops when talked
         over. The relay then places no persona anchor, sends no caller opening and no silence or
         waiting notes, and on barge-in only drops the queued audio. It still starts the greeting
-        and delivers delegation answers."""
+        and delivers delegation answers.
+
+        `control_hub` (web calls only, VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): a call whose session config carries
+        `control_token_sha256` opens its control link there for the call's life."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -169,6 +176,7 @@ class VoiceSessionService:
         self._caller_opening = caller_opening
         self._waiting_gap_max_s = waiting_gap_max_s
         self._greeting_guard_s = greeting_guard_s
+        self._control_hub = control_hub
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -223,8 +231,13 @@ class VoiceSessionService:
         consume_task: Optional[asyncio.Task] = None
         watchdog_task: Optional[asyncio.Task] = None
         cue_task: Optional[asyncio.Task] = None
+        control_link: Optional["CallControlLink"] = None
 
         try:
+            # First, so the page's control socket can attach while the provider session opens. No feature is
+            # offered yet: the channel is a skeleton until "Ask Lelik" (RFC §11 slice 4).
+            if self._control_hub is not None and config.get("control_token_sha256"):
+                control_link = self._control_hub.open(config["control_token_sha256"], fingerprint(ticket))
             # open() is inside the try/finally, not before it: a failed open (e.g. a
             # transient connection error to the provider) must still reach close()
             # and submit_transcript() below - otherwise the relay's one-call-per-user
@@ -287,6 +300,9 @@ class VoiceSessionService:
             if state.pending_barge_in is not None:
                 loops.append(state.pending_barge_in)
             await self._cancel_all(ticket, loops)
+            # The page learns the call ended (`bye{call_ended}`); its token is forgotten. Never raises.
+            if control_link is not None and self._control_hub is not None:
+                await self._control_hub.close(control_link)
             # 2. Abandon what the caller will not hear, before the delegations are cancelled: the
             #    main service posts those answers to the user's chat. Concurrently, so teardown
             #    waits one bound (_ABANDON_TIMEOUT_S), not one per delegation.
