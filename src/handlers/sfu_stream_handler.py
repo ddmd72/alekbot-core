@@ -12,7 +12,6 @@ sockets of a ticket reach this process.
 """
 import asyncio
 import base64
-import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -47,20 +46,9 @@ _MAX_UNPAIRED_CALLS = 32
 # owner's background tests showed iOS pausing the home-screen web app's outgoing audio for seconds up to about half a
 # minute while the call went on normally: the watchdog is there to end calls of pages that are really gone (app swiped
 # away), never a backgrounded call, so it sits far above any pause seen live. A re-dial ends a dead call much sooner
-# anyway (§7.5). The knob VOICE_DEAD_PEER_TIMEOUT_S overrides it (seconds).
-_DEAD_PEER_TIMEOUT_S = 600.0
-
-
-def _dead_peer_timeout_s() -> float:
-    """The optional knob, read at its call site (root CLAUDE.md: optional knobs are `os.getenv`, never settings). An
-    unparsable or non-positive value keeps the default rather than disabling the watchdog."""
-    raw = os.getenv("VOICE_DEAD_PEER_TIMEOUT_S", "").strip()
-    try:
-        value = float(raw) if raw else _DEAD_PEER_TIMEOUT_S
-    except ValueError:
-        logger.warning("sfu stream: VOICE_DEAD_PEER_TIMEOUT_S is not a number, using the default")
-        return _DEAD_PEER_TIMEOUT_S
-    return value if value > 0 else _DEAD_PEER_TIMEOUT_S
+# anyway (§7.5). The knob VOICE_DEAD_PEER_TIMEOUT_S overrides it (seconds); relay_main reads it and passes it in
+# (REQ-ARCH-01: no env reads in a core layer).
+DEAD_PEER_TIMEOUT_S = 600.0
 
 
 def parse_sfu_path(path: str) -> Optional[Tuple[str, str]]:
@@ -108,8 +96,8 @@ class SfuStreamHandler:
     def __init__(self, session_service: VoiceSessionService, pair_timeout_s: float = 15.0,
                  egress_reattach_s: float = 5.0, frame_interval_s: float = _FRAME_MS / 1000,
                  max_unpaired_calls: int = _MAX_UNPAIRED_CALLS, gap_poll_s: float = 0.5,
-                 clock=time.monotonic, dead_peer_timeout_s: Optional[float] = None) -> None:
-        """`dead_peer_timeout_s` None = the knob or the default (§7.4); tests pass it."""
+                 clock=time.monotonic, dead_peer_timeout_s: float = DEAD_PEER_TIMEOUT_S) -> None:
+        """`dead_peer_timeout_s`: the dead-peer watchdog's N (§7.4); relay_main passes the knob's value."""
         self._session_service = session_service
         self._pair_timeout_s = pair_timeout_s
         self._egress_reattach_s = egress_reattach_s
@@ -117,7 +105,7 @@ class SfuStreamHandler:
         self._max_unpaired_calls = max_unpaired_calls
         self._gap_poll_s = gap_poll_s
         self._clock = clock
-        self._dead_peer_timeout_s = dead_peer_timeout_s if dead_peer_timeout_s is not None else _dead_peer_timeout_s()
+        self._dead_peer_timeout_s = dead_peer_timeout_s
         self._calls: Dict[str, _SfuCall] = {}
 
     async def handle_connection(self, ws, path: str) -> None:

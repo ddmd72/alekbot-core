@@ -15,6 +15,8 @@ import numpy as np
 import pytest
 from quart import Quart
 
+import relay_main
+
 from src.adapters.http_call_control_plane_adapter import HttpCallControlPlaneAdapter
 from src.domain.sfu_packet import encode_sfu_packet
 from src.handlers.sfu_stream_handler import SfuStreamHandler, _SfuCall
@@ -254,7 +256,8 @@ async def test_the_knob_overrides_n(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     monkeypatch.setenv("VOICE_DEAD_PEER_TIMEOUT_S", "30")
     clock = Clock()
-    handler = SfuStreamHandler(session_service=None, clock=clock, gap_poll_s=0.01)
+    handler = SfuStreamHandler(session_service=None, clock=clock, gap_poll_s=0.01,
+                               dead_peer_timeout_s=relay_main._dead_peer_timeout_s())
 
     assert await _ends_at(handler, clock, before=29.0, at=30.0)
     assert "no inbound audio for 30s" in _dead_peer_lines(caplog)[0]
@@ -268,6 +271,7 @@ async def test_without_a_usable_knob_n_is_ten_minutes(monkeypatch, raw):
     else:
         monkeypatch.setenv("VOICE_DEAD_PEER_TIMEOUT_S", raw)
     clock = Clock()
-    handler = SfuStreamHandler(session_service=None, clock=clock, gap_poll_s=0.01)
+    handler = SfuStreamHandler(session_service=None, clock=clock, gap_poll_s=0.01,
+                               dead_peer_timeout_s=relay_main._dead_peer_timeout_s())
 
     assert await _ends_at(handler, clock, before=599.0, at=600.0)
