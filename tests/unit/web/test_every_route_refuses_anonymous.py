@@ -265,6 +265,11 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
         "Home Screen install: iOS fetches it without the session cookie",
     ("create_voice_web_call_blueprint", "GET", "/cabinet/call/modes/manifest.webmanifest"):
         "Home Screen install: iOS fetches it without the session cookie",
+    # reviewer edit, per-mode Home Screen icons: each mode page has its own static icon, fetched like the call icon.
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/interpreter/icon-<int:size>.png"):
+        "Home Screen icon (interpreter mode), fetched without the cookie; sizes are an allowlist (test_voice_web_call_mode_icons)",
+    ("create_voice_web_call_blueprint", "GET", "/cabinet/call/tutor/icon-<int:size>.png"):
+        "Home Screen icon (tutor mode), fetched without the cookie; sizes are an allowlist (test_voice_web_call_mode_icons)",
     ("create_oauth_blueprint", "GET", "/auth/login"): "starts sign-in: only redirects to the provider",
     ("create_oauth_blueprint", "POST", "/auth/logout"): "only clears the caller's own cookies",
     ("create_indexer_worker_blueprint", "GET", "/health"): "health check, no data",
