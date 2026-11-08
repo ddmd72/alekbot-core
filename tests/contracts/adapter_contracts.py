@@ -537,6 +537,31 @@ XAI_REALTIME_TURN_DETECTION = ContractRule(
 )
 
 
+def _check_xai_realtime_builtin_search(kw: dict) -> None:
+    tools = kw["session"].get("tools") or []
+    builtins = [t for t in tools if t.get("type") in ("web_search", "x_search")]
+    _eq(builtins, [{"type": "web_search"}, {"type": "x_search"}],
+        "xai_realtime: session.tools must carry web_search and x_search, each bare ({'type': ...} only)")
+    functions = [t for t in tools if t not in builtins]
+    _true(all(t.get("type") == "function" for t in functions),
+          "xai_realtime: every other session.tools entry must be a function tool")
+    _eq([t.get("name") for t in functions], kw["expected_function_names"],
+        "xai_realtime: the function tools must be the caller's, in order, next to the built-ins")
+    _eq(kw["session"].get("tool_choice"), "auto", "xai_realtime: tool_choice must be 'auto' (also with built-ins alone)")
+
+
+XAI_REALTIME_BUILTIN_SEARCH_TOOLS = ContractRule(
+    name="XAI_REALTIME_BUILTIN_SEARCH_TOOLS",
+    description=(
+        "XaiRealtimeAdapter.open() offers xAI's server-side web_search and x_search in every session, declared bare "
+        "({'type': 'web_search'}, {'type': 'x_search'}, never through the function wrapper), next to the caller's "
+        "function tools, with tool_choice='auto' even when the caller passes no tools (live probe 2026-11-08). "
+        "Input: captured session.update message {type: str, session: dict} plus `expected_function_names`."
+    ),
+    validators={"xai_realtime": _check_xai_realtime_builtin_search},
+)
+
+
 def _text_follows_function_output(items) -> bool:
     """OpenAI/Grok Responses API: items are a flat list, not nested message blocks.
     True iff a user-role item with non-empty text content appears after the first
