@@ -23,6 +23,11 @@ def amd_key(key: bytes, ticket: str) -> str:
     return f"voice_amd:{keyed_digest(key, 'voice_amd', ticket)}"
 
 
+def button_end_key(key: bytes, ticket: str) -> str:
+    """The marker that the caller ended this call with the hang-up button (such a call is never resumed)."""
+    return f"voice_button_end:{keyed_digest(key, 'voice_button_end', ticket)}"
+
+
 def result_key(key: bytes, ticket: str, call_id: str) -> str:
     """A delegation answer kept for the chat."""
     return f"voice_delegation_result:{keyed_digest(key, 'voice_delegation_result', ticket + _SEP + call_id)}"

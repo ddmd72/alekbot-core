@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List
+from typing import Any, AsyncIterator, ClassVar, Dict, FrozenSet, List, Optional
 
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -29,9 +29,18 @@ class RealtimeSessionPort(ABC):
     supported_turn_ownership: ClassVar[FrozenSet[TurnOwnership]]
 
     @abstractmethod
-    async def open(self, instructions: str, reasoning_effort: str, tools: List[Any]) -> None:
+    async def open(self, instructions: str, reasoning_effort: str, tools: List[Any],
+                   resume_handle: Optional[str] = None) -> None:
         """Connect and send the initial session.update. `instructions` must
-        already have PROMPT_CACHE_BOUNDARY stripped by the caller."""
+        already have PROMPT_CACHE_BOUNDARY stripped by the caller.
+
+        `resume_handle` asks a provider that supports it to continue an earlier conversation (VOICE_CALL_CONTROL_CHANNEL_RFC
+        §6); the caller passes it only to such a provider. After open(), `resumed` says whether the provider honoured it."""
+
+    @property
+    def resumed(self) -> bool:
+        """True when open() was given a resume_handle and the provider continued that conversation."""
+        return False
 
     @abstractmethod
     async def send_audio(self, frame: AudioFrame) -> None:
@@ -42,6 +51,8 @@ class RealtimeSessionPort(ABC):
         """Yield normalized events: audio_delta (payload: frame: AudioFrame,
         item_id - the provider's id for the assistant item this audio belongs to,
         needed to truncate it on barge-in),
+        resume_handle (payload: handle - the provider's id of this conversation, kept to resume it after a drop;
+        only a provider that supports resumption emits it),
         tool_call (payload: call_id, name, arguments), speech_started and
         speech_stopped (payload: item_id - the provider's id for the caller's
         turn this speech becomes once committed; None when the provider sends
