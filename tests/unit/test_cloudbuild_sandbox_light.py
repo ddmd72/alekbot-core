@@ -125,13 +125,21 @@ def test_deploy_flags_match_the_light_row():
     flags = _deploy_flags()
     for flag in ("--concurrency=1", "--use-http2", "--execution-environment=gen2", "--min-instances=0",
                  "--max-instances=5", "--memory=2Gi", "--cpu=2", "--timeout=900", "--no-allow-unauthenticated",
-                 "--clear-secrets", "--no-cpu-throttling"):
+                 "--clear-secrets"):
         assert re.search(re.escape(flag) + r"(\s|$)", flags), flag
     assert "--add-volume=name=sandbox-work,type=in-memory,size-limit=" in flags
     assert "--add-volume-mount=volume=sandbox-work,mount-path=/work" in flags
     assert '--service-account="$SANDBOX_LIGHT_SA"' in flags
     assert 'WORK_VOLUME_SIZE="${SANDBOX_WORK_VOLUME_SIZE:-320Mi}"' in _script_code()
     assert "--target light" in _script_code()
+
+
+def test_light_deploy_bills_per_request():
+    """Warm idle and deploy-rollout instances must cost nothing: request-based billing, stated explicitly because a
+    deploy keeps the service's previous CPU setting (decisions/sandbox_render_service.md)."""
+    flags = _deploy_flags()
+    assert re.search(r"(^|\s)--cpu-throttling(\s|$)", flags)
+    assert "--no-cpu-throttling" not in flags
 
 
 def test_env_has_exactly_the_light_names():

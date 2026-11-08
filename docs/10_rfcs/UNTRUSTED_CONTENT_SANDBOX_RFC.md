@@ -409,6 +409,8 @@ suites pin the observable outcomes of the sandbox adapters (S1-S5). For the rend
 - **Cost (estimate, list prices to be re-checked):** request-based billing at about $0.000024 per vCPU-second and $0.0000025 per GiB-second. A 5 s parse at **2 vCPU** / 2 GiB is
   ≈ $0.00025; with a cold start per request (`always`, ~+2 s) ≈ $0.00035. Ten thousand files ≈ $2.5-4. Media: 1.07 CPU-s per audio minute (§27.2) ≈ $0.0015 per audio hour of CPU, negligible
   next to the $0.35 per hour of transcription. Idle cost with `min-instances=0`: zero. A warm minimum is not recommended (a warm instance contradicts `always`).
+  The zero idle cost holds only under request-based billing: the light service deploys with `--cpu-throttling`; the render service keeps
+  `--no-cpu-throttling` for its post-response drain and pays ~15 idle minutes per deploy (`decisions/sandbox_render_service.md`).
 - Cold start, light image: expected 1-3 s, to be measured in S0-b.
 
 ## 5. Owner decisions and proposals
