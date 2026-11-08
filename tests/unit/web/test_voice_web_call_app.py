@@ -78,13 +78,13 @@ async def test_start_answers_and_never_returns_the_ticket():
 
 
 @pytest.mark.asyncio
-async def test_second_call_while_live_is_409_and_leaves_the_first_intact():
+async def test_a_web_call_while_a_phone_call_is_live_is_409_and_leaves_it_intact():
     store, room = MemoryStore(), _room()
     client = _app(store, room).test_client()
-    _, first = await _start(client)
+    store.data["voice_one_call:u1"] = {"in_flight": True}  # the phone path's marker: never replaced (RFC 7.5.4)
     resp, _ = await _start(client)
     assert resp.status_code == 409
-    assert store.data["voice_one_call:u1"]["call_id"] == first["call_id"]
+    assert store.data["voice_one_call:u1"] == {"in_flight": True}
 
 
 @pytest.mark.asyncio
