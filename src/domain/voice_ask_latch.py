@@ -16,8 +16,13 @@ timeouts) never interleave inside one; the service performs the step after the t
 | awaiting_reply | speech_started, no reply audio yet            | note again -> active                     |
 | awaiting_reply | response_created                              | reply started                            |
 | awaiting_reply | response_done after reply started             | -> idle, `answered`                      |
-| active/awaiting| 20 s from speech_stopped, no response_done    | -> idle, `timeout`                       |
+| awaiting_reply | 20 s from speech_stopped, no reply started    | -> idle, `timeout`                       |
+| awaiting_reply | 90 s from the reply's start, no response_done | -> idle, `timeout` (a runaway reply)     |
 | any but idle   | call ends                                     | -> idle, `call_ended`                    |
+
+The button releases when Lelik's answer ends (owner), so once the reply has started no 20 s timeout can cut it
+short, however long Lelik speaks; only the runaway cap remains. The 20 s timeout covers a reply that never starts
+(a false VAD start, a dropped turn).
 
 Two readings the table leaves open, decided here:
 - A `response_done` before the reply to the marked words started belongs to the reply those words interrupted (xAI
@@ -34,7 +39,8 @@ from enum import Enum
 from typing import Callable, Optional
 
 ASK_ARMED_TIMEOUT_S = 60.0  # owner, Q1: an armed button with no speech releases itself
-ASK_REPLY_TIMEOUT_S = 20.0  # from speech_stopped: a reply that never ends, or a false VAD start
+ASK_REPLY_TIMEOUT_S = 20.0  # from speech_stopped while no reply has started: a false VAD start, a dropped turn
+ASK_RUNAWAY_REPLY_S = 90.0  # from the reply's response_created: a reply whose response_done never comes
 
 
 class AskState(str, Enum):
@@ -82,15 +88,16 @@ class AskLatch:
     """One call's "Ask Lelik" latch. `clock` is monotonic seconds (the relay passes the event loop's time)."""
 
     def __init__(self, clock: Callable[[], float], armed_timeout_s: float = ASK_ARMED_TIMEOUT_S,
-                 reply_timeout_s: float = ASK_REPLY_TIMEOUT_S) -> None:
+                 reply_timeout_s: float = ASK_REPLY_TIMEOUT_S, runaway_reply_s: float = ASK_RUNAWAY_REPLY_S) -> None:
         self._clock = clock
         self._armed_timeout_s = armed_timeout_s
         self._reply_timeout_s = reply_timeout_s
+        self._runaway_reply_s = runaway_reply_s
         self._state = AskState.IDLE
         self._item_id: Optional[str] = None
         self._armed_at = 0.0
         self._stopped_at: Optional[float] = None
-        self._reply_started = False
+        self._reply_started_at: Optional[float] = None
         self._reply_audible = False
 
     @property
@@ -134,36 +141,41 @@ class AskLatch:
             return _NOTHING  # the end of some other speech, not the marked one
         self._state = AskState.AWAITING_REPLY
         self._stopped_at = self._clock()
-        self._reply_started = False
+        self._reply_started_at = None
         self._reply_audible = False
         return _NOTHING
 
     def response_created(self) -> AskStep:
         if self._state is AskState.AWAITING_REPLY:
-            self._reply_started = True
+            self._reply_started_at = self._clock()
         return _NOTHING
 
     def reply_audio(self) -> AskStep:
         """Lelik's answer to the marked words is audible (its first audio arrived)."""
-        if self._state is AskState.AWAITING_REPLY and self._reply_started:
+        if self._state is AskState.AWAITING_REPLY and self._reply_started_at is not None:
             self._reply_audible = True
         return _NOTHING
 
     def response_done(self) -> AskStep:
-        if self._state is AskState.AWAITING_REPLY and self._reply_started:
+        if self._state is AskState.AWAITING_REPLY and self._reply_started_at is not None:
             return self._release(AskReason.ANSWERED)
         return _NOTHING
 
     # ------------------------------------------------------------------ time and teardown
 
     def tick(self) -> AskStep:
-        """Called periodically; releases an armed latch after `armed_timeout_s` with no speech, and a marked one
-        `reply_timeout_s` after the words ended with no answer finished."""
+        """Called periodically. Releases an armed latch after `armed_timeout_s` with no speech; a marked one
+        `reply_timeout_s` after the words ended when no reply has started; and a started reply only after
+        `runaway_reply_s` with no response_done, so an answer is never cut short while Lelik is giving it."""
         now = self._clock()
         if self._state is AskState.ARMED and now - self._armed_at >= self._armed_timeout_s:
             return self._release(AskReason.TIMEOUT)
-        if (self._state in (AskState.ACTIVE, AskState.AWAITING_REPLY) and self._stopped_at is not None
-                and now - self._stopped_at >= self._reply_timeout_s):
+        if self._state is not AskState.AWAITING_REPLY:
+            return _NOTHING
+        if self._reply_started_at is not None:
+            if now - self._reply_started_at >= self._runaway_reply_s:
+                return self._release(AskReason.TIMEOUT)
+        elif self._stopped_at is not None and now - self._stopped_at >= self._reply_timeout_s:
             return self._release(AskReason.TIMEOUT)
         return _NOTHING
 
@@ -180,7 +192,7 @@ class AskLatch:
         self._state = AskState.ACTIVE
         self._item_id = item_id
         self._stopped_at = None
-        self._reply_started = False
+        self._reply_started_at = None
         self._reply_audible = False
         report = AskReport(AskState.ACTIVE.wire) if was.wire != AskState.ACTIVE.wire else None
         return AskStep(insert_note=True, report=report)
@@ -188,7 +200,7 @@ class AskLatch:
     def _release(self, reason: AskReason, seq: Optional[int] = None) -> AskStep:
         self._state = AskState.IDLE
         self._stopped_at = None
-        self._reply_started = False
+        self._reply_started_at = None
         self._reply_audible = False
         return AskStep(report=AskReport(AskState.IDLE.wire, reason=reason, seq=seq))
 

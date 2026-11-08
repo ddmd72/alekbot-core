@@ -273,3 +273,32 @@ async def test_other_modes_offer_no_ask_and_ignore_a_press(mode):
 
     assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": []}
     assert call.ask_states() == [] and call.notes() == [_WEB_PICKUP_NOTE]
+
+
+@pytest.mark.asyncio
+async def test_a_long_answer_keeps_the_button_pressed_until_its_response_done():
+    call = await _interpreter_call()
+    await call.page_says({"type": "ask_arm", "seq": 1})
+    await call.provider_says("speech_started", item_id="item-u1")
+    await call.provider_says("speech_stopped", item_id="item-u1")
+    await call.provider_says("turn_committed", item_id="item-u1")
+    await call.provider_says("response_created")
+    await call.tick_to(60.0)                               # Lelik is still answering a minute later
+    assert call.ask_states()[-1] == {"type": "ask_state", "state": "active"}
+    await call.provider_says("response_done")
+    await call.end()
+    assert call.ask_states()[-2:] == [{"type": "ask_state", "state": "active"},
+                                      {"type": "ask_state", "state": "idle", "reason": "answered"}]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_never_starts_releases_the_button_at_the_timeout():
+    call = await _interpreter_call()
+    await call.page_says({"type": "ask_arm", "seq": 1})
+    await call.provider_says("speech_started", item_id="item-u1")
+    await call.provider_says("speech_stopped", item_id="item-u1")
+    await call.tick_to(19.5)
+    assert call.ask_states()[-1] == {"type": "ask_state", "state": "active"}
+    await call.tick_to(0.5)
+    await call.end()
+    assert call.ask_states()[-1] == {"type": "ask_state", "state": "idle", "reason": "timeout"}

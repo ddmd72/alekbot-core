@@ -6,7 +6,9 @@ feature). Slice 4 ("Ask Lelik") built: adapter `item_id`, `AskLatch` (`src/domai
 control task and note (`_ASK_NOTE`), the button on the interpreter page, the P1/P2 probe
 (`scripts/voice/ask_note_probe.py`), and the edited `VOICE_PERSONA_INTERPRETER` in `prompts_snapshot/` (not uploaded:
 §5.6, §12 — after P1 passes and the relay is live). Readings of §5.3 the latch fixes: a command that changes nothing
-echoes the current state with its `seq`; speech over Lelik's audible answer is not marked again.
+echoes the current state with its `seq`; speech over Lelik's audible answer is not marked again; the 20 s reply timeout
+applies only until the reply starts (the button releases when the answer ends, however long), with a 90 s runaway cap
+from the reply's start.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — web call controls
@@ -136,7 +138,8 @@ inside one (single event loop; the note is sent after the transition).
 | active | `speech_started` (a pause split the question, no reply audio yet) | insert the note again |
 | awaiting_reply | `response_created` | mark reply started |
 | awaiting_reply | `response_done` after reply started | → idle, `answered` |
-| active / awaiting_reply | 20 s from `speech_stopped` with no `response_done` | → idle, `timeout` |
+| awaiting_reply | 20 s from `speech_stopped` and no reply started | → idle, `timeout` |
+| awaiting_reply | 90 s from the reply's `response_created` with no `response_done` (a runaway reply) | → idle, `timeout` |
 | any | call ends | `call_ended` |
 
 Why "`response_created` after `speech_stopped`": if Lelik was mid-translation when the caller spoke, xAI stops that reply
@@ -288,7 +291,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
 | Control socket cannot connect / drops | button unusable | button disabled, reconnect with backoff; the call itself unaffected |
 | `ask_arm` lost | button stays pressed | no `ask_state` in 2 s → page rolls back to idle |
 | Note never sent (no speech) | button armed forever | released after 60 s |
-| Reply never ends | button stuck busy | 20 s after `speech_stopped` → `timeout` release |
+| Reply never starts / never ends | button stuck busy | no reply 20 s after `speech_stopped`, or no `response_done` 90 s after the reply started → `timeout` release; a long answer in progress is never cut |
 | Model ignores the note | Lelik translates the question | P1 gates the prompt change; the button still releases on `response_done` |
 | Relay restart | call ends (SFU legs die) | page sees `status: ended`; re-dial resumes (B) |
 | Resume handle rejected | fresh session | adapter reopens without it, warning logged |
