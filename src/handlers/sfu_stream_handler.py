@@ -12,6 +12,7 @@ sockets of a ticket reach this process.
 """
 import asyncio
 import base64
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Dict, Optional, Tuple
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from websockets.exceptions import ConnectionClosed
 
+from src.domain.inbound_gap_tracker import InboundGapTracker
 from src.domain.paced_audio_outlet import PacedAudioOutlet
 from src.domain.pcm_downsampler import PcmDownsampler
 from src.domain.pcm_upsampler import PcmUpsampler
@@ -70,6 +72,7 @@ class _SfuCall:
     paired: asyncio.Event = field(default_factory=asyncio.Event)
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     task: Optional[asyncio.Task] = None
+    gaps: InboundGapTracker = field(default_factory=InboundGapTracker)
 
     def end(self) -> None:
         if not self.ended.is_set():
@@ -83,12 +86,15 @@ class SfuStreamHandler:
 
     def __init__(self, session_service: VoiceSessionService, pair_timeout_s: float = 15.0,
                  egress_reattach_s: float = 5.0, frame_interval_s: float = _FRAME_MS / 1000,
-                 max_unpaired_calls: int = _MAX_UNPAIRED_CALLS) -> None:
+                 max_unpaired_calls: int = _MAX_UNPAIRED_CALLS, gap_poll_s: float = 0.5,
+                 clock=time.monotonic) -> None:
         self._session_service = session_service
         self._pair_timeout_s = pair_timeout_s
         self._egress_reattach_s = egress_reattach_s
         self._frame_interval_s = frame_interval_s
         self._max_unpaired_calls = max_unpaired_calls
+        self._gap_poll_s = gap_poll_s
+        self._clock = clock
         self._calls: Dict[str, _SfuCall] = {}
 
     async def handle_connection(self, ws, path: str) -> None:
@@ -125,13 +131,17 @@ class SfuStreamHandler:
             except asyncio.TimeoutError:
                 logger.warning(f"sfu stream {fingerprint(call.ticket)}: second socket never arrived, dropping")
                 return
-            await self._session_service.handle_call(
-                ticket=call.ticket,
-                inbound_audio=self._inbound_frames(call),
-                send_outbound_audio=lambda frame: self._enqueue(call, frame),
-                clear_outbound_audio=lambda: self._clear(call),
-                playback=call.playback,
-            )
+            gap_watch = asyncio.ensure_future(self._watch_gaps(call))
+            try:
+                await self._session_service.handle_call(
+                    ticket=call.ticket,
+                    inbound_audio=self._inbound_frames(call),
+                    send_outbound_audio=lambda frame: self._enqueue(call, frame),
+                    clear_outbound_audio=lambda: self._clear(call),
+                    playback=call.playback,
+                )
+            finally:
+                gap_watch.cancel()
         except Exception:
             logger.error(f"sfu stream {fingerprint(call.ticket)}: call failed", exc_info=True)
         finally:
@@ -160,6 +170,19 @@ class SfuStreamHandler:
         if call.ingest_ws is not None and call.egress_ws is not None:
             call.paired.set()
 
+    def _note_packet(self, call: _SfuCall) -> None:
+        # Measurement for the dead-peer watchdog (RFC §7.4.2): counts and durations only, no audio.
+        duration = call.gaps.packet(self._clock())
+        if duration is not None:
+            logger.info(f"sfu stream {fingerprint(call.ticket)}: inbound audio gap ended after {duration:.1f}s")
+
+    async def _watch_gaps(self, call: _SfuCall) -> None:
+        while not call.ended.is_set():
+            await asyncio.sleep(self._gap_poll_s)
+            if call.gaps.gap_started(self._clock()):
+                logger.info(f"sfu stream {fingerprint(call.ticket)}: inbound audio gap started "
+                            f"(no packets for {call.gaps.floor_s:.1f}s)")
+
     async def _serve_egress(self, call: _SfuCall, ws) -> None:
         call.egress_ws = ws
         self._mark_paired(call)
@@ -176,6 +199,7 @@ class SfuStreamHandler:
                 except ValueError as exc:
                     logger.warning(f"sfu stream {fingerprint(call.ticket)}: malformed egress packet skipped: {exc}")
                     continue
+                self._note_packet(call)
                 pcm24 = call.downsampler(packet.payload)
                 if pcm24:
                     call.inbound.put_nowait(AudioFrame(
