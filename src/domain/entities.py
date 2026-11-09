@@ -190,3 +190,25 @@ class FactEntity(BaseModel):
     # BREAKING CHANGE: visibility changed from str to enum
     # ========================================================================
     visibility: FactVisibility = FactVisibility.ACCOUNT_SHARED  # Default: shared with account members
+
+    # --- Retrieval profile (fact profile RFC §2.1): written only by write_fact_profile; PROFILE_FIELDS in fact_profile.py
+    label_words: Optional[List[str]] = None
+    label_vector: Optional[List[float]] = None
+    time_role: Optional[str] = None
+    time_points: Optional[List[Dict[str, Any]]] = None      # {from, to, precision, source}
+    place_keys: Optional[List[str]] = None
+    places_unresolved: Optional[List[Dict[str, Any]]] = None  # {city, country}
+    people: Optional[List[Dict[str, Any]]] = None           # {name, role, name_keys, role_keys}
+    primary_domain: Optional[str] = None
+    domain_keys: Optional[List[str]] = None
+    user_identity: Optional[bool] = None
+    kinds: Optional[List[str]] = None
+    sensitivity: Optional[str] = None
+    profile_answer: Optional[Dict[str, Any]] = None
+    profile_fingerprint: Optional[str] = None
+    profile_derivation: Optional[str] = None
+    profile_drops: Optional[Dict[str, int]] = None
+    profile_model: Optional[str] = None
+    profiled_at: Optional[datetime] = None
+    profile_failures: Optional[int] = None
+    profile_failed_fingerprint: Optional[str] = None

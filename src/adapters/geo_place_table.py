@@ -29,7 +29,7 @@ def load_place_rows(path: Optional[Path] = None, countries_path: Optional[Path] 
             alt = tuple(name for name in (r.get("alt_names") or "").split("|") if name)
             rows.append(PlaceRow(float(r["lat"]), float(r["lon"]), r["name_en"], r["name_local"], r["country"],
                                  int(r.get("weight") or 0), alt_names=alt,
-                                 country_names=countries.get(r["country"], ())))
+                                 country_names=countries.get(r["country"], ()), geonameid=r.get("geonameid") or ""))
             ids.append(r.get("geonameid") or "")
             large_ids.append(r.get("large_id") or "")
     by_id: Dict[str, PlaceRow] = {gid: row for gid, row in zip(ids, rows) if gid}

@@ -16,6 +16,7 @@ S5's classify applied 2026-10-27; P2 revised, "a fact whose date passed becomes 
 | Question | Read |
 |---|---|
 | What is in memory; what a fact holds; what `domain`, `temporal_class`, `state`, `context_priority` mean | §2 |
+| What a fact's retrieval profile fields are, who writes them, and where the domain registry lives | §2.1 |
 | What `is_current`, `valid_to`, `lineage_id`, `version`, `superseded_by` mean today; what an update or a merge does to them | §2.3, §2.4 |
 | Why an update gave the fact a new id; whether the old wording is kept and how to look at it; why an old id still works | §2.4, §9.3 |
 | When does a conversation become facts; why nothing happened after I told it something | §3 steps 1–3, §7 |
@@ -149,8 +150,11 @@ like any other message.
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
+| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*`, `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Nothing reads them yet: search moves onto them in later PRs of the RFC |
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
+
+The 27 domains live in one registry, `src/domain/fact_domains.py`, the single source of their keys, labels and renderers; the 16-value `domain` field of §2.2 stays until the last PR of the fact-profile series.
 
 The adapter also stores `context_priority_rank` (critical 1 … archival 5) next to the entity for ordering
 (`firestore_repo.py:38-44`, written by `_to_document`, `:176-184`, for every new document).

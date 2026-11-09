@@ -50,13 +50,13 @@ step through `write_fact_profile` (§2.3); never by the consolidator, the review
 
 | Field | Type | Written from | Read by |
 |---|---|---|---|
-| `label_words` | list of 0 or 2–12 strings, 1–3 lowercase English words | model, checked by code | labels list (via vector), intimate rule |
+| `label_words` | list of 0–12 strings, 1–3 lowercase English words | model, checked by code | labels list (via vector), intimate rule |
 | `label_vector` | 768-dim vector of the joined labels (`RETRIEVAL_DOCUMENT`) | code | labels list |
 | `time_role` | `event` / `state` / `validity` / `measurement` / `timeless` | model | list ordering |
 | `time_points` | ≤ 8 maps `{from, to, precision, source}` | model, each point verified as printed | time list, ordering, `when:` line |
 | `place_keys` | `pl:<geonameid>` (with the large neighbour) and `co:<country>` | code from the model's `{city, country, source}` via the atlas | places list |
 | `places_unresolved` | list of `{city, country}` with no single atlas row | code | reports only |
-| `people` | list of `{name, role, name_keys, role_key}` | model names and roles; keys by code (`skeleton_key`, word forms) | people list, people cards |
+| `people` | list of `{name, role, name_keys, role_keys}` | model names and roles; keys by code (`skeleton_key`, word forms) | people list, people cards |
 | `primary_domain` | registry key | code (§3.3) | display, voice filter, baseline grouping |
 | `domain_keys` | registry keys: primary, hard extras, ≤ 2 topical extras | code | domain list, Cabinet filter |
 | `user_identity` | bool | model answer, stored | baseline identity block |
@@ -216,6 +216,7 @@ nothing is written.
   after three failures on one fingerprint the fact is `abandoned` until its content changes (logged once). A provider
   outage ends the step early; the rest wait for the next cycle. The step never fails the consolidation batch.
 - **Validation and drops** (the code checks of the profiler design): labels — lowercased, ≤ 3 words, no digits, no
+  lone record word (a one-word label naming a record, not a life situation), no
   relation word, no word form already in the text or metadata, deduplicated, cap 12; time points — the source occurs in
   the text or a metadata value (`drive_grade.TextEvidence`), the date is read from that source, `from ≤ to`, year
   1900–2100; places — printed source, city found in the named country by the atlas (`place_lookup.py`, the table loaded
