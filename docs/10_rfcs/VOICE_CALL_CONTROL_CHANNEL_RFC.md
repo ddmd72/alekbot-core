@@ -88,6 +88,7 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 | page → relay | `hello {v: 1, token}` | first frame, within 5 s of open, or the relay closes |
 | relay → page | `welcome {v: 1, features: ["ask"], ask: "idle"\|"armed"\|"active"}` | features this call offers; current state |
 | relay → page | `bye {reason: "version"\|"auth"\|"call_ended"\|"replaced"}` | then close |
+| page → relay | `listening` | once per call, every call (no feature needed): the page hears Lelik's track (§4.4) |
 | page → relay | `ask_arm {seq}` / `ask_disarm {seq}` | press / press again before speaking |
 | relay → page | `ask_state {state, seq?, reason?}` | every transition; `reason`: `answered`, `cancelled`, `timeout`, `call_ended` |
 | both | `ping` / `pong` | every 20 s from the page; keeps proxies and Cloud Run from idling the socket |
@@ -99,6 +100,8 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 - **Reconnect.** The page re-dials with the same token (backoff 1, 2, 4 … 10 s) while the call is live. A new socket
   replaces the old one (`bye{replaced}` to the old). `welcome` carries the current `ask` state, so the button re-syncs.
 - **Relay is authoritative.** The page shows "pressed" on tap (optimistic) and rolls back if no `ask_state` arrives in 2 s.
+- **Which pages open it.** Every web call page (`/cabinet/call`, interpreter, tutor) opens the channel whenever
+  `/connect` hands out `control`; what a page shows on it stays per feature (the Ask button is interpreter-only, §5.5).
 
 ### 4.3 Relay components
 
@@ -111,6 +114,20 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 - `VoiceSessionService.handle_call` (`src/services/voice_session_service.py:182-200`) opens the link from
   `config["control_token_sha256"]` when present, runs a `control_task` beside the forward and consume loops, and closes
   the link (sending `bye{call_ended}`) in the teardown `finally` (`:262-287`).
+
+### 4.4 `listening` gates the web greeting
+
+Lelik speaks first, but on a web call the browser subscribes to his track only with `POST /renegotiate`, after
+`/connect`, which takes several seconds. A fixed delay of about a second before the greeting started it while
+`/connect` was still in flight, and a short greeting had ended before the browser listened: the caller never heard it. So the page sends
+`listening` once per call, as soon as its `/renegotiate` is done and the channel is welcomed (a reconnect does not resend
+it), and the relay starts the greeting when the call's link has received it, at most `web_pickup_max_wait_s` (6 s,
+`relay_main.py`) after the notes are in; a web call without a link (knob off) waits the whole cap, a phone call never
+waits. The handler marks the link on every call (it is not a feature command); a second `listening` is ignored. A
+provider-owned reply that starts during the wait still suppresses the pickup, and a call that ends during it gets no
+greeting. The relay logs `pickup after the page listened (<ms> ms)` or `pickup on the cap (<s> s), no listening signal`.
+Compatibility: a relay that predates the frame ignores it (unknown type); a page that predates it (cached) costs the
+cap, so the relay deploys first and the page follows with the main service.
 
 ## 5. A — "Ask Lelik"
 
@@ -192,7 +209,7 @@ The caller controls the button, so this is accepted. A false VAD start that neve
 ### 5.5 Page
 
 Only when `window.VOICE_MODE === "interpreter"` (`voice_web_call_app.py:53-60` injects it); `/cabinet/call` and the tutor
-page get no button and open no control socket in v1. A large button under the call button, label "Ask Lelik" (with
+page get no button (they open the control socket for `listening` only, §4.4). A large button under the call button, label "Ask Lelik" (with
 the page's other locales). States: hidden (no call), disabled (channel down or no `ask` feature), idle, pressed
 (armed), busy (active/awaiting: Lelik is answering), back to idle on `ask_state{idle}`. Vibrates on press if supported.
 
@@ -404,6 +421,7 @@ same handle fits this design; no log shows such drops yet. Reopen when one does.
   (reason)`. Main: `web call {call_id}: hangup trigger=…`.
 - Kill switch: `VOICE_CONTROL_CHANNEL` (`os.getenv` on the main service, default on). Off: `/connect` returns no
   `control` and the page shows no button; the caller then has no way to address Lelik until the old token is re-uploaded.
+  Every web call's greeting then waits the full `listening` cap (§4.4).
 
 ## 10. Probes (all xAI, $0.08 per audio minute; total well under $1)
 

@@ -9,8 +9,9 @@ Caps (RFC §4.2, §9): a page frame over `MAX_INBOUND_FRAME_BYTES`, or more than
 any second, closes the socket (codes 1009 / 1008; the page's backoff redials and the call is unaffected). Sockets that
 have not finished `hello` are bounded like `_MAX_UNPAIRED_CALLS` in `sfu_stream_handler.py`.
 
-After `welcome` the handler answers `ping` with `pong`, queues the commands of the call's features on the link, and
-ignores everything else (forward-compatible).
+After `welcome` the handler answers `ping` with `pong`, marks the link on `listening` (every call, whatever its
+features; a repeat is ignored), queues the commands of the call's features on the link, and ignores everything else
+(forward-compatible).
 """
 import asyncio
 import time
@@ -22,6 +23,7 @@ from websockets.exceptions import ConnectionClosed
 from src.domain.voice_control_protocol import (
     HELLO,
     HELLO_TIMEOUT_S,
+    LISTENING,
     MAX_INBOUND_FRAME_BYTES,
     MAX_INBOUND_FRAMES_PER_S,
     PING,
@@ -136,6 +138,8 @@ class CallControlHandler:
                     continue
                 if frame["type"] == PING:
                     await link.send(pong_frame())
+                elif frame["type"] == LISTENING:
+                    link.mark_listening()
                 elif link.accepts(frame["type"]):
                     link.offer_command(frame)
         except ConnectionClosed:
