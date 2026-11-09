@@ -1,15 +1,16 @@
 """FirestoreTokenRepository.save / delete: the timestamps written and the document actually removed.
 
-The repository calls `doc_ref.set(...)` and `doc_ref.delete()` without `await` (the profile repository awaits them).
-`_SyncWriteDb` therefore models a client whose writes are plain calls and whose reads are awaited, so the write lands
-and the stored document can be inspected. The strict-xfail test shows what the real async client (`EvalDb`) does.
+The repository calls `doc_ref.set(...)` and `doc_ref.delete()` without `await` (P10-D1, P10-D2, pinned as strict xfails in
+tests/unit/adapters/test_prompt_token_store_kit.py). `_EagerWriteDb` applies a write at call time and hands back an
+already-completed future, so the write lands whether or not the adapter awaits it and the tests stay valid once the
+defect is fixed; its reads are awaited like the async client's.
 """
-import pytest
+import asyncio
+
 from google.cloud import firestore
 
 from src.adapters.prompt_v3.firestore_token_repository import FirestoreTokenRepository
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
-from tests.support.firestore_eval import EvalDb
 from tests.unit.adapters.prompt_v3.test_firestore_repositories import MockSecurityPort
 
 
@@ -27,12 +28,20 @@ class _Ref:
 
     def set(self, data):
         self.store[self.doc_id] = data
+        return _done()
 
     def delete(self):
         self.store.pop(self.doc_id, None)
+        return _done()
 
 
-class _SyncWriteDb:
+def _done():
+    future = asyncio.get_running_loop().create_future()
+    future.set_result(None)
+    return future
+
+
+class _EagerWriteDb:
     def __init__(self):
         self.cols = {}
 
@@ -51,7 +60,7 @@ def _token():
 
 
 async def test_save_writes_both_server_timestamps():
-    db = _SyncWriteDb()
+    db = _EagerWriteDb()
     await _repo(db).save(_token(), "system")
     doc = db.cols["sys_tokens"]["TOK_A"]
     assert doc["created_at"] is firestore.SERVER_TIMESTAMP
@@ -59,7 +68,7 @@ async def test_save_writes_both_server_timestamps():
 
 
 async def test_delete_removes_document_from_system_collection():
-    db = _SyncWriteDb()
+    db = _EagerWriteDb()
     repo = _repo(db)
     await repo.save(_token(), "system")
     await repo.delete(TokenId("TOK_A"))
@@ -67,18 +76,10 @@ async def test_delete_removes_document_from_system_collection():
 
 
 async def test_delete_removes_document_from_user_collection():
-    db = _SyncWriteDb()
+    db = _EagerWriteDb()
     repo = _repo(db)
     await repo.save(_token(), "user")
     await repo.delete(TokenId("TOK_A"))
     assert "TOK_A" not in db.cols["usr_tokens"]
     assert not db.cols.get("sys_tokens")
 
-
-@pytest.mark.xfail(strict=True, reason="MUT-D1: save/delete do not await the async client's set()/delete()")
-async def test_save_then_delete_on_async_client_fake():
-    db = EvalDb()
-    repo = _repo(db)
-    await repo.save(_token(), "system")
-    snap = await db.collection("sys_tokens").document("TOK_A").get()
-    assert snap.exists
