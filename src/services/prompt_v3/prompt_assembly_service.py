@@ -35,6 +35,10 @@ from src.services.prompt_v3.context_formatter import ContextFormatter
 from src.utils.logger import logger
 
 
+# Joins the blueprint tail to the cached static template; assemble() splits it off, it never reaches a prompt.
+_TAIL_MARKER = "<!-- TAIL_BLOCK -->"
+
+
 class PromptAssemblyService:
     """Assembles prompts from token library via blueprint class-collection model (v4).
 
@@ -63,9 +67,6 @@ class PromptAssemblyService:
         # Performance optimization: Assembly cache (RFC: PROMPT_ASSEMBLY_CACHING_RFC.md)
         self._assembled_cache: Dict[str, Tuple[str, float]] = {}  # (prompt, timestamp)
         self._cache_ttl = cache_ttl
-        # Blueprint tail blocks (Blueprint.tail_categories) per cache key, written next to the
-        # static template and rendered after the dynamic parts. Empty string = no tail.
-        self._tail_blocks: Dict[str, str] = {}
 
     async def assemble(
         self,
@@ -128,7 +129,6 @@ class PromptAssemblyService:
         else:
             logger.info(f"📦 Cache MISS: {cache_key} - assembling from repositories...")
 
-            self._tail_blocks.pop(cache_key, None)
             static_prompt = await self._assemble_static_template(
                 agent_type=agent_type,
                 account_id=account_id,
@@ -136,6 +136,12 @@ class PromptAssemblyService:
             )
 
             self._save_to_cache(cache_key, static_prompt)
+
+        # The blueprint tail travels inside the cached string, so a template and its tail are one value.
+        static_prompt, marker, tail_block = static_prompt.partition(_TAIL_MARKER)
+        if marker:
+            static_prompt = static_prompt[:-1]  # the newline that joined the marker
+            tail_block = tail_block[1:]  # the newline that joined the tail
 
         # RUNTIME INJECTION (ALWAYS - even on cache hit)
         # This happens AFTER cache because biographical facts and conversation change frequently
@@ -154,7 +160,7 @@ class PromptAssemblyService:
             include_datetime=include_datetime,
             skills_catalog=skills_catalog,
             session_key=session_key,
-            tail_block=self._tail_blocks.get(cache_key, ""),
+            tail_block=tail_block,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -285,7 +291,7 @@ class PromptAssemblyService:
                 for _, tok in tail_entries
             )
             tail_blocks.append(f"{class_name} {{\n{tail_text}\n}}")
-        self._tail_blocks[self._build_cache_key(agent_type, account_id, user_id)] = "\n\n".join(tail_blocks)
+        tail_text_all = "\n\n".join(tail_blocks)
 
         # STEP 8: Render sections in blueprint class_order
         sections = []
@@ -331,6 +337,8 @@ class PromptAssemblyService:
         )
 
         prompt = self._normalize_whitespace(prompt)
+        if tail_text_all:
+            prompt = prompt + "\n" + _TAIL_MARKER + "\n" + tail_text_all
 
         logger.debug(f"Static template assembled: {len(prompt)} chars, {len(sections)} sections")
         return prompt
@@ -713,7 +721,6 @@ class PromptAssemblyService:
         """
         cache_size = len(self._assembled_cache)
         self._assembled_cache.clear()
-        self._tail_blocks.clear()
         logger.info(f"🔥 Cache cleared: {cache_size} entries removed")
 
     async def preload_cache(

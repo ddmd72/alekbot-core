@@ -131,3 +131,31 @@ async def test_the_loader_reads_tail_categories_and_defaults_to_empty():
 
     assert (await _repo({**base, "tail_categories": ["output_language"]}).get("bp")).tail_categories == ["output_language"]
     assert (await _repo(base).get("bp")).tail_categories == []
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_still_ends_with_the_tail_before_the_session_key_and_holds_the_rule_once():
+    service = _service(_blueprint(tail_categories=["output_language"]))
+    await _assemble(service, session_key=KEY)
+    hit = await _assemble(service, session_key=KEY)
+
+    assert hit.endswith(render_session_key(KEY))
+    assert hit.rindex("\npolicies {") < hit.index("session_key {")
+    assert hit.count("Output_Language_Fixed_EN") == 1
+
+
+@pytest.mark.asyncio
+async def test_the_internal_marker_never_reaches_a_final_prompt():
+    for service in (_service(_blueprint(tail_categories=["output_language"])), _service(_blueprint())):
+        for _ in range(2):
+            assert "TAIL_BLOCK" not in await _assemble(service, include_datetime=True, session_key=KEY)
+
+
+@pytest.mark.asyncio
+async def test_invalidating_the_cache_between_two_assemblies_still_yields_the_tail():
+    service = _service(_blueprint(tail_categories=["output_language"]))
+    first = await _assemble(service)
+    service.invalidate_cache()
+    second = await _assemble(service)
+
+    assert first == second and second.count("Output_Language_Fixed_EN") == 1 and "\npolicies {" in second
