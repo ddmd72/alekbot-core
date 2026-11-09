@@ -513,6 +513,9 @@ class PromptAssemblyService:
                 prompt = prompt + "\n\n" + kb_block + extra
         elif extra_static_blocks and kb_preamble:
             prompt = head + "\n\n".join(extra_static_blocks) + "\n\n" + prompt
+        elif extra_static_blocks:
+            # No knowledge base and no preamble: the blocks follow the template (they were dropped here before).
+            prompt = prompt + "\n\n" + "\n\n".join(extra_static_blocks)
 
         # Skills catalog — before directives so directives keep the last static slot (recency).
         # Pre-rendered by the orchestrator; descriptions were validated when saved.
