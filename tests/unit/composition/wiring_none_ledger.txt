@@ -22,6 +22,7 @@ GcsWorkspaceAdapter._client  # lazy storage client built on first use (gcs_works
 BigQueryPromptContentAdapter._client  # lazy BigQuery client (bigquery_prompt_content_adapter.py:75)
 GcpKmsCipherAdapter._client  # lazy KMS async client built on the first encrypt or decrypt, inside the running event loop, plan D-P6 (gcp_kms_cipher_adapter.py:35-38)
 MCPClient._tool_declarations  # lazy filled by the first get_tool_declarations() (adapters/mcp/mcp_client.py:48-57)
+FactProfilerRunner._agent  # lazy the internal profiler agent is built on the first profile() call, under the runner's lock (fact_profiler_runner.py:50,59-67, FACT_PROFILE_RFC 4.1)
 
 # ---- state a served request fills
 RouterAgent._cached_triage_prompt  # runtime built on the first triage (router_agent.py:217,430)
@@ -41,6 +42,7 @@ app.agent_factory.file_conversion_service._documents._reader._prompt_builder.rep
 app.agent_factory.file_conversion_service._documents._reader._temp_root  # by-design no temp_root: the reader's work directory is the default TMPDIR, as on the indexer (drive_reader_runner.py:202)
 app.companion_extractor_runner._prompt_builder.repo  # by-design never reads facts, include_biographical=False (application_graph.py companion_prompt_builder comment)
 app.container.email_classifier._prompt_builder.repo  # by-design never reads facts, repo=None (service_container.py:300)
+app.container.fact_profiler._prompt_builder.repo  # by-design never reads facts, repo=None: the profiler assembles its system prompt with include_biographical=False and no user or account (service_container.py:394, fact_profiler_agent.py _system_prompt)
 app.notification_service._platform_rich_content['telegram']._storage_port  # by-design Telegram has no media storage: the graph builds Telegram's one RichContentService without storage_port (application_graph.py:971), the same instance the Telegram chat handler holds, documented (rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:122-125)
 app.telegram_adapter.conversation_handler._channel_history  # by-design the Telegram Bot API cannot read chat history; only history_source="platform" bindings use it, guarded at conversation_handler.py:718 (slack_adapter_factory.py:110)
 AgentDescriptor.allowed_intents*  # by-design None means every non-internal intent (agent_registry.py:58-62)
