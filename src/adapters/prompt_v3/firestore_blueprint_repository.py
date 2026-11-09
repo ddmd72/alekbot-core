@@ -23,7 +23,8 @@ class FirestoreBlueprintRepository(BlueprintRepository):
             "blueprint_id": "universal_agent_v1",
             "outer_class": "Alek extends Agent",
             "class_order": ["properties", "cognitive_process", "policies",
-                            "protocols", "output_format", "final_directives"]
+                            "protocols", "output_format", "final_directives"],
+            "tail_categories": ["output_language"]   # optional
         }
 
     Examples:
@@ -49,6 +50,7 @@ class FirestoreBlueprintRepository(BlueprintRepository):
             id=data["blueprint_id"],
             outer_class=data["outer_class"],
             class_order=list(data["class_order"]),
+            tail_categories=list(data.get("tail_categories") or []),
         )
         blueprint.validate()
         return blueprint
@@ -63,6 +65,7 @@ class FirestoreBlueprintRepository(BlueprintRepository):
                 id=data["blueprint_id"],
                 outer_class=data["outer_class"],
                 class_order=list(data["class_order"]),
+                tail_categories=list(data.get("tail_categories") or []),
             )
             blueprints.append(blueprint)
 
@@ -76,6 +79,8 @@ class FirestoreBlueprintRepository(BlueprintRepository):
             "outer_class": blueprint.outer_class,
             "class_order": list(blueprint.class_order),
         }
+        if blueprint.tail_categories:
+            data["tail_categories"] = list(blueprint.tail_categories)
 
         doc_ref = self.db.collection(self.collection_name).document(blueprint.id)
         doc_ref.set(data)

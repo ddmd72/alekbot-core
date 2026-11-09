@@ -458,9 +458,12 @@ def test_strategies_has_no_orphans():
     #   (composition/) for the drive indexer, not UserAgentFactory (USER_DRIVE_INDEXING_RFC §24.2).
     # - drive_profiler / drive_passages: built per call by DriveProfilerRunner / DrivePassageRunner (composition/)
     #   for the drive indexer, the same way (USER_DRIVE_INDEXING_RFC §25.4.4).
+    # - fact_profiler: built once by FactProfilerRunner (composition/, ServiceContainer.fact_profiler) with a default
+    #   UserBotConfig and a pinned model — a system agent, not a per-user instance (FACT_PROFILE_RFC §4.1); its entry
+    #   pins Claude with no fallback.
     _NON_FACTORY_STRATEGIES = {
         "email_classifier", "deep_research", "tutor_extractor", "lelik_summarizer", "drive_reader", "drive_triage",
-        "drive_profiler", "drive_passages",
+        "drive_profiler", "drive_passages", "fact_profiler",
     }
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())

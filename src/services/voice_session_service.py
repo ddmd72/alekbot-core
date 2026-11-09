@@ -14,6 +14,7 @@ from src.domain.voice_ask_latch import AskLatch, AskReason, AskState, AskStep
 from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, pair_session_servers
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_control_protocol import ASK_ARM, ASK_DISARM, FEATURE_ASK, ask_state_frame, command_seq
+from src.domain.voice_language_note import build_language_note
 from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_mode import VoiceMode
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
@@ -395,6 +396,9 @@ class VoiceSessionService:
                 # The earlier conversation, caller opening included, is already in the provider's context.
                 await session.submit_message("system", _RESUME_NOTE)
             else:
+                language_note = build_language_note(config.get("instructions"))
+                if language_note is not None:
+                    await session.submit_message("system", language_note)
                 if self._caller_opening and state.turn_ownership is TurnOwnership.RELAY:
                     # A user turn, not system text: live, the caller's own request changed how
                     # Lelik spoke where the same rule as system text did not (2026-09-25).

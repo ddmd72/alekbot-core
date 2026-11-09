@@ -101,6 +101,7 @@ src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.composition.email_classifier_runner.EmailClassifierRunner 1  # by-design the email indexing service's one classifier; it builds the agent per batch for the job's user (service_container.py)
+src.composition.fact_profiler_runner.FactProfilerRunner 1  # by-design the one fact profiler, held by the ServiceContainer as fact_profiler; it builds its internal agent once, lazily, on the pinned model (service_container.py:392, FACT_PROFILE_RFC 4.1)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -158,7 +159,7 @@ src.services.memory_fact_service.MemoryFactService 1  # by-design single instanc
 src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (application_graph.py, MULTI_DRIVE_RFC 5.2)
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
 src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
-src.services.prompt_builder.PromptBuilder 3  # by-design three plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:384), CompanionExtractorRunner's (application_graph.py:625) and the document service reader's (document_service_setup.py:33); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
+src.services.prompt_builder.PromptBuilder 4  # by-design four plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:385), FactProfilerRunner's (service_container.py:394, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (application_graph.py:625) and the document service reader's (document_service_setup.py:33); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
 src.services.prompt_v3.biographical_formatter.BiographicalFactsFormatter 1  # by-design single instance

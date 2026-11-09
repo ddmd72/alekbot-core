@@ -79,6 +79,7 @@ POST /api/user/reminders
 POST /api/user/request-phone-otp
 POST /api/user/verify-phone-otp
 POST /api/voice/web-call
+POST /api/voice/web-call/<call_id>/client-report
 POST /api/voice/web-call/<call_id>/connect
 POST /api/voice/web-call/<call_id>/hangup
 POST /api/voice/web-call/<call_id>/renegotiate

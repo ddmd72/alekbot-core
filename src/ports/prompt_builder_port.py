@@ -62,6 +62,12 @@ class PromptBuilderPort(ABC):
     def invalidate_cache(self, component_key: Optional[str] = None) -> None:
         """Invalidate one or all cache entries."""
 
+    def invalidate_agent_prompt(
+        self, agent_type: str, account_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> None:
+        """Drop the one cached assembly of this agent / account / user key, leaving every other entry. A builder
+        with nothing cached keeps this no-op."""
+
     @abstractmethod
     def invalidate_biographical_cache(self, user_id: str) -> None:
         """Invalidate biographical cache for a specific user."""

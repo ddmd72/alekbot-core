@@ -35,11 +35,13 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
       Claude, but that is still one LLM call when nothing is delegated.
       Cache write would not be amortized → pay the +25% surcharge for nothing. Skipped.
     - WebSearch: single LLM call with native grounding, no follow-up.
+    - Fact profiler: one call per fact over a ~30 k-character static prompt, the same for every fact; the parse retry and
+      the next fact read the cached prefix (FACT_PROFILE_RFC §4.3). Single user turn: no last-message cache.
     - Drive specialist: multi-turn (search, then report); the prefix is ~8 k tokens and the cache holds across the
       several commissions of one Smart turn (DRIVE_SPECIALIST_RFC §5.1 cost check).
     """
 
-    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch", "drive"})
+    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch", "drive", "fact_profiler"})
     MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart", "drive"})
 
     def resolve(

@@ -60,6 +60,14 @@ class AgentProviderStrategy:
             "required_capabilities": ["context_caching"],
             "fallback": None
         },
+        # The fact profiler (FACT_PROFILE_RFC §4.1): one structured call per fact, pinned to Claude. No cross-provider
+        # fallback: memory quality over availability, owner ruling 2026-10-23 (P9 D8).
+        "fact_profiler": {
+            "default_provider": "claude",
+            "allowed_providers": ["claude"],
+            "required_capabilities": [],
+            "fallback": None
+        },
         # Single LLM call (structured JSON, no multi-turn tool loop) — no
         # context_caching requirement, unlike consolidation's 8-step loop.
         # No cross-provider fallback by owner ruling 2026-10-23 (P9 D8): memory quality over availability.
