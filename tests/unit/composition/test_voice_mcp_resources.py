@@ -3,7 +3,7 @@
 - Routing: the facts provider (`MCPSdkOAuthProvider.load_access_token`) and the drive verifier
   (`DriveTokenVerifier.verify_token`) send a `voice-mcp` kid to the voice verifier only and anything else to the OAuth
   verifier only; each rejects the other's tokens, on key, type and audience, and a forged kid.
-- The facts tool over HTTP: the tools claim, the voice cap, counts-only logging.
+- The facts tool over HTTP: the tools claim, the voice cap, logging (search terms verbatim, never facts or the token).
 - The drive tools over HTTP on the production drive services (`drive_mcp_access_world`): the tools claim (neutral
   refusal, no read), the audience left unset (connector access "Nothing" still sees chat's view), the voice cap.
 
@@ -224,15 +224,17 @@ class TestFactsTool:
         assert voice_text.endswith("ask a narrower question to see the rest.]") and oauth_text.startswith(voice_text
                                                                                                        .split("\n")[0])
 
-    async def test_a_voice_call_logs_counts_never_the_query(self, kit, tokens, caplog):
+    async def test_a_voice_call_logs_its_search_terms_never_facts_or_token(self, kit, tokens, caplog):
         caplog.set_level(logging.DEBUG)
         await FactsApp(kit, [_fact(1)]).call(tokens.facts)
         lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
         assert len(lines) == 2 and all("client=voice" in line for line in lines)
-        assert f"query_chars={len(QUERY)}" in lines[0]
-        # What reaches Cloud Logging (INFO and up): no query, no fact. At any level: no token.
+        # The search terms, verbatim, as the call sent them (only `query`; the other two take their defaults).
+        assert f"query={QUERY!r}" in lines[0]
+        assert "alternate_phrasing=''" in lines[0] and "keywords=[]" in lines[0]
+        # What reaches Cloud Logging (INFO and up): no fact. At any level: no token.
         shipped = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
-        assert QUERY not in shipped and FACT not in shipped
+        assert FACT not in shipped
         everything = "\n".join(r.getMessage() for r in caplog.records)
         assert tokens.facts not in everything and tokens.facts.split(".")[2] not in everything
 
