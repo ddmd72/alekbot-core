@@ -24,6 +24,7 @@ GcpKmsCipherAdapter._client  # lazy KMS async client built on the first encrypt 
 MCPClient._tool_declarations  # lazy filled by the first get_tool_declarations() (adapters/mcp/mcp_client.py:48-57)
 FactProfilerRunner._agent  # lazy the internal profiler agent is built on the first profile() call, under the runner's lock (fact_profiler_runner.py:50,59-67, FACT_PROFILE_RFC 4.1)
 LazyAtlas._loaded  # lazy the place atlas and its digest are loaded on the profile step's first run, under the atlas's lock and off the event loop (asyncio.to_thread), never at boot (fact_profile_setup.py:44-52, FACT_PROFILE_RFC 4.4)
+FactSearchService._places  # lazy the place-name index is read from the bundled place table on the first search that names a place, never at build (fact_search_service.py:118-121, fact_search_setup.py)
 
 # ---- state a served request fills
 RouterAgent._cached_triage_prompt  # runtime built on the first triage (router_agent.py:217,430)

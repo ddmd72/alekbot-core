@@ -143,6 +143,7 @@ src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-desi
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as _fact_profile_step in application_graph.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (application_graph.py:724,739,921, FACT_PROFILE_RFC 4.4)
 src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
+src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service (application_graph.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); no caller yet
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance

@@ -125,7 +125,9 @@ from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
+from src.composition.fact_search_setup import build_fact_search_service
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
+from src.ports.fact_search_port import FactSearchPort
 from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.drive_disconnect_service import DriveDisconnectService
 from src.services.oauth_connect_service import OAuthConnectService
@@ -183,6 +185,8 @@ class ApplicationGraph:
     billing_agent: BillingAgent
     logger_agent: LoggerAgent
     html_renderer: Optional[HtmlRendererPort]
+    # the fact search (FACT_PROFILE_RFC §5); no caller yet
+    fact_search: FactSearchPort
     # The voice MCP token kind's key (LELIK_VOICE_MCP_RFC §5.2), validated before anything else is built; consumed by
     # main()'s voice and MCP wiring. None: no key, every voice token refused. Never in a repr.
     voice_mcp_signing_key: Optional[str] = field(default=None, repr=False)
@@ -1120,6 +1124,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
 
+    fact_search = build_fact_search_service(container.repository, container.embedding_service)
+
     return ApplicationGraph(
         container=container,
         agent_factory=agent_factory,
@@ -1162,6 +1168,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         billing_agent=billing_agent,
         logger_agent=logger_agent,
         html_renderer=html_renderer,
+        fact_search=fact_search,
         voice_mcp_signing_key=voice_mcp_key,
     )
 

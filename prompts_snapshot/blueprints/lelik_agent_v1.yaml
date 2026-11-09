@@ -7,4 +7,6 @@ class_order:
 - few_shot_examples
 outer_class: Lelik extends Agent
 source_file: firestore_utils/uploads/lelik_agent_v1.json
+tail_categories:
+- output_language
 uploaded_by: local_script

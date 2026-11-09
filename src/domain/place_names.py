@@ -84,3 +84,22 @@ class PlaceNames:
             keys.append(f"pl:{row.large.geonameid}")
         keys.append(country_key(row.country))
         return (tuple(keys), None)
+
+    def query_keys(self, name: str, country: str) -> Tuple[str, ...]:
+        """The place keys a query's place reaches (fact profile RFC §5.3): a country alone gives its `co:` key (a country
+        reaches every city carrying it); a city gives its own `pl:` key and its large neighbour's. A query key is one
+        vote, not a stored identity, so an ambiguous city takes the heaviest row (a weight tie, the first row of the
+        table). A name nobody knows gives no key."""
+        city, named = fold(name or ""), fold(country or "")
+        as_country = self._country_of.get(city)
+        if (as_country is not None and (not named or self._country_of.get(named) == as_country)
+                and city not in self._by_name):
+            return (country_key(as_country),)
+        inside = self._country_of.get(named)
+        candidates = self._by_name.get(city, set())
+        if inside:
+            candidates = {i for i in candidates if self._rows[i].country == inside}
+        if not candidates:
+            return (country_key(as_country),) if as_country is not None else ()
+        row = self._rows[max(candidates, key=lambda i: (self._rows[i].weight or 0, -i))]
+        return (f"pl:{row.geonameid}",) + ((f"pl:{row.large.geonameid}",) if row.large is not None else ())
