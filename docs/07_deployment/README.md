@@ -155,7 +155,9 @@ relay; only the main service needs credentials, to mint SFU sessions.
 4. Two optional relay knobs, read with `os.environ.get`, both defaulting to the phone path's values:
    `VOICE_WEB_REASONING_EFFORT` (default `medium`) and `VOICE_WEB_CALLER_OPENING` (`on`/`off`, default `on`).
 5. One optional main-service knob, read with `os.getenv` per request: `VOICE_CONTROL_CHANNEL` (`on`/`off`, default
-   `off`), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). Off,
+   `off` in code), the kill switch of the call control channel (`docs/10_rfcs/VOICE_CALL_CONTROL_CHANNEL_RFC.md` §9). The
+   deploy sets it `on` (`cloudbuild-dev.yaml` `--set-env-vars`); the rollback is
+   `gcloud run services update <main service> --update-env-vars=VOICE_CONTROL_CHANNEL=off` until the next deploy. Off,
    `/connect` hands out no `control` and the page opens no socket; the relay needs no knob.
 6. One optional relay knob for the dead-peer watchdog, read with `os.getenv` when the SFU handler is built:
    `VOICE_DEAD_PEER_TIMEOUT_S` (seconds, default `600`). A web call with no inbound audio packet for that long ends
@@ -384,7 +386,9 @@ HS256 key of Lelik's per-call MCP tokens and nothing else. **Create it before th
 fails otherwise): at least 48 characters (`openssl rand -hex 32` gives 64, stored with `printf '%s'`), never the OAuth
 session secret in effect nor the public dev placeholder (the start is refused for either), `secretmanager.secretAccessor` for the main service's
 account only. Rotating it ends every live voice token at once (calls in flight lose their memory and drive tools).
-The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off; `on` turns it on) wires the tools: the plain
+The knob `VOICE_MCP_TOOLS` (`os.getenv`, main service only, default off in code; `on` turns it on; the deploy sets it
+`on` through `cloudbuild-dev.yaml` `--set-env-vars`, and the rollback is `--update-env-vars=VOICE_MCP_TOOLS=off` until the
+next deploy) wires the tools: the plain
 companion call on xAI gets the memory and drive MCP servers as session tools (their URLs come from `MCP_RESOURCE_URI`,
 no new key), loses its `search_memory` delegation, and `/voice/session-config` mints the call's tokens; with it on and
 the key missing the main service refuses to start. The relay needs no knob: it offers a server only when the session
@@ -608,6 +612,10 @@ created from 2b on starts read-only until the owner picks a write folder in the 
   caches a template for 24 h per instance, so fresh instances must find the new token.
 - **`--set-env-vars` replaces every variable.** A variable set by hand with `gcloud run services update` is gone at the
   next deploy; a lasting setting goes into `cloudbuild-dev.yaml` or a deploy-only `.env` key.
+- **Env drift check.** `make deploy` ends with `scripts/infrastructure/check_env_drift.py`: for each service the build
+  deploys with `gcloud run deploy`, it compares the variable names of the newest revision with the one before it and
+  prints every name that disappeared (names only, never values), exiting nonzero. The deploy has already happened;
+  re-set the variable or add it to `cloudbuild-dev.yaml`.
 - **A deploy never resumes a paused queue or scheduler job.** Resume them yourself.
 - **Check what serves** after a deploy:
   ```bash
