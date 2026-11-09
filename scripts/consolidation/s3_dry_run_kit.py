@@ -300,6 +300,21 @@ class NoWriteFactRepository(FactRepository):
         """The live list with the pass's own writes applied (as `get_active_facts`); an overlay document is whole."""
         return self._current_view(await self._real.list_profile_states(account_id), account_id)
 
+    async def list_search_snapshot(self, account_id: str) -> List[FactEntity]:
+        """The live list with the pass's own writes applied (as `list_profile_states`)."""
+        return self._current_view(await self._real.list_search_snapshot(account_id), account_id)
+
+    async def get_baseline_refreshed_at(self, account_id: str) -> Optional[datetime]:
+        return await self._real.get_baseline_refreshed_at(account_id)
+
+    async def nearest_fact_ids(
+        self, account_id: str, vector_field: str, query_vector: Sequence[float], limit: int
+    ) -> List[str]:
+        return await self._real.nearest_fact_ids(account_id, vector_field, query_vector, limit)
+
+    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
+        return await self._real.get_fact_vectors(account_id, fact_ids)
+
     async def write_fact_profile(
         self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]
     ) -> bool:

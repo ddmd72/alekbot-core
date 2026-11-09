@@ -597,6 +597,17 @@ async def get_all_order_not_assumed(db: Any, col: str) -> Any:
             "in_transaction": await read_each(db.transaction())}
 
 
+async def get_all_field_paths(db: Any, col: str) -> Any:
+    """`get_all(field_paths=[...])` (the fact search's vector read): only those fields of each document, a missing
+    document reads as not existing; the vector field comes back as a Vector."""
+    c = db.collection(col)
+    await _seed(c, {"a": {"acc": "x", "v": Vector([1.0, 0.0]), "text": "t"}, "b": {"acc": "y", "text": "u"}})
+    refs = [c.document(i) for i in ("a", "b", "nobody")]
+    got = {snap.id: snap.to_dict() async for snap in db.get_all(refs, field_paths=["acc", "v"])}
+    return {"fields": {i: (None if d is None else sorted(d)) for i, d in got.items()},
+            "vector": list(got["a"]["v"]), "type": type(got["a"]["v"]).__name__}
+
+
 # ------------------------------------------------------------------------------------ the table, indexes
 
 @dataclass(frozen=True)
@@ -704,6 +715,8 @@ SCENARIOS: List[Scenario] = [
     Scenario("get_all_order_not_assumed", get_all_order_not_assumed, {
         "get_all": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None},
         "in_transaction": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None}}),
+    Scenario("get_all_field_paths", get_all_field_paths, {
+        "fields": {"a": ["acc", "v"], "b": ["acc"], "nobody": None}, "vector": [1.0, 0.0], "type": "Vector"}),
 ]
 
 # Fields of each group's composite and vector indexes, in index order: (field, "ASC" | "VECTOR").
