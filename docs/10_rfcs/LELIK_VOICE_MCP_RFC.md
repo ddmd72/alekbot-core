@@ -186,9 +186,10 @@ is query access to the rest of memory and the indexed drives *during* the call.
 
 **Logging rules.** The token and the `Authorization` header are never logged, on any side: no logging of session
 config in the relay or the adapter (none today; a test pins it); verifiers log the refusal reason only; alerts print
-`fingerprint(cid)`. Every MCP log line and span of a voice token adds `client=voice`. The facts tool logs the query
-verbatim today (`src/composition/mcp_setup.py:336-341`); for a voice token it logs counts only, the drive rule
-(DRIVE_MCP_CONNECTOR_RFC §9): a spoken question is often more personal than a typed one.
+`fingerprint(cid)`. Every MCP log line and span of a voice token adds `client=voice`. The facts tool logs its search
+terms (`query`, `alternate_phrasing`, `keywords`) verbatim for every token, voice included: without them a voice miss
+cannot be diagnosed (owner's decision; it replaced the earlier counts-only rule for the facts tool). The drive tools
+keep counts only for a voice token (DRIVE_MCP_CONNECTOR_RFC §9). Fact contents are never logged.
 
 ## 6. Untrusted content
 
