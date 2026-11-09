@@ -16,7 +16,7 @@ spellings its keys are made from, on the index side only (no query-side table, O
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .drive_index_params import PLACE_MAX_DISTANCE_KM, PLACE_PREFER_RADIUS_KM
@@ -47,6 +47,8 @@ class PlaceRow:
     alt_names: Tuple[str, ...] = ()
     country_names: Tuple[str, ...] = ()
     large: Optional["PlaceRow"] = None
+    # The table's geonameid ("" on a v1 row): a fact profile's place key. Not part of a row's identity.
+    geonameid: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)

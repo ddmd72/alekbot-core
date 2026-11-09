@@ -267,6 +267,10 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
 - **No fallback prompts.** Agents must not contain inline/hardcoded fallback prompts. If `PromptBuilder.build_for_agent()`
   fails — return `AgentResponse.failure()`, do not degrade to an empty or inline prompt. The Firestore prompt (token +
   blueprint + profile) is the single source of truth. Fail fast on missing prompts.
+- **Prompt text explains, then rules.** A prompt token or rule text for a model first states what its output is for, how
+  it is used downstream, what is already covered elsewhere and which gap it must bridge; only then the rules. A dry
+  instruction is followed literally and fits only the cases its author imagined. No examples (models copy them
+  literally); what must hold is enforced in code, not in wording.
 
 ## Patterns
 
