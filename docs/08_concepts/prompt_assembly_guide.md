@@ -129,6 +129,14 @@ Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6)
 9. Append `query_specific_context` block (only if Q-S facts present)
 10. Append `session_key { <three-word key> }` as the **last** dynamic block (only when the orchestrator passes `session_key`; Smart and Quick draw a fresh key per attempt; `SYSTEM_TURN_FINGERPRINT_RFC.md` §4.2)
 
+**`tail_categories` (optional blueprint field).** A blueprint may list token categories (e.g. `output_language`).
+Tokens of those categories are not rendered in their class section; each class that has any renders them instead as a
+trailing top-level block (`policies { … }`, tokens sorted by `ProfileToken.order`) placed after `current_date_time` and
+`query_specific_context` and before `session_key`, which stays last. The block is built with the static template and
+kept next to its cache entry, so a blueprint without the field produces the same prompt as before. The voice blueprint
+uses it for recency: facts and chat history follow the middle of the instructions, and on providers that own the turns
+no per-turn anchor repeats the output-language rule, so it goes at the very end where it is read last.
+
 ---
 
 ## 3. Assembled Prompt Structure

@@ -49,6 +49,17 @@ _PROFILE_STATE_FIELDS = [
 # What the people cards read of a current fact (list_profile_people).
 # The fields FactEntity requires come along (created_by_user_id, lineage_id, owner_id for legacy documents, text, type).
 _PROFILE_PEOPLE_FIELDS = ["account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "state", "people"]
+# What the fact search reads of a current fact (list_search_snapshot): search_facts' projection without `vector`, plus the
+# profile fields the search lists use.
+_SEARCH_SNAPSHOT_FIELDS = [
+    "account_id", "owner_id", "created_by_user_id", "lineage_id", "text", "type", "state", "domain", "tags",
+    "context_priority", "valid_from", "valid_to", "created_at", "source", "version", "visibility", "metadata",
+    "temporal_class", "reported_date", "context", "expiry_kind", "ttl_days", "expires_at",
+    "label_words", "time_role", "time_points", "place_keys", "people", "primary_domain", "domain_keys", "kinds",
+    "sensitivity",
+]
+_NEAREST_VECTOR_FIELDS = ("vector", _LABEL_VECTOR)
+_GET_ALL_CHUNK = 300
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -687,6 +698,53 @@ class FirestoreFactRepository(FactRepository):
             .select(_PROFILE_PEOPLE_FIELDS)
         )
         return [self._fact_from_snapshot(snap) async for snap in query.stream()]
+
+    async def list_search_snapshot(self, account_id: str) -> List[FactEntity]:
+        """Two equalities on account_id and state: served without a composite index."""
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", FactState.CURRENT.value))
+            .select(_SEARCH_SNAPSHOT_FIELDS)
+        )
+        return [self._fact_from_snapshot(snap) async for snap in query.stream()]
+
+    async def get_baseline_refreshed_at(self, account_id: str) -> Optional[datetime.datetime]:
+        snap = await self.user_context_col.document(account_id).get()
+        if not snap.exists:
+            return None
+        refreshed = (snap.to_dict() or {}).get("refreshed_at")
+        return refreshed if isinstance(refreshed, datetime.datetime) else None
+
+    async def nearest_fact_ids(
+        self, account_id: str, vector_field: str, query_vector: Sequence[float], limit: int
+    ) -> List[str]:
+        if vector_field not in _NEAREST_VECTOR_FIELDS:
+            raise ValueError(f"nearest_fact_ids searches {', '.join(_NEAREST_VECTOR_FIELDS)}, not {vector_field!r}")
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", FactState.CURRENT.value))
+            .select(["account_id"])
+            .find_nearest(
+                vector_field=vector_field, query_vector=list(query_vector),
+                distance_measure=DistanceMeasure.COSINE, limit=limit,
+            )
+        )
+        async with _FIND_NEAREST_SEMAPHORE:
+            docs = await query.get()
+        return [doc.id for doc in docs]
+
+    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
+        out: Dict[str, List[float]] = {}
+        ids = list(fact_ids)
+        for start in range(0, len(ids), _GET_ALL_CHUNK):
+            refs = [self.facts_col.document(fact_id) for fact_id in ids[start:start + _GET_ALL_CHUNK]]
+            async for snap in self.db.get_all(refs, field_paths=["account_id", "vector"]):
+                data = snap.to_dict() if snap.exists else None
+                if data and data.get("account_id") == account_id and data.get("vector") is not None:
+                    out[snap.id] = list(data["vector"])
+        return out
 
     async def write_fact_profile(
         self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]

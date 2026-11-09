@@ -718,6 +718,80 @@
         }
       }
 
+      // Playback report (observation only): small snapshots of the remote audio's state, POSTed fire-and-forget so
+      // the server log shows where playback dies. Nothing here touches playback or the call flow.
+      let playingEvents = 0;
+      let trackArrivedAt = 0;
+      let firstPlayingMs = -1;
+      let reportTrack = null;
+      remoteAudio.addEventListener("playing", () => {
+        try {
+          playingEvents++;
+          if (firstPlayingMs < 0 && trackArrivedAt) firstPlayingMs = Math.round(performance.now() - trackArrivedAt);
+        } catch (e) {
+          // observation only
+        }
+      });
+
+      async function sendClientReport(stage, token) {
+        try {
+          if (token !== callToken || !callId) return;
+          const reportCallId = callId;
+          const d = {};
+          const put = (k, fn) => {
+            try {
+              const v = fn();
+              if (v !== undefined && v !== null) d[k] = v;
+            } catch (e) {
+              // missing API — key omitted
+            }
+          };
+          put("el_paused", () => remoteAudio.paused);
+          put("el_ready_state", () => remoteAudio.readyState);
+          put("el_current_time", () => remoteAudio.currentTime);
+          put("el_muted", () => remoteAudio.muted);
+          put("el_volume", () => remoteAudio.volume);
+          put("el_has_src", () => remoteAudio.srcObject !== null);
+          put("el_error", () => (remoteAudio.error ? remoteAudio.error.code : 0));
+          put("el_playing_events", () => playingEvents);
+          put("el_first_playing_ms", () => firstPlayingMs);
+          const track = reportTrack;
+          put("tr_ready_state", () => track.readyState);
+          put("tr_muted", () => track.muted);
+          put("tr_enabled", () => track.enabled);
+          put("pc_state", () => pc.connectionState);
+          put("ice_state", () => pc.iceConnectionState);
+          put("ctx_state", () => (audioCtx ? audioCtx.state : "none"));
+          put("session_type", () => (navigator.audioSession ? navigator.audioSession.type : "none"));
+          try {
+            const receiver = pc.getReceivers().find((r) => r.track && r.track.kind === "audio");
+            const stats = await receiver.getStats();
+            stats.forEach((s) => {
+              if (s.type !== "inbound-rtp" || s.kind === "video") return;
+              const take = (k, v) => {
+                if (typeof v === "number") d[k] = v;
+              };
+              take("rx_packets", s.packetsReceived);
+              take("rx_bytes", s.bytesReceived);
+              take("rx_audio_level", s.audioLevel);
+              take("rx_samples", s.totalSamplesReceived);
+              take("rx_concealed", s.concealedSamples);
+            });
+          } catch (e) {
+            // no stats — the rx keys are omitted
+          }
+          fetch(`/api/voice/web-call/${reportCallId}/client-report`, {
+            method: "POST",
+            credentials: "same-origin",
+            keepalive: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stage, data: d }),
+          }).catch(() => {});
+        } catch (e) {
+          // never throws
+        }
+      }
+
       function inboundAudioLevel(report) {
         // The receiver's decoded audio level (0..1, linear, like the analyser's RMS), computed by
         // the WebRTC stack itself — no Web Audio involved.
@@ -869,19 +943,15 @@
       }
 
       // Control channel to the relay (VOICE_CALL_CONTROL_CHANNEL_RFC §4): a websocket to the
-      // relay process that runs the call, opened only on the interpreter page in v1 and only
-      // when /connect hands out `control` (the VOICE_CONTROL_CHANNEL knob). The token goes in
-      // the first frame, never in the URL. No UI here: a feature ("Ask Lelik" below) registers
-      // with onControl() and hears every frame, and null when the socket is down; it sends with
-      // sendControl(). The call itself never depends on this socket.
+      // relay process that runs the call, opened on every page whenever /connect hands out
+      // `control` (the VOICE_CONTROL_CHANNEL knob). The token goes in the first frame, never in
+      // the URL. No UI here: a feature ("Ask Lelik" below) registers with onControl() and hears
+      // every frame, and null when the socket is down; it sends with sendControl(). The call
+      // itself never depends on this socket.
       const CONTROL_PING_MS = 20000;
       const CONTROL_BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
       let control = null;
       const controlListeners = [];
-
-      function wantsControlChannel() {
-        return window.VOICE_MODE === "interpreter";
-      }
 
       function onControl(listener) {
         controlListeners.push(listener);
@@ -906,8 +976,24 @@
         closeControl();
         if (!handout || typeof handout.url !== "string" || typeof handout.token !== "string") return;
         control = { url: handout.url, token: handout.token, owner, ws: null, ping: null, retry: null,
-                    attempt: 0, done: false, features: [] };
+                    attempt: 0, done: false, features: [],
+                    welcomed: false, listening: false, listenSent: false };
         dialControl(control);
+      }
+
+      // `listening` (RFC §4.2): the relay holds the call's greeting until the page hears Lelik's
+      // track, or a few seconds at most. Sent once per call, as soon as both hold: /renegotiate is
+      // done (controlListening) and the socket is welcomed; a reconnect never sends it again.
+      function controlListening(owner) {
+        const ch = control;
+        if (!ch || ch.owner !== owner) return;
+        ch.listening = true;
+        sendListening(ch);
+      }
+
+      function sendListening(ch) {
+        if (ch !== control || !ch.listening || !ch.welcomed || ch.listenSent) return;
+        if (sendControl({ type: "listening" })) ch.listenSent = true;
       }
 
       function dialControl(ch) {
@@ -939,6 +1025,8 @@
             ch.ping = setInterval(() => {
               if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
             }, CONTROL_PING_MS);
+            ch.welcomed = true;
+            sendListening(ch);
           } else if (msg.type === "bye") {
             // version / auth / call_ended / replaced: the relay will not take this token again
             // on this socket's behalf; stop redialling.
@@ -953,6 +1041,7 @@
           ch.ping = null;
           ch.ws = null;
           ch.features = [];
+          ch.welcomed = false;
           notifyControl(null);
           retryControl(ch);
         };
@@ -991,7 +1080,8 @@
       /* ── Ask Lelik ───────────────────────────────────── */
       // Interpreter page only (VOICE_CALL_CONTROL_CHANNEL_RFC §5.5): a press marks the caller's
       // next words as addressed to Lelik; pressing again before speaking cancels. The button is
-      // created only when a call hands out the control channel, so /cabinet/call never has one.
+      // created only on the interpreter page (showAsk checks the mode) and only when a call hands
+      // out the control channel, so /cabinet/call and the tutor page never have one.
       // Views: hidden (no call), disabled (channel down, or the call offers no `ask`), idle,
       // armed (pressed), busy (Lelik is answering). The relay is authoritative: a tap shows its
       // result at once and rolls back unless an `ask_state` answers within 2 s.
@@ -1221,6 +1311,20 @@
           pc.ontrack = (ev) => {
             // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
+            // Safari 27 never starts an autoplay element with no renderer (an <audio> without controls) that has not
+            // played yet (WebKit bug 326969), so autoplay alone leaves Lelik silent there. Start it explicitly; a
+            // refusal shows in the playback report (el_paused), never in the call flow.
+            remoteAudio.play().catch(() => {});
+            try {
+              playingEvents = 0;
+              firstPlayingMs = -1;
+              trackArrivedAt = performance.now();
+              reportTrack = ev.track;
+              const reportToken = callToken;
+              setTimeout(() => sendClientReport("track", reportToken), 0);
+            } catch (e) {
+              // observation only
+            }
             // A separate tap on the same track, for ringback's audible-detection only.
             startAudibleMonitor(ev.track, ev.receiver);
           };
@@ -1302,11 +1406,17 @@
           }
 
           setState(t("state.live"));
+          setTimeout(() => sendClientReport("live_3s", myToken), 3000);
+          setTimeout(() => sendClientReport("live_10s", myToken), 10000);
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
-          if (wantsControlChannel() && connectBody.control) openControl(connectBody.control, myToken);
+          if (connectBody.control) openControl(connectBody.control, myToken);
           // Shown disabled; the control channel's `welcome` enables it when the call offers `ask`.
-          if (wantsControlChannel() && connectBody.control) showAsk();
+          // Interpreter page only: showAsk() checks the mode.
+          if (connectBody.control) showAsk();
+          // /renegotiate is done: the page hears Lelik's track, so the relay may greet now (the frame
+          // goes out once the channel is welcomed). Never awaited; the call does not wait on it.
+          controlListening(myToken);
 
           // Ringback safety net: if nothing ever started watching for Lelik's first sound
           // (neither the analyser nor the receiver's stats are available), don't ring

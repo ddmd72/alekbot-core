@@ -250,11 +250,12 @@ request (no prompt involved), as `facts_memory` does today.
 
 - the two kNN lists through `find_nearest` (`vector`, `label_vector`), depth 40, as today's channels do;
 - the five key lists over an **account snapshot**: one projected read of the account's current facts (profile fields,
-  text, `reported_date`, `created_at`; no vectors), cached per instance and keyed by the baseline cache document's
+  text, `metadata`, `context`, `reported_date`, `created_at`; no vectors in the read), cached per instance and keyed by the baseline cache document's
   `refreshed_at`. Every fact writer already refreshes the baseline (memory map §4.1 "When it changes"), so the key moves
   whenever the facts do. The key lists, ordering, gate and fusion then run in pure domain code
-  (`src/domain/fact_search_lists.py`), exactly as the validated prototype did. Text vectors for deduplication are
-  fetched by id for the fused candidates only. (OD-1 is the alternative: Firestore array queries per list.)
+  (`src/domain/fact_search_lists.py`), exactly as the validated prototype did. Text vectors are cached per account by fact id
+  (a document's `vector` never changes, so a reload fetches only the ids it has not seen) and serve in-list similarity
+  and deduplication. (OD-1 is the alternative: Firestore array queries per list.)
 
 ### 5.3 The lists
 
@@ -272,18 +273,20 @@ request (no prompt involved), as `facts_memory` does today.
 **In-list order** (key lists): with a window, distance to the window (0 on overlap, else days; MIN over a fact's
 points; recurring facts projected into each year the window touches); intent `latest`, newest point first; otherwise by
 time role, interleaved — state and validity newest first, event and measurement nearest to today (an undated fact uses
-`reported_date`), timeless by subject similarity. **Windows** by code: `future` → today to `to` or today + 12 months;
-`past` → `from` or today − 12 months to today; `period` → both ends, one end ± 31 days; `none`/`latest` → no window.
+`reported_date`), timeless by subject similarity. **Windows** by code: `future` → `from` when it is after today, else today, to `to` or 365 days after that start;
+`past` → `from` (or 365 days before the end) to `to` capped at today; `period` → both ends, one end ± 31 days;
+`none`/`latest` → no window.
 
-**Recurring occasion** (code rule, OD-7): a fact with a day-precision point and a label from the closed occasion list
-(`birthday`, `anniversary`) in `fact_search_lists.py`. Example: Clara Moreira's birth date (14 July 1982) has a point
+**Recurring occasion** (code rule, OD-7): a fact with a label phrase containing `birthday` or `anniversary`; each of its
+points spanning at most 31 days (day or month precision) is projected into every year the window touches and its
+neighbours (`fact_search_lists.py`). Example: Clara Moreira's birth date (14 July 1982) has a point
 1982-07-14; asked in November 2026 "what is coming up next summer", its July projection falls inside the window.
 
 **Intimate gate:** an `intimate` fact survives only in the labels list or the domain list; exception — `scope=all`
 with people named (collect everything about a person). **Fusion:** RRF `1/(60 + rank)`, equal weights, existing
 `src/domain/rrf.py`; then `SmartDeduplication(0.96, 0.98)`; cut 30; `scope=all` keeps every fused fact after dedup.
 The Router path drops facts already in the baseline. One log line per search:
-`[FactSearch] path=… lists=semantic:40,labels:40,domain:…,… fused=… kept=… gate_dropped=… ms=…`.
+`[FactSearch] path=… lists=semantic:40,labels:40,domain:…,… fused=… kept=… gate_dropped=… unsnapped=… snapshot=hit|load:<n> ms=…`.
 
 ### 5.4 Callers
 
@@ -467,8 +470,8 @@ until a wrong card is seen.
 **OD-6 Consolidator domain.** (a) PR 13 in this series: the consolidator decides only "directive or not", the 16-value
 domain and its tokens go; (b) a later RFC. **Recommend (a)** one week after PR 12, behind a consolidation bench dry run.
 
-**OD-7 Recurring occasions.** (a) Code rule: day-precision point + an occasion label from a closed list (what the
-prototype ran); (b) a profiler field (prompt change, re-probe). **Recommend (a).**
+**OD-7 Recurring occasions.** (a) Code rule: a label phrase containing `birthday` or `anniversary`, points spanning at most 31 days (day or
+month precision) projected into each year (what the prototype ran); (b) a profiler field (prompt change, re-probe). **Recommend (a).**
 
 **OD-8 Time role as a filter (taxonomy read side).** Neither P1 nor the engine has it; the engine uses the role only for
 in-list order. (a) Ship role ordering only; (b) add a slot and measure. **Recommend (a).**
