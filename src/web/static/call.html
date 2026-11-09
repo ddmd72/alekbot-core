@@ -718,6 +718,80 @@
         }
       }
 
+      // Playback report (observation only): small snapshots of the remote audio's state, POSTed fire-and-forget so
+      // the server log shows where playback dies. Nothing here touches playback or the call flow.
+      let playingEvents = 0;
+      let trackArrivedAt = 0;
+      let firstPlayingMs = -1;
+      let reportTrack = null;
+      remoteAudio.addEventListener("playing", () => {
+        try {
+          playingEvents++;
+          if (firstPlayingMs < 0 && trackArrivedAt) firstPlayingMs = Math.round(performance.now() - trackArrivedAt);
+        } catch (e) {
+          // observation only
+        }
+      });
+
+      async function sendClientReport(stage, token) {
+        try {
+          if (token !== callToken || !callId) return;
+          const reportCallId = callId;
+          const d = {};
+          const put = (k, fn) => {
+            try {
+              const v = fn();
+              if (v !== undefined && v !== null) d[k] = v;
+            } catch (e) {
+              // missing API — key omitted
+            }
+          };
+          put("el_paused", () => remoteAudio.paused);
+          put("el_ready_state", () => remoteAudio.readyState);
+          put("el_current_time", () => remoteAudio.currentTime);
+          put("el_muted", () => remoteAudio.muted);
+          put("el_volume", () => remoteAudio.volume);
+          put("el_has_src", () => remoteAudio.srcObject !== null);
+          put("el_error", () => (remoteAudio.error ? remoteAudio.error.code : 0));
+          put("el_playing_events", () => playingEvents);
+          put("el_first_playing_ms", () => firstPlayingMs);
+          const track = reportTrack;
+          put("tr_ready_state", () => track.readyState);
+          put("tr_muted", () => track.muted);
+          put("tr_enabled", () => track.enabled);
+          put("pc_state", () => pc.connectionState);
+          put("ice_state", () => pc.iceConnectionState);
+          put("ctx_state", () => (audioCtx ? audioCtx.state : "none"));
+          put("session_type", () => (navigator.audioSession ? navigator.audioSession.type : "none"));
+          try {
+            const receiver = pc.getReceivers().find((r) => r.track && r.track.kind === "audio");
+            const stats = await receiver.getStats();
+            stats.forEach((s) => {
+              if (s.type !== "inbound-rtp" || s.kind === "video") return;
+              const take = (k, v) => {
+                if (typeof v === "number") d[k] = v;
+              };
+              take("rx_packets", s.packetsReceived);
+              take("rx_bytes", s.bytesReceived);
+              take("rx_audio_level", s.audioLevel);
+              take("rx_samples", s.totalSamplesReceived);
+              take("rx_concealed", s.concealedSamples);
+            });
+          } catch (e) {
+            // no stats — the rx keys are omitted
+          }
+          fetch(`/api/voice/web-call/${reportCallId}/client-report`, {
+            method: "POST",
+            credentials: "same-origin",
+            keepalive: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stage, data: d }),
+          }).catch(() => {});
+        } catch (e) {
+          // never throws
+        }
+      }
+
       function inboundAudioLevel(report) {
         // The receiver's decoded audio level (0..1, linear, like the analyser's RMS), computed by
         // the WebRTC stack itself — no Web Audio involved.
@@ -1221,6 +1295,16 @@
           pc.ontrack = (ev) => {
             // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
+            try {
+              playingEvents = 0;
+              firstPlayingMs = -1;
+              trackArrivedAt = performance.now();
+              reportTrack = ev.track;
+              const reportToken = callToken;
+              setTimeout(() => sendClientReport("track", reportToken), 0);
+            } catch (e) {
+              // observation only
+            }
             // A separate tap on the same track, for ringback's audible-detection only.
             startAudibleMonitor(ev.track, ev.receiver);
           };
@@ -1302,6 +1386,8 @@
           }
 
           setState(t("state.live"));
+          setTimeout(() => sendClientReport("live_3s", myToken), 3000);
+          setTimeout(() => sendClientReport("live_10s", myToken), 10000);
           renderButton("live");
           statusTimer = setInterval(pollStatus, 2000);
           if (wantsControlChannel() && connectBody.control) openControl(connectBody.control, myToken);
