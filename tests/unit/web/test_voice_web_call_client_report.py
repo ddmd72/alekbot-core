@@ -1,5 +1,6 @@
 """Playback report route: closed stages and keys, one sorted log line, ownership, size cap; and the page's side
-(three stages, keepalive, no `.play(` on the remote audio, the page's keys equal the server allowlist)."""
+(three stages, keepalive, the report never plays anything, the page's keys equal the server allowlist), and the
+explicit start of the remote audio Safari 27 needs."""
 import json
 import logging
 import re
@@ -91,9 +92,19 @@ def test_the_page_sends_the_three_stages_and_uses_keepalive():
     assert "keepalive: true" in fn and "await fetch" not in fn
 
 
-def test_the_page_never_plays_the_remote_audio():
-    assert not re.search(r"remoteAudio\s*\.\s*play\s*\(", HTML)
-    assert ".play(" not in HTML
+def test_the_report_only_observes_playback():
+    fn = re.search(r"async function sendClientReport.*?\n      }\n", HTML, re.S).group(0)
+    assert ".play(" not in fn
+
+
+def test_the_remote_audio_is_started_explicitly_when_the_track_arrives():
+    # Safari 27 never autoplays an <audio> with no renderer (WebKit 326969): ontrack must call play() itself,
+    # right after attaching the stream, with the rejection handled.
+    handler = re.search(r"pc\.ontrack = \(ev\) => \{.*?\n          \};", HTML, re.S).group(0)
+    attach = handler.index("remoteAudio.srcObject = new MediaStream([ev.track]);")
+    play = handler.index("remoteAudio.play().catch(")
+    assert attach < play
+    assert len(re.findall(r"\.play\(", HTML)) == 1
 
 
 def test_the_page_keys_equal_the_server_allowlist():

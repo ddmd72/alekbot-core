@@ -1295,6 +1295,10 @@
           pc.ontrack = (ev) => {
             // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
+            // Safari 27 never starts an autoplay element with no renderer (an <audio> without controls) that has not
+            // played yet (WebKit bug 326969), so autoplay alone leaves Lelik silent there. Start it explicitly; a
+            // refusal shows in the playback report (el_paused), never in the call flow.
+            remoteAudio.play().catch(() => {});
             try {
               playingEvents = 0;
               firstPlayingMs = -1;
