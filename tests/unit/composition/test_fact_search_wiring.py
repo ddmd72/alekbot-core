@@ -2,6 +2,7 @@
 repository and embedding service; the place table is read on the first search that names a place, never at build."""
 from src.ports.fact_search_port import FactSearchPort
 from src.services.fact_search_service import FactSearchService
+from tests.support.fact_search_kit import query
 from tests.support import prod_graph as prod_graph_module
 from tests.support.prod_graph import prod_graph  # noqa: F401  (fixture)
 
@@ -20,8 +21,10 @@ async def test_the_place_table_is_not_loaded_at_build_and_then_once(monkeypatch)
     graph = await prod_graph_module.build(monkeypatch)
     try:
         assert loads == []
-        names = graph.app.fact_search._place_loader
-        assert names() is names() and loads == [1]
+        search = graph.app.fact_search
+        await search._place_keys(query(places=[("Rome", "")]))
+        await search._place_keys(query(places=[("Rome", "")]))
+        assert loads == [1]
     finally:
         await graph.app.shutdown()
 
