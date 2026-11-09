@@ -592,7 +592,7 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 25 abstract methods.
+        """Port should have exactly 26 abstract methods.
 
         F7.2 (2026-05-18): added search_facts_by_domain to close the
         port/adapter contract gap — search_facts_by_domain was called via
@@ -608,14 +608,15 @@ class TestFactRepositoryContract:
         (23; reviewer edit, card T3b).
         2026-11-09 (FACT_PROFILE_RFC §2.3, §9 PR 2): the profiler's list_profile_states and write_fact_profile added
         (25; reviewer edit).
+        2026-11-09 (FACT_PROFILE_RFC §7, §9 PR 5): the people cards' list_profile_people added (26; reviewer edit).
         """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 25, f"Expected 25 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 26, f"Expected 26 abstract methods, got {abstract_methods}"
         assert {"find_due_facts", "stale_due_fact", "stale_backlog"} <= abstract_methods
-        assert {"list_profile_states", "write_fact_profile"} <= abstract_methods
+        assert {"list_profile_states", "write_fact_profile", "list_profile_people"} <= abstract_methods
         assert "invalidate_fact" not in abstract_methods
 
     def test_add_fact_signature(self):
