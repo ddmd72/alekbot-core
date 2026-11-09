@@ -47,7 +47,9 @@ def test_the_page_markup_has_no_ask_button_and_the_script_makes_one_only_on_the_
 
 def test_the_button_is_shown_only_when_the_call_hands_out_the_control_channel_and_hidden_at_the_end():
     assert re.findall(r".*showAsk\(\);.*", HTML) == [
-        "          if (wantsControlChannel() && connectBody.control) showAsk();"]
+        "          if (connectBody.control) showAsk();"]
+    # the interpreter-only gate now lives inside showAsk() itself (§5.5)
+    assert 'if (window.VOICE_MODE !== "interpreter") return;' in _block("      function showAsk() {", "\n      }")
     end_call = re.search(r"async function endCall\(.*?\n      }\n", HTML, re.S).group(0)
     assert "hideAsk();" in end_call
 
