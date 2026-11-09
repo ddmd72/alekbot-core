@@ -154,6 +154,9 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Search v2 enrichment (USER_DRIVE_INDEXING_RFC §25.4.4): a profile per text file, passage hints per chunk.
     "drive_profiler": PerformanceTier.ECO,
     "drive_passages": PerformanceTier.ECO,
+    # The fact profiler (FACT_PROFILE_RFC §4.1): the model is pinned by FACT_PROFILER_MODEL, not by this tier; the tier
+    # only satisfies the default-tier invariant.
+    "fact_profiler": PerformanceTier.BALANCED,
     "image_generation": PerformanceTier.PERFORMANCE,
     "video_generation": PerformanceTier.PERFORMANCE,  # motion-prompt quality — same reasoning as image_generation
 }

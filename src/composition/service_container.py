@@ -93,6 +93,7 @@ from ..ports.fact_review_store import FactReviewStore
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
 from .email_classifier_runner import EmailClassifierRunner
+from .fact_profiler_runner import FactProfilerRunner, profiler_model
 from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
@@ -383,6 +384,15 @@ class ServiceContainer:
             user_repo=user_repo,
             prompt_builder=PromptBuilder(repo=None, assembly_service=self.assembly_service),
             gmail=self.gmail_provider,
+            quota_service=quota_service,
+            prompt_content_store=self.prompt_content_store,
+        )
+        # The fact profiler (FACT_PROFILE_RFC §4.1): one pinned model for every account, billed to the fact's account.
+        # An optional knob: read here with os.getenv, never in load_settings().
+        self.fact_profiler = FactProfilerRunner(
+            context_builder=self.context_builder,
+            prompt_builder=PromptBuilder(repo=None, assembly_service=self.assembly_service),
+            model=profiler_model(os.getenv("FACT_PROFILER_MODEL")),
             quota_service=quota_service,
             prompt_content_store=self.prompt_content_store,
         )

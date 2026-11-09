@@ -53,6 +53,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 | Quick | `docs/05_building_blocks/quick_agent_delegation/README.md`, `decisions/quick_agent_deferred_deletion.md` |
 | WebSearch | `decisions/websearch_per_intent_tier.md` |
 | Memory, Consolidation, review pass | `docs/05_building_blocks/memory/README.md` (§5.6 review, §2.7 expiry), `decisions/standing_directives.md`, `decisions/directive_applicability_gate.md`, `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` |
+| FactProfiler (internal, never delegated; `agents/fact_profiler_agent.py`, pinned Claude, no fallback) | `docs/10_rfcs/FACT_PROFILE_RFC.md` §4 |
 | EmailSearch, EmailClassification | `docs/05_building_blocks/gmail_email_indexing/README.md` |
 | Drive model agents (reader, triage, profiler, passages), DriveTranscriber | `docs/05_building_blocks/user_drive/README.md` §4.16, §4.17, §4.23; `decisions/drive_model_extractor_agents.md`, `decisions/drive_model_outage_defers_model_work.md` |
 | Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` §3.4, `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
