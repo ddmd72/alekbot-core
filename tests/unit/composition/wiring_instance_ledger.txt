@@ -37,6 +37,7 @@ src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-desi
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
 src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as _memory_write_lease in application_graph.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
+src.adapters.firestore_person_card_repo.FirestorePersonCardRepository 1  # by-design the one people-card store, built once as _person_cards in application_graph.py and held by the one FactProfileService (which rebuilds the cards) and the one FactReviewService (which lists them in the weekly digest) (application_graph.py:726,729,926, FACT_PROFILE_RFC 7)
 src.adapters.firestore_quota_service.FirestoreQuotaService 1  # by-design single instance
 src.adapters.firestore_repo.FirestoreFactRepository 1  # by-design single instance
 src.adapters.firestore_session_store.FirestoreSessionStore 1  # by-design single instance

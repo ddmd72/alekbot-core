@@ -2,7 +2,7 @@
 FactProfileService — the profile step of the memory-write lease (docs/10_rfcs/FACT_PROFILE_RFC.md §4.2, §4.4).
 
 Public interface:
-    FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock)
+    FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards)
         async scan(account_id) -> FactProfileScan                 what a run would find; reads, writes nothing
         async run(account_id, deadline) -> FactProfileRun         never raises; `deadline` is the lease's `until`
 
@@ -14,7 +14,8 @@ One run, inside a lease the caller holds, reads the account's current facts once
      lease leaves `call_budget_s`); the first `unavailable` reply stops new calls: an outage is nobody's failure;
   4. one embedding batch for the label texts, then one compare-and-set write per fact (a fact that changed meanwhile is
      left for the next cycle), stopping when the lease has no time left;
-  5. one baseline refresh when any profile was written, so the search snapshot (keyed by the baseline) sees it.
+  5. people cards rebuilt by code from the current facts (when a card repository is wired; RFC §7);
+  6. one baseline refresh when any profile was written, so the search snapshot (keyed by the baseline) sees it.
 The service never touches the lease. Logs carry ids (8 characters), counts, reasons, ms and usd, never fact content.
 """
 import asyncio
@@ -40,9 +41,11 @@ from ..domain.fact_profile_fingerprint import (
 from ..domain.fact_profile_run import FactProfileRun, FactProfileScan
 from ..domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
 from ..domain.memory_write_lease import agent_timeout_s
+from ..domain.person_cards import build_person_cards_counted
 from ..domain.place_names import PlaceNames
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
+from ..ports.person_card_repository import PersonCardRepository
 from ..ports.repository import FactRepository
 from ..utils.logger import logger
 
@@ -126,6 +129,7 @@ class _Tally:
     drops: Dict[str, int] = field(default_factory=dict)
     outage: bool = False
     refreshed: bool = False
+    cards: int = 0
     error: bool = False
 
     def freeze(self) -> FactProfileRun:
@@ -133,7 +137,7 @@ class _Tally:
             scan=self.scan, rederived=self.rederived, directives=self.directives, called=self.called,
             written=self.written, failed=self.failed, newly_abandoned=self.newly_abandoned, deferred=self.deferred,
             lost_cas=self.lost_cas, usd=self.usd, drops=dict(self.drops), outage=self.outage,
-            refreshed=self.refreshed, error=self.error)
+            refreshed=self.refreshed, cards=self.cards, error=self.error)
 
 
 class FactProfileService:
@@ -148,6 +152,7 @@ class FactProfileService:
         call_budget_s: float,
         concurrency: int = 4,
         clock: Callable[[], datetime] = _utcnow,
+        person_cards: Optional[PersonCardRepository] = None,
     ) -> None:
         self._repo = repo
         self._profiler = profiler
@@ -157,6 +162,7 @@ class FactProfileService:
         self._call_budget_s = call_budget_s
         self._concurrency = concurrency
         self._clock = clock
+        self._person_cards = person_cards
 
     async def scan(self, account_id: str) -> FactProfileScan:
         """The account's facts by status and the model calls a run would make (no cap applied). Reads only."""
@@ -238,6 +244,7 @@ class FactProfileService:
 
         await self._attach_vectors(pending)
         await self._write_all(pending, deadline, tally)
+        await self._rebuild_cards(account_id, tally)
 
         if tally.written:
             try:
@@ -245,6 +252,20 @@ class FactProfileService:
                 tally.refreshed = True
             except Exception:
                 logger.warning(f"[FactProfile] baseline refresh failed account={account_id[:8]}", exc_info=True)
+
+    async def _rebuild_cards(self, account_id: str, tally: _Tally) -> None:
+        """People cards (RFC §7): rebuilt from the current facts after the writes, so this run's profiles count and a fact
+        that left `current` lowers a count even when nothing was written. An error is logged; the run goes on."""
+        if self._person_cards is None:
+            return
+        try:
+            built = build_person_cards_counted(await self._repo.list_profile_people(account_id))
+            await self._person_cards.replace_cards(account_id, built.cards)
+        except Exception:
+            logger.error(f"[FactProfile] cards failed account={account_id[:8]}", exc_info=True)
+            return
+        tally.cards = len(built.cards)
+        logger.info(f"[FactProfile] cards account={account_id[:8]} cards={len(built.cards)} ambiguous={built.ambiguous}")
 
     # ------------------------------------------------------------------------------------------------ model calls
 

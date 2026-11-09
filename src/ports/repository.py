@@ -257,6 +257,18 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def list_profile_people(self, account_id: str) -> List[FactEntity]:
+        """Return every `state == "current"` fact of account `account_id` with the one profile field the people cards are
+        built from (fact profile RFC §7): one projected scan per card rebuild.
+
+        Projection: id (the document id), account_id, state, people, and the fields the entity requires (created_by_user_id,
+            lineage_id, text, type). Every other field keeps the model default.
+        Tenancy: only that account's documents (the stored `account_id`).
+        Order: none.
+        """
+        pass
+
+    @abstractmethod
     async def write_fact_profile(
         self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]
     ) -> bool:

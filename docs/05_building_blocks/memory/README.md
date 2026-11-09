@@ -683,6 +683,28 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   per run `[FactProfile] run account=<id8> scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… lost_cas=… usd=…`.
   They carry ids, counts, reasons and cost, never fact content. A failed run logs `[FactProfile] run failed account=<id8>`.
 
+#### People cards
+
+At the end of every profile step (after the writes, before the baseline refresh; on every run whose scan succeeded, so a
+fact that left `current` lowers a count even when nothing was written) the step rebuilds the account's **people cards** by
+code, with no model call (`src/domain/person_cards.py`, `FACT_PROFILE_RFC.md` §7). One projected read of the current
+facts' `people` (`list_profile_people`) feeds `build_person_cards`; `PersonCardRepository.replace_cards` stores the result
+in `{prefix}person_cards` (doc id `{account_id}:{card_key}`) and deletes the account's other cards.
+
+- **Rule:** a stored mention counts when it has a name and at least one `x:` transliteration skeleton (a role-only mention
+  is ignored). Mentions with the same skeleton set are one spelling; the distinct sets go fullest first, and a set that
+  fits inside exactly one existing root joins it, inside none founds a new group, inside two or more is ambiguous and joins
+  nobody (a bare surname beside two relatives of that surname; counted in the log). "Maria Doe", "Maria A. Doe", "Mariia"
+  and "Марія" are one card; a short form such as "Mia" has another skeleton and stays apart.
+- **Card:** `card_key` is the root's skeleton words, sorted and joined by `_` (a rebuild keeps it); `display` the root's
+  most used spelling; `spellings`, `name_keys`, `fact_count` (distinct facts) and `relation` (the relation word that more
+  than half of the mentions carry as their whole role, no synonym folding). A group becomes a card at **10 distinct facts**
+  (`PERSON_CARD_MIN_FACTS`).
+- **Digest line:** the weekly digest (§5.6) ends with a language-neutral line `👥 <name> — <facts>; …` (most facts first),
+  only when the digest is sent for other reasons; a read error sends it without the line. There is no edit page (OD-5 a).
+- **Never** a fact, never in a prompt, never read by the consolidator.
+- **Log:** `[FactProfile] cards account=<id8> cards=<n> ambiguous=<k>`; an error is logged and the run goes on.
+
 ### Step 10 — the next conversation
 
 Smart reads the cache document on every request (no in-process copy, `smart_response_agent.py:425-435`), so the new

@@ -101,6 +101,7 @@ def digest_message(
     histories: Sequence[str] = (),
     invoices: Sequence[str] = (),
     cabinet_url: Optional[str] = None,
+    people: Sequence[str] = (),
 ) -> str:
     """The digest text, its sections joined by one blank line, each only when it lists something:
 
@@ -109,6 +110,9 @@ def digest_message(
     2. the history header and one line per text a timeout wrote as history (`histories`);
     3. the invoices header, one line per invoice text (`invoices`), then, with a `cabinet_url`, the Cabinet line and the
        URL on its own line (code appends it: a label may not hold a URL).
+
+    4. the people line, last, only when `people` is given: "👥 " and the entries joined by "; " (names as printed, no
+       label: a language-neutral section, so no label key changes). `people` alone never makes a digest.
 
     Every text is shown through `shown_quote` over the translation in `translations` under its `quote_digest` and
     `language`, on one line. `labels` is the message language's label set. With removals only the text is the S4 one.
@@ -134,6 +138,8 @@ def digest_message(
         if cabinet_url:
             block += [labels[_INVOICES_CABINET], cabinet_url]
         sections.append("\n".join(block))
+    if people:
+        sections.append("👥 " + "; ".join(people))
     return "\n\n".join(sections)
 
 

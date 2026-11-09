@@ -15,6 +15,7 @@ from typing import Any, Optional, Tuple
 from ..adapters.geo_place_table import load_place_rows
 from ..domain.place_names import PlaceNames, atlas_digest
 from ..infrastructure.agent_config import FACT_PROFILER
+from ..ports.person_card_repository import PersonCardRepository
 from ..services.fact_profile_service import FactProfileService
 from ..utils.logger import logger
 
@@ -52,8 +53,11 @@ class LazyAtlas:
             return self._loaded
 
 
-def build_fact_profile_service(container: Any, *, max_per_run: Optional[int]) -> FactProfileService:
-    """The profile step over the container's repository, profiler and embedding service."""
+def build_fact_profile_service(
+    container: Any, *, max_per_run: Optional[int], person_cards: Optional[PersonCardRepository] = None,
+) -> FactProfileService:
+    """The profile step over the container's repository, profiler and embedding service; `person_cards` is where it
+    rebuilds the people cards (none: it builds no cards)."""
     return FactProfileService(
         repo=container.repository,
         profiler=container.fact_profiler,
@@ -61,4 +65,5 @@ def build_fact_profile_service(container: Any, *, max_per_run: Optional[int]) ->
         atlas=LazyAtlas(),
         max_per_run=max_per_run,
         call_budget_s=2 * FACT_PROFILER.call_timeout_s,  # one parse retry
+        person_cards=person_cards,
     )

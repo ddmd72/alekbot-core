@@ -300,6 +300,10 @@ class NoWriteFactRepository(FactRepository):
         """The live list with the pass's own writes applied (as `get_active_facts`); an overlay document is whole."""
         return self._current_view(await self._real.list_profile_states(account_id), account_id)
 
+    async def list_profile_people(self, account_id: str) -> List[FactEntity]:
+        """The live list with the pass's own writes applied (as `list_profile_states`)."""
+        return self._current_view(await self._real.list_profile_people(account_id), account_id)
+
     async def list_search_snapshot(self, account_id: str) -> List[FactEntity]:
         """The live list with the pass's own writes applied (as `list_profile_states`)."""
         return self._current_view(await self._real.list_search_snapshot(account_id), account_id)

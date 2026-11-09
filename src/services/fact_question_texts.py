@@ -151,10 +151,11 @@ class FactQuestionTexts:
         histories: Sequence[str] = (),
         invoices: Sequence[str] = (),
         cabinet_url: Optional[str] = None,
+        people: Sequence[str] = (),
     ) -> str:
         """The weekly digest's text: each fact, history text and invoice text in its translation into the lines' language
         when one is stored, else as stored. `histories` and `invoices` are the texts of the two new blocks; `cabinet_url`
-        ends the invoices block."""
+        ends the invoices block. `people` is the last line's entries, passed through as printed (names are not translated)."""
         code, state, ui_language = await self._read(user_id, account_id)
         labels = await self._labels(code, state, ui_language, account_id)
         language = shown_language(code, state, ui_language)
@@ -162,6 +163,7 @@ class FactQuestionTexts:
         found = await self._translations(account_id, language, shown)
         return digest_message(
             labels, facts, found, language, histories=histories, invoices=invoices, cabinet_url=cabinet_url,
+            people=people,
         )
 
     async def text(self, user_id: str, account_id: str, message: UIMessage) -> str:
