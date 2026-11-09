@@ -99,8 +99,10 @@ class TestGraph:
     def test_the_knob_off_without_the_key_builds_with_no_voice_key(self, monkeypatch):
         config, _ = prod_env.prod_settings(monkeypatch)
         config["VOICE_MCP_SIGNING_KEY"] = None
-        monkeypatch.delenv("VOICE_MCP_TOOLS", raising=False)
         services = prod_env.install_offline_services(monkeypatch)
+        # after the deploy env is installed: the deploy sets the knob on, so it is turned off here, not before
+        monkeypatch.delenv("VOICE_MCP_TOOLS", raising=False)
+        assert voice_mcp_setup.voice_mcp_tools_enabled() is False
         graph = build_application_graph(config, services.db)
         assert graph.voice_mcp_signing_key is None
 
