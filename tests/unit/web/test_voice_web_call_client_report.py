@@ -12,6 +12,8 @@ from src.web.voice_web_call_app import _CLIENT_REPORT_KEYS, _CLIENT_REPORT_STAGE
 from tests.unit.web.test_voice_web_call_app import AUTH, MemoryStore, _app, _room, _start
 
 HTML = (Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "call.html").read_text(encoding="utf-8")
+# A play() call in any spelling: with spaces around the dot or the paren, or by bracket access.
+_PLAY = r"""\.\s*play\s*\(|\[\s*["']play["']\s*\]"""
 
 
 def _report_lines(caplog):
@@ -94,7 +96,9 @@ def test_the_page_sends_the_three_stages_and_uses_keepalive():
 
 def test_the_report_only_observes_playback():
     fn = re.search(r"async function sendClientReport.*?\n      }\n", HTML, re.S).group(0)
-    assert ".play(" not in fn
+    assert not re.search(_PLAY, fn)
+    assert not re.search(r"\.\s*(pause|load)\s*\(", fn)
+    assert not re.search(r"remoteAudio\s*\.\s*\w+\s*=(?!=)", fn)
 
 
 def test_the_remote_audio_is_started_explicitly_when_the_track_arrives():
@@ -104,7 +108,7 @@ def test_the_remote_audio_is_started_explicitly_when_the_track_arrives():
     attach = handler.index("remoteAudio.srcObject = new MediaStream([ev.track]);")
     play = handler.index("remoteAudio.play().catch(")
     assert attach < play
-    assert len(re.findall(r"\.play\(", HTML)) == 1
+    assert len(re.findall(_PLAY, HTML)) == 1
 
 
 def test_the_page_keys_equal_the_server_allowlist():
