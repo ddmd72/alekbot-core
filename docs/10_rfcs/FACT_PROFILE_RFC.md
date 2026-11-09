@@ -209,8 +209,8 @@ nothing is written.
   (re-derivations, directives) → model calls for `missing`/`stale_input`, newest `created_at` first, at most
   `FACT_PROFILER_MAX_PER_RUN` (knob, default 20; 0 turns the step into re-derivation only), four at a time, stopping
   when the lease deadline minus its margin is near → embed the surviving label words in one batch → CAS writes →
-  rebuild people cards (§7) → one baseline refresh if any written profile changed `user_identity`, `primary_domain`
-  or `sensitivity` (the agent already refreshed before the step).
+  rebuild people cards (§7) → one baseline refresh after any written profile (the search snapshot is keyed by the
+  baseline's `refreshed_at`, so new labels, times, places and people stay invisible to search without it).
 - **Failures:** a failed call, an invalid answer after the retry, or a profiling error that requires a redo (an
   `intimate` answer with no surviving label) writes nothing but `profile_failures` and `profile_failed_fingerprint`;
   after three failures on one fingerprint the fact is `abandoned` until its content changes (logged once). A provider

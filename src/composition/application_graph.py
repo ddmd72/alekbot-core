@@ -60,6 +60,7 @@ from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition import cipher_setup, voice_mcp_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
+from src.composition.fact_profile_setup import build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_service
 from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.sandbox_media_setup import build_sandbox_media
@@ -718,6 +719,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The one memory-write lease: a consolidation batch and a memory review of the same account never write at once.
     _memory_write_lease = FirestoreMemoryWriteLease(db_client, env_config)
 
+    # The profile step (fact profile RFC §4.4): one instance, run inside the lease by both the consolidation and the
+    # memory review; the cap is an optional knob, read here with os.getenv.
+    _fact_profile_step = build_fact_profile_service(
+        container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")))
+
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
     _consolidation_service = ConsolidationService(
@@ -730,6 +736,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         indexed_email_repo=indexed_email_repo,
         user_repo=user_repo,
         owner_zones=_owner_zones,
+        profile_step=_fact_profile_step,
     ) if consolidation_queue else None
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(
@@ -911,6 +918,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         fact_updates=_review_fact_updates,
         cabinet_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/cabinet?tab=memory",
+        profile_step=_fact_profile_step,
     ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
           and _alert_webhook is not None) else None
 
