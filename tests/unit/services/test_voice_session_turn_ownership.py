@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import src.services.voice_session_service as voice_session_module
+from src.domain.llm import build_persona_anchor
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION, VOICE_PROVIDER_PROFILES
 from src.ports.realtime_session_port import RealtimeSessionEvent
@@ -110,12 +111,15 @@ class TestRelayOwnedTurns:
 
 class TestProviderOwnedTurns:
     @pytest.mark.asyncio
-    async def test_greeting_has_no_anchor_and_no_caller_opening(self):
+    async def test_greeting_has_the_anchor_once_first_and_no_caller_opening(self):
         realtime_session = AsyncMock()
+        anchor = build_persona_anchor(_PERSONA)
+        assert anchor is not None
 
         await _call(_service(realtime_session, voice=_XAI, caller_opening=_OPENING), realtime_session, _no_events)
 
-        assert _notes(realtime_session) == ["[The caller has just picked up the phone you called. Speak first.]"]
+        assert [c.args for c in realtime_session.submit_message.await_args_list] == [
+            ("system", anchor), ("system", "[The caller has just picked up the phone you called. Speak first.]")]
         realtime_session.request_response.assert_awaited_once()
 
     @pytest.mark.asyncio
