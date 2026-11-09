@@ -41,6 +41,19 @@ _MODE_PAGES = {VoiceMode.INTERPRETER: "Lelik Translator", VoiceMode.TUTOR: "Leli
 # Closed set of /hangup triggers the page may report (VOICE_CALL_CONTROL_CHANNEL_RFC §7.1).
 _HANGUP_TRIGGERS = frozenset({"button", "status_ended", "start_failed", "superseded"})
 
+# The page's playback snapshots (observation only): the closed sets of stages and keys the report route accepts.
+_CLIENT_REPORT_STAGES = frozenset({"track", "live_3s", "live_10s"})
+_CLIENT_REPORT_KEYS = frozenset({
+    "el_paused", "el_ready_state", "el_current_time", "el_muted", "el_volume", "el_has_src", "el_error",
+    "el_playing_events", "el_first_playing_ms",
+    "tr_ready_state", "tr_muted", "tr_enabled",
+    "rx_packets", "rx_bytes", "rx_audio_level", "rx_samples", "rx_concealed",
+    "pc_state", "ice_state", "ctx_state", "session_type",
+})
+_CLIENT_REPORT_MAX_BYTES = 4096
+_CLIENT_REPORT_STR_MAX = 40
+_CLIENT_REPORT_UA_MAX = 120
+
 # How long a replacing start waits for the running call's one-call marker to be released (RFC §7.5.2). The release is
 # the last step of the relay's end-of-call report: the SFU re-attach window (5 s) passes first, then the relay's
 # teardown and the report itself, and on a companion (lelik-mode) call the report runs the end-of-call summary, an LLM
@@ -300,6 +313,36 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         await _close_media(record, ticket)
         # The record goes last: a connect still attaching re-reads it and cleans up after itself.
         await ephemeral_store.delete(f"voice_web_call:{call_id}")
+        return jsonify({"ok": True})
+
+    @bp.route("/api/voice/web-call/<call_id>/client-report", methods=["POST"])
+    @auth_required
+    async def client_report(call_id):
+        """One log line per playback snapshot the page sends. Observation only: nothing is stored or acted on."""
+        record = await _owned(call_id)
+        if record is None:
+            return jsonify({"error": "not found"}), 404
+        if (request.content_length or 0) > _CLIENT_REPORT_MAX_BYTES:
+            return jsonify({"error": "too large"}), 413
+        body = await request.get_json(silent=True)
+        stage = body.get("stage") if isinstance(body, dict) else None
+        if stage not in _CLIENT_REPORT_STAGES:
+            return jsonify({"error": "bad stage"}), 400
+        data = body.get("data")
+        pairs = []
+        for key in sorted(data if isinstance(data, dict) else {}):
+            value = data[key]
+            if key not in _CLIENT_REPORT_KEYS:
+                continue
+            if isinstance(value, float):
+                value = round(value, 3)
+            elif isinstance(value, str):
+                value = value[:_CLIENT_REPORT_STR_MAX]
+            elif not isinstance(value, (bool, int)):
+                continue
+            pairs.append(f"{key}={value}")
+        ua = (request.headers.get("User-Agent") or "")[:_CLIENT_REPORT_UA_MAX]
+        logger.info(f"web call {call_id}: client {stage} {' '.join(pairs)} ua={ua}")
         return jsonify({"ok": True})
 
     @bp.route("/api/voice/web-call/<call_id>/status", methods=["GET"])
