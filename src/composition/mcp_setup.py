@@ -333,8 +333,8 @@ def build_mcp_components(
 
         user_id = access_token.user_id
         account_id = access_token.account_id
-        # A voice token (LELIK_VOICE_MCP_RFC §5.3-§5.4): its tools claim is enforced, its query is never logged (a
-        # spoken question is often more personal than a typed one: counts only), its result takes the voice cap.
+        # A voice token (LELIK_VOICE_MCP_RFC §5.3-§5.4): its tools claim is enforced, its search terms are logged like
+        # an OAuth call's (owner: without them a voice miss cannot be diagnosed), its result takes the voice cap.
         voice = access_token.kind is McpTokenKind.VOICE
         client = " client=voice" if voice else ""
 
@@ -351,18 +351,12 @@ def build_mcp_components(
                 "as `query`, a short English phrase."
             )
 
-        if voice:
-            logger.info(
-                f"🔎 MCP get_user_context: user={user_id[:8]} query_chars={len(query)} "
-                f"alternate_chars={len(alternate_phrasing)} keywords={len(keywords)}{client}"
-            )
-        else:
-            logger.info(
-                f"🔎 MCP get_user_context: user={user_id[:8]} "
-                f"query={query!r} "
-                f"alternate_phrasing={alternate_phrasing!r} "
-                f"keywords={keywords!r}"
-            )
+        logger.info(
+            f"🔎 MCP get_user_context: user={user_id[:8]} "
+            f"query={query!r} "
+            f"alternate_phrasing={alternate_phrasing!r} "
+            f"keywords={keywords!r}{client}"
+        )
 
         with RequestContext(user_id=user_id, account_id=account_id):
             enriched = await search_enrichment_service.enrich_context(
