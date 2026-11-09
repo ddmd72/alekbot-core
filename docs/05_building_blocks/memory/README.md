@@ -154,7 +154,7 @@ like any other message.
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
-The profile is made by `FactProfilerAgent` (`src/agents/fact_profiler_agent.py`, `FACT_PROFILE_RFC.md` §4): one structured Claude call per fact, run through `FactProfilerPort` / `FactProfilerRunner`; nothing calls it yet (the consolidation step comes in a later PR).
+The profile is made by `FactProfilerAgent` (`src/agents/fact_profiler_agent.py`, `FACT_PROFILE_RFC.md` §4): one structured Claude call per fact, run through `FactProfilerPort` / `FactProfilerRunner`; `FactProfileService` runs it inside the two leased runs (§3 step 9b).
 
 The 27 domains live in one registry, `src/domain/fact_domains.py`, the single source of their keys, labels and renderers; the 16-value `domain` field of §2.2 stays until the last PR of the fact-profile series.
 
@@ -657,6 +657,31 @@ replaced version's id and text next to the new version, until the next consolida
 does not refresh. The same `finally` also runs when the run is cancelled by its timeout, which is close to the lease
 margin: that is a cache rebuild (one read, one cache-document write), not a fact write, so it does not break the
 one-writer rule. The retried batch can add one more version of a fact (§2.4).
+
+### Step 9b — the profile step
+
+After the baseline is rebuilt and still inside the memory-write lease, `FactProfileService` (`src/services/fact_profile_service.py`,
+`FACT_PROFILE_RFC.md` §4.2, §4.4) brings the account's fact profiles up to date. It runs in both leased runs:
+`ConsolidationService._consolidate_leased` after a batch ended `CONSOLIDATED` or `FAILED` (not on nothing pending, no time
+left, or an error), and `FactReviewService._daily` after the review for every status but a busy lease. The lease's `until` is its
+deadline. A step that raises is logged (`[FactProfile] step failed`) and changes nothing of the run's result.
+
+- **Order:** one projected scan (`list_profile_states`) of the current facts, classified by `classify_profile`; free work
+  first (a `stale_derivation` profile with a stored answer is re-derived without a call; a standing directive,
+  `domain == agent_directive`, gets its fixed profile without a call; `abandoned` facts are skipped); then model calls for
+  `missing`, `stale_input` and a former directive, newest `created_at` first, at most `FACT_PROFILER_MAX_PER_RUN`, four at a
+  time, each started only while the lease leaves twice the profiler's call timeout; one embedding batch of the joined label words;
+  then one compare-and-set write per fact, stopping when the lease has no time left. `SYSTEM` facts are out.
+- **Failures:** an `invalid` or `refused` reply, or an `intimate` answer left with no label word, writes only
+  `profile_failures` / `profile_failed_fingerprint`; the third failure on one fingerprint abandons the fact until its content
+  changes (logged once). An `unavailable` reply is an outage: no failure is written, no new call starts, the rest waits for
+  the next cycle. A write refused by the compare-and-set (the fact changed meanwhile) is counted and picked up next cycle.
+- **Baseline:** after any written profile the step refreshes the baseline once (the search snapshot is keyed by its `refreshed_at`).
+- **Knob:** `FACT_PROFILER_MAX_PER_RUN` (default 20; `0` = re-derivation only; unparsable = 20 and a warning),
+  `docs/07_deployment/README.md` § Standing levers.
+- **Logs:** per fact `[FactProfile] fact=<id8> outcome=written|rederived|failed|abandoned|lost_cas drops=<reason:n,…> ms=… usd=…`;
+  per run `[FactProfile] run account=<id8> scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… lost_cas=… usd=…`.
+  They carry ids, counts, reasons and cost, never fact content. A failed run logs `[FactProfile] run failed account=<id8>`.
 
 ### Step 10 — the next conversation
 
@@ -1867,6 +1892,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | `src/adapters/firestore_consolidation_queue.py` | queue, oldest first, zombie reset (threshold per caller), bounded failed revival (`revive_failed`), `has_open_batches`, sweep query |
 | `src/adapters/gcp_task_queue.py` | `enqueue_consolidation_task` |
 | `src/handlers/worker_handler.py` | `consolidation`, `sweep_consolidation` (revives FAILED, then enqueues), `fact_lifecycle_sweep` (runs the janitor; 500 on a failed run), `fact_review` (`daily` or `next`), `interactive_choice` |
+| `src/services/fact_profile_service.py`, `src/domain/fact_profile_run.py`, `src/composition/fact_profile_setup.py` | the profile step (§3 step 9b): scan, run, the result types; the knob and the lazy place atlas |
 | `src/services/consolidation_service.py` | one batch under the lease: run, delete or retry; deferral; `consolidate_now` (`$consolidate`); `revive_failed_batches` (sweep); the give-up log; the owner's timezone |
 | `src/services/fact_lifecycle_sweep_service.py` | the janitor (§5.5): guard, visit set, pool, enqueue, alerts, line |
 | `src/services/fact_review_service.py`, `src/services/fact_answer_service.py`, `src/services/fact_question_texts.py` | the review run, the owner's answers and every question close, the question's texts and language (§5.6) |

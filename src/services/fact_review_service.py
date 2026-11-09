@@ -112,6 +112,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from .fact_answer_service import FactAnswerService
+    from .fact_profile_service import FactProfileService
     from .fact_question_texts import FactQuestionTexts
     from .owner_timezone_resolver import OwnerTimezoneResolver
     from .user_notification_service import UserNotificationService
@@ -234,6 +235,7 @@ class FactReviewService:
         *,
         fact_updates: FactUpdatePort,
         cabinet_url: str,
+        profile_step: Optional["FactProfileService"] = None,
     ) -> None:
         if run_timeout_s <= _MARGIN_S:
             raise ValueError(f"run_timeout_s must exceed the lease margin ({_MARGIN_S:.0f} s), got {run_timeout_s}")
@@ -259,6 +261,7 @@ class FactReviewService:
         self._clock = clock
         self._fact_updates = fact_updates
         self._cabinet_url = cabinet_url
+        self._profile_step = profile_step
 
     async def run(self, user_id: str, account_id: str, mode: ReviewMode = "daily") -> Dict[str, Any]:
         """One run; every result is 200-shaped.
@@ -313,9 +316,20 @@ class FactReviewService:
             return {"status": "deferred"}
         try:
             await self._mark("started", self._review_store.mark_started, account_id, now)
-            return await self._leased(user_id, account_id, now, zone, until)
+            result = await self._leased(user_id, account_id, now, zone, until)
+            await self._profile(account_id, until)
+            return result
         finally:
             await self._release(account_id, owner)
+
+    async def _profile(self, account_id: str, until: datetime) -> None:
+        """The profile step, inside the lease after the review (fact profile RFC §4.4); it never changes the result."""
+        if self._profile_step is None:
+            return
+        try:
+            await self._profile_step.run(account_id, until)
+        except Exception:
+            logger.error(f"[FactProfile] step failed account={account_id[:8]}", exc_info=True)
 
     async def _defer(self, user_id: str, account_id: str, now: datetime) -> None:
         await self._task_queue.enqueue_worker_task(

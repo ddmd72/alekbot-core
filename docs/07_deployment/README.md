@@ -647,6 +647,10 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
 for every account (`composition/fact_profiler_runner.py: profiler_model`). Claude ids only: the strategy's only provider
 is Claude and it has no fallback. Read with `os.getenv` where the container is built, never in `load_settings()`.
 
+**Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (optional; empty = `20`) is the most model calls one profile step makes in a
+leased run (`composition/fact_profile_setup.py: max_per_run`); `0` turns the step into re-derivation only (no model call, so no spend),
+an unparsable or negative value is `20` with one WARNING. Read with `os.getenv` in `application_graph.py`, never in `load_settings()`.
+
 **Drive indexing.**
 - Pause / resume the drive work: `gcloud tasks queues pause|resume drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`
   and `gcloud scheduler jobs pause|resume alek-bot-dev-start-drive-sync --location=us-central1 --project=<PROJECT_ID>`. A
