@@ -4,7 +4,7 @@ Blueprint v4 — defines prompt assembly structure by class order.
 Part of Prompt Design System v4 (RFC: docs/10_rfcs/PROMPT_BUILDER_V4_RFC.md).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 
@@ -39,6 +39,9 @@ class Blueprint:
     id: str
     outer_class: str     # e.g., "Alek extends Agent"
     class_order: List[str]  # e.g., ["properties", "cognitive_process", ...]
+    # Token categories rendered as a trailing top-level block per class, at the very end of the
+    # prompt (recency), instead of inside their class section. Empty = no tail.
+    tail_categories: List[str] = field(default_factory=list)
 
     def validate(self) -> None:
         """Check structural integrity of the blueprint.
@@ -56,4 +59,4 @@ class Blueprint:
             raise ValueError(f"class_order has duplicates: {list(set(dupes))}")
 
     def __hash__(self) -> int:
-        return hash((self.id, self.outer_class, tuple(self.class_order)))
+        return hash((self.id, self.outer_class, tuple(self.class_order), tuple(self.tail_categories)))
