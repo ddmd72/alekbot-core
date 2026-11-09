@@ -13,3 +13,6 @@ df73ee36  # CancelledError handler is the last statement of stop_status_updates,
 d843bf05  # inner except of the failure-line send in _finish_long_turn: the original body logs then hits the outer except's bare return; return None exits identically, finally still runs
 207b9433  # _close_long_turn_in_session: the try/except is the last statement of a -> None function; return None skips nothing but the log line
 295f14f1  # _handle_skill_save: the history-append try/except is the last statement of a -> None function, after SKILL_SAVED was sent; return None skips only the log line
+6826086a  # handle_message error-reply except (L1123) is the last statement of the outer except and nothing follows try/except/finally; the finally still runs on return; only the log differs
+6e784676  # _close_long_turn_in_session (L1398): the try/except is the last statement of a -> None function; return None skips only the log line
+2fc4d62d  # _handle_skill_save (L2050): the history-append try/except is the last statement of a -> None function, after SKILL_SAVED was sent; return None skips only the log line
