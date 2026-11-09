@@ -90,9 +90,11 @@ _THINKING_CUE_PATH = Path(__file__).parent / "src" / "assets" / "voice" / "think
 # 2026-09-28). Delivery rules no longer ride here — one place for them, not three. "One short
 # sentence" because the greeting's first seconds cannot be interrupted (greeting_guard_s). The language
 # reminder matters: this English item is the first input, and LANG_MIRROR would otherwise mirror it.
-# Web pickup waits for the browser to subscribe to Lelik's track (/renegotiate after /connect).
-_WEB_PICKUP_DELAY_S = 1.2
 _CALLER_OPENING = "Welcome the user in one short sentence. Do not forget to follow language settings"
+# A web call's greeting waits for the page's `listening` (it has subscribed to Lelik's track after /connect and
+# /renegotiate; VOICE_CALL_CONTROL_CHANNEL_RFC §4.4), at most this long: /connect alone takes several seconds, and a
+# fixed short delay sent the whole greeting before the browser listened. A page without the channel waits all of it.
+_WEB_PICKUP_MAX_WAIT_S = 6.0
 
 
 def _dead_peer_timeout_s() -> float:
@@ -212,7 +214,7 @@ async def main() -> None:
         delegation_timeout_s=300.0,
         # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
         control_hub=control_hub,
-        web_pickup_delay_s=_WEB_PICKUP_DELAY_S,
+        web_pickup_max_wait_s=_WEB_PICKUP_MAX_WAIT_S,
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service, dead_peer_timeout_s=_dead_peer_timeout_s())
     control_handler = CallControlHandler(control_hub)

@@ -49,6 +49,10 @@ WELCOME = "welcome"
 BYE = "bye"
 PING = "ping"
 PONG = "pong"
+# Page -> relay, no fields, once per call: the page has subscribed to Lelik's audio (its `/renegotiate` is done) and
+# the channel is welcomed. A web call's greeting waits for it (capped), so the caller hears it from the first word.
+# Accepted on every call whatever its features; a repeat is ignored. A relay that predates it ignores it as unknown.
+LISTENING = "listening"
 
 
 class ByeReason(str, Enum):

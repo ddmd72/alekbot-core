@@ -202,7 +202,7 @@ class VoiceSessionService:
         ask_clock: Optional[Callable[[], float]] = None,
         ask_tick_s: float = _ASK_TICK_S,
         remote_tool_wait_s: float = _REMOTE_TOOL_WAIT_S,
-        web_pickup_delay_s: float = 0.0,
+        web_pickup_max_wait_s: float = 0.0,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -221,8 +221,9 @@ class VoiceSessionService:
         `remote_tool_wait_s`: how long the reply after a response's remote MCP calls waits for the provider to report
         them finished before it starts anyway.
 
-        `web_pickup_delay_s`: web calls only; how long the greeting waits after the notes are in, so the browser
-        has subscribed to Lelik's audio before the first sample is sent. Phone calls never wait."""
+        `web_pickup_max_wait_s`: web calls only; the greeting waits until the page says `listening` on the call's
+        control link (it has subscribed to Lelik's audio), at most this long; a web call without a link waits all of
+        it. 0 = no wait. Phone calls never wait."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -240,7 +241,7 @@ class VoiceSessionService:
         self._ask_clock = ask_clock
         self._ask_tick_s = ask_tick_s
         self._remote_tool_wait_s = remote_tool_wait_s
-        self._web_pickup_delay_s = web_pickup_delay_s
+        self._web_pickup_max_wait_s = web_pickup_max_wait_s
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -410,13 +411,17 @@ class VoiceSessionService:
                 self._consume_events(ticket, config, session, buffer, send_outbound_audio, clear_outbound_audio, state,
                                      secrets=secrets)
             )
-            if config.get("call_kind") == "web" and self._web_pickup_delay_s > 0:
+            pick_up = True
+            if config.get("call_kind") == "web" and self._web_pickup_max_wait_s > 0:
                 # The browser subscribes to Lelik's track via /renegotiate after /connect; audio the relay sends
-                # earlier is paced in real time and lost (its first 0.2-0.9 s). The loops above already run, so
-                # caller audio keeps flowing and a provider-owned reply that starts meanwhile is seen by the
-                # consumer (response_active), which makes the pickup below a no-op instead of a second response.
-                await asyncio.sleep(self._web_pickup_delay_s)
-            await self._reply_to_turn(session, state, "pickup")
+                # earlier is paced in real time and lost, and a greeting is shorter than /connect takes. The loops
+                # above already run, so caller audio keeps flowing and a provider-owned reply that starts meanwhile
+                # is seen by the consumer (response_active), which makes the pickup below a no-op instead of a
+                # second response.
+                pick_up = await self._wait_for_web_listener(
+                    ticket, control_link, [task for task in (forward_task, consume_task) if task is not None])
+            if pick_up:
+                await self._reply_to_turn(session, state, "pickup")
             # The watchdog never ends on its own; the call ends with the audio streams.
             if state.turn_ownership is TurnOwnership.RELAY:
                 watchdog_task = asyncio.ensure_future(self._watch_silence(session, state))
@@ -474,6 +479,30 @@ class VoiceSessionService:
                     **({"resume_handle": state.resume_handle, "resume_provider": spec.provider}
                        if state.resume_handle else {}),
                 )
+
+    async def _wait_for_web_listener(self, ticket: str, link: Optional["CallControlLink"],
+                                     call_loops: Sequence[asyncio.Task]) -> bool:
+        """Hold a web call's greeting until the page says `listening` on its control link (it has subscribed to
+        Lelik's audio), at most `web_pickup_max_wait_s`; without a link, the whole cap. False when a call loop ended
+        meanwhile: the call is over and gets no greeting (its teardown is not held up by the rest of the wait)."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        listened = asyncio.ensure_future(link.listened.wait()) if link is not None else None
+        waiters = set(call_loops) | ({listened} if listened is not None else set())
+        try:
+            await asyncio.wait(waiters, timeout=self._web_pickup_max_wait_s, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if listened is not None and not listened.done():
+                listened.cancel()
+        if any(task.done() for task in call_loops):
+            return False
+        if link is not None and link.listened.is_set():
+            logger.info(f"voice call {fingerprint(ticket)}: pickup after the page listened "
+                        f"({(loop.time() - started) * 1000:.0f} ms)")
+        else:
+            logger.info(f"voice call {fingerprint(ticket)}: pickup on the cap ({self._web_pickup_max_wait_s:g} s), "
+                        f"no listening signal")
+        return True
 
     async def _cancel_all(self, ticket: str, tasks: List[asyncio.Task], *, secrets: Sequence[str] = ()) -> None:
         for task in tasks:

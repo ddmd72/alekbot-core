@@ -21,6 +21,7 @@ feature (slice 4 "Ask Lelik", the live-text RFC) uses, and nothing else:
 - `commands` — the page's command frames for the features this call offers (`voice_control_protocol.FEATURE_COMMANDS`),
   in arrival order, for the session's control task.
 - `set_state(**fields)` — fields the next `welcome` carries (e.g. `ask="armed"`), so a reconnecting page re-syncs.
+- `listened` — set once the page said `listening` (it hears Lelik's audio); the web greeting waits on it, capped.
 
 Three public classes in one module, on purpose: the link is created and torn down only by the hub, and `ControlSocket`
 exists only as their parameter type; a split would also be a cross-service import (REQ-ARCH-22).
@@ -127,6 +128,8 @@ class CallControlLink:
         self.call_fp = call_fp
         self.features: FrozenSet[str] = frozenset(features)
         self.commands: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue(maxsize=_COMMAND_QUEUE_SIZE)
+        # The page's `listening` (protocol core frame, every call): set once, never cleared for the call's life.
+        self.listened = asyncio.Event()
         self._accepted = accepted_commands(self.features)
         self._state: Dict[str, Any] = {}
         self._socket: Optional[ControlSocket] = None
@@ -163,6 +166,13 @@ class CallControlLink:
     def accepts(self, frame_type: str) -> bool:
         """True when `frame_type` is a command of a feature this call offers."""
         return frame_type in self._accepted
+
+    def mark_listening(self) -> bool:
+        """The page said `listening`. True the first time; a repeat (a re-sent frame) changes nothing."""
+        if self.listened.is_set():
+            return False
+        self.listened.set()
+        return True
 
     def offer_command(self, frame: Dict[str, Any]) -> bool:
         """Queue a page command for the session. False (dropped) when the queue is full."""

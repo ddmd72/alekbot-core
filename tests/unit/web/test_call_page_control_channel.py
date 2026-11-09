@@ -1,5 +1,5 @@
-"""The call page's control socket (VOICE_CALL_CONTROL_CHANNEL_RFC §4.2, §5.5): only the interpreter page opens it,
-only when `/connect` hands out `control`; the token is the first frame and never in the URL; pings every 20 s after
+"""The call page's control socket (VOICE_CALL_CONTROL_CHANNEL_RFC §4.2, §4.4): every web page opens it, whatever its
+mode, only when `/connect` hands out `control`; the token is the first frame and never in the URL; pings every 20 s after
 `welcome`; redials with backoff on a drop, never after `bye`; closed with the call. The static checks read the page;
 the behavioural ones run the page's control block under node (skipped when node is not installed)."""
 import json
@@ -21,10 +21,10 @@ def _control_block() -> str:
     return block.group(0)
 
 
-def test_only_the_interpreter_page_opens_the_socket_and_only_with_a_hand_out():
-    assert 'return window.VOICE_MODE === "interpreter";' in _control_block()
+def test_every_page_opens_the_socket_and_only_with_a_hand_out():
+    assert "VOICE_MODE" not in _control_block()
     calls = re.findall(r".*openControl\(connectBody.*", HTML)
-    assert calls == ['          if (wantsControlChannel() && connectBody.control) openControl(connectBody.control, myToken);']
+    assert calls == ['          if (connectBody.control) openControl(connectBody.control, myToken);']
     assert HTML.count("new WebSocket(") == 1 and "new WebSocket(ch.url)" in HTML
 
 
