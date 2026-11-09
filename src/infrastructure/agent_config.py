@@ -129,6 +129,16 @@ class MemorySearchAgentConfig:
 
 
 # ---------------------------------------------------------------------------
+# FactQuerySlotsAgent (src/agents/fact_query_slots_agent.py)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FactQuerySlotsAgentConfig:
+    """The query step: one short JSON object per call, on the caller's cheap model."""
+    max_tokens: int = 2048
+
+
+# ---------------------------------------------------------------------------
 # WebSearchAgent (src/agents/web_search_agent.py)
 # ---------------------------------------------------------------------------
 
@@ -395,6 +405,7 @@ ROUTER = RouterAgentConfig()
 QUICK = QuickAgentConfig()
 SMART = SmartAgentConfig()
 MEMORY_SEARCH = MemorySearchAgentConfig()
+FACT_QUERY_SLOTS = FactQuerySlotsAgentConfig()
 WEB_SEARCH = WebSearchAgentConfig()
 CONSOLIDATION = ConsolidationAgentConfig()
 TUTOR_EXTRACTOR = TutorExtractorAgentConfig()
