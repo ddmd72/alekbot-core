@@ -1,0 +1,8 @@
+agent_id: fact_query_slots
+blueprint_id: fact_query_slots_v1
+source_file: firestore_utils/uploads/fact_query_slots.json
+tokens:
+  OUTPUT_FORMAT_FACT_QUERY_SLOTS:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

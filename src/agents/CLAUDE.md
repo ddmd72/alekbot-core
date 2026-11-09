@@ -67,6 +67,8 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 | Tutor, TutorExtractor | `docs/10_rfcs/COMPANION_AGENTS_RFC.md`, `decisions/companion_write_path.md`, `decisions/companion_history_recent_full_turns_per_channel.md` |
 | Lelik, LelikSummarizer, AlekGateway | `docs/10_rfcs/VOICE_COMPANION_RFC.md` (§4.7, §4.8, §4.10, §4.15), `decisions/lelik_send_to_chat.md`, `docs/04_solution_strategy/current_implementation/STRUCTURE.md` |
 
+| FactQuerySlots | `docs/10_rfcs/FACT_PROFILE_RFC.md` §5.1. Internal and unregistered: runs on its caller's execution context (cheap model), degrades to one semantic list. The LIFE AREAS block is code (the domain registry); the `OUTPUT_FORMAT_FACT_QUERY_SLOTS` token is the measured P1 head |
+
 ### Traps by agent
 
 - **WebSearch:** JSON output is prompt-only (`WEBSEARCH_OUTPUT_FORMAT`); `use_grounding` makes the OpenAI adapter drop
