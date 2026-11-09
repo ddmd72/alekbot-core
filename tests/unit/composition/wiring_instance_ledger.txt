@@ -101,6 +101,7 @@ src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.composition.email_classifier_runner.EmailClassifierRunner 1  # by-design the email indexing service's one classifier; it builds the agent per batch for the job's user (service_container.py)
+src.composition.fact_profile_setup.LazyAtlas 1  # by-design the one place atlas, held by the one FactProfileService and loaded on its first run (fact_profile_setup.py:61, FACT_PROFILE_RFC 4.4)
 src.composition.fact_profiler_runner.FactProfilerRunner 1  # by-design the one fact profiler, held by the ServiceContainer as fact_profiler; it builds its internal agent once, lazily, on the pinned model (service_container.py:392, FACT_PROFILE_RFC 4.1)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
@@ -139,6 +140,7 @@ src.services.email_review_service.EmailReviewService 1  # by-design single insta
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
 src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (application_graph.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
+src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as _fact_profile_step in application_graph.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (application_graph.py:724,739,921, FACT_PROFILE_RFC 4.4)
 src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
 src.services.fact_write_service.FactWriteService 1  # by-design single instance

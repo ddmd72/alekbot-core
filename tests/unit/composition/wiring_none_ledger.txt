@@ -23,6 +23,7 @@ BigQueryPromptContentAdapter._client  # lazy BigQuery client (bigquery_prompt_co
 GcpKmsCipherAdapter._client  # lazy KMS async client built on the first encrypt or decrypt, inside the running event loop, plan D-P6 (gcp_kms_cipher_adapter.py:35-38)
 MCPClient._tool_declarations  # lazy filled by the first get_tool_declarations() (adapters/mcp/mcp_client.py:48-57)
 FactProfilerRunner._agent  # lazy the internal profiler agent is built on the first profile() call, under the runner's lock (fact_profiler_runner.py:50,59-67, FACT_PROFILE_RFC 4.1)
+LazyAtlas._loaded  # lazy the place atlas and its digest are loaded on the profile step's first run, under the atlas's lock and off the event loop (asyncio.to_thread), never at boot (fact_profile_setup.py:44-52, FACT_PROFILE_RFC 4.4)
 
 # ---- state a served request fills
 RouterAgent._cached_triage_prompt  # runtime built on the first triage (router_agent.py:217,430)
