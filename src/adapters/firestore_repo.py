@@ -46,6 +46,9 @@ _PROFILE_STATE_FIELDS = [
     "created_at", "profile_fingerprint", "profile_derivation", "profile_failures", "profile_failed_fingerprint",
     "profile_answer", "user_identity", "primary_domain", "sensitivity",
 ]
+# What the people cards read of a current fact (list_profile_people).
+# The fields FactEntity requires come along (created_by_user_id, lineage_id, owner_id for legacy documents, text, type).
+_PROFILE_PEOPLE_FIELDS = ["account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "state", "people"]
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -672,6 +675,16 @@ class FirestoreFactRepository(FactRepository):
             .where(filter=FieldFilter("account_id", "==", account_id))
             .where(filter=FieldFilter("state", "==", FactState.CURRENT.value))
             .select(_PROFILE_STATE_FIELDS)
+        )
+        return [self._fact_from_snapshot(snap) async for snap in query.stream()]
+
+    async def list_profile_people(self, account_id: str) -> List[FactEntity]:
+        """Two equalities on account_id and state, as `list_profile_states`: no composite index."""
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", FactState.CURRENT.value))
+            .select(_PROFILE_PEOPLE_FIELDS)
         )
         return [self._fact_from_snapshot(snap) async for snap in query.stream()]
 

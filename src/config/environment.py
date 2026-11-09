@@ -597,6 +597,15 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}fact_review_questions"
 
     @property
+    def person_cards_collection(self) -> str:
+        """
+        People cards (fact profile RFC §7): one document per person the facts mention often, doc id `<account_id>:<card_key>`.
+        A retrieval index entry rebuilt by code at the end of every profile step; never a fact, never in a prompt.
+        Dev: development_person_cards
+        """
+        return f"{self.firestore_collection_prefix}person_cards"
+
+    @property
     def fact_review_messages_collection(self) -> str:
         """
         The memory review's message records (Facts S4 plan §2.2): the weekly digest's claim, doc id `<user_id>:digest:<iso_week>`
