@@ -168,28 +168,31 @@ class FactProfilerAgent(BaseAgent):
 
     async def _system_prompt(self) -> str:
         """The Firestore prompt plus the registry's enum block, assembled once per instance. A prompt missing a
-        section is evicted from the builder's cache and is an outage; nothing is cached."""
+        section is evicted from the assembly cache and is an outage; nothing is kept."""
         async with self._system_lock:
-            if self._system is not None:
-                return self._system
-            enum_block = render_subject_enum_block() + "\n" + render_use_area_line()
-            try:
-                prompt = await self._prompt_builder.build_for_agent(
-                    agent_type=AGENT_TYPE, user_id=None, account_id=None, include_biographical=False,
-                    include_directives=False, kb_preamble=False, extra_static_blocks=[enum_block])
-            except Exception as exc:
-                logger.error(f"[FactProfile] prompt assembly failed: {type(exc).__name__}: {exc}")
-                raise _PromptUnavailable() from exc
-            missing = [s for s in _REQUIRED_SECTIONS if s not in (prompt or "")]
-            if missing:
-                for section in missing:
-                    logger.error(f"[FactProfile] token missing: {section.rstrip(' {')}")
-                # The assembly service cached this incomplete template under this agent's key: drop that one entry,
-                # so the prompt is assembled afresh once the tokens are uploaded.
-                self._prompt_builder.invalidate_agent_prompt(AGENT_TYPE)
-                raise _PromptUnavailable()
-            self._system = prompt
-            return prompt
+            if self._system is None:
+                self._system = await self._assemble_system_prompt()
+            return self._system
+
+    async def _assemble_system_prompt(self) -> str:
+        """Build the prompt and check its sections; writes nothing to self (the caller keeps the result)."""
+        enum_block = render_subject_enum_block() + "\n" + render_use_area_line()
+        try:
+            prompt = await self._prompt_builder.build_for_agent(
+                agent_type=AGENT_TYPE, user_id=None, account_id=None, include_biographical=False,
+                include_directives=False, kb_preamble=False, extra_static_blocks=[enum_block])
+        except Exception as exc:
+            logger.error(f"[FactProfile] prompt assembly failed: {type(exc).__name__}: {exc}")
+            raise _PromptUnavailable() from exc
+        missing = [s for s in _REQUIRED_SECTIONS if s not in (prompt or "")]
+        if missing:
+            for section in missing:
+                logger.error(f"[FactProfile] token missing: {section.rstrip(' {')}")
+            # The assembly service cached this incomplete template under this agent's key: drop that one entry,
+            # so the prompt is assembled afresh once the tokens are uploaded.
+            self._prompt_builder.invalidate_agent_prompt(AGENT_TYPE)
+            raise _PromptUnavailable()
+        return prompt
 
 
 def _parse(raw: str) -> ProfileAnswer:
