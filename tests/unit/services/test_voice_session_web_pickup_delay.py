@@ -48,7 +48,7 @@ class _Harness:
             **({"call_kind": call_kind} if call_kind else {})}
         self.service = VoiceSessionService(
             realtime_session_factory=MagicMock(return_value=self.session), control_plane=control,
-            alert_sink=AsyncMock(), web_pickup_delay_s=delay)
+            alert_sink=AsyncMock(), web_pickup_max_wait_s=delay)
 
     @staticmethod
     async def _inbound():
