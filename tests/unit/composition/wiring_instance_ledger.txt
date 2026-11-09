@@ -140,6 +140,7 @@ src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
+src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service (application_graph.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); no caller yet
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
