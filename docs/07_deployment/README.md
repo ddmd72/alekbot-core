@@ -643,6 +643,10 @@ release's own values are in its rollout notes (ops).
 silently does nothing, and a later `--to-latest` serves the bad image. Run no `services update` and no Makefile switch until
 the fix is deployed forward; if one is unavoidable, follow it with an explicit `update-traffic`.
 
+**Fact profiler model.** `FACT_PROFILER_MODEL` (optional; empty = `claude-sonnet-5-5`) pins the model the fact profiler runs on
+for every account (`composition/fact_profiler_runner.py: profiler_model`). Claude ids only: the strategy's only provider
+is Claude and it has no fallback. Read with `os.getenv` where the container is built, never in `load_settings()`.
+
 **Drive indexing.**
 - Pause / resume the drive work: `gcloud tasks queues pause|resume drive-sync-dev --location=us-central1 --project=<PROJECT_ID>`
   and `gcloud scheduler jobs pause|resume alek-bot-dev-start-drive-sync --location=us-central1 --project=<PROJECT_ID>`. A

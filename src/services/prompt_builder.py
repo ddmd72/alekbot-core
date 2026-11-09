@@ -282,6 +282,15 @@ class PromptBuilder(PromptBuilderPort):
             self._component_cache.clear()
             logger.info("📋 [PromptBuilder] Invalidated entire cache")
 
+    def invalidate_agent_prompt(
+        self, agent_type: str, account_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> None:
+        """Drop the assembly service's cached template for exactly this key (the shared cache keeps the rest)."""
+        if self.assembly_service:
+            # The same defaults build_for_agent passes, so the key is the one that call cached under.
+            self.assembly_service.invalidate_assembled(
+                agent_type, account_id or ANONYMOUS_ACCOUNT_ID, user_id or ANONYMOUS_USER_ID)
+
     def invalidate_biographical_cache(self, user_id: str) -> None:
         """
         Invalidate biographical cache for specific user.

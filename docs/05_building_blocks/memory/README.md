@@ -154,6 +154,8 @@ like any other message.
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
+The profile is made by `FactProfilerAgent` (`src/agents/fact_profiler_agent.py`, `FACT_PROFILE_RFC.md` §4): one structured Claude call per fact, run through `FactProfilerPort` / `FactProfilerRunner`; nothing calls it yet (the consolidation step comes in a later PR).
+
 The 27 domains live in one registry, `src/domain/fact_domains.py`, the single source of their keys, labels and renderers; the 16-value `domain` field of §2.2 stays until the last PR of the fact-profile series.
 
 The adapter also stores `context_priority_rank` (critical 1 … archival 5) next to the entity for ordering

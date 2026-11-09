@@ -167,7 +167,7 @@ model call** (labels and time are not used for directives).
 
 ### 4.1 Model contract
 
-`FactProfilerAgent` (`src/agents/fact_profiler_agent.py`), internal, built by the factory, never delegated. Model pinned
+`FactProfilerAgent` (`src/agents/fact_profiler_agent.py`), internal, built by its runner in composition, never delegated. Model pinned
 by the optional knob `FACT_PROFILER_MODEL` read with `os.getenv` at the call site (default: the Sonnet 5.5 id); effort
 high, adaptive thinking (the stall fix of `decisions/sonnet55_adaptive_thinking_stall.md` applies), system prompt with
 `cache_control`, output by JSON schema (`CLAUDE_STRUCTURED_OUTPUTS_GA_RFC.md`), `allow_provider_storage=False`, one parse
