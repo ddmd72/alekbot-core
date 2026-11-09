@@ -28,6 +28,7 @@ from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepositor
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
+from src.adapters.firestore_person_card_repo import FirestorePersonCardRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
@@ -721,8 +722,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     # The profile step (fact profile RFC §4.4): one instance, run inside the lease by both the consolidation and the
     # memory review; the cap is an optional knob, read here with os.getenv.
+    # The people cards (RFC §7) it rebuilds are listed in the review's weekly digest.
+    _person_cards = FirestorePersonCardRepository(db_client, env_config)
     _fact_profile_step = build_fact_profile_service(
-        container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")))
+        container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
+        person_cards=_person_cards)
 
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
@@ -919,6 +923,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_updates=_review_fact_updates,
         cabinet_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/cabinet?tab=memory",
         profile_step=_fact_profile_step,
+        person_cards=_person_cards,
     ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
           and _alert_webhook is not None) else None
 

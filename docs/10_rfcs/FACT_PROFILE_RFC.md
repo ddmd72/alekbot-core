@@ -337,8 +337,9 @@ A card is a retrieval index entry: never a fact, never in a prompt, never read b
   `src/domain/person_cards.py`, no model call): mentions are grouped by transliteration skeleton across scripts; a group
   with **≥ 10 current facts** becomes a card with its spellings, its fact count and its relation — the relation word
   (closed list in code: partner, wife, husband, son, daughter, mother, father, brother, sister and their kin) that most of
-  its mentions carry as their role, if any. Example: Maria Doe written as "Maria Doe", "Mariia" and "Mia" in Alex's facts
-  is one card, relation "mother", once her facts reach ten. A card key is the skeleton of its fullest spelling, so a
+  its mentions carry as their role, if any. Example: Maria Doe written as "Maria Doe", "Maria A. Doe", "Mariia" and the Ukrainian
+  form is one card, relation "mother", once her facts reach ten. A short form such as "Mia" has another skeleton and
+  stays a card of its own (joining nicknames is the later fix of OD-5 b). A card key is the skeleton of its fullest spelling, so a
   rebuild keeps it.
 - **Used at query time only:** a `people` slot naming a relation or one spelling widens to every spelling of the
   matching cards (§5.3). This supplies the spellings the slot model cannot know and closes the relation gap of §1;

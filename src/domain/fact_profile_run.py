@@ -28,6 +28,7 @@ class FactProfileRun:
     stored; newly_abandoned: failures that reached the abandon limit; deferred: planned work not done this cycle (a call
     not started, a write past the deadline); lost_cas: writes refused because the fact changed; usd: spend of the calls;
     drops: dropped values per reason; outage: the model was unavailable; refreshed: the baseline was refreshed;
+    cards: people cards stored by this run's rebuild (0 when none was built);
     error: the run stopped on an error (the counts are partial).
     """
     scan: FactProfileScan = field(default_factory=FactProfileScan)
@@ -43,4 +44,5 @@ class FactProfileRun:
     drops: Mapping[str, int] = field(default_factory=dict)
     outage: bool = False
     refreshed: bool = False
+    cards: int = 0
     error: bool = False

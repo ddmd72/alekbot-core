@@ -104,6 +104,7 @@ from ..ports.fact_update_port import FactUpdatePort
 from ..ports.interactive_message_port import InteractiveMessagePort
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.notification_state_port import NotificationStatePort
+from ..ports.person_card_repository import PersonCardRepository
 from ..ports.repository import FactRepository
 from ..ports.session_store import SessionStore
 from ..ports.task_queue import TaskQueue
@@ -236,6 +237,7 @@ class FactReviewService:
         fact_updates: FactUpdatePort,
         cabinet_url: str,
         profile_step: Optional["FactProfileService"] = None,
+        person_cards: Optional[PersonCardRepository] = None,
     ) -> None:
         if run_timeout_s <= _MARGIN_S:
             raise ValueError(f"run_timeout_s must exceed the lease margin ({_MARGIN_S:.0f} s), got {run_timeout_s}")
@@ -262,6 +264,7 @@ class FactReviewService:
         self._fact_updates = fact_updates
         self._cabinet_url = cabinet_url
         self._profile_step = profile_step
+        self._person_cards = person_cards
 
     async def run(self, user_id: str, account_id: str, mode: ReviewMode = "daily") -> Dict[str, Any]:
         """One run; every result is 200-shaped.
@@ -748,10 +751,24 @@ class FactReviewService:
             histories=[history_line(q, zone) for q in histories],
             invoices=[q.quoted_text for q in invoices],
             cabinet_url=self._cabinet_url,
+            people=await self._people_line(account_id),
         )
         if not await self._notifications.notify_raw(user_id, account_id, text, literal=True):
             return None
         return len(listed) + len(histories) + len(invoices)
+
+    async def _people_line(self, account_id: str) -> List[str]:
+        """The digest's people entries ("<name> — <facts>", most facts first): what the people cards group, so the owner
+        sees it (RFC §7, OD-5 a). Best effort: a read error is a WARNING and the digest goes without the line."""
+        if self._person_cards is None:
+            return []
+        try:
+            cards = await self._person_cards.list_cards(account_id)
+        except Exception as exc:
+            logger.warning(f"[FactReview] people cards of account {account_id[:8]} not read: {type(exc).__name__}: {exc}")
+            return []
+        ordered = sorted(cards, key=lambda card: (-card.fact_count, card.display))
+        return [f"{card.display} — {card.fact_count}" for card in ordered]
 
     async def _release_digest(self, user_id: str, day: date) -> None:
         try:
