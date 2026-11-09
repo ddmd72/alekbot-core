@@ -184,8 +184,9 @@ class FactProfilerAgent(BaseAgent):
             if missing:
                 for section in missing:
                     logger.error(f"[FactProfile] token missing: {section.rstrip(' {')}")
-                # The builder cached this assembly: drop it, so the prompt is assembled afresh once uploaded.
-                self._prompt_builder.invalidate_cache()
+                # The assembly service cached this incomplete template under this agent's key: drop that one entry,
+                # so the prompt is assembled afresh once the tokens are uploaded.
+                self._prompt_builder.invalidate_agent_prompt(AGENT_TYPE)
                 raise _PromptUnavailable()
             self._system = prompt
             return prompt

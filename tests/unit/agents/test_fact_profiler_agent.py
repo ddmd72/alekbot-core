@@ -185,18 +185,16 @@ class TestPrompt:
     ])
     async def test_a_missing_section_is_an_outage_that_evicts_the_cached_assembly(self, prompt, section, caplog):
         builder = prompt_builder(prompt)
-        builder.invalidate_cache = MagicMock()
         agent, llm = _agent([reply(ANSWER)], builder)
         with caplog.at_level(logging.ERROR):
             result = await agent.profile("acc-1", TEXT, None)
         assert result.status is ProfilerStatus.UNAVAILABLE and result.calls == 0 and llm.requests == []
         assert f"[FactProfile] token missing: {section}" in [r.getMessage() for r in caplog.records]
-        builder.invalidate_cache.assert_called_once_with()
+        builder.invalidate_agent_prompt.assert_called_once_with("fact_profiler")
         assert agent._system is None
 
     async def test_nothing_is_cached_after_a_missing_section_so_the_next_call_assembles_again(self):
         builder = prompt_builder("class A extends Agent {\n}")
-        builder.invalidate_cache = MagicMock()
         agent, _ = _agent([reply(ANSWER)], builder)
         await agent.profile("acc-1", TEXT, None)
         builder.build_for_agent.return_value = PROMPT

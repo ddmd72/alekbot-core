@@ -687,6 +687,16 @@ class PromptAssemblyService:
         self._assembled_cache.clear()
         logger.info(f"🔥 Cache cleared: {cache_size} entries removed")
 
+    def invalidate_assembled(self, agent_type: str, account_id: Optional[str] = None,
+                             user_id: Optional[str] = None) -> bool:
+        """Drop the one cached static template of this agent / account / user key; every other entry stays.
+        Returns whether an entry was dropped."""
+        key = self._build_cache_key(agent_type, account_id, user_id)
+        dropped = self._assembled_cache.pop(key, None) is not None
+        if dropped:
+            logger.info(f"🔥 Cache entry dropped: {key}")
+        return dropped
+
     async def preload_cache(
         self,
         agent_type: str,
