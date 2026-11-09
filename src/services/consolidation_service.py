@@ -39,6 +39,7 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .fact_profile_service import FactProfileService
     from .owner_timezone_resolver import OwnerTimezoneResolver
 
 _INTENT_CONSOLIDATE_FULL = "consolidate_full"  # mirrors Intent.CONSOLIDATE_FULL
@@ -84,9 +85,12 @@ class ConsolidationService:
         task_queue: Optional[TaskQueue] = None,
         indexed_email_repo: Optional[object] = None,
         clock: Callable[[], datetime] = _utcnow,
+        *,
+        profile_step: Optional["FactProfileService"] = None,
     ) -> None:
         if run_timeout_s <= _MARGIN_S:
             raise ValueError(f"run_timeout_s must exceed the lease margin ({_MARGIN_S:.0f} s), got {run_timeout_s}")
+        self._profile_step = profile_step
         self._queue = queue
         self._coordinator = coordinator
         self._agent_factory = agent_factory
@@ -259,10 +263,22 @@ class ConsolidationService:
                     "✅ RequestContext set: user_id=%s, account_id=%s",
                     user_id[:8], account_id[:12],
                 )
-                return await self._process_one_batch(user_id, owner_timezone, until, touched)
+                step = await self._process_one_batch(user_id, owner_timezone, until, touched)
+                if self._profile_step is not None and step in (_Step.CONSOLIDATED, _Step.FAILED):
+                    await self._profile(account_id, until)
+                return step
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return _Step.ERROR
+
+    async def _profile(self, account_id: str, until: datetime) -> None:
+        """The profile step, inside the lease after the agent ran (fact profile RFC §4.4); it never fails the batch."""
+        step = self._profile_step
+        try:
+            if step is not None:
+                await step.run(account_id, until)
+        except Exception:
+            logger.error(f"[FactProfile] step failed account={account_id[:8]}", exc_info=True)
 
     async def _process_one_batch(self, user_id: str, owner_timezone: str, until: datetime, touched: list[str]) -> _Step:
         await self._queue.reset_recoverable_batches(user_id, zombie_after_s=_MARGIN_S)
