@@ -1,0 +1,9 @@
+agent_id: fact_profiler
+blueprint_id: fact_profiler_agent_v1
+tokens:
+  COGNITIVE_PROCESS_FACT_PROFILER:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_FACT_PROFILER:
+    non_overridable: true
+    order: 10
