@@ -46,6 +46,7 @@ from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from src.domain.fact_lifecycle_run_guard import run_guard_held
+from src.domain.fact_profile import require_profile_fields
 from src.domain.fact_resolution import ForwardWalk
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_review_rules import stale_order_key
@@ -294,6 +295,23 @@ class NoWriteFactRepository(FactRepository):
             raise PermissionError("Not authorized to modify this fact")
         base = self._base(stored)
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
+
+    async def list_profile_states(self, account_id: str) -> List[FactEntity]:
+        """The live list with the pass's own writes applied (as `get_active_facts`); an overlay document is whole."""
+        return self._current_view(await self._real.list_profile_states(account_id), account_id)
+
+    async def write_fact_profile(
+        self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]
+    ) -> bool:
+        """The store's compare-and-set on `profile_fingerprint`, against the document as the kit sees it."""
+        require_profile_fields(fields)
+        async with self._lock:
+            base = self._docs.get(fact_id) or await self._real.get_fact_by_id(fact_id)
+            if base is None or base.profile_fingerprint != expected_fingerprint:
+                return False
+            self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
+            self._record("write_fact_profile", fact_id=fact_id, fields=sorted(fields))
+        return True
 
     async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
         require_in_place(fields)

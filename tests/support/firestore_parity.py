@@ -5,8 +5,9 @@ Each scenario is `async def scenario(db, col) -> result`: it writes into the col
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
 what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
 Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read,
-and the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole: documented
-behaviour, not yet run on the test database, owner `make test-cloud` before deploy; and P11's
+the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole, and the fact
+profile's arrays_of_maps_vector_and_projection: documented behaviour, not yet run on the test database, owner
+`make test-cloud` before deploy; and P11's
 naive_datetime_filter_is_utc: the client's own encoding, run on the emulator 2026-10-27, not yet on the test database); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
@@ -328,6 +329,19 @@ async def set_replaces_whole_document(db: Any, col: str) -> Any:
     return (await d.get()).to_dict()
 
 
+async def arrays_of_maps_vector_and_projection(db: Any, col: str) -> Any:
+    """A fact profile's fields (fact profile RFC §10.2): an array of maps and a vector round-trip whole, and a projected
+    query leaves both out while it returns a selected map with its nested array."""
+    c = db.collection(col)
+    d = c.document("a")
+    points = [{"from": "2026-04-01", "to": "2027-03-31", "precision": "day"}, {"from": "2025", "to": ""}]
+    await d.set({"k": "x", "points": points, "v": Vector([1.0, 0.0, 0.0]), "m": {"x": [1, 2]}})
+    projected = [s.to_dict() async for s in _where(c, "k", "==", "x").select(["k", "m"]).stream()]
+    full = (await d.get()).to_dict()
+    return {"projected": projected, "points": full["points"], "vector": list(full["v"]),
+            "vector_type": type(full["v"]).__name__}
+
+
 async def aware_datetime_stored_as_utc(db: Any, col: str) -> Any:
     d = db.collection(col).document("a")
     sent = datetime(2026, 10, 22, 15, 30, 45, 123456, tzinfo=timezone(timedelta(hours=3)))
@@ -642,6 +656,10 @@ SCENARIOS: List[Scenario] = [
         "merge_true": {"account_id": "x", "sent": 3, "offers": {"f1": 2, "f2": 1},
                        "labels": {"uk": {"a": "9", "b": "2"}, "en": {"a": "A"}}},
         "created": {"account_id": "x", "offers": {"f2": 1}}}),
+    Scenario("arrays_of_maps_vector_and_projection", arrays_of_maps_vector_and_projection, {
+        "projected": [{"k": "x", "m": {"x": [1, 2]}}],
+        "points": [{"from": "2026-04-01", "to": "2027-03-31", "precision": "day"}, {"from": "2025", "to": ""}],
+        "vector": [1.0, 0.0, 0.0], "vector_type": "Vector"}),
     Scenario("aware_datetime_stored_as_utc", aware_datetime_stored_as_utc, {
         "utc_fields": (2026, 10, 22, 12, 30, 45, 123456), "offset": timedelta(0), "same_instant": True}),
     Scenario("document_ids_are_case_sensitive", document_ids_are_case_sensitive, {

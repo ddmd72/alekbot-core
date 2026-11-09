@@ -11,6 +11,7 @@ from ..domain.due_fact import DueFact
 from ..domain.entities import ExpiryKind, FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
+from ..domain.fact_profile import require_profile_fields
 from ..domain.fact_resolution import ForwardWalk
 from ..domain.fact_review_overview import LISTABLE_STATES
 from ..domain.fact_review_rules import stale_order_key
@@ -36,6 +37,15 @@ _gcp_retry_logger.addHandler(_GcpRetryForwarder())
 _gcp_retry_logger.setLevel(_logging.DEBUG)
 
 _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
+# The profile's label vector (fact profile RFC §2.1): stored as a Vector, written only by write_fact_profile.
+_LABEL_VECTOR = "label_vector"
+_ALL_VECTOR_FIELDS = (*_VECTOR_FIELDS, _LABEL_VECTOR)
+# What profile classification and the profiler read of a current fact (list_profile_states); no vectors.
+_PROFILE_STATE_FIELDS = [
+    "account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "metadata", "domain", "tags", "state",
+    "created_at", "profile_fingerprint", "profile_derivation", "profile_failures", "profile_failed_fingerprint",
+    "profile_answer", "user_identity", "primary_domain", "sensitivity",
+]
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -194,7 +204,7 @@ class FirestoreFactRepository(FactRepository):
         """The stored form of a fact. The Vector() wrapper is required: unwrapped, Firestore saves a map {0: v, 1: v, ...}
         that vector search cannot see. `context_priority_rank` is adapter-only, for ORDER BY."""
         data = fact.model_dump()
-        for name in _VECTOR_FIELDS:
+        for name in _ALL_VECTOR_FIELDS:
             if data.get(name) is not None:
                 data[name] = Vector(data[name])
         data['context_priority_rank'] = _PRIORITY_RANK.get(data.get('context_priority') or 'medium', 3)
@@ -533,7 +543,7 @@ class FirestoreFactRepository(FactRepository):
             .where(filter=FieldFilter("valid_to", ">=", since))
             .order_by("valid_to", direction=firestore.Query.DESCENDING)
             .limit(limit)
-            .select(_projection(*_VECTOR_FIELDS))
+            .select(_projection(*_ALL_VECTOR_FIELDS))
         )
         return [self._fact_from_snapshot(snap) async for snap in query.stream()]
 
@@ -543,7 +553,7 @@ class FirestoreFactRepository(FactRepository):
             .where(filter=FieldFilter("account_id", "==", account_id))
             .where(filter=FieldFilter("lineage_id", "==", lineage_id))
             .order_by("version", direction=firestore.Query.ASCENDING)
-            .select([name for name in FactEntity.model_fields if name not in _VECTOR_FIELDS and name != "id"])
+            .select(_projection(*_ALL_VECTOR_FIELDS))
         )
         results = []
         async for snap in query.stream():
@@ -654,6 +664,42 @@ class FirestoreFactRepository(FactRepository):
             transaction.update(archived_ref, encoded)
 
         await self._in_transaction(body, archived.fact.id)
+
+    async def list_profile_states(self, account_id: str) -> List[FactEntity]:
+        """Two equalities on account_id and state: served without a composite index."""
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", FactState.CURRENT.value))
+            .select(_PROFILE_STATE_FIELDS)
+        )
+        return [self._fact_from_snapshot(snap) async for snap in query.stream()]
+
+    async def write_fact_profile(
+        self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]
+    ) -> bool:
+        require_profile_fields(fields)
+        ref = self.facts_col.document(fact_id)
+        encoded = dict(fields)
+        if encoded.get(_LABEL_VECTOR) is not None:
+            encoded[_LABEL_VECTOR] = Vector(encoded[_LABEL_VECTOR])
+        wrote = False
+
+        async def body(transaction: Any) -> None:
+            nonlocal wrote
+            wrote = False
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists or (snap.to_dict() or {}).get("profile_fingerprint") != expected_fingerprint:
+                return
+            transaction.update(ref, encoded)
+            wrote = True
+
+        try:
+            await self._in_transaction(body, fact_id)
+        except FactWriteConflict:
+            logger.info(f"[FactProfile] fact={fact_id[:8]} profile write lost to contention")
+            return False
+        return wrote
 
     async def _in_transaction(self, body: Callable[[Any], Awaitable[None]], fact_id: str) -> None:
         """Run `body` in a fresh transaction. A read-time Aborted, the client's ValueError after 5 aborted commits and

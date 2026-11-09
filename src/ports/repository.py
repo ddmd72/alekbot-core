@@ -243,6 +243,35 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def list_profile_states(self, account_id: str) -> List[FactEntity]:
+        """Return every `state == "current"` fact of account `account_id` with what profile classification and the
+        profiler read (fact profile RFC §4.2): one projected scan per profile run.
+
+        Projection: id (the document id), account_id, created_by_user_id, lineage_id, text, type, metadata, domain,
+            tags, state, created_at, and the profile fields profile_fingerprint, profile_derivation, profile_failures,
+            profile_failed_fingerprint, profile_answer, user_identity, primary_domain, sensitivity. Every other field
+            keeps the model default: no vectors, no label words, no time points, places or people.
+        Tenancy: only that account's documents (the stored `account_id`).
+        Order: none.
+        """
+        pass
+
+    @abstractmethod
+    async def write_fact_profile(
+        self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]
+    ) -> bool:
+        """Write `fields` onto document `fact_id` in place, only those fields, when its stored `profile_fingerprint`
+        still equals `expected_fingerprint` (None: the document has none); return whether it wrote.
+
+        Allowed keys: PROFILE_FIELDS (domain/fact_profile.py); any other raises InPlaceFieldRefused before any I/O.
+        `label_vector` is given as a list of floats and stored as a vector.
+        Atomicity: a transaction; the compare and the write see one snapshot. A document that is missing, carries
+            another fingerprint, or whose transaction gave up after repeated contention is not written (False).
+        Tenancy: none; the caller writes only ids it listed for its account.
+        """
+        pass
+
+    @abstractmethod
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """Return every `state == "stale"` fact of account `account_id`, longest stale first.
 
