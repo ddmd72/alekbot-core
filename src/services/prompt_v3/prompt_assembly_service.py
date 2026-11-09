@@ -35,6 +35,10 @@ from src.services.prompt_v3.context_formatter import ContextFormatter
 from src.utils.logger import logger
 
 
+# Joins the blueprint tail to the cached static template; assemble() splits it off, it never reaches a prompt.
+_TAIL_MARKER = "<!-- TAIL_BLOCK -->"
+
+
 class PromptAssemblyService:
     """Assembles prompts from token library via blueprint class-collection model (v4).
 
@@ -133,6 +137,12 @@ class PromptAssemblyService:
 
             self._save_to_cache(cache_key, static_prompt)
 
+        # The blueprint tail travels inside the cached string, so a template and its tail are one value.
+        static_prompt, marker, tail_block = static_prompt.partition(_TAIL_MARKER)
+        if marker:
+            static_prompt = static_prompt[:-1]  # the newline that joined the marker
+            tail_block = tail_block[1:]  # the newline that joined the tail
+
         # RUNTIME INJECTION (ALWAYS - even on cache hit)
         # This happens AFTER cache because biographical facts and conversation change frequently
         final_prompt = await self._inject_runtime_context(
@@ -150,6 +160,7 @@ class PromptAssemblyService:
             include_datetime=include_datetime,
             skills_catalog=skills_catalog,
             session_key=session_key,
+            tail_block=tail_block,
         )
 
         logger.info(f"✅ Assembled prompt: {len(final_prompt)} chars")
@@ -258,8 +269,29 @@ class PromptAssemblyService:
 
         # STEP 7: Group active tokens by class, collect (order, Token) pairs
         by_class: Dict[str, List[Tuple[int, Token]]] = defaultdict(list)
+        tail_by_class: Dict[str, List[Tuple[int, Token]]] = defaultdict(list)
+        tail_categories = set(blueprint.tail_categories)
         for tid, (pt, tok) in active.items():
-            by_class[str(tok.class_)].append((pt.order, tok))
+            target = tail_by_class if str(tok.category) in tail_categories else by_class
+            target[str(tok.class_)].append((pt.order, tok))
+
+        # Tail blocks (Blueprint.tail_categories): rendered at the end of the prompt by
+        # _inject_runtime_context. The provenance head is never a tail: it stays in place.
+        tail_blocks = []
+        for class_name in blueprint.class_order:
+            tail_entries = tail_by_class.get(class_name, [])
+            if not tail_entries:
+                continue
+            if class_name == PROVENANCE_CLASS:
+                by_class[class_name].extend(tail_entries)
+                continue
+            tail_entries.sort(key=lambda x: x[0])
+            tail_text = "\n\n".join(
+                "\n".join(f"    {line}" if line.strip() else "" for line in tok.content.split("\n"))
+                for _, tok in tail_entries
+            )
+            tail_blocks.append(f"{class_name} {{\n{tail_text}\n}}")
+        tail_text_all = "\n\n".join(tail_blocks)
 
         # STEP 8: Render sections in blueprint class_order
         sections = []
@@ -305,6 +337,8 @@ class PromptAssemblyService:
         )
 
         prompt = self._normalize_whitespace(prompt)
+        if tail_text_all:
+            prompt = prompt + "\n" + _TAIL_MARKER + "\n" + tail_text_all
 
         logger.debug(f"Static template assembled: {len(prompt)} chars, {len(sections)} sections")
         return prompt
@@ -402,6 +436,7 @@ class PromptAssemblyService:
         include_datetime: bool = False,
         skills_catalog: Optional[str] = None,
         session_key: Optional[str] = None,
+        tail_block: str = "",
     ) -> str:
         """Inject RUNTIME data with SecurityPort validation.
 
@@ -412,6 +447,8 @@ class PromptAssemblyService:
             user_id: User ID for logging
             query_specific_context: Pre-formatted Q-S context string from router enrichment.
                 Validated here via SecurityPort and appended after the cache boundary.
+            tail_block: Pre-rendered Blueprint.tail_categories block(s); placed after the other
+                dynamic parts and before the session key (the key stays last).
             kb_preamble: When True, knowledge_base {} is placed BEFORE the blueprint template
                 (preamble). When False (default), it is appended after (postamble).
 
@@ -587,6 +624,8 @@ class PromptAssemblyService:
             dynamic_parts.append(f"current_date_time {{\n    {current_datetime}\n}}")
         if query_specific_str:
             dynamic_parts.append(f"query_specific_context: '''\n{query_specific_str}\n'''")
+        if tail_block:
+            dynamic_parts.append(tail_block)
         if session_key:
             dynamic_parts.append(render_session_key(session_key))
         prompt = prompt + "\n\n" + PROMPT_CACHE_BOUNDARY + "\n" + "\n\n".join(dynamic_parts)
