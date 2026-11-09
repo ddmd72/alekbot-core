@@ -272,6 +272,50 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def list_search_snapshot(self, account_id: str) -> List[FactEntity]:
+        """Return every `state == "current"` fact of account `account_id` with what the fact search reads (fact profile
+        RFC §5.2): one projected scan per snapshot load.
+
+        Projection: id (the document id), account_id, owner_id, created_by_user_id, lineage_id, text, type, state, domain,
+            tags, context_priority, valid_from, valid_to, created_at, source, version, visibility, metadata,
+            temporal_class, reported_date, context, expiry_kind, ttl_days, expires_at, and the profile fields label_words,
+            time_role, time_points, place_keys, people, primary_domain, domain_keys, kinds, sensitivity. No vectors.
+        Tenancy: only that account's documents (the stored `account_id`).
+        Order: none.
+        """
+        pass
+
+    @abstractmethod
+    async def get_baseline_refreshed_at(self, account_id: str) -> Optional[datetime]:
+        """Return `refreshed_at` of the account's baseline cache document, or None when there is none (or it has none).
+
+        The document is written whenever the baseline is refreshed, so it changes whenever the facts do (the search
+        snapshot's validity token).
+        """
+        pass
+
+    @abstractmethod
+    async def nearest_fact_ids(
+        self, account_id: str, vector_field: str, query_vector: Sequence[float], limit: int
+    ) -> List[str]:
+        """Return the ids of the `limit` current facts of account `account_id` nearest to `query_vector` by cosine
+        distance, nearest first.
+
+        `vector_field` is `vector` or `label_vector`, anything else raises ValueError before any I/O. A fact without that
+        vector is not a hit. The projection carries no vectors.
+        Tenancy: only that account's documents (the stored `account_id`).
+        """
+        pass
+
+    @abstractmethod
+    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
+        """Return the text vector (`vector`) of each of `fact_ids` that belongs to account `account_id` and has one.
+
+        An id that does not exist, belongs to another account, or has no `vector` is left out of the result.
+        """
+        pass
+
+    @abstractmethod
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """Return every `state == "stale"` fact of account `account_id`, longest stale first.
 
