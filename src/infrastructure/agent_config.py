@@ -356,6 +356,18 @@ class DriveProfilerAgentConfig:
     thinking: str = "low"
 
 
+# FactProfilerAgent (FACT_PROFILE_RFC §4.1): one structured call per fact. The probe measured output <= 308 tokens; the
+# cap leaves room for adaptive thinking at effort "high", which counts toward it.
+@dataclass
+class FactProfilerAgentConfig:
+    call_timeout_s: int = 60
+    max_tokens: int = 16_000
+    max_parse_retries: int = 1
+    thinking: str = "high"
+    # Used when FACT_PROFILER_MODEL is unset (read in composition, never here).
+    default_model: str = "claude-sonnet-5-5"
+
+
 @dataclass
 class DriveTranscriberAgentConfig:
     """Batch transcription of one audio window (USER_DRIVE_INDEXING_RFC §27.5). Not a `_call_llm` agent: no timeout or
@@ -398,6 +410,7 @@ DRIVE_READER = DriveReaderAgentConfig()
 DRIVE_TRIAGE = DriveTriageAgentConfig()
 DRIVE_PROFILER = DriveProfilerAgentConfig()
 DRIVE_PASSAGES = DrivePassageAgentConfig()
+FACT_PROFILER = FactProfilerAgentConfig()
 DRIVE_TRANSCRIBER = DriveTranscriberAgentConfig()
 
 

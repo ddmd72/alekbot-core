@@ -513,6 +513,9 @@ class PromptAssemblyService:
                 prompt = prompt + "\n\n" + kb_block + extra
         elif extra_static_blocks and kb_preamble:
             prompt = head + "\n\n".join(extra_static_blocks) + "\n\n" + prompt
+        elif extra_static_blocks:
+            # No knowledge base and no preamble: the blocks follow the template (they were dropped here before).
+            prompt = prompt + "\n\n" + "\n\n".join(extra_static_blocks)
 
         # Skills catalog — before directives so directives keep the last static slot (recency).
         # Pre-rendered by the orchestrator; descriptions were validated when saved.
@@ -683,6 +686,16 @@ class PromptAssemblyService:
         cache_size = len(self._assembled_cache)
         self._assembled_cache.clear()
         logger.info(f"🔥 Cache cleared: {cache_size} entries removed")
+
+    def invalidate_assembled(self, agent_type: str, account_id: Optional[str] = None,
+                             user_id: Optional[str] = None) -> bool:
+        """Drop the one cached static template of this agent / account / user key; every other entry stays.
+        Returns whether an entry was dropped."""
+        key = self._build_cache_key(agent_type, account_id, user_id)
+        dropped = self._assembled_cache.pop(key, None) is not None
+        if dropped:
+            logger.info(f"🔥 Cache entry dropped: {key}")
+        return dropped
 
     async def preload_cache(
         self,
