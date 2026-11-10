@@ -606,6 +606,14 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}person_cards"
 
     @property
+    def confirmed_people_collection(self) -> str:
+        """
+        The owner-confirmed people list (fact profile RFC §4.5): one document per account, doc id `<account_id>`. Written only
+        from the owner's confirmation; read by the profiler. Dev: development_confirmed_people
+        """
+        return f"{self.firestore_collection_prefix}confirmed_people"
+
+    @property
     def fact_review_messages_collection(self) -> str:
         """
         The memory review's message records (Facts S4 plan §2.2): the weekly digest's claim, doc id `<user_id>:digest:<iso_week>`

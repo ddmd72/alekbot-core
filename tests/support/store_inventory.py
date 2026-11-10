@@ -134,6 +134,9 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_drive_link_store.FirestoreDriveLinkStore": (_A + "test_drive_link_store_kit.py",),
     # Fact profile RFC §7: the people cards
     _STORE + "firestore_person_card_repo.FirestorePersonCardRepository": (_A + "test_person_card_store_kit.py",),
+    # Fact profile RFC §4.5: the owner-confirmed people list
+    _STORE + "firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository": (
+        _A + "test_confirmed_people_store_kit.py",),
 }
 
 ALLOWLIST_FILE = REPO / "tests" / "unit" / "adapters" / "stateful_store_allowlist.txt"
