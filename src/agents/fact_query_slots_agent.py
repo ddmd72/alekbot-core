@@ -10,7 +10,8 @@ memory search always runs, it only loses the narrowing lists.
 Internal: not manifest-registered, no tier of its own, and no caller yet. It is built by its caller with the caller's
 execution context (the model is the caller's cheap model), like `LelikSummarizerAgent`. The prompt is the P1 head
 (`OUTPUT_FORMAT_FACT_QUERY_SLOTS`) plus the LIFE AREAS block rendered from the domain registry, so a new life area
-reaches this prompt by code deploy alone.
+reaches this prompt by code deploy alone. The call also carries the owner's location, so an implicit "here / to me"
+request can take the home town as its place.
 """
 import json
 import time
@@ -158,7 +159,7 @@ class FactQuerySlotsAgent(BaseAgent):
         try:
             system = await self.prompt_builder.build_for_agent(
                 AGENT_TYPE, user_id=user_id, account_id=account_id,
-                include_biographical=False, include_directives=False, include_location=False,
+                include_biographical=False, include_directives=False, include_location=True,
                 extra_static_blocks=[render_life_areas_block()],
             )
         except Exception as e:
