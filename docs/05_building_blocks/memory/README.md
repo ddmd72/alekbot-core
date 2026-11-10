@@ -150,7 +150,7 @@ like any other message.
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
 | `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
-| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*`, `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Nothing reads them yet: search moves onto them in later PRs of the RFC |
+| `label_words`, `label_vector`, `time_role`, `time_points`, `place_keys`, `places_unresolved`, `people`, `primary_domain`, `domain_keys`, `user_identity`, `kinds`, `sensitivity`, `profile_*` (incl. `profile_review_needed`, `profile_review_items`), `profiled_at` | the retrieval profile (`FACT_PROFILE_RFC.md` §2.1; the set is `PROFILE_FIELDS`, `src/domain/fact_profile.py`). Optional; only the profiler step writes them, through `write_fact_profile`, a compare-and-set on `profile_fingerprint`. Nothing reads them yet: search moves onto them in later PRs of the RFC |
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
@@ -672,6 +672,14 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   `missing`, `stale_input` and a former directive, newest `created_at` first, at most `FACT_PROFILER_MAX_PER_RUN`, four at a
   time, each started only while the lease leaves twice the profiler's call timeout; one embedding batch of the joined label words;
   then one compare-and-set write per fact, stopping when the lease has no time left. `SYSTEM` facts are out.
+- **Confirmed people:** the step reads the account's owner-confirmed people list once per run
+  (`ConfirmedPeopleRepository.get`, collection `{prefix}confirmed_people`, `FACT_PROFILE_RFC.md` §4.5) before it
+  classifies. Every call carries the whole list as a block before the fact; a fact's fingerprint holds only the entries it
+  names (by a name form or a relation word), so a list edit re-profiles only the facts naming the edited person. An
+  unreadable list ends the step with `error=True` (nothing classified, called or written). A date a fact prints without a
+  year takes the recording year (the earlier of `reported_date` and `created_at`), which is part of the derivation string.
+  A `needs_review` answer is written with `profile_review_needed` / `profile_review_items`, counted as `flagged=` in the run
+  line, and never counts towards abandonment.
 - **Failures:** an `invalid` or `refused` reply, or an `intimate` answer left with no label word, writes only
   `profile_failures` / `profile_failed_fingerprint`; the third failure on one fingerprint abandons the fact until its content
   changes (logged once). An `unavailable` reply is an outage: no failure is written, no new call starts, the rest waits for
@@ -680,7 +688,7 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
 - **Knob:** `FACT_PROFILER_MAX_PER_RUN` (default 20; `0` = re-derivation only; unparsable = 20 and a warning),
   `docs/07_deployment/README.md` § Standing levers.
 - **Logs:** per fact `[FactProfile] fact=<id8> outcome=written|rederived|failed|abandoned|lost_cas drops=<reason:n,…> ms=… usd=…`;
-  per run `[FactProfile] run account=<id8> scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… lost_cas=… usd=…`.
+  per run `[FactProfile] run account=<id8> scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… lost_cas=… flagged=… usd=…`.
   They carry ids, counts, reasons and cost, never fact content. A failed run logs `[FactProfile] run failed account=<id8>`.
 
 #### People cards
