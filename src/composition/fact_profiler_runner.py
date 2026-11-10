@@ -12,10 +12,11 @@ services/ cannot import agents/, so composition builds the agent. The knob is re
 never in `agents/` (REQ-ARCH-17) and never in `load_settings()` (an optional knob).
 """
 import asyncio
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from ..agents.fact_profiler_agent import AGENT_TYPE, FactProfilerAgent
 from ..domain.agent import AgentConfig
+from ..domain.confirmed_people import ConfirmedPerson
 from ..domain.fact_profiler_reply import FactProfilerReply
 from ..domain.user import UserBotConfig
 from ..infrastructure.agent_config import FACT_PROFILER
@@ -50,11 +51,12 @@ class FactProfilerRunner(FactProfilerPort):
         self._agent: Optional[FactProfilerAgent] = None
         self._lock = asyncio.Lock()
 
-    async def profile(self, account_id: str, text: str, metadata: Optional[Mapping[str, Any]]) -> FactProfilerReply:
+    async def profile(self, account_id: str, text: str, metadata: Optional[Mapping[str, Any]],
+                      people: Sequence[ConfirmedPerson] = ()) -> FactProfilerReply:
         agent = await self._get_agent()
         if agent is None:
             return FactProfilerReply.unavailable(self._model)
-        return await agent.profile(account_id, text, metadata)
+        return await agent.profile(account_id, text, metadata, people)
 
     async def _get_agent(self) -> Optional[FactProfilerAgent]:
         async with self._lock:
