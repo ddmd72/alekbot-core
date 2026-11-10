@@ -16,6 +16,7 @@ from src.services.fact_search_service import FactSearchService
 from tests.support.fact_kit import ACC, OTHER, make_fact
 from tests.support.fact_search_kit import query
 from tests.support.fact_store import INDEXES_FILE, FactStore, HashEmbedder, embed
+from tests.support.person_card_fakes import HeldCards
 
 T1 = datetime(2026, 11, 9, 8, 0, tzinfo=timezone.utc)
 ROME = PlaceRow(41.9, 12.5, "Rome", "Roma", "Italy", 2_800_000, country_names=("Italia", "Italy"), geonameid="100")
@@ -63,7 +64,7 @@ class World:
         self.repo = RecordingRepo(self.store.repo)
         self.embedder = RecordingEmbedder()
         self.place_loads = 0
-        self.service = FactSearchService(self.repo, self.embedder, self._places)
+        self.service = FactSearchService(self.repo, self.embedder, self._places, HeldCards())
 
     def _places(self):
         self.place_loads += 1
