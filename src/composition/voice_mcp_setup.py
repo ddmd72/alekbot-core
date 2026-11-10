@@ -3,9 +3,9 @@
 - `VOICE_MCP_SIGNING_KEY` (`load_settings()`, a Secret Manager secret): the token kind's own HS256 key, used for nothing
   else and never replaced by the OAuth session secret (O8). `signing_key` validates it; `build_application_graph` calls
   it before anything else is built, because `main()` swallows the MCP build's errors.
-- `VOICE_MCP_TOOLS` (an optional knob, `os.getenv`, main service, default off): "on" puts the memory and drive MCP
-  servers on a plain companion call's session on xAI (`voice_mcp_servers`, slice S3; search_memory leaves that call's
-  delegation) and lets `/voice/session-config` mint the call's tokens. With it on and no key the graph refuses to
+- `VOICE_MCP_TOOLS` (an optional knob, `os.getenv`, main service, default off): "on" puts the drive MCP
+  server on a plain companion call's session on xAI (`voice_mcp_servers`, slice S3; memory is not an MCP server of the
+  call, it goes by the search_memory delegation) and lets `/voice/session-config` mint the call's tokens. With it on and no key the graph refuses to
   start. Off: no server, no token is minted; tokens minted elsewhere with the key still verify while their live-call
   record exists.
 - `build_voice_mcp_tokens`: the service both MCP resources verify with and the voice control plane mints and revokes
@@ -37,9 +37,9 @@ def voice_mcp_tools_enabled() -> bool:
 
 
 def voice_mcp_servers(config: dict) -> Tuple[RemoteToolServer, ...]:
-    """The memory and drive server descriptors LelikAgent puts on an eligible call's session config (slice S3), at
-    the canonical resource URIs `AuthConfig` resolves from `config` (`MCP_RESOURCE_URI` and the drive URI derived from
-    it; no new URL key). Empty with the knob off: no call then carries MCP tools and search_memory stays."""
+    """The drive server descriptor LelikAgent puts on an eligible call's session config (slice S3), at the canonical
+    resource URI `AuthConfig` resolves from `config` (the drive URI derived from `MCP_RESOURCE_URI`; no new URL key).
+    Empty with the knob off: no call then carries MCP tools. search_memory stays in either case."""
     if not voice_mcp_tools_enabled():
         return ()
     return voice_session_servers(AuthConfig(config).mcp_resource_uri)

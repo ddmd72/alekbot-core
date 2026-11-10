@@ -31,7 +31,6 @@ from pydantic import AnyHttpUrl, BeforeValidator, Field
 from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientRepository
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
-from ..domain.drive_connector_result import cap_result
 from ..agents.memory_search_agent import FactsMemoryAgent
 from ..domain import fact_domains
 from ..domain.fact_when import when_line
@@ -39,12 +38,10 @@ from ..domain.mcp import normalize_queries, queries_dropped
 from ..domain.memory_search_texts import NO_RECORDS_TEXT, QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
-from ..domain.voice_mcp_token import FACTS_TOOL, VOICE_RESULT_MAX_CHARS, McpTokenKind, tool_permitted
 from ..ports.cipher_port import CipherPort
 from ..ports.user_repository import UserRepository
 from ..ports.whitelist_repository import WhitelistRepository
 from ..services.mcp_authorization_service import MCPAuthorizationService
-from ..services.voice_mcp_token_service import VoiceMcpTokenService
 from ..utils.logger import logger
 from .mcp_sdk_oauth_provider import AlekAccessToken, MCPSdkOAuthProvider
 
@@ -138,10 +135,8 @@ _NO_MEMORY_SEARCH = "Memory search is not available for this account."
 # and the server has no better phrasing to offer than the caller did.
 _NO_RESULTS = NO_RECORDS_TEXT
 
-# A tool outside the token's tools claim (LELIK_VOICE_MCP_RFC §5.3): one neutral line, nothing read.
-_REFUSED = "Refused: this tool is not available to this caller."
-# The last line of a voice result cut at VOICE_RESULT_MAX_CHARS (§8, O5).
-_VOICE_OVER_SIZE = "[More records matched than fit here; ask a narrower question to see the rest.]"
+# The facts tool's name (the facts app registers it under this name).
+FACTS_TOOL = "get_user_context"
 
 
 def _format_facts(facts) -> str:
@@ -192,7 +187,6 @@ def build_mcp_components(
     digest_key: bytes,
     user_repo: UserRepository,
     whitelist_repo: WhitelistRepository,
-    voice_tokens: Optional[VoiceMcpTokenService] = None,
 ) -> MCPComponents:
     """
     Build the FastMCP server for the remote MCP endpoint.
@@ -208,7 +202,6 @@ def build_mcp_components(
             key would read as "MCP off", not as a failed start)
         digest_key: the verify-only digest key, built there too
         user_repo / whitelist_repo: read by the authorization service at every refresh rotation
-        voice_tokens: the voice token kind's verifier (LELIK_VOICE_MCP_RFC §5.3); None refuses every voice token
 
     Returns:
         MCPComponents with the FastMCP instance and the authorization
@@ -240,7 +233,7 @@ def build_mcp_components(
         auth_code_ttl=auth_config.mcp_auth_code_ttl,
         consent_request_ttl=auth_config.mcp_consent_request_ttl,
     )
-    sdk_provider = MCPSdkOAuthProvider(mcp_service, voice_tokens)
+    sdk_provider = MCPSdkOAuthProvider(mcp_service)
 
     # --- FastMCP instance with full AS+RS in-process ---
     #
@@ -319,14 +312,6 @@ def build_mcp_components(
 
         user_id = access_token.user_id
         account_id = access_token.account_id
-        # A voice token (LELIK_VOICE_MCP_RFC §5.3-§5.4): its tools claim is enforced, its search terms are logged like
-        # an OAuth call's (owner: without them a voice miss cannot be diagnosed), its result takes the voice cap.
-        voice = access_token.kind is McpTokenKind.VOICE
-        client = " client=voice" if voice else ""
-
-        if not tool_permitted(access_token.kind, access_token.tools, FACTS_TOOL):
-            logger.warning(f"MCP get_user_context: user={user_id[:8]} refused: tool outside the token's claim{client}")
-            return _REFUSED
 
         # The only legitimate input rejection: nothing to search on at all.
         # This is also the only branch allowed to instruct the model, because
@@ -336,25 +321,23 @@ def build_mcp_components(
 
         dropped = _DROPPED.get()
         cut = f" dropped={dropped}" if dropped else ""
-        logger.info(f"🔎 MCP get_user_context: user={user_id[:8]} queries={queries!r}{cut}{client}")
+        logger.info(f"🔎 MCP get_user_context: user={user_id[:8]} queries={queries!r}{cut}")
 
         with RequestContext(user_id=user_id, account_id=account_id):
             agent = await memory_search(user_id)
             if agent is None:
-                logger.warning(f"MCP get_user_context: user={user_id[:8]} has no memory search agent{client}")
+                logger.warning(f"MCP get_user_context: user={user_id[:8]} has no memory search agent")
                 raise ToolError(_NO_MEMORY_SEARCH)
             if _agent_account_id(agent) != account_id:
                 logger.warning(
                     f"MCP get_user_context: user={user_id[:8]} memory agent serves another account than the token's; "
-                    f"refused{client}"
+                    f"refused"
                 )
                 raise ToolError(_NO_MEMORY_SEARCH)
-            facts = await agent.search_facts(queries, path="connector_voice" if voice else "connector")
+            facts = await agent.search_facts(queries, path="connector")
 
         result = _format_facts(facts)
-        if voice:
-            result = cap_result(result, _VOICE_OVER_SIZE, limit=VOICE_RESULT_MAX_CHARS)
-        logger.info(f"✅ MCP get_user_context: user={user_id[:8]} facts={len(facts)} len={len(result)}{client}")
+        logger.info(f"✅ MCP get_user_context: user={user_id[:8]} facts={len(facts)} len={len(result)}")
         return result
 
     logger.info(

@@ -73,7 +73,7 @@ from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
 # `VOICE_MCP_TOKENS_FIELD` (re-exported from the domain): the session-config response field that carries a call's two
-# voice MCP tokens, `{"facts": <jwt>, "drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay pairs them with the
+# voice MCP token, `{"drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay pairs them with the
 # ticket's `mcp_servers` descriptors into the session's `mcp` tools (slice S3); nothing logs it.
 __all__ = ["VOICE_MCP_TOKENS_FIELD", "create_voice_control_plane_blueprint"]
 
@@ -126,7 +126,7 @@ def create_voice_control_plane_blueprint(
     is empty (its error text is never kept). Without a sink such answers are kept, never posted.
 
     `voice_mcp_tokens` (LELIK_VOICE_MCP_RFC §5): the voice MCP token kind. With `voice_mcp_minting`
-    (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's two tokens
+    (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's token
     on xAI and returns them under `VOICE_MCP_TOKENS_FIELD`; `/voice/submit-transcript` deletes the
     call's live-call record whatever the knob, so every token of the call stops verifying.
 
@@ -136,7 +136,7 @@ def create_voice_control_plane_blueprint(
     bp = Blueprint("voice_control_plane", __name__)
 
     async def _voice_mcp_tokens_for(ticket: str, config: dict) -> Optional[dict]:
-        """The call's tokens on the wire (`{"facts", "drive"}`), or None: the knob off, no key, a call
+        """The call's tokens on the wire (`{"drive"}`), or None: the knob off, no key, a call
         other than the plain companion call on xAI (O6, O7), or a user the whitelist now refuses (the
         service alerts). A store error propagates: the session-config fails, closed."""
         if voice_mcp_tokens is None or not voice_mcp_minting:

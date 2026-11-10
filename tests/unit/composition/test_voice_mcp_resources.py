@@ -199,18 +199,6 @@ def _fact(i: int, content: str = FACT) -> FactEntity:
 
 
 class TestFactsTool:
-    async def test_a_voice_token_reads_memory(self, kit, tokens):
-        app = FactsApp(kit, [_fact(1)])
-        assert FACT in _text(await app.call(tokens.facts))
-        assert app.search.queries == [QUERY]
-
-    async def test_a_tool_outside_the_claim_gets_the_neutral_refusal_and_no_read(self, kit, tokens):
-        narrowed = resign(tokens.facts, VOICE_KEY, tools=["search_drive"])
-        app = FactsApp(kit, [_fact(1)])
-        text = _text(await app.call(narrowed))
-        assert text == "Refused: this tool is not available to this caller."
-        assert app.search.queries == []
-
     async def test_the_drive_voice_token_gets_401(self, kit, tokens):
         app = FactsApp(kit, [_fact(1)])
         assert (await app.call(tokens.drive)).status_code == 401
@@ -220,28 +208,6 @@ class TestFactsTool:
         await kit.voice.revoke(TICKET)
         app = FactsApp(kit, [_fact(1)])
         assert (await app.call(tokens.facts)).status_code == 401
-
-    async def test_a_voice_result_is_cut_at_the_voice_cap_and_an_oauth_one_is_not(self, kit, tokens):
-        many = [_fact(i, f"{FACT}, note {i:04d} " + "x" * 80) for i in range(200)]
-        voice_text = _text(await FactsApp(kit, many).call(tokens.facts))
-        oauth_text = _text(await FactsApp(kit, many).call(kit.oauth_token(MCPResource.FACTS)))
-        assert VOICE_RESULT_MAX_CHARS == 8000
-        assert len(voice_text) <= VOICE_RESULT_MAX_CHARS < len(oauth_text)
-        assert voice_text.endswith("ask a narrower question to see the rest.]") and oauth_text.startswith(voice_text
-                                                                                                       .split("\n")[0])
-
-    async def test_a_voice_call_logs_its_search_terms_never_facts_or_token(self, kit, tokens, caplog):
-        caplog.set_level(logging.DEBUG)
-        await FactsApp(kit, [_fact(1)]).call(tokens.facts)
-        lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
-        assert len(lines) == 2 and all("client=voice" in line for line in lines)
-        # The search phrases, verbatim, as the call sent them.
-        assert f"queries={[QUERY]!r}" in lines[0]
-        # What reaches Cloud Logging (INFO and up): no fact. At any level: no token.
-        shipped = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
-        assert FACT not in shipped
-        everything = "\n".join(r.getMessage() for r in caplog.records)
-        assert tokens.facts not in everything and tokens.facts.split(".")[2] not in everything
 
     async def test_an_oauth_call_logs_as_before(self, kit, caplog):
         caplog.set_level(logging.DEBUG)

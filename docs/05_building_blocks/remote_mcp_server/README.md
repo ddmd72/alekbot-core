@@ -360,31 +360,30 @@ verify, revoke), rules in `src/domain/voice_mcp_token.py`, key and knob in `src/
 
 - **Key and claims.** HS256 under its own secret `VOICE_MCP_SIGNING_KEY`, never the OAuth secret (the start is refused
   when the two are equal). Header `kid=voice-mcp`; `type=voice_mcp_access`; `aud=voice:<canonical resource URI>`;
-  `sub`, `account_id`, `scope` (the resource's own), `tools` (facts: `get_user_context`; drive: `search_drive`,
-  `find_passages`, `read_passages`), `cid` (keyed digest of the call ticket, purpose `voice_mcp`), `iat`, `exp` =
+  `sub`, `account_id`, `scope` (the resource's own), `tools` (drive only: `search_drive`,
+  `find_passages`, `read_passages`; the facts resource has no voice token since 2026-11-10, memory goes by delegation), `cid` (keyed digest of the call ticket, purpose `voice_mcp`), `iat`, `exp` =
   `iat` + 3600.
 - **Mint.** At `/voice/session-config` only (never at prepare, never stored), with the `VOICE_MCP_TOOLS` knob on, for
   the plain companion call on xAI; the whitelist is re-read first (a refused user gets the call without tokens and an
   alert). The live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` goes to the voice tickets store with
-  the token's TTL; the two tokens go back to the relay in the response field `voice_mcp_tokens` (`{"facts", "drive"}`).
+  the token's TTL; the drive token goes back to the relay in the response field `voice_mcp_tokens` (`{"drive"}`).
 - **Verify.** Both resources route on the unverified header: `kid=voice-mcp` → the voice verifier only, anything else →
   the OAuth verifier only; each refuses the other's tokens on key, type and audience. The voice verifier also reads the
   live-call record on every call (missing, another user or another account → 401); OAuth tokens read no record. A
   verified voice token is `AlekAccessToken(kind=VOICE, tools=[…])`, its tools the server's set for the resource
   narrowed by the claim (a claim never adds a tool); OAuth tokens are `kind=OAUTH, tools=None`.
-- **At the tools.** A tool outside the claim gets the neutral refusal before any read (drive: the REFUSED line; facts:
-  one "Refused" line). A drive call runs with the drive audience unset, so Lelik reads what chat reads (the Cabinet's
+- **At the tools.** A tool outside the claim gets the neutral refusal before any read (drive: the REFUSED line). A drive call runs with the drive audience unset, so Lelik reads what chat reads (the Cabinet's
   "Connector access" does not apply); OAuth calls always run under the connector audience. Results are cut at
   `VOICE_RESULT_MAX_CHARS` (8 000) instead of 100 000.
-- **Revoke.** `/voice/submit-transcript` deletes the live-call record (whatever the knob), so both tokens stop verifying;
+- **Revoke.** `/voice/submit-transcript` deletes the live-call record (whatever the knob), so the token stops verifying;
   a relay that dies leaves it to its TTL.
 - **Logs.** No token, ticket or `Authorization` header in any line; refusals log the reason only; voice lines carry
-  `client=voice`; the facts tool logs counts, never the query, for a voice token.
-- **The voice consumer (slice S3).** Grok calls both resources itself, server-side, from Lelik's xAI session. With
-  `VOICE_MCP_TOOLS` on, `LelikAgent.session_config` puts two descriptors under `mcp_servers` for the plain companion
-  call on xAI (`alek_memory` at the facts URI with `get_user_context`; `alek_drive` at the drive URI with the three
-  drive reads; `src/domain/voice_mcp_servers.py`) and drops its `search_memory` delegation. The relay pairs each
-  descriptor with its token from `voice_mcp_tokens` and sends one `mcp` entry per server in `session.update`, the token
+  `client=voice`.
+- **The voice consumer (slice S3).** Grok calls the drive resource itself, server-side, from Lelik's xAI session.
+  Lelik does not use the facts tool: memory goes by the `search_memory` delegation. With `VOICE_MCP_TOOLS` on,
+  `LelikAgent.session_config` puts one descriptor under `mcp_servers` for the plain companion call on xAI
+  (`alek_drive` at the drive URI with the three drive reads; `src/domain/voice_mcp_servers.py`). The relay pairs it
+  with its token from `voice_mcp_tokens` and sends one `mcp` entry in `session.update`, the token
   raw in `authorization` (xAI adds `Bearer `). xAI lists each server's tools once, at `session.update`; a refused list
   (a 401) arrives only as `mcp_list_tools.failed`, which the relay logs as one WARNING with the server label, and the
   call goes on without that server. Server-side, a voice call is a normal MCP request with a voice token
@@ -533,10 +532,10 @@ async def get_user_context(
     ctx: Context,
 ) -> str:
     access_token = ctx.request_context.request.user.access_token   # AlekAccessToken or ToolError
-    # no phrases -> ToolError(_NO_QUERIES); a voice token's tools claim is checked first
+    # no phrases -> ToolError(_NO_QUERIES)
     with RequestContext(user_id=access_token.user_id, account_id=access_token.account_id):
         agent = await memory_search(access_token.user_id)           # FactsMemoryAgent of this user
-        facts = await agent.search_facts(queries, path="connector")  # "connector_voice" for a voice token
+        facts = await agent.search_facts(queries, path="connector")
     return _format_facts(facts)
 ```
 

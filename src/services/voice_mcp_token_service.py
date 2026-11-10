@@ -2,7 +2,7 @@
 VoiceMcpTokenService — the voice MCP access token kind (LELIK_VOICE_MCP_RFC §5): mint, verify, revoke.
 
 Public interface:
-    VoiceMcpTokens                      the two tokens of one call (facts, drive); repr hides them
+    VoiceMcpTokens                      the token of one call (drive); repr hides it
     VerifiedVoiceToken                  what a verified voice token carries; repr hides the token
     is_voice_token(token) -> bool       the routing rule: the unverified header's `kid` is `voice-mcp`
     VoiceMcpTokenService
@@ -12,8 +12,8 @@ Public interface:
 
 Mint (§5.2, O1): at ticket redemption only. The whitelist is re-read as the OAuth refresh path reads it (the user
 exists, has an email and the email is allowed); a refused user gets no tokens, a warning and an alert, never an error.
-Then the live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` is written with the token's TTL, and two
-HS256 JWTs are encoded in memory under the dedicated key, one per resource; nothing stores a token. A store or
+Then the live-call record `voice_mcp_call:{cid}` → `{user_id, account_id}` is written with the token's TTL, and the
+drive's HS256 JWT is encoded in memory under the dedicated key (memory has no voice token, it goes by delegation); nothing stores a token. A store or
 repository error propagates (the caller fails the session-config: fail closed).
 
 Verify (§5.3): the key, `kid`, `type`, `aud` (`voice:` + this resource), `exp`, the claims' shapes, then the live-call
@@ -56,14 +56,13 @@ _REQUIRED_CLAIMS = ["exp", "iat", "sub", "aud"]
 
 @dataclass(frozen=True)
 class VoiceMcpTokens:
-    """The two bearer tokens of one call. Never stored, never logged: the repr shows no token."""
+    """The bearer token of one call (the drive's). Never stored, never logged: the repr shows no token."""
 
-    facts: str = field(repr=False)
     drive: str = field(repr=False)
 
     def to_wire(self) -> Dict[str, str]:
-        """`{"facts": <token>, "drive": <token>}`: the session-config response field's value."""
-        return {MCPResource.FACTS.value: self.facts, MCPResource.DRIVE.value: self.drive}
+        """`{"drive": <token>}`: the session-config response field's value."""
+        return {MCPResource.DRIVE.value: self.drive}
 
 
 @dataclass(frozen=True)
@@ -111,8 +110,8 @@ class VoiceMcpTokenService:
         self._key = signing_key
         self._store = store
         self._digest_key = digest_key
-        self._audiences = {r: voice_audience(resource_uris[r]) for r in MCPResource}
-        self._scope_of = {r: scope_of[r] for r in MCPResource}
+        self._audiences = {r: voice_audience(resource_uris[r]) for r in VOICE_ALLOWED_TOOLS}
+        self._scope_of = {r: scope_of[r] for r in VOICE_ALLOWED_TOOLS}
         self._user_repo = user_repo
         self._whitelist_repo = whitelist_repo
         self._alerts = alert_sink
@@ -124,7 +123,7 @@ class VoiceMcpTokenService:
     # -----------------------------------------------------------------
 
     async def mint(self, ticket: str, user_id: str, account_id: str) -> Optional[VoiceMcpTokens]:
-        """The call's two tokens, or None when the user is no longer allowed (warned and alerted, not raised). Writes
+        """The call's token, or None when the user is no longer allowed (warned and alerted, not raised). Writes
         the live-call record first: a token never exists without it. Store and repository errors propagate."""
         cid = voice_call_id(self._digest_key, ticket)
         reason = await self._allow_reason(user_id)
@@ -137,7 +136,6 @@ class VoiceMcpTokenService:
         await self._store.set(voice_call_key(cid), {"user_id": user_id, "account_id": account_id}, ttl_s=self._ttl_s)
         now = int(self._clock())
         tokens = VoiceMcpTokens(
-            facts=self._encode(MCPResource.FACTS, user_id, account_id, cid, now),
             drive=self._encode(MCPResource.DRIVE, user_id, account_id, cid, now),
         )
         logger.info(f"[VoiceMCP] tokens minted: call={fingerprint(cid)} user={user_id[:8]} ttl={self._ttl_s} "
@@ -149,7 +147,11 @@ class VoiceMcpTokenService:
     # -----------------------------------------------------------------
 
     async def verify(self, token: str, resource: MCPResource) -> Optional[VerifiedVoiceToken]:
-        """The verified token for `resource`, or None (one log line with the reason only)."""
+        """The verified token for `resource`, or None (one log line with the reason only). A resource without a voice
+        token (the facts one) refuses every token."""
+        if resource not in self._audiences:
+            self._log_refusal(resource, "resource")
+            return None
         decoded = self._decode(token, resource)
         if isinstance(decoded, str):
             self._log_refusal(resource, decoded)
