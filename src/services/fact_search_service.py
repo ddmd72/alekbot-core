@@ -20,7 +20,7 @@ from ..domain.deduplication_service import SmartDeduplication
 from ..domain.entities import FactEntity
 from ..domain.fact_query import SCOPE_ALL, FactQuery
 from ..domain.fact_search_result import PhraseSearchResult
-from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, keep_distinct, run_search
+from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, keep_distinct, keep_within_cut, run_search
 from ..domain.fact_search_rank import PRIORITY_WEIGHTS, CardRef, HomePlace, QueryPlaceKeys, card_ref, fuse_phrases
 from ..domain.fact_search_snapshot import FactSearchSnapshot
 from ..domain.place_names import PlaceNames, fold, local_place_key, resolve_home
@@ -147,8 +147,12 @@ class FactSearchService(FactSearchPort):
             fused = fuse_phrases(
                 [[(fact_id, o.scores[fact_id]) for fact_id in o.fused] for o in outcomes],
                 [o.scores[o.kept[:CUT][-1]] if o.kept else 0.0 for o in outcomes])
-            limit = None if any(q.scope == SCOPE_ALL for q in queries) else CUT
-            kept = keep_distinct(fused, lambda a, b: self._is_duplicate(loaded, a, b), limit)
+            is_dup = lambda a, b: self._is_duplicate(loaded, a, b)  # noqa: E731
+            lifted = {fact_id for q, o in zip(queries, outcomes) if q.scope == SCOPE_ALL for fact_id in o.kept}
+            if lifted:
+                kept = keep_within_cut(keep_distinct(fused, is_dup, None), CUT, lifted)
+            else:
+                kept = keep_distinct(fused, is_dup, CUT)
             lists_of = [set(o.kept[:CUT]) for o in outcomes]
             candidates = len(fused)
         lists = self._lists_text(outcomes[0], loaded)

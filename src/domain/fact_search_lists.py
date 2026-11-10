@@ -310,6 +310,12 @@ def keep_distinct(order: Sequence[str], is_duplicate: Callable[[str, str], bool]
     return kept
 
 
+def keep_within_cut(order: Sequence[str], cut: int, lifted: AbstractSet[str]) -> List[str]:
+    """The facts of `order` at a position within `cut`, plus the ones in `lifted` (the own matches of the phrases whose
+    scope lifts the cut) wherever they stand; every other fact past `cut` is dropped."""
+    return [fact_id for position, fact_id in enumerate(order) if position < cut or fact_id in lifted]
+
+
 def run_search(
     snapshot: FactSearchSnapshot,
     query: FactQuery,

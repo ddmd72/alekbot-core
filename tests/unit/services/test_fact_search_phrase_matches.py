@@ -48,3 +48,33 @@ async def test_the_log_shows_each_lists_size_before_its_cap(caplog):
         await world.service.search_phrases(ACC, [query(subject="Car service 3 at the Springfield garage")])
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("[FactSearch]"))
     assert f"semantic:{DEPTH_KNN}/{DEPTH_KNN + 15}" in line
+
+
+async def test_an_all_phrase_lifts_the_cut_only_for_its_own_matches():
+    from dataclasses import replace
+    world = World()
+    for n in range(CUT + 20):
+        await world.seed(f"Car service {n} at the Springfield garage")
+    await world.baseline()
+    plain = [query(subject="Car service 1 at the Springfield garage"),
+             query(subject="Car service 2 at the Springfield garage")]
+    everything = replace(query(subject="Car service 3 at the Springfield garage"), scope="all")
+    only_all = await world.service.search_phrases(ACC, [everything])
+    mixed = await world.service.search_phrases(ACC, [*plain, everything])
+    own = {f.id for f in only_all.facts}
+    assert len(only_all.facts) > CUT
+    assert len(mixed.facts) > CUT
+    assert all(f.id in own for f in mixed.facts[CUT:])
+    capped = await world.service.search_phrases(ACC, plain)
+    assert len(capped.facts) == CUT
+
+
+async def test_a_single_all_phrase_returns_every_fact_as_before():
+    from dataclasses import replace
+    world = World()
+    for n in range(CUT + 20):
+        await world.seed(f"Car service {n} at the Springfield garage")
+    await world.baseline()
+    result = await world.service.search_phrases(
+        ACC, [replace(query(subject="Car service 3 at the Springfield garage"), scope="all")])
+    assert len(result.facts) == CUT + 20
