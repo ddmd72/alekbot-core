@@ -55,14 +55,16 @@ class LazyAtlas:
 
 def build_fact_profile_service(
     container: Any, *, max_per_run: Optional[int], person_cards: Optional[PersonCardRepository] = None,
+    atlas: Optional[LazyAtlas] = None,
 ) -> FactProfileService:
     """The profile step over the container's repository, profiler and embedding service; `person_cards` is where it
-    rebuilds the people cards (none: it builds no cards)."""
+    rebuilds the people cards (none: it builds no cards). `atlas` is the place atlas to share with the owner's word
+    replies (one atlas per process); none: the step loads its own."""
     return FactProfileService(
         repo=container.repository,
         profiler=container.fact_profiler,
         embeddings=container.embedding_service,
-        atlas=LazyAtlas(),
+        atlas=atlas if atlas is not None else LazyAtlas(),
         max_per_run=max_per_run,
         call_budget_s=2 * FACT_PROFILER.call_timeout_s,  # one parse retry
         person_cards=person_cards,

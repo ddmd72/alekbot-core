@@ -4,7 +4,9 @@
 purpose. A run carries its own scan.
 """
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Tuple
+
+from .profile_open_points import OpenPoint
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,8 @@ class FactProfileRun:
     drops: dropped values per reason; outage: the model was unavailable; refreshed: the baseline was refreshed;
     cards: people cards stored by this run's rebuild (0 when none was built);
     flagged: profiles written this run with the needs-review flag;
+    open_points: the points the owner may be asked, after the run (only when the caller asked to collect them and the
+    run ended without error; empty otherwise);
     error: the run stopped on an error (the counts are partial).
     """
     scan: FactProfileScan = field(default_factory=FactProfileScan)
@@ -49,3 +53,4 @@ class FactProfileRun:
     cards: int = 0
     flagged: int = 0
     error: bool = False
+    open_points: Tuple[OpenPoint, ...] = ()

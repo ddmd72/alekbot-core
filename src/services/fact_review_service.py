@@ -38,6 +38,7 @@ from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_reasons import fallback_reason, superseded_reason
 from ..domain.fact_review_result import decode_review_result
 from ..domain.fact_review_rules import (
+    PROFILE_OPEN_CAP,
     QUEUE_ACCEPTS,
     asked_fact_unchanged,
     becomes_unanswered,
@@ -65,6 +66,8 @@ from ..domain.fact_review_rules import (
     unread_replies,
 )
 from ..domain.fact_review_state import FactReviewState
+from ..domain.fact_profile_run import FactProfileRun
+from ..domain.profile_question_plan import plan_profile_questions, profile_question
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext
@@ -320,19 +323,53 @@ class FactReviewService:
         try:
             await self._mark("started", self._review_store.mark_started, account_id, now)
             result = await self._leased(user_id, account_id, now, zone, until)
-            await self._profile(account_id, until)
+            run = await self._profile(account_id, until)
+            await self._ask_profile(user_id, account_id, run, now)
             return result
         finally:
             await self._release(account_id, owner)
 
-    async def _profile(self, account_id: str, until: datetime) -> None:
-        """The profile step, inside the lease after the review (fact profile RFC §4.4); it never changes the result."""
+    async def _profile(self, account_id: str, until: datetime) -> Optional[FactProfileRun]:
+        """The profile step, inside the lease after the review (fact profile RFC §4.4); it never changes the result. Its
+        run is returned with the open points the owner may be asked (§4.7); None when there is no step or it raised."""
         if self._profile_step is None:
-            return
+            return None
         try:
-            await self._profile_step.run(account_id, until)
+            return await self._profile_step.run(account_id, until, collect_points=True)
         except Exception:
             logger.error(f"[FactProfile] step failed account={account_id[:8]}", exc_info=True)
+            return None
+
+    async def _ask_profile(
+        self, user_id: str, account_id: str, run: Optional[FactProfileRun], now: datetime,
+    ) -> None:
+        """Profile questions (fact profile RFC §4.7), created at the end of the daily run, after the profile step and
+        inside the lease: nothing when the step gave no run or ended with an error (what it found is partial, so nothing
+        is created and nothing closed). An open profile question whose point is gone is closed `resolved_elsewhere`;
+        points with no open question are queued, most facts first, until `PROFILE_OPEN_CAP` questions are open (a point
+        whose id is stored already is skipped). Like the profile step, it never changes the run's result."""
+        if run is None or run.error:
+            return
+        try:
+            open_now = await self._review_store.questions_for_account(account_id, scope="profile")
+            plan = plan_profile_questions(run.open_points, open_now, PROFILE_OPEN_CAP)
+            closed = queued = 0
+            for question in plan.to_close:
+                if await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
+                    closed += 1
+            for point in plan.to_queue:
+                if queued >= plan.slots:
+                    break
+                question = profile_question(point, account_id, user_id, now)
+                if await self._review_store.create_queued(question):
+                    queued += 1
+                else:
+                    logger.info(f"[FactReview] profile question {question.question_id} exists already; not created")
+            logger.info(
+                f"[FactReview] profile questions account={account_id[:8]} points={len(run.open_points)} "
+                f"queued={queued} closed={closed}")
+        except Exception:
+            logger.error(f"[FactReview] profile questions failed account={account_id[:8]}", exc_info=True)
 
     async def _defer(self, user_id: str, account_id: str, now: datetime) -> None:
         await self._task_queue.enqueue_worker_task(

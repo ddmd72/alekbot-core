@@ -12,6 +12,7 @@ from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessageAdapter
+from src.composition.fact_profile_setup import LazyAtlas
 from src.domain.fact_review_task_keys import FACT_REVIEW_TASK, review_payload
 from src.infrastructure.agent_config import CONSOLIDATION
 from src.infrastructure.interactive_message_router import InteractiveMessageRouter
@@ -143,8 +144,12 @@ async def test_the_answer_services_whole_constructor_is_the_graphs_objects(prod_
 
     profile_answers = answer._profile_answers
     assert isinstance(profile_answers, ProfileQuestionAnswers)
-    assert vars(profile_answers) == {"_answers": app.container.profile_answers}
+    # Fact profile §4.7 (5e): word replies read the one place atlas the profile step holds and the confirmed list.
+    assert set(vars(profile_answers)) == {"_answers", "_atlas", "_confirmed_people"}
     assert profile_answers._answers is app.container.profile_answers
+    assert isinstance(profile_answers._atlas, LazyAtlas)
+    assert profile_answers._atlas is review._profile_step._atlas
+    assert profile_answers._confirmed_people is app.container.confirmed_people
 
 
 async def test_the_review_run_timeout_is_the_consolidation_runs(prod_graph: ProdGraph):

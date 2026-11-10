@@ -686,8 +686,8 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   `lp:<folded city>` and the country key, `unknown` changes nothing), a person or date answer of the fact's lineage on its
   review item; an answered item is dropped and the flag clears when none is left. The derivation string carries `|a<digest>`
   of the answers a fact's stored answer names, so an answer re-derives exactly those facts, free. An unreadable document
-  ends the step like an unreadable list. Nothing writes answers yet (the question channel is §4.7's next PRs).
-- **Profile questions (PR 5d, dark):** an open point is asked through the memory review's own channel as a
+  ends the step like an unreadable list. Answers are written only from the owner's reply to a profile question (below).
+- **Profile questions (PR 5d, 5e):** an open point is asked through the memory review's own channel as a
   `FactReviewQuestion` of kind `place`, `person` or `date` (origin `profile`, fallback `none`, no texts, never a
   `reply_text`, an `open_point` with the key, the printed words and up to three candidate options; id
   `profile_question_id(account, key)`). Order: lifecycle questions go first (`queue_order`), at most one profile question
@@ -697,8 +697,15 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   (the pool, held facts, sweep plan, alerts and standing stay lifecycle-only). A profile question past its 14 days is closed
   `timeout` in housekeeping and records nothing. A digit or a button picks an option (`profile_option_answer`,
   `ProfileQuestionAnswers`), the answer is recorded and the question closes (owner, no answer kind, source `digit`,
-  `button` or `words`); a reply that is not an option is not read yet: the question stays open and the owner is told
-  the form that is read. Nothing creates questions yet (PR 5e), so no profile question exists in production.
+  `button` or `words`). A reply that is not an option is read by code only (`profile_reply_words`, no model): a place
+  as `city, country`, a city the atlas places in one row or a country naming one shown option; a person as a name or form
+  of one shown list entry; a date as a year, a year and month, a full date or a range of two, read by the derivation's
+  own date reader (`owner_time_point`). Anything else leaves the question open and tells the owner the form read.
+  **Creation (PR 5e):** the daily review run, after its profile step and inside the lease, asks the step for the open
+  points (`FactProfileService.run(..., collect_points=True)`: unresolved places across the account, `people` items that
+  fit a list entry, one `time_points` item per lineage; `open_points`), queues the ones with no open question (most facts
+  first, then the newest fact) until `PROFILE_OPEN_CAP` (3) profile questions are open, and closes an open one whose
+  point is gone `resolved_elsewhere`. A run whose profile step ended with an error creates and closes nothing.
 - **Failures:** an `invalid` or `refused` reply, or an `intimate` answer left with no label word, writes only
   `profile_failures` / `profile_failed_fingerprint`; the third failure on one fingerprint abandons the fact until its content
   changes (logged once). An `unavailable` reply is an outage: no failure is written, no new call starts, the rest waits for
