@@ -24,6 +24,11 @@ class FactSearchPort(ABC):
         """
         pass
 
+    async def warm(self, account_id: str) -> None:
+        """Load the account's search snapshot ahead of its first search. Optional: the default does nothing. A search
+        that arrives during the load waits for it. Errors: raised to the caller."""
+        return None
+
     @abstractmethod
     async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
         """Return the facts that answer one to four phrases' queries, given in the caller's priority order.

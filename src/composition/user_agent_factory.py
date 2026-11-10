@@ -15,7 +15,7 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
 from .sandbox_client_setup import docx_runner_factory, pdf_runner_factory
 from .voice_mcp_setup import voice_mcp_servers
@@ -290,6 +290,7 @@ class UserAgentFactory(AgentFactoryPort):
         self._cache_ttl = 3600
         self._creation_locks: Dict[str, asyncio.Lock] = {}  # Per-user locks
         self._sweep_task: Optional[asyncio.Task] = None
+        self._warmups: Set["asyncio.Task[None]"] = set()  # strong refs: a bare task can be collected mid-run
 
     # ------------------------------------------------------------------
     # ARCHITECTURE FIX: Law of Demeter facade
@@ -698,7 +699,29 @@ class UserAgentFactory(AgentFactoryPort):
             "help_agent": help_agent,
         }
         self._cache[user_id] = cached
+        self._start_search_warmup(account_id)
         return cached
+
+    def _start_search_warmup(self, account_id: str) -> None:
+        """Load the account's fact-search snapshot in the background (it took 5 s on a fresh instance). Never awaited:
+        this runs inside a request and the warm-up must not delay its response. Cloud Run throttles the CPU once the
+        response is sent, so the load may stall until the next request; a search that needs it meanwhile waits on the
+        service's own per-account lock instead of starting a second load."""
+        task = asyncio.create_task(self._warm_search(account_id))
+        self._warmups.add(task)
+        task.add_done_callback(lambda t: self._warmup_done(t, account_id))
+
+    async def _warm_search(self, account_id: str) -> None:
+        await self.fact_search.warm(account_id)
+
+    def _warmup_done(self, task: "asyncio.Task[None]", account_id: str) -> None:
+        self._warmups.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"[UserAgentFactory] search snapshot warm-up failed for account {account_id[:8]}: "
+                         f"{type(exc).__name__}: {exc}", exc_info=exc)
 
     def _preload_agent_types(self) -> List[str]:
         """The prompts warmed when a user's agents are built. The drive specialist is lazy, but Smart uses the drive

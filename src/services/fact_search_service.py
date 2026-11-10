@@ -98,6 +98,18 @@ class FactSearchService(FactSearchPort):
             raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")
         return await self._run(account_id, queries, frozenset())
 
+    async def warm(self, account_id: str) -> None:
+        """Build the account's snapshot through the same guarded `_snapshot` a search uses, so a search that arrives
+        meanwhile waits on the account's lock and then hits the cache. Without a baseline stamp the snapshot cannot be
+        cached, so nothing is loaded."""
+        started = time.perf_counter()
+        refreshed_at = await self._repository.get_baseline_refreshed_at(account_id)
+        if refreshed_at is None:
+            return
+        _, status = await self._snapshot(account_id, refreshed_at)
+        logger.info(f"[FactSearch] warm acc={account_id[:8]} snapshot={status} "
+                    f"ms={int((time.perf_counter() - started) * 1000)}")
+
     async def _run(self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str]) -> List[FactEntity]:
         started = time.perf_counter()
         try:

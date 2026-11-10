@@ -141,8 +141,9 @@ class LelikAgent(BaseAgent):
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         mcp_servers = self._mcp_servers_for(mode)
-        if mcp_servers:
-            # The session reads memory through the MCP server itself: one memory path, not two (O4).
+        if mcp_servers or mode is VoiceMode.INTERPRETER:
+            # The session reads memory through the MCP server itself: one memory path, not two (O4). An interpreter
+            # call has no memory at all (owner rule).
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_MEMORY]
         tools = [self._build_delegate_tool_declaration(available)] if available else []
         if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
@@ -166,12 +167,12 @@ class LelikAgent(BaseAgent):
     def permitted_intents(self, mode: VoiceMode = VoiceMode.LELIK) -> frozenset:
         """The intents a live call in `mode` may delegate: what session_config declares (LELIK.allowed_intents, minus
         search_web_light when the provider searches natively, minus search_memory when the call carries the MCP
-        servers) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
+        servers, and in an interpreter call, which has no memory) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
         this is what /voice/delegate enforces."""
         allowed = set(LELIK.allowed_intents or ()) | {Intent.SEND_TO_CHAT}
         if self._native_search_active():
             allowed.discard(Intent.SEARCH_WEB_LIGHT)
-        if self._mcp_servers_for(mode):
+        if self._mcp_servers_for(mode) or mode is VoiceMode.INTERPRETER:
             allowed.discard(Intent.SEARCH_MEMORY)
         return frozenset(allowed)
 
