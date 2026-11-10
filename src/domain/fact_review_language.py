@@ -114,9 +114,9 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     PROFILE_OPTION_KEYS["keep"]: "Keep as written",
     PROFILE_OPTION_KEYS["not_listed"]: "Not on my list",
     UIMessage.MEMORY_PROFILE_NOT_READ.value: (
-        "I could not use that reply. Reply with a digit, or write the place as city, country, or the person's name."),
+        "Not understood. Reply with a digit, or write city, country or a name."),
     UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: (
-        "I could not use that reply. Reply with a digit, or write the date as a year, a year and month, or a full date."),
+        "Not understood. Reply with a digit, or write a year, month or full date."),
 })
 
 
