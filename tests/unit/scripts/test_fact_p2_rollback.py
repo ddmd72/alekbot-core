@@ -72,7 +72,9 @@ def _snapshot(db):
 def test_the_s4_field_set_is_todays_model_minus_the_five_p2_fields():
     from src.domain.fact_review_question import FactReviewQuestion
 
-    assert set(FactReviewQuestion.model_fields) - set(rollback.P2_KEYS) == S4_FIELDS
+    # `open_point` (fact profile §4.7, 5d) is outside this script: the fact profile series carries no rollback insurance
+    # (FACT_PROFILE_RFC, "Settled before this RFC"), so a rollback to S4 reads documents of the P2 revision only.
+    assert set(FactReviewQuestion.model_fields) - set(rollback.P2_KEYS) - {"open_point"} == S4_FIELDS
 
 
 @pytest.mark.parametrize("doc, p2", [
@@ -260,6 +262,8 @@ async def test_the_p2_models_own_documents_roll_back_to_a_shape_the_s4_field_set
     await world.put_question(build_question(QuestionStatus.QUEUED, question_id="q-plain", fact_id="f-plain"))
     docs = world.question_docs
     assert "texts" in docs["q-talk"] and "question" in docs["q-plain"]   # the model stores the defaults too
+    for doc in docs.values():   # as the P2 revision wrote them: `open_point` came with fact profile 5d, after P2
+        assert doc.pop("open_point") is None
 
     await rollback.run(world.store.db, world.env.fact_review_questions_collection, apply=True, out_dir=tmp_path, now=NOW)
 

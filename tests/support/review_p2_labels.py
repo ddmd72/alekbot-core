@@ -1,6 +1,9 @@
 """The 13 label texts P2 revised adds to a model-written label set (contract C11), in Russian and in Portuguese: the two
 languages without UI strings the review tests write sets for. Each test's own 15-key set spreads one of these in, so the
-set is exactly `LABEL_KEYS` again (28 keys) and `check_labels` accepts it (the options of each question kind differ)."""
+set is exactly `LABEL_KEYS` again (28 keys) and `check_labels` accepts it (the options of each question kind differ).
+
+Fact profile RFC §4.7 (PR 5d) adds 7 keys (35 in all): the profile question lines, their two own options and the two
+not-read notes; `RU_PROFILE_LABELS` and `PT_PROFILE_LABELS` are spread in beside the P2 ones."""
 from typing import Dict
 
 from src.domain.ui_messages import UIMessage
@@ -35,4 +38,24 @@ PT_P2_LABELS: Dict[str, str] = {
     UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value: "Registado como histórico sem a sua resposta:",
     UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value: "Faturas sem confirmação de pagamento:",
     UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value: "Marque as pagas no Cabinet:",
+}
+
+RU_PROFILE_LABELS: Dict[str, str] = {
+    UIMessage.MEMORY_PROFILE_PLACE_QUESTION.value: "Уточните место",
+    UIMessage.MEMORY_PROFILE_PERSON_QUESTION.value: "Уточните человека",
+    UIMessage.MEMORY_PROFILE_DATE_QUESTION.value: "Уточните дату",
+    UIMessage.MEMORY_OPTION_KEEP_AS_WRITTEN.value: "Оставить как есть",
+    UIMessage.MEMORY_OPTION_NOT_LISTED.value: "Нет в моём списке",
+    UIMessage.MEMORY_PROFILE_NOT_READ.value: "Не удалось понять ответ. Ответьте цифрой или напишите город и страну либо имя.",
+    UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: "Не удалось понять ответ. Ответьте цифрой или напишите год, месяц или полную дату.",
+}
+
+PT_PROFILE_LABELS: Dict[str, str] = {
+    UIMessage.MEMORY_PROFILE_PLACE_QUESTION.value: "Local a confirmar",
+    UIMessage.MEMORY_PROFILE_PERSON_QUESTION.value: "Pessoa a confirmar",
+    UIMessage.MEMORY_PROFILE_DATE_QUESTION.value: "Data a confirmar",
+    UIMessage.MEMORY_OPTION_KEEP_AS_WRITTEN.value: "Manter como está",
+    UIMessage.MEMORY_OPTION_NOT_LISTED.value: "Não está na lista",
+    UIMessage.MEMORY_PROFILE_NOT_READ.value: "Não percebi a resposta. Responda com um algarismo ou escreva a cidade e o país, ou o nome.",
+    UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: "Não percebi a resposta. Responda com um algarismo ou escreva o ano, o mês ou a data completa.",
 }

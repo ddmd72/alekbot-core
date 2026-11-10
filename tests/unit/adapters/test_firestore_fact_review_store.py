@@ -16,6 +16,7 @@ from src.domain.fact_review_question import (
 from src.domain.messaging import MessageRef
 from src.ports.fact_review_store import FactReviewStore
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.profile_question_builders import profile_question
 from tests.support.review_rule_builders import NOW, REF
 from tests.support.review_rule_builders import question as build_question
 
@@ -53,11 +54,14 @@ def test_the_adapter_is_the_review_store_port(world):
 
 async def test_every_field_round_trips_through_the_stored_form(world):
     full = await a_fully_filled_question(world)
-    assert all(getattr(full, name) is not None for name in FactReviewQuestion.model_fields)
+    # Fact profile §4.7 (5d): `open_point` is a profile question's only, so a profile question carries it here.
+    profile = await world.put_question(profile_question("place", QuestionStatus.ASKED))
+    assert all(getattr(full, name) is not None for name in set(FactReviewQuestion.model_fields) - {"open_point"})
+    assert profile.open_point is not None
 
-    [back] = await world.review_store.get_questions(["full"])
+    back = await world.review_store.get_questions(["full", profile.question_id])
 
-    assert back == full
+    assert back == [full, profile]
     doc = stored(world, "full")
     assert set(doc) == model_fields() | {"purge_after"}          # the store's TTL field, on a closed question only
     assert (doc["message_platform"], doc["message_channel"], doc["message_id"]) == (REF.platform, REF.channel_id, REF.message_id)

@@ -68,8 +68,14 @@ def test_the_thirteen_ui_messages_follow_the_s4_ones_and_are_named_by_their_valu
     assert all(m.name.lower() == m.value for m in tail)
 
 
-def test_the_label_set_is_twenty_eight_keys():
-    assert len(LABEL_KEYS) == 28
+def test_the_label_set_is_thirty_five_keys():
+    # P2-3: 28 keys; fact profile §4.7 (5d) adds the 7 profile keys
+    profile = {
+        "memory_profile_place_question", "memory_profile_person_question", "memory_profile_date_question",
+        "memory_option_keep_as_written", "memory_option_not_listed", "memory_profile_not_read",
+        "memory_profile_date_not_read",
+    }
+    assert len(LABEL_KEYS) == 35 and profile <= LABEL_KEYS
     assert set(TABLE) <= LABEL_KEYS
     assert set(CANONICAL_LABELS) == LABEL_KEYS
     assert all(is_review_text(UIMessage(key)) for key in LABEL_KEYS)

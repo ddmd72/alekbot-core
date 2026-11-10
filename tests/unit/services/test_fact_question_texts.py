@@ -17,7 +17,7 @@ from src.domain.language import LanguageCode
 from src.domain.ui_messages import UIMessage
 from src.services.fact_question_texts import FactQuestionTexts
 from tests.support.fact_review_world import ReviewWorld
-from tests.support.review_p2_labels import RU_P2_LABELS
+from tests.support.review_p2_labels import RU_P2_LABELS, RU_PROFILE_LABELS
 
 USER, ACC = "u1", "acc"
 ACKS = (UIMessage.MEMORY_ANSWER_NOTED, UIMessage.MEMORY_REPLY_NOTED, UIMessage.MEMORY_ALREADY_ANSWERED,
@@ -40,6 +40,7 @@ RU: Dict[str, str] = {
     UIMessage.MEMORY_DIGEST_ARCHIVED.value: "это уже не так",
     UIMessage.MEMORY_DIGEST_INVALIDATED.value: "этого никогда не было",
     **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
+    **RU_PROFILE_LABELS,  # fact profile §4.7 (5d): the 7 profile keys, 35 in all
 }
 BAD_RU = {**RU, UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Да 1"}       # a digit: refused by check_labels
 
