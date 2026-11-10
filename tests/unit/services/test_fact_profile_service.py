@@ -76,7 +76,7 @@ class Profiler(FactProfilerPort):
         self.hold: Optional[asyncio.Event] = None
         self.on_call: Any = None
 
-    async def profile(self, account_id, text, metadata):
+    async def profile(self, account_id, text, metadata, people=()):
         self.calls.append(text)
         self.accounts.append(account_id)
         self.in_flight += 1
