@@ -5,7 +5,7 @@ place or person reply is refused too when it holds a digit (a digit is an option
 is a model and nothing is guessed: a reply that is not one of the forms below is not read, the question stays open and
 the owner is told the form.
 
-- *Place* — `city, country` (the city before the last comma, a country the atlas knows): one atlas row for the pair is
+- *Place* — `city, country` (the city before the last comma, which holds no comma itself, and a country the atlas knows): one atlas row for the pair is
   `atlas`; a city the atlas lacks, or has only in other countries, is `local` (the city as typed, the atlas's name of the
   country); several rows is not read. Without a comma: a country that names exactly one of the shown options picks that
   row; else a city the atlas places in one row (inside the question's country when it has one) is that row.
@@ -64,7 +64,7 @@ def read_place_reply(text: str, point: ProfileOpenPoint, names: PlaceNames) -> O
         before, _, after = text.rpartition(",")
         city, country = before.strip(), after.strip()
         canonical = names.canonical_country(country) if country else None
-        if not city or canonical is None:
+        if not city or "," in city or canonical is None:
             return None
         reason, rows = names.candidates(city, canonical)
         if reason is None and len(rows) == 1 and rows[0].geonameid:
