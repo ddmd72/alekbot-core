@@ -93,13 +93,7 @@ class FactSearchService(FactSearchPort):
     ) -> List[FactEntity]:
         return list((await self._run(account_id, [query], exclude)).facts)
 
-    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
-        queries = list(queries)
-        if not 1 <= len(queries) <= MAX_PHRASES:
-            raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")
-        return (await self._run(account_id, queries, frozenset())).facts
-
-    async def search_phrases_matched(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
+    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
         queries = list(queries)
         if not 1 <= len(queries) <= MAX_PHRASES:
             raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")

@@ -25,9 +25,6 @@ class _Search(FactSearchPort):
         raise AssertionError("unused")
 
     async def search_phrases(self, account_id, queries):
-        raise AssertionError("the agent reads the matched variant")
-
-    async def search_phrases_matched(self, account_id, queries):
         return RESULT
 
 

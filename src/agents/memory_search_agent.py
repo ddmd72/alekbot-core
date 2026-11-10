@@ -122,7 +122,7 @@ class FactsMemoryAgent(BaseAgent):
             replace(q, home=self._user_location, message=message or q.message or phrase)
             for q, phrase in zip(built, queries)
         ]
-        return await self._fact_search.search_phrases_matched(self._account_id, fact_queries)
+        return await self._fact_search.search_phrases(self._account_id, fact_queries)
 
     async def _query_for(self, phrase: str, path: str) -> FactQuery:
         """One phrase's query. The slots agent degrades on its own failures; an exception that still escapes costs

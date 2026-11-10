@@ -31,8 +31,9 @@ class FactSearchPort(ABC):
         return None
 
     @abstractmethod
-    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
-        """Return the facts that answer one to four phrases' queries, given in the caller's priority order.
+    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
+        """Return the facts that answer one to four phrases' queries, given in the caller's priority order, each with
+        the zero-based indices of the phrases whose own kept top-`CUT` list holds it (one phrase: every kept fact).
 
         Order: each query scored on its own candidates; the fused order of RFC §5.3 "Several phrases" (priority weight
             times σ of the score relative to that phrase's 30th kept score; a fact's best phrase counts); then
@@ -42,10 +43,3 @@ class FactSearchPort(ABC):
         Projection and tenancy: as `search`.
         """
         pass
-
-    async def search_phrases_matched(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
-        """`search_phrases` plus, per returned fact, the zero-based indices of the phrases whose own kept top-`CUT`
-        list holds it (a single phrase: every kept fact). The default reports no matches; an implementation that knows
-        them overrides it."""
-        facts = await self.search_phrases(account_id, queries)
-        return PhraseSearchResult(tuple(facts), tuple(() for _ in facts))
