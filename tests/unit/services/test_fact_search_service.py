@@ -122,11 +122,15 @@ async def test_the_result_is_the_snapshot_entities_with_their_profile_and_no_vec
     assert fact.id == "f-car" and fact.domain_keys == ["transport"] and fact.vector is None
 
 
-async def test_the_lists_fuse_the_key_lists_with_the_knn_lists(world):
+async def test_the_key_lists_and_the_knn_lists_give_candidates_and_the_score_orders_them(world, caplog):
     await world.seed("alpha", domain_keys=["money"], primary_domain="money")
     await world.seed("beta")
     await world.baseline()
-    assert await world.search(subject="beta", domains=["money"]) == ["f-alpha", "f-beta"]   # alpha is in both lists
+    with caplog.at_level(logging.INFO):
+        got = await world.search(subject="beta", domains=["money"])
+    # alpha is in both lists, beta only in the semantic one: no vote by list count, the subject's own fact leads
+    assert got == ["f-beta", "f-alpha"]
+    assert "lists=semantic:2,domain:1 cands=2 " in lines(caplog)[-1]
 
 
 # ------------------------------------------------------------------------------------------------ embedding and kNN
@@ -149,23 +153,24 @@ async def test_a_query_without_subject_or_kind_embeds_nothing_and_runs_no_knn(wo
     assert world.embedder.batches == [] and world.repo.named("nearest_fact_ids") == []
 
 
-async def test_knn_asks_for_40_in_the_text_and_label_fields_of_the_account(world):
+async def test_knn_asks_for_60_in_the_text_and_label_fields_of_the_account(world):
     await world.seed("alpha")
     await world.baseline()
     await world.search(subject="alpha", kind="holiday")
-    assert sorted((c[1], c[3]) for c in world.repo.named("nearest_fact_ids")) == [("label_vector", 40), ("vector", 40)]
+    assert sorted((c[1], c[3]) for c in world.repo.named("nearest_fact_ids")) == [("label_vector", 60), ("vector", 60)]
     assert {c[0] for c in world.repo.named("nearest_fact_ids")} == {ACC}
     await world.search(subject="alpha")
     assert [c[1] for c in world.repo.named("nearest_fact_ids")[2:]] == ["vector"]
 
 
-async def test_the_semantic_list_is_cut_at_40(world, caplog):
-    for n in range(45):
+async def test_the_semantic_list_is_cut_at_60_and_the_result_at_30(world, caplog):
+    for n in range(65):
         await world.seed(f"fact {n}")
     await world.baseline()
     with caplog.at_level(logging.INFO):
-        await world.search(subject="fact 3")
-    assert "lists=semantic:40 " in lines(caplog)[-1]
+        got = await world.search(subject="fact 3")
+    assert "lists=semantic:60 cands=60 " in lines(caplog)[-1]
+    assert len(got) == 30 and "kept=30 " in lines(caplog)[-1]
 
 
 # ------------------------------------------------------------------------------------------------ snapshot cache
@@ -236,7 +241,8 @@ async def test_the_first_load_fetches_every_vector_and_a_reload_only_the_new_fac
     await world.seed("gamma")
     await world.baseline(T1 + timedelta(hours=1))
     await world.search(subject="alpha")
-    fetched = [sorted(ids) for _, ids in world.repo.named("get_fact_vectors")]
+    # The text-vector reads only (no field, or "vector"); label vectors are read whole on each load (scored tests).
+    fetched = [sorted(c[1]) for c in world.repo.named("get_fact_vectors") if c[2:] in ((), ("vector",))]
     assert fetched == [["f-alpha", "f-beta"], ["f-gamma"]]
 
 
@@ -297,8 +303,8 @@ async def test_one_line_per_search_names_the_path_the_lists_and_the_counts(world
     with caplog.at_level(logging.INFO):
         await world.search(subject="alpha", domains=["transport"])
     (line,) = lines(caplog)
-    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 lists=semantic:1,domain:1 fused=1 kept=1 gate_dropped=0 "
-                        r"unsnapped=0 snapshot=load:1 ms=\d+", line)
+    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 phrases=1 lists=semantic:1,domain:1 cands=1 "
+                        r"gate_dropped=0 kept=1 unsnapped=0 snapshot=load:1 ms=\d+", line)
 
 
 async def test_the_gate_count_is_logged(world, caplog):

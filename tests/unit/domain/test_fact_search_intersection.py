@@ -1,6 +1,17 @@
-"""Domain lists of the fact search (fact profile RFC §5.3): one or two domains, the union fallback, only the first two
-domains, the cut, and the domain list fused as a full equal-weight list."""
+"""Domain lists of the fact search (fact profile RFC §5.3, OD-14): one or two domains (the facts carrying both first,
+then the facts carrying either), only the first two domains, the cap, and the domain list as a source of candidates
+whose in-list order does not rank them."""
+from datetime import date
+
+from src.domain.fact_search_lists import run_search
+from src.domain.fact_search_snapshot import FactSearchSnapshot
 from tests.support.fact_search_kit import fact, query, search
+
+
+def scored(facts, q, *, semantic, sim, weights):
+    """One search with injected weights, so the order does not depend on the fitted ones."""
+    return run_search(FactSearchSnapshot.from_facts(list(facts)), q, semantic_ids=semantic, label_ids=None,
+                      similarity=sim, query_place_keys=frozenset(), is_duplicate=lambda a, b: False, weights=weights)
 
 
 def test_one_domain_lists_every_fact_carrying_it():
@@ -9,10 +20,10 @@ def test_one_domain_lists_every_fact_carrying_it():
     assert sorted(out.lists["domain"]) == ["a", "b"]
 
 
-def test_two_domains_list_the_facts_carrying_both():
+def test_two_domains_list_the_facts_carrying_both_first_then_the_facts_carrying_either():
     out = search([fact("a", domains=("money",)), fact("b", domains=("health", "money")), fact("c", domains=("health",))],
                  query(domains=["health", "money"]))
-    assert out.lists["domain"] == ["b"]
+    assert out.lists["domain"][:1] == ["b"] and sorted(out.lists["domain"][1:]) == ["a", "c"]
 
 
 def test_two_domains_without_a_fact_carrying_both_fall_back_to_the_union():
@@ -23,9 +34,10 @@ def test_two_domains_without_a_fact_carrying_both_fall_back_to_the_union():
 
 def test_only_the_first_two_domains_count_and_blank_ones_are_skipped():
     facts = [fact("a", domains=("money", "health")), fact("b", domains=("money", "health", "work")),
-             fact("c", domains=("money",))]
+             fact("c", domains=("money",)), fact("d", domains=("work",))]
     out = search(facts, query(domains=["money", "", "health", "work"]))
-    assert sorted(out.lists["domain"]) == ["a", "b"]
+    # both = money and health (not work); then either; a fact only in work is in no list
+    assert sorted(out.lists["domain"][:2]) == ["a", "b"] and out.lists["domain"][2:] == ["c"]
     assert search(facts, query(domains=["", ""])).lists == {}
 
 
@@ -34,10 +46,12 @@ def test_a_domain_list_is_present_even_when_empty_and_a_fact_without_a_profile_i
     assert out.lists == {"domain": []}
 
 
-def test_a_key_list_is_cut_at_50_and_at_100_for_collect_all():
+def test_a_domain_list_is_capped_at_100_and_the_result_is_cut_at_30_only_after_scoring():
     facts = [fact(f"f{n:03d}", domains=("money",)) for n in range(130)]
-    assert len(search(facts, query(domains=["money"])).lists["domain"]) == 50
-    assert len(search(facts, query(domains=["money"], scope="all")).lists["domain"]) == 100
+    top = search(facts, query(domains=["money"]))
+    assert len(top.lists["domain"]) == 100 and len(top.kept) == 30
+    collect = search(facts, query(domains=["money"], scope="all"))
+    assert len(collect.lists["domain"]) == 100 and len(collect.kept) == 100
 
 
 def test_the_cut_follows_the_order_of_the_whole_candidate_set():
@@ -46,19 +60,18 @@ def test_the_cut_follows_the_order_of_the_whole_candidate_set():
     assert search(facts, query(domains=["money"]), sim=sim).lists["domain"][0] == "f059"
 
 
-def test_the_domain_list_fuses_as_a_full_equal_weight_list():
-    a, b, c = (fact(x, domains=("money",)) for x in "abc")
-    out = search([a, b, c], query(domains=["money"]), semantic=["c", "b"], sim={"a": 0.9, "b": 0.5, "c": 0.1})
-    # domain: a, b, c; semantic: c, b. Scores: a 1/61; b 1/62 + 1/62; c 1/63 + 1/61
+def test_every_domain_list_member_is_a_candidate_and_its_in_list_order_does_not_rank():
+    a, b, c = (fact(x, domains=("money",), role="state", reported=day)
+               for x, day in (("a", date(2026, 11, 1)), ("b", date(2024, 1, 1)), ("c", date(2020, 1, 1))))
+    out = scored([a, b, c], query(subject="money", domains=["money"]), semantic=["c", "b"],
+                 sim={"a": 0.1, "b": 0.5, "c": 0.9}, weights={"sim_text": 1.0})
+    # domain (states newest first): a, b, c; semantic: c, b; a comes from the domain list alone
     assert out.lists["domain"] == ["a", "b", "c"]
     assert out.fused == ["c", "b", "a"]
 
 
-def test_a_score_tie_goes_to_the_list_that_came_first():
-    a, b = fact("a", domains=("money",)), fact("b", domains=("money",))
-    out = search([a, b], query(domains=["money"]), semantic=["b"], sim={"a": 0.5})
-    # b: 1/61 (semantic) + 1/62; a: 1/61 (domain rank 1): b leads on score
-    assert out.fused == ["b", "a"]
-    lone = search([fact("x", domains=("money",)), fact("y", domains=("health",))], query(domains=["money"]),
-                  semantic=["y"])
-    assert lone.fused == ["y", "x"]          # equal scores: the semantic list is first in insertion order
+def test_a_score_tie_goes_to_the_smaller_id_whichever_list_came_first():
+    lone = scored([fact("x", domains=("money",)), fact("y", domains=("health",))], query(domains=["money"]),
+                  semantic=["y"], sim={}, weights={})
+    assert list(lone.lists) == ["semantic", "domain"] and lone.scores["x"] == lone.scores["y"]
+    assert lone.fused == ["x", "y"]          # equal scores: the id decides, not the list order

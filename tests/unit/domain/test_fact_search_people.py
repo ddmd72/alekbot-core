@@ -1,6 +1,6 @@
 """People in the fact search (fact profile RFC §5.3): a relation word matches mentions whose role carries it, a name
-matches by skeleton subset (cross-script too), and the people list is narrowed to the query's domains only when that
-leaves any fact."""
+matches by skeleton subset (cross-script too), and the people list is not narrowed by the query's domains (OD-14: the
+domain counts in the score instead)."""
 from datetime import date
 
 from tests.support.fact_search_kit import fact, person, query, search
@@ -49,11 +49,11 @@ def test_no_mentions_and_an_unprofiled_fact_are_never_matched():
     assert people_list([fact("none"), fact("bare", profiled=False)], people=["Clara"]) == []
 
 
-def test_the_people_list_is_narrowed_to_the_query_domains_when_that_leaves_any():
+def test_the_people_list_is_not_narrowed_to_the_query_domains():
     home = fact("home", domains=("family",), people=[person("Clara Moreira", "partner")])
     work = fact("work", domains=("work",), people=[person("Clara Moreira", "partner")])
     out = search([home, work], query(people=["Clara"], domains=["family"]))
-    assert out.lists["people"] == ["home"]
+    assert sorted(out.lists["people"]) == ["home", "work"]
 
 
 def test_the_people_list_keeps_every_match_when_none_is_in_the_domains():

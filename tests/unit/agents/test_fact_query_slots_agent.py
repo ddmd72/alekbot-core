@@ -1,4 +1,5 @@
-"""FactQuerySlotsAgent: one cheap-model call becomes a FactQuery; every failure degrades to one semantic list."""
+"""FactQuerySlotsAgent: one cheap-model call becomes a FactQuery; every failure degrades to one semantic list. Every query
+it returns carries the text it was read from as `message` (fact profile RFC §5.1, OD-14)."""
 import json
 from datetime import date, datetime, timezone
 from unittest.mock import patch
@@ -71,14 +72,14 @@ def _lines(log):
 
 # ---- prompt build -----------------------------------------------------------------------------------------------
 
-async def test_the_prompt_is_built_without_biography_directives_or_location_and_with_the_life_areas():
+async def test_the_prompt_is_built_without_biography_or_directives_and_with_the_location_and_the_life_areas():
     agent, _, builder = _agent([text(_slots())])
     await _ask(agent)
     agent_type, kwargs = builder.kwargs[0]
     assert agent_type == "fact_query_slots"
     assert kwargs["user_id"] == "usr-1" and kwargs["account_id"] == "acc-1"
     assert kwargs["include_biographical"] is False and kwargs["include_directives"] is False
-    assert kwargs["include_location"] is False
+    assert kwargs["include_location"] is True
     assert len(kwargs["extra_static_blocks"]) == 1 and kwargs["extra_static_blocks"][0].startswith("LIFE AREAS\n")
 
 
@@ -138,7 +139,7 @@ async def test_valid_json_becomes_the_query_with_the_path():
     assert query == FactQuery(
         today=date(2026, 11, 9), subject="Clara's passport validity", kind="identity document", people=("Clara",),
         places=(QueryPlace("Rome", "Italy"),), time=QueryTime("future", date(2026, 11, 9), None),
-        domains=("biography",), kinds=("document",), scope="all", path="connector",
+        domains=("biography",), kinds=("document",), scope="all", path="connector", message=REQUEST,
     )
     assert len(llm.requests) == 1 and llm.unanswered == 0
 
@@ -162,7 +163,7 @@ async def test_a_json_value_that_is_not_an_object_is_retried_too():
 # ---- degradation ------------------------------------------------------------------------------------------------
 
 def _semantic(request=REQUEST, path="fm"):
-    return FactQuery(today=date(2026, 11, 9), subject=request, path=path)
+    return FactQuery(today=date(2026, 11, 9), subject=request, path=path, message=request)
 
 
 async def test_two_invalid_outputs_degrade_to_the_semantic_query():
