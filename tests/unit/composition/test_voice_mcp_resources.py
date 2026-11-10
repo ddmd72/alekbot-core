@@ -3,11 +3,11 @@
 - Routing: the facts provider (`MCPSdkOAuthProvider.load_access_token`) and the drive verifier
   (`DriveTokenVerifier.verify_token`) send a `voice-mcp` kid to the voice verifier only and anything else to the OAuth
   verifier only; each rejects the other's tokens, on key, type and audience, and a forged kid.
-- The facts tool over HTTP: the tools claim, the voice cap, logging (search terms verbatim, never facts or the token).
+- The facts tool over HTTP: the tools claim, the voice cap, logging (search phrases verbatim, never facts or the token).
 - The drive tools over HTTP on the production drive services (`drive_mcp_access_world`): the tools claim (neutral
   refusal, no read), the audience left unset (connector access "Nothing" still sees chat's view), the voice cap.
 
-Real services throughout (`tests/support/voice_mcp_kit.py`); the facts search is a recording fake.
+Real services throughout (`tests/support/voice_mcp_kit.py`); the memory search agent is a recording fake.
 """
 import json
 import logging
@@ -24,7 +24,7 @@ from src.composition.mcp_setup import build_mcp_components
 from src.domain import drive_connector_contract as c
 from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.mcp_resource import MCPResource
-from src.domain.search import EnrichedContext, EnrichedFact
+from src.domain.entities import FactEntity, FactType
 from src.domain.voice_mcp_token import VOICE_MCP_KID, VOICE_RESULT_MAX_CHARS, McpTokenKind
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.drive_connector_texts import marker
@@ -145,16 +145,17 @@ class TestDriveResourceRouting:
 
 
 class RecordingSearch:
-    """The facts search: answers `facts`, records every query it was asked."""
+    """The user's memory search agent: serves the kit's account, answers `facts`, records every phrase it was asked."""
 
-    def __init__(self, facts: List[EnrichedFact]) -> None:
+    account_id = ACCOUNT
+
+    def __init__(self, facts: List[FactEntity]) -> None:
         self.facts = facts
         self.queries: List[str] = []
 
-    async def enrich_context(self, **kw: Any) -> EnrichedContext:
-        self.queries.append(kw["search_phrase_1"])
-        return EnrichedContext(facts=self.facts, total_sources=len(self.facts), dedup_count=0,
-                               biographical_dedup_count=0)
+    async def search_facts(self, queries: List[str], *, path: str) -> List[FactEntity]:
+        self.queries.extend(queries)
+        return self.facts
 
 
 FACTS_AUTH = SimpleNamespace(mcp_resource_uri=FACTS_URI, oauth_session_secret=OAUTH_SECRET, mcp_access_token_ttl=3600,
@@ -163,10 +164,14 @@ ENV = SimpleNamespace(mcp_oauth_clients_collection="c", mcp_auth_codes_collectio
 
 
 class FactsApp:
-    def __init__(self, kit: Kit, facts: List[EnrichedFact]) -> None:
+    def __init__(self, kit: Kit, facts: List[FactEntity]) -> None:
         self.search = RecordingSearch(facts)
+
+        async def memory_search(user_id: str) -> RecordingSearch:
+            return self.search
+
         components = build_mcp_components(
-            db_client=EvalDb(), env_config=ENV, auth_config=FACTS_AUTH, search_enrichment_service=self.search,
+            db_client=EvalDb(), env_config=ENV, auth_config=FACTS_AUTH, memory_search=memory_search,
             cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=kit.user_repo,
             whitelist_repo=kit.whitelist_repo, voice_tokens=kit.voice)
         # the components' own authorization service signs with the same OAuth secret as the kit's
@@ -174,7 +179,7 @@ class FactsApp:
 
     async def call(self, token: str) -> httpx.Response:
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "get_user_context", "arguments": {"query": QUERY}}}
+                "params": {"name": "get_user_context", "arguments": {"queries": [QUERY]}}}
         transport = httpx.ASGITransport(app=self.app.streamable_http_app(), raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="https://mcp.example.test") as http:
             async with self.app.session_manager.run():
@@ -188,8 +193,9 @@ def _text(resp: httpx.Response) -> str:
     return json.loads(data)["result"]["content"][0]["text"]
 
 
-def _fact(i: int, content: str = FACT) -> EnrichedFact:
-    return EnrichedFact(fact_id=f"f{i}", content=content, source="keyword", domain="home")
+def _fact(i: int, content: str = FACT) -> FactEntity:
+    return FactEntity(id=f"f{i}", account_id=ACCOUNT, created_by_user_id=USER, lineage_id=f"l{i}", text=content,
+                      type=FactType.STATE, primary_domain="home")
 
 
 class TestFactsTool:
@@ -229,9 +235,8 @@ class TestFactsTool:
         await FactsApp(kit, [_fact(1)]).call(tokens.facts)
         lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
         assert len(lines) == 2 and all("client=voice" in line for line in lines)
-        # The search terms, verbatim, as the call sent them (only `query`; the other two take their defaults).
-        assert f"query={QUERY!r}" in lines[0]
-        assert "alternate_phrasing=''" in lines[0] and "keywords=[]" in lines[0]
+        # The search phrases, verbatim, as the call sent them.
+        assert f"queries={[QUERY]!r}" in lines[0]
         # What reaches Cloud Logging (INFO and up): no fact. At any level: no token.
         shipped = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
         assert FACT not in shipped
@@ -242,7 +247,7 @@ class TestFactsTool:
         caplog.set_level(logging.DEBUG)
         await FactsApp(kit, [_fact(1)]).call(kit.oauth_token(MCPResource.FACTS))
         lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
-        assert f"query={QUERY!r}" in lines[0] and not any("client=voice" in line for line in lines)
+        assert f"queries={[QUERY]!r}" in lines[0] and not any("client=voice" in line for line in lines)
 
 
 # ----------------------------------------------------------------------------- the drive tools over HTTP

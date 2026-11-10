@@ -3,42 +3,41 @@ Unit tests for MemorySearchAgent.
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 from src.agents.memory_search_agent import FactsMemoryAgent
-from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
-from src.domain.entities import FactEntity, FactType
-from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities
+from src.domain.agent import AgentConfig, AgentMessage, AgentIntent
+from src.ports.fact_search_port import FactSearchPort
+
+
+class _UntouchedSearch(FactSearchPort):
+    async def search(self, account_id, query, *, exclude=frozenset()):
+        raise AssertionError("no search expected")
+
+    async def search_phrases(self, account_id, queries):
+        raise AssertionError("no search expected")
+
+
+class _UntouchedSlots:
+    async def query_for_request(self, request, *, path, account_id, user_id):
+        raise AssertionError("no slots call expected")
 
 
 class TestMemorySearchAgent:
     """Test suite for MemorySearchAgent."""
 
     @pytest.fixture
-    def mock_repo(self):
-        repo = Mock()
-        repo.search_facts = AsyncMock()
-        return repo
-
-    @pytest.fixture
-    def mock_embedding(self):
-        service = Mock()
-        service.get_embedding = AsyncMock()
-        return service
-
-    @pytest.fixture
-    def agent(self, mock_repo, mock_embedding):
+    def agent(self):
         config = AgentConfig(
             agent_id="memory_agent",
             agent_type="memory_search"
         )
         return FactsMemoryAgent(
             config=config,
-            repository=mock_repo,
-            embedding_service=mock_embedding,
-            account_id="user123"
+            fact_search=_UntouchedSearch(),
+            slots=_UntouchedSlots(),
+            account_id="user123",
+            user_id="usr-1",
+            user_location="Springfield, Portugal",
         )
-
-
 
     @pytest.mark.asyncio
     async def test_can_handle_wrong_intent(self, agent):
@@ -50,23 +49,3 @@ class TestMemorySearchAgent:
             payload={"query": "my car"}
         )
         assert await agent.can_handle(message) is False
-
-
-
-
-    @pytest.mark.asyncio
-    async def test_execute_missing_query(self, agent):
-        """Test execution without query."""
-        message = AgentMessage.create(
-            sender="test",
-            recipient="memory_agent",
-            intent=AgentIntent.QUERY,
-            payload={}
-        )
-
-        response = await agent.execute(message)
-
-        assert response.status == AgentStatus.FAILED
-        assert "No search keys provided" in response.error
-
-

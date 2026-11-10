@@ -1,13 +1,12 @@
 """save_to_memory is gone (MEMORY_FACT_CONFIRMATION_RFC §6): no intent, no descriptor, no writer."""
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
+from src.domain.memory_search_texts import NO_QUERIES_NOTE
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, MEMORY_SEARCH, Intent
-from src.ports.embedding_service import EmbeddingService
-from src.ports.repository import FactRepository
+from src.ports.fact_search_port import FactSearchPort
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 
@@ -33,18 +32,36 @@ def test_no_descriptor_exposes_save_to_memory():
     assert set(MEMORY_SEARCH.capabilities) == {Intent.SEARCH_MEMORY}
 
 
-async def test_memory_agent_rejects_a_stale_save_payload():
+class _UntouchedSearch(FactSearchPort):
+    async def search(self, account_id, query, *, exclude=frozenset()):
+        raise AssertionError("a stale save payload must not search")
+
+    async def search_phrases(self, account_id, queries):
+        raise AssertionError("a stale save payload must not search")
+
+
+class _UntouchedSlots:
+    async def query_for_request(self, request, *, path, account_id, user_id):
+        raise AssertionError("a stale save payload must not reach the slots")
+
+
+async def test_memory_agent_answers_a_stale_save_payload_with_the_tool_note_and_writes_nothing():
+    # The agent takes every QUERY (FACT_PROFILE_RFC §5.4: a call without phrases comes back as a tool note), so a stale
+    # save payload reaches execute: it gets the no-phrases note, nothing is searched, and there is no save handler.
     agent = FactsMemoryAgent(
         config=AgentConfig(agent_id="facts_memory_agent_u", agent_type="facts_memory"),
-        repository=AsyncMock(spec=FactRepository),
-        embedding_service=AsyncMock(spec=EmbeddingService),
+        fact_search=_UntouchedSearch(),
+        slots=_UntouchedSlots(),
         account_id="a",
+        user_id="u",
+        user_location="Springfield, Portugal",
     )
     stale = AgentMessage.create(
         sender="t", recipient=agent.agent_id, intent=AgentIntent.QUERY,
         payload={"intent": "save_to_memory", "text": "User's lease ends in December 2027"},
     )
-    assert await agent.can_handle(stale) is False
+    response = await agent.execute(stale)
+    assert response.result == NO_QUERIES_NOTE
     assert not hasattr(agent, "_handle_save")
 
 
