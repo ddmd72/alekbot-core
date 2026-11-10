@@ -169,7 +169,8 @@ async def test_the_semantic_list_is_cut_at_60_and_the_result_at_30(world, caplog
     await world.baseline()
     with caplog.at_level(logging.INFO):
         got = await world.search(subject="fact 3")
-    assert "lists=semantic:60 cands=60 " in lines(caplog)[-1]
+    # The kNN list is cut at its depth; the log shows the depth over the 65 facts that have a vector.
+    assert "lists=semantic:60/65 cands=60 " in lines(caplog)[-1]
     assert len(got) == 30 and "kept=30 " in lines(caplog)[-1]
 
 

@@ -5,6 +5,7 @@ fake that records what it was asked; its own search is tested with the agent.
 """
 
 import json
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import pytest
@@ -15,6 +16,7 @@ from src.domain.fact_search_result import PhraseSearchResult
 from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
 from src.composition.mcp_setup import build_mcp_components
 from src.domain.entities import FactEntity, FactType
+from src.domain.memory_search_format import RESULT_EXPLANATION
 from src.domain.memory_search_texts import QUERIES_FIELD_TEXT
 from src.composition.mcp_setup import FACTS_TOOL
 from src.domain.voice_mcp_token import McpTokenKind
@@ -161,30 +163,43 @@ class TestAgentCall:
 
 
 class TestResult:
-    async def test_facts_group_under_the_english_label_of_the_primary_domain_with_when(self):
+    async def test_facts_are_flat_in_fused_order_each_headed_by_the_english_label_of_its_primary_domain_with_when(
+            self):
+        # One result format for the connector and the memory agent (owner, 2026-11-10): no domain sections, the
+        # agent's fused order kept, the domain label and the `when` part on each fact's first line.
+        recorded = datetime(2026, 11, 6, 9, 0, tzinfo=timezone.utc)
         facts = [
+            _fact("Alex owns a 2015 Skoda Fabia", primary="transport"),
             _fact("Clara Moreira's passport is valid until 2026-12-09", primary="state_law",
                   points=[{"from": "2026-12-09"}]),
-            _fact("Alex owns a 2015 Skoda Fabia", primary="transport"),
             _fact("Car service on 2026-11-05", primary="transport", points=[{"from": "2026-11-05"}]),
         ]
+        facts = [f.model_copy(update={"reported_date": recorded}) for f in facts]
         tool, _, _, _ = _setup(facts)
         out = await tool.run({"queries": ["passport", "car"]}, context=_ctx())
         assert out == (
-            "## State & law\n"
-            "- Clara Moreira's passport is valid until 2026-12-09 (when: 2026-12-09)\n"
+            f"{RESULT_EXPLANATION}\n"
+            'q1 "passport": 0 found\n'
+            'q2 "car": 0 found\n'
             "\n"
-            "## Transport\n"
-            "- Alex owns a 2015 Skoda Fabia\n"
-            "- Car service on 2026-11-05 (when: 2026-11-05)"
+            "Transport | recorded 2026-11-06\n"
+            "Alex owns a 2015 Skoda Fabia\n"
+            "---\n"
+            "State & law | when: 2026-12-09 | recorded 2026-11-06\n"
+            "Clara Moreira's passport is valid until 2026-12-09\n"
+            "---\n"
+            "Transport | when: 2026-11-05 | recorded 2026-11-06\n"
+            "Car service on 2026-11-05"
         )
+        assert "## " not in out
 
     async def test_a_fact_without_a_primary_domain_falls_back_to_its_old_domain_then_general(self):
         facts = [_fact("Alex owns a 2015 Skoda Fabia", domain="possession"), _fact("Car service on 2026-11-05")]
         tool, _, _, _ = _setup(facts)
         out = await tool.run({"queries": ["car"]}, context=_ctx())
-        assert "## possession\n- Alex owns a 2015 Skoda Fabia" in out
-        assert "## general\n- Car service on 2026-11-05" in out
+        blocks = out.split("\n\n", 1)[1].split("\n---\n")
+        assert [b.splitlines()[0].split(" | ")[0] for b in blocks] == ["possession", "general"]
+        assert [b.splitlines()[1] for b in blocks] == ["Alex owns a 2015 Skoda Fabia", "Car service on 2026-11-05"]
         assert "score" not in out
 
     async def test_an_empty_result_says_no_records_matched(self):

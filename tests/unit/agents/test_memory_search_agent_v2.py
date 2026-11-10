@@ -176,11 +176,11 @@ async def test_a_fact_is_rendered_with_context_reported_metadata_and_when():
 
     response = await agent.execute(_message({"queries": ["car service Skoda Fabia 2026-11-05"]}))
 
-    first, second = response.result.split("\n---\n")
+    first, second = response.result.split("\n\n", 1)[1].split("\n---\n")
     assert first.splitlines() == [
-        "Car service for the 2015 Skoda Fabia", "context: Done at the garage", "reported: 2026-11-06",
-        'metadata: {"policy": "MP-2026-118204"}', "when: 2026-11-05"]
-    assert second.splitlines()[0] == "Weekend in Coimbra with Clara"
+        "general | when: 2026-11-05 | recorded 2026-11-06", "Car service for the 2015 Skoda Fabia",
+        "context: Done at the garage", 'metadata: {"policy": "MP-2026-118204"}']
+    assert second.splitlines()[1] == "Weekend in Coimbra with Clara"
 
 
 async def test_no_facts_is_the_empty_text():
@@ -204,9 +204,10 @@ async def test_a_slots_failure_on_one_phrase_still_searches_that_phrase_degraded
 async def test_search_facts_is_public_and_takes_phrases_and_a_path():
     agent, slots, search = _agent(1, [_fact(PASSPORT)])
 
-    facts = await agent.search_facts([PASSPORT], path="mcp")
+    found = await agent.search_facts([PASSPORT], path="mcp")
 
-    assert [f.text for f in facts] == [PASSPORT]
+    assert isinstance(found, PhraseSearchResult)
+    assert [f.text for f in found.facts] == [PASSPORT] and found.phrase_matches == ((),)
     assert search.calls[0][1][0].path == "mcp"
 
 

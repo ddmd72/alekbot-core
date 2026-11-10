@@ -45,7 +45,7 @@ async def test_the_agent_result_is_the_shared_formatters_output():
 
 
 async def test_the_connector_result_is_the_shared_formatters_output():
-    from src.domain.voice_mcp_token import FACTS_TOOL
+    from src.composition.mcp_setup import FACTS_TOOL
     from tests.unit.composition.test_mcp_get_user_context_v2 import Resolver, _components, _ctx
 
     class Agent:
