@@ -114,9 +114,9 @@ class MCPComponents:
 _TOOL_DESCRIPTION = (
     "Looks up what the user's exocortex (alekbot) knows about the user: the facts of their life, the people around "
     "them, places, plans, preferences, past events and decisions. Each stored record is a short English statement "
-    "about one matter of the user's life. Every phrase you send is turned into a meaning vector and compared with the "
-    "records' statements (semantic vector search); the records closest to any of your phrases come back with their "
-    "dates.\n"
+    "about one matter of the user's life. Every phrase you send is read for the people, places and times it names and "
+    "compared by meaning with the records' statements; the records that match best come back with their dates, the "
+    "first phrase's matches first.\n"
     "\n"
     "Call it whenever personal context could change the content or tone of your answer, including when you are not "
     "sure it is relevant. Skip it only for questions with no personal side at all. An empty result means nothing is "

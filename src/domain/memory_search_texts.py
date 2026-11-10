@@ -11,7 +11,8 @@ QUERIES_FIELD_TEXT = (
     "importance. The results are merged by that order, so the first phrase's records come first and a later phrase adds "
     "what the earlier ones missed. The search never sees your conversation: write the person, place or time instead of "
     "\"he\", \"there\" or \"last time\", and put in only what the conversation tells you, since a guessed detail moves the "
-    "phrase toward the wrong records."
+    "phrase toward the wrong records. When the user asks for more on a matter already searched, the same phrases bring "
+    "back the same records: send phrases for the sides of the matter the earlier results did not cover."
 )
 
 SEARCH_MEMORY_DESCRIPTION = (
