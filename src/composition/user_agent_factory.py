@@ -477,6 +477,12 @@ class UserAgentFactory(AgentFactoryPort):
                 workspace_enabled=self.workspace_service is not None,
             )
 
+        router_slots_agent = FactQuerySlotsAgent(
+            AgentConfig(agent_id=f"fact_query_slots_router_{user_id}", agent_type="fact_query_slots"),
+            execution_context=router_context,
+            prompt_builder=prompt_builder,
+            user_timezone=user_profile.config.timezone,
+        )
         router_agent = create_router_agent(
             execution_context=router_context,
             coordinator=self.coordinator,
@@ -486,7 +492,9 @@ class UserAgentFactory(AgentFactoryPort):
             session_store=self.session_store,
             repository=self.repository,
             embedding_service=self.embedding_service,
-            search_enrichment_service=search_enrichment_service,
+            fact_search=self.fact_search,
+            slots=router_slots_agent,
+            user_location=user_profile.config.location or "",
             prompt_builder=prompt_builder,
             notes_port=self.notes_provider,
         )

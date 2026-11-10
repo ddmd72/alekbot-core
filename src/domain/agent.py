@@ -27,7 +27,6 @@ class RoutingMetadata:
     task_complexity: TaskComplexity
     needs_tools: List[str]
     reasoning: str
-    semantic_lens: List[str] = field(default_factory=list)
     needs_memory_search: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -36,7 +35,6 @@ class RoutingMetadata:
             "task_complexity": self.task_complexity.value,
             "needs_tools": self.needs_tools,
             "reasoning": self.reasoning,
-            "semantic_lens": self.semantic_lens,
             "needs_memory_search": self.needs_memory_search
         }
 
@@ -47,7 +45,6 @@ class RoutingMetadata:
             task_complexity=_coerce_task_complexity(data.get("task_complexity")),
             needs_tools=list(data.get("needs_tools", [])),
             reasoning=data.get("reasoning", ""),
-            semantic_lens=list(data.get("semantic_lens", [])),
             needs_memory_search=bool(data.get("needs_memory_search", False))
         )
 
