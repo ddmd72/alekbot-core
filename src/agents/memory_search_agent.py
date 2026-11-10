@@ -56,6 +56,11 @@ class FactsMemoryAgent(BaseAgent):
         self._user_location = user_location
         logger.info(f"🧠 FactsMemoryAgent initialized for account {account_id[:20]}...")
 
+    @property
+    def account_id(self) -> str:
+        """The tenant this agent serves (read by the connector's tenant check)."""
+        return self._account_id
+
     async def can_handle(self, message: AgentMessage) -> bool:
         """The coordinator routes `search_memory` here as a QUERY; a call without `queries` must reach `execute` and
         come back as a tool note rather than fall through to another agent."""

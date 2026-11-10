@@ -178,8 +178,8 @@ def _normalize_and_count(value):
 
 
 def _agent_account_id(agent) -> Optional[str]:
-    """The tenant a memory agent serves (P3 keeps it as `_account_id`; a public `account_id` wins when it exists)."""
-    return getattr(agent, "account_id", None) or getattr(agent, "_account_id", None)
+    """The tenant a memory agent serves, from its public `account_id`."""
+    return getattr(agent, "account_id", None)
 
 
 def build_mcp_components(
