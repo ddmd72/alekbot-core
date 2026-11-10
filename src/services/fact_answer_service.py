@@ -9,6 +9,12 @@ question's message. `answer_reply` is the owner's reply at intake: it finds the 
 the digit through `apply` or records the words (releasing the next question when this one was current), and appends the reply with its acknowledgement to history. `handle` is the
 owner's click on a button of the question's message (`ChoiceHandlerPort`): the same `apply` for an open question, the
 existing answer for a closed one.
+
+A profile question (kind place, person or date, fact profile RFC §4.7) is answered by the same two doors, never through
+`apply` (that is the lifecycle path: it writes a fact): a digit or a button picks an option that
+`ProfileQuestionAnswers` records, the words are read by code only, and a reply that is neither is not applied: the
+question stays open and the owner is told which form is read. Nothing of a profile question's reply is recorded on the
+question for the review.
 """
 from datetime import datetime, timezone
 import asyncio
@@ -42,6 +48,7 @@ from ..domain.interactive_choice import InteractiveChoice
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import MessageRef
 from ..domain.pass_actor import PassActor
+from ..domain.profile_apply import ProfileApply
 from ..domain.stored_fact import StoredFact
 from ..domain.ui_messages import UIMessage
 from ..ports.choice_handler_port import ChoiceHandlerPort
@@ -57,6 +64,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .fact_question_texts import FactQuestionTexts
     from .owner_timezone_resolver import OwnerTimezoneResolver
+    from .profile_question_answers import ProfileQuestionAnswers
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -80,7 +88,9 @@ class FactAnswerService(ChoiceHandlerPort):
         interactive: InteractiveMessagePort,
         owner_zones: "OwnerTimezoneResolver",
         clock: Callable[[], datetime] = _utcnow,
+        profile_answers: Optional["ProfileQuestionAnswers"] = None,
     ) -> None:
+        self._profile_answers = profile_answers
         self._fact_updates = fact_updates
         self._repo = repo
         self._review_store = review_store
@@ -120,6 +130,8 @@ class FactAnswerService(ChoiceHandlerPort):
         if question is None or not question.asked_of(account_id, user_id):
             logger.info(f"[FactAnswer] question {question_id} not found for account {account_id[:8]}")
             return AnswerResult.NOT_FOUND
+        if question.is_profile:
+            return await self._not_applied(question, now, "a profile question is answered by its own path, not by apply")
         if not question.is_open:
             logger.info(f"[FactAnswer] question {question_id} is {question.status.value}; answer not applied")
             return AnswerResult.NOT_OPEN
@@ -201,6 +213,8 @@ class FactAnswerService(ChoiceHandlerPort):
         question = await self._review_store.by_message(user_id, MessageRef(platform, channel_id, message_id))
         if question is None or not text.strip():
             return None
+        if question.is_profile:
+            return await self._profile_reply(question, user_id, account_id, text, now)
         labels = await self._texts.labels_for(user_id, account_id)
         digit = digit_answer(fact_question_message(question, labels), text) if question.is_open else None
         path = reply_path(question, digit)
@@ -256,6 +270,8 @@ class FactAnswerService(ChoiceHandlerPort):
         if question is None or not question.asked_of(account_id, user_id):
             logger.info(f"[FactAnswer] choice on question {choice.binding.id}: not this user's question; ignored")
             return None
+        if question.is_profile:
+            return await self._profile_click(question, choice)
         answer = option_answer(choice.option_id)
         if answer is None:
             logger.warning(f"[FactAnswer] choice on question {question.question_id}: {choice.option_id!r} is no answer")
@@ -282,6 +298,69 @@ class FactAnswerService(ChoiceHandlerPort):
                 logger.info(f"[FactAnswer] choice on closed question {question.question_id}: not its message; ignored")
                 return None
         return await self._closed_outcome(question, question.answer, None)
+
+    async def _profile_reply(
+        self, question: FactReviewQuestion, user_id: str, account_id: str, text: str, now: datetime,
+    ) -> Optional[str]:
+        """The owner's reply to a profile question. Closed: the existing already-answered path. Not delivered: left to
+        conversation. Otherwise the reply is a digit that picks an option, or words read by code; an applied answer
+        closes the question (owner, no answer kind, source `digit` or `words`); a reply that is neither is counted
+        (`profile_reply_not_read`), answered with the form that is read, and the question stays open and untouched. The
+        words are never recorded on the question (`record_reply` is not called). The pair is appended as for any reply."""
+        if not question.is_open:
+            labels = await self._texts.labels_for(user_id, account_id)
+            await self._count(account_id, now, {CounterField.ALREADY_ANSWERED: 1})
+            reply = labels[UIMessage.MEMORY_ALREADY_ANSWERED.value]
+        else:
+            if not question.answerable:
+                logger.warning(f"[FactAnswer] question {question.question_id} is open but was never delivered; reply left alone")
+                return None
+            if self._profile_answers is None:
+                logger.warning(f"[FactAnswer] question {question.question_id} is a profile question and no profile answers are wired")
+                return None
+            if needs_completing(question):
+                await self._review_store.complete_delivered(question.question_id)
+            labels = await self._texts.labels_for(user_id, account_id)
+            option = fact_question_message(question, labels).option_for_reply(text)
+            if option is not None:
+                applied = await self._profile_answers.apply_option(question, option, now)
+            else:
+                applied = await self._profile_answers.apply_words(question, text, now)
+            if applied is ProfileApply.APPLIED:
+                await self._close(question, ClosedBy.OWNER, None, "digit" if option is not None else "words",
+                                  UIMessage.MEMORY_ANSWER_NOTED, now)
+                await self._count(account_id, now, {CounterField.PROFILE_ANSWERED: 1})
+                note = UIMessage.MEMORY_ANSWER_NOTED
+            else:
+                await self._count(account_id, now, {CounterField.PROFILE_REPLY_NOT_READ: 1})
+                note = (UIMessage.MEMORY_PROFILE_DATE_NOT_READ if question.question == "date"
+                        else UIMessage.MEMORY_PROFILE_NOT_READ)
+            reply = labels[note.value]
+        await self._append_reply(question, reply_part(question.question_id, text), reply)
+        logger.info(f"[FactAnswer] question {question.question_id}: profile reply taken and acknowledged")
+        return reply
+
+    async def _profile_click(self, question: FactReviewQuestion, choice: InteractiveChoice) -> Optional[ChoiceOutcome]:
+        """The owner's click on a button of a profile question's message: on the question's own message only. Open: the
+        option is applied and the question closes (source `button`), the message shown as noted; an option that is none
+        leaves the question as it is. Closed: the message shown closed, nothing written."""
+        path = click_path(question, choice.message_ref)
+        if path is ClickPath.IGNORED:
+            logger.info(f"[FactAnswer] choice on question {question.question_id}: not the question's message; ignored")
+            return None
+        if path is ClickPath.CLOSED:
+            return await self._closed_outcome(question, None, None)
+        if self._profile_answers is None:
+            logger.warning(f"[FactAnswer] question {question.question_id} is a profile question and no profile answers are wired")
+            return None
+        if needs_completing(question):
+            await self._review_store.complete_delivered(question.question_id)
+        if await self._profile_answers.apply_option(question, choice.option_id, choice.at) is not ProfileApply.APPLIED:
+            return None
+        now = as_utc(choice.at)
+        await self._close(question, ClosedBy.OWNER, None, "button", UIMessage.MEMORY_ANSWER_NOTED, now)
+        await self._count(question.account_id, now, {CounterField.PROFILE_ANSWERED: 1})
+        return await self._closed_outcome(question, None, UIMessage.MEMORY_ANSWER_NOTED)
 
     async def review_queue(self, account_id: str, user_id: str) -> List[QueueEntry]:
         """The user's open questions in the order they are dealt with (`queue_entries`), each with its fact as an answer

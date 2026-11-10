@@ -3,6 +3,7 @@ go to the model, how the question queue is ordered and when a question may go ou
 fact becomes then, and when the janitor must start a review. Pure: the services read and write, this decides.
 
 Statuses of a question move only through the methods of `FactReviewQuestion`; nothing here builds a question by hand."""
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import (
     AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence, cast, get_args,
@@ -21,8 +22,8 @@ from .fact_lifecycle import (
 from .fact_review_basis import PAYMENT_KEYS, ReviewAction, ReviewBasis
 from .fact_review_outcome import MADE_CURRENT, ReviewDecision
 from .fact_review_question import (
-    DIGEST_QUESTION_DAYS, TEXT_KEYS, AnswerSource, FactReviewQuestion, QuestionDelivery, QuestionFallback, QuestionKind,
-    QuestionOrigin, QuestionStatus,
+    DIGEST_QUESTION_DAYS, TEXT_KEYS, AnswerSource, FactReviewQuestion, LifecycleKind, QuestionDelivery, QuestionFallback,
+    QuestionKind, QuestionOrigin, QuestionStatus,
 )
 from .fact_review_reasons import (
     FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, kept_twice_reason, queued_reason,
@@ -132,14 +133,51 @@ def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
 
 # ------------------------------------------------------------------------------------------------ the queue
 
+# Which questions a read returns: the stale-fact (lifecycle) questions, the profile ones, or both. Every reader that
+# treats a question as a stale fact in the review's hands reads `lifecycle`; the claim, the reply and button lookup, the
+# review's housekeeping and the janitor's `review_due` read `all`.
+QuestionScope = Literal["lifecycle", "profile", "all"]
+
+
+def in_scope(question: FactReviewQuestion, scope: QuestionScope) -> bool:
+    """Whether `question` belongs to a read of `scope`."""
+    if scope == "all":
+        return True
+    return question.is_profile == (scope == "profile")
+
+
+def lifecycle_only(questions: Iterable[FactReviewQuestion]) -> List[FactReviewQuestion]:
+    """The questions about stale facts: what the pool, the held facts, the sweep plan and the alerts count."""
+    return [q for q in questions if not q.is_profile]
+
+
 def queue_order(questions: Iterable[FactReviewQuestion]) -> List[FactReviewQuestion]:
-    """The order questions go out: the longest-stale fact first (`queue_key`), then the earliest queued, then the id."""
-    return sorted(questions, key=lambda q: (q.queue_key, q.queued_at, q.question_id))
+    """The order questions go out: a stale fact is wrong in answers now, a profile gap costs recall, so lifecycle
+    questions go first; then the longest-stale fact first (`queue_key`), the earliest queued, the id."""
+    return sorted(questions, key=lambda q: (q.is_profile, q.queue_key, q.queued_at, q.question_id))
 
 
-def next_in_queue(questions: Iterable[FactReviewQuestion]) -> Optional[FactReviewQuestion]:
-    """The first queued chat question in queue order, or None. A digest question is never sent."""
-    return next(iter(queue_order(q for q in questions if q.status is QuestionStatus.QUEUED and q.in_chat)), None)
+def next_in_queue(questions: Iterable[FactReviewQuestion], profile_allowed: bool = True) -> Optional[FactReviewQuestion]:
+    """The first queued chat question in queue order, or None. A digest question is never sent; a profile question only
+    while `profile_allowed` (`profile_may_go`)."""
+    queued = (
+        q for q in questions
+        if q.status is QuestionStatus.QUEUED and q.in_chat and (profile_allowed or not q.is_profile)
+    )
+    return next(iter(queue_order(queued)), None)
+
+
+def profile_may_go(state: FactReviewState, today: date) -> bool:
+    """A profile question may be claimed on the owner-local day `today`: none was claimed that day (§4.7: at most one a
+    day, inside the shared daily cap)."""
+    return state.profile_claimed_on != today
+
+
+def profile_question_id(account_id: str, key: str) -> str:
+    """The id of the profile question of one point: derived from the account and the point's key, so a point is never
+    queued twice while its question is stored."""
+    digest = hashlib.sha256(f"{account_id}\x1f{key}".encode("utf-8")).hexdigest()
+    return "pq" + digest[:30]
 
 
 def sent_today(state: FactReviewState, today: date) -> int:
@@ -877,7 +915,7 @@ def _squash(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
-_QUESTION_KINDS: Final[tuple[str, ...]] = get_args(QuestionKind)
+_QUESTION_KINDS: Final[tuple[str, ...]] = get_args(LifecycleKind)
 
 
 def ask_refusal(
@@ -947,7 +985,7 @@ def _ask_shape_refusal(
 
 
 def _ask_texts_refusal(question: str, texts: Mapping[str, str], fact: FactEntity) -> Optional[str]:
-    kind = cast(QuestionKind, question)  # checked against _QUESTION_KINDS before
+    kind = cast(LifecycleKind, question)  # checked against _QUESTION_KINDS before
     keys = TEXT_KEYS[(kind, "chat")]
     if set(texts) != set(keys):
         return f"ask_owner.texts: give exactly {', '.join(keys) or 'none'} for question {kind}"

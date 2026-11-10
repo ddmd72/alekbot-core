@@ -1,7 +1,7 @@
 """A message that asks the owner to pick one of a few options, independent of any platform."""
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .chat_text import unwrapped
 from .interactive_binding import InteractiveBinding
@@ -17,7 +17,10 @@ class InteractiveMessage(BaseModel):
 
     The options are numbered from 1 in their order: a whole reply that is that digit picks the option, on every
     platform and in every language (`option_for_reply`); the digit rule lives here (`numbered_options`) and nowhere else.
-    How the options, the quote and the hint are laid out is each platform adapter's business."""
+    How the options, the quote and the hint are laid out is each platform adapter's business.
+
+    A message offers `MIN_OPTIONS` to `MAX_OPTIONS` options. `min_options` is 1 only for the profile question about a
+    date (fact profile RFC §4.7), whose one option is "don't remember"; every other message keeps the default."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -26,6 +29,7 @@ class InteractiveMessage(BaseModel):
     binding: InteractiveBinding
     quote: str = ""
     reply_hint: str = ""
+    min_options: int = Field(default=MIN_OPTIONS, ge=1, le=MIN_OPTIONS)
 
     @field_validator("prompt")
     @classmethod
@@ -36,8 +40,8 @@ class InteractiveMessage(BaseModel):
 
     @model_validator(mode="after")
     def _options_are_a_short_distinct_list(self) -> "InteractiveMessage":
-        if not MIN_OPTIONS <= len(self.options) <= MAX_OPTIONS:
-            raise ValueError(f"an interactive message offers {MIN_OPTIONS}-{MAX_OPTIONS} options")
+        if not self.min_options <= len(self.options) <= MAX_OPTIONS:
+            raise ValueError(f"an interactive message offers {self.min_options}-{MAX_OPTIONS} options")
         ids = [option.id for option in self.options]
         if len(set(ids)) != len(ids):
             raise ValueError("option ids must be unique")

@@ -28,6 +28,7 @@ from .fact_review_quote_translation import (
     translations_wanted,
 )
 from .language import LanguageCode
+from .profile_question_message import FIXED_OPTIONS, PROFILE_OPTION_KEYS, PROFILE_QUESTION_KEYS, profile_question_message
 from .ui_messages import UIMessage
 
 MAX_TEXT_CHARS: Final[int] = 120  # the question line, the hint, the acknowledgements, the closed note, the digest lines
@@ -64,8 +65,12 @@ _TEXT_KEYS: Final[tuple[str, ...]] = (
     UIMessage.MEMORY_DIGEST_ARCHIVED.value, UIMessage.MEMORY_DIGEST_INVALIDATED.value,
     UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value, UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value,
     UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value,
+    UIMessage.MEMORY_PROFILE_NOT_READ.value, UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value,
 )
-LABEL_KEYS: Final[frozenset[str]] = frozenset((*OPTION_KEYS.values(), *QUESTION_KEYS.values(), *_TEXT_KEYS))
+LABEL_KEYS: Final[frozenset[str]] = frozenset((
+    *OPTION_KEYS.values(), *QUESTION_KEYS.values(), *PROFILE_QUESTION_KEYS.values(), *PROFILE_OPTION_KEYS.values(),
+    *_TEXT_KEYS,
+))
 
 
 def is_review_text(message: UIMessage) -> bool:
@@ -103,6 +108,15 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value: "Recorded as history without your answer:",
     UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value: "Invoices with no payment confirmation:",
     UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value: "Mark the paid ones in the Cabinet:",
+    PROFILE_QUESTION_KEYS["place"]: "Place to confirm",
+    PROFILE_QUESTION_KEYS["person"]: "Person to confirm",
+    PROFILE_QUESTION_KEYS["date"]: "Date to confirm",
+    PROFILE_OPTION_KEYS["keep"]: "Keep as written",
+    PROFILE_OPTION_KEYS["not_listed"]: "Not on my list",
+    UIMessage.MEMORY_PROFILE_NOT_READ.value: (
+        "I could not use that reply. Reply with a digit, or write the place as city, country, or the person's name."),
+    UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: (
+        "I could not use that reply. Reply with a digit, or write the date as a year, a year and month, or a full date."),
 })
 
 
@@ -251,7 +265,7 @@ def check_labels(labels: object) -> Optional[str]:
         return "the labels are not an object"
     if set(labels) != LABEL_KEYS:
         return "the labels are not exactly the expected keys"
-    option_keys = set(OPTION_KEYS.values())
+    option_keys = {*OPTION_KEYS.values(), *PROFILE_OPTION_KEYS.values()}
     for key in sorted(LABEL_KEYS):
         problem = _text_problem(labels[key], key in option_keys)
         if problem is not None:
@@ -260,6 +274,10 @@ def check_labels(labels: object) -> Optional[str]:
         options = [str(labels[OPTION_KEYS[answer]]).strip().casefold() for answer in answers]
         if len(set(options)) != len(options):
             return f"the option labels of a {kind} question must differ"
+    for profile_kind, option_ids in FIXED_OPTIONS.items():
+        fixed = [str(labels[PROFILE_OPTION_KEYS[option_id]]).strip().casefold() for option_id in option_ids]
+        if len(set(fixed)) != len(fixed):
+            return f"the option labels of a {profile_kind} question must differ"
     return None
 
 
@@ -293,7 +311,10 @@ def fact_question_message(
     """The one message that asks the owner about a fact: the question line of its kind (`QUESTION_KEYS`), the fact as the
     owner is shown it (its translation into `language` when it has one that holds, else as stored), the options of its
     kind (`options_of`, digits from 1; each option's id is its answer) and the hint on how to reply. `labels` holds every
-    key of `LABEL_KEYS`, from the UI strings or a label set that passed `check_labels`."""
+    key of `LABEL_KEYS`, from the UI strings or a label set that passed `check_labels`. A profile question has its own
+    message (`profile_question_message`)."""
+    if question.is_profile:
+        return profile_question_message(question, labels, translation, language)
     missing: List[str] = sorted(LABEL_KEYS - labels.keys())
     if missing:
         raise ValueError(f"the labels lack: {', '.join(missing)}")

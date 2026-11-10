@@ -136,6 +136,15 @@ class UIMessage(Enum):
     MEMORY_DIGEST_HISTORY_HEADER = "memory_digest_history_header"
     MEMORY_DIGEST_INVOICES_HEADER = "memory_digest_invoices_header"
     MEMORY_DIGEST_INVOICES_CABINET = "memory_digest_invoices_cabinet"
+    # Profile questions (FACT_PROFILE_RFC §4.7): the question line of each kind, the two options only they have, and the
+    # note that a reply in words could not be read (the form that is read, by kind).
+    MEMORY_PROFILE_PLACE_QUESTION = "memory_profile_place_question"
+    MEMORY_PROFILE_PERSON_QUESTION = "memory_profile_person_question"
+    MEMORY_PROFILE_DATE_QUESTION = "memory_profile_date_question"
+    MEMORY_OPTION_KEEP_AS_WRITTEN = "memory_option_keep_as_written"
+    MEMORY_OPTION_NOT_LISTED = "memory_option_not_listed"
+    MEMORY_PROFILE_NOT_READ = "memory_profile_not_read"
+    MEMORY_PROFILE_DATE_NOT_READ = "memory_profile_date_not_read"
     # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.6, §4.8): the receipt's header per outcome, its classifier,
     # searchability and undo lines, and the erase request and outcome. Rendered by `domain.drive_note_receipt` only;
     # placeholders `{path}`, `{version}`, `{doc_type}`, `{areas}`, `{versions}`, `{count}`, `{minutes}`, `{erased}`,

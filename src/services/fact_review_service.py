@@ -405,10 +405,13 @@ class FactReviewService:
         """Step 5. A `stuck_pending` question with a message ref was delivered: it becomes asked at its `appended_at`. One
         without a ref is retracted (the not-delivered pair, only when its frame was appended) and goes back to the front
         of the queue. Then an asked question from an earlier owner-local day becomes unanswered and stops being current.
-        A send claimed today is left alone: it may still be running. Writes no fact."""
+        A send claimed today is left alone: it may still be running. These moves are the same for every question, a profile
+        one included (it reads `scope="all"`); a profile question past its timeout is then closed `timeout`, and nothing
+        else is written for it: a timeout records no answer, and the id derived from its point keeps the point from being
+        asked again while the closed question is kept. Writes no fact."""
         state = await self._review_store.get_state(account_id) or FactReviewState(account_id=account_id)
         questions: List[FactReviewQuestion] = []
-        for question in await self._review_store.questions_for_account(account_id):
+        for question in await self._review_store.questions_for_account(account_id, scope="all"):
             if stuck_pending(question, state, now, zone):
                 question = await self._settle_stuck(question)
             questions.append(question)
@@ -418,6 +421,10 @@ class FactReviewService:
                     logger.info(f"[FactReview] question {question.question_id} unanswered since an earlier day")
                 else:
                     logger.warning(f"[FactReview] question {question.question_id} not marked unanswered: it changed")
+        for question in questions:
+            if question.is_profile and question.is_timed_out(now):
+                if await self._answer_service.close_question(question, ClosedBy.TIMEOUT):
+                    logger.info(f"[FactReview] profile question {question.question_id} timed out; closed, nothing recorded")
 
     async def _settle_stuck(self, question: FactReviewQuestion) -> FactReviewQuestion:
         """The question as housekeeping left it: completed, requeued, or as read when the store refused the move."""
@@ -651,7 +658,7 @@ class FactReviewService:
             await self._requeue(claimed, failed_today=False, why="its message could not be built")
             raise
         try:
-            await self._append_pair(claimed, review_frame(qid), question_text(message))
+            await self._append_pair(claimed, review_frame(qid, profile=claimed.is_profile), question_text(message))
         except Exception:
             await self._requeue(claimed, failed_today=False, why="its pair was not appended")
             return _StepResult()

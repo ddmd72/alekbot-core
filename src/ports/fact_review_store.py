@@ -33,6 +33,7 @@ from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_review_reply_record import ReplyRecord
 from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_rules import QuestionScope
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
 
@@ -46,9 +47,12 @@ class FactReviewStore(ABC):
         left out. No transaction."""
 
     @abstractmethod
-    async def questions_for_account(self, account_id: str) -> List[FactReviewQuestion]:
-        """The account's open questions: `account_id ==` and `status in [queued, pending, asked, unanswered]`. Unordered:
-        queue order is `queue_order`'s. No transaction."""
+    async def questions_for_account(self, account_id: str, scope: QuestionScope = "lifecycle") -> List[FactReviewQuestion]:
+        """The account's open questions of `scope`: `account_id ==` and `status in [queued, pending, asked, unanswered]`,
+        then `in_scope`. The default is the lifecycle questions, the stale facts in the review's hands: every reader that
+        treats a question as one (held facts and the pool, the review batch, the pass's closes, the digest, the Cabinet
+        queue) stays as it was and never sees a profile question; a reader that needs the others names `profile` or
+        `all`. Unordered: queue order is `queue_order`'s. No transaction."""
 
     @abstractmethod
     async def timeout_histories(self, account_id: str) -> List[FactReviewQuestion]:
@@ -57,9 +61,9 @@ class FactReviewStore(ABC):
         one that no longer validates is skipped (ERROR), as in the other list reads."""
 
     @abstractmethod
-    async def all_open(self) -> List[FactReviewQuestion]:
-        """Every open question of every account: `status in [queued, pending, asked, unanswered]`. Unordered. No
-        transaction."""
+    async def all_open(self, scope: QuestionScope = "lifecycle") -> List[FactReviewQuestion]:
+        """Every open question of `scope` of every account: `status in [queued, pending, asked, unanswered]`, then
+        `in_scope` (the default is the lifecycle questions, as for `questions_for_account`). Unordered. No transaction."""
 
     @abstractmethod
     async def by_message(self, user_id: str, ref: MessageRef) -> Optional[FactReviewQuestion]:

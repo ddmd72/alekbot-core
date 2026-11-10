@@ -687,6 +687,18 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   review item; an answered item is dropped and the flag clears when none is left. The derivation string carries `|a<digest>`
   of the answers a fact's stored answer names, so an answer re-derives exactly those facts, free. An unreadable document
   ends the step like an unreadable list. Nothing writes answers yet (the question channel is §4.7's next PRs).
+- **Profile questions (PR 5d, dark):** an open point is asked through the memory review's own channel as a
+  `FactReviewQuestion` of kind `place`, `person` or `date` (origin `profile`, fallback `none`, no texts, never a
+  `reply_text`, an `open_point` with the key, the printed words and up to three candidate options; id
+  `profile_question_id(account, key)`). Order: lifecycle questions go first (`queue_order`), at most one profile question
+  is claimed per owner-local day (`profile_claimed_on` on the review state, inside the shared daily cap). The store's list
+  reads (`questions_for_account`, `all_open`) return lifecycle questions unless a reader names `scope="profile"` or
+  `"all"`; only the claim, the reply and button lookup, the review's housekeeping and the janitor's `review_due` read both
+  (the pool, held facts, sweep plan, alerts and standing stay lifecycle-only). A profile question past its 14 days is closed
+  `timeout` in housekeeping and records nothing. A digit or a button picks an option (`profile_option_answer`,
+  `ProfileQuestionAnswers`), the answer is recorded and the question closes (owner, no answer kind, source `digit`,
+  `button` or `words`); a reply that is not an option is not read yet: the question stays open and the owner is told
+  the form that is read. Nothing creates questions yet (PR 5e), so no profile question exists in production.
 - **Failures:** an `invalid` or `refused` reply, or an `intimate` answer left with no label word, writes only
   `profile_failures` / `profile_failed_fingerprint`; the third failure on one fingerprint abandons the fact until its content
   changes (logged once). An `unavailable` reply is an outage: no failure is written, no new call starts, the rest waits for

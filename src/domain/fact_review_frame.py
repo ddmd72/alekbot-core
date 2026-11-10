@@ -18,9 +18,13 @@ def _checked(question_id: str) -> str:
     return question_id
 
 
-def review_frame(question_id: str) -> str:
-    """The user part before the question: the owner did not write it, the system says what the next message is."""
-    return f"[System: memory review q={_checked(question_id)} — Alek asked the owner about a fact he could not confirm]"
+def review_frame(question_id: str, profile: bool = False) -> str:
+    """The user part before the question: the owner did not write it, the system says what the next message is. The chat
+    model reads it in history: a lifecycle question is about a fact he could not confirm (true of a stale fact), a profile
+    question about which place, person or date a fact means (true of all three profile kinds); neither text names the other case."""
+    tail = "Alek asked the owner which place, person or date a fact means" if profile else (
+        "Alek asked the owner about a fact he could not confirm")
+    return f"[System: memory review q={_checked(question_id)} — {tail}]"
 
 
 def question_text(message: InteractiveMessage) -> str:

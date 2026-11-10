@@ -102,6 +102,7 @@ from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyS
 from src.services.document_delivery_service import DocumentDeliveryService
 from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
 from src.services.fact_answer_service import FactAnswerService
+from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
@@ -884,6 +885,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
         total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
     )) if agent_task_queue else None
+    # Profile questions (fact profile RFC §4.7): a picked option is recorded in the account's answers store.
+    _profile_question_answers = ProfileQuestionAnswers(container.profile_answers)
     _fact_answer_service = FactAnswerService(
         fact_updates=_review_fact_updates,
         repo=container.repository,
@@ -894,6 +897,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         texts=_fact_question_texts,
         interactive=_interactive,
         owner_zones=_owner_zones,
+        profile_answers=_profile_question_answers,
     ) if agent_task_queue else None
     # An owner's click on an interactive message (Facts S4 plan §3.20): the Slack interactivity route queues it, the
     # worker's `interactive_choice` branch runs it. The handlers are keyed by the binding kind they answer.
