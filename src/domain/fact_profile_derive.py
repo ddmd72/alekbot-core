@@ -292,8 +292,9 @@ def check_places(places: Sequence[AnswerPlace], evidence: TextEvidence, atlas: P
         if reason is not None:
             unresolved.append(UnresolvedPlace(place.city, place.country))
             _bump(drops, f"place_unresolved:{reason}")
-            # The model's country is a fact of its own: an unresolved city does not drop it.
-            if place.country.strip():
+            # The model's country survives a city the atlas lacks or cannot pick; a city the atlas places only in
+            # another country contradicts it, and then neither is trusted.
+            if place.country.strip() and reason in ("not_in_atlas", "ambiguous"):
                 keys.extend(atlas.resolve("", place.country)[0])
         else:
             keys.extend(found)

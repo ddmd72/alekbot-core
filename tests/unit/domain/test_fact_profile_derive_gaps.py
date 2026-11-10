@@ -96,6 +96,23 @@ def test_an_unresolved_city_keeps_the_country_key():
     assert drops == {"place_unresolved:not_in_atlas": 1}
 
 
+def test_a_city_the_atlas_places_in_another_country_does_not_keep_the_country():
+    ev, _ = evidence("Lisboa and Rome.")
+    drops = {}
+    keys, unresolved = check_places(
+        [AnswerPlace.model_validate({"city": "Lisboa", "country": "Italy", "source": "Lisboa"})], ev, ATLAS, drops)
+    assert keys == () and len(unresolved) == 1
+    assert drops == {"place_unresolved:not_in_country": 1}
+
+
+def test_an_ambiguous_city_keeps_the_country():
+    ev, _ = evidence("Place: Frankfurt.")
+    keys, _ = check_places(
+        [AnswerPlace.model_validate({"city": "Frankfurt", "country": "Germany", "source": "Frankfurt"})],
+        ev, ATLAS, {})
+    assert keys == ("co:germany",)
+
+
 def test_an_unresolved_city_with_an_unknown_country_gives_no_key():
     ev, _ = evidence("Place: Nowhereville.")
     keys, unresolved = check_places(
