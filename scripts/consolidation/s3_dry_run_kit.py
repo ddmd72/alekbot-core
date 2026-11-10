@@ -316,8 +316,10 @@ class NoWriteFactRepository(FactRepository):
     ) -> List[str]:
         return await self._real.nearest_fact_ids(account_id, vector_field, query_vector, limit)
 
-    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
-        return await self._real.get_fact_vectors(account_id, fact_ids)
+    async def get_fact_vectors(
+        self, account_id: str, fact_ids: Sequence[str], field: str = "vector"
+    ) -> Dict[str, List[float]]:
+        return await self._real.get_fact_vectors(account_id, fact_ids, field)
 
     async def write_fact_profile(
         self, fact_id: str, fields: Mapping[str, Any], expected_fingerprint: Optional[str]

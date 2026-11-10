@@ -322,10 +322,13 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
-        """Return the text vector (`vector`) of each of `fact_ids` that belongs to account `account_id` and has one.
+    async def get_fact_vectors(
+        self, account_id: str, fact_ids: Sequence[str], field: str = "vector"
+    ) -> Dict[str, List[float]]:
+        """Return the vector in `field` of each of `fact_ids` that belongs to account `account_id` and has one.
 
-        An id that does not exist, belongs to another account, or has no `vector` is left out of the result.
+        `field` is `vector` (the text vector) or `label_vector`, anything else raises ValueError before any I/O.
+        An id that does not exist, belongs to another account, or has no vector in that field is left out of the result.
         """
         pass
 

@@ -1137,7 +1137,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
 
-    fact_search = build_fact_search_service(container.repository, container.embedding_service)
+    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards)
 
     return ApplicationGraph(
         container=container,

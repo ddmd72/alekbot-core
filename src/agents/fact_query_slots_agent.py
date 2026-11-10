@@ -14,6 +14,7 @@ reaches this prompt by code deploy alone.
 """
 import json
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Callable, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -151,7 +152,7 @@ class FactQuerySlotsAgent(BaseAgent):
         def degraded(reason: str) -> FactQuery:
             query = semantic_only_query(raw, today=today, path=path)
             self._log(path, f"degraded:{reason}", query, (), (), started)
-            return query
+            return replace(query, message=raw)
 
         if not messages:
             return degraded("no_messages")
@@ -187,7 +188,7 @@ class FactQuerySlotsAgent(BaseAgent):
                 ))]))
                 continue
             self._log(path, "slots", parsed.query, parsed.refused, parsed.dropped, started)
-            return parsed.query
+            return replace(parsed.query, message=raw)
         return degraded(reason)
 
     def _request(self, system: str, history: List[Message]) -> LLMRequest:

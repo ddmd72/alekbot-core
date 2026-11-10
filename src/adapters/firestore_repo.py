@@ -736,15 +736,19 @@ class FirestoreFactRepository(FactRepository):
             docs = await query.get()
         return [doc.id for doc in docs]
 
-    async def get_fact_vectors(self, account_id: str, fact_ids: Sequence[str]) -> Dict[str, List[float]]:
+    async def get_fact_vectors(
+        self, account_id: str, fact_ids: Sequence[str], field: str = "vector"
+    ) -> Dict[str, List[float]]:
+        if field not in _NEAREST_VECTOR_FIELDS:
+            raise ValueError(f"get_fact_vectors reads {', '.join(_NEAREST_VECTOR_FIELDS)}, not {field!r}")
         out: Dict[str, List[float]] = {}
         ids = list(fact_ids)
         for start in range(0, len(ids), _GET_ALL_CHUNK):
             refs = [self.facts_col.document(fact_id) for fact_id in ids[start:start + _GET_ALL_CHUNK]]
-            async for snap in self.db.get_all(refs, field_paths=["account_id", "vector"]):
+            async for snap in self.db.get_all(refs, field_paths=["account_id", field]):
                 data = snap.to_dict() if snap.exists else None
-                if data and data.get("account_id") == account_id and data.get("vector") is not None:
-                    out[snap.id] = list(data["vector"])
+                if data and data.get("account_id") == account_id and data.get(field) is not None:
+                    out[snap.id] = list(data[field])
         return out
 
     async def write_fact_profile(
