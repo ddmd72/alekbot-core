@@ -2,7 +2,7 @@
 
 **Status:** Accepted by the owner 2026-11-09 (§12); amended by the owner 2026-11-10 (confirmed people list, needs-review
 flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11) and again the same day (profile questions to
-the owner: §4.7, §12 OD-12; the design choices of OD-13 await the owner's word). Implementation in progress (§9 PR
+the owner: §4.7, §12 OD-12, OD-13). Implementation in progress (§9 PR
 series).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
@@ -329,10 +329,11 @@ corrects the profile by code, without a model call.
 - *Person* — a `people` review item whose mention fits at least one entry of the confirmed list (the user included,
   by the selection rule of §4.5). One question per fact lineage and folded mention: the profiler flags a mention exactly
   when it fits several entries, so two facts printing the same words may mean two people (OD-13 a).
-- Not asked: `time_points` items, a `places` item that is not an unresolved place, a `people` item that fits no entry,
-  a flag without items (OD-13 c). They stay flagged and counted by the scan.
+- *Date* — a `time_points` review item. One question per fact lineage: a date belongs to one fact (OD-13 c).
+- Not asked: a `places` item that is not an unresolved place, a `people` item that fits no entry, a flag without
+  items. They stay flagged and counted by the scan.
 
-**One channel.** A profile question is a `FactReviewQuestion` of kind `place` or `person`, sent through the memory
+**One channel.** A profile question is a `FactReviewQuestion` of kind `place`, `person` or `date`, sent through the memory
 review's queue, current-question slot, primary channel, session pair, message ref, reply intake and buttons — no second
 channel. What differs is stated in the record, so no reader has to guess: origin `profile`, no texts, delivery `chat`,
 fallback `none` (silence changes nothing; a lifecycle question can never take `none` and a profile question can take
@@ -356,10 +357,13 @@ question whose point is gone (answered, placed by an atlas update, its facts no 
 there is one), the options, the usual reply hint. Place: up to three atlas rows of that name, heaviest first, labelled
 by name and country (and the large neighbour where two rows of one country would read alike), then "keep as written"
 (a real place the atlas lacks) and "don't remember". Person: up to three fitting entries (name and relation), then "not
-on my list" and "don't remember". A digit or a button picks an option.
+on my list" and "don't remember". Date: the printed words, then "don't remember"; the reply names the date. A digit or a
+button picks an option.
 
 **Words, read by code only.** A place reply of a city and a known country, a city the atlas places in one row, or a
-country that names one shown option; a person reply of a name or form of a shown entry. Anything else is not
+country that names one shown option; a person reply of a name or form of a shown entry; a date reply in one of the
+forms the derivation already accepts from the profiler (a year, a year and month, a full date, a range of two of
+these), read by the same parser. Anything else is not
 applied: the question stays open, the owner is told what form is read, and nothing is recorded for the review model. No
 model reads a reply: the question states the form, replies are short, and a failed read costs one more reply; a model
 would add a prompt, its contract tests, a failure path and a cost per reply. If the counters ever show replies that
@@ -678,16 +682,17 @@ asked of the owner in chat; the biggest namesake is never picked silently. The o
 account, never in the repository atlas; filling the atlas in the background is out of scope. Needs-review items use the
 same chat channel. An answer fixes the profile without asking the model again where code can do it.
 
-**OD-13 Design choices of §4.7 (proposed 2026-11-10, to confirm).**
+**OD-13 Design choices of §4.7 (decided 2026-11-10 under the owner's delegation).**
 - (a) *Person questions per fact, not per mention across the account.* A mention is flagged because it fits several
   entries; an account-wide answer would file every other fact printing those words under the person this one meant.
   Places stay account-wide: a printed city and country name one place for the owner.
 - (b) *No list edit from an answer in this series.* An alias added to an entry would re-profile every fact naming
   that entry (a model call each) and, for a mention that fits several entries, misfile the others; a new entry needs a
   name and a relation the chat cannot check. The list stays owner-script only; `review_answer` stays reserved.
-- (c) *Time-point items are not asked.* A date answer belongs to one fact and needs a date read from free words in any
-  language (a model, or a parser this repository does not have); flagged facts are still written and searched. Owner:
-  ask them later, or leave them counted.
+- (c) *Time-point items are asked, one question per fact.* The owner's rule is that everything the profiler could not
+  decide goes to chat. A date answer belongs to one fact, so it is stored for that fact's lineage. The reply is read only
+  in the date forms the derivation already parses; a reply in other words is not applied and the question says which
+  form is read. No model and no new free-word date parser.
 - (d) *The atlas reason is not stored on the fact.* The question needs the candidate rows anyway, read from the same
   atlas when it is built; storing the reason would change the stored shape and re-derive every profile once for a
   value nothing else reads.
