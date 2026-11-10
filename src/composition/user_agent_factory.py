@@ -656,7 +656,9 @@ class UserAgentFactory(AgentFactoryPort):
         # request that reaches it during the awaits below must be billed and captured.
         # Quick/Smart/Router already set self.coordinator in their constructors;
         # overwriting with the same value is harmless.
-        for agent in agents_to_register:
+        # The query-slots agents are helpers of the router and the memory agent, never routable, so
+        # they are wired here but not registered: their LLM calls are billed and recorded like any other.
+        for agent in [*agents_to_register, router_slots_agent, slots_agent]:
             if agent is not None:
                 agent.coordinator = self.coordinator
                 agent._prompt_content_store = self.prompt_content_store

@@ -420,7 +420,8 @@ class RouterAgent(BaseAgent):
         return asyncio.create_task(self._read_slots(messages, account_id))
 
     async def _read_slots(self, messages: List[Message], account_id: str) -> Optional[FactQuery]:
-        assert self.slots is not None
+        if self.slots is None:
+            return None
         try:
             return await self.slots.query_for_messages(
                 messages, path="router", account_id=account_id, user_id=self.user_id,
@@ -433,7 +434,9 @@ class RouterAgent(BaseAgent):
         self, task: "asyncio.Task[Optional[FactQuery]]", message: AgentMessage,
     ) -> Optional[EnrichedContext]:
         """The scored search of the slots query, outside the baseline; None on any failure (the turn goes on)."""
-        assert self.fact_search is not None
+        if self.fact_search is None:
+            task.cancel()
+            return None
         try:
             query = await task
             if query is None:

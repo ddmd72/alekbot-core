@@ -14,10 +14,9 @@ import json
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, List, Sequence
+from typing import TYPE_CHECKING, Any, List, Sequence
 
 from ..agents.base_agent import BaseAgent
-from ..agents.fact_query_slots_agent import FactQuerySlotsAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.entities import FactEntity
 from ..domain.fact_query import FactQuery
@@ -27,6 +26,9 @@ from ..domain.mcp import QUERIES_MAX, normalize_queries, queries_dropped
 from ..domain.memory_search_texts import NO_QUERIES_NOTE, NO_RECORDS_TEXT
 from ..ports.fact_search_port import FactSearchPort
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .fact_query_slots_agent import FactQuerySlotsAgent
 
 PATH = "memory_agent"
 
@@ -43,7 +45,7 @@ class FactsMemoryAgent(BaseAgent):
         self,
         config: AgentConfig,
         fact_search: FactSearchPort,
-        slots: FactQuerySlotsAgent,
+        slots: "FactQuerySlotsAgent",
         account_id: str,
         user_id: str,
         user_location: str,
