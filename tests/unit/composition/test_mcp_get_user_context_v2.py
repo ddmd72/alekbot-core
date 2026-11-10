@@ -20,7 +20,7 @@ from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos
 
 _RESOURCE_URI = "https://mcp.example.test/mcp"
-_NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries."
+_NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries, most important first."
 
 
 def _fact(content: str, *, domain: Optional[str] = None, primary: Optional[str] = None,
