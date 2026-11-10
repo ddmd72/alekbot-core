@@ -1,7 +1,9 @@
 # RFC: Fact profile — a per-fact retrieval profile, one domain registry and multi-list memory search
 
 **Status:** Accepted by the owner 2026-11-09 (§12); amended by the owner 2026-11-10 (confirmed people list, needs-review
-flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11). Implementation in progress (§9 PR series).
+flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11) and again the same day (profile questions to
+the owner: §4.7, §12 OD-12; the design choices of OD-13 await the owner's word). Implementation in progress (§9 PR
+series).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
 are private working documents; measured numbers quoted here are aggregates from those runs.
@@ -55,16 +57,16 @@ step through `write_fact_profile` (§2.3); never by the consolidator, the review
 | `label_vector` | 768-dim vector of the joined labels (`RETRIEVAL_DOCUMENT`) | code | labels list |
 | `time_role` | `event` / `state` / `validity` / `measurement` / `timeless` | model | list ordering |
 | `time_points` | ≤ 8 maps `{from, to, precision, source}` | model, each point verified as printed; a date printed without a year takes the year the fact was recorded (§4.4) | time list, ordering, `when:` line |
-| `place_keys` | `pl:<geonameid>` (with the large neighbour) and `co:<country>` | code from the model's `{city, country, source}` via the atlas | places list |
-| `places_unresolved` | list of `{city, country}` with no single atlas row | code | reports only |
+| `place_keys` | `pl:<geonameid>` (with the large neighbour) and `co:<country>`; `lp:<folded city>` for a place the owner confirmed that the atlas lacks (§4.7) | code from the model's `{city, country, source}` via the atlas and the owner's place answers | places list |
+| `places_unresolved` | list of `{city, country}` with no single atlas row and no owner answer that places it | code | the place question (§4.7), reports |
 | `people` | list of `{name, role, name_keys, role_keys}` | model names and roles; keys by code (`skeleton_key`, word forms) | people list, people cards |
 | `primary_domain` | registry key | code (§3.3) | display, voice filter, baseline grouping |
 | `domain_keys` | registry keys: primary, hard extras, ≤ 2 topical extras | code | domain list, Cabinet filter |
 | `user_identity` | bool | model answer, stored | baseline identity block |
 | `kinds` | subset of the seven kinds | model answer | kinds list |
 | `sensitivity` | `ordinary` / `discreet` / `intimate` | model answer | intimate gate, voice baseline |
-| `profile_review_needed` | bool | model's `quality` answer, checked by code (§4.6) | the review question (a later PR), scan counts |
-| `profile_review_items` | list of `{field, mention}`, `field` one of `people` / `time_points` / `places` | model, each mention verified as printed (§4.6) | the review question (a later PR) |
+| `profile_review_needed` | bool | model's `quality` answer, checked by code (§4.6); cleared when the owner answered every item (§4.7) | scan counts |
+| `profile_review_items` | list of `{field, mention}`, `field` one of `people` / `time_points` / `places` | model, each mention verified as printed (§4.6); an item the owner answered is dropped (§4.7) | the person question (§4.7) |
 | `profile_answer` | map: the model's validated raw answer | code | re-derivation without a call |
 | `profile_fingerprint` | sha256 of the profiler's user message | code | staleness |
 | `profile_derivation` | code-derivation version string (§4.2) | code | re-derivation trigger |
@@ -85,6 +87,7 @@ expiry fields and the old `domain` field keep their writers and values. The prof
 `PROFILE_FIELDS` disjoint from them and from `IN_PLACE_FIELDS`, `fact_lifecycle.py:48`). The old `domain` keeps being
 written by the consolidator until PR 13 (§9) and is read only as the directive marker after PR 12.
 The confirmed people list (§4.5) is not a fact field: it lives in its own collection and the profiler step never writes it.
+Nor are the owner's profile answers (§4.7): one document per account, read by the step, written only from an answer.
 
 ### 2.3 Writing a profile
 
@@ -191,10 +194,12 @@ model.
   them changes what the model must answer for this fact, and a tags-only or lifecycle-only change, or a list edit about
   a person the fact does not name, must not cost a call. A list edit makes exactly the facts that name the edited entry
   `stale_input`; they are re-profiled by the step's normal order and cap.
-- `profile_derivation = DERIVE_VERSION | registry digest | atlas digest | is_directive | recording year`. A mismatch
+- `profile_derivation = DERIVE_VERSION | registry digest | atlas digest | is_directive | recording year`, then
+  `| a<answers digest>` when the owner has answered a point this fact's stored answer names (§4.7). A mismatch
   means only code inputs changed: the step re-derives from `profile_answer` without a call. The recording year (§4.4) is
   in it because `reported_date` can be rewritten in place (`IN_PLACE_FIELDS`), and a yearless date must follow it
-  without a call.
+  without a call. The answers digest covers only the answers this fact names, so an answer re-derives exactly the facts
+  it changes, and a fact no answer touches keeps its string.
 - `classify_profile(fact)` (pure) → `missing` (no fingerprint) / `stale_input` (fingerprint ≠ hash of the current
   message) / `stale_derivation` / `abandoned` (§4.4) / `fresh`.
 - **Scope:** every `state == current` fact of the account being processed, including the history-trail fact a history
@@ -303,13 +308,85 @@ files the fact under the wrong person, time or place and nobody notices.
 - **Written but flagged.** A `needs_review` profile is written and used by search like any other; the flag and the
   checked items are stored as `profile_review_needed` and `profile_review_items` (§2.1). It is not a failure and does not
   count towards abandonment.
-- **The question channel is a later PR** — the one that also asks about unresolved places. Today's review questions are
-  lifecycle questions about stale facts (`QuestionKind` still_true / happened / renewed / paid, fixed options, a fallback
-  applied on timeout); a profile question is about a current fact, its answer is free text and its effect is a list entry
-  or a profile correction. That PR adds the question kind, its code-built texts (`fact_question_texts.py`) and the answer
-  path; this one stores what it reads.
+- **The questions** are §4.7 (PR 5c–5e): a profile question is about a current fact, its options are built from the atlas
+  or the list, and its answer corrects the profile by code; PR 5b only stores what it reads.
 - **Old answers.** A stored answer written before these fields existed reads as `confident` with no items (schema
   defaults), so re-derivation never needs a call for them.
+
+### 4.7 Profile questions to the owner (owner, 2026-11-10)
+
+A place the atlas cannot place, and a person mention the profiler could not tie to one list entry, are asked of the owner
+in chat, never guessed: a guess files every fact that prints the place or names the person under the wrong key, and
+nobody notices. Questions are meant to stay rare; one interruption is cheaper than a wrong fact. The owner's answer
+corrects the profile by code, without a model call.
+
+**What is asked (an open point).**
+- *Place* — a place a current fact's profile keeps in `places_unresolved` (atlas reason `ambiguous`, `not_in_atlas`,
+  `not_in_country` or `unknown_country`). One question per distinct place across the account: key = folded city + folded
+  country (the atlas's canonical country name when it knows the country), as the profile names them. The answer applies to
+  every fact whose profile names that place. The reason and the candidate rows are read from the atlas when the
+  question is built (`PlaceNames.candidates`), not stored on the fact (OD-13 d).
+- *Person* — a `people` review item whose mention fits at least one entry of the confirmed list (the user included,
+  by the selection rule of §4.5). One question per fact lineage and folded mention: the profiler flags a mention exactly
+  when it fits several entries, so two facts printing the same words may mean two people (OD-13 a).
+- Not asked: `time_points` items, a `places` item that is not an unresolved place, a `people` item that fits no entry,
+  a flag without items (OD-13 c). They stay flagged and counted by the scan.
+
+**One channel.** A profile question is a `FactReviewQuestion` of kind `place` or `person`, sent through the memory
+review's queue, current-question slot, primary channel, session pair, message ref, reply intake and buttons — no second
+channel. What differs is stated in the record, so no reader has to guess: origin `profile`, no texts, delivery `chat`,
+fallback `none` (silence changes nothing; a lifecycle question can never take `none` and a profile question can take
+nothing else), never a `reply_text` (the owner's words are never offered to the review model), `quoted_text` the newest
+current fact naming the point, an `open_point` with the key, the printed words, the atlas reason and the options shown,
+and an id derived from the account and the key, so one point is never queued twice. Every reader that treats a question
+as a stale fact in the review's hands (held facts and the pool, the review batch and the review model's view, the pass's
+closes, fallbacks, kept-twice, the digest, the Cabinet queue) reads lifecycle questions only: the store's list reads
+return lifecycle questions unless a reader names another scope. Only the claim, the reply and button lookup, the
+review's housekeeping (a stuck send, an asked question that becomes unanswered, a timeout) and the janitor's
+`review_due` read both.
+
+**Order and rate.** Lifecycle questions go first (a stale fact is wrong in answers now; a profile gap costs recall).
+At most one profile question is claimed per owner-local day, inside the shared daily cap, and at most three are open.
+They are created at the end of the daily review run, after its profile step: the points named by the most current
+facts first, then the newest fact. A run that ends with an error creates and closes nothing; otherwise an open profile
+question whose point is gone (answered, placed by an atlas update, its facts no longer current) closes
+`resolved_elsewhere`.
+
+**The message.** The question line of its kind and the printed words, the quoted fact (its stored translation when
+there is one), the options, the usual reply hint. Place: up to three atlas rows of that name, heaviest first, labelled
+by name and country (and the large neighbour where two rows of one country would read alike), then "keep as written"
+(a real place the atlas lacks) and "don't remember". Person: up to three fitting entries (name and relation), then "not
+on my list" and "don't remember". A digit or a button picks an option.
+
+**Words, read by code only.** A place reply of a city and a known country, a city the atlas places in one row, or a
+country that names one shown option; a person reply of a name or form of a shown entry. Anything else is not
+applied: the question stays open, the owner is told what form is read, and nothing is recorded for the review model. No
+model reads a reply: the question states the form, replies are short, and a failed read costs one more reply; a model
+would add a prompt, its contract tests, a failure path and a cost per reply. If the counters ever show replies that
+code cannot read, the rule for a model is at most one cheap-tier call per owner reply, only after code failed to read it.
+
+**Where answers live.** `{prefix}profile_answers`, one document per account (doc id `{account_id}`): `places [{key,
+city, country, resolution, geonameid, question_id, answered_at}]` and `people [{key, lineage_id, mention, resolution,
+name, question_id, answered_at}]`. Place resolutions: `atlas` (the row the owner picked or named), `local` (a place the
+atlas lacks, city and country as printed or typed), `unknown`. Person resolutions: `entry` (an entry's name), `not_listed`,
+`unknown`. Port `ProfileAnswerRepository` (`get`, `record` — a transaction, the first answer for a key wins). Per account
+and never in the repository atlas (the repository is public), not on the account document, not in the confirmed list
+(OD-13 b). Written only from the owner's answer; the profiler, the consolidator and the review pass never write it. A
+document that does not parse ends the profile step, as the list does (§4.5): deriving without it would undo answers.
+A timeout (14 days) writes nothing; the derived id keeps the point from being asked again while the closed question is
+kept (90 days), after which an unanswered point may be asked once more. "Don't remember" records `unknown`: never
+asked again.
+
+**Effect without a model call.** `derive_profile` reads the answers the fact names. A place answer is applied before
+the atlas: `atlas` gives that row's keys as resolution would, `local` gives `lp:<folded city>` and the country key when
+the atlas knows the country, `unknown` leaves the place unresolved; a row that has left the atlas falls back to
+resolution and is counted. A `places` review item naming an answered place is dropped. A person answer applies the
+rules of §4.5 to that mention: a printed name is kept and takes the entry's relation, a relation alone takes the
+entry's full name with `from_list`; the user means no person entry; `not_listed` keeps what the fact prints; the item
+is dropped. The flag clears when the owner answered every item the model gave. The answers digest in
+`profile_derivation` (§4.2) makes exactly the facts naming an answered point `stale_derivation`; the next profile step
+(the next consolidation or daily review) re-derives them free and refreshes the baseline. Search reaches a local place
+through the `lp:` key its query side adds (§5.3).
 
 ## 5. Search
 
@@ -349,7 +426,7 @@ request (no prompt involved), as `facts_memory` does today.
 | domain | `domains` | every fact whose `domain_keys` hold the domain; two domains → facts carrying both, the union when none does. A full RRF list with equal weight — never a tie-break or a half weight (measured: no gain; the tie-break lowered a collect-all question) | in-list order, cut at 50 (`scope=all`: 100) |
 | time | intent `future`/`past`/`period` | a point inside the window; a recurring occasion matches by month and day in any year | in-list order |
 | time (latest) | intent `latest` | union of the other lists' candidates with a point | newest point first |
-| places | `places` | `place_keys` ∩ the atlas query keys (a country reaches its cities; a city reaches its large neighbour) | in-list order |
+| places | `places` | `place_keys` ∩ the atlas query keys (a country reaches its cities; a city reaches its large neighbour) plus `lp:<folded name>` for a named city (an owner-confirmed place the atlas lacks, §4.7) | in-list order |
 | people | `people` | a relation word → facts whose mention role has it + every spelling of the matching cards (§7); a name → facts whose name keys match, widened by its card's spellings; with domains given, kept to those in the domains when that leaves any | in-list order |
 | kinds | `kinds` | stored `kinds` ∩ requested | in-list order |
 
@@ -465,6 +542,9 @@ Each PR is small, deploys on its own and changes no behaviour a later PR needs u
 | — | **Backfill** (§8) | owner OK | — |
 | 5 | People cards + digest line | — | `tests/unit/domain/test_person_cards.py`, `tests/unit/services/test_fact_review_digest_people_line.py` |
 | 5b | Confirmed people list (store, port, selection, block in the profiler message, fingerprint), needs-review answer and fields, approximate and yearless dates in the derive check; tokens amended | tokens uploaded; the owner's list written by the ops script (dry run first) | `tests/unit/domain/test_confirmed_people.py`, `test_fact_profile_fingerprint_people.py`, `test_fact_profile_yearless_dates.py`, `test_fact_profile_approximate_dates.py`, `test_fact_profile_review.py`, `test_fact_profile_people_from_list.py`, `tests/unit/adapters/test_confirmed_people_store_kit.py`, `tests/unit/services/test_fact_profile_people_list.py`, `tests/unit/agents/test_fact_profiler_agent_people_block.py`, `tests/unit/prompts/test_fact_profiler_prompt_contract_review.py` |
+| 5c | Profile answers store + port, atlas candidates and row keys, answers in `derive_profile` and the derivation string, `lp:` key on the query side; nothing writes answers yet | — | `tests/unit/domain/test_profile_answers.py`, `test_place_candidates.py`, `test_fact_profile_derive_answers.py`, `test_fact_profile_derivation_answers.py`, `tests/unit/adapters/test_profile_answer_store_kit.py`, `tests/unit/services/test_fact_profile_answers_step.py`, `tests/unit/services/test_fact_search_local_place.py` |
+| 5d | Profile question kinds on the review record, scoped list reads, order and daily rate, housekeeping and timeout, the message and its labels, the answer path for digits and buttons; nothing creates questions yet | — | `tests/unit/domain/test_profile_question_record.py`, `test_profile_question_queue.py`, `test_profile_question_message.py`, `tests/unit/services/test_profile_question_answers.py`, `test_fact_review_profile_housekeeping.py`, `test_fact_lifecycle_sweep_profile_scope.py` |
+| 5e | Open points from the profile view, creation and `resolved_elsewhere` in the daily run, words read by code; turns the questions on | 5c and 5d deployed | `tests/unit/domain/test_profile_open_points.py`, `test_profile_reply_words.py`, `tests/unit/services/test_fact_review_profile_questions.py` |
 | 6 | `fact_search_lists.py`, `FactQuery`, `FactSearchService` + port, snapshot cache; no caller | — | `tests/unit/domain/test_fact_search_windows.py`, `test_fact_search_recurring.py`, `test_fact_search_intersection.py`, `test_fact_search_people.py`, `test_fact_search_intimate_gate.py`, `test_fact_search_collect_all.py`, `test_fact_search_kinds_list.py`, `tests/unit/services/test_fact_search_service.py` |
 | 7 | P1 token + `FactQuerySlotsAgent` + `parse_slots` | token uploaded | `tests/unit/domain/test_fact_query_parse.py`, `tests/contracts/test_fact_query_slots_prompt_contract.py`, `tests/unit/agents/test_fact_query_slots_agent.py` |
 | — | **Acceptance re-run** (§10.3) | backfill done | — |
@@ -495,6 +575,12 @@ Confirmed people cases use the universe household as the list: Alex Doe (forms "
 partner, Jamie Doe older daughter, Ana Doe younger daughter, Maria Doe mother (forms "Mariia", "Mia"), Hanna Doe sister.
 A fact printing "Jamie" names Jamie Doe only; a fact printing only "Doe" names every Doe; "mother" names Maria Doe;
 "Mariia" in Ukrainian script names Maria Doe; a fact printing none of them names nobody and keeps its fingerprint.
+Profile questions (§4.7) use a fixture atlas: Rome with rows in two countries (the ambiguous place), Porto and Lisbon
+with one row each, no Springfield (the place the atlas lacks). Facts printing Rome without a country share one
+question; a picked row gives every one of them that row's keys after one free re-derivation, and a fact printing Porto
+is untouched. "Keep as written" on Springfield gives `lp:springfield`, and a query naming Springfield reaches it. A
+person question over a list of Alex Doe (the user), Clara Moreira and Jamie Doe offers Alex Doe and Jamie Doe for a
+flagged "Doe", and its answer applies only to the quoted fact.
 Editing Ana Doe's entry makes only the facts that mention Ana (by name or as the younger daughter) stale. Dates:
 "Hamburg conference Oct 15" recorded in 2026 gives 2026-10-15; "weekend in Coimbra with Clara Mar 6–8" gives the range
 2026-03-06 to 2026-03-08; a conference talk "around mid-October 2026" is filed at 2026-10 (month precision).
@@ -525,6 +611,8 @@ PR 8. A fresh, truly unseen question set, labelled from two weeks of use, runs o
 2b. PR 5b: the owner uploads the amended profiler tokens; PR 5b deploys; the ops script shows the owner's list and the
     number of facts it would make stale, then writes it on the owner's word. The step re-profiles those facts within its
     per-run cap; facts that name no listed person are not re-profiled by this (§13).
+2c. PR 5c and 5d deploy dark (no question exists yet; their texts ship by deploy, no token upload); PR 5e turns the
+    questions on. The first daily run after it queues at most three; one goes out per day.
 3. PR 4 deploys; backfill run (owner OK); scan shows 0 unprofiled.
 4. PR 5–7 deploy (no reader change); owner uploads the P1 token; acceptance re-run; owner approves.
 5. PR 8, then 9, then 10, each watched for a day in `[FactSearch]` lines and turn latency.
@@ -585,6 +673,25 @@ is written and used; the owner is asked in chat by a later PR rather than the mo
 a date printed without a year takes the recording year, applied by code from the fact's own fields, so the answer stays
 independent of when the profiler runs.
 
+**OD-12 Profile questions (owner, 2026-11-10, binding).** A place the atlas cannot place (ambiguous, or missing) is
+asked of the owner in chat; the biggest namesake is never picked silently. The owner's place answers are stored per
+account, never in the repository atlas; filling the atlas in the background is out of scope. Needs-review items use the
+same chat channel. An answer fixes the profile without asking the model again where code can do it.
+
+**OD-13 Design choices of §4.7 (proposed 2026-11-10, to confirm).**
+- (a) *Person questions per fact, not per mention across the account.* A mention is flagged because it fits several
+  entries; an account-wide answer would file every other fact printing those words under the person this one meant.
+  Places stay account-wide: a printed city and country name one place for the owner.
+- (b) *No list edit from an answer in this series.* An alias added to an entry would re-profile every fact naming
+  that entry (a model call each) and, for a mention that fits several entries, misfile the others; a new entry needs a
+  name and a relation the chat cannot check. The list stays owner-script only; `review_answer` stays reserved.
+- (c) *Time-point items are not asked.* A date answer belongs to one fact and needs a date read from free words in any
+  language (a model, or a parser this repository does not have); flagged facts are still written and searched. Owner:
+  ask them later, or leave them counted.
+- (d) *The atlas reason is not stored on the fact.* The question needs the candidate rows anyway, read from the same
+  atlas when it is built; storing the reason would change the stored shape and re-derive every profile once for a
+  value nothing else reads.
+
 **Inputs found contradictory or under-specified (to confirm):**
 1. The profiler prompt draft claims its DOMAIN QUESTIONS are the taxonomy's model rule text byte for byte, but holds the
    round-3 rules; the taxonomy text is now the round-4b hybrid. The token pair of §4.3 combines v4 with the hybrid and was never run as one prompt — hence the
@@ -609,6 +716,7 @@ The consolidator's duplicate search and the review's neighbour search (stay on `
 the drive and Gmail indexes; SYSTEM-account facts; the Router triage token (until PR 13); an LLM re-ranker; graph edges
 or one-hop expansion; RRF weights; storing "planned/past"; per-turn Router injection into voice; a card editing page;
 discreet-fact rules for shared channels beyond Lelik's baseline; re-profiling on a prompt change (an explicit,
-owner-approved run); the review-question channel for flagged profiles (a later PR, with the place questions); the consolidator reading the
+owner-approved run); questions about time-point items, list edits from an answer, correcting a recorded answer, profile
+questions in the Cabinet, filling the atlas from answers (§4.7, OD-13); the consolidator reading the
 confirmed list (a later PR); re-profiling facts that name no listed person after the token amendment (an explicit,
 owner-approved run, as for any prompt change); building people cards from the confirmed list.
