@@ -36,6 +36,7 @@ from typing import FrozenSet
 
 from ..domain.companion_config import CompanionConfig
 from ..domain.drive_tool_texts import COPY_FILE_NAME
+from ..domain.memory_search_texts import QUERIES_FIELD_TEXT, SEARCH_MEMORY_DESCRIPTION
 from ..domain.voice_errand import SEND_TO_CHAT_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
@@ -129,11 +130,11 @@ MEMORY_SEARCH = AgentDescriptor(
         Intent.SEARCH_MEMORY: ExecutionMode.SYNC,
     },
     description="Personal knowledge base: search facts",
-    capability_descriptions={
-        Intent.SEARCH_MEMORY: (
-            "Semantic search across the personal knowledge base — "
-            "biographical facts, projects, health, family, possessions, preferences"
-        ),
+    capability_descriptions={Intent.SEARCH_MEMORY: SEARCH_MEMORY_DESCRIPTION},
+    context_schemas={
+        Intent.SEARCH_MEMORY: {
+            "queries": {"type": "array", "items": {"type": "string"}, "description": QUERIES_FIELD_TEXT},
+        },
     },
 )
 

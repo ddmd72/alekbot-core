@@ -604,10 +604,16 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_repo=container.repository,
     )
 
+    # The people cards (RFC §7) and the one fact search: built first, the agent factory hands the search to the
+    # memory agent of every user.
+    _person_cards = FirestorePersonCardRepository(db_client, env_config)
+    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards)
+
     # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
     logger.info("🏭 Initializing User Agent Factory...")
     agent_factory = UserAgentFactory(
         config=config,
+        fact_search=fact_search,
         env_config=env_config,
         coordinator=coordinator,
         user_repo=user_repo,
@@ -728,7 +734,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The profile step (fact profile RFC §4.4): one instance, run inside the lease by both the consolidation and the
     # memory review; the cap is an optional knob, read here with os.getenv.
     # The people cards (RFC §7) it rebuilds are listed in the review's weekly digest.
-    _person_cards = FirestorePersonCardRepository(db_client, env_config)
     # The one place atlas: the step resolves places with it and the owner's word replies to profile questions read it.
     _place_atlas = LazyAtlas()
     _fact_profile_step = build_fact_profile_service(
@@ -1136,8 +1141,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             PlatformAdapterFactory.register("telegram", telegram_adapter)
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
-
-    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards)
 
     return ApplicationGraph(
         container=container,

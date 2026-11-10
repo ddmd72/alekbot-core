@@ -39,6 +39,7 @@ from ..ports.user_repository import UserRepository
 from ..ports.video_duration_port import VideoDurationPort
 from ..ports.account_repository import AccountRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.fact_search_port import FactSearchPort
 from ..ports.llm_port import LLMPort
 from ..ports.session_store import SessionStore
 from ..services.prompt_builder import UserPromptBuilder
@@ -76,6 +77,7 @@ from ..agents.core.smart_response_agent import create_smart_response_agent
 from ..infrastructure.task_execution_resolver import TaskExecutionResolver
 from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
+from ..agents.fact_query_slots_agent import FactQuerySlotsAgent
 from ..agents.memory_search_agent import FactsMemoryAgent
 from ..agents.web_search_agent import WebSearchAgent
 from ..agents.web_search_light_agent import WebSearchLightAgent
@@ -177,6 +179,7 @@ class UserAgentFactory(AgentFactoryPort):
         grok_service: Optional[LLMPort],
         openai_service: Optional[LLMPort] = None,
         embedding_service: EmbeddingService,
+        fact_search: FactSearchPort,
         repository,
         config_service: ConfigurationService,
         biographical_context_service: BiographicalContextService,
@@ -230,6 +233,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.grok_service = grok_service
         self.openai_service = openai_service
         self.embedding_service = embedding_service
+        self.fact_search = fact_search
         self.repository = repository
         self.config_service = config_service
         self.biographical_context_service = biographical_context_service
@@ -490,6 +494,12 @@ class UserAgentFactory(AgentFactoryPort):
         account_id = user_profile.account_id
 
         memory_search_context = self.context_builder.build("facts_memory", user_profile.config)
+        slots_agent = FactQuerySlotsAgent(
+            AgentConfig(agent_id=f"fact_query_slots_{user_id}", agent_type="fact_query_slots"),
+            execution_context=memory_search_context,
+            prompt_builder=prompt_builder,
+            user_timezone=user_profile.config.timezone,
+        )
         memory_agent = FactsMemoryAgent(
             config=AgentConfig(
                 agent_id=f"facts_memory_agent_{user_id}",
@@ -497,13 +507,11 @@ class UserAgentFactory(AgentFactoryPort):
                 timeout_ms=MEMORY_SEARCH_CFG.timeout_ms,
                 capabilities=["personal_data_retrieval", "fact_search"],
             ),
-            repository=self.repository,
-            embedding_service=self.embedding_service,
+            fact_search=self.fact_search,
+            slots=slots_agent,
             account_id=account_id,
-            search_enrichment=search_enrichment_service,
-            execution_context=memory_search_context,
-            prompt_builder=prompt_builder,
             user_id=user_id,
+            user_location=user_profile.config.location or "",
         )
 
         web_search_context = self.context_builder.build("web_search", user_profile.config)
@@ -977,6 +985,13 @@ class UserAgentFactory(AgentFactoryPort):
             user_timezone=ctx.user_profile.config.timezone,
             history_summary_service=ctx.history_summary_service,
         )
+
+    async def get_memory_search(self, user_id: str) -> Optional[FactsMemoryAgent]:
+        """The user's FactsMemoryAgent: the one memory entry point of the connector and the Router's callers."""
+        await self.ensure_agents_for_user(user_id)
+        cached = self._agent_cache.get(user_id)
+        agent = cached.get("memory_agent") if cached else None
+        return agent if isinstance(agent, FactsMemoryAgent) else None
 
     async def get_lelik(self, user_id: str) -> Optional[LelikAgent]:
         """The user's LelikAgent, built on first use like any lazy agent. The voice

@@ -21,7 +21,7 @@ agents_registry {
     memory_search_agent {
         intent: "search_memory"
         when: "The caller asks about their own past that knowledge_base does not cover: an older conversation, a detail, something they once mentioned."
-        how: "Name the topic, not a question. Put specifics you already know (names, places) in the query as anchors."
+        how: "The search hears nothing of this call and reads only the phrases in context.queries, written as that field describes, in English whatever language the call is in. A name, a place or a date is what lets a phrase find its record; one the caller said or knowledge_base holds is known, not guessed: put it in. query says in a few words what you need."
     }
 
     web_search_light_agent {
