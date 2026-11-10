@@ -28,11 +28,11 @@ from src.services.voice_call_setup_service import VoiceCallSetupService
 from src.services.voice_session_service import VoiceSessionService
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from tests.support.firestore_eval import eval_transactions
-from tests.support.voice_mcp_kit import ACCOUNT, BASE, DIGEST_KEY, FACTS_URI, TICKET, USER, Kit
+from tests.support.voice_mcp_kit import ACCOUNT, BASE, DIGEST_KEY, DRIVE_URI, FACTS_URI, TICKET, USER, Kit
 
 
 class EchoingXai:
-    """A fake xAI socket: after the session.update it reports the memory server's tools/list as failed (its error
+    """A fake xAI socket: after the session.update it reports the first MCP server's tools/list as failed (its error
     text carrying the URL and the token) and then an error event that echoes the session.update it got."""
 
     def __init__(self) -> None:
@@ -45,14 +45,14 @@ class EchoingXai:
     def _build_script(self) -> list:
         update = self.sent[0]
         mcp = [tool for tool in update["session"]["tools"] if tool["type"] == "mcp"]
-        facts = mcp[0]
+        server = mcp[0]
         return [
-            {"type": "mcp_list_tools.in_progress", "item_id": "item-mcp-1", "server_label": facts["server_label"]},
-            {"type": "mcp_list_tools.failed", "item_id": "item-mcp-1", "server_label": facts["server_label"],
-             "error": {"message": f"Cancelled by cancel scope ({facts['server_url']}, "
-                                  f"Authorization: Bearer {facts['authorization']})"}},
+            {"type": "mcp_list_tools.in_progress", "item_id": "item-mcp-1", "server_label": server["server_label"]},
+            {"type": "mcp_list_tools.failed", "item_id": "item-mcp-1", "server_label": server["server_label"],
+             "error": {"message": f"Cancelled by cancel scope ({server['server_url']}, "
+                                  f"Authorization: Bearer {server['authorization']})"}},
             {"type": "error", "error": {"type": "invalid_request_error",
-                                        "message": f"authorization {facts['authorization']} refused",
+                                        "message": f"authorization {server['authorization']} refused",
                                         "echo": json.dumps(update)}},
         ]
 
@@ -152,20 +152,20 @@ def transactions():
 
 @pytest.mark.usefixtures("transactions")
 class TestNoTokenInAnyLog:
-    async def test_the_full_path_offers_both_servers_and_logs_no_token(self, caplog):
+    async def test_the_full_path_offers_the_drive_server_and_logs_no_token(self, caplog):
         kit = Kit()
         caplog.set_level(logging.DEBUG)
         config = await _session_config(kit)
-        tokens = [config[VOICE_MCP_TOKENS_FIELD]["facts"], config[VOICE_MCP_TOKENS_FIELD]["drive"]]
+        assert set(config[VOICE_MCP_TOKENS_FIELD]) == {"drive"}
+        tokens = [config[VOICE_MCP_TOKENS_FIELD]["drive"]]
         assert all(tokens) and config[VOICE_MCP_SERVERS_FIELD]
         ws = EchoingXai()
 
         control, alerts = await _run_relay(config, AsyncMock(return_value=ws))
 
-        # The session.update carried both servers with their raw tokens (the test is not vacuous).
+        # The session.update carried the drive server with its raw token (the test is not vacuous).
         mcp = [tool for tool in ws.sent[0]["session"]["tools"] if tool["type"] == "mcp"]
-        assert [(t["server_label"], t["authorization"]) for t in mcp] == [("alek_memory", tokens[0]),
-                                                                          ("alek_drive", tokens[1])]
+        assert [(t["server_label"], t["authorization"]) for t in mcp] == [("alek_drive", tokens[0])]
         logged = _everything_logged(caplog)
         reported = "\n".join(alerts.posted + kit.alerts.posted) + repr(control.mock_calls)
         for token in tokens:
@@ -173,21 +173,21 @@ class TestNoTokenInAnyLog:
             assert token not in reported
         assert BASE.split("//")[1] not in logged
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("remote tool server alek_memory unavailable" in w for w in warnings)
+        assert any("remote tool server alek_drive unavailable" in w for w in warnings)
         assert alerts.posted and "invalid_request_error" in alerts.posted[0]
 
     async def test_a_failed_open_whose_error_carries_the_token_logs_no_token(self, caplog):
         kit = Kit()
         caplog.set_level(logging.DEBUG)
         config = await _session_config(kit)
-        token = config[VOICE_MCP_TOKENS_FIELD]["facts"]
-        connect = AsyncMock(side_effect=OSError(f"handshake failed: Authorization: Bearer {token} {FACTS_URI}"))
+        token = config[VOICE_MCP_TOKENS_FIELD]["drive"]
+        connect = AsyncMock(side_effect=OSError(f"handshake failed: Authorization: Bearer {token} {DRIVE_URI}"))
 
         await _run_relay(config, connect)
 
         logged = "\n".join(r.getMessage() for r in caplog.records)
         assert "failed to open realtime session: OSError" in logged
-        assert token not in logged and FACTS_URI not in logged
+        assert token not in logged and DRIVE_URI not in logged
 
     async def test_the_relay_hands_no_token_to_the_control_plane(self, caplog):
         kit = Kit()

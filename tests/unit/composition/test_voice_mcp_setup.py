@@ -69,7 +69,7 @@ class TestBuild:
             key=None, store=kit.store, digest_key=DIGEST_KEY, auth_config=AUTH_CONFIG, user_repo=kit.user_repo,
             whitelist_repo=kit.whitelist_repo, alert_sink=None) is None
 
-    async def test_a_key_builds_the_service_over_both_resource_uris(self):
+    async def test_a_key_builds_the_service_over_the_drive_resource_uri(self):
         kit = Kit()
         service = voice_mcp_setup.build_voice_mcp_tokens(
             key=VOICE_KEY, store=kit.store, digest_key=DIGEST_KEY, auth_config=AUTH_CONFIG, user_repo=kit.user_repo,
@@ -77,7 +77,7 @@ class TestBuild:
         assert isinstance(service, VoiceMcpTokenService)
         tokens = await service.mint("ticket-0003-invented", "usr-1", "acc-1")
         # same key, same URIs, same scopes as the kit's own service: each verifies the other's tokens
-        assert await kit.voice.verify(tokens.facts, MCPResource.FACTS) is not None
+        assert await kit.voice.verify(tokens.drive, MCPResource.DRIVE) is not None
 
 
 class TestGraph:

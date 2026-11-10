@@ -46,7 +46,7 @@ def _config(tokens=None, descriptors=None, **over) -> dict:
               "mode": "lelik", "call_kind": "web", "voice": XAI,
               VOICE_MCP_SERVERS_FIELD: descriptors if descriptors is not None else
               [s.to_dict() for s in voice_session_servers(FACTS_URI)],
-              VOICE_MCP_TOKENS_FIELD: tokens if tokens is not None else {"facts": FACTS_TOKEN, "drive": DRIVE_TOKEN}}
+              VOICE_MCP_TOKENS_FIELD: tokens if tokens is not None else {"drive": DRIVE_TOKEN}}
     config.update(over)
     return config
 
@@ -145,35 +145,35 @@ class TestTokenBoundToItsServer:
         assert unverified_audience("not-a-jwt") is None
         assert unverified_audience("a.%%%.c") is None
 
-    def test_matching_audiences_offer_both_servers(self):
+    def test_a_matching_audience_offers_the_drive_server(self):
         servers, dropped = pair_session_servers(_config())
 
-        assert [(s.label, s.token) for s in servers] == [("alek_memory", FACTS_TOKEN), ("alek_drive", DRIVE_TOKEN)]
+        assert [(s.label, s.token) for s in servers] == [("alek_drive", DRIVE_TOKEN)]
         assert dropped == ()
 
     def test_a_mismatched_audience_drops_that_server(self):
-        servers, dropped = pair_session_servers(_config(tokens={"facts": DRIVE_TOKEN, "drive": DRIVE_TOKEN}))
+        servers, dropped = pair_session_servers(_config(tokens={"drive": FACTS_TOKEN}))
 
-        assert [s.label for s in servers] == ["alek_drive"]
-        assert len(dropped) == 1 and dropped[0].startswith("alek_memory")
-        assert DRIVE_TOKEN not in dropped[0]
+        assert servers == ()
+        assert len(dropped) == 1 and dropped[0].startswith("alek_drive")
+        assert FACTS_TOKEN not in dropped[0]
 
     def test_a_descriptor_pointing_elsewhere_drops_that_server(self):
         descriptors = [s.to_dict() for s in voice_session_servers(FACTS_URI)]
-        descriptors[0]["url"] = "https://elsewhere.example.test/mcp"
+        descriptors[0]["url"] = "https://elsewhere.example.test/drive-mcp"
 
         servers, dropped = pair_session_servers(_config(descriptors=descriptors))
 
-        assert [s.label for s in servers] == ["alek_drive"] and dropped[0].startswith("alek_memory")
+        assert servers == () and dropped[0].startswith("alek_drive")
 
     def test_a_duplicate_label_drops_the_duplicate(self):
         descriptors = [s.to_dict() for s in voice_session_servers(FACTS_URI)]
-        descriptors.append({**descriptors[0], "url": "https://elsewhere.example.test/mcp"})
+        descriptors.append({**descriptors[0], "url": "https://elsewhere.example.test/drive-mcp"})
 
         servers, dropped = pair_session_servers(_config(descriptors=descriptors))
 
-        assert [(s.label, s.url) for s in servers] == [("alek_memory", FACTS_URI), ("alek_drive", DRIVE_URI)]
-        assert dropped == ("alek_memory (duplicate)",)
+        assert [(s.label, s.url) for s in servers] == [("alek_drive", DRIVE_URI)]
+        assert dropped == ("alek_drive (duplicate)",)
 
 
 class _RecordingWs:
@@ -211,17 +211,18 @@ async def _handle(service):
 class TestRelayBindsAndReports:
     async def test_a_mismatched_server_is_dropped_with_a_warning_naming_only_its_label(self, caplog):
         control = AsyncMock()
-        control.fetch_session_config.return_value = _config(tokens={"facts": DRIVE_TOKEN, "drive": DRIVE_TOKEN})
+        control.fetch_session_config.return_value = _config(tokens={"drive": FACTS_TOKEN})
         ws = _RecordingWs()
         caplog.set_level(logging.DEBUG)
 
         await _handle(_service(control, lambda spec: XaiRealtimeAdapter(api_key="x", ws_connect=AsyncMock(
             return_value=ws))))
 
-        assert [t["server_label"] for t in ws.sent[0]["session"]["tools"] if t["type"] == "mcp"] == ["alek_drive"]
+        # The only server was dropped and the config has no other tool, so the session carries no tools list.
+        assert all(t["type"] != "mcp" for t in ws.sent[0]["session"].get("tools", []))
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("remote tool server alek_memory" in w and "dropped" in w for w in warnings)
-        assert DRIVE_TOKEN not in _logged(caplog) and "mcp.example.test" not in "\n".join(warnings)
+        assert any("remote tool server alek_drive" in w and "dropped" in w for w in warnings)
+        assert FACTS_TOKEN not in _logged(caplog) and "mcp.example.test" not in "\n".join(warnings)
 
     async def test_a_factory_that_raises_still_reports_the_call_end(self):
         control = AsyncMock()

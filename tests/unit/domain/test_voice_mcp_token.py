@@ -28,8 +28,8 @@ def test_the_cid_is_the_keyed_digest_and_the_key_holds_no_ticket():
 
 
 def test_the_allowed_tools_are_index_reads_only():
-    assert VOICE_ALLOWED_TOOLS == {MCPResource.FACTS: ("get_user_context",),
-                                   MCPResource.DRIVE: ("search_drive", "find_passages", "read_passages")}
+    # Only the drive has a voice token: memory reaches a call by delegation (RFC §2 amendment, 2026-11-10).
+    assert VOICE_ALLOWED_TOOLS == {MCPResource.DRIVE: ("search_drive", "find_passages", "read_passages")}
 
 
 @pytest.mark.parametrize("mode, provider, eligible", [

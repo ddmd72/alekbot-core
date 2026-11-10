@@ -68,7 +68,7 @@ def transactions():
 
 @pytest.mark.usefixtures("transactions")
 class TestSessionConfigMints:
-    async def test_the_companion_call_on_xai_gets_two_tokens_that_verify(self):
+    async def test_the_companion_call_on_xai_gets_the_drive_token_that_verifies(self):
         w = World()
         await w.prepare()
         resp = await w.session_config()
@@ -76,9 +76,9 @@ class TestSessionConfigMints:
 
         assert resp.status_code == 200
         tokens = body[VOICE_MCP_TOKENS_FIELD]
-        assert set(tokens) == {"facts", "drive"}
-        assert (await w.kit.voice.verify(tokens["facts"], MCPResource.FACTS)).user_id == USER
-        assert (await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE)).account_id == ACCOUNT
+        assert set(tokens) == {"drive"}
+        verified = await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE)
+        assert (verified.user_id, verified.account_id) == (USER, ACCOUNT)
         assert {k: v for k, v in body.items() if k != VOICE_MCP_TOKENS_FIELD}["instructions"] == "you are Lelik"
 
     async def test_the_ticket_record_never_holds_a_token(self):
@@ -149,13 +149,13 @@ class TestSessionConfigMints:
 
 @pytest.mark.usefixtures("transactions")
 class TestSubmitTranscriptRevokes:
-    async def test_after_submit_both_tokens_fail(self):
+    async def test_after_submit_the_token_fails(self):
         w = World()
         await w.prepare()
         tokens = (await (await w.session_config()).get_json())[VOICE_MCP_TOKENS_FIELD]
+        assert await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE) is not None
         assert (await w.submit()).status_code == 200
         assert "voice_mcp_call" not in w.dump()
-        assert await w.kit.voice.verify(tokens["facts"], MCPResource.FACTS) is None
         assert await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE) is None
 
     async def test_revocation_runs_with_the_knob_off(self):
@@ -164,7 +164,7 @@ class TestSubmitTranscriptRevokes:
         tokens = (await (await w.session_config()).get_json())[VOICE_MCP_TOKENS_FIELD]
         off = World(minting=False, kit=w.kit)      # the same store and service, the knob turned off mid-call
         assert (await off.submit()).status_code == 200
-        assert await w.kit.voice.verify(tokens["facts"], MCPResource.FACTS) is None
+        assert await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE) is None
 
     async def test_a_failed_revoke_still_releases_the_one_call_marker(self, caplog):
         w = World()
@@ -191,8 +191,8 @@ async def test_no_log_record_from_mint_to_revoke_contains_a_token(caplog):
     w = World()
     await w.prepare()
     tokens = (await (await w.session_config()).get_json())[VOICE_MCP_TOKENS_FIELD]
-    await w.kit.voice.verify(tokens["facts"], MCPResource.FACTS)
-    await w.kit.voice.verify(tokens["drive"], MCPResource.FACTS)
+    await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE)
+    await w.kit.voice.verify(tokens["drive"], MCPResource.FACTS)          # a refusal
     await w.submit()
     await w.kit.voice.verify(tokens["drive"], MCPResource.DRIVE)
     text = "\n".join(r.getMessage() for r in caplog.records)
