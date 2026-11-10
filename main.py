@@ -600,7 +600,6 @@ async def main():
                         digest_key=app.digest_key,
                         user_repo=app.user_repo,
                         whitelist_repo=app.whitelist_repo,
-                        voice_tokens=voice_mcp_tokens,
                     )
                     # Consent blueprint is built in main.py (not in
                     # composition/) because composition must not depend

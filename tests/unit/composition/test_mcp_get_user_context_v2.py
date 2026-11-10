@@ -16,7 +16,8 @@ from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
 from src.composition.mcp_setup import build_mcp_components
 from src.domain.entities import FactEntity, FactType
 from src.domain.memory_search_texts import QUERIES_FIELD_TEXT
-from src.domain.voice_mcp_token import FACTS_TOOL, VOICE_RESULT_MAX_CHARS, McpTokenKind
+from src.composition.mcp_setup import FACTS_TOOL
+from src.domain.voice_mcp_token import McpTokenKind
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos
 
@@ -141,11 +142,6 @@ class TestAgentCall:
         assert resolver.users == ["user-7"]
         assert agent.calls == [(["car service date", "Alex car"], "connector")]
 
-    async def test_a_voice_token_uses_the_voice_path(self):
-        tool, agent, _, _ = _setup()
-        await tool.run({"queries": ["car"]}, context=_ctx(kind=McpTokenKind.VOICE, tools=[FACTS_TOOL]))
-        assert agent.calls == [(["car"], "connector_voice")]
-
     async def test_another_tenants_agent_is_refused_and_logged(self, monkeypatch):
         tool, agent, _, _ = _setup(facts=[_fact("secret", account="acc-2")], agent_account="acc-2")
         warnings: list = []
@@ -162,12 +158,6 @@ class TestAgentCall:
         with pytest.raises(ToolError) as err:
             await tool.run({"queries": ["car"]}, context=_ctx())
         assert "Memory search is not available for this account." in str(err.value)
-
-    async def test_a_refused_tool_claim_returns_refused_without_calling_the_agent(self):
-        tool, agent, resolver, _ = _setup()
-        out = await tool.run({"queries": ["car"]}, context=_ctx(kind=McpTokenKind.VOICE, tools=["search_drive"]))
-        assert out.startswith("Refused:")
-        assert agent.calls == [] and resolver.users == []
 
 
 class TestResult:
@@ -200,10 +190,3 @@ class TestResult:
     async def test_an_empty_result_says_no_records_matched(self):
         tool, _, _, _ = _setup([])
         assert await tool.run({"queries": ["car"]}, context=_ctx()) == "No records matched."
-
-    async def test_a_voice_result_is_capped(self):
-        facts = [_fact(f"Alex owns a 2015 Skoda Fabia, note {i} " + "x" * 200, primary="transport") for i in range(200)]
-        tool, _, _, _ = _setup(facts)
-        out = await tool.run({"queries": ["car"]}, context=_ctx(kind=McpTokenKind.VOICE, tools=[FACTS_TOOL]))
-        assert len(out) <= VOICE_RESULT_MAX_CHARS + 200
-        assert out.rstrip().endswith("ask a narrower question to see the rest.]")
