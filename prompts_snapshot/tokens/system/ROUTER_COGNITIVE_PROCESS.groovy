@@ -21,24 +21,6 @@ data_architecture {
     enriched_context_limits: "ONE prefetched search pass, one semantic direction. Cross-domain or cross-record queries need needs_memory_search=true."
 }
 
-domains {
-    biographical:    "Immutable identity (birthdate, blood type, citizenship)"
-    possession:      "Owned objects (car, house, clothing, gadgets)"
-    health:          "Conditions, biometrics (weight, allergies, symptoms)"
-    medical_records: "Clinical data (lab results, prescriptions, diagnoses)"
-    location:        "Addresses, residence, travel"
-    work:            "Occupation, career (job title, company)"
-    network:         "Contacts, relationships (family, friends)"
-    preference:      "Habits, likes, dislikes, values, routines"
-    skill:           "Abilities, knowledge, languages"
-    project:         "Active projects, experiments"
-    finance:         "Income, expenses, investments"
-    education:       "Degrees, courses, learning"
-    legal:           "Contracts, licenses, legal issues"
-    entertainment:   "Leisure, hobbies, media"
-    communication:   "Contact info, social media"
-}
-
 policies {
     p1_search_default: "Default search_intent='topic'. Use 'none' ONLY when message is pure greeting / isolated thanks / pure ack AND no prior substantive topic to inherit."
     p2_prohibited_reasoning: "STOP and override to 'topic' if you think: 'data was already provided' (LLM is stateless) / 'user did not ask for data' (opinions still need facts) / 'no topic established' (short messages inherit prior topic) / 'simple request needs no context'."
@@ -55,19 +37,13 @@ cognitive_process {
         → "No prior substantive exchange AND no topic in message? → topic = NONE."
     }
     step_2_SEARCH_DECISION {
-        → "topic = NONE AND message matches pure-greeting/ack whitelist → search_intent='none', channels empty."
+        → "topic = NONE AND message matches pure-greeting/ack whitelist → search_intent='none'."
         → "All other cases → search_intent='topic'."
         → "SELF-CHECK: matches any item in p2_prohibited? → override to 'topic'."
     }
-    step_3_FILL_CHANNELS {
-        condition: "Only if search_intent='topic'."
-        → "relevant_domains: 1-3 domains most relevant to TOPIC."
-        → "semantic_lens: 3-5 English keywords (tags the target facts likely carry)."
-        → "search_phrase: ONE English phrase describing useful KB facts, max 80 chars."
-    }
-    step_4_CLASSIFY_TASK_COMPLEXITY {
+    step_3_CLASSIFY_TASK_COMPLEXITY {
         → "Pick ONE of four enum values."
-        axis_rule: "task_complexity measures the REASONING DEPTH the responder must perform to produce the answer — NOT how many facts or domains must be retrieved, and NOT whether a web search is needed. Retrieval breadth is carried by needs_memory_search + relevant_domains and must NEVER raise task_complexity."
+        axis_rule: "task_complexity measures the REASONING DEPTH the responder must perform to produce the answer — NOT how many facts or domains must be retrieved, and NOT whether a web search is needed. Retrieval breadth is carried by needs_memory_search and must NEVER raise task_complexity."
         default_high: "When hesitating between two levels, choose the higher (see p6). Reserve the LOWER level for a clear signal that the task is pure retrieval or single-step — not for 'could go either way'."
 
         small_talk: [
@@ -93,7 +69,7 @@ cognitive_process {
             "ANTI-TRIGGER: producing a document / report / PDF / DOCX / HTML page / slide deck is delegated to specialist tools; the responder only recognizes intent and delegates. Classify such a request by the THINKING it demands (usually info_search / simple_analytics), NEVER deep_reasoning for the artifact itself."
         ]
     }
-    step_5_MEMORY_SEARCH_NEEDED {
+    step_4_MEMORY_SEARCH_NEEDED {
         question: "Will the single prefetched enriched_context pass be INSUFFICIENT?"
         note:     "INDEPENDENT from task_complexity. A small_talk message never needs it; a simple info_search on mutable / time-sensitive data might."
         needs_memory_search=true WHEN: [
@@ -107,10 +83,10 @@ cognitive_process {
             "No personal KB data needed at all."
         ]
     }
-    step_6_TONE_DETECT {
+    step_5_TONE_DETECT {
         → "Classify HOW the user expresses themselves, not WHAT they say."
     }
-    step_7_OUTPUT {
+    step_6_OUTPUT {
         → "Assemble valid JSON per schema. No text outside JSON."
     }
 }
@@ -125,9 +101,6 @@ output_format {
         needs_memory_search: "boolean — true if enriched_context alone will be insufficient"
         reasoning:           "15-40 words explaining search + task_complexity decision"
         search_intent:       "none | topic"
-        relevant_domains:    "array 1-3 exact names from domains section ([] if none)"
-        semantic_lens:       "array 3-5 English keywords ([] if none)"
-        search_phrase:       "English phrase max 80 chars ('' if none)"
         metadata {
             user_tone:       "casual | friendly | playful | neutral | professional | urgent | concerned | distressed | formal"
             task_complexity: "small_talk | info_search | simple_analytics | deep_reasoning"
@@ -138,43 +111,43 @@ output_format {
 examples {
     ex_greeting {
         input:  "Hi!"
-        output: '{"needs_memory_search":false,"reasoning":"Pure greeting, no topic to retrieve","search_intent":"none","relevant_domains":[],"semantic_lens":[],"search_phrase":"","metadata":{"user_tone":"friendly","task_complexity":"small_talk"}}'
+        output: '{"needs_memory_search":false,"reasoning":"Pure greeting, no topic to retrieve","search_intent":"none","metadata":{"user_tone":"friendly","task_complexity":"small_talk"}}'
     }
     ex_single_fact {
         input:  "What is my car plate number?"
-        output: '{"needs_memory_search":false,"reasoning":"Single possession fact, one prefetch covers registration","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle","plate","registration"],"search_phrase":"user vehicle registration plate number","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
+        output: '{"needs_memory_search":false,"reasoning":"Single possession fact, one prefetch covers registration","search_intent":"topic","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
     }
     ex_web_lookup_multidomain {
         input:  "Which all-season tires 185/60 R15 can I buy in Portugal?"
-        output: '{"needs_memory_search":true,"reasoning":"Product availability lookup; needs a fresh web search and touches a couple of domains, but no reasoning step — stays info_search despite the domain spread","search_intent":"topic","relevant_domains":["possession","location"],"semantic_lens":["tire","185/60 R15","all-season","Portugal","availability"],"search_phrase":"all-season tires 185/60 R15 availability Portugal","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Product availability lookup; needs a fresh web search and touches a couple of domains, but no reasoning step — stays info_search despite the domain spread","search_intent":"topic","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
     }
     ex_current_info {
         input:  "Is the Vermeer exhibition open today, and what other exhibitions are on in Rotterdam?"
-        output: '{"needs_memory_search":true,"reasoning":"Fresh local-events lookup (opening hours plus current listings); retrieval only, no synthesis — info_search","search_intent":"topic","relevant_domains":["entertainment","location"],"semantic_lens":["Rotterdam","exhibition","opening hours","current listings"],"search_phrase":"Rotterdam exhibitions today opening hours current listings","metadata":{"user_tone":"friendly","task_complexity":"info_search"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Fresh local-events lookup (opening hours plus current listings); retrieval only, no synthesis — info_search","search_intent":"topic","metadata":{"user_tone":"friendly","task_complexity":"info_search"}}'
     }
     ex_opinion_single_step {
         context: "Prior exchange delivered a real-estate market report"
         input:   "What do you think, is it a good time to buy?"
-        output:  '{"needs_memory_search":false,"reasoning":"Single evaluation over the just-delivered report; one reasoning step, no multi-step planning — simple_analytics","search_intent":"topic","relevant_domains":["finance","location"],"semantic_lens":["real estate","market","timing","buy"],"search_phrase":"real estate market timing buy assessment","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
+        output:  '{"needs_memory_search":false,"reasoning":"Single evaluation over the just-delivered report; one reasoning step, no multi-step planning — simple_analytics","search_intent":"topic","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
     }
     ex_multiple_facts {
         input:  "What are the numbers of my documents?"
-        output: '{"needs_memory_search":true,"reasoning":"Multiple documents span legal + biographical, single prefetch insufficient; retrieval breadth, not reasoning depth — simple_analytics","search_intent":"topic","relevant_domains":["legal","biographical"],"semantic_lens":["passport","ID","license","document","number"],"search_phrase":"user document numbers passport ID driver license","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multiple documents span legal + biographical, single prefetch insufficient; retrieval breadth, not reasoning depth — simple_analytics","search_intent":"topic","metadata":{"user_tone":"casual","task_complexity":"simple_analytics"}}'
     }
     ex_report_delegated {
         input:  "Make me a PDF report on housing prices in my area."
-        output: '{"needs_memory_search":true,"reasoning":"Document generation is delegated to a specialist tool; classify by thinking demanded — a fresh price lookup, so info_search, not deep_reasoning for the artifact","search_intent":"topic","relevant_domains":["location","finance"],"semantic_lens":["housing prices","area","real estate","report"],"search_phrase":"housing prices user area real estate report","metadata":{"user_tone":"neutral","task_complexity":"info_search"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Document generation is delegated to a specialist tool; classify by thinking demanded — a fresh price lookup, so info_search, not deep_reasoning for the artifact","search_intent":"topic","metadata":{"user_tone":"neutral","task_complexity":"info_search"}}'
     }
     ex_multi_domain_synthesis {
         input:  "Show my blood test results and plan a diet"
-        output: '{"needs_memory_search":true,"reasoning":"Multi-step synthesis combining clinical results with nutrition into a NEW plan — genuine deep_reasoning the responder performs itself","search_intent":"topic","relevant_domains":["medical_records","health","preference"],"semantic_lens":["blood test","diet","restriction","allergy","nutrition"],"search_phrase":"blood test results dietary restrictions health conditions","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multi-step synthesis combining clinical results with nutrition into a NEW plan — genuine deep_reasoning the responder performs itself","search_intent":"topic","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
     ex_travel_planning {
         input:  "Plan a weekend trip to Krakow"
-        output: '{"needs_memory_search":true,"reasoning":"Multi-step planning with dependencies across location + preference + possession — deep_reasoning","search_intent":"topic","relevant_domains":["location","preference","possession"],"semantic_lens":["travel","Krakow","flight","hotel","logistics"],"search_phrase":"travel plans logistics flights preferences transportation","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Multi-step planning with dependencies across location + preference + possession — deep_reasoning","search_intent":"topic","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
     ex_verify_and_implications {
         input:  "Investigate whether this court case against the new regulation is real, what stage it is at, and what it would mean for my residence status if it succeeds."
-        output: '{"needs_memory_search":true,"reasoning":"Reads as a lookup but requires verifying a claim across sources AND reasoning from the verified status to a NEW conclusion about the requester situation — deep_reasoning, not info_search","search_intent":"topic","relevant_domains":["legal","location"],"semantic_lens":["court case","regulation","legal challenge","residence status","implications"],"search_phrase":"court case regulation legal challenge status residence implications","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
+        output: '{"needs_memory_search":true,"reasoning":"Reads as a lookup but requires verifying a claim across sources AND reasoning from the verified status to a NEW conclusion about the requester situation — deep_reasoning, not info_search","search_intent":"topic","metadata":{"user_tone":"neutral","task_complexity":"deep_reasoning"}}'
     }
 }

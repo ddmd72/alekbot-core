@@ -82,7 +82,6 @@ def build_routing_metadata(classification: Dict[str, Any]) -> RoutingMetadata:
         task_complexity=_safe_complexity(task_complexity),
         needs_tools=list(metadata.get("needs_tools", [])),
         reasoning=classification.get("reasoning", ""),
-        semantic_lens=list(classification.get("semantic_lens", [])),
         needs_memory_search=bool(classification.get("needs_memory_search", False))
     )
 

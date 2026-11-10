@@ -8,9 +8,10 @@ This is the entry point for all user queries in the agent network.
 NO LLM required - uses rule-based classification for speed.
 """
 
+import asyncio
 import json
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from typing import Optional, Set, List, TYPE_CHECKING
 from ..base_agent import BaseAgent
@@ -29,7 +30,10 @@ from ...ports.llm_port import Message, MessagePart, LLMRequest
 from ...ports.session_store import SessionStore
 from ...ports.repository import FactRepository
 from ...ports.embedding_service import EmbeddingService
-from ...ports.search_enrichment_port import SearchEnrichmentPort
+from ...ports.fact_search_port import FactSearchPort
+from ...domain.request_context import get_current_account_id
+from ...domain.search import EnrichedContext, EnrichedFact
+from ...domain.fact_query import FactQuery
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...ports.agent_note_port import AgentNotePort
@@ -38,6 +42,7 @@ from ...infrastructure.agent_config import ROUTER
 
 if TYPE_CHECKING:
     from ...infrastructure.agent_coordinator import AgentCoordinator
+    from ..fact_query_slots_agent import FactQuerySlotsAgent
 
 
 class RouterAgent(BaseAgent):
@@ -142,15 +147,6 @@ class RouterAgent(BaseAgent):
             "needs_memory_search": {"type": "BOOLEAN"},
             "reasoning": {"type": "STRING"},
             "search_intent": {"type": "STRING"},
-            "relevant_domains": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-            "semantic_lens": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-            "search_phrase": {"type": "STRING"},
             "metadata": {
                 "type": "OBJECT",
                 "properties": {
@@ -163,9 +159,6 @@ class RouterAgent(BaseAgent):
         "required": [
             "needs_memory_search",
             "search_intent",
-            "relevant_domains",
-            "semantic_lens",
-            "search_phrase",
             "metadata"
         ]
     }
@@ -181,7 +174,9 @@ class RouterAgent(BaseAgent):
         session_store: Optional[SessionStore] = None,
         repository: Optional[FactRepository] = None,
         embedding_service: Optional[EmbeddingService] = None,
-        search_enrichment_service: Optional[SearchEnrichmentPort] = None,
+        fact_search: Optional[FactSearchPort] = None,
+        slots: Optional["FactQuerySlotsAgent"] = None,
+        user_location: str = "",
         prompt_builder: Optional[PromptBuilderPort] = None,
         notes_port: Optional[AgentNotePort] = None,
     ):
@@ -211,20 +206,22 @@ class RouterAgent(BaseAgent):
         self.session_store = session_store
         self.repository = repository
         self.embedding_service = embedding_service
-        self.search_enrichment_service = search_enrichment_service
+        self.fact_search = fact_search
+        self.slots = slots
+        self.user_location = user_location
         self.prompt_builder = prompt_builder
         self.notes_port = notes_port
         self._cached_triage_prompt: Optional[str] = None
 
         logger.info(
             "🎯 RouterAgent initialized "
-            "(quick=%s, smart=%s, llm=%s, history=%s, prompt_builder=%s, enrichment=%s)",
+            "(quick=%s, smart=%s, llm=%s, history=%s, prompt_builder=%s, prefetch=%s)",
             quick_agent_id,
             smart_agent_id,
             "enabled" if self.llm else "disabled",
             "enabled" if self.session_store else "disabled",
             "enabled" if self.prompt_builder else "disabled",
-            "enabled" if self.search_enrichment_service else "disabled"
+            "enabled" if self._prefetch_enabled() else "disabled"
         )
     
     async def can_handle(self, message: AgentMessage) -> bool:
@@ -280,8 +277,17 @@ class RouterAgent(BaseAgent):
                 context_window=self.CONTEXT_WINDOW
             )
         
+        # The memory prefetch reads the same messages as triage and runs beside it (fact profile RFC §5.4); triage
+        # then decides whether its result is wanted.
+        prefetch_task = self._start_prefetch(text, message, history)
+
         # Classify the request (LLM triage preferred)
-        classification = await self._classify_request_with_fallback(text, message, history)
+        try:
+            classification = await self._classify_request_with_fallback(text, message, history)
+        except BaseException:
+            if prefetch_task is not None:
+                prefetch_task.cancel()
+            raise
         routing_metadata = build_routing_metadata(classification)
         
         # Vision override: native binary images need Smart agent for vision capabilities.
@@ -299,10 +305,9 @@ class RouterAgent(BaseAgent):
             routing_metadata.task_complexity = TaskComplexity.DEEP_REASONING
 
         logger.info(
-            "🎯 [RouterAgent] Triage result: complexity=%s, tone=%s, lens=%s",
+            "🎯 [RouterAgent] Triage result: complexity=%s, tone=%s",
             routing_metadata.task_complexity.value,
             routing_metadata.user_tone,
-            routing_metadata.semantic_lens
         )
 
         target_agent = self._apply_routing_rules(routing_metadata)
@@ -311,32 +316,14 @@ class RouterAgent(BaseAgent):
         enriched_context = None
         search_intent = classification.get("search_intent", "topic")
         
-        if search_intent == "none":
-            logger.info("🎯 [RouterAgent] search_intent=none, skipping enrichment")
-        elif self.search_enrichment_service and self.user_id:
-            biographical_facts = None
-            if self.repository:
-                try:
-                    # SESSION_27: Auto-resolve from RequestContext (set by ConversationHandler)
-                    biographical_facts = await self.repository.get_biographical_context_cached(
-                        limit=self.BIOGRAPHICAL_LIMIT
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "⚠️ [RouterAgent] Failed to load biographical cache: %s",
-                        exc
-                    )
+        if prefetch_task is None:
+            pass
+        elif search_intent == "none":
+            prefetch_task.cancel()
+            logger.info("🎯 [RouterAgent] search_intent=none, prefetch=skipped")
+        else:
+            enriched_context = await self._finish_prefetch(prefetch_task, message)
 
-            # Session 2026-02-17: Router v3 - New parameters
-            # SESSION_27: enrich_context uses RequestContext automatically
-            enriched_context = await self.search_enrichment_service.enrich_context(
-                keywords=classification.get("semantic_lens", []),
-                search_phrase_1=classification.get("search_phrase", ""),  # Renamed
-                search_phrase_2="",  # Deprecated, always empty
-                relevant_domains=classification.get("relevant_domains", []),  # NEW
-                biographical_facts=biographical_facts
-            )
-        
         # Load active orchestrator notes for injection into downstream prompt
         agent_notes = []
         if self.notes_port and self.user_id:
@@ -397,6 +384,81 @@ class RouterAgent(BaseAgent):
         
         return response
     
+    def _prefetch_enabled(self) -> bool:
+        return bool(self.fact_search and self.slots and self.user_id)
+
+    @staticmethod
+    def _triage_messages(text: str, history: Optional[List[Message]]) -> List[Message]:
+        """The messages triage reads: the recent conversation (else the text), text parts only — images would make
+        the model answer instead of classify."""
+        source = history if history else [Message(role="user", parts=[MessagePart(text=text)])]
+        clean: List[Message] = []
+        for msg in source:
+            text_parts = [p for p in msg.parts if p.text]
+            if text_parts:
+                clean.append(Message(role=msg.role, parts=text_parts))
+        return clean
+
+    @staticmethod
+    def _account_id(message: AgentMessage) -> Optional[str]:
+        """The account the baseline cache reads (RequestContext), else the one the message carries."""
+        return get_current_account_id() or message.context.get("account_id")
+
+    def _start_prefetch(
+        self, text: str, message: AgentMessage, history: Optional[List[Message]],
+    ) -> Optional["asyncio.Task[Optional[FactQuery]]"]:
+        """Start reading the query slots of the turn; None when the prefetch is not wired or has no account."""
+        if not self._prefetch_enabled():
+            return None
+        account_id = self._account_id(message)
+        if not account_id:
+            logger.warning("⚠️ [RouterAgent] No account id, memory prefetch skipped")
+            return None
+        messages = self._triage_messages(text, history)
+        if not messages:
+            return None
+        return asyncio.create_task(self._read_slots(messages, account_id))
+
+    async def _read_slots(self, messages: List[Message], account_id: str) -> Optional[FactQuery]:
+        assert self.slots is not None
+        try:
+            return await self.slots.query_for_messages(
+                messages, path="router", account_id=account_id, user_id=self.user_id,
+            )
+        except Exception as exc:
+            logger.error(f"[RouterAgent] Query slots failed, no memory prefetch this turn: {type(exc).__name__}: {exc}")
+            return None
+
+    async def _finish_prefetch(
+        self, task: "asyncio.Task[Optional[FactQuery]]", message: AgentMessage,
+    ) -> Optional[EnrichedContext]:
+        """The scored search of the slots query, outside the baseline; None on any failure (the turn goes on)."""
+        assert self.fact_search is not None
+        try:
+            query = await task
+            if query is None:
+                return None
+            baseline_ids: Set[str] = set()
+            if self.repository:
+                try:
+                    biographical = await self.repository.get_biographical_context_cached(
+                        limit=self.BIOGRAPHICAL_LIMIT
+                    )
+                    baseline_ids = {f["id"] for f in biographical or [] if f.get("id")}
+                except Exception as exc:
+                    logger.warning("⚠️ [RouterAgent] Failed to load biographical cache: %s", exc)
+            facts = await self.fact_search.search(
+                self._account_id(message) or "", replace(query, home=self.user_location),
+                exclude=baseline_ids,
+            )
+        except Exception as exc:
+            logger.error(f"[RouterAgent] Memory prefetch failed, turn goes on without it: {type(exc).__name__}: {exc}")
+            return None
+        return EnrichedContext(
+            facts=[EnrichedFact.from_fact(f, "fact_search", None) for f in facts],
+            total_sources=1, dedup_count=0, biographical_dedup_count=0,
+        )
+
     @staticmethod
     def _note_context(n: AgentNote) -> dict:
         """One active reminder as the orchestrator sees it. The orchestrator edits reminders by delegation, so it
@@ -448,14 +510,7 @@ class RouterAgent(BaseAgent):
         # IMPORTANT: Triage agent should NOT see file_data (images) to avoid 
         # trying to answer the user's question instead of classifying.
         # We only send text parts.
-        clean_messages = []
-        
-        source_messages = history if history else [Message(role="user", parts=[MessagePart(text=text)])]
-        
-        for msg in source_messages:
-            text_parts = [p for p in msg.parts if p.text]
-            if text_parts:
-                clean_messages.append(Message(role=msg.role, parts=text_parts))
+        clean_messages = self._triage_messages(text, history)
 
         # Ensure we don't send empty messages to LLM
         if not clean_messages:
@@ -511,7 +566,6 @@ class RouterAgent(BaseAgent):
             - is_simple: Simple greeting/acknowledgment
             - is_personal: References user's personal data
             - needs_external: Requires external search
-            - semantic_lens: Basic keywords for search
         """
         is_simple = self._is_simple_request(text)
         is_personal = self._is_personal_request(text)
@@ -521,16 +575,10 @@ class RouterAgent(BaseAgent):
         if is_personal or needs_external:
             is_simple = False
         
-        # Basic keyword extraction for fallback
-        clean_text = re.sub(r'[^\w\s]', ' ', text).lower()
-        words = clean_text.split()
-        lens = [w for w in words if len(w) > 3][:5]
-        
         return {
             "is_simple": is_simple,
             "is_personal": is_personal,
             "needs_external": needs_external,
-            "semantic_lens": lens
         }
     
     def _is_simple_request(self, text: str) -> bool:
@@ -694,7 +742,9 @@ def create_router_agent(
     session_store: Optional[SessionStore] = None,
     repository: Optional[FactRepository] = None,
     embedding_service: Optional[EmbeddingService] = None,
-    search_enrichment_service: Optional[SearchEnrichmentPort] = None,
+    fact_search: Optional[FactSearchPort] = None,
+    slots: Optional["FactQuerySlotsAgent"] = None,
+    user_location: str = "",
     prompt_builder: Optional[PromptBuilderPort] = None,
     notes_port: Optional[AgentNotePort] = None,
 ) -> RouterAgent:
@@ -736,7 +786,9 @@ def create_router_agent(
         session_store=session_store,
         repository=repository,
         embedding_service=embedding_service,
-        search_enrichment_service=search_enrichment_service,
+        fact_search=fact_search,
+        slots=slots,
+        user_location=user_location,
         prompt_builder=prompt_builder,
         notes_port=notes_port,
     )
