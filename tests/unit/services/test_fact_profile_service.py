@@ -21,7 +21,7 @@ from src.domain.place_names import PlaceNames
 from src.ports.embedding_service import EmbeddingService
 from src.ports.fact_profiler_port import FactProfilerPort
 from src.services.fact_profile_service import FactProfileService
-from tests.support.fact_kit import ACC, OTHER, make_fact
+from tests.support.fact_kit import ACC, OTHER, T0 as SEEDED_AT, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, embed, make_env_config
 
 T0 = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
@@ -76,7 +76,7 @@ class Profiler(FactProfilerPort):
         self.hold: Optional[asyncio.Event] = None
         self.on_call: Any = None
 
-    async def profile(self, account_id, text, metadata):
+    async def profile(self, account_id, text, metadata, people=()):
         self.calls.append(text)
         self.accounts.append(account_id)
         self.in_flight += 1
@@ -142,7 +142,9 @@ class World:
         return self.store.docs
 
     def derivation(self, directive: bool = False) -> str:
-        return profile_derivation(registry_digest(), ATLAS_DIGEST, directive)
+        # The recording year of every seeded fact: make_fact's created_at (SEEDED_AT); reported_date is the wall
+        # clock at seeding, later, so the earlier of the two is created_at. The step's clock (T0) is not its source.
+        return profile_derivation(registry_digest(), ATLAS_DIGEST, directive, SEEDED_AT.year)
 
     async def seed(self, text: str, **over: Any):
         fact = make_fact(text, **over)
@@ -468,7 +470,7 @@ SUCCESS_FIELDS = {
     "label_words", "label_vector", "time_role", "time_points", "place_keys", "places_unresolved", "people",
     "primary_domain", "domain_keys", "user_identity", "kinds", "sensitivity", "profile_answer", "profile_drops",
     "profile_fingerprint", "profile_derivation", "profile_model", "profiled_at", "profile_failures",
-    "profile_failed_fingerprint",
+    "profile_failed_fingerprint", "profile_review_needed", "profile_review_items",
 }
 REDERIVE_FIELDS = SUCCESS_FIELDS - {"profile_fingerprint", "profile_model", "profiled_at", "profile_failures",
                                     "profile_failed_fingerprint"}

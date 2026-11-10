@@ -17,6 +17,7 @@ class FactProfileScan:
     abandoned: int = 0
     fresh: int = 0
     to_call: int = 0
+    needs_review: int = 0   # current facts whose profile is flagged `profile_review_needed`
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class FactProfileRun:
     not started, a write past the deadline); lost_cas: writes refused because the fact changed; usd: spend of the calls;
     drops: dropped values per reason; outage: the model was unavailable; refreshed: the baseline was refreshed;
     cards: people cards stored by this run's rebuild (0 when none was built);
+    flagged: profiles written this run with the needs-review flag;
     error: the run stopped on an error (the counts are partial).
     """
     scan: FactProfileScan = field(default_factory=FactProfileScan)
@@ -45,4 +47,5 @@ class FactProfileRun:
     outage: bool = False
     refreshed: bool = False
     cards: int = 0
+    flagged: int = 0
     error: bool = False

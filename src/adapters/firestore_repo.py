@@ -44,7 +44,7 @@ _ALL_VECTOR_FIELDS = (*_VECTOR_FIELDS, _LABEL_VECTOR)
 _PROFILE_STATE_FIELDS = [
     "account_id", "created_by_user_id", "lineage_id", "owner_id", "text", "type", "metadata", "domain", "tags", "state",
     "created_at", "profile_fingerprint", "profile_derivation", "profile_failures", "profile_failed_fingerprint",
-    "profile_answer", "user_identity", "primary_domain", "sensitivity",
+    "profile_answer", "user_identity", "primary_domain", "sensitivity", "reported_date", "profile_review_needed",
 ]
 # What the people cards read of a current fact (list_profile_people).
 # The fields FactEntity requires come along (created_by_user_id, lineage_id, owner_id for legacy documents, text, type).

@@ -1,11 +1,16 @@
 """What a profile was made from, and whether it still holds (fact profile RFC §4.1, §4.2, §4.4).
 
-- `build_profiler_user_message(text, metadata)`: the profiler's user message, the exact bytes the fingerprint hashes:
-  `Fact:\\n<text>`, then `\\nMetadata:\\n` and one `key: value` line per key in sorted key order (strings as they are,
-  every other value as compact JSON with sorted keys); no metadata section when there is no metadata.
-- `profile_fingerprint(text, metadata)`: sha256 of that message. Tags, dates, state and the old domain are not input.
-- `profile_derivation(registry, atlas, is_directive)`: the code-input version; a mismatch re-derives without a call.
-- `classify_profile(fact, derivation)`: missing / stale_input / stale_derivation / abandoned / fresh.
+- `build_profiler_user_message(text, metadata, people)`: the profiler's user message: the confirmed people block (the
+  whole list, when there is one), then `Fact:\\n<text>`, then `\\nMetadata:\\n` and one `key: value` line per key in sorted
+  key order (strings as they are, every other value as compact JSON with sorted keys); no metadata section when there is
+  no metadata.
+- `profile_fingerprint(text, metadata, named)`: sha256 of the message WITHOUT the list block, plus the block of the
+  `named` entries (the list entries the fact names, `named_people`) when there are any. A fact that names no listed
+  person hashes exactly what it did before the list existed, so a list edit re-profiles only the facts naming the
+  edited person. Tags, dates, state and the old domain are not input.
+- `profile_derivation(registry, atlas, is_directive, recording_year)`: the code-input version; a mismatch re-derives
+  without a call.
+- `classify_profile(fact, derivation, named)`: missing / stale_input / stale_derivation / abandoned / fresh.
 - `failure_fields(...)`: the write after a failed profiling; three failures on one fingerprint abandon the fact until its
   content changes.
 """
@@ -13,13 +18,14 @@ import hashlib
 import json
 from dataclasses import fields
 from enum import Enum
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from .confirmed_people import ConfirmedPeople, ConfirmedPerson, people_named_in_texts, render_people_block
 from .entities import FactEntity
 from .fact_domains import FACT_DOMAINS
 
 # Bump when derivation or validation code changes what it stores from the same answer.
-DERIVE_VERSION = "2"
+DERIVE_VERSION = "3"
 ABANDON_AFTER_FAILURES = 3
 _DIGEST_CHARS = 16
 
@@ -38,16 +44,29 @@ def metadata_lines(metadata: Optional[Mapping[str, Any]]) -> List[str]:
     return [f"{key}: {metadata_value(items[key])}" for key in sorted(items)]
 
 
-def build_profiler_user_message(text: str, metadata: Optional[Mapping[str, Any]]) -> str:
+def build_profiler_user_message(text: str, metadata: Optional[Mapping[str, Any]],
+                                people: Sequence[ConfirmedPerson] = ()) -> str:
+    """The message the model reads: the people block (`people` is the whole confirmed list, or nothing), then the fact."""
     message = f"Fact:\n{text}"
     lines = metadata_lines(metadata)
     if lines:
         message += "\nMetadata:\n" + "\n".join(lines)
-    return message
+    return render_people_block(people) + message
 
 
-def profile_fingerprint(text: str, metadata: Optional[Mapping[str, Any]]) -> str:
-    return hashlib.sha256(build_profiler_user_message(text, metadata).encode("utf-8")).hexdigest()
+def named_people(people: Optional[ConfirmedPeople], text: str,
+                 metadata: Optional[Mapping[str, Any]]) -> Sequence[ConfirmedPerson]:
+    """The list entries this fact names (a name form or a relation word in its text or metadata): the part of the list
+    that belongs to the fact's fingerprint. The texts are the ones `derive_profile` checks against."""
+    return people_named_in_texts(people, [text, *metadata_lines(metadata)])
+
+
+def profile_fingerprint(text: str, metadata: Optional[Mapping[str, Any]],
+                        named: Sequence[ConfirmedPerson] = ()) -> str:
+    material = build_profiler_user_message(text, metadata)
+    if named:
+        material += "\n\n" + render_people_block(named)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def registry_digest() -> str:
@@ -57,9 +76,11 @@ def registry_digest() -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:_DIGEST_CHARS]
 
 
-def profile_derivation(registry: str, atlas: str, is_directive: bool) -> str:
-    """`DERIVE_VERSION | registry digest | atlas digest | is_directive`."""
-    return f"{DERIVE_VERSION}|{registry}|{atlas}|{int(is_directive)}"
+def profile_derivation(registry: str, atlas: str, is_directive: bool, recording_year: Optional[int] = None) -> str:
+    """`DERIVE_VERSION | registry digest | atlas digest | is_directive`, then `|y<year>` when the recording year is
+    given: `reported_date` can be rewritten in place, and a date printed without a year follows it."""
+    base = f"{DERIVE_VERSION}|{registry}|{atlas}|{int(is_directive)}"
+    return base if recording_year is None else f"{base}|y{recording_year}"
 
 
 class ProfileStatus(str, Enum):
@@ -70,10 +91,10 @@ class ProfileStatus(str, Enum):
     FRESH = "fresh"
 
 
-def classify_profile(fact: FactEntity, derivation: str) -> ProfileStatus:
-    """The status of one fact's profile against its current text, metadata and the current `derivation`. Abandonment is
-    checked first: a fact that never got a profile can be abandoned too."""
-    current = profile_fingerprint(fact.text, fact.metadata)
+def classify_profile(fact: FactEntity, derivation: str, named: Sequence[ConfirmedPerson] = ()) -> ProfileStatus:
+    """The status of one fact's profile against its current text, metadata, the list entries it names and the current
+    `derivation`. Abandonment is checked first: a fact that never got a profile can be abandoned too."""
+    current = profile_fingerprint(fact.text, fact.metadata, named)
     if fact.profile_failed_fingerprint == current and (fact.profile_failures or 0) >= ABANDON_AFTER_FAILURES:
         return ProfileStatus.ABANDONED
     if not fact.profile_fingerprint:

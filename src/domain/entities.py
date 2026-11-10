@@ -212,3 +212,5 @@ class FactEntity(BaseModel):
     profiled_at: Optional[datetime] = None
     profile_failures: Optional[int] = None
     profile_failed_fingerprint: Optional[str] = None
+    profile_review_needed: Optional[bool] = None
+    profile_review_items: Optional[List[Dict[str, Any]]] = None   # {field, mention}

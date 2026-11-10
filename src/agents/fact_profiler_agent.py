@@ -5,11 +5,12 @@ Public interface:
     AGENT_TYPE = "fact_profiler"
     response_schema() -> dict          the strict JSON schema of `ProfileAnswer`, enums taken from the domain registry
     FactProfilerAgent(config, execution_context, prompt_builder)
-        .profile(account_id, text, metadata) -> FactProfilerReply
+        .profile(account_id, text, metadata, people) -> FactProfilerReply
             never raises: ok / invalid / refused / unavailable (`FactProfilerPort` says which side each is on)
 
-In: the fact's text and metadata as the one user message `build_profiler_user_message` prints (the bytes the
-fingerprint hashes). Out: a `ProfileAnswer` validated against the registry's enums (code derives the domains from it
+In: the confirmed people list (when the account has one) and the fact's text and metadata as the one user message
+`build_profiler_user_message` prints. The list is per account, so it travels in the user message, never in the system
+prompt: that text is built once, shared by every account and cached. Out: a `ProfileAnswer` validated against the registry's enums (code derives the domains from it
 afterwards). Structured output per the standard (src/adapters/CLAUDE.md): OUTPUT_FORMAT_FACT_PROFILER + the schema
 through the provider's native structured output, json.loads, one parse retry, no regex fallback. No tools, history,
 biography or user overrides; a prompt missing a section is an outage, never a fallback prompt. Not a delegation agent
@@ -19,17 +20,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Mapping, Optional, Tuple, get_args
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, get_args
 
 from pydantic import ValidationError
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
+from ..domain.confirmed_people import ConfirmedPerson
 from ..domain.exceptions import (
     LLMAccountError, LLMClientError, LLMError, LLMFallbackClientError, LLMRefusalError,
 )
 from ..domain.fact_domains import render_subject_enum_block, render_use_area_line, subject_enum, use_area_enum
 from ..domain.fact_profile_answer import (
-    PROFILE_KINDS, AboutPerson, Precision, ProfileAnswer, Sensitivity, TaxOrFine, TimeRole,
+    PROFILE_KINDS, AboutPerson, Precision, ProfileAnswer, Quality, ReviewField, Sensitivity, TaxOrFine, TimeRole,
 )
 from ..domain.fact_profile_fingerprint import build_profiler_user_message
 from ..domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
@@ -79,6 +81,9 @@ def response_schema() -> Dict[str, Any]:
             "city": _strings(), "country": _strings(), "source": _strings()})},
         "people": {"type": "array", "items": _object({
             "name": _strings(), "role": _strings(), "source": _strings()})},
+        "quality": _enum(get_args(Quality)),
+        "review_items": {"type": "array", "items": _object({
+            "field": _enum(get_args(ReviewField)), "mention": _strings()})},
         "tax_or_fine": _enum(get_args(TaxOrFine)),
         "user_identity": {"type": "boolean"},
         "pet": {"type": "boolean"},
@@ -111,12 +116,13 @@ class FactProfilerAgent(BaseAgent):
         return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id,
                                      error="FactProfilerAgent is not part of the delegation chain; use profile()")
 
-    async def profile(self, account_id: str, text: str, metadata: Optional[Mapping[str, Any]]) -> FactProfilerReply:
+    async def profile(self, account_id: str, text: str, metadata: Optional[Mapping[str, Any]],
+                      people: Sequence[ConfirmedPerson] = ()) -> FactProfilerReply:
         """One call (plus at most one parse retry), billed to `account_id` as one execution. Never raises."""
         calls = [0]
         with self._execution_billing_scope(account_id) as ledger:
             try:
-                status, answer = await self._profile(text, metadata, calls)
+                status, answer = await self._profile(text, metadata, people, calls)
             except _PromptUnavailable:
                 status, answer = ProfilerStatus.UNAVAILABLE, None
             except Exception as exc:
@@ -128,11 +134,11 @@ class FactProfilerAgent(BaseAgent):
 
     # -- implementation -----------------------------------------------------------------------------------------
 
-    async def _profile(self, text: str, metadata: Optional[Mapping[str, Any]],
+    async def _profile(self, text: str, metadata: Optional[Mapping[str, Any]], people: Sequence[ConfirmedPerson],
                        calls: List[int]) -> Tuple[ProfilerStatus, Optional[ProfileAnswer]]:
         system = await self._system_prompt()
         history: List[Message] = [Message(role="user", parts=[MessagePart(
-            text=build_profiler_user_message(text, metadata))])]
+            text=build_profiler_user_message(text, metadata, people))])]
         schema = response_schema()
         for attempt in range(FACT_PROFILER.max_parse_retries + 1):
             calls[0] += 1

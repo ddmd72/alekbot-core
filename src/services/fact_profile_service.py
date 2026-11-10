@@ -2,12 +2,15 @@
 FactProfileService — the profile step of the memory-write lease (docs/10_rfcs/FACT_PROFILE_RFC.md §4.2, §4.4).
 
 Public interface:
-    FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards)
+    FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards,
+                       confirmed_people)
         async scan(account_id) -> FactProfileScan                 what a run would find; reads, writes nothing
         async run(account_id, deadline) -> FactProfileRun         never raises; `deadline` is the lease's `until`
 
 One run, inside a lease the caller holds, reads the account's current facts once and brings every profile up to date:
-  1. classify each fact against its content and the code inputs (registry, atlas, directive or not);
+  0. read the account's confirmed people list once (when a repository is wired; an unreadable list ends the step);
+  1. classify each fact against its content, the list entries it names and the code inputs (registry, atlas, the
+     recording year, directive or not);
   2. free work: a profile whose only stale part is code is re-derived from its stored answer; a standing directive gets
      its fixed profile (no call); a failed fact is not retried once abandoned;
   3. model calls for the rest (newest first, at most `max_per_run`, `concurrency` at a time, each started only while the
@@ -25,15 +28,17 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
+from ..domain.confirmed_people import ConfirmedPeople, ConfirmedPerson
 from ..domain.entities import FactDomain, FactEntity
 from ..domain.fact_profile import FactProfile
 from ..domain.fact_profile_answer import ProfileAnswer
-from ..domain.fact_profile_derive import DeriveOutcome, derive_profile, directive_profile
+from ..domain.fact_profile_derive import DeriveOutcome, derive_profile, directive_profile, recording_year
 from ..domain.fact_profile_fingerprint import (
     ABANDON_AFTER_FAILURES,
     ProfileStatus,
     classify_profile,
     failure_fields,
+    named_people,
     profile_derivation,
     profile_fingerprint,
     registry_digest,
@@ -43,6 +48,7 @@ from ..domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
 from ..domain.memory_write_lease import agent_timeout_s
 from ..domain.person_cards import build_person_cards_counted
 from ..domain.place_names import PlaceNames
+from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
 from ..ports.person_card_repository import PersonCardRepository
@@ -85,6 +91,9 @@ class _Item:
     is_directive: bool
     derivation: str
     answer: Optional[ProfileAnswer]
+    named: Tuple[ConfirmedPerson, ...] = ()     # the list entries the fact names: part of its fingerprint
+    listed: Tuple[ConfirmedPerson, ...] = ()    # the whole list: what the call carries
+    year: Optional[int] = None                  # the recording year
 
     @property
     def needs_call(self) -> bool:
@@ -130,6 +139,7 @@ class _Tally:
     outage: bool = False
     refreshed: bool = False
     cards: int = 0
+    flagged: int = 0
     error: bool = False
 
     def freeze(self) -> FactProfileRun:
@@ -137,7 +147,7 @@ class _Tally:
             scan=self.scan, rederived=self.rederived, directives=self.directives, called=self.called,
             written=self.written, failed=self.failed, newly_abandoned=self.newly_abandoned, deferred=self.deferred,
             lost_cas=self.lost_cas, usd=self.usd, drops=dict(self.drops), outage=self.outage,
-            refreshed=self.refreshed, cards=self.cards, error=self.error)
+            refreshed=self.refreshed, cards=self.cards, flagged=self.flagged, error=self.error)
 
 
 class FactProfileService:
@@ -153,6 +163,7 @@ class FactProfileService:
         concurrency: int = 4,
         clock: Callable[[], datetime] = _utcnow,
         person_cards: Optional[PersonCardRepository] = None,
+        confirmed_people: Optional[ConfirmedPeopleRepository] = None,
     ) -> None:
         self._repo = repo
         self._profiler = profiler
@@ -163,6 +174,7 @@ class FactProfileService:
         self._concurrency = concurrency
         self._clock = clock
         self._person_cards = person_cards
+        self._confirmed_people = confirmed_people
 
     async def scan(self, account_id: str) -> FactProfileScan:
         """The account's facts by status and the model calls a run would make (no cap applied). Reads only."""
@@ -187,21 +199,37 @@ class FactProfileService:
         logger.info(
             f"[FactProfile] run account={account_id[:8]} scanned={scan.scanned} missing={scan.missing} "
             f"stale={scan.stale_input + scan.stale_derivation} rederived={run.rederived} written={run.written} "
-            f"failed={run.failed} deferred={run.deferred} lost_cas={run.lost_cas} usd={run.usd:.4f}")
+            f"failed={run.failed} deferred={run.deferred} lost_cas={run.lost_cas} flagged={run.flagged} usd={run.usd:.4f}")
         return run
 
     # ------------------------------------------------------------------------------------------------ planning
 
     async def _plan(self, account_id: str) -> Tuple[PlaceNames, List[_Item]]:
+        confirmed = await self._read_confirmed(account_id)
+        listed = confirmed.entries() if confirmed is not None else ()
         facts = await self._repo.list_profile_states(account_id)
         names, atlas = await self._atlas()
         registry = registry_digest()
         items: List[_Item] = []
         for fact in facts:
             directive = _is_directive(fact)
-            derivation = profile_derivation(registry, atlas, directive)
-            items.append(_Item(fact, classify_profile(fact, derivation), directive, derivation, _stored_answer(fact)))
+            named = tuple(named_people(confirmed, fact.text, fact.metadata))
+            year = recording_year(fact.reported_date, fact.created_at)
+            derivation = profile_derivation(registry, atlas, directive, year)
+            items.append(_Item(fact, classify_profile(fact, derivation, named), directive, derivation,
+                               _stored_answer(fact), named, listed, year))
         return names, items
+
+    async def _read_confirmed(self, account_id: str) -> Optional[ConfirmedPeople]:
+        """The account's confirmed list. An unreadable list propagates: classifying without it would mark every fact that
+        names a listed person stale and re-profile it without the list."""
+        if self._confirmed_people is None:
+            return None
+        try:
+            return await self._confirmed_people.get(account_id)
+        except Exception:
+            logger.error(f"[FactProfile] confirmed people unreadable account={account_id[:8]}")
+            raise
 
     @staticmethod
     def _count(items: List[_Item]) -> FactProfileScan:
@@ -211,7 +239,8 @@ class FactProfileService:
         return FactProfileScan(
             scanned=len(items), missing=n(ProfileStatus.MISSING), stale_input=n(ProfileStatus.STALE_INPUT),
             stale_derivation=n(ProfileStatus.STALE_DERIVATION), abandoned=n(ProfileStatus.ABANDONED),
-            fresh=n(ProfileStatus.FRESH), to_call=sum(1 for item in items if item.needs_call))
+            fresh=n(ProfileStatus.FRESH), to_call=sum(1 for item in items if item.needs_call),
+            needs_review=sum(1 for item in items if item.fact.profile_review_needed is True))
 
     async def _run(self, account_id: str, deadline: datetime, tally: _Tally) -> None:
         names, items = await self._plan(account_id)
@@ -278,16 +307,17 @@ class FactProfileService:
                 if outage.is_set() or agent_timeout_s(deadline, self._clock()) <= self._call_budget_s:
                     return None
                 started = self._clock()
-                reply = await self._ask(account_id, item.fact)
+                reply = await self._ask(account_id, item)
                 if reply.status is ProfilerStatus.UNAVAILABLE:
                     outage.set()
                 return _Called(item, reply, int((self._clock() - started).total_seconds() * 1000))
 
         return list(await asyncio.gather(*(one(item) for item in targets)))
 
-    async def _ask(self, account_id: str, fact: FactEntity) -> FactProfilerReply:
+    async def _ask(self, account_id: str, item: _Item) -> FactProfilerReply:
+        fact = item.fact
         try:
-            return await self._profiler.profile(account_id, fact.text, fact.metadata)
+            return await self._profiler.profile(account_id, fact.text, fact.metadata, people=item.listed)
         except Exception:
             logger.error(f"[FactProfile] profiler raised fact={fact.id[:8]}", exc_info=True)
             return FactProfilerReply.unavailable()
@@ -299,15 +329,15 @@ class FactProfileService:
         if item.status is ProfileStatus.STALE_DERIVATION:
             fields = self._rederived_fields(profile, item.derivation)
         else:
-            fields = self._success_fields(profile, fact, item.derivation, None)
+            fields = self._success_fields(profile, item, None)
         fields["label_vector"] = None
         return _Pending(fact, _DIRECTIVE, fields,
                         outcome="rederived" if item.status is ProfileStatus.STALE_DERIVATION else "written")
 
     def _derived_write(self, item: _Item, answer: ProfileAnswer, names: PlaceNames) -> _Pending:
-        outcome = derive_profile(answer, item.fact.text, item.fact.metadata, names)
+        outcome = derive_profile(answer, item.fact.text, item.fact.metadata, names, item.year, item.listed)
         if outcome.redo_reason is not None:
-            return self._failure(item.fact, outcome.profile.profile_drops)
+            return self._failure(item, outcome.profile.profile_drops)
         return _Pending(item.fact, _REDERIVED, self._rederived_fields(outcome.profile, item.derivation),
                         label_text=self._label_text(outcome.profile), drops=dict(outcome.profile.profile_drops),
                         outcome="rederived")
@@ -315,20 +345,22 @@ class FactProfileService:
     def _called_write(self, entry: _Called, names: PlaceNames) -> _Pending:
         item, reply = entry.item, entry.reply
         if reply.status is not ProfilerStatus.OK or reply.answer is None:
-            pending = self._failure(item.fact, {})
+            pending = self._failure(item, {})
         else:
-            outcome: DeriveOutcome = derive_profile(reply.answer, item.fact.text, item.fact.metadata, names)
+            outcome: DeriveOutcome = derive_profile(reply.answer, item.fact.text, item.fact.metadata, names, item.year,
+                                                    item.listed)
             if outcome.redo_reason is not None:
-                pending = self._failure(item.fact, outcome.profile.profile_drops)
+                pending = self._failure(item, outcome.profile.profile_drops)
             else:
-                fields = self._success_fields(outcome.profile, item.fact, item.derivation, reply.model)
+                fields = self._success_fields(outcome.profile, item, reply.model)
                 pending = _Pending(item.fact, _WRITTEN, fields, label_text=self._label_text(outcome.profile),
                                    drops=dict(outcome.profile.profile_drops))
         pending.ms, pending.usd = entry.ms, reply.usd
         return pending
 
-    def _failure(self, fact: FactEntity, drops: Any) -> _Pending:
-        fingerprint = profile_fingerprint(fact.text, fact.metadata)
+    def _failure(self, item: _Item, drops: Any) -> _Pending:
+        fact = item.fact
+        fingerprint = profile_fingerprint(fact.text, fact.metadata, item.named)
         fields = failure_fields(fact.profile_failures, fact.profile_failed_fingerprint, fingerprint)
         return _Pending(fact, _FAILED, fields, drops=dict(drops),
                         abandoned=fields["profile_failures"] >= ABANDON_AFTER_FAILURES)
@@ -341,11 +373,11 @@ class FactProfileService:
     def _rederived_fields(profile: FactProfile, derivation: str) -> Dict[str, Any]:
         return {**profile.stored(), "profile_derivation": derivation, "label_vector": None}
 
-    def _success_fields(self, profile: FactProfile, fact: FactEntity, derivation: str,
-                        model: Optional[str]) -> Dict[str, Any]:
+    def _success_fields(self, profile: FactProfile, item: _Item, model: Optional[str]) -> Dict[str, Any]:
+        fact, derivation = item.fact, item.derivation
         return {
             **profile.stored(), "label_vector": None,
-            "profile_fingerprint": profile_fingerprint(fact.text, fact.metadata),
+            "profile_fingerprint": profile_fingerprint(fact.text, fact.metadata, item.named),
             "profile_derivation": derivation, "profile_model": model, "profiled_at": self._clock(),
             "profile_failures": None, "profile_failed_fingerprint": None,
         }
@@ -382,6 +414,8 @@ class FactProfileService:
                 self._log_fact(p, "abandoned" if p.abandoned else "failed")
                 continue
             tally.written += 1
+            if p.fields.get("profile_review_needed") is True:
+                tally.flagged += 1
             if p.kind == _DIRECTIVE:
                 tally.directives += 1
             elif p.kind == _REDERIVED:

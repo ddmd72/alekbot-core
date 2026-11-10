@@ -1,6 +1,7 @@
 # RFC: Fact profile — a per-fact retrieval profile, one domain registry and multi-list memory search
 
-**Status:** Accepted by the owner 2026-11-09 (§12). Implementation in progress (§9 PR series).
+**Status:** Accepted by the owner 2026-11-09 (§12); amended by the owner 2026-11-10 (confirmed people list, needs-review
+flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11). Implementation in progress (§9 PR series).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
 are private working documents; measured numbers quoted here are aggregates from those runs.
@@ -53,7 +54,7 @@ step through `write_fact_profile` (§2.3); never by the consolidator, the review
 | `label_words` | list of 0–12 strings, 1–3 lowercase English words | model, checked by code | labels list (via vector), intimate rule |
 | `label_vector` | 768-dim vector of the joined labels (`RETRIEVAL_DOCUMENT`) | code | labels list |
 | `time_role` | `event` / `state` / `validity` / `measurement` / `timeless` | model | list ordering |
-| `time_points` | ≤ 8 maps `{from, to, precision, source}` | model, each point verified as printed | time list, ordering, `when:` line |
+| `time_points` | ≤ 8 maps `{from, to, precision, source}` | model, each point verified as printed; a date printed without a year takes the year the fact was recorded (§4.4) | time list, ordering, `when:` line |
 | `place_keys` | `pl:<geonameid>` (with the large neighbour) and `co:<country>` | code from the model's `{city, country, source}` via the atlas | places list |
 | `places_unresolved` | list of `{city, country}` with no single atlas row | code | reports only |
 | `people` | list of `{name, role, name_keys, role_keys}` | model names and roles; keys by code (`skeleton_key`, word forms) | people list, people cards |
@@ -62,6 +63,8 @@ step through `write_fact_profile` (§2.3); never by the consolidator, the review
 | `user_identity` | bool | model answer, stored | baseline identity block |
 | `kinds` | subset of the seven kinds | model answer | kinds list |
 | `sensitivity` | `ordinary` / `discreet` / `intimate` | model answer | intimate gate, voice baseline |
+| `profile_review_needed` | bool | model's `quality` answer, checked by code (§4.6) | the review question (a later PR), scan counts |
+| `profile_review_items` | list of `{field, mention}`, `field` one of `people` / `time_points` / `places` | model, each mention verified as printed (§4.6) | the review question (a later PR) |
 | `profile_answer` | map: the model's validated raw answer | code | re-derivation without a call |
 | `profile_fingerprint` | sha256 of the profiler's user message | code | staleness |
 | `profile_derivation` | code-derivation version string (§4.2) | code | re-derivation trigger |
@@ -81,6 +84,7 @@ sensitivity `ordinary`, and labels that are not in the text (the word "insurance
 expiry fields and the old `domain` field keep their writers and values. The profiler never writes them (a test pins
 `PROFILE_FIELDS` disjoint from them and from `IN_PLACE_FIELDS`, `fact_lifecycle.py:48`). The old `domain` keeps being
 written by the consolidator until PR 13 (§9) and is read only as the directive marker after PR 12.
+The confirmed people list (§4.5) is not a fact field: it lives in its own collection and the profiler step never writes it.
 
 ### 2.3 Writing a profile
 
@@ -171,17 +175,26 @@ model call** (labels and time are not used for directives).
 by the optional knob `FACT_PROFILER_MODEL` read with `os.getenv` at the call site (default: the Sonnet 5.5 id); effort
 high, adaptive thinking (the stall fix of `decisions/sonnet55_adaptive_thinking_stall.md` applies), system prompt with
 `cache_control`, output by JSON schema (`CLAUDE_STRUCTURED_OUTPUTS_GA_RFC.md`), `allow_provider_storage=False`, one parse
-retry. User message: `Fact:\n<text>`, then `\nMetadata:\n` and one `key: value` line per key in sorted key order (lists
-and objects as compact JSON) — the exact bytes the fingerprint hashes. No `Today:`, no reported date: the answer depends
-on the fact alone, so a fingerprint holds for the fact's life.
+retry. User message: first, when the account has a confirmed people list (§4.5), the whole list as a block; then
+`Fact:\n<text>`, then `\nMetadata:\n` and one `key: value` line per key in sorted key order (lists and objects as
+compact JSON). The fingerprint hashes the message without the list block, plus the block of the entries the fact names
+(§4.2), so a fact that names no listed person has the message bytes it had before the list existed. No `Today:`, no
+reported date: the answer depends on the fact and the entries it names, so a fingerprint holds until one of those
+changes. The year of a date the fact prints without one is applied by code after the call (§4.4), never asked of the
+model.
 
 ### 4.2 Fingerprint and staleness (decided)
 
-- `profile_fingerprint = sha256(user message)` — text and metadata only. Excluded on purpose: tags, `reported_date`,
-  expiry, state, priority, the old domain. None of them is model input, and a tags-only or lifecycle-only change must
-  not cost a call.
-- `profile_derivation = DERIVE_VERSION | registry digest | atlas digest | is_directive`. A mismatch means only code
-  inputs changed: the step re-derives from `profile_answer` without a call.
+- `profile_fingerprint = sha256(message without the list block + the block of the entries the fact names)` — text,
+  metadata and the confirmed-list entries the fact names by a name form or a relation word (§4.5). Excluded on purpose:
+  tags, `reported_date`, expiry, state, priority, the old domain, and every list entry the fact does not name. None of
+  them changes what the model must answer for this fact, and a tags-only or lifecycle-only change, or a list edit about
+  a person the fact does not name, must not cost a call. A list edit makes exactly the facts that name the edited entry
+  `stale_input`; they are re-profiled by the step's normal order and cap.
+- `profile_derivation = DERIVE_VERSION | registry digest | atlas digest | is_directive | recording year`. A mismatch
+  means only code inputs changed: the step re-derives from `profile_answer` without a call. The recording year (§4.4) is
+  in it because `reported_date` can be rewritten in place (`IN_PLACE_FIELDS`), and a yearless date must follow it
+  without a call.
 - `classify_profile(fact)` (pure) → `missing` (no fingerprint) / `stale_input` (fingerprint ≠ hash of the current
   message) / `stale_derivation` / `abandoned` (§4.4) / `fresh`.
 - **Scope:** every `state == current` fact of the account being processed, including the history-trail fact a history
@@ -192,10 +205,12 @@ on the fact alone, so a fingerprint holds for the fact's life.
 ### 4.3 The prompt token
 
 Two Firestore tokens, uploaded before the agent ships: `COGNITIVE_PROCESS_FACT_PROFILER` (the v4 general rules, label
-words, time role, time points, places, people, then the domain questions — the decided "hybrid": each question's why-paragraph,
-then its crisp rules) and `OUTPUT_FORMAT_FACT_PROFILER`. The closing `SUBJECT ENUM` / `USE-AREA ENUM` block is a
-code-rendered static block from the registry, appended after the tokens; it ships by deploy. Text explains, then states
-rules, and carries no examples. No inline fallback: a missing token fails the step (`[FactProfile] token missing`),
+words, time role, time points, places, people, the confirmed people, the quality answer, then the domain questions — the
+decided "hybrid": each question's why-paragraph, then its crisp rules) and `OUTPUT_FORMAT_FACT_PROFILER`. The closing
+`SUBJECT ENUM` / `USE-AREA ENUM` block is a code-rendered static block from the registry, appended after the tokens; it
+ships by deploy. The confirmed people list is per account, so it is never in the system prompt: that text stays one
+cached text shared by every account, and the list travels in the user message, which is not cached. Text explains, then
+states rules, and carries no examples. No inline fallback: a missing token fails the step (`[FactProfile] token missing`),
 nothing is written.
 
 ### 4.4 Placement, budget, failure, cost
@@ -219,14 +234,82 @@ nothing is written.
   lone record word (a one-word label naming a record, not a life situation), no
   relation word, no word form already in the text or metadata, deduplicated, cap 12; time points — the source occurs in
   the text or a metadata value (`drive_grade.TextEvidence`), the date is read from that source, `from ≤ to`, year
-  1900–2100; places — printed source, city found in the named country by the atlas (`place_lookup.py`, the table loaded
-  by `geo_place_table.py`), one row → keys, else `places_unresolved`; people — printed name or role. Every drop is
-  counted per reason in `profile_drops`.
+  1900–2100; a month or a year read from a printed full date is accepted (an approximate time stated around a printed
+  date is filed at the month of that date); a date the model writes without a year (`--MM-DD`, `--MM`) is accepted only
+  when its source prints no year, and takes the **recording year**: the year of the earlier of the fact's `reported_date`
+  and `created_at` (UTC; the earlier, because a document missing `reported_date` reads it as the time of the read), so a
+  day and month printed without a year are filed in the year the user said them, never in the year of the run; places —
+  printed source, city found in the named country by the atlas (`place_lookup.py`, the table loaded
+  by `geo_place_table.py`), one row → keys, else `places_unresolved`; people — printed name or role; a name that is not printed is kept only when it is a confirmed list entry's name, the
+  source (the printed relation) is printed, and the person is then stored with `from_list`; review items — the mention
+  is printed (`review_mention_not_printed` otherwise), items given with `quality = confident` are dropped
+  (`review_items_without_flag`). Every drop is counted per reason in `profile_drops`.
 - **Cost:** ≈ $0.003 per fact (measured); steady state is the new and changed facts
   of the month, cents. Spend goes through the execution-scoped billing ledger as agent `fact_profiler`.
 - **Observability:** per fact `[FactProfile] fact=<id8> outcome=written|rederived|failed|abandoned drops=… ms=… usd=…`;
-  per run `[FactProfile] run scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… usd=…`;
+  per run `[FactProfile] run scanned=… missing=… stale=… rederived=… written=… failed=… deferred=… flagged=… usd=…`
+  (`flagged`: profiles written this run with `profile_review_needed`; the scan counts the flagged current facts);
   `prompt_content` rows and Logfire spans come from the agent's normal call path.
+
+### 4.5 Confirmed people list (owner, 2026-11-10)
+
+A per-account list of people the owner has confirmed, kept per account: the user first, by full name, then
+each person with their name, the other forms they are written in and their relation to the user. It exists because a
+fact often names a relative by a first name alone or by a relation alone, and a relative filed as a stranger is missed
+by every relation question; the model cannot know who a first name is, the owner can.
+
+- **Store.** Collection `{prefix}confirmed_people`, one document per account, doc id `{account_id}`:
+  `account_id`, `user {name, forms[]}`, `people [{name, forms[], relation}]` (owner's order kept), `source`
+  (`owner_script`; later `review_answer`), `confirmed_at`. One document: the list is read whole on every profile step
+  and replaced whole on every confirmation. Not on the account document (that document is overwritten whole from
+  `BillingAccount` by the account repository) and not among the people cards (`replace_cards` deletes every card it did
+  not build, and a card is never in a prompt).
+- **Port.** `ConfirmedPeopleRepository` (`get(account_id)`, `replace(account_id, people, source)`): services cannot read
+  Firestore themselves, and a second reader is planned (the consolidator, a later PR); `get` is the one read both use.
+- **Writers.** Only the owner's confirmation: a local ops script now, an answer to a review question later. The profiler
+  step, the consolidator and the review pass never write it; it is never derived from facts or cards. It is not memory
+  and not a fact: nothing of it is written into a fact.
+- **What the model reads.** The whole list, as one block before `Fact:`: a title line, then one line per entry (name,
+  the other forms, the relation; `the user` for the first). The list is short, and it lets the model resolve an
+  inflected form of a name or a mention by relation alone. Its exact bytes are pinned by a test.
+- **What the fingerprint holds.** Only the entries the fact names (pure, `src/domain/confirmed_people.py`): an entry is
+  named when a word of its name or of one of its forms occurs in the fact's text or metadata as a word, or as the same
+  transliteration skeleton in the other script (the evidence test `check_people` uses), or a word of its relation occurs
+  (plural and possessive forms count; the user's relation is not a word to look for). Selection over-includes on
+  purpose — a shared surname or relation selects every entry carrying it. A list edit then re-profiles only the facts
+  that mention the edited person by a name form or by their relation word; facts that mention nobody on the list are
+  never re-called by it, and the first list write does not re-profile the store.
+- **Rules for the model** (token, §4.3): a mention identifies an entry when what the fact prints about the person (a
+  name or form, together with any relation, role or context) fits that entry and no other; a name with a relation or
+  role that only one entry has is enough, and so is a relation that only one entry has. A person identified by a
+  printed name keeps the name as printed and takes the entry's relation as role. A person identified only by a relation
+  takes the entry's full name; code accepts that name although the fact does not print it, when it is a list entry's
+  name (never the user's) and the printed relation words are given as the source, and stores the person with
+  `from_list` so that cards and search can tell it from a printed name. The user is never a person entry. A mention
+  that fits several entries is not resolved by a guess: it is left with what the fact states and marked for review
+  (§4.6). Otherwise code keeps a name only when it is printed (`check_people`).
+- **Failure.** A list that cannot be read or does not parse ends the step before any classification
+  (`[FactProfile] run failed`, `error=True`): classifying without it would mark every fact that names a listed person
+  stale and re-profile it without the list. No document is an empty list, not an error.
+
+### 4.6 Needs review (owner, 2026-11-10)
+
+The model states the quality of its answer: `confident` when every person, time point and place it returns is what the
+fact states, `needs_review` when at least one could not be decided from the fact and was left open. With
+`needs_review` it lists `review_items` `{field, mention}` — the field (`people`, `time_points`, `places`) and the printed
+words the open point is about. A fact that leaves a person, a date or a place open is better asked than guessed: a guess
+files the fact under the wrong person, time or place and nobody notices.
+
+- **Written but flagged.** A `needs_review` profile is written and used by search like any other; the flag and the
+  checked items are stored as `profile_review_needed` and `profile_review_items` (§2.1). It is not a failure and does not
+  count towards abandonment.
+- **The question channel is a later PR** — the one that also asks about unresolved places. Today's review questions are
+  lifecycle questions about stale facts (`QuestionKind` still_true / happened / renewed / paid, fixed options, a fallback
+  applied on timeout); a profile question is about a current fact, its answer is free text and its effect is a list entry
+  or a profile correction. That PR adds the question kind, its code-built texts (`fact_question_texts.py`) and the answer
+  path; this one stores what it reads.
+- **Old answers.** A stored answer written before these fields existed reads as `confident` with no items (schema
+  defaults), so re-derivation never needs a call for them.
 
 ## 5. Search
 
@@ -381,6 +464,7 @@ Each PR is small, deploys on its own and changes no behaviour a later PR needs u
 | 4 | `FactProfileService` step in both leased runs, knobs, logs; backfill script | PR 3 tokens live | `tests/unit/services/test_fact_profile_service.py`, `tests/unit/services/test_consolidation_profile_step.py`, `tests/unit/services/test_fact_review_profile_step.py` |
 | — | **Backfill** (§8) | owner OK | — |
 | 5 | People cards + digest line | — | `tests/unit/domain/test_person_cards.py`, `tests/unit/services/test_fact_review_digest_people_line.py` |
+| 5b | Confirmed people list (store, port, selection, block in the profiler message, fingerprint), needs-review answer and fields, approximate and yearless dates in the derive check; tokens amended | tokens uploaded; the owner's list written by the ops script (dry run first) | `tests/unit/domain/test_confirmed_people.py`, `test_fact_profile_fingerprint_people.py`, `test_fact_profile_yearless_dates.py`, `test_fact_profile_approximate_dates.py`, `test_fact_profile_review.py`, `test_fact_profile_people_from_list.py`, `tests/unit/adapters/test_confirmed_people_store_kit.py`, `tests/unit/services/test_fact_profile_people_list.py`, `tests/unit/agents/test_fact_profiler_agent_people_block.py`, `tests/unit/prompts/test_fact_profiler_prompt_contract_review.py` |
 | 6 | `fact_search_lists.py`, `FactQuery`, `FactSearchService` + port, snapshot cache; no caller | — | `tests/unit/domain/test_fact_search_windows.py`, `test_fact_search_recurring.py`, `test_fact_search_intersection.py`, `test_fact_search_people.py`, `test_fact_search_intimate_gate.py`, `test_fact_search_collect_all.py`, `test_fact_search_kinds_list.py`, `tests/unit/services/test_fact_search_service.py` |
 | 7 | P1 token + `FactQuerySlotsAgent` + `parse_slots` | token uploaded | `tests/unit/domain/test_fact_query_parse.py`, `tests/contracts/test_fact_query_slots_prompt_contract.py`, `tests/unit/agents/test_fact_query_slots_agent.py` |
 | — | **Acceptance re-run** (§10.3) | backfill done | — |
@@ -407,6 +491,14 @@ Clara's (valid until 2026-12-09) — the `document` kinds list across domains, `
 one discreet fact — Alex's trade-union membership at Acme (dues 12 EUR/month) — and no intimate one; the discreet tests use
 it, and the intimate gate tests set `sensitivity` on a neutral universe fact, since the code reads only the stored field. Derivation tests replay the taxonomy's boundary cases marked `generic` (never the owner-derived ones).
 
+Confirmed people cases use the universe household as the list: Alex Doe (forms "Alex", "Bo") as the user, Clara Moreira
+partner, Jamie Doe older daughter, Ana Doe younger daughter, Maria Doe mother (forms "Mariia", "Mia"), Hanna Doe sister.
+A fact printing "Jamie" names Jamie Doe only; a fact printing only "Doe" names every Doe; "mother" names Maria Doe;
+"Mariia" in Ukrainian script names Maria Doe; a fact printing none of them names nobody and keeps its fingerprint.
+Editing Ana Doe's entry makes only the facts that mention Ana (by name or as the younger daughter) stale. Dates:
+"Hamburg conference Oct 15" recorded in 2026 gives 2026-10-15; "weekend in Coimbra with Clara Mar 6–8" gives the range
+2026-03-06 to 2026-03-08; a conference talk "around mid-October 2026" is filed at 2026-10 (month precision).
+
 ### 10.2 Contract tests for the prompt tokens
 
 - The rendered profiler prompt (tokens + registry block) and the rendered P1 static text each equal their reviewed text
@@ -430,6 +522,9 @@ PR 8. A fresh, truly unseen question set, labelled from two weeks of use, runs o
 
 1. PR 1–2 merged; `make deploy-indexes`; wait for READY.
 2. Owner uploads the profiler tokens; PR 3 deploys; confirm run on the 20 probe facts.
+2b. PR 5b: the owner uploads the amended profiler tokens; PR 5b deploys; the ops script shows the owner's list and the
+    number of facts it would make stale, then writes it on the owner's word. The step re-profiles those facts within its
+    per-run cap; facts that name no listed person are not re-profiled by this (§13).
 3. PR 4 deploys; backfill run (owner OK); scan shows 0 unprofiled.
 4. PR 5–7 deploy (no reader change); owner uploads the P1 token; acceptance re-run; owner approves.
 5. PR 8, then 9, then 10, each watched for a day in `[FactSearch]` lines and turn latency.
@@ -476,6 +571,20 @@ month precision) projected into each year (what the prototype ran); (b) a profil
 **OD-8 Time role as a filter (taxonomy read side).** Neither P1 nor the engine has it; the engine uses the role only for
 in-list order. (a) Ship role ordering only; (b) add a slot and measure. **Recommend (a).**
 
+**Owner, 2026-11-10 — amendments, all accepted:**
+
+**OD-9 Confirmed people list.** One owner-confirmed list per account (§4.5), stored in Firestore, never in a token or the
+repository; written only from the owner's confirmation; read by the profiler now and by the consolidator later. The
+whole list travels with every profiler call; the fingerprint holds only the entries a fact names, so a list edit
+re-profiles only the facts that name the edited person.
+
+**OD-10 Needs review.** The profiler states `confident` or `needs_review` with the open points (§4.6); a flagged profile
+is written and used; the owner is asked in chat by a later PR rather than the model guessing.
+
+**OD-11 Dates.** An approximate time around a printed date is filed at the coarser precision of that date (its month);
+a date printed without a year takes the recording year, applied by code from the fact's own fields, so the answer stays
+independent of when the profiler runs.
+
 **Inputs found contradictory or under-specified (to confirm):**
 1. The profiler prompt draft claims its DOMAIN QUESTIONS are the taxonomy's model rule text byte for byte, but holds the
    round-3 rules; the taxonomy text is now the round-4b hybrid. The token pair of §4.3 combines v4 with the hybrid and was never run as one prompt — hence the
@@ -500,4 +609,6 @@ The consolidator's duplicate search and the review's neighbour search (stay on `
 the drive and Gmail indexes; SYSTEM-account facts; the Router triage token (until PR 13); an LLM re-ranker; graph edges
 or one-hop expansion; RRF weights; storing "planned/past"; per-turn Router injection into voice; a card editing page;
 discreet-fact rules for shared channels beyond Lelik's baseline; re-profiling on a prompt change (an explicit,
-owner-approved run).
+owner-approved run); the review-question channel for flagged profiles (a later PR, with the place questions); the consolidator reading the
+confirmed list (a later PR); re-profiling facts that name no listed person after the token amendment (an explicit,
+owner-approved run, as for any prompt change); building people cards from the confirmed list.
