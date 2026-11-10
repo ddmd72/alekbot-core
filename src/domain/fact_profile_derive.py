@@ -10,7 +10,12 @@ per reason in `profile_drops`:
   YEAR_MIN..YEAR_MAX, no duplicate, at most TIME_CAP;
 - places: the source is printed, the city found in the named country by the atlas (`place_names.PlaceNames`); one row
   gives keys, anything else is kept as unresolved;
-- people: the name (or, without a name, the source) is printed; keys from the drive key forms.
+- people: the name (or, without a name, the source) is printed; keys from the drive key forms. A name the fact does
+  not print is kept only when it is a confirmed list entry's name and the source (the printed relation) is printed; the
+  person is then marked `from_list`;
+- a date the fact prints without a year is written `--MM-DD` / `--MM` by the model and takes the recording year
+  (`recording_year`); a month or year read from a printed full date is accepted (an approximate time is filed there);
+- review items: kept only when the mention is printed and the answer is `needs_review`.
 
 A directive is decided by the consolidator, not asked of the model: it gets `agent_directives`, no extras and nothing
 else (`directive_profile`). An `intimate` answer with no surviving label word is a profiling error that needs a redo:
@@ -18,9 +23,10 @@ the outcome carries `redo_reason` and nothing of it may be stored but the failur
 """
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from .confirmed_people import ConfirmedPerson
 from .drive_content_terms import _MONTH_OF, content_terms
 from .drive_enrichment import Grade
 from .drive_grade import TextEvidence
@@ -28,7 +34,7 @@ from .drive_key_forms import primary as form_primary
 from .drive_key_forms import skeleton_key, token_spans
 from .drive_keys import _month_year_spans, word_form_keys
 from .fact_domains import Domain
-from .fact_profile import FactProfile, ProfilePerson, ProfileTimePoint, UnresolvedPlace
+from .fact_profile import FactProfile, ProfilePerson, ProfileReviewItem, ProfileTimePoint, UnresolvedPlace
 from .fact_profile_answer import AnswerPerson, AnswerPlace, AnswerTimePoint, ProfileAnswer
 from .fact_profile_periods import period_ranges
 from .fact_profile_fingerprint import metadata_lines, metadata_value
@@ -57,6 +63,18 @@ _SHORT_RANGE = re.compile(r"(?<!\d)(\d{4})\s*[-–—]\s*(\d{2})(?!\d)")
 # The prefix the fact review writes on a retracted fact (`fact_review_answers.ended_text`): the month in it is when the
 # owner said the fact had ended, not a time the fact is about.
 _RETRACTION_PREFIX = re.compile(r"^\s*No longer true \([^)\n]*\bsaid so in [^)\n]*\):\s*")
+
+
+_YEARLESS_DAY = re.compile(r"--\d{2}-\d{2}")
+_YEARLESS_MONTH = re.compile(r"--\d{2}")
+
+
+def recording_year(reported_date: datetime, created_at: datetime) -> int:
+    """The UTC year of the earlier of the two (a naive value reads as UTC). The earlier, because a stored document that
+    lacks `reported_date` reads it as the time of the read, and that is the year of the run, not of the fact."""
+    def utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return min(utc(reported_date), utc(created_at)).year
 
 
 @dataclass(frozen=True)
@@ -189,8 +207,9 @@ def _short_range_ends(source: str) -> Set[str]:
 
 
 def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[str], value: str, precision: str,
-               source: str) -> Tuple[bool, str]:
-    """(accepted, how it was read or the drop reason) of one ISO value read from `source`."""
+               source: str, year_supplied: bool = False) -> Tuple[bool, str]:
+    """(accepted, how it was read or the drop reason) of one ISO value read from `source`. With `year_supplied` the
+    year of `value` is the recording year, not a printed one: the source then proves the day and month only."""
     src = source.strip()
     src_printed = bool(src) and evidence.occurs(src)
     # A date copied from metadata keeps its underscores ("aug_2025", "Aug_14_2025"): read it as its text form.
@@ -211,8 +230,8 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
             day_ok = (_has_word(s, str(day.day)) or _has_word(s, f"{day.day:02d}")
                       or re.search(rf"(?<!\d){day.day}(?:st|nd|rd|th)?\s*[-–]", s) is not None)
             month_ok = any(_has_word(s, f) for f in _month_forms(day.month))
-            if day_ok and month_ok and _year_printed(s, raw_all, day.year):
-                return True, "parts"
+            if day_ok and month_ok and (year_supplied or _year_printed(s, raw_all, day.year)):
+                return True, "parts_recorded_year" if year_supplied else "parts"
             return False, "time_date_not_in_source"
         if precision == "month":
             if not re.fullmatch(r"\d{4}-\d{2}", value):
@@ -230,8 +249,9 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return True, "month_year_span"
             if any(t.startswith(value) for t in content_terms(spaced)):
                 return True, "iso_in_month"
-            if any(_has_word(s, f) for f in _month_forms(month)) and _year_printed(s, raw_all, year):
-                return True, "parts"
+            if any(_has_word(s, f) for f in _month_forms(month)) and (
+                    year_supplied or _year_printed(s, raw_all, year)):
+                return True, "parts_recorded_year" if year_supplied else "parts"
             if re.search(rf"(?<!\d){year}[-_]{month:02d}(?!\d)", src):
                 return True, "yyyy_mm_in_source"
             return False, "time_date_not_in_source"
@@ -252,30 +272,68 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
     return False, "time_bad_format"
 
 
+def _yearless(value: str, precision: str) -> Optional[bool]:
+    """True: `value` is a yearless date of its precision; False: a full value; None: it starts like a yearless date but
+    is not one of this precision."""
+    if not value.startswith("--"):
+        return False
+    pattern = {"day": _YEARLESS_DAY, "month": _YEARLESS_MONTH}.get(precision)
+    return True if pattern is not None and pattern.fullmatch(value) else None
+
+
+def _check_point_end(value: str, year: Optional[int], precision: str, source: str, evidence: TextEvidence,
+                     raw_all: str, metadata_values: Sequence[str]) -> Tuple[bool, str, str]:
+    """(accepted, how or the drop reason, the ISO value) of one end of a point; a yearless end takes `year`."""
+    yearless = _yearless(value, precision)
+    if yearless is None:
+        return False, "time_bad_format", value
+    if not yearless:
+        ok, why = check_date(evidence, raw_all, metadata_values, value, precision, source)
+        return ok, why, value
+    if year is None:
+        return False, "time_year_unknown", value
+    if _FOUR_DIGITS.search(source):
+        return False, "time_yearless_but_year_printed", value
+    filled = f"{year:04d}{value[1:]}"
+    ok, why = check_date(evidence, raw_all, metadata_values, filled, precision, source, year_supplied=True)
+    return ok, why, filled
+
+
 def check_time_points(points: Sequence[AnswerTimePoint], evidence: TextEvidence, raw_all: str,
-                      metadata_values: Sequence[str], drops: Dict[str, int]) -> Tuple[ProfileTimePoint, ...]:
+                      metadata_values: Sequence[str], drops: Dict[str, int],
+                      recorded_year: Optional[int] = None) -> Tuple[ProfileTimePoint, ...]:
+    """The points that survive. A date written without a year (`--MM-DD` for a day, `--MM` for a month) takes
+    `recorded_year`; when both ends are yearless and the end then falls before the start, the end is in the next year."""
     kept: List[ProfileTimePoint] = []
     seen: Set[Tuple[str, str]] = set()
     for point in points:
         if len(kept) >= TIME_CAP:
             _bump(drops, "time_over_cap")
             continue
-        ok, why = check_date(evidence, raw_all, metadata_values, point.from_, point.precision, point.source)
+        ok, why, start = _check_point_end(point.from_, recorded_year, point.precision, point.source, evidence, raw_all,
+                                          metadata_values)
         if not ok:
             _bump(drops, why)
             continue
         end = ""
         if point.to:
-            ok_to, why_to = check_date(evidence, raw_all, metadata_values, point.to, point.precision, point.source)
-            if ok_to and point.to >= point.from_:
-                end = point.to
+            to_year = recorded_year
+            if (recorded_year is not None and _yearless(point.from_, point.precision)
+                    and _yearless(point.to, point.precision)):
+                filled_to = f"{recorded_year:04d}{point.to[1:]}"
+                if filled_to < start:
+                    to_year = recorded_year + 1
+            ok_to, why_to, filled = _check_point_end(point.to, to_year, point.precision, point.source, evidence,
+                                                    raw_all, metadata_values)
+            if ok_to and filled >= start:
+                end = filled
             else:
                 _bump(drops, "time_to_" + (why_to if not ok_to else "before_from"))
-        if (point.from_, end) in seen:
+        if (start, end) in seen:
             _bump(drops, "time_duplicate")
             continue
-        seen.add((point.from_, end))
-        kept.append(ProfileTimePoint(point.from_, end, point.precision, point.source))
+        seen.add((start, end))
+        kept.append(ProfileTimePoint(start, end, point.precision, point.source))
     return tuple(kept)
 
 
@@ -316,8 +374,12 @@ def name_keys(name: str) -> Tuple[str, ...]:
     return tuple(_dedupe(keys))
 
 
-def check_people(people: Sequence[AnswerPerson], evidence: TextEvidence,
-                 drops: Dict[str, int]) -> Tuple[ProfilePerson, ...]:
+def check_people(people: Sequence[AnswerPerson], evidence: TextEvidence, drops: Dict[str, int],
+                 listed: Sequence[ConfirmedPerson] = ()) -> Tuple[ProfilePerson, ...]:
+    """The people that survive. A name the fact does not print is kept in one case: it is the name of a confirmed list
+    entry (never the user's) and the source, the printed words that pointed to the person, is printed; the person
+    carries the entry's name and relation and is marked `from_list`."""
+    by_name = {entry.name.casefold(): entry for entry in listed if not entry.is_user}
     kept: List[ProfilePerson] = []
     for person in people:
         name, role, src = person.name.strip(), person.role.strip().casefold(), person.source.strip()
@@ -328,12 +390,43 @@ def check_people(people: Sequence[AnswerPerson], evidence: TextEvidence,
             printed = evidence.occurs(name) or bool(evidence.skeleton_seen(name))
         else:
             printed = bool(src) and evidence.occurs(src)
+        entry = by_name.get(name.casefold()) if name and not printed else None
+        if entry is not None and src and evidence.occurs(src):
+            relation = entry.relation.casefold()
+            kept.append(ProfilePerson(entry.name, relation, name_keys(entry.name), word_form_keys(relation),
+                                      from_list=True))
+            continue
         if not printed:
             _bump(drops, "person_not_printed")
             continue
         kept.append(ProfilePerson(name, role, name_keys(name) if name else (),
                                   word_form_keys(role) if role else ()))
     return tuple(kept)
+
+
+# ── Review items ────────────────────────────────────────────────────────────
+
+def check_review(answer: ProfileAnswer, evidence: TextEvidence,
+                 drops: Dict[str, int]) -> Tuple[bool, Tuple[ProfileReviewItem, ...]]:
+    """(needs review, the items that survive). `confident` carries no items (any given are dropped and counted);
+    `needs_review` keeps the items whose mention is printed, once per (field, mention). The flag stays set when no item
+    survives: the model said it is unsure, and that is worth one generic question later."""
+    if answer.quality != "needs_review":
+        if answer.review_items:
+            _bump(drops, "review_items_without_flag", len(answer.review_items))
+        return False, ()
+    kept: List[ProfileReviewItem] = []
+    seen: Set[Tuple[str, str]] = set()
+    for item in answer.review_items:
+        mention = item.mention.strip()
+        if not mention or not (evidence.occurs(mention) or evidence.skeleton_seen(mention)):
+            _bump(drops, "review_mention_not_printed")
+            continue
+        key = (item.field, mention.casefold())
+        if key not in seen:
+            seen.add(key)
+            kept.append(ProfileReviewItem(item.field, mention))
+    return True, tuple(kept)
 
 
 # ── The whole profile ───────────────────────────────────────────────────────
@@ -344,8 +437,11 @@ def _metadata_values(metadata: Optional[Mapping[str, Any]]) -> List[str]:
 
 
 def derive_profile(answer: ProfileAnswer, text: str, metadata: Optional[Mapping[str, Any]],
-                   atlas: PlaceNames) -> DeriveOutcome:
-    """The profile of a non-directive fact from its validated answer (a directive takes `directive_profile`)."""
+                   atlas: PlaceNames, recorded_year: Optional[int] = None,
+                   listed: Sequence[ConfirmedPerson] = ()) -> DeriveOutcome:
+    """The profile of a non-directive fact from its validated answer (a directive takes `directive_profile`).
+    `recorded_year` fills dates the fact prints without a year; `listed` are the confirmed list's entries, the only
+    names kept without being printed."""
     drops: Dict[str, int] = {}
     # The retraction prefix is code's, not the fact's: its date is no source of a time point.
     texts = [_RETRACTION_PREFIX.sub("", text, count=1), *metadata_lines(metadata)]
@@ -368,13 +464,14 @@ def derive_profile(answer: ProfileAnswer, text: str, metadata: Optional[Mapping[
         _bump(drops, INTIMATE_WITHOUT_LABELS)
         redo = INTIMATE_WITHOUT_LABELS
 
-    points = check_time_points(answer.time_points, evidence, raw_all, values, drops)
+    points = check_time_points(answer.time_points, evidence, raw_all, values, drops, recorded_year)
     place_keys, unresolved = check_places(answer.places, evidence, atlas, drops)
-    people = check_people(answer.people, evidence, drops)
+    people = check_people(answer.people, evidence, drops, listed)
+    review_needed, review_items = check_review(answer, evidence, drops)
     profile = FactProfile(
         primary_domain=primary, domain_keys=(primary, *extras), user_identity=answer.user_identity,
         kinds=tuple(answer.kinds), sensitivity=answer.sensitivity, label_words=labels, time_role=answer.time_role,
         time_points=points, place_keys=place_keys, places_unresolved=unresolved, people=people,
-        profile_answer=answer.stored(), profile_drops=drops,
+        profile_answer=answer.stored(), profile_drops=drops, review_needed=review_needed, review_items=review_items,
     )
     return DeriveOutcome(profile, redo)

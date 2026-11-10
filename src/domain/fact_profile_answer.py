@@ -2,7 +2,7 @@
 the registry's enums. Code checks every proposed value afterwards (`fact_profile_derive.py`) and computes the domains;
 the validated answer is stored as `profile_answer`, so a code change re-derives without a call.
 
-`ProfileAnswer` and its three parts (`AnswerTimePoint`, `AnswerPlace`, `AnswerPerson`) are one schema, so they share
+`ProfileAnswer` and its parts (`AnswerTimePoint`, `AnswerPlace`, `AnswerPerson`, `AnswerReviewItem`) are one schema, so they share
 this module on purpose.
 """
 from typing import List, Literal
@@ -18,6 +18,8 @@ Precision = Literal["day", "month", "year"]
 Sensitivity = Literal["ordinary", "discreet", "intimate"]
 TaxOrFine = Literal["none", "tax", "fine"]
 AboutPerson = Literal["none", "relative", "other"]
+Quality = Literal["confident", "needs_review"]
+ReviewField = Literal["people", "time_points", "places"]
 
 
 class AnswerTimePoint(BaseModel):
@@ -45,6 +47,13 @@ class AnswerPerson(BaseModel):
     source: str
 
 
+class AnswerReviewItem(BaseModel):
+    """An open point: the field it belongs to and the printed words it is about."""
+    model_config = ConfigDict(extra="forbid")
+    field: ReviewField
+    mention: str
+
+
 class ProfileAnswer(BaseModel):
     """Every field the model answers (the profiler's JSON schema); unknown fields and out-of-enum values fail."""
     model_config = ConfigDict(extra="forbid")
@@ -53,6 +62,10 @@ class ProfileAnswer(BaseModel):
     time_points: List[AnswerTimePoint]
     places: List[AnswerPlace]
     people: List[AnswerPerson]
+    # Defaults on purpose: an answer stored before these fields existed still validates (as confident, no items), so
+    # re-deriving it never needs a model call. The model cannot omit them: the response schema requires both.
+    quality: Quality = "confident"
+    review_items: List[AnswerReviewItem] = Field(default_factory=list)
     tax_or_fine: TaxOrFine
     user_identity: bool
     pet: bool

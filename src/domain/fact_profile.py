@@ -1,7 +1,7 @@
 """A fact's retrieval profile (fact profile RFC §2.1): the fields code derives from the profiler's checked answer, and the
 set of every field the profile step may write (`PROFILE_FIELDS`).
 
-`FactProfile` and its parts (`ProfileTimePoint`, `ProfilePerson`, `UnresolvedPlace`) are one stored shape, so they
+`FactProfile` and its parts (`ProfileTimePoint`, `ProfilePerson`, `UnresolvedPlace`, `ProfileReviewItem`) are one stored shape, so they
 share this module on purpose.
 """
 from dataclasses import dataclass, field
@@ -15,7 +15,7 @@ PROFILE_FIELDS: frozenset[str] = frozenset({
     "label_words", "label_vector", "time_role", "time_points", "place_keys", "places_unresolved", "people",
     "primary_domain", "domain_keys", "user_identity", "kinds", "sensitivity", "profile_answer", "profile_fingerprint",
     "profile_derivation", "profile_drops", "profile_model", "profiled_at", "profile_failures",
-    "profile_failed_fingerprint",
+    "profile_failed_fingerprint", "profile_review_needed", "profile_review_items",
 })
 
 
@@ -46,10 +46,15 @@ class ProfilePerson:
     role: str
     name_keys: Tuple[str, ...]
     role_keys: Tuple[str, ...]
+    # The name comes from the owner's confirmed list, not from the fact's text (the fact printed only a relation).
+    from_list: bool = False
 
     def stored(self) -> Dict[str, Any]:
-        return {"name": self.name, "role": self.role, "name_keys": list(self.name_keys),
-                "role_keys": list(self.role_keys)}
+        stored: Dict[str, Any] = {"name": self.name, "role": self.role, "name_keys": list(self.name_keys),
+                                  "role_keys": list(self.role_keys)}
+        if self.from_list:
+            stored["from_list"] = True   # written only when true: a person from the text keeps its stored shape
+        return stored
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,16 @@ class UnresolvedPlace:
 
     def stored(self) -> Dict[str, str]:
         return {"city": self.city, "country": self.country}
+
+
+@dataclass(frozen=True)
+class ProfileReviewItem:
+    """An open point the profiler left open: the field it belongs to and the printed words it is about."""
+    field: str
+    mention: str
+
+    def stored(self) -> Dict[str, str]:
+        return {"field": self.field, "mention": self.mention}
 
 
 @dataclass(frozen=True)
@@ -79,6 +94,8 @@ class FactProfile:
     people: Tuple[ProfilePerson, ...] = ()
     profile_answer: Optional[Mapping[str, Any]] = None
     profile_drops: Mapping[str, int] = field(default_factory=dict)
+    review_needed: bool = False
+    review_items: Tuple[ProfileReviewItem, ...] = ()
 
     def stored(self) -> Dict[str, Any]:
         return {
@@ -95,4 +112,6 @@ class FactProfile:
             "people": [p.stored() for p in self.people],
             "profile_answer": dict(self.profile_answer) if self.profile_answer is not None else None,
             "profile_drops": dict(self.profile_drops),
+            "profile_review_needed": self.review_needed,
+            "profile_review_items": [i.stored() for i in self.review_items],
         }
