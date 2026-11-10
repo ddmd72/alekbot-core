@@ -151,7 +151,7 @@ class FactSearchService(FactSearchPort):
             kept = keep_distinct(fused, lambda a, b: self._is_duplicate(loaded, a, b), limit)
             lists_of = [set(o.kept[:CUT]) for o in outcomes]
             candidates = len(fused)
-        lists = ",".join(f"{name}:{len(ids)}" for name, ids in outcomes[0].lists.items()) or "none"
+        lists = self._lists_text(outcomes[0], loaded)
         logger.info(
             f"[FactSearch] path={queries[0].path} acc={account_id[:8]} phrases={len(queries)} lists={lists} "
             f"cands={candidates} gate_dropped={sum(o.gate_dropped for o in outcomes)} kept={len(kept)} "
@@ -160,6 +160,22 @@ class FactSearchService(FactSearchPort):
         return PhraseSearchResult(
             tuple(snapshot.entities[fact_id] for fact_id in kept),
             tuple(tuple(n for n, found in enumerate(lists_of) if fact_id in found) for fact_id in kept))
+
+    @staticmethod
+    def _lists_text(outcome: SearchOutcome, loaded: _Loaded) -> str:
+        """`name:kept`; `name:kept/before` for a list a cap cut; a kNN list also shows `/eligible` (the facts that have
+        the vector it reads) when that is more than its depth."""
+        eligible = {"semantic": int(loaded.has_vector.sum()), "labels": int(loaded.has_label.sum()),
+                    "message": int(loaded.has_vector.sum())}
+        parts = []
+        for name, ids in outcome.lists.items():
+            part = f"{name}:{len(ids)}"
+            if name in outcome.uncut:
+                part += f"/{outcome.uncut[name]}"
+            elif eligible.get(name, 0) > DEPTH_KNN:
+                part += f"/{eligible[name]}"
+            parts.append(part)
+        return ",".join(parts) or "none"
 
     async def _phrase(
         self, loaded: _Loaded, query: FactQuery, semantic: Optional[List[str]], labels: Optional[List[str]],

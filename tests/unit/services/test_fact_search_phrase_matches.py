@@ -1,6 +1,6 @@
 """FactSearchService.search_phrases: per returned fact, the phrases whose own kept top list holds it. Same
 world as the scored-search tests; examples from the invented universe."""
-from src.domain.fact_search_lists import CUT
+from src.domain.fact_search_lists import CUT, DEPTH_KNN
 from tests.unit.services.test_fact_search_service_scored import ACC, World, query
 
 COIMBRA = "Weekend in Coimbra with Clara Mar 6-8"
@@ -36,3 +36,15 @@ async def test_one_phrase_tags_every_returned_fact_with_it():
     world = await _crowded_world()
     result = await world.service.search_phrases(ACC, [query(subject=COIMBRA)])
     assert result.facts and set(result.phrase_matches) == {(0,)}
+
+
+async def test_the_log_shows_each_lists_size_before_its_cap(caplog):
+    import logging
+    world = World()
+    for n in range(DEPTH_KNN + 15):
+        await world.seed(f"Car service {n} at the Springfield garage")
+    await world.baseline()
+    with caplog.at_level(logging.INFO):
+        await world.service.search_phrases(ACC, [query(subject="Car service 3 at the Springfield garage")])
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("[FactSearch]"))
+    assert f"semantic:{DEPTH_KNN}/{DEPTH_KNN + 15}" in line
