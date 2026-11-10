@@ -19,7 +19,10 @@ RESULT_EXPLANATION = (
     "Each q-number below is one of the phrases that were sent, with the count of returned records it found; the tag "
     "[q1,q3] on a record lists the phrases that found it, and a record with no tag came in through the fused ranking "
     "alone. Records are in relevance order. \"when\" is the time the record is about; \"recorded\" is the day it was "
-    "stored, which may be long after the event."
+    "stored, which may be long after the event. "
+    "Some records match a phrase not by its topic but by one of its other sides — the same time, the same place, the "
+    "same people or the same area of life: they show what else surrounds the matter in the user's life, and an answer "
+    "that notices how they bear on it is worth more than one that sets them aside."
 )
 
 
