@@ -4,10 +4,10 @@
 
 ### What it does
 
-Exposes the MCP tool `get_user_context(query, alternate_phrasing?, keywords?)`, to any
-remote MCP client. When Claude on claude.ai calls the tool, the server runs a 6-vector RRF
-search across the user's indexed facts and returns a formatted text block of memory facts,
-RRF-ordered and grouped by domain.
+Exposes the MCP tool `get_user_context(queries)`, to any remote MCP client. When Claude on
+claude.ai calls the tool, the server hands the phrases to the memory search agent
+(`FactsMemoryAgent`, the one entry point of the memory search: `FACT_PROFILE_RFC` §5.4), which runs the
+scored fact search and returns a formatted text block of memory facts, grouped by domain.
 
 One authorization server fronts two protected resources (resource-server apps, one FastMCP each):
 
@@ -96,8 +96,7 @@ main.py                                     # parent ASGI dispatcher + lifespan 
 - `web/mcp_consent_app.py` — Quart blueprint that owns the consent page UX (the only
   piece of the OAuth flow the SDK does NOT implement — the developer renders the consent
   HTML and validates the user).
-- `main.py` — glues everything together: builds a dedicated per-service
-  `SearchEnrichmentService` singleton for MCP, calls `build_mcp_components`, registers the
+- `main.py` — glues everything together: passes the per-user memory search lookup to `build_mcp_components`, registers the
   consent blueprint on the existing Quart app, and wraps both in a plain ASGI dispatcher
   that routes by path.
 
@@ -131,8 +130,8 @@ facts app. The drive connector is built separately, so a failure there never tak
 
 ### 3.2 Tool definition
 
-One tool: `get_user_context`. Schema as actually emitted in `tools/list` (descriptions
-abbreviated here — full text in `composition/mcp_setup.py`):
+One tool: `get_user_context`, one parameter. Schema as actually emitted in `tools/list` (the description is
+`QUERIES_FIELD_TEXT` in `src/domain/memory_search_texts.py`, shared with the agent's manifest entry):
 
 ```json
 {
@@ -140,12 +139,10 @@ abbreviated here — full text in `composition/mcp_setup.py`):
   "title": "Get user context from alekbot memory",
   "inputSchema": {
     "type": "object",
-    "required": ["query"],
+    "required": ["queries"],
     "properties": {
-      "query":              { "type": "string", "description": "The user's information need, restated in English …" },
-      "alternate_phrasing": { "type": "string", "default": "",  "description": "A distinct rephrasing of `query` …" },
-      "keywords":           { "type": "array", "items": { "type": "string" }, "default": [],
-                              "description": "2-5 single-word topical tags, lowercase English …" }
+      "queries": { "type": "array", "items": { "type": "string" },
+                   "description": "The search phrases, in English, one to four of them …" }
     }
   }
 }
@@ -154,8 +151,7 @@ abbreviated here — full text in `composition/mcp_setup.py`):
 **Two invariants hold this schema, both enforced by
 `tests/unit/composition/test_mcp_setup.py`:**
 
-1. **No `anyOf`, no `"null"`, no `title`-without-`description`.** Optional parameters are
-   expressed as `default: "" / []`, never `Optional[T]` — `Optional` emits
+1. **No `anyOf`, no `"null"`, no `title`-without-`description`.** `Optional[T]` emits
    `anyOf: [T, null]`, clients collapse that union to an untyped value, and then guess the
    argument shape. Per-parameter `description` is what a client actually reads when
    constructing arguments; prose in the tool description is not a reliable substitute.
@@ -165,32 +161,29 @@ abbreviated here — full text in `composition/mcp_setup.py`):
    — an `isError` result the model must recover from, costing a full extra round-trip.
    Bounds live in the descriptions as guidance and are enforced by normalization instead.
 
-**Input is accepted liberally.** `pydantic.BeforeValidator` hooks run
-`normalize_phrase` / `normalize_keywords` (`src/domain/mcp.py`, pure functions) before
-validation. They do not appear in the emitted schema, so the advertised contract stays
-strict while every plausible client output is absorbed:
+**Input is accepted liberally.** A `pydantic.BeforeValidator` runs `normalize_queries`
+(`src/domain/mcp.py`, a pure function) before validation. It does not appear in the emitted schema, so the
+advertised contract stays strict while every plausible client output is absorbed:
 
 | Client sends | Server uses |
 |---|---|
-| `keywords: null` / omitted | `[]` (vector disabled) |
-| `keywords: "mcp, schema"` | `["mcp", "schema"]` |
-| `keywords: "[\"MCP\", \" Schema \"]"` | `["mcp", "schema"]` |
-| `keywords: ["mcp schema"]` | `["mcp", "schema"]` |
-| more than 5 tags | first 5, rest dropped silently |
+| `queries: null` / omitted | no phrases: the one rejection below |
+| `queries: "a phrase"` | one phrase, kept whole (never split on commas) |
+| `queries: "[\"first\", \" second \"]"` | `["first", "second"]` |
+| `queries: ["first", "", " second "]` | `["first", "second"]` (stripped, empty ones dropped, order kept) |
+| more than four phrases | the first four, the rest dropped and counted in the log |
 | an unknown extra argument | ignored |
-| `query` with surrounding whitespace | trimmed |
 
 **Error contract.** `isError` is reserved for genuine failures: authentication, a search
-backend fault, or a call carrying no search terms at all (the one input the server cannot
+backend fault, or a call carrying no phrases at all (the one input the server cannot
 resolve on its own, and therefore the only branch allowed to instruct the model). **Zero
-results is a success**, rendered as `No records matched.` — never a hint to rephrase and
-retry, because such a hint costs a round-trip and the server has no better phrasing to
+results is a success**, rendered as `No records matched.` (the constant the agent also uses) — never a hint to
+rephrase and retry, because such a hint costs a round-trip and the server has no better phrasing to
 offer than the caller already produced.
 
 Description (full text in `composition/mcp_setup.py::_TOOL_DESCRIPTION`): states when to
-call and when to skip, and asks for `query`/`keywords` in English (records live in an
-English-aligned embedding space) with `alternate_phrasing` reserved for the user's original
-language. It deliberately avoids an absolute imperative — see
+call and when to skip, and asks for the phrases in English (records live in an
+English-aligned embedding space). It deliberately avoids an absolute imperative — see
 [`decisions/mcp_tool_schema_liberal_input.md`](../../04_solution_strategy/decisions/mcp_tool_schema_liberal_input.md).
 
 ---
@@ -244,7 +237,7 @@ Here's the short version:
    `AlekAccessToken` subclass to `request.user.access_token`. The MCP protocol layer
    dispatches `tools/call` to our tool handler.
 8. **Tool execution:** handler reads `user_id` + `account_id` from `request.user.access_token`,
-   sets a `RequestContext` contextvar, calls `SearchEnrichmentService.enrich_context(...)`,
+   sets a `RequestContext` contextvar, calls `FactsMemoryAgent.search_facts(queries)`,
    formats the result facts into a text block, returns it as `{content: [{type: "text", text: ...}]}`.
 9. **Refresh:** when the access token expires (1h), claude.ai POSTs `/token` with
    `grant_type=refresh_token`. The SDK validates and calls
@@ -536,29 +529,15 @@ Defined in `composition/mcp_setup.py` as a closure inside `build_mcp_components`
 ```python
 @fastmcp.tool(name="get_user_context", title=..., description=...)
 async def get_user_context(
-    query: str,
+    queries: Annotated[List[str], BeforeValidator(_normalize_and_count), Field(description=QUERIES_FIELD_TEXT)],
     ctx: Context,
-    alternate_phrasing: Optional[str] = None,
-    keywords: Optional[List[str]] = None,
 ) -> str:
-    request = ctx.request_context.request
-    access_token = request.user.access_token
-    if not isinstance(access_token, AlekAccessToken):
-        return "(authentication error — invalid token type)"
-
-    user_id = access_token.user_id
-    account_id = access_token.account_id
-
-    with RequestContext(user_id=user_id, account_id=account_id):
-        enriched = await search_enrichment_service.enrich_context(
-            keywords=keywords or [],
-            search_phrase_1=query,
-            search_phrase_2=alternate_phrasing or query,
-            dedup_threshold=0.98,
-            skip_semantic_dedup=False,
-        )
-
-    return _format_enriched_facts(enriched.facts)
+    access_token = ctx.request_context.request.user.access_token   # AlekAccessToken or ToolError
+    # no phrases -> ToolError(_NO_QUERIES); a voice token's tools claim is checked first
+    with RequestContext(user_id=access_token.user_id, account_id=access_token.account_id):
+        agent = await memory_search(access_token.user_id)           # FactsMemoryAgent of this user
+        facts = await agent.search_facts(queries, path="connector")  # "connector_voice" for a voice token
+    return _format_facts(facts)
 ```
 
 **Key points:**
@@ -571,12 +550,13 @@ async def get_user_context(
 - `RequestContext(user_id, account_id)` is the project's existing contextvar mechanism.
   The Firestore fact repository reads it inside `search_facts()` to scope queries to the
   right account. Without this, search returns nothing or leaks data across accounts.
-- `SearchEnrichmentService` is the same service `UserAgentFactory` uses for Quick/Smart —
-  no reimplementation. For MCP we build a dedicated singleton at main.py wiring time
-  (not per-user) because the tool handler serves many users on the same instance. See
-  [RFC § 4.7](../../10_rfcs/REMOTE_MCP_SERVER_RFC.md#47-searchenrichmentservice-as-a-dedicated-singleton-for-mcp).
-- `_format_enriched_facts` produces a compact markdown-ish text block: `## <domain>`
-  headers, `- <content>` lines, optional RRF score suffix. No JSON wrapping — plain text
+- The search is the memory search agent every other caller uses (Smart, Quick, Lelik): the connector holds no
+  search logic of its own. The handler refuses an agent whose `account_id` differs from the token's. The agent
+  reads each phrase into slots, scores the candidates and fuses the phrases (`FACT_PROFILE_RFC` §5.3-§5.4); an
+  earlier version of this block called `SearchEnrichmentService.enrich_context` directly (RFC § 4.7 describes that
+  history).
+- `_format_facts` produces a compact markdown-ish text block: `## <domain>`
+  headers, `- <content>` lines, a `when:` line where a record has one. No JSON wrapping — plain text
   is what claude.ai wants in a tool result.
 
 ---
@@ -622,7 +602,7 @@ Unit tests across 6 layers:
 | `tests/unit/composition/test_mcp_sdk_oauth_provider.py` | SDK shim | Type translation, delegation, error mapping |
 | `tests/unit/web/test_mcp_consent_app.py` | Consent blueprint | GET with/without cookie, POST approve/deny, bad JWT |
 | `tests/unit/composition/test_mcp_setup.py` | Tool contract | Emitted `inputSchema` invariants (§3.2), liberal coercion through the real pydantic stack, error contract, result rendering |
-| `tests/unit/domain/test_mcp_tool_input.py` | Domain | `normalize_phrase` / `normalize_keywords` coercion table |
+| `tests/unit/domain/test_mcp_tool_input.py` | Domain | `normalize_queries` coercion table |
 
 Run with:
 
@@ -678,9 +658,9 @@ It handles the full OAuth flow including browser-based consent and lets you call
 | `404 /.well-known/oauth-protected-resource/mcp` | Mount under `/mcp` prefixed the RFC 9728 path incorrectly | Move issuer to server root, use dispatcher (already fixed — see RFC § 6.3) |
 | `invalid_redirect_uri` on DCR | Client supplied a callback host not in the allowlist | Check `_ALLOWED_REDIRECT_HOSTS` in `composition/mcp_setup.py` |
 | Tool call fails with `Authentication failed: no user context on this request.` | `request.user` is None — BearerAuthBackend didn't attach the token | Check `provider.load_access_token` returns a non-None `AlekAccessToken` |
-| Tool returns empty/wrong facts | `RequestContext` not set → repo queries wrong account | Verify the `with RequestContext(...)` wraps `enrich_context` |
+| Tool returns empty/wrong facts | `RequestContext` not set → repo queries wrong account | Verify the `with RequestContext(...)` wraps the `search_facts` call |
 | Client's **first** call sends malformed arguments | Emitted schema lost a type (`anyOf` union) or a parameter has no `description` | Both are asserted by `tests/unit/composition/test_mcp_setup.py` — run it. If green, the client is serving a **cached** `tools/list`: remove and re-add the connector (§ 10.3) |
-| A tool call fails validation instead of being interpreted | A constraint reached the emitted schema, or a new argument shape has no `BeforeValidator` coverage | Extend `normalize_keywords`/`normalize_phrase` in `domain/mcp.py` — never add the constraint to the schema (see § 3.2) |
+| A tool call fails validation instead of being interpreted | A constraint reached the emitted schema, or a new argument shape has no `BeforeValidator` coverage | Extend `normalize_queries` in `domain/mcp.py` — never add the constraint to the schema (see § 3.2) |
 
 ---
 
@@ -708,8 +688,7 @@ It handles the full OAuth flow including browser-based consent and lets you call
 
 ### Planned enhancements
 
-- **Iterate on tool description** based on observed claude.ai tool-use patterns (currently
-  Claude sometimes stuffs three phrases into `query` as CSV).
+- **Iterate on the `queries` description** based on observed claude.ai tool-use patterns (the owner decides its wording).
 - **Per-user tier limits** — resolve `semantic_limit` from the user's `UserBotConfig` at
   query time instead of a fixed `total_limit=30`. Trade-off: extra Firestore lookup on
   the hot path.

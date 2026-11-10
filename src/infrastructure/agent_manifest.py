@@ -133,7 +133,7 @@ MEMORY_SEARCH = AgentDescriptor(
     capability_descriptions={Intent.SEARCH_MEMORY: SEARCH_MEMORY_DESCRIPTION},
     context_schemas={
         Intent.SEARCH_MEMORY: {
-            "queries": {"type": "array", "items": {"type": "string"}, "description": QUERIES_FIELD_TEXT},
+            "queries": {"type": "array", "items": {"type": "string"}, "description": ("Read by search_memory only, and required there: the search reads these phrases and never the query field. " + QUERIES_FIELD_TEXT)},
         },
     },
 )

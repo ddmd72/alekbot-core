@@ -486,11 +486,12 @@ Existing code works unchanged, automatically gets better results.
 
 - **Facts carry three vectors:** `vector` (the text), `tags_vector` and `metadata_vector`. Indexed emails add a fourth,
   `attachments_vector`.
-- **Where it runs:** `SearchEnrichmentService` (`src/services/search_enrichment_service.py`) runs the channels in
-  parallel and fuses them with RRF, k = 60.
-  - The Router prefetches once per message, with up to 4 vector channels plus the domain channel. The orchestrator
-    turn shares that result.
-  - `search_memory` searches again with up to 7 channels.
+- **Where it runs:** the older engine, `SearchEnrichmentService` (`src/services/search_enrichment_service.py`), runs the
+  channels in parallel and fuses them with RRF, k = 60. It still serves the companion context and the fact-management
+  adapter. The Router prefetch, `search_memory`, Lelik and the claude.ai connector have moved to the scored fact search
+  (`FactSearchService`, `docs/10_rfcs/FACT_PROFILE_RFC.md` §5.3, OD-14): the candidate lists only generate candidates, a
+  linear score orders them, and several phrases are fused by priority. This guide's reasoning about multiple
+  representations still applies to the candidate generation.
 - **Limits** resolve USER > ACCOUNT > SYSTEM (`UserBotConfig.semantic_search_limit` and the account defaults).
 
 ---

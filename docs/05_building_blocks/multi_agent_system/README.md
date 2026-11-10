@@ -137,7 +137,7 @@ Agents marked with `eager=False` in their `AgentDescriptor` are not created duri
 ### 5.2 Specialist Agents (Tools)
 
 - **FactsMemoryAgent** (`memory_search_agent.py`): Memory specialist — one intent:
-  - `search_memory`: Two-phase: (1) LLM key formulation via `COGNITIVE_PROCESS_MEMORY_SEARCH` Firestore token — Gemini Flash extracts `keywords`, `primary_query`, `alternative_query`, `domains` from the delegation query; (2) multi-vector RRF search via `SearchEnrichmentService`. Schema-enforced: 3–5 keywords, 2 domains max, 50-char query limit. Reachable from both Quick and Smart.
+  - `search_memory`: the caller sends `context.queries` (one to four English phrases, most important first); the agent reads each phrase into slots and runs the scored fact search with phrase fusion (`FACT_PROFILE_RFC` §5.3-§5.4), with no model call of its own. Reachable from both Quick and Smart.
   - There is no save intent. Facts read from a document reach memory through Smart's local tool `propose_memory_facts` and the owner's `$memory save` (`MEMORY_FACT_CONFIRMATION_RFC.md`); `FactsMemoryAgent` serves `search_memory` only.
 - **Web Search Light Agent:** Lightweight single-pass grounding agent called exclusively by `QuickResponseAgent` via the `search_web_light` intent. ECO tier (Gemini Flash Lite), single LLM call with Google Search grounding tool, returns plain Slack mrkdwn. No multi-turn refinement. Prompt via PromptBuilder v3 (`agent_type="websearch_light"`) with inline Groovy fallback.
 - **Web Search Agent:** Full-depth real-time information retrieval via Google Search grounding. Called exclusively by `SmartResponseAgent` via `search_web` intent. BALANCED tier.
@@ -522,7 +522,7 @@ formatting. `places[i]` in the tool result corresponds to the i-th place cited i
 - `src/agents/core/quick_response_agent.py`: Delegation loop, `MAX_DELEGATION_TURNS=5`, `_INTENT_REMAP`, memory-first parallel scheduling, JSON output.
 - `src/agents/core/smart_response_agent.py`: `delegate_to_specialist` tool + memory-first parallel scheduling.
 - `src/agents/web_search_light_agent.py`: Lightweight grounding specialist (`internal=True`, Quick path via remap).
-- `src/agents/memory_search_agent.py`: LLM key formulation + `MEMORY_SEARCH_RESPONSE_SCHEMA`.
+- `src/agents/memory_search_agent.py`: memory search over `queries` (slots per phrase, scored search, phrase fusion).
 - `src/handlers/agent_worker_handler.py`: ASYNC task execution from Cloud Tasks. `_deliver_docx_result()` dispatches `file_upload` delivery items from DocPlannerAgent.
 - `src/agents/doc_planner_agent.py`: Two-phase DOCX creation specialist (intent: `create_document`, ASYNC).
 - `src/agents/doc_generator_agent.py`: Internal Node.js DOCX code generation specialist (intent: `generate_docx_code`, ASYNC, `internal=True`).

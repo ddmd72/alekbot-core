@@ -399,8 +399,9 @@ through the `lp:` key its query side adds (§5.3).
 
 `FactQuery` (`src/domain/fact_query.py`): `subject`, `kind`, `people[]`, `places[{name, country}]`,
 `time{intent, from, to}`, `domains` (≤ 2 registry keys), `kinds[]`, `scope` (`top`/`all`), `today`, `path`, and two
-inputs that are not slots (OD-14): `message`, the whole text the slots were read from (one phrase of the memory search
-agent, or the user's last message on the Router path), embedded for one more similarity; `home`, the owner's location
+inputs that are not slots (OD-14): `message`, the whole text the slots were read from, embedded for one more similarity
+(the user's latest message when the calling turn has one, else the phrase itself; on the Router path always the latest
+message); `home`, the owner's location
 as their settings store it, resolved by the search into the home town's place keys. `parse_slots` validates in code:
 dates parsed and the window clamped (§5.3), unknown domains and kinds dropped, a slot with Cyrillic refused and logged
 (the contract is English), `domain_link` read and ignored (§12 item 3).
@@ -493,7 +494,7 @@ priority weight (1, 0.7, 0.5, 0.35 by position) times σ of its score taken rela
 score of its 30th candidate after dedup, or its last when fewer): a fact the phrase ranks at its line reads 0.5, so the
 priority weights trade phrases on one scale. No bonus for being found by several phrases (nothing to fit it on). Then
 dedup in fused order and the cut to 30; `scope=all` on any phrase keeps every fused fact. One query is the one-phrase
-case: its order is its score order. (The cut-line anchor is the author's reading of "σ(score)", to confirm: OD-14.)
+case: its order is its score order. The anchor, σ(score − the phrase's 30th-ranked score), is the accepted reading of "σ(score)" (OD-14 (d)).
 One log line per search:
 `[FactSearch] path=… phrases=<n> lists=semantic:…,labels:…,message:…,… cands=… gate_dropped=… kept=… unsnapped=… snapshot=hit|load:<n> ms=…`.
 
@@ -508,6 +509,9 @@ seen from several sides, becomes several phrases. The order is the caller's stat
 most, which the fusion above turns into weights. The phrases must be self-contained: the search never sees the
 conversation. The tool and protocol texts that tell each caller this explain it first, then state the rules, and carry
 no examples. There is no other request shape and no fallback to a single free-text query.
+
+`FactQuery.message` is the user's latest message when the calling turn has one (Smart, Quick, Lelik), else the phrase itself
+(a connector call has no turn text).
 
 | Caller | Slots | Receives |
 |---|---|---|
@@ -777,10 +781,12 @@ measured value enters this repository.
   `queries` (§5.4); the connector no longer calls `enrich_context` itself. No backward compatibility and no old
   request shapes (one active user).
 - (d) *Several phrases.* Each phrase has its own slots and score; fusion is the maximum over phrases of priority
-  weight times σ(score); no multi-phrase bonus; then the cut. **To confirm:** the score is a pairwise log-odds with no
-  intercept, so σ of the raw score saturates near 1 for every candidate and the fusion would reduce to "phrase 1
-  first, wholly". §5.3 reads σ(score) relative to the phrase's own cut line (the probability that the fact ranks above
-  the phrase's 30th candidate); the owner confirms this reading before PR 6b lands.
+  weight times σ(score); no multi-phrase bonus; then the cut. The score is a pairwise log-odds with no intercept, so σ of
+  the raw score would saturate near 1 for every candidate and the fusion would reduce to "phrase 1 first, wholly". The
+  accepted anchor is σ(score − the phrase's 30th-ranked score): the probability that the fact ranks above the phrase's
+  30th candidate (§5.3).
+  `FactQuery.message` is the user's latest message when the calling turn has one, else the phrase itself, so the message
+  similarity reads what the user wrote and a bare connector call still has a text to embed (§5.4).
 - (e) *Router.* OD-3 (a) stays; (c) was measured and rejected; the triage drops its search fields in PR 9.
 
 **Inputs found contradictory or under-specified (to confirm):**

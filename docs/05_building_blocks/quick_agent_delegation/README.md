@@ -135,8 +135,8 @@ intent set in agent code.
 
 ### 3.1 search_memory
 
-Routes to `MemorySearchAgent` (shared with Smart path). Same two-phase execution: LLM key
-formulation → multi-vector RRF search via `SearchEnrichmentService`.
+Routes to `MemorySearchAgent` (shared with Smart path). Same execution: the caller's `context.queries`
+(one to four English phrases) → slots per phrase → scored fact search with phrase fusion (`FACT_PROFILE_RFC` §5.4).
 
 **When to call (per `PROTOCOL_QUICK_AGENT_SELECTION`):**
 - User references personal data not covered by the biographical context already in the prompt.

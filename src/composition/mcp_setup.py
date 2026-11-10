@@ -36,7 +36,7 @@ from ..agents.memory_search_agent import FactsMemoryAgent
 from ..domain import fact_domains
 from ..domain.fact_when import when_line
 from ..domain.mcp import normalize_queries, queries_dropped
-from ..domain.memory_search_texts import QUERIES_FIELD_TEXT
+from ..domain.memory_search_texts import NO_RECORDS_TEXT, QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..domain.voice_mcp_token import FACTS_TOOL, VOICE_RESULT_MAX_CHARS, McpTokenKind, tool_permitted
@@ -130,13 +130,13 @@ _TOOL_DESCRIPTION = (
 # instead of being silently normalized (see src/domain/mcp.py).
 
 # The only rejection: nothing usable was sent.
-_NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries."
+_NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries, most important first."
 _NO_MEMORY_SEARCH = "Memory search is not available for this account."
 
 # Zero results is a successful answer, not an error and not an instruction
 # to the model to try again — a "rephrase and retry" hint costs a round-trip
 # and the server has no better phrasing to offer than the caller did.
-_NO_RESULTS = "No records matched."
+_NO_RESULTS = NO_RECORDS_TEXT
 
 # A tool outside the token's tools claim (LELIK_VOICE_MCP_RFC §5.3): one neutral line, nothing read.
 _REFUSED = "Refused: this tool is not available to this caller."
@@ -294,7 +294,7 @@ def build_mcp_components(
         # plain `string` / `array<string>` with no `anyOf` union (clients
         # collapse unions to an untyped value and then guess the shape),
         # while the BeforeValidators absorb every shape a client plausibly
-        # sends — explicit nulls, a delimited string, a JSON-encoded array.
+        # sends — explicit nulls, one string (kept as one phrase), a JSON-encoded array.
         # A rejected argument costs a full extra round-trip with the calling
         # model, so nothing that can be interpreted is treated as an error.
         queries: Annotated[

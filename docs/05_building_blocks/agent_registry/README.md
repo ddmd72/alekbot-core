@@ -262,70 +262,25 @@ to both Quick and Smart via the registry. It handles one intent:
 
 | Intent | Trigger | Payload key | Side effect |
 |--------|---------|-------------|-------------|
-| `search_memory` | KB retrieval request | `query` | None — read only |
+| `search_memory` | KB retrieval request | `queries` (and `query`, logged only) | None — read only |
 
 The `save_to_memory` intent was removed: it let the bot write text that the consolidator read as the owner's words.
 Facts from a document are proposed with Smart's local tool `propose_memory_facts` and saved when the owner pastes
 `$memory save <code>` (see `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`).
 
-### 6.2 `search_memory`: LLM Key Formulation
+### 6.2 `search_memory`: the caller writes the phrases
 
-Before calling `SearchEnrichmentService`, `FactsMemoryAgent` runs a **key formulation step** via
-Gemini Flash (ECO tier). This is the bridge between a natural language delegation query and the
-multi-vector search system.
+`FactsMemoryAgent` has no model call of its own. The calling model (Smart, Quick, Lelik, or the claude.ai connector
+through `get_user_context`) sends `context.queries`: one to four English phrases, most important first, each about one
+subject. `query` stays in the payload as the need in a few words and is only logged. The coordinator spreads declared
+context fields into the payload, so the agent reads `queries` from there; `can_handle` accepts any QUERY message, and a
+call without `queries` comes back as a tool note naming the field instead of falling through to another agent.
 
-**Why:** `SearchEnrichmentService` requires 3 distinct, non-overlapping inputs for its multi-vector strategy:
-`keywords` (tag matching), `primary_query` (direct semantic vector), `alternative_query` (diversity
-vector). A raw natural language query cannot fill all 3 effectively — an LLM sub-call optimizes
-each channel independently.
-
-### 6.3 Firestore Prompt: COGNITIVE_PROCESS_MEMORY_SEARCH
-
-Token class: `cognitive_process`. This prompt instructs Gemini to act as a "Memory Search Key
-Extractor" and produce a structured JSON output:
-
-```json
-{
-  "keywords":         ["3–5 terms", "1–2 words each", "English only"],
-  "primary_query":    "max 50 chars — direct intent description",
-  "alternative_query":"max 50 chars — different phrasing for diversity recall",
-  "domains":          ["up to 2 values from 15-value enum"]
-}
-```
-
-**Domain enum (15 values):** `biographical`, `possession`, `health`, `medical_records`, `location`,
-`work`, `network`, `preference`, `skill`, `project`, `finance`, `education`, `legal`,
-`entertainment`, `communication`.
-
-### 6.4 Output Format Enforcement (Prompt-Level)
-
-Constraints are described in the `OUTPUT_FORMAT_MEMORY_SEARCH` Firestore token (category:
-`output_format`), which is included in the `memorysearch` agent profile
-(`universal_agent_v1_SYSTEM_memorysearch`). The token replaces the former `response_schema`
-API-level constraint.
-
-**Why prompt-level instead of `response_schema`:** Gemini Flash Lite returns empty responses
-when `response_schema` (structured output) is combined with Groovy DSL system instructions.
-`response_mime_type="application/json"` alone is sufficient — the model follows the JSON
-structure described in the prompt without API-level enforcement. This was confirmed by
-22+ diagnostic tests in `scripts/debug/test_gemini_json_schema.py`.
-
-| Field | Constraint | Enforced by |
-|-------|-----------|-------------|
-| `keywords` | 3–5 short English terms (1–2 words) | Prompt |
-| `domains` items | enum of 15 values | Prompt |
-| `domains` | 1–2 values | Prompt |
-| `primary_query` | max 50 chars | Prompt |
-| `alternative_query` | max 50 chars, no overlap with primary | Prompt |
-
-### 6.5 Key → SearchEnrichmentService Mapping
-
-| LLM output field | `enrich_context()` parameter |
-|-----------------|------------------------------|
-| `keywords` | `keywords` |
-| `primary_query` | `search_phrase_1` |
-| `alternative_query` | `search_phrase_2` |
-| `domains` | `relevant_domains` |
+Each phrase is read into slots by the slots agent, and `FactSearchService.search_phrases` scores the candidates and fuses
+the phrases (`docs/10_rfcs/FACT_PROFILE_RFC.md` §5.3-§5.4). The field text that tells a caller how to write phrases is
+`QUERIES_FIELD_TEXT` in `src/domain/memory_search_texts.py`, shared by the manifest entry and the connector tool.
+The former key-formulation step (the `MEMORYSEARCH_*` tokens and the keywords / primary / alternative query output, mapped
+onto `SearchEnrichmentService.enrich_context`) is gone.
 
 ---
 
@@ -634,7 +589,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 - `src/agents/base_agent.py` — lifecycle hooks, `_debug_prompt`, `_debug_response`
 - `src/agents/core/smart_response_agent.py` — delegate_to_specialist tool, memory-first parallel scheduling. Class-level `_descriptor = SMART_RESPONSE`.
 - `src/agents/core/quick_response_agent.py` — `MAX_DELEGATION_TURNS=5`, `_execute_quick_delegation_loop`, `_execute_quick_parallel`, `_clean_history_for_quick`. Class-level `_descriptor = QUICK_RESPONSE` (intent_remap lives in descriptor).
-- `src/agents/memory_search_agent.py` — LLM key formulation (`response_mime_type` only, no `response_schema`)
+- `src/agents/memory_search_agent.py` — memory search over `queries` (no model call of its own)
 - `src/agents/web_search_light_agent.py` — Lightweight grounding specialist (`internal=True`, Quick path via remap)
 - `src/handlers/agent_worker_handler.py` — ASYNC task execution handler
 - `src/ports/task_queue.py` — enqueue_agent_task() protocol method
@@ -644,7 +599,7 @@ make test-e2e-all   # Quick and Smart delegate correctly to the new agent
 - `src/composition/application_graph.py` — registers `ALL_DESCRIPTORS` into `AgentRegistry` at startup (1 loop, no inline declarations)
 - Firestore token: `PROTOCOL_SMART_AGENT_SELECTION` — delegation rules for SmartAgent
 - Firestore token: `PROTOCOL_QUICK_AGENT_SELECTION` — delegation rules for QuickAgent
-- Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — key formulation output constraints (prompt-level)
+- Firestore token: `OUTPUT_FORMAT_MEMORY_SEARCH` — the former key-formulation output constraints (no longer read by `FactsMemoryAgent`)
 - Firestore token: `COMPUTE_COGNITIVE_PROCESS` — ComputeAgent identity, capability, rules, failure protocol (`domain_prompt_tokens_v3_system`)
 - Firestore profile: `universal_agent_v1_SYSTEM_memorysearch` (collection: `development_domain_prompt_profiles_v3`)
 - Firestore blueprint: `compute_agent_v1` (collection: `domain_prompt_blueprints_v3`)

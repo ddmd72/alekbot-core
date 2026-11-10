@@ -5,6 +5,13 @@
 **Owner:** Dmytro
 **Milestone:** External Interop — Custom Connectors
 
+> **Amended 2026-11-10 by `FACT_PROFILE_RFC.md` OD-14.** The tool takes one parameter, `queries` (one to four English
+> phrases, most important first), and goes through `FactsMemoryAgent`, the one entry point of the memory search; the
+> connector no longer calls `SearchEnrichmentService`. The sections below that name `query`, `alternate_phrasing`,
+> `keywords` or the direct call (§2 goals 1 and 5, §4.1, §4.7, §5.2, the flow in §6, §7) describe the first design and
+> are kept as history; the current shape is in
+> [`remote_mcp_server/README.md`](../05_building_blocks/remote_mcp_server/README.md) §3.2 and §9.
+
 **Related:** `MCP_INFRASTRUCTURE_RFC.md` (the **inverse** direction — alekbot as MCP *client* to Google Maps)
 
 ---
@@ -21,11 +28,11 @@ We already have a sophisticated user memory system — biographical facts, conso
 
 ## 2. Goals
 
-1. Expose one tool — `get_user_context(query, alternate_phrasing?, keywords?)` — returning RRF-ranked memory facts.
+1. Expose one tool — `get_user_context(queries)` — returning scored, phrase-fused memory facts (first design: `query, alternate_phrasing?, keywords?` with RRF).
 2. Full OAuth 2.1 authorization server compatible with claude.ai's Custom Connector discovery flow (RFC 8414 / RFC 9728 / RFC 7591 DCR / PKCE S256 / RFC 8707 resource indicator).
 3. Per-user identity: the issued token MUST carry `user_id` + `account_id` so the tool handler scopes search to the right user's facts.
 4. Latency ≤ 1.5s p50 per tool call (claude.ai is latency-sensitive for first-token).
-5. Zero business-logic duplication: reuse `SearchEnrichmentService` directly, bypass the whole alekbot agent stack (Quick/Smart/MemorySearchAgent).
+5. Zero business-logic duplication: one memory search for every caller. (First design: reuse `SearchEnrichmentService` directly and bypass the agent stack; superseded by OD-14, the connector goes through `FactsMemoryAgent`.)
 
 ## 3. Non-Goals
 
@@ -39,6 +46,8 @@ We already have a sophisticated user memory system — biographical facts, conso
 ## 4. Key Design Decisions
 
 ### 4.1 Bypass the alekbot agent stack
+
+*Superseded by OD-14: the connector now goes through `FactsMemoryAgent`; the calling model writes the phrases (`queries`), the agent reads the slots. The first-design reasoning follows.*
 
 The obvious architecture is: claude.ai → MCP server → our `MemorySearchAgent` → RRF. We deliberately don't do this.
 
@@ -104,6 +113,8 @@ The binding between the two is mechanical: our `MCPAuthorizationService` mints a
 
 ### 4.7 `SearchEnrichmentService` as a dedicated singleton for MCP
 
+*Superseded by OD-14: no MCP-specific search singleton exists any more; the tool resolves the user's `FactsMemoryAgent`.*
+
 `SearchEnrichmentService` is NOT a `ServiceContainer` singleton in the main codebase. `UserAgentFactory` builds one per-user with `total_limit` tied to the user's tier (`UserBotConfig.semantic_limit`). For MCP we need a shared instance — the tool handler is called on many user requests, not per-user construction.
 
 **Decision:** build a dedicated MCP singleton at `main.py` wiring time with default `SearchConfig()` limits and a fixed `total_limit=30`. Uses the same `container.repository` + `container.embedding_service` as everyone else. Per-user facts are scoped via `RequestContext(user_id=..., account_id=...)` set inside the tool handler before the search call — same mechanism the Firestore repository already respects for all queries.
@@ -121,11 +132,9 @@ User pastes `https://dev.alekbot.app/mcp` into claude.ai → claude.ai sends `PO
   "name": "get_user_context",
   "inputSchema": {
     "type": "object",
-    "required": ["query"],
+    "required": ["queries"],
     "properties": {
-      "query":              {"type": "string", "description": "…"},
-      "alternate_phrasing": {"type": "string", "default": "", "description": "…"},
-      "keywords":           {"type": "array", "items": {"type": "string"}, "default": [], "description": "…"}
+      "queries": {"type": "array", "items": {"type": "string"}, "description": "…"}
     }
   }
 }
@@ -146,9 +155,8 @@ schema with pydantic, so an advertised `maxItems`/`pattern`/`additionalPropertie
 would convert a recoverable input into a failed tool call.
 
 **Input is accepted liberally, emitted strictly.** `BeforeValidator` hooks running
-`normalize_phrase` / `normalize_keywords` (`src/domain/mcp.py`) absorb explicit nulls,
-delimited strings, JSON-encoded arrays, casing/whitespace, embedded spaces and excess tags
-before validation, and do not appear in the emitted schema.
+`normalize_queries` (`src/domain/mcp.py`) absorbs explicit nulls, one string (kept as one phrase), JSON-encoded
+arrays, whitespace, empty items and phrases beyond the fourth before validation, and do not appear in the emitted schema.
 
 **Description is load-bearing** (it's the only lever on claude.ai's tool-use decisions),
 but is no longer an absolute imperative — the previous `ALWAYS call this tool before
@@ -252,7 +260,7 @@ main.py                                                   parent ASGI dispatcher
        │                                                       │  → AlekAccessToken with user_id/account_id
        │                                                       │  tool handler:
        │                                                       │    with RequestContext(user_id, account_id):
-       │                                                       │      SearchEnrichmentService.enrich_context(...)
+       │                                                       │      FactsMemoryAgent.search_facts(queries)
        │     200 {content: [{type: "text", text: <facts>}]}   │
        │<──────────────────────────────────────────────────────│
 ```
@@ -381,7 +389,7 @@ Match logic: `host == h or host.endswith("." + h)` — allows subdomains of clau
 
 We cannot *force* claude.ai to call a tool. The tool description is the only lever, and it matters a lot — "helps with personal context" will never trigger, "ALWAYS call this tool before answering" triggers aggressively. The current wording is a first pass and should be iterated based on observed call rate (tool-use events per conversation).
 
-A known failure mode we're already watching: claude.ai stuffs everything into `query` as a comma-separated string instead of splitting into `query` / `alternate_phrasing` / `keywords`. Workaround: English-priming hint in description; longer-term, structural examples in the description or a multi-field schema with stricter descriptions per field.
+A known failure mode we're already watching: claude.ai stuffs everything into `query` as a comma-separated string instead of one phrase per item of `queries`. The `queries` description carries the rule and its reason (the owner decides its wording).
 
 ## 8. Security
 

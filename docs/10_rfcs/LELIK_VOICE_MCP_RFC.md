@@ -27,8 +27,9 @@ through `delegate_to_specialist` over three intents (`src/infrastructure/agent_m
 `search_web_light`, `ask_alek`, plus `send_to_chat`. Each call goes Grok → relay → `/voice/delegate` (OIDC) →
 `LelikAgent.delegate` → `DelegationEngine` (`src/agents/lelik_agent.py:130-159`):
 
-- **Memory** (`search_memory`) runs `MemorySearchAgent`: an LLM call (`src/agents/memory_search_agent.py:138`) on top of
-  `enrich_context` (`:241`).
+- **Memory** (`search_memory`) runs `FactsMemoryAgent` (`src/agents/memory_search_agent.py`) on `context.queries`: one slots
+  call per phrase, then the scored fact search (`FACT_PROFILE_RFC` §5.4). (Written against the earlier agent, an LLM call on top of
+  `enrich_context`.)
 - **Drive** has no path of its own: it is `ask_alek` → Router → Smart → drive specialist, several LLM calls, "tens of
   seconds" by its own description (`agent_manifest.py:908`); one live `ask_alek` took 105 s (`relay_main.py:154`).
 
@@ -187,7 +188,7 @@ is query access to the rest of memory and the indexed drives *during* the call.
 **Logging rules.** The token and the `Authorization` header are never logged, on any side: no logging of session
 config in the relay or the adapter (none today; a test pins it); verifiers log the refusal reason only; alerts print
 `fingerprint(cid)`. Every MCP log line and span of a voice token adds `client=voice`. The facts tool logs its search
-terms (`query`, `alternate_phrasing`, `keywords`) verbatim for every token, voice included: without them a voice miss
+terms (`queries`) verbatim for every token, voice included: without them a voice miss
 cannot be diagnosed (owner's decision; it replaced the earlier counts-only rule for the facts tool). The drive tools
 keep counts only for a voice token (DRIVE_MCP_CONNECTOR_RFC §9). Fact contents are never logged.
 
