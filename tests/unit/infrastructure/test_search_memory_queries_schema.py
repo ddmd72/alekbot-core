@@ -28,12 +28,18 @@ def _queries_property(declaration):
     return declaration["parameters"]["properties"]["context"]["properties"]["queries"]
 
 
+# The manifest's declared field text: a delegate-only lead (search_memory reads these phrases, never `query`) followed
+# by the shared QUERIES_FIELD_TEXT the connector also reads, whole and unchanged.
+DECLARED = MEMORY_SEARCH.context_schemas[Intent.SEARCH_MEMORY]["queries"]["description"]
+
+
 def test_the_delegate_tool_carries_queries_as_an_array_of_strings():
     declaration = BaseAgent._build_delegate_tool_declaration(_registry().get_available_intents())
 
     queries = _queries_property(declaration)
     assert queries["type"] == "array" and queries["items"] == {"type": "string"}
-    assert queries["description"] == QUERIES_FIELD_TEXT
+    assert queries["description"] == DECLARED
+    assert DECLARED.endswith(QUERIES_FIELD_TEXT) and DECLARED != QUERIES_FIELD_TEXT
 
 
 def test_the_manifest_describes_search_memory_by_its_own_text():
@@ -56,7 +62,8 @@ async def test_lelik_declares_queries_on_a_call_without_the_mcp_servers():
     config = await agent.session_config("usr-1", "acc-1")
 
     delegate = next(t for t in config["tools"] if t["name"] == "delegate_to_specialist")
-    assert _queries_property(delegate)["description"] == QUERIES_FIELD_TEXT
+    assert _queries_property(delegate)["description"] == DECLARED
+    assert DECLARED.endswith(QUERIES_FIELD_TEXT)
 
 
 class _Slots:
