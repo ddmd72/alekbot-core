@@ -51,7 +51,7 @@ class World:
     def __init__(self) -> None:
         self.db = EvalDb()
         self.components = build_mcp_components(db_client=self.db, env_config=ENV, auth_config=_auth_config(),
-                                               search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
+                                               memory_search=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
                                                user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         self.service = self.components.authorization_service
         self.asgi = self.components.fastmcp.streamable_http_app()
@@ -180,7 +180,7 @@ class TestMcpBearer:
         w = World()
         other = build_mcp_components(db_client=EvalDb(), env_config=ENV,
                                      auth_config=_auth_config("https://other.example.test/mcp"),
-                                     search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
+                                     memory_search=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)),
                                      user_repo=allowing_repos("u1")[0], whitelist_repo=allowing_repos("u1")[1])
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=other.fastmcp.streamable_http_app()),
                                      base_url="https://other.example.test") as other_http:

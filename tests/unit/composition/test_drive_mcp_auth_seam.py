@@ -38,7 +38,7 @@ class World:
         self.db = EvalDb()
         users, whitelist = allowing_repos("u1")
         self.components = build_mcp_components(
-            db_client=self.db, env_config=ENV, auth_config=AUTH_CONFIG, search_enrichment_service=MagicMock(),
+            db_client=self.db, env_config=ENV, auth_config=AUTH_CONFIG, memory_search=MagicMock(),
             cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=users, whitelist_repo=whitelist)
         self.service = self.components.authorization_service
         self.drive = build_drive_mcp_app(authorization_service=self.service, auth_config=AUTH_CONFIG)

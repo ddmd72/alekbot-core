@@ -21,7 +21,7 @@ def _drive_asgi():
     components = build_mcp_components(
         db_client=EvalDb(), env_config=SimpleNamespace(mcp_oauth_clients_collection="c", mcp_auth_codes_collection="a",
                                                        mcp_refresh_tokens_collection="r"),
-        auth_config=AUTH_CONFIG, search_enrichment_service=MagicMock(side_effect=AssertionError("reached anonymously")),
+        auth_config=AUTH_CONFIG, memory_search=MagicMock(side_effect=AssertionError("reached anonymously")),
         cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=users, whitelist_repo=whitelist)
     return build_drive_mcp_app(authorization_service=components.authorization_service,
                                auth_config=AUTH_CONFIG).streamable_http_app()

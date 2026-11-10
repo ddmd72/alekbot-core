@@ -591,29 +591,11 @@ async def main():
                 mcp_components = None
                 drive_mcp = None
                 try:
-                    # SearchEnrichmentService isn't a container singleton —
-                    # UserAgentFactory builds one per user with tier-specific
-                    # total_limit. For MCP we need a shared instance: default
-                    # SearchConfig limits, sensible total_limit=30. Same
-                    # repository + embedding_service as everyone else.
-                    from src.services.search_enrichment_service import (
-                        SearchEnrichmentService,
-                    )
-                    from src.domain.settings import SearchConfig
-                    _mcp_search_config = SearchConfig()
-                    mcp_search_enrichment = SearchEnrichmentService(
-                        repository=app.container.repository,
-                        embedding_service=app.container.embedding_service,
-                        keyword_limit=_mcp_search_config.DEFAULT_KEYWORD_LIMIT,
-                        phrase_one_limit=_mcp_search_config.DEFAULT_PHRASE_ONE_LIMIT,
-                        phrase_two_limit=_mcp_search_config.DEFAULT_PHRASE_TWO_LIMIT,
-                        total_limit=30,
-                    )
                     mcp_components = build_mcp_components(
                         db_client=db_client,
                         env_config=env_config,
                         auth_config=app.auth_config,
-                        search_enrichment_service=mcp_search_enrichment,
+                        memory_search=app.agent_factory.get_memory_search,
                         cipher=app.cipher,
                         digest_key=app.digest_key,
                         user_repo=app.user_repo,

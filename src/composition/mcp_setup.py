@@ -8,7 +8,7 @@ This module is the single place that knows about all layers:
 - MCPAuthorizationService (service)
 - MCPSdkOAuthProvider (composition)
 - FastMCP (SDK)
-- SearchEnrichmentService (service) — the actual tool implementation
+- FactsMemoryAgent (agent, via UserAgentFactory.get_memory_search) — the actual tool implementation
 
 It exposes one function, `build_mcp_components`, which returns a
 FastMCP instance (ready to be mounted via `streamable_http_app()`) and
@@ -17,8 +17,9 @@ blueprint factory — the consent blueprint cannot be imported here
 because composition/ must not depend on web/).
 """
 
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Annotated, List, Optional
+from typing import Annotated, Awaitable, Callable, List, Optional
 from urllib.parse import urlparse
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
@@ -31,7 +32,11 @@ from ..adapters.firestore_mcp_client_repository import FirestoreMCPClientReposit
 from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_connector_result import cap_result
-from ..domain.mcp import KEYWORDS_MAX, normalize_keywords, normalize_phrase
+from ..agents.memory_search_agent import FactsMemoryAgent
+from ..domain import fact_domains
+from ..domain.fact_when import when_line
+from ..domain.mcp import normalize_queries, queries_dropped
+from ..domain.memory_search_texts import QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
 from ..domain.voice_mcp_token import FACTS_TOOL, VOICE_RESULT_MAX_CHARS, McpTokenKind, tool_permitted
@@ -39,7 +44,6 @@ from ..ports.cipher_port import CipherPort
 from ..ports.user_repository import UserRepository
 from ..ports.whitelist_repository import WhitelistRepository
 from ..services.mcp_authorization_service import MCPAuthorizationService
-from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.voice_mcp_token_service import VoiceMcpTokenService
 from ..utils.logger import logger
 from .mcp_sdk_oauth_provider import AlekAccessToken, MCPSdkOAuthProvider
@@ -108,53 +112,26 @@ class MCPComponents:
 # preferences on the client side, and the observed effect was a model
 # oscillating between over-calling and improvising arguments.
 _TOOL_DESCRIPTION = (
-    "Retrieves the user's stored personal context from their exocortex "
-    "(alekbot): biographical facts, preferences, ongoing projects, opinions "
-    "and historical records.\n"
+    "Looks up what the user's exocortex (alekbot) knows about the user: the facts of their life, the people around "
+    "them, places, plans, preferences, past events and decisions. Each stored record is a short English statement "
+    "about one matter of the user's life. Every phrase you send is turned into a meaning vector and compared with the "
+    "records' statements (semantic vector search); the records closest to any of your phrases come back with their "
+    "dates.\n"
     "\n"
-    "WHEN TO CALL\n"
-    "Call whenever personal context could change the content or tone of the "
-    "answer, including when you are unsure whether it is relevant. Skip only "
-    "for purely technical or mathematical questions with zero personal "
-    "dimension.\n"
-    "\n"
-    "RETRIEVAL\n"
-    "Multi-vector RRF search over `query`, `alternate_phrasing` and "
-    "`keywords`. Supplying all three materially improves recall. Records are "
-    "stored in English: build `query` and `keywords` in English regardless of "
-    "the language the user wrote in.\n"
-    "\n"
-    "RETURNS\n"
-    "Matching records grouped by category, as markdown. An empty result means "
-    "no records matched — that is a valid answer, not an error."
+    "Call it whenever personal context could change the content or tone of your answer, including when you are not "
+    "sure it is relevant. Skip it only for questions with no personal side at all. An empty result means nothing is "
+    "stored on that matter; it is an answer, not an error."
 )
 
-# Per-parameter descriptions. These are what a client actually reads when
-# constructing arguments; prose in the tool description above is not a
-# reliable substitute. Bounds are stated here as guidance only — they are
-# NOT advertised as JSON Schema constraints, because FastMCP validates the
-# schema with pydantic and a violation would fail the call instead of being
-# silently normalized (see src/domain/mcp.py).
-_QUERY_DESCRIPTION = (
-    "The user's information need, restated in English as a short noun phrase "
-    'or statement. Example: "MCP connector configuration and tool schema '
-    'issues".'
-)
+# The parameter description (QUERIES_FIELD_TEXT) is what a client reads when
+# constructing arguments. The bound (1-4 phrases) is stated there as guidance
+# only — it is NOT advertised as a JSON Schema constraint, because FastMCP
+# validates the schema with pydantic and a violation would fail the call
+# instead of being silently normalized (see src/domain/mcp.py).
 
-_ALTERNATE_PHRASING_DESCRIPTION = (
-    "A distinct rephrasing of `query` using different vocabulary, used as a "
-    "second retrieval vector. If the user's question was not in English, put "
-    'the original-language phrasing here. Example: "problems with the '
-    'claude.ai custom connector schema". Omit or pass an empty string to '
-    "disable this vector."
-)
-
-_KEYWORDS_DESCRIPTION = (
-    f"2-{KEYWORDS_MAX} single-word topical tags, lowercase English, used as a "
-    'third retrieval vector. Example: ["mcp", "schema", "connector"]. Tags '
-    f"beyond the first {KEYWORDS_MAX} are ignored. Omit or pass an empty array "
-    "to disable this vector."
-)
+# The only rejection: nothing usable was sent.
+_NO_QUERIES = "No search phrases supplied. Pass one to four English phrases as queries."
+_NO_MEMORY_SEARCH = "Memory search is not available for this account."
 
 # Zero results is a successful answer, not an error and not an instruction
 # to the model to try again — a "rephrase and retry" hint costs a round-trip
@@ -167,23 +144,42 @@ _REFUSED = "Refused: this tool is not available to this caller."
 _VOICE_OVER_SIZE = "[More records matched than fit here; ask a narrower question to see the rest.]"
 
 
-def _format_enriched_facts(facts) -> str:
+def _format_facts(facts) -> str:
+    """Facts grouped under the English label of their primary domain, each with its `when:` line when it has one."""
     if not facts:
         return _NO_RESULTS
 
-    lines: List[str] = []
-    by_domain: dict[str, list] = {}
+    by_group: dict[str, list] = {}
     for f in facts:
-        key = (f.domain or "general")
-        by_domain.setdefault(key, []).append(f)
+        primary = getattr(f, "primary_domain", None)
+        group = (fact_domains.label(primary, "en") if primary else None) or getattr(f, "domain", None) or "general"
+        group = getattr(group, "value", group)
+        by_group.setdefault(str(group), []).append(f)
 
-    for domain in sorted(by_domain.keys()):
-        lines.append(f"## {domain}")
-        for f in by_domain[domain]:
-            score = f" (score={f.relevance_score:.3f})" if f.relevance_score else ""
-            lines.append(f"- {f.content}{score}")
+    lines: List[str] = []
+    for group in sorted(by_group.keys()):
+        lines.append(f"## {group}")
+        for f in by_group[group]:
+            when = when_line(f)
+            lines.append(f"- {f.text}" + (f" ({when})" if when else ""))
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+# The phrases the validator cut beyond the limit, for the handler's log line. Validation and the handler run in
+# one task, so a ContextVar carries the count between them.
+_DROPPED: ContextVar[int] = ContextVar("mcp_queries_dropped", default=0)
+
+
+def _normalize_and_count(value):
+    """normalize_queries, remembering how many usable phrases it left out."""
+    _DROPPED.set(queries_dropped(value))
+    return normalize_queries(value)
+
+
+def _agent_account_id(agent) -> Optional[str]:
+    """The tenant a memory agent serves (P3 keeps it as `_account_id`; a public `account_id` wins when it exists)."""
+    return getattr(agent, "account_id", None) or getattr(agent, "_account_id", None)
 
 
 def build_mcp_components(
@@ -191,7 +187,7 @@ def build_mcp_components(
     db_client,
     env_config: EnvironmentConfig,
     auth_config: AuthConfig,
-    search_enrichment_service: SearchEnrichmentService,
+    memory_search: Callable[[str], Awaitable[Optional[FactsMemoryAgent]]],
     cipher: CipherPort,
     digest_key: bytes,
     user_repo: UserRepository,
@@ -205,8 +201,8 @@ def build_mcp_components(
         db_client: Firestore async client
         env_config: EnvironmentConfig (collection names)
         auth_config: AuthConfig (MCP resource URI, TTLs, JWT secret)
-        search_enrichment_service: the RRF memory search service —
-            invoked by the tool handler
+        memory_search: resolves a user's memory search agent (`UserAgentFactory.get_memory_search`) —
+            the tool handler asks it; None means the account has none
         cipher: the stored-secrets cipher built by build_application_graph
             (never here: main.py swallows this build's errors, so a missing
             key would read as "MCP off", not as a failed start)
@@ -301,22 +297,12 @@ def build_mcp_components(
         # sends — explicit nulls, a delimited string, a JSON-encoded array.
         # A rejected argument costs a full extra round-trip with the calling
         # model, so nothing that can be interpreted is treated as an error.
-        query: Annotated[
-            str,
-            BeforeValidator(normalize_phrase),
-            Field(description=_QUERY_DESCRIPTION),
+        queries: Annotated[
+            List[str],
+            BeforeValidator(_normalize_and_count),
+            Field(description=QUERIES_FIELD_TEXT),
         ],
         ctx: Context,
-        alternate_phrasing: Annotated[
-            str,
-            BeforeValidator(normalize_phrase),
-            Field(description=_ALTERNATE_PHRASING_DESCRIPTION),
-        ] = "",
-        keywords: Annotated[
-            List[str],
-            BeforeValidator(normalize_keywords),
-            Field(description=_KEYWORDS_DESCRIPTION),
-        ] = [],  # noqa: B006 — never mutated; pydantic copies the default
     ) -> str:
         # Extract authenticated user from the SDK access token subclass
         request = ctx.request_context.request
@@ -345,35 +331,30 @@ def build_mcp_components(
         # The only legitimate input rejection: nothing to search on at all.
         # This is also the only branch allowed to instruct the model, because
         # it is the only one the server cannot resolve on its own.
-        if not query and not alternate_phrasing and not keywords:
-            raise ToolError(
-                "No search terms supplied. Pass the user's information need "
-                "as `query`, a short English phrase."
-            )
+        if not queries:
+            raise ToolError(_NO_QUERIES)
 
-        logger.info(
-            f"🔎 MCP get_user_context: user={user_id[:8]} "
-            f"query={query!r} "
-            f"alternate_phrasing={alternate_phrasing!r} "
-            f"keywords={keywords!r}{client}"
-        )
+        dropped = _DROPPED.get()
+        cut = f" dropped={dropped}" if dropped else ""
+        logger.info(f"🔎 MCP get_user_context: user={user_id[:8]} queries={queries!r}{cut}{client}")
 
         with RequestContext(user_id=user_id, account_id=account_id):
-            enriched = await search_enrichment_service.enrich_context(
-                keywords=keywords,
-                search_phrase_1=query,
-                search_phrase_2=alternate_phrasing or query,
-                dedup_threshold=0.98,
-                skip_semantic_dedup=False,
-            )
+            agent = await memory_search(user_id)
+            if agent is None:
+                logger.warning(f"MCP get_user_context: user={user_id[:8]} has no memory search agent{client}")
+                raise ToolError(_NO_MEMORY_SEARCH)
+            if _agent_account_id(agent) != account_id:
+                logger.warning(
+                    f"MCP get_user_context: user={user_id[:8]} memory agent serves another account than the token's; "
+                    f"refused{client}"
+                )
+                raise ToolError(_NO_MEMORY_SEARCH)
+            facts = await agent.search_facts(queries, path="connector_voice" if voice else "connector")
 
-        result = _format_enriched_facts(enriched.facts)
+        result = _format_facts(facts)
         if voice:
             result = cap_result(result, _VOICE_OVER_SIZE, limit=VOICE_RESULT_MAX_CHARS)
-        logger.info(
-            f"✅ MCP get_user_context: user={user_id[:8]} "
-            f"facts={len(enriched.facts)} len={len(result)}{client}"
-        )
+        logger.info(f"✅ MCP get_user_context: user={user_id[:8]} facts={len(facts)} len={len(result)}{client}")
         return result
 
     logger.info(
