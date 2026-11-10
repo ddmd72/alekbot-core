@@ -20,7 +20,7 @@ class Step:
         self.lease_seen: List[Optional[dict]] = []
         self.raises = raises
 
-    async def run(self, account_id, deadline):
+    async def run(self, account_id, deadline, collect_points=False):
         self.calls.append((account_id, deadline))
         self.lease_seen.append(lease_doc(self._world))
         if self.raises is not None:
