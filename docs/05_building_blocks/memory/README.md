@@ -115,7 +115,8 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
 | `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document | `src/adapters/firestore_repo.py` |
 | `BiographicalContextService` | chooses the baseline | `src/services/biographical_context_service.py` |
-| `SearchEnrichmentService` | multi-vector search + RRF | `src/services/search_enrichment_service.py` |
+| `FactSearchService` | the scored fact search: candidate lists, the pure scorer, phrase fusion (`FACT_PROFILE_RFC` §5.3) | `src/services/fact_search_service.py` |
+| `SearchEnrichmentService` | the older multi-vector search + RRF, kept for the callers that still use `enrich_context` (the companion context, the fact-management adapter); no longer used by the Router, `search_memory` or the connector | `src/services/search_enrichment_service.py` |
 | Router, Smart, `FactsMemoryAgent`, Lelik, MCP | readers (§4) | §11 |
 
 ### 1.4 What is not this memory
@@ -281,7 +282,7 @@ the source; a pointer that leads into another account is "cannot be resolved" an
 tags `consolidated`/`anchor` left out; the text when no tag is left); `metadata` as JSON (the text when empty). All
 three are embedded with `RETRIEVAL_DOCUMENT` in one batch call (`fact_write_service.py:181-187`), model
 `gemini-embedding-2` at 768 dimensions (`src/adapters/gemini_embedding_adapter.py`). Searches embed queries with
-`RETRIEVAL_QUERY` (`search_enrichment_service.py:123`).
+`RETRIEVAL_QUERY`.
 
 ### 2.7 Expiry, `reported_date` and the trail (Facts S3)
 
@@ -865,7 +866,14 @@ checklist (§9.4).
 A directive invalidated in the Cabinet leaves `standing_directives` from the next message: the invalidate rebuilds the
 cache at once (§5.2).
 
-### 4.3 The search engine: `enrich_context`
+### 4.3 The search engines
+
+Readers use the scored fact search (`FactSearchService.search_phrases`, `FACT_PROFILE_RFC` §5.3): per-phrase candidate
+lists, a linear score, fusion over up to four phrases, a cut to 30. The Router, `search_memory`, Lelik and the connector all
+reach it (§4.4, §4.5, §4.7). The rest of this section describes `enrich_context`, the older multi-vector engine, which the
+companion context assembler and the fact-management adapter still call.
+
+#### `enrich_context`
 
 `SearchEnrichmentService.enrich_context` (`search_enrichment_service.py:42-249`):
 
@@ -901,22 +909,27 @@ Cabinet show none.
 
 ### 4.4 The Router's prefetch (every message)
 
-The Router's triage returns `search_intent`, `semantic_lens` (keywords), `search_phrase` and `relevant_domains`. Unless
-`search_intent` is `none`, it calls `enrich_context(keywords, phrase 1, phrase 2 = "", domains, biographical_facts =
-the baseline)` (`src/agents/core/router_agent.py:310-338`): at most 4 vector channels + the domain channel, deduplicated,
-up to 30 facts, minus those already in the baseline. Smart and Quick receive them as `query_specific_context`
-(`prompt_builder.py:71-110`). This is the one search per message every orchestrator turn shares; Smart's own
-`search_memory` calls are extra.
+The prefetch starts in parallel with triage: the slots agent (the P1 call, `FACT_PROFILE_RFC` §5.1) reads the turn's
+messages into a `FactQuery` whose `message` is the user's latest message, and the scored fact search runs on it
+(`src/agents/core/router_agent.py`). Triage no longer returns search fields: `semantic_lens`, `search_phrase` and
+`relevant_domains` are gone from its output (OD-14); it still returns `search_intent`, and when that is `none` the prefetch
+is cancelled. The result is up to 30 facts minus those already in the baseline. Smart and Quick receive them as
+`query_specific_context` (`prompt_builder.py`), where the facts still carry the tag `semantic_lens` that splits them from
+the baseline. This is the one search per message every orchestrator turn shares; Smart's own `search_memory` calls are
+extra.
 
 ### 4.5 `search_memory`
 
-Smart delegates `search_memory` (SYNC) to `FactsMemoryAgent` (`src/agents/memory_search_agent.py`):
-1. One Gemini ECO call (`gemini-3.5-flash-lite`, provider fixed to Gemini, `agent_context_builder.py:78-83`) turns
-   the request into `keywords`, `primary_query`, `alternative_query`, optional `domains` (JSON, token
-   `MEMORYSEARCH_*`) (`memory_search_agent.py:108-153`). If that call fails, the agent falls back to one
-   `vector` search with the raw query (10 results, principles dropped, `memory_search_agent.py:295-352`).
-2. `enrich_context` with all channels and default limits, dedup on, **no baseline exclusion** (`memory_search_agent.py:241-247`).
-3. Each fact rendered as its text plus `context:`, `reported:` and `metadata:` lines, joined by `---` (`memory_search_agent.py:354-367`).
+Smart delegates `search_memory` (SYNC) to `FactsMemoryAgent` (`src/agents/memory_search_agent.py`). The request is
+`context.queries`: one to four English phrases in priority order, written by the calling model; the declared context
+field carries its rules (`QUERIES_FIELD_TEXT`, `FACT_PROFILE_RFC` §5.4). `query` is the need in a few words and is only
+logged. The agent has no model call of its own:
+1. A call without phrases is accepted by `can_handle` and answered with a tool note naming `context.queries`.
+2. Each phrase goes through the slots agent (a failure costs that phrase its slots, not the search), then
+   `FactSearchService.search_phrases` scores and fuses them. `FactQuery.message` is the user's latest message when the
+   turn has one, else the phrase; `home` is the owner's location. No baseline exclusion.
+3. Each fact rendered as its text plus `context:`, `reported:` and `metadata:` lines, joined by `---`; no match gives
+   `No records matched.`
 
 ### 4.6 Lelik
 
@@ -927,9 +940,9 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 ### 4.7 The claude.ai connector (MCP)
 
-`get_user_context(query, alternate_phrasing, keywords)` (`src/composition/mcp_setup.py:255-332`) calls
-`enrich_context` directly (no model, no Router) with phrase 2 = alternate phrasing or the query, dedup at 0.98, total
-30 (`main.py`, the MCP `SearchEnrichmentService`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
+`get_user_context(queries)` (`src/composition/mcp_setup.py`) hands the phrases to the token account's `FactsMemoryAgent`
+(§4.5), the same entry point as every other caller; there is no model and no Router in the connector itself. The answer
+groups facts by domain, one line each, with a `when:` line where a record has one.
 
 ### 4.8 The Cabinet fact page
 

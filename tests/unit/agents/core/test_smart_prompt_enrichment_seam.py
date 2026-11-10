@@ -4,7 +4,8 @@ From an entry path (`/worker` through the real `UserNotificationService`, or a c
 `ConversationHandler`) via the real coordinator to a **real `SmartResponseAgent`** (and, on a chat turn, a **real
 `RouterAgent`**) over scripted models. Real between them: `PromptBuilder` over the snapshot prompts seeded into the
 world's Firestore fake (`seed_agent_prompt`), `TaskExecutionResolver` over `AgentContextBuilder` and a `ProviderRegistry`
-holding Smart's scripted model under every provider name, and `SearchEnrichmentService` over the fact store. The
+holding Smart's scripted model under every provider name. The Router's memory prefetch runs on fakes of its query
+slots and its fact search; the search answers the account's stored facts from the fact store. The
 boundary asserted on is the request each scripted model received: what reached the system prompt (before or after
 `PROMPT_CACHE_BOUNDARY`), the model the tier resolved to (`TieredLLM` names it `tier-<tier>`; the execution context's
 own model is `scripted-model`, so "no override resolved" and "a tier resolved" differ) and the thinking effort.
@@ -13,7 +14,7 @@ Pins P13-D3: the daily review asks for `thinking_effort="medium"`, the accepted 
 Smart lets the complexity's own `"high"` win instead.
 """
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
@@ -22,16 +23,18 @@ import pytest
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.core.router_agent import RouterAgent, create_router_agent
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
-from src.domain.entities import FactDomain
+from src.domain.entities import FactDomain, FactEntity
+from src.domain.fact_query import FactQuery
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.handlers import worker_handler
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver
+from src.domain.llm import Message
+from src.ports.fact_search_port import FactSearchPort
 from src.ports.llm_port import PROMPT_CACHE_BOUNDARY
 from src.services.agent_context_builder import AgentContextBuilder, AgentProviderStrategy
 from src.services.prompt_builder import PromptBuilder
 from src.services.provider_registry import ProviderRegistry
-from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.clock_instants import pin_datetime
 from tests.support.fact_lifecycle_world import seed_fact
 from tests.support.fact_store import FactStore
@@ -74,9 +77,36 @@ def triage(search_intent: str) -> Any:
     """The Router's triage answer (`TRIAGE_RESPONSE_SCHEMA`, `router_agent.py:139-170`) for the blood-type question."""
     return text(json.dumps({
         "needs_memory_search": True, "reasoning": "personal", "search_intent": search_intent,
-        "relevant_domains": ["health"], "semantic_lens": ["blood type"], "search_phrase": "blood type",
         "metadata": {"user_tone": "friendly", "task_complexity": "info_search"},
     }))
+
+
+class RecordingSlots:
+    """The Router's query slots: the turn's last message as the question, every call recorded."""
+
+    def __init__(self) -> None:
+        self.calls: List[Tuple[str, Optional[str]]] = []
+
+    async def query_for_messages(self, messages: List[Message], *, path: str, account_id: Optional[str],
+                                 user_id: Optional[str]) -> FactQuery:
+        self.calls.append((path, account_id))
+        last = messages[-1].parts[0].text or ""
+        return FactQuery(today=date(2026, 10, 27), subject=last, path=path, message=last)
+
+
+class StoreSearch(FactSearchPort):
+    """The scored fact search, answered from the fact store: the account's current facts outside `exclude`."""
+
+    def __init__(self, store: FactStore) -> None:
+        self.store = store
+        self.calls: List[Tuple[str, FactQuery]] = []
+
+    async def search(self, account_id: str, query: FactQuery, *, exclude: Any = frozenset()) -> List[FactEntity]:
+        self.calls.append((account_id, query))
+        return [f for f in await self.store.repo.get_active_facts(account_id) if f.id not in exclude]
+
+    async def search_phrases(self, account_id: str, queries: Any) -> List[FactEntity]:
+        raise AssertionError("the Router searches one query")
 
 
 def resolver_over(llm: TieredLLM) -> TaskExecutionResolver:
@@ -114,17 +144,19 @@ async def seam(monkeypatch: Any, *smart_script: Any, router_script: Optional[Lis
                       resolver=resolver_over(smart_llm), user_config=UserBotConfig(), session_store=world.sessions)
     world.coordinator.register_agent(smart)
     router_llm: Optional[ScriptedLLM] = None
+    slots, search = RecordingSlots(), StoreSearch(store)
     if router_script is not None:
         await seed_agent_prompt(world.db, world.env, "router")
         router_llm = ScriptedLLM(router_script)
         router: RouterAgent = create_router_agent(
             execution_context=execution_context(router_llm, "router"), coordinator=world.coordinator,
             smart_agent_id=f"smart_response_agent_{USER}", user_id=USER, session_store=world.sessions,
-            repository=None, search_enrichment_service=SearchEnrichmentService(store.repo, store.embedder, 7, 10, 10, 20),
+            repository=None, fact_search=search, slots=slots, user_location="Springfield, Portugal",
             prompt_builder=builder, notes_port=None,
         )
         world.coordinator.register_agent(router)
-    return SimpleNamespace(world=world, store=store, smart_llm=smart_llm, router_llm=router_llm)
+    return SimpleNamespace(world=world, store=store, smart_llm=smart_llm, router_llm=router_llm, slots=slots,
+                           search=search)
 
 
 async def _daily_review(monkeypatch: Any) -> SimpleNamespace:
@@ -197,8 +229,8 @@ async def test_a_reminder_without_an_effort_runs_at_its_complexity_s_effort(monk
 # ----------------------------------------------------------------------------- the chat turn
 
 async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundary(monkeypatch):
-    """Guards the enrichment call `router_agent.py:332-338` only as a whole (each channel finds the one fact); the
-    routed `enriched_context` `:385` → `smart_response_agent.py:419,442-445` → `prompt_builder.py:191-201,213-214` →
+    """Guards the memory prefetch (`RouterAgent._finish_prefetch`) only as a whole (the search answers the one fact);
+    the routed `enriched_context` → `smart_response_agent.py:419,442-445` → `prompt_builder.py:191-201,213-214` →
     `prompt_assembly_service.py:409-417,540-542` (after the boundary); the routed `task_complexity` `router_agent.py:384`
     → `smart_response_agent.py:379` → resolver (BALANCED). Dropping `enriched_context` loses the fact; putting it with
     the static facts moves it before the boundary; dropping `task_complexity` leaves `scripted-model`."""
@@ -212,6 +244,7 @@ async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundar
     require(not s.world.unscripted(), "every agent call was scripted")
     require(scripted_out(s.router_llm) and scripted_out(s.smart_llm), "both scripts were used exactly")
     assert len(s.router_llm.requests) == 1           # triage ran on the scripted model, not the rule-based fallback
+    assert [account for account, _ in s.search.calls] == [ACCOUNT]
     assert chat.texts == ["Your blood type is A Rh+."]
     [request] = s.smart_llm.requests
     static, dynamic = split(request)
@@ -221,7 +254,7 @@ async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundar
 
 
 async def test_a_chat_turn_that_needs_no_search_carries_no_enriched_fact(monkeypatch):
-    """Control for the test above: with `search_intent == "none"` the Router skips enrichment (`router_agent.py:314`),
+    """Control for the test above: with `search_intent == "none"` the Router drops its prefetch and runs no search,
     and with no repository Smart reads no biographical cache (`smart_response_agent.py:427-432`), so the fact is nowhere
     in Smart's prompt. Makes the enrichment test non-vacuous: the fact reaches the prompt only through enrichment."""
     s = await seam(monkeypatch, envelope("I do not know your blood type.", "Did not know the blood type."),
@@ -234,6 +267,7 @@ async def test_a_chat_turn_that_needs_no_search_carries_no_enriched_fact(monkeyp
     require(not s.world.unscripted(), "every agent call was scripted")
     require(scripted_out(s.router_llm) and scripted_out(s.smart_llm), "both scripts were used exactly")
     require(len(s.router_llm.requests) == 1, "triage ran on the scripted model")
+    assert s.search.calls == []
     assert chat.texts == ["I do not know your blood type."]
     [request] = s.smart_llm.requests
     assert "query_specific_context" not in request.system_instruction

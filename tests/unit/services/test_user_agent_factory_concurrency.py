@@ -33,6 +33,7 @@ def _make_factory():
         claude_service=MagicMock(),
         grok_service=None,
         embedding_service=MagicMock(),
+        fact_search=MagicMock(),
         repository=AsyncMock(),
         config_service=MagicMock(),
         biographical_context_service=MagicMock(),

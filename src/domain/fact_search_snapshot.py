@@ -61,6 +61,7 @@ class SnapshotRow:
     kinds: FrozenSet[str]
     sensitivity: Optional[str]
     time_role: Optional[str]
+    primary_domain: Optional[str]
 
 
 def _row(fact: FactEntity) -> SnapshotRow:
@@ -80,7 +81,7 @@ def _row(fact: FactEntity) -> SnapshotRow:
         id=fact.id, text=fact.text, domains=frozenset(fact.domain_keys or ()), intervals=tuple(intervals),
         reported=fact.reported_date.date(), people=people, recurring=recurring,
         place_keys=frozenset(fact.place_keys or ()), kinds=frozenset(fact.kinds or ()),
-        sensitivity=fact.sensitivity, time_role=fact.time_role,
+        sensitivity=fact.sensitivity, time_role=fact.time_role, primary_domain=fact.primary_domain,
     )
 
 

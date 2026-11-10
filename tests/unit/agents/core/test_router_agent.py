@@ -19,6 +19,9 @@ from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities, LLMP
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.ports.session_store import SessionStore
 from src.ports.repository import FactRepository
+from src.ports.fact_search_port import FactSearchPort
+from src.domain.fact_query import FactQuery
+from src.domain.request_context import RequestContext
 from src.ports.agent_note_port import AgentNotePort
 from src.domain.llm import Message, MessagePart
 from src.domain.session import SessionState
@@ -893,14 +896,36 @@ class TestVisionComplexityOverride:
 # Biographical fetch exception swallow (lines 304-319)
 # ============================================================================
 
+class _PrefetchSlots:
+    """The Router's query slots: the turn's last message as the question."""
+
+    async def query_for_messages(self, messages, *, path, account_id, user_id):
+        last = messages[-1].parts[0].text
+        return FactQuery(today=datetime(2026, 11, 10).date(), subject=last, path=path, message=last)
+
+
+class _PrefetchSearch(FactSearchPort):
+    """The scored fact search: no facts, every call recorded."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def search(self, account_id, query, *, exclude=frozenset()):
+        self.calls.append((account_id, set(exclude)))
+        return []
+
+    async def search_phrases(self, account_id, queries):
+        raise AssertionError("the Router searches one query")
+
+
 class TestBiographicalFetchException:
-    """Router must swallow biographical fetch errors and continue (lines 304-319)."""
+    """Router must swallow biographical fetch errors and continue (the baseline read in the memory prefetch)."""
 
     @pytest.mark.asyncio
     async def test_biographical_fetch_failure_does_not_crash_router(self, mock_llm, mock_prompt_builder):
         """Exception in repository.get_biographical_context_cached must be swallowed."""
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"topic","search_intent":"topic","relevant_domains":[],"semantic_lens":["test"],"search_phrase":"test","metadata":{"user_tone":"casual","complexity_score":5}}'
+            text='{"needs_memory_search":true,"confidence":0.9,"reasoning":"topic","search_intent":"topic","metadata":{"user_tone":"casual","complexity_score":5}}'
         )
         ec = AgentExecutionContext(
             agent_type="router",
@@ -916,28 +941,29 @@ class TestBiographicalFetchException:
             side_effect=Exception("Firestore unavailable")
         )
 
-        mock_enrichment = AsyncMock()
-        mock_enrichment.enrich_context = AsyncMock(return_value=None)
-
         agent = create_router_agent(
             execution_context=ec,
             prompt_builder=mock_prompt_builder,
             repository=mock_repository,
-            search_enrichment_service=mock_enrichment,
+            fact_search=_PrefetchSearch(),
+            slots=_PrefetchSlots(),
+            user_location="Springfield, Portugal",
             user_id="user1",
         )
 
         message = create_query_message("Tell me about my projects")
 
         # Must not raise even though biographical fetch fails
-        response = await agent.execute(message)
+        with RequestContext(user_id="user1", account_id="acc-1"):
+            response = await agent.execute(message)
         assert response.status == AgentStatus.SUCCESS
+        mock_repository.get_biographical_context_cached.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_biographical_fetch_skipped_without_repository(self, mock_llm, mock_prompt_builder):
         """When repository is None, no biographical fetch attempt should be made."""
         mock_llm.generate_content.return_value = MagicMock(
-            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"ok","search_intent":"topic","relevant_domains":[],"semantic_lens":["test"],"search_phrase":"test","metadata":{"user_tone":"casual","complexity_score":3}}'
+            text='{"needs_memory_search":false,"confidence":0.9,"reasoning":"ok","search_intent":"topic","metadata":{"user_tone":"casual","complexity_score":3}}'
         )
         ec = AgentExecutionContext(
             agent_type="router",
@@ -948,19 +974,21 @@ class TestBiographicalFetchException:
             resilience_port=InMemoryProviderResilience(),
         )
 
-        mock_enrichment = AsyncMock()
-        mock_enrichment.enrich_context = AsyncMock(return_value=None)
-
+        search = _PrefetchSearch()
         agent = create_router_agent(
             execution_context=ec,
             prompt_builder=mock_prompt_builder,
             repository=None,
-            search_enrichment_service=mock_enrichment,
+            fact_search=search,
+            slots=_PrefetchSlots(),
+            user_location="Springfield, Portugal",
             user_id="user1",
         )
 
-        response = await agent.execute(create_query_message("найди мої проекти"))
+        with RequestContext(user_id="user1", account_id="acc-1"):
+            response = await agent.execute(create_query_message("найди мої проекти"))
         assert response.status == AgentStatus.SUCCESS
+        assert search.calls == [("acc-1", set())]   # the search ran with no baseline to exclude
 
 
 # ============================================================================

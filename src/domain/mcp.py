@@ -27,6 +27,9 @@ from pydantic import BaseModel, Field
 # are dropped silently rather than rejected — see normalize_keywords.
 KEYWORDS_MAX = 5
 
+# Search phrases one memory search takes (fact profile RFC §5.4); the ones beyond are dropped.
+QUERIES_MAX = 4
+
 # Separators a model might use inside a single keyword string.
 _KEYWORD_SEPARATORS = re.compile(r"[,;/|\s]+")
 
@@ -98,6 +101,33 @@ def normalize_keywords(value: Any) -> List[str]:
             if len(tags) == KEYWORDS_MAX:
                 return tags
     return tags
+
+
+def _clean_phrases(value: Any) -> List[str]:
+    phrases: List[str] = []
+    for item in _as_item_list(value):
+        if item is None:
+            continue
+        text = (item if isinstance(item, str) else str(item)).strip()
+        if text:
+            phrases.append(text)
+    return phrases
+
+
+def normalize_queries(value: Any) -> List[str]:
+    """
+    Coerce whatever a client sent into the memory search's phrases: a list, a JSON-encoded array or one string.
+
+    Each item is stripped and the empty ones dropped; the order is the caller's priority order and stays. Only the first
+    QUERIES_MAX are kept (`queries_dropped` says how many were left out, for the caller's log). Like normalize_keywords
+    there is no rejection path; nothing usable gives an empty list.
+    """
+    return _clean_phrases(value)[:QUERIES_MAX]
+
+
+def queries_dropped(value: Any) -> int:
+    """How many usable phrases `normalize_queries` leaves out of `value` for being beyond QUERIES_MAX."""
+    return max(0, len(_clean_phrases(value)) - QUERIES_MAX)
 
 
 def _as_item_list(value: Any) -> List[Any]:

@@ -10,10 +10,12 @@ memory search always runs, it only loses the narrowing lists.
 Internal: not manifest-registered, no tier of its own, and no caller yet. It is built by its caller with the caller's
 execution context (the model is the caller's cheap model), like `LelikSummarizerAgent`. The prompt is the P1 head
 (`OUTPUT_FORMAT_FACT_QUERY_SLOTS`) plus the LIFE AREAS block rendered from the domain registry, so a new life area
-reaches this prompt by code deploy alone.
+reaches this prompt by code deploy alone. The call also carries the owner's location, so an implicit "here / to me"
+request can take the home town as its place.
 """
 import json
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Callable, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -151,14 +153,14 @@ class FactQuerySlotsAgent(BaseAgent):
         def degraded(reason: str) -> FactQuery:
             query = semantic_only_query(raw, today=today, path=path)
             self._log(path, f"degraded:{reason}", query, (), (), started)
-            return query
+            return replace(query, message=raw)
 
         if not messages:
             return degraded("no_messages")
         try:
             system = await self.prompt_builder.build_for_agent(
                 AGENT_TYPE, user_id=user_id, account_id=account_id,
-                include_biographical=False, include_directives=False, include_location=False,
+                include_biographical=False, include_directives=False, include_location=True,
                 extra_static_blocks=[render_life_areas_block()],
             )
         except Exception as e:
@@ -187,7 +189,7 @@ class FactQuerySlotsAgent(BaseAgent):
                 ))]))
                 continue
             self._log(path, "slots", parsed.query, parsed.refused, parsed.dropped, started)
-            return parsed.query
+            return replace(parsed.query, message=raw)
         return degraded(reason)
 
     def _request(self, system: str, history: List[Message]) -> LLMRequest:

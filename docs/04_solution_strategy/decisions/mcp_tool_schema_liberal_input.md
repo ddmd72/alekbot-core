@@ -1,9 +1,14 @@
 # The MCP tool advertises a constraint-free schema and normalizes input server-side
 
 **Date:** 2026-09-18
-**Status:** Live
+**Status:** Live (the parameter set below is superseded, see the note)
 **Scope:** `get_user_context` — the only tool on the remote MCP server exposed to claude.ai
 Custom Connectors.
+
+> **Superseded in part, 2026-11-10, by `FACT_PROFILE_RFC` OD-14.** The tool now takes one parameter, `queries` (one to
+> four English phrases, most important first), and goes through the memory search agent; `query`, `alternate_phrasing`
+> and `keywords` no longer exist. The principle (accept liberally, advertise strictly) stands; the parameter names and
+> the deferred `alternate_phrasing` item below describe the old shape.
 
 ## Problem
 

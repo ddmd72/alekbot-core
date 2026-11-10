@@ -36,7 +36,8 @@ This document MUST be updated when:
 The **Hybrid Router** is the entry point for all user messages. It performs two jobs:
 
 1. **Classify**: LLM triage assigns a `TaskComplexity` (semantic category) and extracts
-   context enrichment signals (`semantic_lens`, `search_intent`, `user_tone`).
+   context enrichment signals (`search_intent`, `user_tone`). Triage no longer emits search fields; the memory
+   prefetch reads its own query slots (§4).
 2. **Enrich**: Fetches memory context and active reminders, packages everything into
    `message.context`, and forwards to `SmartResponseAgent`.
 
@@ -73,10 +74,7 @@ classification.
 ```json
 {
   "needs_memory_search": bool,
-  "search_intent": "string — what to look for in memory",
-  "relevant_domains": ["finance", "health", ...],
-  "semantic_lens": ["keyword1", "keyword2"],
-  "search_phrase": "primary search phrase",
+  "search_intent": "string — whether memory is searched this turn (none | topic | ...)",
   "metadata": {
     "user_tone": "friendly | professional | urgent | ...",
     "task_complexity": "small_talk | info_search | simple_analytics | deep_reasoning"
@@ -98,7 +96,6 @@ Produced by `build_routing_metadata(classification)` in `src/domain/tone.py`:
 | `user_tone`         | `str`               | Detected user tone (`friendly`, `professional`, ...) |
 | `needs_tools`       | `List[str]`         | Capabilities needed (`search_web`, `search_memory`) |
 | `needs_memory_search` | `bool`            | Whether in-request KB retrieval is needed           |
-| `semantic_lens`     | `List[str]`         | Keywords for context enrichment / vector search     |
 | `reasoning`         | `str`               | LLM explanation of its classification decision      |
 
 **Removed fields (compared to prior design):**
@@ -127,7 +124,7 @@ context = {
     "classification":  classification,             # Raw LLM triage dict
     "routing":         routing_metadata.to_dict(), # Serialized RoutingMetadata
     "task_complexity": routing_metadata.task_complexity.value,  # String for resolver
-    "enriched_context": ...,                       # SearchEnrichmentService result
+    "enriched_context": ...,                       # FactSearchService result
     "agent_notes":     ...,                        # Active self-reminders
     "routed_by":       self.agent_id,
 }
@@ -142,9 +139,10 @@ through Cloud Tasks queues (used for async paths).
 
 The router doesn't just route — it prepares the full context for SmartResponseAgent.
 
-1. **Keyword extraction**: LLM triage extracts `semantic_lens` and `search_phrase`.
-2. **Memory enrichment**: `SearchEnrichmentService` runs parallel multi-vector RRF search
-   using the extracted keys. Result is attached as `enriched_context`.
+1. **Slots**: in parallel with triage, the slots agent reads the turn's messages into a `FactQuery`
+   (`FACT_PROFILE_RFC` §5.1). Triage only decides, through `search_intent`, whether the result is used.
+2. **Memory enrichment**: `FactSearchService` runs the scored fact search on those slots
+   (`FACT_PROFILE_RFC` §5.3; `FactQuery.message` is the user's latest message). Result is attached as `enriched_context`.
 3. **Reminders enrichment**: `AgentNotePort.list_active_notes(user_id)` fetches active
    self-reminders → serialized as `agent_notes: List[dict]` in context.
    Failures are caught and logged — enrichment never blocks routing.
@@ -162,7 +160,7 @@ The router doesn't just route — it prepares the full context for SmartResponse
 | `RoutingMetadata` + coercion    | `src/domain/tone.py`                   |
 | `TaskComplexity` enum           | `src/domain/task_complexity.py`        |
 | Prompt assembly                 | `src/ports/prompt_builder_port.py`      |
-| Context enrichment              | `src/services/search_enrichment_service.py` |
+| Context enrichment              | `src/services/fact_search_service.py`   |
 | Downstream resolution           | `src/services/task_execution_resolver.py` |
 
 ---

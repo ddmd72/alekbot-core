@@ -8,7 +8,7 @@ adds recorders around the things `main()` builds itself, then asserts:
   graph (`app.session_service`, `app.container.repository`, ...) is that very object;
 - the Firestore client got the deploy's project and named database (and, with the emulator host set, the emulator project and the same database);
 - the one voice ticket store has the environment's collection and is the one object all three voice consumers hold;
-- the voice call setup, the Cloudflare adapter and the MCP search service got the graph's objects, the deploy's keys and limits;
+- the voice call setup, the Cloudflare adapter and the MCP connector got the graph's objects and the deploy's keys;
 - with no invoker identity configured, the two gates `main()` builds are closed, because the deploy runs on Cloud Run.
 """
 import ast
@@ -18,7 +18,6 @@ from typing import Any, Dict, List, NamedTuple, Optional
 import pytest
 
 import main
-from src.domain.settings import SearchConfig
 from tests.support import prod_env
 from tests.unit.test_main_boots_offline import BLUEPRINT_FACTORY, ROOT, Boot, _boot
 
@@ -37,7 +36,6 @@ class Captured(NamedTuple):
     stores: List[tuple]          # (args, kwargs, instance) of every FirestoreEphemeralStore main() built
     setups: List[tuple]          # VoiceCallSetupService
     sfu: List[tuple]             # CloudflareSfuAdapter
-    searches: List[tuple]        # SearchEnrichmentService built by main()
     mcp_builds: List[tuple]      # (kwargs, MCPComponents)
     gates: List[tuple]           # (label, on_cloud_run, gate)
 
@@ -54,11 +52,10 @@ def _recording(cls: type, sink: list) -> type:
 async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: bool = False,
                              emulator_host: Optional[str] = None) -> Captured:
     from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
-    from src.services.search_enrichment_service import SearchEnrichmentService
     from src.services.voice_call_setup_service import VoiceCallSetupService
 
-    seen: Dict[str, Any] = {"firestore_clients": [], "stores": [], "setups": [], "sfu": [], "searches": [],
-                            "mcp_builds": [], "gates": []}
+    seen: Dict[str, Any] = {"firestore_clients": [], "stores": [], "setups": [], "sfu": [], "mcp_builds": [],
+                            "gates": []}
     offline_real = prod_env.install_offline_services
 
     def install(monkeypatch_) -> Any:
@@ -110,8 +107,6 @@ async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: b
     monkeypatch.setattr("src.services.voice_call_setup_service.VoiceCallSetupService",
                         _recording(VoiceCallSetupService, seen["setups"]))
     monkeypatch.setattr("src.adapters.cloudflare_sfu_adapter.CloudflareSfuAdapter", _recording(CloudflareSfuAdapter, seen["sfu"]))
-    monkeypatch.setattr("src.services.search_enrichment_service.SearchEnrichmentService",
-                        _recording(SearchEnrichmentService, seen["searches"]))
 
     boot = await _boot(monkeypatch, caplog)
     if boot.probe_error is not None:
@@ -255,20 +250,13 @@ async def test_the_voice_webhook_gets_the_service_url_and_the_relay_stream_url(b
 
 # ----------------------------------------------------------------------------- the MCP connector
 
-async def test_the_mcp_search_service_gets_the_graphs_stores_and_the_default_limits(booted):
+async def test_the_mcp_connector_gets_the_graphs_memory_search_and_stores(booted):
     app = booted.app
-    defaults = SearchConfig()
-    [(_, kwargs, search)] = booted.searches
-
-    assert kwargs["repository"] is app.container.repository
-    assert kwargs["embedding_service"] is app.container.embedding_service
-    assert kwargs["keyword_limit"] == defaults.DEFAULT_KEYWORD_LIMIT is not None
-    assert kwargs["phrase_one_limit"] == defaults.DEFAULT_PHRASE_ONE_LIMIT is not None
-    assert kwargs["phrase_two_limit"] == defaults.DEFAULT_PHRASE_TWO_LIMIT is not None
-    assert kwargs["total_limit"] == 30
 
     [(build_kwargs, components)] = booted.mcp_builds
-    assert build_kwargs["search_enrichment_service"] is search
+    # a bound method is a new object per access: the same method of the graph's own factory
+    assert build_kwargs["memory_search"] == app.agent_factory.get_memory_search
+    assert build_kwargs["memory_search"].__self__ is app.agent_factory
     assert build_kwargs["db_client"] is booted.db
     assert build_kwargs["auth_config"] is app.auth_config
     consent = _only_call(booted, "build_mcp_consent_blueprint")

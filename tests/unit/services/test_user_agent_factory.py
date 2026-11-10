@@ -27,6 +27,7 @@ def mock_dependencies():
         "claude_service": Mock(),
         "grok_service": None,
         "embedding_service": Mock(),
+        "fact_search": Mock(),
         "repository": AsyncMock(),
         "config_service": Mock(),
         "biographical_context_service": Mock(),

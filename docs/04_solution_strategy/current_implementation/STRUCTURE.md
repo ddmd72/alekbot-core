@@ -281,7 +281,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                              #    process_attachment → reference-only MessagePart; resolve_content → text;
 │   │                              #    resolve_file(ref, user_id, action=save|send) → bytes; active_kind_of (D13).
 │   ├── rich_content_service.py # 🆕 File conversion + widget render + media dispatch
-│   ├── search_enrichment_service.py # 🆕 Triple search & weighted merge
+│   ├── fact_search_service.py # Scored fact search: candidate lists, scorer, phrase fusion (FACT_PROFILE_RFC §5.3)
+│   ├── search_enrichment_service.py # Older multi-vector search & RRF merge (companion context, fact-management adapter)
 │   ├── lelik_persona_service.py # 🆕 Lelik's warm call-start prompt (full facts minus denylist, directives, primary-channel history)
 │   └── user_notification_service.py # 🆕 Sends Slack/Telegram alerts; stores last active channel
 ├── tools/                # ⚠️ LEGACY Agent Tools (wrapped by agents)
@@ -548,7 +549,7 @@ The multi-agent system enables specialized task handling with different LLM mode
     -   `AgentIntent`: QUERY, DELEGATE, INFORM, REQUEST_FEEDBACK
     -   `AgentStatus`: SUCCESS, PARTIAL, FAILED, TIMEOUT, CANNOT_HANDLE
     -   `AgentConfig`: Per-agent configuration (model, timeout, retries, capabilities)
-    -   `RoutingMetadata`: Typed routing metadata (tone, complexity, confidence, tools, semantic_lens)
+    -   `RoutingMetadata`: Typed routing metadata (tone, complexity, confidence, tools)
 
 ### `web/` - Web Application (Quart Blueprints)
 -   **`auth_blueprint.py`**: OAuth 2.0 authentication flow (login, callback, token refresh, logout, link-oauth).

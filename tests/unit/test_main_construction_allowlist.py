@@ -24,8 +24,6 @@ ALLOWED: Dict[str, str] = {
     "FirestoreEphemeralStore": "voice: the voice tickets store (env_config.voice_tickets_collection), shared by the voice blueprints and the call setup",
     "VoiceCallSetupService": "voice: persona and ticket preparation for the Cabinet call page, built inside its blueprint call",
     "CloudflareSfuAdapter": "voice: the media room of the web call, built only when the Cloudflare SFU settings and VOICE_RELAY_STREAM_URL are set",
-    "SearchEnrichmentService": "MCP: a dedicated instance for the remote server, bypasses the agent stack by design",
-    "SearchConfig": "MCP: the limits of that dedicated SearchEnrichmentService",
     "McpErrorLogger": "MCP: wraps the remote server ASGI app to log its errors (_mcp_asgi), nothing else reads it",
 }
 

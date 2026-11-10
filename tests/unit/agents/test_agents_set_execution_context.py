@@ -28,7 +28,6 @@ OWNER_RULING = ("by-design no cross-provider fallback by owner ruling 2026-10-23
 
 ALLOWED_WITHOUT: Dict[str, str] = {
     "ComputeAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "compute")'),
-    "FactsMemoryAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "facts_memory")'),
     "ImageGenerationAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "image_generation")'),
     "MapsSearchAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "maps_search")'),
     "VideoGenerationAgent": NO_REAL_FAILOVER.format(fallback='None (agent_context_builder.py "video_generation")'),

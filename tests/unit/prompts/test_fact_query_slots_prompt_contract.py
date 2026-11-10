@@ -1,7 +1,8 @@
 """The query prompt and its response schema are one contract (fact profile RFC §5.1, §9 row 7).
 
-The token is the frozen P1 head (measured on the cheap model); the LIFE AREAS block is rendered from the domain
-registry. The pins below change only with a deliberate re-measurement of the prompt. This file lives in
+The token is the frozen P1 head (measured on the cheap model) followed by one paragraph on the owner's location block
+(OD-14 (b), measured and owner-approved); the LIFE AREAS block is rendered from the domain registry. The pins below
+change only with a deliberate re-measurement of the prompt. This file lives in
 `tests/unit/prompts` because `make test-unit` and `make ci` do not collect `tests/contracts/`."""
 import hashlib
 import re
@@ -15,8 +16,9 @@ from src.domain.fact_query_parse import QUERY_DOMAINS, QUERY_INTENTS
 from tests.support.prompt_render import render_static, rendered_token_ids
 
 _TOKEN = Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system" / "OUTPUT_FORMAT_FACT_QUERY_SLOTS.groovy"
-_TOKEN_SHA256 = "b39657909aaeb0050e412181b31988e2d0b65c0952effca8c3d301b7e26fb088"
-_WITH_BLOCK_SHA256 = "8b97a5bb9691f93154e02541aed85662db7016808e8806dcb8e1508bfe2a2bb3"
+_HEAD_SHA256 = "b39657909aaeb0050e412181b31988e2d0b65c0952effca8c3d301b7e26fb088"
+_TOKEN_SHA256 = "533a648693d8385c84327ab0063293694f4177db16e2b8991dc4d0ea35878bf6"
+_WITH_BLOCK_SHA256 = "f6cafc0344f59ce0d4bd08eed68e185e3a442057cb089446140ef830de07ee3a"
 _CYRILLIC = re.compile("[Ѐ-ӿ]")
 
 
@@ -28,8 +30,11 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def test_the_token_is_the_frozen_p1_head():
-    assert len(_content()) == 5589
+def test_the_token_is_the_frozen_p1_head_and_the_home_paragraph():
+    head, _, home = _content().rpartition("\n\n")
+    assert len(head) == 5589 and _sha(head) == _HEAD_SHA256          # the P1 head, unchanged
+    assert home.startswith("The location block is where the user lives.") and "\n" not in home.rstrip("\n")
+    assert len(_content()) == 6009
     assert _sha(_content()) == _TOKEN_SHA256
 
 

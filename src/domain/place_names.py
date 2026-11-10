@@ -6,13 +6,15 @@ apostrophes and dots ignored); its keys are `pl:<geonameid>`, `pl:<large neighbo
 A country alone gives `co:<country>`. Anything else is unresolved, with one reason: unknown_country, empty,
 not_in_country, not_in_atlas or ambiguous. A profile question (RFC §4.7) reads the rows behind that reason
 (`candidates`) and an owner's answer the keys of the row it picked (`keys_of`); a place the atlas lacks that the owner
-kept as written is `lp:<folded city>` (`local_place_key`).
+kept as written is `lp:<folded city>` (`local_place_key`). `resolve_home` reads the owner's free-text location into the
+home town the fact search scores against (RFC §5.3).
 """
 import hashlib
 import re
 import unicodedata
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+from .fact_search_rank import HomePlace
 from .place_lookup import PlaceRow
 
 # A name read as "<head> <connector> <rest>" is also known by its head ("Frankfurt am Main" as "Frankfurt"), and a name
@@ -183,3 +185,20 @@ class PlaceNames:
             return (country_key(as_country),) if as_country is not None else ()
         row = self._rows[max(candidates, key=lambda i: (self._rows[i].weight or 0, -i))]
         return (f"pl:{row.geonameid}",) + ((f"pl:{row.large.geonameid}",) if row.large is not None else ())
+
+
+def resolve_home(names: PlaceNames, location: str) -> Optional[HomePlace]:
+    """The owner's home town from the location as their settings store it. The text is split at commas, brackets and
+    slashes (digits dropped); every part is tried as the city with each other part, then none, as the country, and the
+    first city that resolves to a `pl:` key wins, with its local key. When none resolves, only the first part's local
+    key is kept; None when there is not even that."""
+    parts = [" ".join(re.sub(r"\d+", " ", part).split()) for part in re.split(r"[,(/)]", location or "")]
+    parts = [part for part in parts if part]
+    for i, city in enumerate(parts):
+        for country in [part for j, part in enumerate(parts) if j != i] + [""]:
+            keys = names.query_keys(city, country)
+            if keys and keys[0].startswith("pl:"):
+                return HomePlace(keys=frozenset(keys), lp=local_place_key(city) if fold(city) else None)
+    if parts and fold(parts[0]):
+        return HomePlace(keys=frozenset(), lp=local_place_key(parts[0]))
+    return None

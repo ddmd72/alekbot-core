@@ -31,7 +31,9 @@ class QueryTime:
 class FactQuery:
     """What to look for. `subject` and `kind` are free text to embed (each may be empty); `people`, `places`, `domains`
     and `kinds` narrow by the stored profile; `scope` is `top` (the first 30) or `all` (collect every match);
-    `today` is the day the question was asked; `path` names the caller (a log field)."""
+    `today` is the day the question was asked; `path` names the caller (a log field).
+    `message`: the whole text the slots were read from, embedded for the message similarity and the message list.
+    `home`: the owner's location exactly as their settings store it, resolved by the search into home-town place keys."""
     today: date
     subject: str = ""
     kind: str = ""
@@ -42,3 +44,5 @@ class FactQuery:
     kinds: Tuple[str, ...] = ()
     scope: str = SCOPE_TOP
     path: str = ""
+    message: str = ""
+    home: str = ""

@@ -2,8 +2,9 @@
 
 **Status:** Accepted by the owner 2026-11-09 (§12); amended by the owner 2026-11-10 (confirmed people list, needs-review
 flag, approximate and yearless dates: §4.5, §4.6, §4.4, §12 OD-9 to OD-11) and again the same day (profile questions to
-the owner: §4.7, §12 OD-12, OD-13). Implementation in progress (§9 PR
-series).
+the owner: §4.7, §12 OD-12, OD-13), and a third time (search v2: a scored ranking in place of the list fusion, the
+owner's location in the query slots, one search entry point taking several phrases: §5, §9, §12 OD-14). Implementation
+in progress (§9 PR series).
 **Owner:** Dmytro Deleur.
 **Design inputs:** the design inputs (taxonomy, indexing rules, profiler prompt drafts, code survey, offline prototype)
 are private working documents; measured numbers quoted here are aggregates from those runs.
@@ -11,7 +12,7 @@ are private working documents; measured numbers quoted here are aggregates from 
 **Settled before this RFC (not reopened here):** one Sonnet 5.5 call per fact (effort high, adaptive thinking, cached
 system prompt, JSON-schema output); code computes domains and validates everything the model proposes; a profile
 carries the fingerprint of its input and every consolidation cycle profiles the facts whose profile is missing or stale;
-seven search lists fused by RRF with the domain list kept whole, collect-all mode, plain domain intersection, time role
+seven search lists fused by RRF with the domain list kept whole (the fusion since replaced by a scored ranking, OD-14), collect-all mode, plain domain intersection, time role
 in ordering, recurring occasions by month and day, the intimate gate; query slots from the frozen P1 prompt on the
 cheap model; one domain registry; a one-time backfill; automatic people cards at ≥ 10 facts; no
 migration or rollback insurance; fact text is never rewritten.
@@ -397,41 +398,55 @@ through the `lp:` key its query side adds (§5.3).
 ### 5.1 Query contract and slots
 
 `FactQuery` (`src/domain/fact_query.py`): `subject`, `kind`, `people[]`, `places[{name, country}]`,
-`time{intent, from, to}`, `domains` (≤ 2 registry keys), `kinds[]`, `scope` (`top`/`all`), `today`, `path`.
-`parse_slots` validates in code: dates parsed and the window clamped (§5.3), unknown domains and kinds dropped, a slot
-with Cyrillic refused and logged (the contract is English), `domain_link` read and ignored (§12 item 3).
+`time{intent, from, to}`, `domains` (≤ 2 registry keys), `kinds[]`, `scope` (`top`/`all`), `today`, `path`, and two
+inputs that are not slots (OD-14): `message`, the whole text the slots were read from, embedded for one more similarity
+(the user's latest message when the calling turn has one, else the phrase itself; on the Router path always the latest
+message); `home`, the owner's location
+as their settings store it, resolved by the search into the home town's place keys. `parse_slots` validates in code:
+dates parsed and the window clamped (§5.3), unknown domains and kinds dropped, a slot with Cyrillic refused and logged
+(the contract is English), `domain_link` read and ignored (§12 item 3).
 
-Slots come from the **frozen P1 prompt** as a Firestore token (`OUTPUT_FORMAT_FACT_QUERY_SLOTS` with its rules; LIFE
-AREAS rendered from the registry; `Today: <date> (<weekday>), timezone <owner zone>` appended per call), run by
-`FactQuerySlotsAgent` on the tier of its caller — the Router's and `facts_memory`'s ECO tier (flash-lite). Inputs as
-measured: the Router path passes the turn's messages; `search_memory` passes `SEARCH_REQUEST "<Smart's request>"`; the
-connector and voice pass the caller's words (OD-2). A failed slots call degrades to one semantic list over the raw
-request (no prompt involved), as `facts_memory` does today.
+Slots come from the **P1 prompt** as a Firestore token (`OUTPUT_FORMAT_FACT_QUERY_SLOTS` with its rules; LIFE AREAS
+rendered from the registry; `Today: <date> (<weekday>), timezone <owner zone>` appended per call), run by
+`FactQuerySlotsAgent` on the tier of its caller — the Router's and `facts_memory`'s ECO tier (flash-lite). The call
+carries the owner's location block, and the token ends with one paragraph that explains it: a request about something
+coming to the user or happening where they are is about their town even when the request does not name it, so the
+slots put that town as the place (OD-14; the frozen head is otherwise unchanged). Inputs: the Router path passes the
+turn's messages; the memory search agent passes each phrase it received as `SEARCH_REQUEST "<phrase>"`, one call per
+phrase, in parallel (§5.4). A failed slots call degrades to one semantic list over the raw text (no prompt involved).
 
 ### 5.2 Where the lists read from
 
 `FactSearchService` (implements `FactSearchPort`, `src/services/fact_search_service.py`) reads two kinds of input:
 
-- the two kNN lists through `find_nearest` (`vector`, `label_vector`), depth 40, as today's channels do;
+- the two kNN lists through `find_nearest` (`vector`, `label_vector`), depth 60;
 - the five key lists over an **account snapshot**: one projected read of the account's current facts (profile fields,
   text, `metadata`, `context`, `reported_date`, `created_at`; no vectors in the read), cached per instance and keyed by the baseline cache document's
   `refreshed_at`. Every fact writer already refreshes the baseline (memory map §4.1 "When it changes"), so the key moves
-  whenever the facts do. The key lists, ordering, gate and fusion then run in pure domain code
-  (`src/domain/fact_search_lists.py`), exactly as the validated prototype did. Text vectors are cached per account by fact id
-  (a document's `vector` never changes, so a reload fetches only the ids it has not seen) and serve in-list similarity
-  and deduplication. (OD-1 is the alternative: Firestore array queries per list.)
+  whenever the facts do. The key lists, ordering and gate then run in pure domain code
+  (`src/domain/fact_search_lists.py`), the scoring and the phrase fusion in `src/domain/fact_search_rank.py` (§5.3). Text vectors are cached per account by fact id
+  (a document's `vector` never changes, so a reload fetches only the ids it has not seen) and serve in-list similarity,
+  the message list and its similarity, and deduplication. Label vectors are read with each snapshot load (a re-profile
+  rewrites them in place, so they are not kept across loads) and serve the label similarity of every candidate. The
+  account's people cards (§7) are read with the snapshot and serve the people score. (OD-1 is the alternative:
+  Firestore array queries per list.)
 
 ### 5.3 The lists
 
+The lists no longer rank: they generate the candidates the scoring of this section orders (OD-14). Every list keeps its
+whole candidate set except where a cap is named; the cut to 30 comes only after scoring.
+
 | List | Runs when | Candidates | Order inside the list |
 |---|---|---|---|
-| semantic | `subject` | `vector` kNN, 40 | similarity |
-| labels | `kind` | `label_vector` kNN, 40; facts without labels excluded | similarity |
-| domain | `domains` | every fact whose `domain_keys` hold the domain; two domains → facts carrying both, the union when none does. A full RRF list with equal weight — never a tie-break or a half weight (measured: no gain; the tie-break lowered a collect-all question) | in-list order, cut at 50 (`scope=all`: 100) |
+| semantic | `subject` | `vector` kNN, 60 | similarity |
+| labels | `kind` | `label_vector` kNN, 60; facts without labels excluded | similarity |
+| message | `message` | the 60 snapshot facts whose text vector is nearest to the message's | similarity |
+| domain | `domains` | every fact whose `domain_keys` hold the domain; two domains → the facts carrying both first, then the facts carrying either | in-list order, capped at 100 |
+| home | no `places` and the owner's home resolves | facts whose `place_keys` meet the home town's keys | in-list order, capped at 60 |
 | time | intent `future`/`past`/`period` | a point inside the window; a recurring occasion matches by month and day in any year | in-list order |
-| time (latest) | intent `latest` | union of the other lists' candidates with a point | newest point first |
+| time (latest) | intent `latest` | union of the semantic, labels and key lists' candidates with a point (pooled before the message, domain-cap and home lists are built) | newest point first |
 | places | `places` | `place_keys` ∩ the atlas query keys (a country reaches its cities; a city reaches its large neighbour) plus `lp:<folded name>` for a named city (an owner-confirmed place the atlas lacks, §4.7) | in-list order |
-| people | `people` | a relation word → facts whose mention role has it + every spelling of the matching cards (§7); a name → facts whose name keys match, widened by its card's spellings; with domains given, kept to those in the domains when that leaves any | in-list order |
+| people | `people` | a relation word → facts whose mention role has it; a name → facts whose name keys match (either way round); not narrowed by the domains. A card's other spellings raise a fact's people score instead of widening the list (§7) | in-list order |
 | kinds | `kinds` | stored `kinds` ∩ requested | in-list order |
 
 **In-list order** (key lists): with a window, distance to the window (0 on overlap, else days; MIN over a fact's
@@ -446,23 +461,68 @@ points spanning at most 31 days (day or month precision) is projected into every
 neighbours (`fact_search_lists.py`). Example: Clara Moreira's birth date (14 July 1982) has a point
 1982-07-14; asked in November 2026 "what is coming up next summer", its July projection falls inside the window.
 
-**Intimate gate:** an `intimate` fact survives only in the labels list or the domain list; exception — `scope=all`
-with people named (collect everything about a person). **Fusion:** RRF `1/(60 + rank)`, equal weights, existing
-`src/domain/rrf.py`; then `SmartDeduplication(0.96, 0.98)`; cut 30; `scope=all` keeps every fused fact after dedup.
-The Router path drops facts already in the baseline. One log line per search:
-`[FactSearch] path=… lists=semantic:40,labels:40,domain:…,… fused=… kept=… gate_dropped=… unsnapped=… snapshot=hit|load:<n> ms=…`.
+**Intimate gate:** an `intimate` fact survives only in the labels list or the domain list (the message and home lists
+are gated like the rest); exception — `scope=all` with people named (collect everything about a person). The
+candidates are the union of the gated lists; the Router path drops facts already in the baseline before scoring.
+
+**Scoring (OD-14).** Each candidate gets a linear score, a weighted sum of features computed from the query and the
+fact's stored fields; the scorer is pure (`src/domain/fact_search_rank.py`). The features:
+
+- *meaning* — cosine of the subject to the fact text; of the kind to the fact's label vector; of the message to the
+  fact text (each 0 when the text is absent);
+- *place* — a grade of the fact's place keys against the query places: the named city (or its owner-confirmed `lp:`
+  key, or the country when only a country is named) highest, its large neighbour next, the same country low, another
+  city negative, none 0; *home unplaced* — the query place is the owner's home town and the fact has no place;
+  *home implicit* — the query names no place and the fact is at the home town;
+- *kind* — a requested kind among the fact's kinds; *domain* — the fact's primary domain is a queried one (full), or
+  only one of its further domains (half); *people* — a queried name matches a mention (full), a mention is another
+  spelling on a card of that name (high), the mention's role or its card's relation is a queried relation (medium);
+- *time* — the fact's time role (one indicator per role, timeless included); a time point overlapping the target (the
+  intent's window, else today); closeness of the nearest point outside it, either side (`exp(−days/30)`); no time
+  point at all; an event wholly before today under a `future` intent or wholly after it under `past`; the age of the
+  report (`exp(−days since reported/365)`). Recurring occasions measure their distance by month and day under a window
+  intent.
+
+The weights were fitted offline by a pairwise logistic model on the calibration set (local, never in the repository)
+and live in code as named constants, one line of meaning each; the score is therefore in log-odds units of "this fact
+ranks above that one". Candidates are ordered by score (ties by fact id), `SmartDeduplication(0.96, 0.98)` drops
+near-duplicates in that order, and the first 30 are kept; `scope=all` keeps every candidate after dedup.
+
+**Several phrases (OD-14).** The memory search agent sends up to four queries, one per phrase, in priority order. Each
+is scored on its own candidates; a fact's fused value is the maximum over the phrases that found it of the phrase's
+priority weight (1, 0.7, 0.5, 0.35 by position) times σ of its score taken relative to that phrase's own cut line (the
+score of its 30th candidate after dedup, or its last when fewer): a fact the phrase ranks at its line reads 0.5, so the
+priority weights trade phrases on one scale. No bonus for being found by several phrases (nothing to fit it on). Then
+dedup in fused order and the cut to 30; `scope=all` on any phrase keeps every fused fact. One query is the one-phrase
+case: its order is its score order. The anchor, σ(score − the phrase's 30th-ranked score), is the accepted reading of "σ(score)" (OD-14 (d)).
+One log line per search:
+`[FactSearch] path=… phrases=<n> lists=semantic:…,labels:…,message:…,… cands=… gate_dropped=… kept=… unsnapped=… snapshot=hit|load:<n> ms=…`.
 
 ### 5.4 Callers
 
+**One entry point (OD-14).** Every model that asks the memory a question — Smart and Quick, Lelik, the claude.ai
+connector — goes through the memory search agent (`FactsMemoryAgent`). The request is `queries`: one to four English
+phrases in priority order, each about one subject. The reason is the store's shape: a fact is one short English
+statement about one matter, so a phrase that reads like such a statement lands next to it, and a phrase holding two
+people, two places or two times lands between their facts and near none; a need with several subjects, or one subject
+seen from several sides, becomes several phrases. The order is the caller's statement of what the answer depends on
+most, which the fusion above turns into weights. The phrases must be self-contained: the search never sees the
+conversation. The tool and protocol texts that tell each caller this explain it first, then state the rules, and carry
+no examples. There is no other request shape and no fallback to a single free-text query.
+
+`FactQuery.message` is the user's latest message when the calling turn has one (Smart, Quick, Lelik), else the phrase itself
+(a connector call has no turn text).
+
 | Caller | Slots | Receives |
 |---|---|---|
-| Router prefetch | P1 call started in parallel with triage on the same messages; used when `search_intent ≠ none` (OD-3) | ≤ 30 minus the baseline, as `query_specific_context` |
-| `search_memory` (`FactsMemoryAgent`) | P1 replaces the `MEMORYSEARCH_*` decomposer | 30 (`scope=all`: all), rendered with `context:`, `reported:`, `metadata:` and a new `when: <points at their precision>` line |
-| claude.ai connector `get_user_context` | OD-2 | 30 / all, grouped by the registry label of `primary_domain`, with `when:` |
-| Lelik via the voice token | as the connector | as the connector, then `VOICE_RESULT_MAX_CHARS` (8,000, `voice_mcp_token.py:26`) |
+| Router prefetch | P1 call on the turn's messages, started in parallel with triage; used when `search_intent ≠ none` (OD-3 (a)); one query, `message` = the user's last message | ≤ 30 minus the baseline, as `query_specific_context` |
+| `search_memory` from Smart, Quick and Lelik (`delegate_to_specialist`, `context.queries`) | P1 per phrase, in parallel; `message` = the phrase | 30 (`scope=all`: all), rendered with `context:`, `reported:`, `metadata:` and a `when: <points at their precision>` line |
+| claude.ai connector `get_user_context(queries)` | the memory search agent, as above | 30 / all, grouped by the registry label of `primary_domain`, with `when:` |
+| Lelik on a call that carries the MCP servers (voice token) | as the connector | as the connector, then `VOICE_RESULT_MAX_CHARS` (8,000, `voice_mcp_token.py:26`) |
 | Companion biographical slice | `subject` from its first phrase, `domains` from `session_domains` | as today |
 
-`enrich_context` stays for the consolidator's `search_existing_facts` and the review's neighbour search (out of scope).
+Each caller passes the owner's location as `home`. `enrich_context` stays for the consolidator's
+`search_existing_facts`, the review's neighbour search and the companion slice until PR 12 (out of scope).
 
 **Advice questions (proposal, OD-4).** Measured gap: "what should I do" questions do not pull the user's preferences and
 constraints. Proposed rule in code: a query marked as asking for advice always adds the kinds list for `preference` and
@@ -483,10 +543,10 @@ Every reader of today's `FactDomain` (code survey + taxonomy), its new rule and 
 | 7 | `companion_context_assembler_service.py:136-180` | `enrich_context(…, relevant_domains)` | `FactSearchPort.search`; `session_domains` as registry keys | 12 |
 | 8 | `firestore_channel_binding_adapter.py:72` | `FactDomain(d)` — raises on an unknown value | registry `config_key(d)`: legacy mapping, unknown dropped with a warning, never raises | 12 |
 | 9 | `user_cabinet_app.py:842-1010`, `cabinet.html` | badge `f.domain`; `?domain=` filter (`firestore_repo.py:312`) | badge = registry label of `primary_domain` (old `domain` while absent); filter on `domain_keys`; labels from `/api/user/fact-domains` | 12 |
-| 10 | `mcp_setup.py:175-182` | groups by `f.domain` | registry label of `primary_domain`; gate applied by the engine | 10 |
+| 10 | `mcp_setup.py:175-182`, `:361-370` | groups by `f.domain`; calls `enrich_context` itself | the memory search agent with `queries`; registry label of `primary_domain`; gate applied by the engine | 10 |
 | 11 | `search_enrichment_service.py:135,363`, `firestore_repo.py:909-953` | domain channel `domain IN`, newest first | domain list of §5.3; old method kept for `enrich_context` users | 8–10 |
-| 12 | `router_agent.py:310-338` | prefetch from triage `semantic_lens`/`search_phrase`/`relevant_domains` | P1 slots + `FactSearchService`; the triage fields stay emitted, unread, until PR 13 | 9 |
-| 13 | `memory_search_agent.py:108-153, 241-247, 295-352` | `MEMORYSEARCH_*` decomposer, old domains, fallback vector search | P1 slots; fallback = one semantic list | 8 |
+| 12 | `router_agent.py:310-338` | prefetch from triage `semantic_lens`/`search_phrase`/`relevant_domains` | P1 slots + `FactSearchService`; the triage search fields are removed in the same PR (OD-14) | 9 |
+| 13 | `memory_search_agent.py:108-153, 241-247, 295-352` | `MEMORYSEARCH_*` decomposer, old domains, fallback vector search | `queries` (1–4 phrases); P1 slots per phrase; one multi-phrase search; a failed slots call = one semantic list for that phrase; no legacy payload | 8 |
 | 14 | `consolidation_agent.py:105-116` (+ tokens) | model supplies one of 16 domains | unchanged until PR 13, then the directive decision only (OD-6) | 13 |
 | 15 | `fact_lifecycle.py:332`, `consolidation_agent.py:1664,1706` | directive = `domain == AGENT_DIRECTIVE` or principle or `mindset` | one predicate `is_directive(fact)` in `fact_lifecycle.py`, reading the old domain until PR 13 and the consolidator's flag after | 12 |
 | 16 | `domain/search.py:114-129`, `consolidation_pass_stats.py:135` | consolidator sees and compares the old domain | unchanged until PR 13; then shows `primary_domain`, compares the directive flag | 13 |
@@ -508,9 +568,9 @@ A card is a retrieval index entry: never a fact, never in a prompt, never read b
   form is one card, relation "mother", once her facts reach ten. A short form such as "Mia" has another skeleton and
   stays a card of its own (joining nicknames is the later fix of OD-5 b). A card key is the skeleton of its fullest spelling, so a
   rebuild keeps it.
-- **Used at query time only:** a `people` slot naming a relation or one spelling widens to every spelling of the
-  matching cards (§5.3). This supplies the spellings the slot model cannot know and closes the relation gap of §1;
-  facts are never re-linked or versioned.
+- **Used at query time only:** a fact whose mention is another spelling on the card of a queried name, or on a card
+  whose relation is a queried relation word, gets the people score of §5.3. This supplies the spellings the slot model
+  cannot know and closes the relation gap of §1; facts are never re-linked or versioned.
 - **Shown** in the weekly memory digest (`fact_review_digest.py`) as one bot-written line listing the cards and their
   counts, so the owner sees what the system groups. No edit page in this RFC (OD-5).
 - **Lifecycle:** a group that falls below ten facts loses its card on the next rebuild; nothing else is stored.
@@ -550,14 +610,16 @@ Each PR is small, deploys on its own and changes no behaviour a later PR needs u
 | 5d | Profile question kinds on the review record, scoped list reads, order and daily rate, housekeeping and timeout, the message and its labels, the answer path for digits and buttons; nothing creates questions yet | — | `tests/unit/domain/test_profile_question_record.py`, `test_profile_question_queue.py`, `test_profile_question_message.py`, `tests/unit/services/test_profile_question_answers.py`, `test_fact_review_profile_housekeeping.py`, `test_fact_lifecycle_sweep_profile_scope.py` |
 | 5e | Open points from the profile view, creation and `resolved_elsewhere` in the daily run, words read by code; turns the questions on | 5c and 5d deployed | `tests/unit/domain/test_profile_open_points.py`, `test_profile_reply_words.py`, `tests/unit/services/test_fact_review_profile_questions.py` |
 | 6 | `fact_search_lists.py`, `FactQuery`, `FactSearchService` + port, snapshot cache; no caller | — | `tests/unit/domain/test_fact_search_windows.py`, `test_fact_search_recurring.py`, `test_fact_search_intersection.py`, `test_fact_search_people.py`, `test_fact_search_intimate_gate.py`, `test_fact_search_collect_all.py`, `test_fact_search_kinds_list.py`, `tests/unit/services/test_fact_search_service.py` |
+| 6b | Scored ranking (OD-14): candidate lists (kNN 60, message list, home list, uncut key lists), the pure scorer and phrase fusion in `fact_search_rank.py`, `FactQuery.message`/`home`, label vectors and people cards with the snapshot, the port taking 1–4 queries; still no caller | — | `tests/unit/domain/test_fact_search_rank_features.py`, `test_fact_search_rank_order.py`, `test_fact_search_candidates.py`, `test_fact_search_phrase_fusion.py`, `tests/unit/services/test_fact_search_service_scored.py` |
 | 7 | P1 token + `FactQuerySlotsAgent` + `parse_slots` | token uploaded | `tests/unit/domain/test_fact_query_parse.py`, `tests/contracts/test_fact_query_slots_prompt_contract.py`, `tests/unit/agents/test_fact_query_slots_agent.py` |
+| 7c | Slots read the owner's location; the home paragraph appended to the P1 token (OD-14) | token uploaded | `tests/unit/agents/test_fact_query_slots_location.py`; the token's contract pins re-measured by a reviewer |
 | — | **Acceptance re-run** (§10.3) | backfill done | — |
-| 8 | `search_memory` on the new engine, `when:` line | `label_vector` index READY | `tests/unit/agents/test_memory_search_agent_v2.py` |
-| 9 | Router prefetch on the new engine | — | `tests/unit/agents/test_router_prefetch_v2.py` |
-| 10 | Connector + voice tool | owner reconnects claude.ai if the schema changes | `tests/unit/composition/test_mcp_get_user_context_v2.py` |
+| 8 | The memory search agent on the new engine: `queries` (1–4 phrases), slots per phrase, one multi-phrase search, `when:` line; `search_memory` context schema; Smart/Quick and Lelik delegation texts | `label_vector` index READY; the delegation tokens uploaded with the deploy | `tests/unit/agents/test_memory_search_agent_v2.py`, `tests/unit/infrastructure/test_search_memory_queries_schema.py` |
+| 9 | Router prefetch on the new engine; the triage search fields and their prompt text removed (moved here from PR 13) | router token uploaded with the deploy | `tests/unit/agents/test_router_prefetch_v2.py`, `tests/unit/agents/core/test_router_triage_without_search_fields.py` |
+| 10 | Connector `get_user_context(queries)` through the memory search agent (claude.ai and the voice token) | owner reconnects claude.ai (the schema changes) | `tests/unit/composition/test_mcp_get_user_context_v2.py` |
 | 11 | Baseline identity block, formatter labels, Lelik filter | identity index READY; scan shows 0 unprofiled | `tests/unit/services/test_biographical_identity_block.py`, `tests/unit/services/test_lelik_voice_filter.py`, `tests/unit/services/prompt_v3/test_biographical_formatter_labels.py` |
 | 12 | `is_directive` predicate, Cabinet filter + domains API, companion slice, channel-binding load | Cabinet index READY | `tests/unit/domain/test_is_directive.py`, `tests/unit/web/test_cabinet_fact_domains.py`, `tests/unit/services/test_companion_slice_v2.py`, `tests/unit/adapters/test_channel_binding_legacy_domains.py` |
-| 13 | Consolidator writes the directive decision only; `FactDomain` and old domain indexes removed; Router triage drops its search fields (OD-6) | consolidation bench dry run clean | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py` |
+| 13 | Consolidator writes the directive decision only; `FactDomain` and old domain indexes removed (OD-6); the Router triage part moved to PR 9 | consolidation bench dry run clean | consolidation vocabulary tests updated by a reviewer; `tests/unit/agents/test_consolidation_directive_flag.py` |
 
 An existing test that fails under any PR goes to a reviewer (REVIEWER RULE); tests of deleted code are deleted in that PR
 and listed in its body.
@@ -618,8 +680,11 @@ PR 8. A fresh, truly unseen question set, labelled from two weeks of use, runs o
 2c. PR 5c and 5d deploy dark (no question exists yet; their texts ship by deploy, no token upload); PR 5e turns the
     questions on. The first daily run after it queues at most three; one goes out per day.
 3. PR 4 deploys; backfill run (owner OK); scan shows 0 unprofiled.
-4. PR 5–7 deploy (no reader change); owner uploads the P1 token; acceptance re-run; owner approves.
-5. PR 8, then 9, then 10, each watched for a day in `[FactSearch]` lines and turn latency.
+4. PR 5–7, 6b and 7c deploy (no reader change); owner uploads the P1 token with the home paragraph; acceptance re-run;
+   owner approves.
+5. PR 8 with its delegation tokens, then 9 with the router token, then 10 (owner reconnects claude.ai), each watched for
+   a day in `[FactSearch]` lines and turn latency. PR 8 and its tokens go live together: the agent accepts no other
+   request shape.
 6. PR 11 (identity index READY first), PR 12 (Cabinet index READY first).
 7. PR 13 right after PR 12, no waiting period (owner, 2026-11-09), preceded by the second backup (§8 step 6). Memory map, multi-vector RRF concept and `capabilities.py` are updated in
    the PR that changes the behaviour they describe.
@@ -641,10 +706,15 @@ thousand facts per account.
 **OD-2 Connector and voice slots.** (a) Server-side P1 on the caller's words — the measured configuration; +≈ 1.1 s p50
 per voice search. (b) Typed parameters filled by the client model (claude.ai, Lelik's model) — no extra hop, but slot
 quality unmeasured, and a schema change means a reconnect. **Recommend (a)** now; (b) as a measured experiment later.
+*Amended by OD-14:* slots stay server-side, but the client model no longer passes its raw words: it writes one to four
+self-contained English phrases (`queries`), and the server runs P1 on each phrase through the memory search agent.
+Typed slot parameters (b) remain unused.
 
 **OD-3 Router slot call.** (a) Parallel with triage, discarded when `search_intent = none` (no added latency, ≈ $0.001 on
 turns that do not search); (b) after triage (+≈ 1.1 s on searching turns); (c) merged into the triage token (unmeasured).
-**Recommend (a).**
+**Recommend (a).** *Amended by OD-14:* (a) stays. (c), the triage call emitting the slots itself, was measured on the
+calibration set (local) and rejected. With the prefetch on P1, the triage's own search fields have no reader and go in
+PR 9.
 
 **OD-4 Advice questions (proposal).** (a) One new slot `asks_advice` with its why-paragraph; code adds the
 `preference` + `constraint` kinds list when true — changes the frozen P1, so it is measured on the design set plus
@@ -697,6 +767,28 @@ same chat channel. An answer fixes the profile without asking the model again wh
   atlas when it is built; storing the reason would change the stored shape and re-derive every profile once for a
   value nothing else reads.
 
+**OD-14 Search v2 (owner, 2026-11-10, all five accepted).** Measured offline on the calibration set (local); no
+measured value enters this repository.
+- (a) *Scored ranking.* Equal-weight RRF over membership lists was nearly flat, so it degenerated into a vote by how
+  many lists named a fact, and a key list's inner order is time, not relevance. The lists now only generate candidates
+  (§5.3 table, no cut before scoring); a linear score over the features of §5.3 orders them; the cut to 30 follows.
+  The scorer is pure domain code; its weights are constants fitted offline. The message similarity costs one more
+  query embedding, batched with the others.
+- (b) *Slots know where the owner lives.* The P1 call carries the owner's location block, and one paragraph appended
+  to the token explains why an implicit "to me / here / near home" request takes the home town as its place. Model
+  unchanged (the cheap tier); no Cyrillic path (a Cyrillic slot is still refused).
+- (c) *One entry point.* Smart, Quick, Lelik and the claude.ai connector all call the memory search agent with
+  `queries` (§5.4); the connector no longer calls `enrich_context` itself. No backward compatibility and no old
+  request shapes (one active user).
+- (d) *Several phrases.* Each phrase has its own slots and score; fusion is the maximum over phrases of priority
+  weight times σ(score); no multi-phrase bonus; then the cut. The score is a pairwise log-odds with no intercept, so σ of
+  the raw score would saturate near 1 for every candidate and the fusion would reduce to "phrase 1 first, wholly". The
+  accepted anchor is σ(score − the phrase's 30th-ranked score): the probability that the fact ranks above the phrase's
+  30th candidate (§5.3).
+  `FactQuery.message` is the user's latest message when the calling turn has one, else the phrase itself, so the message
+  similarity reads what the user wrote and a bare connector call still has a text to embed (§5.4).
+- (e) *Router.* OD-3 (a) stays; (c) was measured and rejected; the triage drops its search fields in PR 9.
+
 **Inputs found contradictory or under-specified (to confirm):**
 1. The profiler prompt draft claims its DOMAIN QUESTIONS are the taxonomy's model rule text byte for byte, but holds the
    round-3 rules; the taxonomy text is now the round-4b hybrid. The token pair of §4.3 combines v4 with the hybrid and was never run as one prompt — hence the
@@ -718,8 +810,8 @@ same chat channel. An answer fixes the profile without asking the model again wh
 
 The consolidator's duplicate search and the review's neighbour search (stay on `enrich_context`); stopping
 `tags_vector`/`metadata_vector` writes and free tags; `type`, `temporal_class`, the fact lifecycle, expiry and janitor;
-the drive and Gmail indexes; SYSTEM-account facts; the Router triage token (until PR 13); an LLM re-ranker; graph edges
-or one-hop expansion; RRF weights; storing "planned/past"; per-turn Router injection into voice; a card editing page;
+the drive and Gmail indexes; SYSTEM-account facts; the Router triage token beyond removing its search fields (PR 9); an LLM re-ranker; graph edges
+or one-hop expansion; refitting the ranking weights online or per account; storing "planned/past"; per-turn Router injection into voice; a card editing page;
 discreet-fact rules for shared channels beyond Lelik's baseline; re-profiling on a prompt change (an explicit,
 owner-approved run); questions about time-point items, list edits from an answer, correcting a recorded answer, profile
 questions in the Cabinet, filling the atlas from answers (§4.7, OD-13); the consolidator reading the

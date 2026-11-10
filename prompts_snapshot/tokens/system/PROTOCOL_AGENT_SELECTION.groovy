@@ -30,22 +30,8 @@ delegate_to_specialist_extended_rules {
             search_memory {
                 intent: "search_memory"
                 query_formulation: [
-                    "Describe the topic — not the question. Topic descriptions match KB fact vocabulary better.",
-                    "Include known specifics from biographical context (brand, name, condition) as precision anchors.",
-                ]
-                examples: [
-                    {
-                        user_query: "What car do I have?"
-                        context: "Bio mentions Skoda Fabia"
-                        tool_call: 'delegate_to_specialist(intent="search_memory", query="Car: Skoda Fabia model, year, plate, insurance, service history")'
-                        note: "Known anchor included — expands recall across all car-related facts."
-                    },
-                    {
-                        user_query: "tell me more"
-                        context: "Previous turn: user's work project"
-                        tool_call: 'delegate_to_specialist(intent="search_memory", query="Work project: current status, goals, tasks, progress")'
-                        note: "Resolve vague follow-up from prior context — never pass bare 'tell me more'."
-                    }
+                    "The search reads only the phrases in context.queries, written as that field describes; query states in a few words what the answer needs and is kept for the log, not searched.",
+                    "The search cannot see biographical_context or the conversation, and a name, a town or a date is what lets a phrase land on the one statement it is about. What biographical_context or the conversation states is known, not guessed: put it into the phrases.",
                 ]
             }
 
