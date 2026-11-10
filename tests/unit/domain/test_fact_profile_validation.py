@@ -255,18 +255,20 @@ def test_a_country_alone_gives_its_country_key():
     assert places("a week in Italy", [{"city": "", "country": "Italy", "source": "Italy"}])[0] == ("co:italy",)
 
 
-@pytest.mark.parametrize("city, country, reason", [
-    ("Rome", "Atlantis", "unknown_country"),
-    ("", "", "empty"),
-    ("Lisbon", "Italy", "not_in_country"),
-    ("Coimbra", "Portugal", "not_in_atlas"),
-    ("Coimbra", "", "not_in_atlas"),
-    ("Springfield", "USA", "ambiguous"),
+# A country the atlas does not contradict survives its unresolved city (an unknown city, or several rows all inside
+# it); a city the atlas places in another country contradicts the pair, so neither key is written.
+@pytest.mark.parametrize("city, country, reason, kept", [
+    ("Rome", "Atlantis", "unknown_country", ()),
+    ("", "", "empty", ()),
+    ("Lisbon", "Italy", "not_in_country", ()),
+    ("Coimbra", "Portugal", "not_in_atlas", ("co:portugal",)),
+    ("Coimbra", "", "not_in_atlas", ()),
+    ("Springfield", "USA", "ambiguous", ("co:united_states",)),
 ])
-def test_an_unresolved_place_is_kept_apart_with_its_reason(city, country, reason):
+def test_an_unresolved_place_is_kept_apart_with_its_reason(city, country, reason, kept):
     keys, unresolved, drops = places("Rome Lisbon Coimbra Springfield", [
         {"city": city, "country": country, "source": "Rome"}])
-    assert keys == () and unresolved == (UnresolvedPlace(city, country),)
+    assert keys == kept and unresolved == (UnresolvedPlace(city, country),)
     assert drops == {f"place_unresolved:{reason}": 1}
 
 
