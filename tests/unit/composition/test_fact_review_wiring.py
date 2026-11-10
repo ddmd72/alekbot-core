@@ -20,6 +20,7 @@ from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
+from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.prod_graph import ProdGraph, prod_graph  # noqa: F401  (the fixture)
 
@@ -127,7 +128,8 @@ async def test_the_answer_services_whole_constructor_is_the_graphs_objects(prod_
         "_clock": answer_module._utcnow,
     }
     held = vars(answer)
-    assert set(held) == set(expected) | {"_fact_updates"}
+    # Fact profile §4.7 (5d): `_profile_answers` is built for the answer service, checked below like `_fact_updates`.
+    assert set(held) == set(expected) | {"_fact_updates", "_profile_answers"}
     for name, value in expected.items():
         assert held[name] is value, name
 
@@ -138,6 +140,11 @@ async def test_the_answer_services_whole_constructor_is_the_graphs_objects(prod_
     assert updates._fact_write_service is app.container.fact_write_service
     assert isinstance(updates._search_enrichment, SearchEnrichmentService)
     assert updates._search_enrichment._repo is app.container.repository
+
+    profile_answers = answer._profile_answers
+    assert isinstance(profile_answers, ProfileQuestionAnswers)
+    assert vars(profile_answers) == {"_answers": app.container.profile_answers}
+    assert profile_answers._answers is app.container.profile_answers
 
 
 async def test_the_review_run_timeout_is_the_consolidation_runs(prod_graph: ProdGraph):
