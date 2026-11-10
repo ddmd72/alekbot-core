@@ -3,6 +3,7 @@ from typing import AbstractSet, List, Sequence
 
 from ..domain.entities import FactEntity
 from ..domain.fact_query import FactQuery
+from ..domain.fact_search_result import PhraseSearchResult
 
 
 class FactSearchPort(ABC):
@@ -41,3 +42,10 @@ class FactSearchPort(ABC):
         Projection and tenancy: as `search`.
         """
         pass
+
+    async def search_phrases_matched(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
+        """`search_phrases` plus, per returned fact, the zero-based indices of the phrases whose own kept top-`CUT`
+        list holds it (a single phrase: every kept fact). The default reports no matches; an implementation that knows
+        them overrides it."""
+        facts = await self.search_phrases(account_id, queries)
+        return PhraseSearchResult(tuple(facts), tuple(() for _ in facts))

@@ -33,9 +33,8 @@ from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.drive_connector_result import cap_result
 from ..agents.memory_search_agent import FactsMemoryAgent
-from ..domain import fact_domains
-from ..domain.fact_when import when_line
 from ..domain.mcp import normalize_queries, queries_dropped
+from ..domain.memory_search_format import format_search_result
 from ..domain.memory_search_texts import NO_RECORDS_TEXT, QUERIES_FIELD_TEXT
 from ..domain.mcp_resource import MCPResource, drive_resource_uri
 from ..domain.request_context import RequestContext
@@ -142,28 +141,6 @@ _NO_RESULTS = NO_RECORDS_TEXT
 _REFUSED = "Refused: this tool is not available to this caller."
 # The last line of a voice result cut at VOICE_RESULT_MAX_CHARS (§8, O5).
 _VOICE_OVER_SIZE = "[More records matched than fit here; ask a narrower question to see the rest.]"
-
-
-def _format_facts(facts) -> str:
-    """Facts grouped under the English label of their primary domain, each with its `when:` line when it has one."""
-    if not facts:
-        return _NO_RESULTS
-
-    by_group: dict[str, list] = {}
-    for f in facts:
-        primary = getattr(f, "primary_domain", None)
-        group = (fact_domains.label(primary, "en") if primary else None) or getattr(f, "domain", None) or "general"
-        group = getattr(group, "value", group)
-        by_group.setdefault(str(group), []).append(f)
-
-    lines: List[str] = []
-    for group in sorted(by_group.keys()):
-        lines.append(f"## {group}")
-        for f in by_group[group]:
-            when = when_line(f)
-            lines.append(f"- {f.text}" + (f" ({when})" if when else ""))
-        lines.append("")
-    return "\n".join(lines).rstrip()
 
 
 # The phrases the validator cut beyond the limit, for the handler's log line. Validation and the handler run in
@@ -349,9 +326,10 @@ def build_mcp_components(
                     f"refused{client}"
                 )
                 raise ToolError(_NO_MEMORY_SEARCH)
-            facts = await agent.search_facts(queries, path="connector_voice" if voice else "connector")
+            found = await agent.search_facts(queries, path="connector_voice" if voice else "connector")
 
-        result = _format_facts(facts)
+        facts = found.facts
+        result = format_search_result(queries, found)
         if voice:
             result = cap_result(result, _VOICE_OVER_SIZE, limit=VOICE_RESULT_MAX_CHARS)
         logger.info(f"✅ MCP get_user_context: user={user_id[:8]} facts={len(facts)} len={len(result)}{client}")

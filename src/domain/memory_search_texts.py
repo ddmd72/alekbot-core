@@ -12,7 +12,8 @@ QUERIES_FIELD_TEXT = (
     "what the earlier ones missed. The search never sees your conversation: write the person, place or time instead of "
     "\"he\", \"there\" or \"last time\", and put in only what the conversation tells you, since a guessed detail moves the "
     "phrase toward the wrong records. When the user asks for more on a matter already searched, the same phrases bring "
-    "back the same records: send phrases for the sides of the matter the earlier results did not cover."
+    "back the same records: send phrases for the sides of the matter the earlier results did not cover. "
+    "Refer to the user as \"the user\", never by their name: a name in a phrase is read as another person, and the user's name may belong to someone else in their life."
 )
 
 SEARCH_MEMORY_DESCRIPTION = (

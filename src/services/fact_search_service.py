@@ -19,6 +19,7 @@ import numpy as np
 from ..domain.deduplication_service import SmartDeduplication
 from ..domain.entities import FactEntity
 from ..domain.fact_query import SCOPE_ALL, FactQuery
+from ..domain.fact_search_result import PhraseSearchResult
 from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, keep_distinct, run_search
 from ..domain.fact_search_rank import PRIORITY_WEIGHTS, CardRef, HomePlace, QueryPlaceKeys, card_ref, fuse_phrases
 from ..domain.fact_search_snapshot import FactSearchSnapshot
@@ -90,9 +91,15 @@ class FactSearchService(FactSearchPort):
     async def search(
         self, account_id: str, query: FactQuery, *, exclude: AbstractSet[str] = frozenset()
     ) -> List[FactEntity]:
-        return await self._run(account_id, [query], exclude)
+        return list((await self._run(account_id, [query], exclude)).facts)
 
     async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
+        queries = list(queries)
+        if not 1 <= len(queries) <= MAX_PHRASES:
+            raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")
+        return (await self._run(account_id, queries, frozenset())).facts
+
+    async def search_phrases_matched(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
         queries = list(queries)
         if not 1 <= len(queries) <= MAX_PHRASES:
             raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")
@@ -110,7 +117,9 @@ class FactSearchService(FactSearchPort):
         logger.info(f"[FactSearch] warm acc={account_id[:8]} snapshot={status} "
                     f"ms={int((time.perf_counter() - started) * 1000)}")
 
-    async def _run(self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str]) -> List[FactEntity]:
+    async def _run(
+        self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str]
+    ) -> PhraseSearchResult:
         started = time.perf_counter()
         try:
             return await self._search(account_id, queries, exclude, started)
@@ -121,7 +130,7 @@ class FactSearchService(FactSearchPort):
 
     async def _search(
         self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str], started: float
-    ) -> List[FactEntity]:
+    ) -> PhraseSearchResult:
         texts = list(dict.fromkeys(t for q in queries for t in (q.subject, q.kind, q.message) if t))
         embedded, refreshed_at = await asyncio.gather(
             self._embed(texts), self._repository.get_baseline_refreshed_at(account_id))
@@ -138,6 +147,7 @@ class FactSearchService(FactSearchPort):
         outcomes = [p.outcome for p in phrases]
         if len(outcomes) == 1:
             kept = outcomes[0].kept
+            lists_of = [set(kept)]
             candidates = len(outcomes[0].fused)
         else:
             fused = fuse_phrases(
@@ -145,6 +155,7 @@ class FactSearchService(FactSearchPort):
                 [o.scores[o.kept[:CUT][-1]] if o.kept else 0.0 for o in outcomes])
             limit = None if any(q.scope == SCOPE_ALL for q in queries) else CUT
             kept = keep_distinct(fused, lambda a, b: self._is_duplicate(loaded, a, b), limit)
+            lists_of = [set(o.kept[:CUT]) for o in outcomes]
             candidates = len(fused)
         lists = ",".join(f"{name}:{len(ids)}" for name, ids in outcomes[0].lists.items()) or "none"
         logger.info(
@@ -152,7 +163,9 @@ class FactSearchService(FactSearchPort):
             f"cands={candidates} gate_dropped={sum(o.gate_dropped for o in outcomes)} kept={len(kept)} "
             f"unsnapped={sum(p.unsnapped for p in phrases)} snapshot={status} "
             f"ms={int((time.perf_counter() - started) * 1000)}")
-        return [snapshot.entities[fact_id] for fact_id in kept]
+        return PhraseSearchResult(
+            tuple(snapshot.entities[fact_id] for fact_id in kept),
+            tuple(tuple(n for n, found in enumerate(lists_of) if fact_id in found) for fact_id in kept))
 
     async def _phrase(
         self, loaded: _Loaded, query: FactQuery, semantic: Optional[List[str]], labels: Optional[List[str]],
