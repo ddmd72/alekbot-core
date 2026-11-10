@@ -8,8 +8,8 @@
   `named` entries (the list entries the fact names, `named_people`) when there are any. A fact that names no listed
   person hashes exactly what it did before the list existed, so a list edit re-profiles only the facts naming the
   edited person. Tags, dates, state and the old domain are not input.
-- `profile_derivation(registry, atlas, is_directive, recording_year)`: the code-input version; a mismatch re-derives
-  without a call.
+- `profile_derivation(registry, atlas, is_directive, recording_year, answers_digest)`: the code-input version; a
+  mismatch re-derives without a call.
 - `classify_profile(fact, derivation, named)`: missing / stale_input / stale_derivation / abandoned / fresh.
 - `failure_fields(...)`: the write after a failed profiling; three failures on one fingerprint abandon the fact until its
   content changes.
@@ -76,11 +76,15 @@ def registry_digest() -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:_DIGEST_CHARS]
 
 
-def profile_derivation(registry: str, atlas: str, is_directive: bool, recording_year: Optional[int] = None) -> str:
+def profile_derivation(registry: str, atlas: str, is_directive: bool, recording_year: Optional[int] = None,
+                       answers_digest: str = "") -> str:
     """`DERIVE_VERSION | registry digest | atlas digest | is_directive`, then `|y<year>` when the recording year is
-    given: `reported_date` can be rewritten in place, and a date printed without a year follows it."""
+    given: `reported_date` can be rewritten in place, and a date printed without a year follows it; then `|a<digest>`
+    when the owner answered a point this fact names (`profile_answers.answers_digest`, RFC §4.7): an answer re-derives
+    exactly the facts it changes, and a fact no answer touches keeps its string."""
     base = f"{DERIVE_VERSION}|{registry}|{atlas}|{int(is_directive)}"
-    return base if recording_year is None else f"{base}|y{recording_year}"
+    base = base if recording_year is None else f"{base}|y{recording_year}"
+    return f"{base}|a{answers_digest}" if answers_digest else base
 
 
 class ProfileStatus(str, Enum):

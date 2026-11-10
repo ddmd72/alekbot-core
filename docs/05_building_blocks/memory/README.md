@@ -680,6 +680,13 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   year takes the recording year (the earlier of `reported_date` and `created_at`), which is part of the derivation string.
   A `needs_review` answer is written with `profile_review_needed` / `profile_review_items`, counted as `flagged=` in the run
   line, and never counts towards abandonment.
+- **Owner's answers:** the step also reads the account's answers to profile questions once per run
+  (`ProfileAnswerRepository.get`, collection `{prefix}profile_answers`, `FACT_PROFILE_RFC.md` §4.7) and applies them by
+  code in the derivation: a place answer before the atlas (`atlas` gives the picked row's keys, `local` gives
+  `lp:<folded city>` and the country key, `unknown` changes nothing), a person or date answer of the fact's lineage on its
+  review item; an answered item is dropped and the flag clears when none is left. The derivation string carries `|a<digest>`
+  of the answers a fact's stored answer names, so an answer re-derives exactly those facts, free. An unreadable document
+  ends the step like an unreadable list. Nothing writes answers yet (the question channel is §4.7's next PRs).
 - **Failures:** an `invalid` or `refused` reply, or an `intimate` answer left with no label word, writes only
   `profile_failures` / `profile_failed_fingerprint`; the third failure on one fingerprint abandons the fact until its content
   changes (logged once). An `unavailable` reply is an outage: no failure is written, no new call starts, the rest waits for

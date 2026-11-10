@@ -21,6 +21,7 @@ from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.claude_adapter import ClaudeAdapter
 from ..adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from ..adapters.firestore_confirmed_people_repo import FirestoreConfirmedPeopleRepository
+from ..adapters.firestore_profile_answer_repo import FirestoreProfileAnswerRepository
 from ..adapters.firestore_repo import FirestoreFactRepository
 from ..adapters.firestore_session_store import FirestoreSessionStore
 from ..adapters.fact_management_adapter import FactManagementAdapter
@@ -391,6 +392,9 @@ class ServiceContainer:
         # The owner-confirmed people list (FACT_PROFILE_RFC §4.5): on the container so every builder of the profile
         # step reads the same list; a step built without it would fingerprint facts without the entries they name.
         self.confirmed_people = FirestoreConfirmedPeopleRepository(db_client, env_config)
+        # The owner's answers to profile questions (FACT_PROFILE_RFC §4.7): on the container beside the list, read by the
+        # profile step; a step built without it would derive facts as if no point had been answered.
+        self.profile_answers = FirestoreProfileAnswerRepository(db_client, env_config)
         # The fact profiler (FACT_PROFILE_RFC §4.1): one pinned model for every account, billed to the fact's account.
         # An optional knob: read here with os.getenv, never in load_settings().
         self.fact_profiler = FactProfilerRunner(

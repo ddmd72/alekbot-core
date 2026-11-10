@@ -4,7 +4,9 @@ the bundled place table (`place_lookup.PlaceRow`, loaded by `adapters/geo_place_
 A city resolves only when exactly one row of the named country carries that name (folded: case, accents, hyphens,
 apostrophes and dots ignored); its keys are `pl:<geonameid>`, `pl:<large neighbour's geonameid>` and `co:<country>`.
 A country alone gives `co:<country>`. Anything else is unresolved, with one reason: unknown_country, empty,
-not_in_country, not_in_atlas or ambiguous.
+not_in_country, not_in_atlas or ambiguous. A profile question (RFC §4.7) reads the rows behind that reason
+(`candidates`) and an owner's answer the keys of the row it picked (`keys_of`); a place the atlas lacks that the owner
+kept as written is `lp:<folded city>` (`local_place_key`).
 """
 import hashlib
 import re
@@ -44,6 +46,15 @@ def country_key(country: str) -> str:
     return "co:" + re.sub(r"[^a-z0-9]+", "_", fold(country)).strip("_")
 
 
+def local_place_key(city: str) -> str:
+    """The key of a place the owner confirmed that the atlas lacks (fact profile RFC §4.7, §5.3): `lp:` and the folded
+    city, spaces as underscores. Written on the fact by the derivation and added by the query side for a named city."""
+    folded = fold(city)
+    if not folded:
+        raise ValueError("a local place needs a city")
+    return "lp:" + folded.replace(" ", "_")
+
+
 def atlas_digest(rows: Sequence[PlaceRow]) -> str:
     """Digest of everything resolution reads from the table: any change to a row's names, country, weight or large
     neighbour changes it."""
@@ -68,7 +79,10 @@ class PlaceNames:
         self._by_short: Dict[str, Set[int]] = {}
         self._rows: List[PlaceRow] = list(rows)
         self._country_of: Dict[str, str] = {}
+        self._by_id: Dict[str, int] = {}
         for i, row in enumerate(self._rows):
+            if row.geonameid:
+                self._by_id.setdefault(row.geonameid, i)
             for name in {row.name_en, row.name_local, *row.alt_names}:
                 if name:
                     self._by_name.setdefault(fold(name), set()).add(i)
@@ -84,11 +98,52 @@ class PlaceNames:
                 self._country_of.setdefault(alias, self._country_of[fold(country)])
 
     def resolve(self, city: str, country: str) -> PlaceResolution:
+        named, reason, rows = self._match(city, country)
+        if reason is not None:
+            return ((), reason)
+        if not rows:
+            return ((country_key(named),), None) if named else ((), "empty")
+        return (self._keys(self._rows[next(iter(rows))]), None)
+
+    def candidates(self, city: str, country: str) -> Tuple[Optional[str], Tuple[PlaceRow, ...]]:
+        """The rows a profile question offers for a place (fact profile RFC §4.7): `(None, (row,))` when `resolve`
+        resolves the city (`(None, ())` for a country alone); `("ambiguous", rows)` the rows it could not pick between;
+        `("not_in_country", rows)` the rows carrying the name in any country (by name, else by short name); any other
+        reason with no rows. Rows heaviest first (a weight tie keeps table order)."""
+        _, reason, rows = self._match(city, country)
+        if reason not in (None, "ambiguous", "not_in_country"):
+            return (reason, ())
+        ordered = sorted(rows, key=lambda i: (-(self._rows[i].weight or 0), i))
+        return (reason, tuple(self._rows[i] for i in ordered))
+
+    def keys_of(self, geonameid: str) -> Tuple[str, ...]:
+        """The keys `resolve` gives the row with this geonameid (`pl:`, its large neighbour's `pl:`, `co:`); `()` when
+        no row of the table has it (the row left the atlas)."""
+        index = self._by_id.get(geonameid) if geonameid else None
+        return self._keys(self._rows[index]) if index is not None else ()
+
+    def canonical_country(self, country: str) -> Optional[str]:
+        """The table's name of a country given by any of its names or short forms; None when the table lacks it."""
+        return self._country_of.get(fold(country))
+
+    @staticmethod
+    def _keys(row: PlaceRow) -> Tuple[str, ...]:
+        keys = [f"pl:{row.geonameid}"]
+        if row.large is not None:
+            keys.append(f"pl:{row.large.geonameid}")
+        keys.append(country_key(row.country))
+        return tuple(keys)
+
+    def _match(self, city: str, country: str) -> Tuple[Optional[str], Optional[str], Set[int]]:
+        """(the named country, the reason it is not resolved, the rows): reason None with one row resolves the city,
+        reason None with no rows is a country alone; `ambiguous` carries the rows of the name it could not pick between,
+        `not_in_country` the rows carrying the name in other countries (by name, else by short name); any other reason
+        carries no rows."""
         named = self._country_of.get(fold(country)) if country.strip() else None
         if country.strip() and named is None:
-            return ((), "unknown_country")
+            return (None, "unknown_country", set())
         if not city.strip():
-            return ((country_key(named),), None) if named else ((), "empty")
+            return (named, None, set()) if named else (None, "empty", set())
         candidates = self._by_name.get(fold(city), set())
         shorts = self._by_short.get(fold(city), set())
         if named:
@@ -96,20 +151,17 @@ class PlaceNames:
             if not inside:
                 inside = {i for i in shorts if self._rows[i].country == named}
             if not inside:
-                return ((), "not_in_country" if candidates or shorts else "not_in_atlas")
+                if candidates or shorts:
+                    return (named, "not_in_country", set(candidates or shorts))
+                return (named, "not_in_atlas", set())
             candidates = inside
         elif not candidates:
             candidates = shorts
         if not candidates:
-            return ((), "not_in_atlas")
+            return (named, "not_in_atlas", set())
         if len(candidates) > 1:
-            return ((), "ambiguous")
-        row = self._rows[next(iter(candidates))]
-        keys = [f"pl:{row.geonameid}"]
-        if row.large is not None:
-            keys.append(f"pl:{row.large.geonameid}")
-        keys.append(country_key(row.country))
-        return (tuple(keys), None)
+            return (named, "ambiguous", set(candidates))
+        return (named, None, set(candidates))
 
     def query_keys(self, name: str, country: str) -> Tuple[str, ...]:
         """The place keys a query's place reaches (fact profile RFC §5.3): a country alone gives its `co:` key (a country

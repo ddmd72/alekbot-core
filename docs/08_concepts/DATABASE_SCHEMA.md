@@ -67,6 +67,7 @@ Account usage counters written before 2026-07-28 are inflated. For historical co
 | `{p}fact_review_state` | memory-review state per account | `account_id` | same |
 | `{p}person_cards` | people cards: a retrieval index of the people the facts mention often (never a fact, never in a prompt) | `{account_id}:{card_key}` | `PersonCard`, `src/domain/person_cards.py`; `src/adapters/firestore_person_card_repo.py` |
 | `{p}confirmed_people` | the owner-confirmed people list: the user and the people in their life, with name forms and relation; read by the profiler | `{account_id}` | `ConfirmedPeople`, `src/domain/confirmed_people.py`; `src/adapters/firestore_confirmed_people_repo.py` |
+| `{p}profile_answers` | the owner's answers to profile questions: places (account-wide), person mentions and dates (per fact lineage); written only from the owner's answer, read by the profile step | `{account_id}` | `ProfileAnswers`, `src/domain/profile_answers.py`; `src/adapters/firestore_profile_answer_repo.py` |
 | `{p}domain_email_facts_v1` | valuable emails as facts, four vectors, the same search path as facts | `{user_id}_{email_id}` | `IndexedEmail`, `src/domain/email.py` |
 
 What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained in the memory map,

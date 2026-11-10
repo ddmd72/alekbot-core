@@ -66,13 +66,13 @@ def test_the_atlas_is_not_loaded_at_construction(monkeypatch):
 
     monkeypatch.setattr(fact_profile_setup, "load_place_rows", forbidden)
     build_fact_profile_service(SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(),
-                               confirmed_people=object()),
+                               confirmed_people=object(), profile_answers=object()),
                                max_per_run=3)
 
 
 def test_the_builder_wires_the_containers_ports_and_twice_the_call_timeout():
     container = SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(),
-                               confirmed_people=object())
+                               confirmed_people=object(), profile_answers=object())
 
     service = build_fact_profile_service(container, max_per_run=None)
 

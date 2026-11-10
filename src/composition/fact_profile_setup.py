@@ -67,4 +67,5 @@ def build_fact_profile_service(
         call_budget_s=2 * FACT_PROFILER.call_timeout_s,  # one parse retry
         person_cards=person_cards,
         confirmed_people=container.confirmed_people,
+        profile_answers=container.profile_answers,
     )

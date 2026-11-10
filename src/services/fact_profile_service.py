@@ -3,14 +3,15 @@ FactProfileService — the profile step of the memory-write lease (docs/10_rfcs/
 
 Public interface:
     FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards,
-                       confirmed_people)
+                       confirmed_people, profile_answers)
         async scan(account_id) -> FactProfileScan                 what a run would find; reads, writes nothing
         async run(account_id, deadline) -> FactProfileRun         never raises; `deadline` is the lease's `until`
 
 One run, inside a lease the caller holds, reads the account's current facts once and brings every profile up to date:
-  0. read the account's confirmed people list once (when a repository is wired; an unreadable list ends the step);
+  0. read the account's confirmed people list and the owner's profile answers once (each when its repository is
+     wired; an unreadable list or answers document ends the step);
   1. classify each fact against its content, the list entries it names and the code inputs (registry, atlas, the
-     recording year, directive or not);
+     recording year, directive or not, the owner's answers its stored answer names);
   2. free work: a profile whose only stale part is code is re-derived from its stored answer; a standing directive gets
      its fixed profile (no call); a failed fact is not retried once abandoned;
   3. model calls for the rest (newest first, at most `max_per_run`, `concurrency` at a time, each started only while the
@@ -48,10 +49,12 @@ from ..domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
 from ..domain.memory_write_lease import agent_timeout_s
 from ..domain.person_cards import build_person_cards_counted
 from ..domain.place_names import PlaceNames
+from ..domain.profile_answers import EMPTY_ANSWERS, ProfileAnswers, answers_digest
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
 from ..ports.person_card_repository import PersonCardRepository
+from ..ports.profile_answer_repository import ProfileAnswerRepository
 from ..ports.repository import FactRepository
 from ..utils.logger import logger
 
@@ -100,6 +103,22 @@ class _Item:
         if self.is_directive or self.status in (ProfileStatus.FRESH, ProfileStatus.ABANDONED):
             return False
         return self.status is not ProfileStatus.STALE_DERIVATION or self.answer is None
+
+
+@dataclass
+class _Plan:
+    """What one run read once: the atlas and the run's code digests (a called fact's derivation is recomputed from
+    them with its new answer), the owner's answers, and the classified facts."""
+    names: PlaceNames
+    registry: str
+    atlas: str
+    answers: ProfileAnswers
+    items: List[_Item]
+
+    def derivation(self, item: _Item, answer: Optional[ProfileAnswer]) -> str:
+        """The derivation string of `item` when its profile is derived from `answer`."""
+        digest = "" if item.is_directive else answers_digest(self.answers, answer, item.fact.lineage_id, self.names)
+        return profile_derivation(self.registry, self.atlas, item.is_directive, item.year, digest)
 
 
 @dataclass
@@ -164,6 +183,7 @@ class FactProfileService:
         clock: Callable[[], datetime] = _utcnow,
         person_cards: Optional[PersonCardRepository] = None,
         confirmed_people: Optional[ConfirmedPeopleRepository] = None,
+        profile_answers: Optional[ProfileAnswerRepository] = None,
     ) -> None:
         self._repo = repo
         self._profiler = profiler
@@ -175,13 +195,14 @@ class FactProfileService:
         self._clock = clock
         self._person_cards = person_cards
         self._confirmed_people = confirmed_people
+        self._profile_answers = profile_answers
 
     async def scan(self, account_id: str) -> FactProfileScan:
         """The account's facts by status and the model calls a run would make (no cap applied). Reads only."""
         if account_id == SYSTEM_ACCOUNT:
             return FactProfileScan()
-        _, items = await self._plan(account_id)
-        return self._count(items)
+        plan = await self._plan(account_id)
+        return self._count(plan.items)
 
     async def run(self, account_id: str, deadline: datetime) -> FactProfileRun:
         """One profile step under a lease that expires at `deadline`. Never raises: an error is logged and returned as
@@ -204,21 +225,22 @@ class FactProfileService:
 
     # ------------------------------------------------------------------------------------------------ planning
 
-    async def _plan(self, account_id: str) -> Tuple[PlaceNames, List[_Item]]:
+    async def _plan(self, account_id: str) -> _Plan:
         confirmed = await self._read_confirmed(account_id)
+        answers = await self._read_answers(account_id)
         listed = confirmed.entries() if confirmed is not None else ()
         facts = await self._repo.list_profile_states(account_id)
         names, atlas = await self._atlas()
-        registry = registry_digest()
-        items: List[_Item] = []
+        plan = _Plan(names, registry_digest(), atlas, answers, [])
         for fact in facts:
-            directive = _is_directive(fact)
-            named = tuple(named_people(confirmed, fact.text, fact.metadata))
-            year = recording_year(fact.reported_date, fact.created_at)
-            derivation = profile_derivation(registry, atlas, directive, year)
-            items.append(_Item(fact, classify_profile(fact, derivation, named), directive, derivation,
-                               _stored_answer(fact), named, listed, year))
-        return names, items
+            item = _Item(fact, ProfileStatus.MISSING, _is_directive(fact), "", _stored_answer(fact),
+                         tuple(named_people(confirmed, fact.text, fact.metadata)), listed,
+                         recording_year(fact.reported_date, fact.created_at))
+            # The stored answer is what a re-derivation reads, so its named answers belong to the stored string.
+            item.derivation = plan.derivation(item, item.answer)
+            item.status = classify_profile(fact, item.derivation, item.named)
+            plan.items.append(item)
+        return plan
 
     async def _read_confirmed(self, account_id: str) -> Optional[ConfirmedPeople]:
         """The account's confirmed list. An unreadable list propagates: classifying without it would mark every fact that
@@ -229,6 +251,17 @@ class FactProfileService:
             return await self._confirmed_people.get(account_id)
         except Exception:
             logger.error(f"[FactProfile] confirmed people unreadable account={account_id[:8]}")
+            raise
+
+    async def _read_answers(self, account_id: str) -> ProfileAnswers:
+        """The owner's answers to profile questions. An unreadable document propagates: deriving without it would undo
+        the answers."""
+        if self._profile_answers is None:
+            return EMPTY_ANSWERS
+        try:
+            return await self._profile_answers.get(account_id)
+        except Exception:
+            logger.error(f"[FactProfile] profile answers unreadable account={account_id[:8]}")
             raise
 
     @staticmethod
@@ -243,7 +276,8 @@ class FactProfileService:
             needs_review=sum(1 for item in items if item.fact.profile_review_needed is True))
 
     async def _run(self, account_id: str, deadline: datetime, tally: _Tally) -> None:
-        names, items = await self._plan(account_id)
+        plan = await self._plan(account_id)
+        items = plan.items
         tally.scan = self._count(items)
 
         pending: List[_Pending] = []
@@ -253,7 +287,7 @@ class FactProfileService:
             if item.is_directive:
                 pending.append(self._directive_write(item))
             elif item.status is ProfileStatus.STALE_DERIVATION and item.answer is not None:
-                pending.append(self._derived_write(item, item.answer, names))
+                pending.append(self._derived_write(item, item.answer, plan))
 
         targets = sorted((i for i in items if i.needs_call),
                          key=lambda i: (-i.fact.created_at.timestamp(), i.fact.id))
@@ -268,7 +302,7 @@ class FactProfileService:
             if entry.reply.status is ProfilerStatus.UNAVAILABLE:
                 tally.outage = True
                 continue
-            pending.append(self._called_write(entry, names))
+            pending.append(self._called_write(entry, plan))
         tally.deferred += tally.scan.to_call - tally.called
 
         await self._attach_vectors(pending)
@@ -334,25 +368,27 @@ class FactProfileService:
         return _Pending(fact, _DIRECTIVE, fields,
                         outcome="rederived" if item.status is ProfileStatus.STALE_DERIVATION else "written")
 
-    def _derived_write(self, item: _Item, answer: ProfileAnswer, names: PlaceNames) -> _Pending:
-        outcome = derive_profile(answer, item.fact.text, item.fact.metadata, names, item.year, item.listed)
+    def _derived_write(self, item: _Item, answer: ProfileAnswer, plan: _Plan) -> _Pending:
+        outcome = derive_profile(answer, item.fact.text, item.fact.metadata, plan.names, item.year, item.listed,
+                                 plan.answers, item.fact.lineage_id)
         if outcome.redo_reason is not None:
             return self._failure(item, outcome.profile.profile_drops)
         return _Pending(item.fact, _REDERIVED, self._rederived_fields(outcome.profile, item.derivation),
                         label_text=self._label_text(outcome.profile), drops=dict(outcome.profile.profile_drops),
                         outcome="rederived")
 
-    def _called_write(self, entry: _Called, names: PlaceNames) -> _Pending:
+    def _called_write(self, entry: _Called, plan: _Plan) -> _Pending:
         item, reply = entry.item, entry.reply
         if reply.status is not ProfilerStatus.OK or reply.answer is None:
             pending = self._failure(item, {})
         else:
-            outcome: DeriveOutcome = derive_profile(reply.answer, item.fact.text, item.fact.metadata, names, item.year,
-                                                    item.listed)
+            outcome: DeriveOutcome = derive_profile(reply.answer, item.fact.text, item.fact.metadata, plan.names,
+                                                    item.year, item.listed, plan.answers, item.fact.lineage_id)
             if outcome.redo_reason is not None:
                 pending = self._failure(item, outcome.profile.profile_drops)
             else:
-                fields = self._success_fields(outcome.profile, item, reply.model)
+                # The new answer may name other answered points than the stored one: its own digest is stored.
+                fields = self._success_fields(outcome.profile, item, reply.model, plan.derivation(item, reply.answer))
                 pending = _Pending(item.fact, _WRITTEN, fields, label_text=self._label_text(outcome.profile),
                                    drops=dict(outcome.profile.profile_drops))
         pending.ms, pending.usd = entry.ms, reply.usd
@@ -373,8 +409,10 @@ class FactProfileService:
     def _rederived_fields(profile: FactProfile, derivation: str) -> Dict[str, Any]:
         return {**profile.stored(), "profile_derivation": derivation, "label_vector": None}
 
-    def _success_fields(self, profile: FactProfile, item: _Item, model: Optional[str]) -> Dict[str, Any]:
-        fact, derivation = item.fact, item.derivation
+    def _success_fields(self, profile: FactProfile, item: _Item, model: Optional[str],
+                        derivation: Optional[str] = None) -> Dict[str, Any]:
+        fact = item.fact
+        derivation = item.derivation if derivation is None else derivation
         return {
             **profile.stored(), "label_vector": None,
             "profile_fingerprint": profile_fingerprint(fact.text, fact.metadata, item.named),
