@@ -9,7 +9,9 @@ from src.domain import fact_review_answers, fact_review_reasons, fact_review_rul
 from src.domain.entities import ExpiryKind
 from src.domain.fact_review_answer_kind import HISTORY_ANSWERS, AnswerKind
 from src.domain.fact_review_basis import PAYMENT_KEYS, parse_payment
-from src.domain.fact_review_question import TEXT_KEYS, FactReviewQuestion, QuestionKind
+from src.domain.fact_review_question import (
+    PROFILE_KINDS, TEXT_KEYS, FactReviewQuestion, LifecycleKind, QuestionKind,
+)
 from src.domain.fact_review_rules import MAX_FALLBACK_ATTEMPTS, ask_refusal, history_fallback_gives_up
 from tests.support.review_rule_builders import NOW, fact
 
@@ -65,4 +67,6 @@ def test_the_payment_keys_are_the_digest_paid_texts():
 
 
 def test_the_question_kinds_are_the_literals():
-    assert fact_review_rules._QUESTION_KINDS == get_args(QuestionKind)
+    # Fact profile §4.7 (5d): the review asks lifecycle kinds only; the profile kinds are code's, never the model's.
+    assert fact_review_rules._QUESTION_KINDS == get_args(LifecycleKind)
+    assert get_args(QuestionKind) == get_args(LifecycleKind) + PROFILE_KINDS

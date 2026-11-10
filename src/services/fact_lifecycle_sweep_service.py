@@ -29,7 +29,7 @@ from ..domain.fact_lifecycle_sweep import (
     unvisited_rows,
 )
 from ..domain.fact_review_question import FactReviewQuestion
-from ..domain.fact_review_rules import open_fact_ids, pool, review_due, review_interval
+from ..domain.fact_review_rules import lifecycle_only, open_fact_ids, pool, review_due, review_interval
 from ..domain.fact_review_state import FactReviewState
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_DEADLINE_S, daily_key, review_payload
 from ..domain.fact_write_context import as_utc
@@ -152,7 +152,7 @@ class FactLifecycleSweepService:
                 yesterday.get(account_id),
             )
             waiting[account_id] = due_waiting
-            standing[account_id] = question_standing(questions_by_account.get(account_id, []))
+            standing[account_id] = question_standing(lifecycle_only(questions_by_account.get(account_id, [])))
             prior = yesterday.get(account_id)
             rows.append(FactLifecycleDay.of(account_id, day, snapshot, prior.counts(shown) if prior else {}))
             totals["accounts"] += 1
@@ -179,11 +179,13 @@ class FactLifecycleSweepService:
         return {**totals, "purge_overdue": purge_overdue, "dry_run": self._dry_run}
 
     async def _review_reads(self) -> Tuple[Dict[str, List[FactReviewQuestion]], Dict[str, FactReviewState]]:
-        """Every open question by account, and every account's review state. Both empty without a review store."""
+        """Every open question (profile questions too) by account, and every account's review state. Both empty without
+        a review store. The profile questions are there for `review_due` only: the pool, the held facts, the plan, the
+        alerts and the standing are about stale facts and take `lifecycle_only`."""
         if self._review_store is None:
             return {}, {}
         by_account: Dict[str, List[FactReviewQuestion]] = {}
-        for question in await self._review_store.all_open():
+        for question in await self._review_store.all_open(scope="all"):
             by_account.setdefault(question.account_id, []).append(question)
         return by_account, {state.account_id: state for state in await self._review_store.all_states()}
 
@@ -213,9 +215,10 @@ class FactLifecycleSweepService:
         state = review_state or FactReviewState(account_id=account_id)
         owner = await self._owner(account_id)
         interval = await self._interval(account_id, owner)
-        held = pool(stale_count, questions)
+        stale_questions = lifecycle_only(questions)
+        held = pool(stale_count, stale_questions)
         plan = plan_sweep(
-            dues, stale_count, open_fact_ids(questions), previous_run, now,
+            dues, stale_count, open_fact_ids(stale_questions), previous_run, now,
             pool=held, last_review_at=state.last_review_at, interval=interval,
         )
         reason = plan.breaker_reason
@@ -231,7 +234,7 @@ class FactLifecycleSweepService:
             breaker_line = self._hold_back(account_id, reason, len(plan.ordered))
 
         enqueued = await self._enqueue_review(account_id, owner, state, questions, interval, stale_count + staled, now)
-        await self._alert(account_id, now, breaker_line, held, oldest, interval, state, questions, yesterday)
+        await self._alert(account_id, now, breaker_line, held, oldest, interval, state, stale_questions, yesterday)
         breaker = breaker_label(reason, self._dry_run)
         snapshot = SweepSnapshot(
             run_at=now,

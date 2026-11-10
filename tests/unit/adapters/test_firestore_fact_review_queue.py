@@ -71,7 +71,7 @@ async def test_get_state_round_trips_every_field_and_is_none_when_absent(world):
         owner_user_id="u1", enqueued_at=NOW, started_at=NOW, last_review_at=NOW, last_failed_at=NOW,
         unsuccessful_since=NOW, offers={"f1": 2}, last_digest_at=NOW, undigested_since=NOW, oldest_alert_at=NOW,
         queue_alert_at=NOW, current_question_id="q1", sent_on=TODAY, sent=3, delivery_failed_on=TODAY,
-        message_language="uk", labels={"uk": {"yes": "так"}},
+        profile_claimed_on=TODAY, message_language="uk", labels={"uk": {"yes": "так"}},
     )
     assert all(getattr(state, name) is not None for name in FactReviewState.model_fields)
 

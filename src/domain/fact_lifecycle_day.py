@@ -36,10 +36,12 @@ class CounterField(StrEnum):
     TO_HISTORY = "to_history"
     FOLDED = "folded"
     FALLBACKS_NOT_APPLIED = "fallbacks_not_applied"
+    PROFILE_ANSWERED = "profile_answered"
+    PROFILE_REPLY_NOT_READ = "profile_reply_not_read"
 
 
 # The counters of the memory review and its answers: every counter but the expiry tool errors, which the expiry path counts.
-# Listed, not derived: the ops line prints the first twenty in this order (`fact_lifecycle_review_line`), the last five
+# Listed, not derived: the ops line prints the first twenty in this order (`fact_lifecycle_review_line`), the last seven
 # are counted and stored but have no place on it. A new counter is added here by hand, and a test refuses one that is missing.
 REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.REVIEWED,
@@ -67,6 +69,8 @@ REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.REPLIES_IN_WORDS,
     CounterField.ALREADY_ANSWERED,
     CounterField.LABELS_FALLBACK,
+    CounterField.PROFILE_ANSWERED,
+    CounterField.PROFILE_REPLY_NOT_READ,
 )
 
 
@@ -161,6 +165,8 @@ class FactLifecycleDay:
     to_history: int = 0
     folded: int = 0
     fallbacks_not_applied: int = 0
+    profile_answered: int = 0
+    profile_reply_not_read: int = 0
 
     def counts(self, figures: Iterable[CounterField]) -> Dict[CounterField, int]:
         """This row's value of each of `figures`."""

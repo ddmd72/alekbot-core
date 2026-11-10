@@ -210,6 +210,7 @@ def test_the_counters_the_line_does_not_print_earn_no_segment():
     assert unprinted == {
         CounterField.NOT_DELIVERED, CounterField.ANSWERS_NOT_APPLIED, CounterField.REPLIES_IN_WORDS,
         CounterField.ALREADY_ANSWERED, CounterField.LABELS_FALLBACK,
+        CounterField.PROFILE_ANSWERED, CounterField.PROFILE_REPLY_NOT_READ,  # fact profile §4.7 (5d)
     }
     for counter in unprinted:
         assert review_segments(row(**{counter.value: 4}), 0, QuestionStanding()) == ""

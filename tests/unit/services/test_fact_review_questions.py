@@ -38,7 +38,7 @@ from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
-from tests.support.review_p2_labels import RU_P2_LABELS
+from tests.support.review_p2_labels import RU_P2_LABELS, RU_PROFILE_LABELS
 from tests.support.review_fact_updates import RecordingFactUpdates
 
 USER = "u1"
@@ -75,6 +75,7 @@ RU_LABELS = {
     UIMessage.MEMORY_DIGEST_ARCHIVED.value: "это уже не так",
     UIMessage.MEMORY_DIGEST_INVALIDATED.value: "этого никогда не было",
     **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
+    **RU_PROFILE_LABELS,  # fact profile §4.7 (5d): the 7 profile keys, 35 in all
 }
 
 

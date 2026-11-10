@@ -32,7 +32,7 @@ async def test_every_state_round_trips_through_all_states(world):
         owner_user_id="u1", enqueued_at=NOW, started_at=NOW, last_review_at=NOW, last_failed_at=NOW,
         unsuccessful_since=NOW, offers={"f1": 2, "f2": 1}, last_digest_at=NOW, undigested_since=NOW,
         oldest_alert_at=NOW, queue_alert_at=NOW, current_question_id="q1", sent_on=date(2026, 10, 24), sent=1,
-        delivery_failed_on=date(2026, 10, 23), message_language="uk",
+        delivery_failed_on=date(2026, 10, 23), profile_claimed_on=date(2026, 10, 22), message_language="uk",
         labels={"uk": {"still_true": "Так", "ended": "Ні"}, "en": {"still_true": "Yes"}},
         label_digests={"uk": "d-uk", "en": "d-en"},
     )

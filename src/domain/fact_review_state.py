@@ -12,7 +12,8 @@ _LANGUAGE = re.compile(r"[a-z]{2}")
 
 class FactReviewState(BaseModel):
     """`current_question_id` is the one question the owner may answer by reply (none when no question is out). `sent` counts
-    the questions sent on the local day `sent_on`; `delivery_failed_on` is the local day a post failed (no retry that day).
+    the questions sent on the local day `sent_on`; `delivery_failed_on` is the local day a post failed (no retry that day);
+    `profile_claimed_on` is the local day a profile question was last claimed (at most one a day).
     `offers` counts how often a stale fact went to the model without a decision. `message_language` and `labels` are
     the last language the review reported for the owner's messages and the texts the model wrote for it (by language);
     `label_digests` holds, by language, the digest of the canonical texts each label set was written for.
@@ -38,6 +39,7 @@ class FactReviewState(BaseModel):
     sent_on: Optional[date] = None
     sent: int = Field(default=0, ge=0)
     delivery_failed_on: Optional[date] = None
+    profile_claimed_on: Optional[date] = None
     message_language: Optional[str] = None
     labels: Mapping[str, Mapping[str, str]] = Field(default_factory=dict)
     label_digests: Mapping[str, str] = Field(default_factory=dict)
@@ -87,9 +89,13 @@ class FactReviewState(BaseModel):
         """Questions sent on the owner's local day `today`; the count of an earlier day is not today's."""
         return self.sent if self.sent_on == today else 0
 
-    def claimed(self, question_id: str, today: date) -> Dict[str, Any]:
-        """A question goes out: it becomes the current one and counts for `today` (a new day starts at 1)."""
-        return {"current_question_id": question_id, "sent": self.sent_today(today) + 1, "sent_on": today}
+    def claimed(self, question_id: str, today: date, profile: bool = False) -> Dict[str, Any]:
+        """A question goes out: it becomes the current one and counts for `today` (a new day starts at 1). A profile
+        question also marks `today` as the day one was claimed."""
+        changes: Dict[str, Any] = {"current_question_id": question_id, "sent": self.sent_today(today) + 1, "sent_on": today}
+        if profile:
+            changes["profile_claimed_on"] = today
+        return changes
 
     def released(self, question_id: str) -> Dict[str, Any]:
         """The pointer cleared when, and only when, it names this question."""

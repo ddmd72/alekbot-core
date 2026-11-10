@@ -3,10 +3,12 @@ the horizon counted from now, and no constraint advertised that the review's par
 
 from typing import get_args
 
+import re
+
 import pytest
 
 from src.agents.consolidation_agent import ConsolidationAgent
-from src.domain.fact_review_question import TEXT_KEYS, QuestionFallback, QuestionKind
+from src.domain.fact_review_question import PROFILE_KINDS, TEXT_KEYS, LifecycleKind, QuestionFallback
 
 _CONSTRAINTS = ("enum", "minimum", "maximum", "exclusiveMinimum", "pattern", "minItems", "maxItems", "additionalProperties",
                 "minLength", "maxLength", "format")
@@ -98,10 +100,14 @@ def test_ask_owner_takes_a_fact_and_its_fallback_and_no_question_text():
     # P2 revised (P2-3, C8): the ask gives its kind, the texts code writes and its folds; fallback_date is retired
     assert set(params["properties"]) == {"fact_id", "question", "texts", "fallback", "folds", "noise"}
     assert params["required"] == ["fact_id", "fallback"]
-    for fallback in get_args(QuestionFallback):
+    # Fact profile §4.7 (5d): the review model asks lifecycle questions only; the profile kinds and their fallback
+    # `none` are code's (ask_refusal refuses them), so the tool offers every other fallback and kind and never those.
+    for fallback in set(get_args(QuestionFallback)) - {"none"}:
         assert fallback in params["properties"]["fallback"]["description"]
-    for kind in get_args(QuestionKind):
+    assert not re.search(r"\bnone\b", params["properties"]["fallback"]["description"])
+    for kind in get_args(LifecycleKind):
         assert kind in params["properties"]["question"]["description"]
+    assert not any(kind in params["properties"]["question"]["description"] for kind in PROFILE_KINDS)
     assert set(params["properties"]["texts"]["properties"]) == {key for keys in TEXT_KEYS.values() for key in keys}
     assert params["properties"]["folds"]["items"]["type"] == "string"
     assert params["properties"]["noise"]["type"] == "boolean"

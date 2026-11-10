@@ -20,11 +20,14 @@ from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.domain.fact_review_state import FactReviewState
 from src.domain.interactive_option import MAX_LABEL_CHARS
 from src.domain.language import LanguageCode
+from src.domain.profile_question_message import PROFILE_OPTION_KEYS
 from src.domain.ui_messages import UIMessage
 from src.locales import en, es, fr, uk
 from tests.support.review_rule_builders import question, state
 
 UK, EN, FR, ES = LanguageCode.UK, LanguageCode.EN, LanguageCode.FR, LanguageCode.ES
+# Every option label: the lifecycle answers and the profile questions' own options (fact profile §4.7, 5d).
+ALL_OPTION_KEYS = frozenset((*OPTION_KEYS.values(), *PROFILE_OPTION_KEYS.values()))
 OPTION = UIMessage.MEMORY_OPTION_ENDED.value
 QUESTION_LINE = UIMessage.MEMORY_REVIEW_QUESTION.value
 FOOTER = UIMessage.MEMORY_DIGEST_FOOTER.value
@@ -62,8 +65,11 @@ def test_the_label_set_is_the_fifteen_ui_strings_of_the_plan():
         "REVIEW_QUESTION_HAPPENED", "REVIEW_QUESTION_RENEWED", "REVIEW_QUESTION_PAID", "OPTION_HAPPENED",
         "OPTION_NOT_HAPPENED", "OPTION_RENEWED", "OPTION_NOT_RENEWED", "OPTION_NOT_NEEDED", "OPTION_PAID",
         "OPTION_NOT_PAID", "DIGEST_HISTORY_HEADER", "DIGEST_INVOICES_HEADER", "DIGEST_INVOICES_CABINET",
+        # fact profile §4.7 (5d): the 7 profile strings, 35 in all
+        "PROFILE_PLACE_QUESTION", "PROFILE_PERSON_QUESTION", "PROFILE_DATE_QUESTION", "OPTION_KEEP_AS_WRITTEN",
+        "OPTION_NOT_LISTED", "PROFILE_NOT_READ", "PROFILE_DATE_NOT_READ",
     ]
-    assert len(names) == len(LABEL_KEYS) == 28
+    assert len(names) == len(LABEL_KEYS) == 35
     assert LABEL_KEYS == {UIMessage[f"MEMORY_{name}"].value for name in names}
     assert set(CANONICAL_LABELS) == LABEL_KEYS
     assert list(OPTION_KEYS) == list(AnswerKind)
@@ -144,7 +150,7 @@ def test_a_trailing_newline_is_not_a_second_line():
     assert check_labels(good(**{QUESTION_LINE: "Is this still true?\n"})) is None
 
 
-@pytest.mark.parametrize("key", sorted(OPTION_KEYS.values()))
+@pytest.mark.parametrize("key", sorted(ALL_OPTION_KEYS))
 def test_an_option_label_is_at_most_75_characters_and_four_words(key):
     assert check_labels(good(**{key: "x" * MAX_LABEL_CHARS})) is None
     assert check_labels(good(**{key: "x" * (MAX_LABEL_CHARS + 1)})) is not None
@@ -153,7 +159,7 @@ def test_an_option_label_is_at_most_75_characters_and_four_words(key):
     assert MAX_OPTION_WORDS == 4 and MAX_LABEL_CHARS == 75
 
 
-@pytest.mark.parametrize("key", sorted(LABEL_KEYS - set(OPTION_KEYS.values())))
+@pytest.mark.parametrize("key", sorted(LABEL_KEYS - ALL_OPTION_KEYS))
 def test_every_other_text_is_at_most_120_characters_and_may_have_many_words(key):
     assert check_labels(good(**{key: "x" * MAX_TEXT_CHARS})) is None
     assert check_labels(good(**{key: "x" * (MAX_TEXT_CHARS + 1)})) is not None

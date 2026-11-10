@@ -1,6 +1,8 @@
 """One memory-review question: a fact the review could not decide, asked of the owner one message at a time.
 
 Life of a question: `queued` -> (`claimed`) `pending` -> (`appended`, `posted`) -> `asked` -> `unanswered` -> `closed`.
+A profile question (kind `place`, `person` or `date`, fact profile RFC §4.7) lives the same life through the same channel;
+what differs is stated in the record (origin `profile`, an `open_point`, fallback `none`, no texts, never a `reply_text`).
 Every move is a method here that returns a new, validated question or raises `QuestionTransitionError`; the store only
 applies the result in its transaction. A `pending` question that has a message ref was delivered (`delivered`), whatever
 happened to the process after the post: it is completed as `asked`, never sent again."""
@@ -15,6 +17,7 @@ from .exceptions import QuestionTransitionError
 from .fact_lifecycle_day import CounterField
 from .fact_review_answer_kind import AnswerKind
 from .messaging import MessageRef
+from .profile_open_point import ProfileOpenPoint
 
 # A sent question waits this long from `asked_at`, answered or not; a queued question never times out.
 QUESTION_TIMEOUT = timedelta(days=14)
@@ -27,13 +30,23 @@ MAX_REPLY_CHARS = 2000
 FACT_QUESTION_KIND = "fact_question"
 
 # What happens to the fact when nobody answers: kept (`revive`), set aside (`archive`), or its `unknown` text written as
-# history (`history`, P2-3).
-QuestionFallback = Literal["revive", "archive", "history"]
-# What a question asks (P2-3): whether the fact still holds, whether a plan took place, whether a validity end was renewed,
-# whether a bill was paid. Each kind has its own options (`fact_review_options.OPTIONS`).
-QuestionKind = Literal["still_true", "happened", "renewed", "paid"]
-# Who asked: the review model (it wrote the texts), or code for a fact the review kept twice (code builds the texts).
-QuestionOrigin = Literal["review", "kept_twice"]
+# history (`history`, P2-3). A profile question has `none`: silence changes nothing.
+QuestionFallback = Literal["revive", "archive", "history", "none"]
+# What a lifecycle question asks (P2-3): whether the fact still holds, whether a plan took place, whether a validity end
+# was renewed, whether a bill was paid. Each kind has its own options (`fact_review_options.OPTIONS`). The review model
+# names one of these and no other.
+LifecycleKind = Literal["still_true", "happened", "renewed", "paid"]
+# What a profile question asks (§4.7): which place, which person, which date a fact's words mean.
+ProfileKind = Literal["place", "person", "date"]
+QuestionKind = Literal["still_true", "happened", "renewed", "paid", "place", "person", "date"]
+PROFILE_KINDS: Final[Tuple[str, ...]] = ("place", "person", "date")
+# The open point's field of each profile kind.
+PROFILE_FIELDS: Final[Mapping[str, str]] = MappingProxyType({
+    "place": "places", "person": "people", "date": "time_points",
+})
+# Who asked: the review model (it wrote the texts), code for a fact the review kept twice (code builds the texts), or code
+# for an open point of a fact's profile (no texts at all).
+QuestionOrigin = Literal["review", "kept_twice", "profile"]
 # Where it is answered: the owner's chat, or only the Cabinet, listed in the weekly digest (a routine invoice).
 QuestionDelivery = Literal["chat", "digest"]
 # The text key of the `unknown` outcome: what "don't remember" and silence write as history.
@@ -49,7 +62,9 @@ TEXT_KEYS: Final[Mapping[Tuple[QuestionKind, QuestionDelivery], Tuple[str, ...]]
 # An unanswered digest question closes `resolved_elsewhere` after this: its fact already says "payment not confirmed".
 DIGEST_QUESTION_DAYS: Final = timedelta(days=90)
 # Where an answer came from. `review` is the review applying the owner's words.
-AnswerSource = Literal["digit", "button", "cabinet", "review"]
+AnswerSource = Literal["digit", "button", "cabinet", "review", "words"]
+# The sources a profile question's owner close may carry; `words` is a reply read by code (never by the review).
+PROFILE_ANSWER_SOURCES: Final[frozenset[str]] = frozenset({"digit", "button", "words"})
 
 # The owner's answer sources, each with the day counter its answer adds to. A source outside this map is not the owner's.
 ANSWER_COUNTERS: Mapping[str, CounterField] = MappingProxyType({
@@ -86,14 +101,16 @@ _CLOSING_FIELDS = ("closed_at", "closed_by", "answer", "answer_source")
 
 
 class FactReviewQuestion(BaseModel):
-    """About exactly one fact. `quoted_text` is the fact's text when it was queued (what the owner is shown); `queue_key`
+    """About exactly one fact (a profile question: the quoted fact, the newest naming the point). `quoted_text` is the
+    fact's text when it was queued (what the owner is shown); `queue_key`
     orders the queue (the fact's `stale_since`, oldest first). `message_ref` is where the question was posted, which is
     how a reply is matched to it. `reply_text` collects the owner's answers in words until the review has read them
     (`offered_at`). Every datetime is timezone-aware.
 
     P2-3: `question` is its kind, `texts` the outcome texts the review wrote at ask time (a `kept_twice` question has
     none: code builds them), `delivery` chat or digest (Cabinet only), `fallback_attempts` how often its history fallback
-    failed. `texts` makes it unhashable: a question never goes into a set or a dict key.
+    failed. `texts` makes it unhashable: a question never goes into a set or a dict key. A profile question carries its
+    `open_point` instead of texts; a lifecycle question has none.
 
     Frozen, and `model_copy` validates again: a question that exists is a legal one."""
 
@@ -126,6 +143,7 @@ class FactReviewQuestion(BaseModel):
     origin: QuestionOrigin = "review"
     delivery: QuestionDelivery = "chat"
     fallback_attempts: int = Field(default=0, ge=0)
+    open_point: Optional[ProfileOpenPoint] = None
 
     # ------------------------------------------------------------------------------------------------ invariants
 
@@ -143,7 +161,16 @@ class FactReviewQuestion(BaseModel):
         return self
 
     def _check_kind(self) -> None:
-        """The kind, its texts, its origin, its delivery and its fallback agree (P2-3)."""
+        """The kind, its texts, its origin, its delivery and its fallback agree (P2-3). A profile question is the origin
+        `profile`, has an open point and the fallback `none`, and no other question has any of the three."""
+        profile = self.question in PROFILE_KINDS
+        if profile != (self.origin == "profile") or profile != (self.open_point is not None) or profile != (
+                self.fallback == "none"):
+            raise ValueError("a place, person or date question has the origin profile, an open point and the fallback "
+                             "none, and no other question has any of them")
+        if profile:
+            self._check_profile_kind()
+            return
         if self.delivery == "digest" and (self.question != "paid" or self.origin != "review"):
             raise ValueError("a digest question is a paid question the review asked")
         if self.origin == "review":
@@ -162,6 +189,12 @@ class FactReviewQuestion(BaseModel):
         if not allowed:
             raise ValueError(f"a {self.question} question cannot fall back to {self.fallback}")
 
+    def _check_profile_kind(self) -> None:
+        if self.texts or self.delivery != "chat":
+            raise ValueError("a profile question has no texts and is delivered in chat")
+        if self.open_point is None or self.open_point.field != PROFILE_FIELDS[self.question]:
+            raise ValueError(f"a {self.question} question has an open point of the field {PROFILE_FIELDS[self.question]}")
+
     def _check_attempt(self) -> None:
         if self.status is QuestionStatus.QUEUED:
             if any(getattr(self, name) is not None for name in _ATTEMPT_FIELDS):
@@ -178,6 +211,8 @@ class FactReviewQuestion(BaseModel):
                 raise ValueError("an asked or unanswered question has asked_at, session_id, appended_at and a message_ref")
 
     def _check_reply(self) -> None:
+        if self.is_profile and self.reply_text is not None:
+            raise ValueError("a profile question never has a reply_text: the owner's words are read by code only")
         if (self.reply_text is None) != (self.reply_at is None):
             raise ValueError("reply_text and reply_at go together")
         if self.reply_text is not None and self.asked_at is None:
@@ -188,6 +223,12 @@ class FactReviewQuestion(BaseModel):
     def _check_closing(self) -> None:
         if self.closed_at is None or self.closed_by is None:
             raise ValueError("a closed question has closed_at and closed_by")
+        if self.closed_by is ClosedBy.OWNER and self.is_profile:
+            if self.answer is not None or self.answer_source not in PROFILE_ANSWER_SOURCES:
+                raise ValueError("an owner close of a profile question has no answer and a source of digit, button or words")
+            if self.message_ref is None:
+                raise ValueError("an owner close of a profile question needs the question's message_ref")
+            return
         if self.closed_by is ClosedBy.OWNER:
             if self.answer is None or self.answer_source not in ANSWER_COUNTERS:
                 raise ValueError("an owner close has an answer and a source of digit, button or cabinet")
@@ -218,6 +259,12 @@ class FactReviewQuestion(BaseModel):
     def asked_of(self, account_id: str, user_id: str) -> bool:
         """The question belongs to this user in this account: the only one who may answer it."""
         return self.account_id == account_id and self.user_id == user_id
+
+    @property
+    def is_profile(self) -> bool:
+        """A question about a fact's profile (kind place, person or date), not about whether the fact still holds: the
+        review's stale-fact readers do not see it."""
+        return self.question in PROFILE_KINDS
 
     @property
     def in_chat(self) -> bool:
@@ -297,6 +344,7 @@ class FactReviewQuestion(BaseModel):
     def with_reply(self, text: str, at: datetime) -> Self:
         """The owner's words, added to those already recorded (joined by a new line) up to `MAX_REPLY_CHARS`; what does
         not fit is dropped, and words that add nothing leave the question as it is."""
+        self._require(not self.is_profile, "with_reply (a profile question's words are read by code)")
         self._require(self.status in SENT_STATUSES and self.offered_at is None, "with_reply")
         words = text.strip()
         if not words:

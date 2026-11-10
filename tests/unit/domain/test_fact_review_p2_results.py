@@ -120,7 +120,8 @@ def test_the_new_counters_are_stored_and_the_line_counters_lead_the_review_figur
         assert CounterField(name).value == name
         assert getattr(FactLifecycleDay(account_id="acc", day=date(2026, 11, 1)), name) == 0
     assert REVIEW_FIGURES[:len(LINE_COUNTERS)] == LINE_COUNTERS and len(LINE_COUNTERS) == 20
-    assert len(REVIEW_FIGURES) == 25
+    assert len(REVIEW_FIGURES) == 27  # fact profile §4.7 (5d): + profile_answered, profile_reply_not_read, unprinted
+    assert REVIEW_FIGURES[-2:] == (CounterField.PROFILE_ANSWERED, CounterField.PROFILE_REPLY_NOT_READ)
     assert LINE_COUNTERS.index(CounterField.TO_HISTORY) == LINE_COUNTERS.index(CounterField.QUEUED) + 1
     assert LINE_COUNTERS.index(CounterField.FOLDED) == LINE_COUNTERS.index(CounterField.QUEUED) + 2
     assert LINE_COUNTERS.index(CounterField.FALLBACKS_NOT_APPLIED) == LINE_COUNTERS.index(CounterField.REVIEW_REFUSALS) + 1

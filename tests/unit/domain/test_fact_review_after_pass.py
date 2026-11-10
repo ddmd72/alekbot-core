@@ -24,7 +24,8 @@ from src.domain.fact_review_task import (
 from src.domain.llm import Message, MessagePart
 from tests.support.review_rule_builders import NOW, fact, question
 
-PT = {key: f"texto {chr(97 + n)}" for n, key in enumerate(sorted(CANONICAL_LABELS))}
+# Distinct letter texts; past 26 keys (35 since fact profile 5d) the letter repeats, never running into control characters.
+PT = {key: "texto " + chr(97 + n % 26) * (1 + n // 26) for n, key in enumerate(sorted(CANONICAL_LABELS))}
 
 
 def decision(fact_id: str, outcome: str = "revived") -> ReviewDecision:

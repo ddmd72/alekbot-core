@@ -8,6 +8,7 @@ from src.domain.fact_lifecycle_day import CounterField
 from src.domain.fact_review_question import (
     ANSWER_COUNTERS,
     OPEN_STATUSES,
+    PROFILE_ANSWER_SOURCES,
     SENT_STATUSES,
     AnswerSource,
     QuestionStatus,
@@ -30,7 +31,9 @@ def test_is_open_reads_the_public_set(status):
 
 
 def test_the_owners_sources_are_every_answer_source_but_the_review():
-    assert set(ANSWER_COUNTERS) == set(get_args(AnswerSource)) - {"review"}
+    # Fact profile §4.7 (5d): `words` (a reply read by code) closes a profile question only, counted as profile_answered.
+    assert set(ANSWER_COUNTERS) == set(get_args(AnswerSource)) - {"review", "words"}
+    assert PROFILE_ANSWER_SOURCES == {"digit", "button", "words"}
 
 
 def test_each_owner_source_has_its_own_answer_counter():

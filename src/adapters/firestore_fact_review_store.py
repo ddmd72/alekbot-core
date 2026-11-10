@@ -45,7 +45,9 @@ from ..domain.fact_review_quote_translation import QUOTE_TRANSLATION_RETENTION, 
 from ..domain.fact_review_question import (
     OPEN_STATUSES, QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus,
 )
-from ..domain.fact_review_rules import current_question, iso_week_of, may_send, next_in_queue
+from ..domain.fact_review_rules import (
+    QuestionScope, current_question, in_scope, iso_week_of, may_send, next_in_queue, profile_may_go,
+)
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
 from ..ports.fact_review_store import FactReviewStore
@@ -59,7 +61,7 @@ _REF_FIELDS = ("message_platform", "message_channel", "message_id")
 _TTL_FIELD = "purge_after"
 # What a state change of this store is allowed to touch; anything else in the state document belongs to other writers.
 _STATE_FIELDS = frozenset({
-    "current_question_id", "sent", "sent_on", "delivery_failed_on",
+    "current_question_id", "sent", "sent_on", "delivery_failed_on", "profile_claimed_on",
     "enqueued_at", "started_at", "last_review_at", "last_failed_at", "unsuccessful_since", "offers",
     "last_digest_at", "undigested_since", "oldest_alert_at", "queue_alert_at", "message_language", "labels",
     "label_digests",
@@ -139,11 +141,12 @@ class FirestoreFactReviewStore(FactReviewStore):
                     found[snap.id] = question
         return [found[i] for i in wanted if i in found]
 
-    async def questions_for_account(self, account_id: str) -> List[FactReviewQuestion]:
-        """Served by single-field indexes (an equality and an `in`)."""
+    async def questions_for_account(self, account_id: str, scope: QuestionScope = "lifecycle") -> List[FactReviewQuestion]:
+        """Served by single-field indexes (an equality and an `in`); the scope is applied to what is read, so every
+        existing reader stays lifecycle-only and no profile question reaches a reader that did not name one."""
         if not account_id:
             raise ValueError("account_id is required to read the account's review questions")
-        return self._valid(await self._open_of_account(account_id).get())
+        return [q for q in self._valid(await self._open_of_account(account_id).get()) if in_scope(q, scope)]
 
     async def timeout_histories(self, account_id: str) -> List[FactReviewQuestion]:
         """Three equalities (`account_id`, `closed_by`, `fallback`): merged single-field indexes, no composite index."""
@@ -156,8 +159,9 @@ class FirestoreFactReviewStore(FactReviewStore):
         )
         return self._valid(await query.get())
 
-    async def all_open(self) -> List[FactReviewQuestion]:
-        return self._valid(await self._questions.where(filter=FieldFilter("status", "in", _OPEN_VALUES)).get())
+    async def all_open(self, scope: QuestionScope = "lifecycle") -> List[FactReviewQuestion]:
+        found = self._valid(await self._questions.where(filter=FieldFilter("status", "in", _OPEN_VALUES)).get())
+        return [q for q in found if in_scope(q, scope)]
 
     async def by_message(self, user_id: str, ref: MessageRef) -> Optional[FactReviewQuestion]:
         """Equalities on the stored fields `user_id`, `message_platform`, `message_channel` and `message_id`."""
@@ -241,7 +245,7 @@ class FirestoreFactReviewStore(FactReviewStore):
             questions = [q for q in read if q is not None]
             if not may_send(state, today, current_question(state, questions)):
                 return None
-            chosen = next_in_queue(questions)
+            chosen = next_in_queue(questions, profile_allowed=profile_may_go(state, today))
             if chosen is None:
                 return None
             try:
@@ -249,7 +253,7 @@ class FirestoreFactReviewStore(FactReviewStore):
             except QuestionTransitionError as exc:
                 logger.info(f"[FactReviewStore] question {chosen.question_id[:12]} not claimed: {exc}")
                 return None
-            state_write = self._state_write(state, state.claimed(claimed.question_id, today))
+            state_write = self._state_write(state, state.claimed(claimed.question_id, today, profile=claimed.is_profile))
             transaction.set(self._questions.document(claimed.question_id), question_document(claimed))
             transaction.set(state_ref, state_write, merge=list(state_write))
             return claimed

@@ -7,7 +7,9 @@ import pytest
 
 from src.agents.consolidation_agent import _REVIEW_HEADER, _TRANSLATIONS_RULE
 from src.domain.fact_review_options import OPTIONS
-from src.domain.fact_review_question import TEXT_KEYS, UNKNOWN_TEXT, QuestionFallback, QuestionKind
+from src.domain.fact_review_question import (
+    PROFILE_KINDS, TEXT_KEYS, UNKNOWN_TEXT, LifecycleKind, QuestionFallback,
+)
 from src.domain.fact_words import MAX_FACT_WORDS
 from tests.unit.prompts.test_consolidation_review_vocabulary import LIFECYCLE, PROSE, REVIEW_TOOLS, UPDATE
 
@@ -57,15 +59,19 @@ def test_a_still_true_question_has_no_texts_in_the_token_and_the_schema():
 def test_the_ask_kinds_the_token_gives_equal_the_domains_question_kinds():
     line = _asking_item("question:")
     named = re.findall(r"\b(still_true|happened|renewed|paid)\b", line)
-    assert set(named) == set(get_args(QuestionKind)) == set(OPTIONS)
-    assert all(kind in ASK["question"]["description"] for kind in get_args(QuestionKind))
+    # Fact profile §4.7 (5d): the review model asks the lifecycle kinds only; place, person and date are code's.
+    assert set(named) == set(get_args(LifecycleKind)) == set(OPTIONS)
+    assert all(kind in ASK["question"]["description"] for kind in get_args(LifecycleKind))
+    assert not any(re.search(rf"\b{kind}\b", ASK["question"]["description"]) for kind in PROFILE_KINDS)
 
 
 def test_the_fallbacks_the_token_and_the_schema_give_equal_the_domains():
     token = _asking_item("fallback is")
     schema = ASK["fallback"]["description"]
-    for fallback in get_args(QuestionFallback):
+    # Fact profile §4.7 (5d): `none` is a profile question's fallback only, never the review model's to give.
+    for fallback in set(get_args(QuestionFallback)) - {"none"}:
         assert re.search(rf"\b{fallback}\b", token) and re.search(rf"\b{fallback}\b", schema), fallback
+    assert not re.search(r"\bnone\b", token) and not re.search(r"\bnone\b", schema)
     assert "fallback_date" not in PROSE and "fallback_date" not in ASK
 
 
