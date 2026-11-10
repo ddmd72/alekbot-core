@@ -6,7 +6,7 @@ per reason in `profile_drops`:
 
 - label words: lowercased, at most 3 words, no digits, not a lone record word, not a relation word, not only word forms
   the text or metadata already holds, no duplicate, at most LABEL_CAP;
-- time points: the source is printed and the date is read from it (`drive_grade.TextEvidence`), `from <= to`, years
+- time points (a quarter or season source is its range of months, `fact_profile_periods`): the source is printed and the date is read from it (`drive_grade.TextEvidence`), `from <= to`, years
   YEAR_MIN..YEAR_MAX, no duplicate, at most TIME_CAP;
 - places: the source is printed, the city found in the named country by the atlas (`place_names.PlaceNames`); one row
   gives keys, anything else is kept as unresolved;
@@ -30,6 +30,7 @@ from .drive_keys import _month_year_spans, word_form_keys
 from .fact_domains import Domain
 from .fact_profile import FactProfile, ProfilePerson, ProfileTimePoint, UnresolvedPlace
 from .fact_profile_answer import AnswerPerson, AnswerPlace, AnswerTimePoint, ProfileAnswer
+from .fact_profile_periods import period_ranges
 from .fact_profile_fingerprint import metadata_lines, metadata_value
 from .place_names import PlaceNames
 
@@ -223,6 +224,8 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return True, "metadata_yyyy_mm"
             if not src_printed:
                 return False, "time_source_not_printed"
+            if any(value in ends for ends in period_ranges(spaced)):
+                return True, "quarter_or_season"
             if any(ym == value for _, _, ym in _month_year_spans(spaced)):
                 return True, "month_year_span"
             if any(t.startswith(value) for t in content_terms(spaced)):

@@ -6,6 +6,7 @@ from src.domain.drive_grade import TextEvidence
 from src.domain.fact_profile_answer import AnswerPlace, AnswerTimePoint, ProfileAnswer
 from src.domain.fact_profile_derive import _short_range_ends, check_date, check_places, derive_profile
 from src.domain.fact_profile_fingerprint import DERIVE_VERSION
+from src.domain.fact_profile_periods import period_ranges
 from src.domain.place_lookup import PlaceRow
 from src.domain.place_names import PlaceNames
 
@@ -178,3 +179,58 @@ def test_a_month_printed_in_both_prefix_and_fact_is_kept():
 
 def test_the_derivation_version_moved_past_the_stored_one():
     assert DERIVE_VERSION == "2"
+
+
+# 7. quarters and seasons as month ranges
+
+@pytest.mark.parametrize("source, start, end", [
+    ("Q1 2027", "2027-01", "2027-03"),
+    ("1st quarter 2027", "2027-01", "2027-03"),
+    ("second quarter 2026", "2026-04", "2026-06"),
+    ("T3 2026", "2026-07", "2026-09"),
+    ("primer trimestre de 2027", "2027-01", "2027-03"),
+    ("quatrième trimestre 2026", "2026-10", "2026-12"),
+    ("перший квартал 2027", "2027-01", "2027-03"),
+    ("spring 2026", "2026-03", "2026-05"),
+    ("summer 2026", "2026-06", "2026-08"),
+    ("fall 2026", "2026-09", "2026-11"),
+    ("verano de 2026", "2026-06", "2026-08"),
+    ("automne 2026", "2026-09", "2026-11"),
+    ("winter 2026", "2026-12", "2027-02"),
+    ("зима 2026", "2026-12", "2027-02"),
+])
+def test_a_quarter_or_season_is_a_range_of_months(source, start, end):
+    ev, raw = evidence(f"Periodic car inspection in {source}.")
+    assert check_date(ev, raw, [], start, "month", source)[0] is True
+    assert check_date(ev, raw, [], end, "month", source)[0] is True
+
+
+def test_a_month_outside_the_quarter_is_dropped():
+    ev, raw = evidence("Payment due in Q1 2027.")
+    assert check_date(ev, raw, [], "2027-04", "month", "Q1 2027") == (False, "time_date_not_in_source")
+
+
+def test_a_quarter_is_stored_as_one_month_range_point():
+    out = derive_profile(full_answer(time_role="validity", time_points=[
+        {"from": "2027-04", "to": "2027-06", "precision": "month", "source": "Q2 2027"}]),
+        "Car insurance renews in Q2 2027.", None, ATLAS)
+    assert [(p.start, p.end, p.precision) for p in out.profile.time_points] == [("2027-04", "2027-06", "month")]
+    assert out.profile.profile_drops == {}
+
+
+def test_a_season_is_stored_as_one_month_range_point_and_winter_crosses_the_year():
+    out = derive_profile(full_answer(time_role="validity", time_points=[
+        {"from": "2026-03", "to": "2026-05", "precision": "month", "source": "spring 2026"}]),
+        "Weekend in Coimbra in spring 2026.", None, ATLAS)
+    assert [(p.start, p.end) for p in out.profile.time_points] == [("2026-03", "2026-05")]
+
+
+def test_winter_crosses_the_year_in_a_stored_point():
+    out = derive_profile(full_answer(time_role="validity", time_points=[
+        {"from": "2026-12", "to": "2027-02", "precision": "month", "source": "winter 2026"}]),
+        "Periodic car inspection in winter 2026.", None, ATLAS)
+    assert [(p.start, p.end) for p in out.profile.time_points] == [("2026-12", "2027-02")]
+
+
+def test_period_ranges_lists_every_period_in_a_source():
+    assert period_ranges("Q4 2026 to Q1 2027") == [("2026-10", "2026-12"), ("2027-01", "2027-03")]
