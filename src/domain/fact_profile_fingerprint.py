@@ -19,7 +19,7 @@ from .entities import FactEntity
 from .fact_domains import FACT_DOMAINS
 
 # Bump when derivation or validation code changes what it stores from the same answer.
-DERIVE_VERSION = "1"
+DERIVE_VERSION = "2"
 ABANDON_AFTER_FAILURES = 3
 _DIGEST_CHARS = 16
 

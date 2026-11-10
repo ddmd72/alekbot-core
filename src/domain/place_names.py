@@ -13,6 +13,22 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from .place_lookup import PlaceRow
 
+# A name read as "<head> <connector> <rest>" is also known by its head ("Frankfurt am Main" as "Frankfurt"), and a name
+# with a bracketed suffix by what precedes it ("Frankfurt (Oder)"): a fallback index, read only when no row carries the
+# asked name itself.
+_CONNECTORS = frozenset({"am", "an", "im", "in", "bei", "de", "del", "di", "da", "sur", "sous", "upon", "on", "nad",
+                         "pod", "ob", "lez", "les", "en", "au", "aux", "sul", "sulla", "della", "dei", "dell"})
+
+
+def _short_name(name: str) -> str:
+    """The head of a long name ("" when it has none); `name` is folded."""
+    head = re.sub(r"\s*\(.*$", "", name)
+    tokens = head.split()
+    if len(tokens) >= 2 and tokens[1] in _CONNECTORS:
+        return tokens[0]
+    return head if head != name else ""
+
+
 # Short forms the table's country names lack.
 _COUNTRY_ALIASES = (("usa", "United States"), ("us", "United States"), ("uk", "United Kingdom"))
 
@@ -49,12 +65,17 @@ class PlaceNames:
 
     def __init__(self, rows: Sequence[PlaceRow]) -> None:
         self._by_name: Dict[str, Set[int]] = {}
+        self._by_short: Dict[str, Set[int]] = {}
         self._rows: List[PlaceRow] = list(rows)
         self._country_of: Dict[str, str] = {}
         for i, row in enumerate(self._rows):
             for name in {row.name_en, row.name_local, *row.alt_names}:
                 if name:
                     self._by_name.setdefault(fold(name), set()).add(i)
+            for name in {row.name_en, row.name_local, *row.alt_names}:
+                short = _short_name(fold(name)) if name else ""
+                if short:
+                    self._by_short.setdefault(short, set()).add(i)
             for name in (row.country, *row.country_names):
                 if name:
                     self._country_of.setdefault(fold(name), row.country)
@@ -69,11 +90,16 @@ class PlaceNames:
         if not city.strip():
             return ((country_key(named),), None) if named else ((), "empty")
         candidates = self._by_name.get(fold(city), set())
+        shorts = self._by_short.get(fold(city), set())
         if named:
             inside = {i for i in candidates if self._rows[i].country == named}
             if not inside:
-                return ((), "not_in_country" if candidates else "not_in_atlas")
+                inside = {i for i in shorts if self._rows[i].country == named}
+            if not inside:
+                return ((), "not_in_country" if candidates or shorts else "not_in_atlas")
             candidates = inside
+        elif not candidates:
+            candidates = shorts
         if not candidates:
             return ((), "not_in_atlas")
         if len(candidates) > 1:
@@ -99,6 +125,8 @@ class PlaceNames:
         candidates = self._by_name.get(city, set())
         if inside:
             candidates = {i for i in candidates if self._rows[i].country == inside}
+        if not candidates:
+            candidates = {i for i in self._by_short.get(city, set()) if not inside or self._rows[i].country == inside}
         if not candidates:
             return (country_key(as_country),) if as_country is not None else ()
         row = self._rows[max(candidates, key=lambda i: (self._rows[i].weight or 0, -i))]
