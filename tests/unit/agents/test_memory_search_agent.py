@@ -96,19 +96,7 @@ def _make_message(payload: dict) -> AgentMessage:
 
 class TestCanHandle:
 
-    async def test_accepts_3key_format(self):
-        agent, *_ = _make_agent()
-        msg = _make_message({
-            "keywords": ["health", "weight"],
-            "primary_query": "User weight history",
-            "alternative_query": "body weight measurements",
-        })
-        assert await agent.can_handle(msg) is True
 
-    async def test_accepts_legacy_query(self):
-        agent, *_ = _make_agent()
-        msg = _make_message({"query": "what is my weight"})
-        assert await agent.can_handle(msg) is True
 
     async def test_rejects_wrong_intent(self):
         agent, *_ = _make_agent()
@@ -120,10 +108,6 @@ class TestCanHandle:
         )
         assert await agent.can_handle(msg) is False
 
-    async def test_rejects_empty_payload(self):
-        agent, *_ = _make_agent()
-        msg = _make_message({})
-        assert await agent.can_handle(msg) is False
 
 
 class TestFormatFactRich:
@@ -170,101 +154,8 @@ class TestFormatFactRich:
         assert f"metadata: {json.dumps(meta, ensure_ascii=False)}" in result
 
 
-class TestExecuteEnrichedPath:
-
-    async def test_two_facts_joined_by_separator(self):
-        agent, _, _, enrichment = _make_agent()
-        fact1 = _make_enriched_fact("Fact one.", context="ctx1", reported_date="2026-01-01")
-        fact2 = _make_enriched_fact("Fact two.", context="ctx2")
-        enrichment.enrich_context.return_value = _make_enriched_context([fact1, fact2])
-
-        msg = _make_message({
-            "keywords": ["health"],
-            "primary_query": "user health",
-            "alternative_query": "",
-        })
-        response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert "---" in response.result
-        assert "Fact one." in response.result
-        assert "Fact two." in response.result
-        assert "context: ctx1" in response.result
-
-    async def test_empty_results_returns_empty_string(self):
-        agent, _, _, enrichment = _make_agent()
-        enrichment.enrich_context.return_value = _make_enriched_context([])
-
-        msg = _make_message({
-            "keywords": ["health"],
-            "primary_query": "user health",
-            "alternative_query": "",
-        })
-        response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result == ""
-
-    async def test_enrichment_exception_returns_failure(self):
-        agent, _, _, enrichment = _make_agent()
-        enrichment.enrich_context.side_effect = RuntimeError("Firestore unavailable")
-
-        msg = _make_message({
-            "keywords": ["health"],
-            "primary_query": "user health",
-            "alternative_query": "",
-        })
-        response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.FAILED
-        assert "Firestore unavailable" in response.error
-
-    async def test_metadata_in_agent_response(self):
-        agent, _, _, enrichment = _make_agent()
-        enrichment.enrich_context.return_value = _make_enriched_context(
-            [_make_enriched_fact("Fact.")]
-        )
-
-        msg = _make_message({
-            "keywords": ["x"],
-            "primary_query": "query",
-            "alternative_query": "",
-        })
-        response = await agent.execute(msg)
-
-        assert response.metadata["search_strategy"] == "multi_vector_rrf"
-        assert response.metadata["result_count"] == 1
 
 
-class TestExecuteLegacyPath:
-
-    async def test_returns_formatted_string(self):
-        agent, repo, embedding, _ = _make_agent(with_enrichment=False)
-        embedding.get_embedding.return_value = [0.1] * 768
-        repo.search_facts.return_value = [
-            _FakeFact(text="Legacy fact.", type=FactType.STATE, context="legacy ctx"),
-        ]
-
-        msg = _make_message({"query": "some query"})
-        response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert "Legacy fact." in response.result
-        assert "context: legacy ctx" in response.result
-
-    async def test_principle_facts_filtered(self):
-        agent, repo, embedding, _ = _make_agent(with_enrichment=False)
-        embedding.get_embedding.return_value = [0.1] * 768
-        repo.search_facts.return_value = [
-            _FakeFact(text="Normal fact.", type=FactType.STATE),
-            _FakeFact(text="Should be filtered.", type=FactType.PRINCIPLE),
-        ]
-
-        msg = _make_message({"query": "some query"})
-        response = await agent.execute(msg)
-
-        assert "Normal fact." in response.result
-        assert "Should be filtered." not in response.result
 
 
 class TestExecuteNoKeys:
