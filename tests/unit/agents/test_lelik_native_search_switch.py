@@ -52,7 +52,9 @@ class TestSwitchedOnXai:
 
         description = _delegate_description(config)
         assert "- search_web_light:" not in description
-        assert "- search_memory:" in description and "- ask_alek:" in description
+        assert "- ask_alek:" in description
+        # An interpreter call has no memory search (owner rule 2026-11-10); every other mode keeps it.
+        assert ("- search_memory:" in description) is (mode is not VoiceMode.INTERPRETER)
         assert "send_to_chat" in {t["name"] for t in config["tools"]}
 
     @pytest.mark.asyncio

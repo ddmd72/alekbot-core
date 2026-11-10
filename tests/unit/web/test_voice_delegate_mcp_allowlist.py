@@ -1,6 +1,6 @@
 """/voice/delegate applies the allowlist of the call's own mode: with the VOICE_MCP_TOOLS knob on, the plain companion
-call (which reads memory through the MCP server) refuses search_memory, an interpreter call keeps it
-(LELIK_VOICE_MCP_RFC §8 O4, O7; §11 S3).
+call (which reads memory through the MCP server) refuses search_memory, a tutor call keeps it, and an interpreter call
+refuses it too: it has no memory at all (LELIK_VOICE_MCP_RFC §8 O4, O7; §11 S3; owner rule 2026-11-10).
 
 The real blueprint, the real `VoiceCallSetupService.prepare` (it writes the call-mode record the route reads), the
 real `LelikAgent` over the real coordinator with only `handle_delegation` scripted, the store on the evaluating fake.
@@ -82,9 +82,16 @@ async def test_the_companion_call_still_dispatches_its_other_intents():
     dispatched.assert_awaited_once()
 
 
-@pytest.mark.parametrize("mode", [VoiceMode.INTERPRETER, VoiceMode.TUTOR])
-async def test_an_interpreter_or_tutor_call_keeps_search_memory(mode):
-    output, dispatched = await _delegate(mode)
+async def test_a_tutor_call_keeps_search_memory():
+    output, dispatched = await _delegate(VoiceMode.TUTOR)
 
     assert output == "Garage space 14 behind 12 Oak Street"
     dispatched.assert_awaited_once()
+
+
+async def test_an_interpreter_call_refuses_search_memory():
+    """Owner rule 2026-11-10: an interpreter call has no memory search, with or without the MCP servers."""
+    output, dispatched = await _delegate(VoiceMode.INTERPRETER)
+
+    assert output.startswith("Tool error:")
+    dispatched.assert_not_awaited()

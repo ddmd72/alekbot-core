@@ -1,6 +1,7 @@
 """Lelik's session config carries the memory and drive MCP servers only on the plain companion call on xAI with the
 VOICE_MCP_TOOLS knob on, and such a call has no search_memory delegation, neither declared nor permitted
-(LELIK_VOICE_MCP_RFC §4, §8 O4, O6, O7; §11 S3).
+(LELIK_VOICE_MCP_RFC §4, §8 O4, O6, O7; §11 S3). An interpreter call has none either, in any configuration: it has no
+memory at all (owner rule 2026-11-10).
 
 The knob reaches LelikAgent as its `mcp_servers` (composition: `voice_mcp_servers`): given = knob on, empty = off.
 Built over the real registry of ALL_DESCRIPTORS and the real coordinator.
@@ -92,7 +93,6 @@ class TestSearchMemoryLeavesExactlyThen:
         assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.LELIK)
 
     @pytest.mark.parametrize("provider,mcp_servers,mode", [
-        ("xai", SERVERS, VoiceMode.INTERPRETER),
         ("xai", SERVERS, VoiceMode.TUTOR),
         ("openai", SERVERS, VoiceMode.LELIK),
         ("xai", (), VoiceMode.LELIK),
@@ -105,6 +105,18 @@ class TestSearchMemoryLeavesExactlyThen:
         assert Intent.SEARCH_MEMORY in _declared_intents(config)
         assert Intent.SEARCH_MEMORY in agent.permitted_intents(mode)
 
+    @pytest.mark.parametrize("mcp_servers", [SERVERS, ()])
+    async def test_an_interpreter_call_declares_and_permits_no_search_memory(self, mcp_servers):
+        """Owner rule 2026-11-10: an interpreter call (xAI only) has no memory search, with or without the MCP servers,
+        and still carries no server of its own."""
+        agent = _lelik(mcp_servers=mcp_servers)
+        config = await _config(agent, VoiceMode.INTERPRETER)
+
+        assert VOICE_MCP_SERVERS_FIELD not in config
+        assert Intent.SEARCH_MEMORY not in _declared_intents(config)
+        assert Intent.ASK_ALEK in _declared_intents(config)
+        assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.INTERPRETER)
+
     async def test_a_model_naming_search_memory_on_the_mcp_call_is_refused_before_dispatch(self):
         agent = _lelik()
         agent.coordinator.handle_delegation = AsyncMock(
@@ -116,7 +128,17 @@ class TestSearchMemoryLeavesExactlyThen:
         assert outcome.failed is True and outcome.text.startswith("Tool error:")
         agent.coordinator.handle_delegation.assert_not_awaited()
 
-    async def test_the_same_intent_on_an_interpreter_call_still_dispatches(self):
+    async def test_the_same_intent_on_a_tutor_call_still_dispatches(self):
+        agent = _lelik()
+        agent.coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok"))
+
+        outcome = await agent.delegate_outcome("usr-1", "acc-1", {"intent": "search_memory", "query": "q"},
+                                               call_context=[], mode=VoiceMode.TUTOR)
+
+        assert outcome.failed is False and outcome.text == "ok"
+
+    async def test_the_same_intent_on_an_interpreter_call_is_refused_before_dispatch(self):
         agent = _lelik()
         agent.coordinator.handle_delegation = AsyncMock(
             return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok"))
@@ -124,4 +146,5 @@ class TestSearchMemoryLeavesExactlyThen:
         outcome = await agent.delegate_outcome("usr-1", "acc-1", {"intent": "search_memory", "query": "q"},
                                                call_context=[], mode=VoiceMode.INTERPRETER)
 
-        assert outcome.failed is False and outcome.text == "ok"
+        assert outcome.failed is True and outcome.text.startswith("Tool error:")
+        agent.coordinator.handle_delegation.assert_not_awaited()
