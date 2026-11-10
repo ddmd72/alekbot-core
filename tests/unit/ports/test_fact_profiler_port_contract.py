@@ -23,7 +23,7 @@ def test_profile_is_its_only_abstract_method_and_is_async():
 
 def test_profile_signature():
     params = list(inspect.signature(FactProfilerPort.profile).parameters)
-    assert params == ["self", "account_id", "text", "metadata"]
+    assert params == ["self", "account_id", "text", "metadata", "people"]
 
 
 async def test_a_minimal_implementation_works():

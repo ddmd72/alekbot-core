@@ -178,7 +178,7 @@ def test_a_month_printed_in_both_prefix_and_fact_is_kept():
 # 6. the derivation version
 
 def test_the_derivation_version_moved_past_the_stored_one():
-    assert DERIVE_VERSION == "2"
+    assert DERIVE_VERSION == "3"
 
 
 # 7. quarters and seasons as month ranges
