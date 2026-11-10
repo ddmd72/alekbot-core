@@ -3,6 +3,7 @@ servers, and carried by the real coordinator into the agent's payload."""
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
+from src.domain.fact_search_result import PhraseSearchResult
 from src.agents.base_agent import BaseAgent
 from src.agents.lelik_agent import LelikAgent
 from src.agents.memory_search_agent import FactsMemoryAgent
@@ -80,7 +81,7 @@ class _Search(FactSearchPort):
 
     async def search_phrases(self, account_id, queries):
         self.calls.append(list(queries))
-        return []
+        return PhraseSearchResult((), ())
 
 
 async def test_a_delegation_with_queries_arrives_in_the_agents_payload_through_the_real_coordinator():

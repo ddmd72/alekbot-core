@@ -88,7 +88,7 @@ class World:
         return [f.id for f in await self.service.search(ACC, q, **kw)]
 
     async def phrases(self, *queries):
-        return [f.id for f in await self.service.search_phrases(ACC, list(queries))]
+        return [f.id for f in (await self.service.search_phrases(ACC, list(queries))).facts]
 
 
 @pytest.fixture

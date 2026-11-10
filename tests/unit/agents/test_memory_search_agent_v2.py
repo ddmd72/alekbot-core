@@ -5,6 +5,7 @@ from typing import List
 
 import pytest
 
+from src.domain.fact_search_result import PhraseSearchResult
 from src.agents.memory_search_agent import FactsMemoryAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.entities import FactEntity, FactType
@@ -44,7 +45,7 @@ class _Search(FactSearchPort):
 
     async def search_phrases(self, account_id, queries):
         self.calls.append((account_id, list(queries)))
-        return self.facts
+        return PhraseSearchResult(tuple(self.facts), tuple(() for _ in self.facts))
 
 
 def _fact(text, **kw):

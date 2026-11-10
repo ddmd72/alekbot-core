@@ -11,6 +11,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 from unittest.mock import MagicMock
 
+from src.domain.fact_search_result import PhraseSearchResult
 from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
 from src.composition.mcp_setup import build_mcp_components
 from src.domain.entities import FactEntity, FactType
@@ -41,7 +42,7 @@ class FakeMemoryAgent:
 
     async def search_facts(self, queries, *, path):
         self.calls.append((list(queries), path))
-        return self.facts
+        return PhraseSearchResult(tuple(self.facts), tuple(() for _ in self.facts))
 
 
 class Resolver:

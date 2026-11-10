@@ -19,7 +19,8 @@ import numpy as np
 from ..domain.deduplication_service import SmartDeduplication
 from ..domain.entities import FactEntity
 from ..domain.fact_query import SCOPE_ALL, FactQuery
-from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, keep_distinct, run_search
+from ..domain.fact_search_result import PhraseSearchResult
+from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, keep_distinct, keep_within_cut, run_search
 from ..domain.fact_search_rank import PRIORITY_WEIGHTS, CardRef, HomePlace, QueryPlaceKeys, card_ref, fuse_phrases
 from ..domain.fact_search_snapshot import FactSearchSnapshot
 from ..domain.place_names import PlaceNames, fold, local_place_key, resolve_home
@@ -90,9 +91,9 @@ class FactSearchService(FactSearchPort):
     async def search(
         self, account_id: str, query: FactQuery, *, exclude: AbstractSet[str] = frozenset()
     ) -> List[FactEntity]:
-        return await self._run(account_id, [query], exclude)
+        return list((await self._run(account_id, [query], exclude)).facts)
 
-    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
+    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
         queries = list(queries)
         if not 1 <= len(queries) <= MAX_PHRASES:
             raise ValueError(f"search_phrases takes 1 to {MAX_PHRASES} queries, got {len(queries)}")
@@ -110,7 +111,9 @@ class FactSearchService(FactSearchPort):
         logger.info(f"[FactSearch] warm acc={account_id[:8]} snapshot={status} "
                     f"ms={int((time.perf_counter() - started) * 1000)}")
 
-    async def _run(self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str]) -> List[FactEntity]:
+    async def _run(
+        self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str]
+    ) -> PhraseSearchResult:
         started = time.perf_counter()
         try:
             return await self._search(account_id, queries, exclude, started)
@@ -121,7 +124,7 @@ class FactSearchService(FactSearchPort):
 
     async def _search(
         self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str], started: float
-    ) -> List[FactEntity]:
+    ) -> PhraseSearchResult:
         texts = list(dict.fromkeys(t for q in queries for t in (q.subject, q.kind, q.message) if t))
         embedded, refreshed_at = await asyncio.gather(
             self._embed(texts), self._repository.get_baseline_refreshed_at(account_id))
@@ -138,21 +141,45 @@ class FactSearchService(FactSearchPort):
         outcomes = [p.outcome for p in phrases]
         if len(outcomes) == 1:
             kept = outcomes[0].kept
+            lists_of = [set(kept)]
             candidates = len(outcomes[0].fused)
         else:
             fused = fuse_phrases(
                 [[(fact_id, o.scores[fact_id]) for fact_id in o.fused] for o in outcomes],
                 [o.scores[o.kept[:CUT][-1]] if o.kept else 0.0 for o in outcomes])
-            limit = None if any(q.scope == SCOPE_ALL for q in queries) else CUT
-            kept = keep_distinct(fused, lambda a, b: self._is_duplicate(loaded, a, b), limit)
+            is_dup = lambda a, b: self._is_duplicate(loaded, a, b)  # noqa: E731
+            lifted = {fact_id for q, o in zip(queries, outcomes) if q.scope == SCOPE_ALL for fact_id in o.kept}
+            if lifted:
+                kept = keep_within_cut(keep_distinct(fused, is_dup, None), CUT, lifted)
+            else:
+                kept = keep_distinct(fused, is_dup, CUT)
+            lists_of = [set(o.kept[:CUT]) for o in outcomes]
             candidates = len(fused)
-        lists = ",".join(f"{name}:{len(ids)}" for name, ids in outcomes[0].lists.items()) or "none"
+        lists = self._lists_text(outcomes[0], loaded)
         logger.info(
             f"[FactSearch] path={queries[0].path} acc={account_id[:8]} phrases={len(queries)} lists={lists} "
             f"cands={candidates} gate_dropped={sum(o.gate_dropped for o in outcomes)} kept={len(kept)} "
             f"unsnapped={sum(p.unsnapped for p in phrases)} snapshot={status} "
             f"ms={int((time.perf_counter() - started) * 1000)}")
-        return [snapshot.entities[fact_id] for fact_id in kept]
+        return PhraseSearchResult(
+            tuple(snapshot.entities[fact_id] for fact_id in kept),
+            tuple(tuple(n for n, found in enumerate(lists_of) if fact_id in found) for fact_id in kept))
+
+    @staticmethod
+    def _lists_text(outcome: SearchOutcome, loaded: _Loaded) -> str:
+        """`name:kept`; `name:kept/before` for a list a cap cut; a kNN list also shows `/eligible` (the facts that have
+        the vector it reads) when that is more than its depth."""
+        eligible = {"semantic": int(loaded.has_vector.sum()), "labels": int(loaded.has_label.sum()),
+                    "message": int(loaded.has_vector.sum())}
+        parts = []
+        for name, ids in outcome.lists.items():
+            part = f"{name}:{len(ids)}"
+            if name in outcome.uncut:
+                part += f"/{outcome.uncut[name]}"
+            elif eligible.get(name, 0) > DEPTH_KNN:
+                part += f"/{eligible[name]}"
+            parts.append(part)
+        return ",".join(parts) or "none"
 
     async def _phrase(
         self, loaded: _Loaded, query: FactQuery, semantic: Optional[List[str]], labels: Optional[List[str]],

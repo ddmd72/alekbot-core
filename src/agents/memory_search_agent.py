@@ -10,7 +10,6 @@ There is no other request shape and no fallback: a call without phrases comes ba
 """
 
 import asyncio
-import json
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -18,12 +17,12 @@ from typing import TYPE_CHECKING, Any, List, Sequence
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
-from ..domain.entities import FactEntity
 from ..domain.fact_query import FactQuery
 from ..domain.fact_query_parse import semantic_only_query
-from ..domain.fact_when import when_line
 from ..domain.mcp import QUERIES_MAX, normalize_queries, queries_dropped
-from ..domain.memory_search_texts import NO_QUERIES_NOTE, NO_RECORDS_TEXT
+from ..domain.fact_search_result import PhraseSearchResult
+from ..domain.memory_search_format import format_search_result
+from ..domain.memory_search_texts import NO_QUERIES_NOTE
 from ..ports.fact_search_port import FactSearchPort
 from ..utils.logger import logger
 
@@ -88,15 +87,16 @@ class FactsMemoryAgent(BaseAgent):
 
         started = time.perf_counter()
         try:
-            facts = await self.search_facts(queries, path=PATH, message=_latest_user_text(message))
+            found = await self.search_facts(queries, path=PATH, message=_latest_user_text(message))
         except Exception as e:
             self._on_agent_error(e)
             return AgentResponse.failure(
                 task_id=message.task_id, agent_id=self.agent_id, error=f"Memory search failed: {e}",
             )
 
+        facts = found.facts
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        result = "\n---\n".join(self._format_fact_rich(f) for f in facts) if facts else NO_RECORDS_TEXT
+        result = format_search_result(queries, found)
         logger.info(f"✅ [FactsMemoryAgent] {len(facts)} fact(s) for {len(queries)} phrase(s) in {elapsed_ms} ms")
         return AgentResponse.success(
             task_id=message.task_id,
@@ -114,8 +114,8 @@ class FactsMemoryAgent(BaseAgent):
 
     async def search_facts(
         self, queries: Sequence[str], *, path: str, message: str = "",
-    ) -> List[FactEntity]:
-        """The fused facts for `queries` (1-4 non-empty phrases, priority order). `message`: the user's latest
+    ) -> PhraseSearchResult:
+        """The fused facts, with the phrases that found each, for `queries` (1-4 non-empty phrases, priority order). `message`: the user's latest
         message when the calling turn has one; it is what the message similarity reads, else the phrase itself."""
         built = await asyncio.gather(*(self._query_for(phrase, path) for phrase in queries))
         fact_queries = [
@@ -136,21 +136,6 @@ class FactsMemoryAgent(BaseAgent):
             return replace(
                 semantic_only_query(phrase, today=datetime.now(timezone.utc).date(), path=path), message=phrase,
             )
-
-    @staticmethod
-    def _format_fact_rich(fact: FactEntity) -> str:
-        """One fact for the calling model: its text, context, report date, metadata and time points."""
-        parts = [fact.text]
-        if fact.context:
-            parts.append(f"context: {fact.context}")
-        if fact.reported_date:
-            parts.append(f"reported: {str(fact.reported_date)[:10]}")
-        if fact.metadata:
-            parts.append(f"metadata: {json.dumps(fact.metadata, ensure_ascii=False)}")
-        when = when_line(fact)
-        if when:
-            parts.append(when)
-        return "\n".join(parts)
 
     def _get_alternative_agents(self) -> List[str]:
         return ["web_search_agent", "reasoning_agent"]
