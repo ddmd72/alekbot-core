@@ -249,8 +249,10 @@ class FactRepository(ABC):
 
         Projection: id (the document id), account_id, created_by_user_id, lineage_id, text, type, metadata, domain,
             tags, state, created_at, and the profile fields profile_fingerprint, profile_derivation, profile_failures,
-            profile_failed_fingerprint, profile_answer, user_identity, primary_domain, sensitivity. Every other field
-            keeps the model default: no vectors, no label words, no time points, places or people.
+            profile_failed_fingerprint, profile_answer, user_identity, primary_domain, sensitivity, reported_date,
+            profile_review_needed, and the open points of the profile: places_unresolved and profile_review_items
+            (what the profile questions of the owner are made from, RFC §4.7). Every other field keeps the model
+            default: no vectors, no label words, no time points, places or people.
         Tenancy: only that account's documents (the stored `account_id`).
         Order: none.
         """

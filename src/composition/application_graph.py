@@ -61,7 +61,7 @@ from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition import cipher_setup, voice_mcp_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
-from src.composition.fact_profile_setup import build_fact_profile_service, max_per_run as profile_max_per_run
+from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_service
 from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.sandbox_media_setup import build_sandbox_media
@@ -729,9 +729,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # memory review; the cap is an optional knob, read here with os.getenv.
     # The people cards (RFC §7) it rebuilds are listed in the review's weekly digest.
     _person_cards = FirestorePersonCardRepository(db_client, env_config)
+    # The one place atlas: the step resolves places with it and the owner's word replies to profile questions read it.
+    _place_atlas = LazyAtlas()
     _fact_profile_step = build_fact_profile_service(
         container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
-        person_cards=_person_cards)
+        person_cards=_person_cards, atlas=_place_atlas)
 
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
@@ -885,8 +887,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
         total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
     )) if agent_task_queue else None
-    # Profile questions (fact profile RFC §4.7): a picked option is recorded in the account's answers store.
-    _profile_question_answers = ProfileQuestionAnswers(container.profile_answers)
+    # Profile questions (fact profile RFC §4.7): a picked option or a reply in words read by code is recorded in the
+    # account's answers store; a place reply reads the atlas and a person reply the confirmed list.
+    _profile_question_answers = ProfileQuestionAnswers(
+        container.profile_answers, atlas=_place_atlas, confirmed_people=container.confirmed_people)
     _fact_answer_service = FactAnswerService(
         fact_updates=_review_fact_updates,
         repo=container.repository,

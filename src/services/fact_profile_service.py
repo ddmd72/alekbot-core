@@ -5,7 +5,9 @@ Public interface:
     FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards,
                        confirmed_people, profile_answers)
         async scan(account_id) -> FactProfileScan                 what a run would find; reads, writes nothing
-        async run(account_id, deadline) -> FactProfileRun         never raises; `deadline` is the lease's `until`
+        async run(account_id, deadline, collect_points=False)     never raises; `deadline` is the lease's `until`;
+            -> FactProfileRun                                     with `collect_points` the run carries the open points
+                                                                  the owner may be asked (RFC §4.7)
 
 One run, inside a lease the caller holds, reads the account's current facts once and brings every profile up to date:
   0. read the account's confirmed people list and the owner's profile answers once (each when its repository is
@@ -20,10 +22,12 @@ One run, inside a lease the caller holds, reads the account's current facts once
      left for the next cycle), stopping when the lease has no time left;
   5. people cards rebuilt by code from the current facts (when a card repository is wired; RFC §7);
   6. one baseline refresh when any profile was written, so the search snapshot (keyed by the baseline) sees it.
+  7. when asked (`collect_points`) and the answers store is wired, the open points over the facts as the run left them
+     (a fact written this run by its new profile, any other as read); a run that ended with an error carries none.
 The service never touches the lease. Logs carry ids (8 characters), counts, reasons, ms and usd, never fact content.
 """
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -31,7 +35,7 @@ from pydantic import ValidationError
 
 from ..domain.confirmed_people import ConfirmedPeople, ConfirmedPerson
 from ..domain.entities import FactDomain, FactEntity
-from ..domain.fact_profile import FactProfile
+from ..domain.fact_profile import FactProfile, ProfileReviewItem, UnresolvedPlace
 from ..domain.fact_profile_answer import ProfileAnswer
 from ..domain.fact_profile_derive import DeriveOutcome, derive_profile, directive_profile, recording_year
 from ..domain.fact_profile_fingerprint import (
@@ -50,6 +54,7 @@ from ..domain.memory_write_lease import agent_timeout_s
 from ..domain.person_cards import build_person_cards_counted
 from ..domain.place_names import PlaceNames
 from ..domain.profile_answers import EMPTY_ANSWERS, ProfileAnswers, answers_digest
+from ..domain.profile_open_points import OpenPoint, PointFact, open_points
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
@@ -114,6 +119,7 @@ class _Plan:
     atlas: str
     answers: ProfileAnswers
     items: List[_Item]
+    confirmed: Optional[ConfirmedPeople] = None
 
     def derivation(self, item: _Item, answer: Optional[ProfileAnswer]) -> str:
         """The derivation string of `item` when its profile is derived from `answer`."""
@@ -160,6 +166,9 @@ class _Tally:
     cards: int = 0
     flagged: int = 0
     error: bool = False
+    plan: Optional[_Plan] = None
+    # The open-point fields of the profiles this run wrote, by fact id: the view the points are read from.
+    written_open: Dict[str, Tuple[Any, Any]] = field(default_factory=dict)
 
     def freeze(self) -> FactProfileRun:
         return FactProfileRun(
@@ -204,18 +213,24 @@ class FactProfileService:
         plan = await self._plan(account_id)
         return self._count(plan.items)
 
-    async def run(self, account_id: str, deadline: datetime) -> FactProfileRun:
+    async def run(self, account_id: str, deadline: datetime, collect_points: bool = False) -> FactProfileRun:
         """One profile step under a lease that expires at `deadline`. Never raises: an error is logged and returned as
-        `error=True` with the counts reached so far."""
+        `error=True` with the counts reached so far. With `collect_points` (and the answers store wired) a run that ended
+        without error carries `open_points`: reading them failing is an error of the run, so a caller never takes
+        nothing found for nothing to ask."""
         if account_id == SYSTEM_ACCOUNT:
             return FactProfileRun()
         tally = _Tally()
+        points: Tuple[OpenPoint, ...] = ()
         try:
             await self._run(account_id, deadline, tally)
+            if collect_points and self._profile_answers is not None and tally.plan is not None:
+                points = self._collect_points(tally.plan, tally.written_open)
         except Exception:
             tally.error = True
+            points = ()
             logger.error(f"[FactProfile] run failed account={account_id[:8]}", exc_info=True)
-        run = tally.freeze()
+        run = replace(tally.freeze(), open_points=points)
         scan = run.scan
         logger.info(
             f"[FactProfile] run account={account_id[:8]} scanned={scan.scanned} missing={scan.missing} "
@@ -231,7 +246,7 @@ class FactProfileService:
         listed = confirmed.entries() if confirmed is not None else ()
         facts = await self._repo.list_profile_states(account_id)
         names, atlas = await self._atlas()
-        plan = _Plan(names, registry_digest(), atlas, answers, [])
+        plan = _Plan(names, registry_digest(), atlas, answers, [], confirmed)
         for fact in facts:
             item = _Item(fact, ProfileStatus.MISSING, _is_directive(fact), "", _stored_answer(fact),
                          tuple(named_people(confirmed, fact.text, fact.metadata)), listed,
@@ -241,6 +256,22 @@ class FactProfileService:
             item.status = classify_profile(fact, item.derivation, item.named)
             plan.items.append(item)
         return plan
+
+    @staticmethod
+    def _collect_points(plan: _Plan, written: Dict[str, Tuple[Any, Any]]) -> Tuple[OpenPoint, ...]:
+        """The open points over the facts as the run left them: a fact written this run by the open-point fields it was
+        written with, any other as it was read."""
+        view = []
+        for item in plan.items:
+            fact = item.fact
+            places, review = written.get(fact.id, (fact.places_unresolved, fact.profile_review_items))
+            view.append(PointFact(
+                fact.id, fact.lineage_id, fact.text, fact.created_at,
+                tuple(UnresolvedPlace(p["city"], p["country"]) for p in places or []
+                      if isinstance(p, dict) and isinstance(p.get("city"), str) and isinstance(p.get("country"), str)),
+                tuple(ProfileReviewItem(i["field"], i["mention"]) for i in review or []
+                      if isinstance(i, dict) and isinstance(i.get("field"), str) and isinstance(i.get("mention"), str))))
+        return tuple(open_points(view, plan.answers, plan.confirmed, plan.names))
 
     async def _read_confirmed(self, account_id: str) -> Optional[ConfirmedPeople]:
         """The account's confirmed list. An unreadable list propagates: classifying without it would mark every fact that
@@ -277,6 +308,7 @@ class FactProfileService:
 
     async def _run(self, account_id: str, deadline: datetime, tally: _Tally) -> None:
         plan = await self._plan(account_id)
+        tally.plan = plan
         items = plan.items
         tally.scan = self._count(items)
 
@@ -452,6 +484,8 @@ class FactProfileService:
                 self._log_fact(p, "abandoned" if p.abandoned else "failed")
                 continue
             tally.written += 1
+            if "places_unresolved" in p.fields:
+                tally.written_open[p.fact.id] = (p.fields["places_unresolved"], p.fields["profile_review_items"])
             if p.fields.get("profile_review_needed") is True:
                 tally.flagged += 1
             if p.kind == _DIRECTIVE:

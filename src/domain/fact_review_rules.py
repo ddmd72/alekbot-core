@@ -173,6 +173,11 @@ def profile_may_go(state: FactReviewState, today: date) -> bool:
     return state.profile_claimed_on != today
 
 
+# At most this many profile questions are open at once (§4.7): lifecycle questions go first, and one profile question is
+# claimed a day, so a longer line would only grow stale.
+PROFILE_OPEN_CAP = 3
+
+
 def profile_question_id(account_id: str, key: str) -> str:
     """The id of the profile question of one point: derived from the account and the point's key, so a point is never
     queued twice while its question is stored."""
