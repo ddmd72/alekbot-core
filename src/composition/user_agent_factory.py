@@ -497,6 +497,7 @@ class UserAgentFactory(AgentFactoryPort):
             user_location=user_profile.config.location or "",
             prompt_builder=prompt_builder,
             notes_port=self.notes_provider,
+            prefetch_limit=semantic_limit,
         )
 
         account_id = user_profile.account_id
@@ -998,8 +999,7 @@ class UserAgentFactory(AgentFactoryPort):
 
     async def get_memory_search(self, user_id: str) -> Optional[FactsMemoryAgent]:
         """The user's FactsMemoryAgent: the one memory entry point of the connector and the Router's callers."""
-        await self.ensure_agents_for_user(user_id)
-        cached = self._agent_cache.get(user_id)
+        cached = await self.ensure_agents_for_user(user_id)
         agent = cached.get("memory_agent") if cached else None
         return agent if isinstance(agent, FactsMemoryAgent) else None
 

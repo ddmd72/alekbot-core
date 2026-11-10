@@ -34,6 +34,7 @@ from ...ports.fact_search_port import FactSearchPort
 from ...domain.request_context import get_current_account_id
 from ...domain.search import EnrichedContext, EnrichedFact
 from ...domain.fact_query import FactQuery
+from ...domain.settings import SearchConfig
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...ports.agent_note_port import AgentNotePort
@@ -179,6 +180,7 @@ class RouterAgent(BaseAgent):
         user_location: str = "",
         prompt_builder: Optional[PromptBuilderPort] = None,
         notes_port: Optional[AgentNotePort] = None,
+        prefetch_limit: Optional[int] = None,
     ):
         """
         Initialize Router Agent.
@@ -211,6 +213,8 @@ class RouterAgent(BaseAgent):
         self.user_location = user_location
         self.prompt_builder = prompt_builder
         self.notes_port = notes_port
+        # The user's resolved semantic_search_limit; None = the system default the config service falls back to.
+        self.prefetch_limit = prefetch_limit if prefetch_limit is not None else SearchConfig.DEFAULT_SEMANTIC_SEARCH_LIMIT
         self._cached_triage_prompt: Optional[str] = None
 
         logger.info(
@@ -458,7 +462,8 @@ class RouterAgent(BaseAgent):
             logger.error(f"[RouterAgent] Memory prefetch failed, turn goes on without it: {type(exc).__name__}: {exc}")
             return None
         return EnrichedContext(
-            facts=[EnrichedFact.from_fact(f, "fact_search", None) for f in facts],
+            # scope=all makes the search return its whole list; the prefetch holds at most the user's semantic_search_limit facts (RFC §5.4).
+            facts=[EnrichedFact.from_fact(f, "fact_search", None) for f in list(facts)[:self.prefetch_limit]],
             total_sources=1, dedup_count=0, biographical_dedup_count=0,
         )
 
@@ -750,6 +755,7 @@ def create_router_agent(
     user_location: str = "",
     prompt_builder: Optional[PromptBuilderPort] = None,
     notes_port: Optional[AgentNotePort] = None,
+    prefetch_limit: Optional[int] = None,
 ) -> RouterAgent:
     """
     Factory function to create RouterAgent with default config.
@@ -794,4 +800,5 @@ def create_router_agent(
         user_location=user_location,
         prompt_builder=prompt_builder,
         notes_port=notes_port,
+        prefetch_limit=prefetch_limit,
     )
