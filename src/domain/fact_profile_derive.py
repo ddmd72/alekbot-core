@@ -6,7 +6,7 @@ per reason in `profile_drops`:
 
 - label words: lowercased, at most 3 words, no digits, not a lone record word, not a relation word, not only word forms
   the text or metadata already holds, no duplicate, at most LABEL_CAP;
-- time points: the source is printed and the date is read from it (`drive_grade.TextEvidence`), `from <= to`, years
+- time points (a quarter or season source is its range of months, `fact_profile_periods`): the source is printed and the date is read from it (`drive_grade.TextEvidence`), `from <= to`, years
   YEAR_MIN..YEAR_MAX, no duplicate, at most TIME_CAP;
 - places: the source is printed, the city found in the named country by the atlas (`place_names.PlaceNames`); one row
   gives keys, anything else is kept as unresolved;
@@ -30,6 +30,7 @@ from .drive_keys import _month_year_spans, word_form_keys
 from .fact_domains import Domain
 from .fact_profile import FactProfile, ProfilePerson, ProfileTimePoint, UnresolvedPlace
 from .fact_profile_answer import AnswerPerson, AnswerPlace, AnswerTimePoint, ProfileAnswer
+from .fact_profile_periods import period_ranges
 from .fact_profile_fingerprint import metadata_lines, metadata_value
 from .place_names import PlaceNames
 
@@ -51,6 +52,11 @@ RELATION_WORDS = frozenset({
     "grandchild", "grandchildren", "aunt", "uncle", "cousin", "niece", "nephew", "stepmother", "stepfather",
     "stepson", "stepdaughter", "stepbrother", "stepsister", "relative"})
 _FOUR_DIGITS = re.compile(r"(?<!\d)\d{4}(?!\d)")
+# A range whose end is printed short ("2026–27", "2026-27"): the end is the year of the start's century.
+_SHORT_RANGE = re.compile(r"(?<!\d)(\d{4})\s*[-–—]\s*(\d{2})(?!\d)")
+# The prefix the fact review writes on a retracted fact (`fact_review_answers.ended_text`): the month in it is when the
+# owner said the fact had ended, not a time the fact is about.
+_RETRACTION_PREFIX = re.compile(r"^\s*No longer true \([^)\n]*\bsaid so in [^)\n]*\):\s*")
 
 
 @dataclass(frozen=True)
@@ -168,7 +174,18 @@ def _month_forms(month: int) -> Set[str]:
 
 def _year_printed(source: str, raw_all: str, year: int) -> bool:
     """The year in the source, or (when the source prints no year at all) anywhere in the text."""
-    return _has_word(source, str(year)) or (not _FOUR_DIGITS.search(source) and _has_word(raw_all, str(year)))
+    return _has_word(source, str(year)) or (not _FOUR_DIGITS.search(source)
+                                            and _has_word(raw_all.replace("_", " "), str(year)))
+
+
+def _short_range_ends(source: str) -> Set[str]:
+    """The full years the short range ends in `source` stand for: "2026–27" gives 2027, in the start's century (an end
+    below the start belongs to the next century: "2099–01" gives 2101)."""
+    ends: Set[str] = set()
+    for start, end in _SHORT_RANGE.findall(source):
+        year = int(start[:2] + end)
+        ends.add(str(year if year >= int(start) else year + 100))
+    return ends
 
 
 def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[str], value: str, precision: str,
@@ -176,7 +193,9 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
     """(accepted, how it was read or the drop reason) of one ISO value read from `source`."""
     src = source.strip()
     src_printed = bool(src) and evidence.occurs(src)
-    s = src.casefold()
+    # A date copied from metadata keeps its underscores ("aug_2025", "Aug_14_2025"): read it as its text form.
+    s = src.casefold().replace("_", " ")
+    spaced = src.replace("_", " ")
     try:
         if precision == "day":
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
@@ -184,7 +203,7 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
             day = date.fromisoformat(value)
             if not YEAR_MIN <= day.year <= YEAR_MAX:
                 return False, "time_year_out_of_range"
-            grade, _ = evidence.date_grade(day, src)
+            grade, _ = evidence.date_grade(day, spaced)
             if grade in (Grade.IN_TEXT, Grade.IN_TEXT_AS):
                 return True, "date_grade"
             if not src_printed:
@@ -205,13 +224,15 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return True, "metadata_yyyy_mm"
             if not src_printed:
                 return False, "time_source_not_printed"
-            if any(ym == value for _, _, ym in _month_year_spans(src)):
+            if any(value in ends for ends in period_ranges(spaced)):
+                return True, "quarter_or_season"
+            if any(ym == value for _, _, ym in _month_year_spans(spaced)):
                 return True, "month_year_span"
-            if any(t.startswith(value) for t in content_terms(src)):
+            if any(t.startswith(value) for t in content_terms(spaced)):
                 return True, "iso_in_month"
             if any(_has_word(s, f) for f in _month_forms(month)) and _year_printed(s, raw_all, year):
                 return True, "parts"
-            if re.search(rf"(?<!\d){year}-{month:02d}(?!\d)", src):
+            if re.search(rf"(?<!\d){year}[-_]{month:02d}(?!\d)", src):
                 return True, "yyyy_mm_in_source"
             return False, "time_date_not_in_source"
         if precision == "year":
@@ -223,6 +244,8 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return False, "time_source_not_printed"
             if re.search(rf"(?<!\d){value}(?!\d)", src):
                 return True, "year"
+            if value in _short_range_ends(src):
+                return True, "year_short_range_end"
             return False, "time_date_not_in_source"
     except ValueError:
         return False, "time_bad_format"
@@ -272,6 +295,10 @@ def check_places(places: Sequence[AnswerPlace], evidence: TextEvidence, atlas: P
         if reason is not None:
             unresolved.append(UnresolvedPlace(place.city, place.country))
             _bump(drops, f"place_unresolved:{reason}")
+            # The model's country survives a city the atlas lacks or cannot pick; a city the atlas places only in
+            # another country contradicts it, and then neither is trusted.
+            if place.country.strip() and reason in ("not_in_atlas", "ambiguous"):
+                keys.extend(atlas.resolve("", place.country)[0])
         else:
             keys.extend(found)
     return tuple(_dedupe(keys)), tuple(unresolved)
@@ -320,7 +347,8 @@ def derive_profile(answer: ProfileAnswer, text: str, metadata: Optional[Mapping[
                    atlas: PlaceNames) -> DeriveOutcome:
     """The profile of a non-directive fact from its validated answer (a directive takes `directive_profile`)."""
     drops: Dict[str, int] = {}
-    texts = [text, *metadata_lines(metadata)]
+    # The retraction prefix is code's, not the fact's: its date is no source of a time point.
+    texts = [_RETRACTION_PREFIX.sub("", text, count=1), *metadata_lines(metadata)]
     evidence = TextEvidence(texts)
     raw_all = "\n".join(texts).casefold()
     values = _metadata_values(metadata)
