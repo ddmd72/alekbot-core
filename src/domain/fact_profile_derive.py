@@ -15,7 +15,9 @@ per reason in `profile_drops`:
   person is then marked `from_list`;
 - a date the fact prints without a year is written `--MM-DD` / `--MM` by the model and takes the recording year
   (`recording_year`); a month or year read from a printed full date is accepted (an approximate time is filed there);
-- review items: kept only when the mention is printed and the answer is `needs_review`.
+- review items: kept only when the mention is printed and the answer is `needs_review`;
+- the owner's answers to profile questions (§4.7, `apply_answers`): a place answer before the atlas, a person or date
+  answer of this lineage on its review item; an answered item is dropped, and the flag clears when none is left.
 
 A directive is decided by the consolidator, not asked of the model: it gets `agent_directives`, no extras and nothing
 else (`directive_profile`). An `intimate` answer with no surviving label word is a profiling error that needs a redo:
@@ -38,7 +40,8 @@ from .fact_profile import FactProfile, ProfilePerson, ProfileReviewItem, Profile
 from .fact_profile_answer import AnswerPerson, AnswerPlace, AnswerTimePoint, ProfileAnswer
 from .fact_profile_periods import period_ranges
 from .fact_profile_fingerprint import metadata_lines, metadata_value
-from .place_names import PlaceNames
+from .place_names import PlaceNames, country_key, fold, local_place_key
+from .profile_answers import EMPTY_ANSWERS, DateAnswer, ProfileAnswers, date_point_key, person_point_key, place_point_key
 
 LABEL_CAP = 12
 LABEL_MAX_WORDS = 3
@@ -206,10 +209,37 @@ def _short_range_ends(source: str) -> Set[str]:
     return ends
 
 
+def date_value_problem(value: str, precision: str) -> Optional[str]:
+    """None when `value` is an ISO value of `precision` as the profiler writes it (`YYYY-MM-DD`, `YYYY-MM`, `YYYY`) with
+    its year in YEAR_MIN..YEAR_MAX; else the drop reason (`time_bad_format`, `time_year_out_of_range`). The one reader
+    of a date's form: `check_date` reads the model's values with it, `owner_time_point` the owner's date answers."""
+    try:
+        if precision == "day":
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                return "time_bad_format"
+            year = date.fromisoformat(value).year
+        elif precision == "month":
+            if not re.fullmatch(r"\d{4}-\d{2}", value):
+                return "time_bad_format"
+            year = int(value[:4])
+        elif precision == "year":
+            if not re.fullmatch(r"\d{4}", value):
+                return "time_bad_format"
+            year = int(value)
+        else:
+            return "time_bad_format"
+    except ValueError:
+        return "time_bad_format"
+    return None if YEAR_MIN <= year <= YEAR_MAX else "time_year_out_of_range"
+
+
 def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[str], value: str, precision: str,
                source: str, year_supplied: bool = False) -> Tuple[bool, str]:
     """(accepted, how it was read or the drop reason) of one ISO value read from `source`. With `year_supplied` the
     year of `value` is the recording year, not a printed one: the source then proves the day and month only."""
+    problem = date_value_problem(value, precision)
+    if problem is not None:
+        return False, problem
     src = source.strip()
     src_printed = bool(src) and evidence.occurs(src)
     # A date copied from metadata keeps its underscores ("aug_2025", "Aug_14_2025"): read it as its text form.
@@ -217,11 +247,7 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
     spaced = src.replace("_", " ")
     try:
         if precision == "day":
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-                raise ValueError(value)
             day = date.fromisoformat(value)
-            if not YEAR_MIN <= day.year <= YEAR_MAX:
-                return False, "time_year_out_of_range"
             grade, _ = evidence.date_grade(day, spaced)
             if grade in (Grade.IN_TEXT, Grade.IN_TEXT_AS):
                 return True, "date_grade"
@@ -234,11 +260,7 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return True, "parts_recorded_year" if year_supplied else "parts"
             return False, "time_date_not_in_source"
         if precision == "month":
-            if not re.fullmatch(r"\d{4}-\d{2}", value):
-                raise ValueError(value)
             year, month = int(value[:4]), int(value[5:])
-            if not YEAR_MIN <= year <= YEAR_MAX:
-                return False, "time_year_out_of_range"
             if src == value and value in metadata_values:
                 return True, "metadata_yyyy_mm"
             if not src_printed:
@@ -256,10 +278,6 @@ def check_date(evidence: TextEvidence, raw_all: str, metadata_values: Sequence[s
                 return True, "yyyy_mm_in_source"
             return False, "time_date_not_in_source"
         if precision == "year":
-            if not re.fullmatch(r"\d{4}", value):
-                raise ValueError(value)
-            if not YEAR_MIN <= int(value) <= YEAR_MAX:
-                return False, "time_year_out_of_range"
             if not src_printed:
                 return False, "time_source_not_printed"
             if re.search(rf"(?<!\d){value}(?!\d)", src):
@@ -340,14 +358,53 @@ def check_time_points(points: Sequence[AnswerTimePoint], evidence: TextEvidence,
 # ── Places ──────────────────────────────────────────────────────────────────
 
 def check_places(places: Sequence[AnswerPlace], evidence: TextEvidence, atlas: PlaceNames,
-                 drops: Dict[str, int]) -> Tuple[Tuple[str, ...], Tuple[UnresolvedPlace, ...]]:
-    """(place keys, unresolved places) of the printed places."""
+                 drops: Dict[str, int], answers: ProfileAnswers = EMPTY_ANSWERS,
+                 ) -> Tuple[Tuple[str, ...], Tuple[UnresolvedPlace, ...]]:
+    """(place keys, unresolved places) of the printed places; the owner's place answers are applied first (§4.7)."""
+    keys, unresolved, _ = _check_places(places, evidence, atlas, drops, answers)
+    return keys, unresolved
+
+
+def _answered_place(place: AnswerPlace, atlas: PlaceNames, answers: ProfileAnswers,
+                    drops: Dict[str, int]) -> Optional[Tuple[str, ...]]:
+    """The keys the owner's answer gives this place, or None when no answer places it (none, `unknown`, or an `atlas`
+    row that has left the table: counted, and the place falls back to resolution)."""
+    if not answers.places:
+        return None
+    key = place_point_key(place.city, atlas.canonical_country(place.country) or place.country)
+    entry = answers.places.get(key)
+    if entry is None or entry.resolution == "unknown":
+        return None
+    if entry.resolution == "atlas":
+        found = atlas.keys_of(entry.geonameid)
+        if not found:
+            _bump(drops, "place_answer_stale")
+            return None
+        _bump(drops, "place_answered:atlas")
+        return found
+    local = [local_place_key(entry.city)]
+    canonical = atlas.canonical_country(entry.country) if entry.country.strip() else None
+    if canonical:
+        local.append(country_key(canonical))
+    _bump(drops, "place_answered:local")
+    return tuple(local)
+
+
+def _check_places(places: Sequence[AnswerPlace], evidence: TextEvidence, atlas: PlaceNames, drops: Dict[str, int],
+                  answers: ProfileAnswers) -> Tuple[Tuple[str, ...], Tuple[UnresolvedPlace, ...], Set[str]]:
+    """`check_places` plus the folded cities the owner's answers placed (their `places` review items are answered)."""
     keys: List[str] = []
     unresolved: List[UnresolvedPlace] = []
+    answered: Set[str] = set()
     for place in places:
         src = place.source.strip()
         if not src or not (evidence.occurs(src) or evidence.skeleton_seen(src)):
             _bump(drops, "place_not_printed")
+            continue
+        placed = _answered_place(place, atlas, answers, drops)
+        if placed is not None:
+            keys.extend(placed)
+            answered.add(fold(place.city))
             continue
         found, reason = atlas.resolve(place.city, place.country)
         if reason is not None:
@@ -359,7 +416,7 @@ def check_places(places: Sequence[AnswerPlace], evidence: TextEvidence, atlas: P
                 keys.extend(atlas.resolve("", place.country)[0])
         else:
             keys.extend(found)
-    return tuple(_dedupe(keys)), tuple(unresolved)
+    return tuple(_dedupe(keys)), tuple(unresolved), answered
 
 
 # ── People ──────────────────────────────────────────────────────────────────
@@ -429,6 +486,123 @@ def check_review(answer: ProfileAnswer, evidence: TextEvidence,
     return True, tuple(kept)
 
 
+# ── The owner's answers (§4.7) ──────────────────────────────────────────────
+
+def owner_time_point(answer: DateAnswer) -> Optional[ProfileTimePoint]:
+    """The point an owner's date answer gives, read with the derivation's own date reader (`date_value_problem`; a
+    month is read as its first day too, so a month that does not exist is refused); None when it does not read or its
+    end is before its start. The source is the mention the owner was asked about."""
+    def reads(value: str) -> bool:
+        if date_value_problem(value, answer.precision) is not None:
+            return False
+        return answer.precision != "month" or date_value_problem(value + "-01", "day") is None
+    if not reads(answer.start) or (answer.end and (not reads(answer.end) or answer.end < answer.start)):
+        return None
+    return ProfileTimePoint(answer.start, answer.end, answer.precision, answer.mention)
+
+
+def _source_about(source: str, mention: str) -> bool:
+    """A point read from the flagged words: its folded source and the folded mention hold one another as words."""
+    a, b = fold(source), fold(mention)
+    if not a or not b:
+        return False
+    return a == b or _has_word(a, b) or _has_word(b, a)
+
+
+def _person_matches(person: ProfilePerson, mention: str) -> bool:
+    """The person a mention points to: the folded name equals it or holds every word of it; without a name, the folded
+    role equals it."""
+    if person.name:
+        name = fold(person.name)
+        return name == mention or set(mention.split()) <= set(name.split())
+    return fold(person.role) == mention
+
+
+def _apply_person(entry: ConfirmedPerson, mention: str, people: List[ProfilePerson]) -> List[ProfilePerson]:
+    """The people after the owner said `mention` is `entry` (§4.5 rules): the user is no person entry; a printed name is
+    kept and takes the entry's relation; a person without a name takes the entry's name, from the list; nobody matched
+    adds the entry, from the list."""
+    if entry.is_user:
+        return [p for p in people if not _person_matches(p, mention)]
+    relation = entry.relation.casefold()
+    role_keys = word_form_keys(relation)
+    out: List[ProfilePerson] = []
+    matched = False
+    for p in people:
+        if not _person_matches(p, mention):
+            out.append(p)
+            continue
+        matched = True
+        if p.name:
+            out.append(ProfilePerson(p.name, relation, p.name_keys, role_keys, p.from_list))
+        else:
+            out.append(ProfilePerson(entry.name, relation, name_keys(entry.name), role_keys, from_list=True))
+    if not matched:
+        out.append(ProfilePerson(entry.name, relation, name_keys(entry.name), role_keys, from_list=True))
+    return out
+
+
+def _apply_date(entry: DateAnswer, points: List[ProfileTimePoint],
+                drops: Dict[str, int]) -> Optional[List[ProfileTimePoint]]:
+    """The points after the owner dated the flagged mention: the points read from those words are replaced by the
+    owner's point; None (nothing applied) when the answer does not read or no room is left under TIME_CAP."""
+    point = owner_time_point(entry)
+    if point is None:
+        _bump(drops, "date_answer_unreadable")
+        return None
+    kept = [p for p in points if not _source_about(p.source, entry.mention)]
+    if len(kept) >= TIME_CAP:
+        _bump(drops, "date_answer_over_cap")
+        return None
+    return kept + [point]
+
+
+def apply_answers(answers: ProfileAnswers, lineage_id: str, points: Sequence[ProfileTimePoint],
+                  people: Sequence[ProfilePerson], review_needed: bool, review_items: Sequence[ProfileReviewItem],
+                  answered_cities: Set[str], listed: Sequence[ConfirmedPerson], drops: Dict[str, int],
+                  ) -> Tuple[Tuple[ProfileTimePoint, ...], Tuple[ProfilePerson, ...], bool,
+                             Tuple[ProfileReviewItem, ...]]:
+    """(points, people, review needed, review items) after the owner's answers this fact names. A `places` item whose
+    city an answer placed is dropped; a `people` item with an `entry` or `not_listed` answer for this lineage and
+    mention is dropped and the entry applied (an entry no longer on the list keeps the item); a `time_points` item with
+    a `date` answer for this lineage and mention is dropped and its points replaced. Every dropped item counts
+    `review_item_answered`; the flag clears when an item was answered and none is left. `unknown` changes nothing."""
+    out_points, out_people = list(points), list(people)
+    kept: List[ProfileReviewItem] = []
+    answered = 0
+    by_name = {entry.name.casefold(): entry for entry in listed}
+    for item in review_items:
+        mention = fold(item.mention)
+        done = False
+        if item.field == "places":
+            done = mention in answered_cities
+        elif item.field == "people" and lineage_id:
+            person = answers.people.get(person_point_key(lineage_id, item.mention))
+            if person is not None and person.resolution == "not_listed":
+                done = True
+            elif person is not None and person.resolution == "entry":
+                entry = by_name.get(person.name.casefold())
+                if entry is None:
+                    _bump(drops, "person_answer_stale")
+                else:
+                    out_people = _apply_person(entry, mention, out_people)
+                    done = True
+        elif item.field == "time_points" and lineage_id:
+            dated = answers.dates.get(date_point_key(lineage_id))
+            if dated is not None and dated.resolution == "date" and fold(dated.mention) == mention:
+                replaced = _apply_date(dated, out_points, drops)
+                if replaced is not None:
+                    out_points, done = replaced, True
+        if done:
+            answered += 1
+            _bump(drops, "review_item_answered")
+        else:
+            kept.append(item)
+    if answered and not kept:
+        review_needed = False
+    return tuple(out_points), tuple(out_people), review_needed, tuple(kept)
+
+
 # ── The whole profile ───────────────────────────────────────────────────────
 
 def _metadata_values(metadata: Optional[Mapping[str, Any]]) -> List[str]:
@@ -438,10 +612,12 @@ def _metadata_values(metadata: Optional[Mapping[str, Any]]) -> List[str]:
 
 def derive_profile(answer: ProfileAnswer, text: str, metadata: Optional[Mapping[str, Any]],
                    atlas: PlaceNames, recorded_year: Optional[int] = None,
-                   listed: Sequence[ConfirmedPerson] = ()) -> DeriveOutcome:
+                   listed: Sequence[ConfirmedPerson] = (), answers: ProfileAnswers = EMPTY_ANSWERS,
+                   lineage_id: str = "") -> DeriveOutcome:
     """The profile of a non-directive fact from its validated answer (a directive takes `directive_profile`).
     `recorded_year` fills dates the fact prints without a year; `listed` are the confirmed list's entries, the only
-    names kept without being printed."""
+    names kept without being printed; `answers` are the owner's answers to profile questions, applied to this fact by
+    its `lineage_id` (person and date answers) and its places (§4.7)."""
     drops: Dict[str, int] = {}
     # The retraction prefix is code's, not the fact's: its date is no source of a time point.
     texts = [_RETRACTION_PREFIX.sub("", text, count=1), *metadata_lines(metadata)]
@@ -465,9 +641,11 @@ def derive_profile(answer: ProfileAnswer, text: str, metadata: Optional[Mapping[
         redo = INTIMATE_WITHOUT_LABELS
 
     points = check_time_points(answer.time_points, evidence, raw_all, values, drops, recorded_year)
-    place_keys, unresolved = check_places(answer.places, evidence, atlas, drops)
+    place_keys, unresolved, answered_cities = _check_places(answer.places, evidence, atlas, drops, answers)
     people = check_people(answer.people, evidence, drops, listed)
     review_needed, review_items = check_review(answer, evidence, drops)
+    points, people, review_needed, review_items = apply_answers(
+        answers, lineage_id, points, people, review_needed, review_items, answered_cities, listed, drops)
     profile = FactProfile(
         primary_domain=primary, domain_keys=(primary, *extras), user_identity=answer.user_identity,
         kinds=tuple(answer.kinds), sensitivity=answer.sensitivity, label_words=labels, time_role=answer.time_role,

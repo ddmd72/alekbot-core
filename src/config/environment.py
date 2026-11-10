@@ -614,6 +614,14 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}confirmed_people"
 
     @property
+    def profile_answers_collection(self) -> str:
+        """
+        The owner's answers to profile questions (fact profile RFC §4.7): one document per account, doc id `<account_id>`.
+        Written only from the owner's answer; read by the profile step. Dev: development_profile_answers
+        """
+        return f"{self.firestore_collection_prefix}profile_answers"
+
+    @property
     def fact_review_messages_collection(self) -> str:
         """
         The memory review's message records (Facts S4 plan §2.2): the weekly digest's claim, doc id `<user_id>:digest:<iso_week>`

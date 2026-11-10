@@ -18,7 +18,7 @@ from ..domain.entities import FactEntity
 from ..domain.fact_query import FactQuery
 from ..domain.fact_search_lists import DEPTH_KNN, run_search
 from ..domain.fact_search_snapshot import FactSearchSnapshot
-from ..domain.place_names import PlaceNames
+from ..domain.place_names import PlaceNames, fold, local_place_key
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_search_port import FactSearchPort
 from ..ports.repository import FactRepository
@@ -122,6 +122,9 @@ class FactSearchService(FactSearchPort):
         keys = set()
         for place in query.places:
             keys.update(names.query_keys(place.name, place.country))
+            # A place the owner confirmed that the atlas lacks is stored under its folded name (RFC §4.7, §5.3).
+            if fold(place.name):
+                keys.add(local_place_key(place.name))
         return frozenset(keys)
 
     async def _snapshot(self, account_id: str, refreshed_at: object) -> Tuple[_Loaded, str]:
