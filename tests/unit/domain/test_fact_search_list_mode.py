@@ -72,6 +72,29 @@ def test_different_keys_are_joined_by_and():
     assert out.kept == ["fabia"] and out.keys == ("domains", "kinds")
 
 
+def test_domains_with_kinds_are_ignored_and_a_kind_match_under_another_domain_stays():
+    facts = [fact("fabia", "Bought the 2015 Skoda Fabia", domains=("transport",), kinds=["ownership"]),
+             fact("washer", "Bought the washer for 12 Oak Street", domains=("home",), kinds=["ownership"]),
+             fact("bus", "Took the bus to Coimbra", domains=("transport",), kinds=["trip"])]
+    out = search(facts, query(domains=["transport"], kinds=["ownership"], scope="all"))
+    assert sorted(out.kept) == ["fabia", "washer"] and out.keys == ("kinds",)
+
+
+def test_a_phrase_with_only_domains_still_filters_by_domain():
+    facts = [fact("fabia", "Bought the 2015 Skoda Fabia", domains=("transport",), kinds=["ownership"]),
+             fact("washer", "Bought the washer for 12 Oak Street", domains=("home",), kinds=["ownership"])]
+    out = search(facts, query(domains=["transport"], scope="all"))
+    assert out.kept == ["fabia"] and out.keys == ("domains",)
+
+
+def test_domains_with_people_are_ignored():
+    facts = [fact("sister", "Hanna lives in Porto", domains=("family",), people=[HANNA]),
+             fact("lease", "Hanna signed the Porto lease", domains=("home",), people=[HANNA]),
+             fact("car", "Skoda Fabia oil change", domains=("transport",))]
+    out = search(facts, query(people=["Hanna"], domains=["family"], scope="all"))
+    assert sorted(out.kept) == ["lease", "sister"] and out.keys == ("people",)
+
+
 def test_people_match_by_name_or_relation():
     facts = [fact("named", "Dinner with Clara", people=[person("Clara", "")]),
              fact("related", "Birthday gift for my partner: a cookbook", people=[person("", "partner")]),
@@ -209,6 +232,12 @@ def test_otherwise_the_gate_drops_an_intimate_fact():
     plain = fact("plain", "Clara likes the Coimbra trips", kinds=["gift"])
     out = search([secret(), plain], query(kinds=["gift"], scope="all"))
     assert out.kept == ["plain"] and out.gate_dropped == 1 and out.lists["set"] == ["plain"]
+
+
+def test_an_intimate_fact_under_an_ignored_domain_stays_out():
+    plain = fact("plain", "Clara likes the Coimbra trips", domains=("family",), kinds=["gift"])
+    out = search([secret(), plain], query(domains=["family"], kinds=["gift"], scope="all"))
+    assert out.kept == ["plain"] and out.gate_dropped == 1 and out.keys == ("kinds",)
 
 
 # ------------------------------------------------------------------------------------------------ fallback

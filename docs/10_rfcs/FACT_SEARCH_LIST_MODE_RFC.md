@@ -55,6 +55,12 @@ The structural keys are the four slots that the profile stores as exact fields:
   either" grouping of the `top` domain list does not apply here.
 - **Different keys are joined by AND.** A fact is in the set only when every key the phrase names matches. The filter
   is strict.
+- **A domain is a key only when it stands alone.** The phrase's domains take part in membership only when it has none
+  of kinds, people, a resolved named place or a time window; otherwise they are ignored for the set (`top` still uses
+  them for its domain list). The slots model infers domains the question never named, and the strict AND would then
+  drop every fact stored under another domain (a bicycle stored under belongings for "my transport"). A domain-only
+  phrase ("everything about my health") still filters by domain. The result's `keys` list only the keys that formed
+  the set.
 - **A time window is a filter too.** The `period`, `future` and `past` intents add one more AND condition: a point of
   the fact inside the window (a recurring occasion by month and day, as in §5.3).
 - **`latest` is not a filter.** It only sets the output order (§3.2).
@@ -93,8 +99,9 @@ answer; the result is ordered by closeness to the phrase like any other set.
 
 Today `scope=all` with people named opens the intimate gate on every list (`fact_search_lists.py:241`). Otherwise an
 intimate fact survives only in the labels list and its own domain list (§5.3). The `all` set applies the same gate. An
-intimate fact stays in the set when the phrase names people, or when it enters through a domain the phrase names (the
-case the domain list exempts today). Otherwise the gate drops it.
+intimate fact stays in the set when the phrase names people, or when it carries a domain that formed the set (§3.1: a
+domain ignored because the phrase has other keys never opens the gate, since the slots model usually inferred it).
+Otherwise the gate drops it.
 
 This stays open. The owner chose not to change the gate now, because there is a sole user.
 
@@ -104,9 +111,9 @@ All examples come from the invented universe of `tests/CLAUDE.md`. Springfield i
 
 - **"everything about Clara".** One key: people, `Clara` (the partner). The set is every fact that names Clara or carries
   the partner relation, ordered by closeness to the phrase. Because people are named, the intimate gate is open.
-- **"everything about the Skoda Fabia".** Two keys: the domain `transport` and the kind `ownership`. The set is the
-  transport facts that carry the ownership kind, ordered by closeness to "Skoda Fabia". The filter is strict: a
-  transport fact without the ownership kind is outside the set. Which keys a phrase carries is the slots' business (§6).
+- **"everything about the Skoda Fabia".** The slots carry the domain `transport` and the kind `ownership`; the domain
+  is ignored (§3.1), so one key forms the set: the facts that carry the ownership kind, whatever their domain, ordered by
+  closeness to "Skoda Fabia". A transport fact without the ownership kind is outside the set. Which keys a phrase carries is the slots' business (§6).
 - **"all my gym habits"** (the Iron Temple gym). A topic with a domain. Two domain values, `sport` and `lifestyle`,
   joined by OR, give the facts that carry either one. The phrase names no place, so no Springfield facts join through the
   home list as they would under `top`. Facts about the gym itself rise to the top only by closeness.

@@ -169,6 +169,19 @@ def set_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str,
     return tuple(name for name, present in named if present)
 
 
+def set_domains(query: FactQuery, query_place_keys: AbstractSet[str]) -> FrozenSet[str]:
+    """The domains that take part in the membership of an `all` set (list mode RFC §3.1): the phrase's domains only when
+    it has none of kinds, people, a resolved named place or a time window. The slots model infers domains the question
+    never named, and the strict AND would drop every fact stored under another domain. `top` is untouched."""
+    others = tuple(k for k in set_keys(query, query_place_keys) if k != "domains")
+    return frozenset() if others else frozenset(query_domains(query))
+
+
+def membership_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
+    """The keys that formed the set: `set_keys` without the domains `set_domains` left out."""
+    return tuple(k for k in set_keys(query, query_place_keys) if k != "domains" or set_domains(query, query_place_keys))
+
+
 def unresolved_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
     """The keys a phrase names that were ignored because they reach nothing: `place` when it names places and they
     reach no place key."""
@@ -208,7 +221,7 @@ class _Search:
         keys. People match as `person_match`; a named place by the fact's place keys meeting `place_keys` (no keys: the
         place is no condition, `set_keys`); a window by a point inside it (a recurring occasion by month and day)."""
         rows, query, span = self._rows, self._query, self._window
-        domains, kinds = frozenset(query_domains(query)), _query_kinds(query)
+        domains, kinds = set_domains(query, place_keys), _query_kinds(query)
         people = frozenset(self.person_match()) if query.people else None
         places = place_keys if query.places else frozenset()
 
@@ -222,12 +235,13 @@ class _Search:
 
         return [i for i in self._ids if member(i)]
 
-    def set_gate(self, members: Sequence[str]) -> Tuple[List[str], int]:
+    def set_gate(self, members: Sequence[str], place_keys: FrozenSet[str]) -> Tuple[List[str], int]:
         """The intimate gate of the set (list mode RFC §3.5): an intimate fact stays when the phrase names people, or when
-        it carries a domain the phrase names; otherwise it is dropped."""
+        it carries a domain that formed the set (`set_domains`: an ignored domain, usually inferred by the slots model, never
+        opens the gate); otherwise it is dropped."""
         if self._query.people:
             return list(members), 0
-        domains = frozenset(query_domains(self._query))
+        domains = set_domains(self._query, place_keys)
         kept = [i for i in members if self._rows[i].sensitivity != "intimate" or self._rows[i].domains & domains]
         return kept, len(members) - len(kept)
 
@@ -471,10 +485,10 @@ def run_set(
     Arguments as `run_search`; the phrase must name a key (`set_keys`)."""
     close = closeness(similarity, message_similarity)
     engine = _Search(snapshot, query, similarity, close)
-    members, dropped = engine.set_gate(engine.set_members(query_place_keys))
+    members, dropped = engine.set_gate(engine.set_members(query_place_keys), frozenset(query_place_keys))
     ordered = engine.set_order(members)
     fused = [i for i in ordered if i not in exclude]
     kept = keep_distinct(fused, is_duplicate, None)
     return SearchOutcome(lists={"set": ordered}, gate_dropped=dropped, uncut={}, fused=fused, kept=kept,
                          scores={i: float(close.get(i, 0.0)) for i in fused}, mode=SCOPE_ALL,
-                         keys=set_keys(query, query_place_keys))
+                         keys=membership_keys(query, query_place_keys))
