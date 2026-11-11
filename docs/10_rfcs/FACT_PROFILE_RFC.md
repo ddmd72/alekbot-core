@@ -395,6 +395,7 @@ through the `lp:` key its query side adds (§5.3).
 
 ## 5. Search
 
+Amended by `FACT_SEARCH_LIST_MODE_RFC.md` (`scope=all` per phrase as a boolean set; capped lists ordered by closeness).
 ### 5.1 Query contract and slots
 
 `FactQuery` (`src/domain/fact_query.py`): `subject`, `kind`, `people[]`, `places[{name, country}]`,
