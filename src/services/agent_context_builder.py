@@ -60,8 +60,6 @@ class AgentProviderStrategy:
             "required_capabilities": ["context_caching"],
             "fallback": None
         },
-        # The fact profiler (FACT_PROFILE_RFC §4.1): one structured call per fact, pinned to Claude. No cross-provider
-        # fallback: memory quality over availability, owner ruling 2026-10-23 (P9 D8).
         # The memory-search slots call (one structured JSON reply): Claude only, so the pinned Haiku id is
         # always sent to a Claude provider whatever the user's provider preference. The router's slots call does
         # not use this entry: it runs on the router's own context.
@@ -71,6 +69,8 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": None
         },
+        # The fact profiler (FACT_PROFILE_RFC §4.1): one structured call per fact, pinned to Claude. No cross-provider
+        # fallback: memory quality over availability, owner ruling 2026-10-23 (P9 D8).
         "fact_profiler": {
             "default_provider": "claude",
             "allowed_providers": ["claude"],

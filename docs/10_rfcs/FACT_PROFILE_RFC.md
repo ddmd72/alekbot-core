@@ -409,10 +409,10 @@ dates parsed and the window clamped (§5.3), unknown domains and kinds dropped, 
 
 Slots come from the **P1 prompt** as a Firestore token (`OUTPUT_FORMAT_FACT_QUERY_SLOTS` with its rules; LIFE AREAS
 rendered from the registry; `Today: <date> (<weekday>), timezone <owner zone>` appended per call), run by
-`FactQuerySlotsAgent` on the tier of its caller — the Router's and `facts_memory`'s ECO tier (flash-lite). The call
+`FactQuerySlotsAgent`. The memory-search path runs it on `claude-haiku-5-5` with thinking low (optional knob `FACT_QUERY_SLOTS_MODEL`); the Router path keeps the Router's own model and no thinking. The call
 carries the owner's location block, and the token ends with one paragraph that explains it: a request about something
 coming to the user or happening where they are is about their town even when the request does not name it, so the
-slots put that town as the place (OD-14; the frozen head is otherwise unchanged). Inputs: the Router path passes the
+slots put that town as the place (OD-14). The `latest` clause and the home paragraph were rewritten after the freeze (draft2, measured 2026-11-11); the rest of the head is unchanged. Inputs: the Router path passes the
 turn's messages; the memory search agent passes each phrase it received as `SEARCH_REQUEST "<phrase>"`, one call per
 phrase, in parallel (§5.4). A failed slots call degrades to one semantic list over the raw text (no prompt involved).
 
