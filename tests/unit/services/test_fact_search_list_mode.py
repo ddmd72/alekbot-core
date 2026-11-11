@@ -82,12 +82,12 @@ async def test_without_a_subject_the_message_orders_the_set():
 
 async def test_the_log_marks_each_phrase_mode_and_the_keys_of_a_set(caplog):
     world = await _world()
-    clara = replace(query(people=["Clara"], domains=["family"]), scope="all")
+    clara = replace(query(people=["Clara"], kinds=["gift"], domains=["family"]), scope="all")
     keyless = replace(query(subject="Skoda Fabia"), scope="all")
     with caplog.at_level(logging.INFO):
         await world.phrases(gym_set(), query(subject="Skoda Fabia"), clara, keyless)
     (line,) = lines(caplog)
-    assert " modes=all[domains],top,all[domains+people],all>top " in line
+    assert " modes=all[domains],top,all[kinds+people],all>top " in line
     assert f" lists=set:{CUT + 5} " in line
 
 

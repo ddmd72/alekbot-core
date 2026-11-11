@@ -65,11 +65,14 @@ def test_two_domains_give_the_facts_carrying_either_with_no_both_first_grouping(
 
 
 def test_different_keys_are_joined_by_and():
-    facts = [fact("fabia", "Bought the 2015 Skoda Fabia", domains=("transport",), kinds=["ownership"]),
-             fact("bus", "Took the bus to Coimbra", domains=("transport",), kinds=["trip"]),
-             fact("flat", "Bought the washer for 12 Oak Street", domains=("home",), kinds=["ownership"])]
-    out = search(facts, query(subject="Skoda Fabia", domains=["transport"], kinds=["ownership"], scope="all"))
-    assert out.kept == ["fabia"] and out.keys == ("domains", "kinds")
+    facts = [fact("fabia", "Bought the 2015 Skoda Fabia", domains=("transport",), kinds=["ownership"],
+                  points=[point("2015-06-01")]),
+             fact("bus", "Took the bus to Coimbra", domains=("transport",), kinds=["trip"], points=[point("2015-06-01")]),
+             fact("flat", "Bought the washer for 12 Oak Street", domains=("home",), kinds=["ownership"],
+                  points=[point("2026-10-01")])]
+    out = search(facts, query(subject="Skoda Fabia", kinds=["ownership"], intent="period", start=D("2015-06-01"),
+                              end=D("2015-06-30"), scope="all"))
+    assert out.kept == ["fabia"] and out.keys == ("kinds", "time")
 
 
 def test_domains_with_kinds_are_ignored_and_a_kind_match_under_another_domain_stays():
@@ -134,10 +137,10 @@ def test_a_time_window_alone_defines_a_slice_with_a_recurring_occasion_by_month_
 
 
 def test_a_window_is_one_more_and_condition():
-    facts = [fact("march", "Weekend in Coimbra", domains=("travel",), points=[point("2026-03-07")]),
-             fact("may", "Porto with Hanna", domains=("travel",), points=[point("2026-05-02")]),
+    facts = [fact("march", "Weekend in Coimbra", domains=("travel",), kinds=["trip"], points=[point("2026-03-07")]),
+             fact("may", "Porto with Hanna", domains=("travel",), kinds=["trip"], points=[point("2026-05-02")]),
              fact("gym", "Iron Temple gym pass renewed", domains=("sport",), points=[point("2026-03-10")])]
-    out = search(facts, query(domains=["travel"], intent="period", start=D("2026-03-01"), end=D("2026-03-31"),
+    out = search(facts, query(kinds=["trip"], intent="period", start=D("2026-03-01"), end=D("2026-03-31"),
                               scope="all"))
     assert out.kept == ["march"]
 
@@ -224,8 +227,8 @@ def test_people_named_open_the_gate():
 
 
 def test_an_intimate_fact_entering_through_a_named_domain_stays():
-    out = search([secret()], query(domains=["family"], kinds=["gift"], scope="all"))
-    assert out.kept == ["secret"] and out.gate_dropped == 0
+    out = search([secret()], query(domains=["family"], scope="all"))
+    assert out.kept == ["secret"] and out.gate_dropped == 0 and out.keys == ("domains",)
 
 
 def test_otherwise_the_gate_drops_an_intimate_fact():
