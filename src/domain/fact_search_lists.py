@@ -336,11 +336,9 @@ class _Search:
         return lists
 
     def gate(self, lists: Dict[str, List[str]]) -> Tuple[Dict[str, List[str]], int]:
-        """An intimate fact stays only in the labels list and its own domain list; the exception is collecting all facts
-        about a person."""
-        if self._query.scope == SCOPE_ALL and self._query.people:
-            return lists, 0
-        kept = {name: [i for i in members if self._rows[i].sensitivity != "intimate" or name in ("labels", "domain")]
+        """An intimate fact stays only in the labels list and its own domain list. (An `all` phrase naming people never
+        gets here: it is a set phrase, gated by `set_gate`.)"""
+        kept ={name: [i for i in members if self._rows[i].sensitivity != "intimate" or name in ("labels", "domain")]
                 for name, members in lists.items()}
         dropped = sum(len(lists[name]) - len(kept[name]) for name in lists)
         return kept, dropped
