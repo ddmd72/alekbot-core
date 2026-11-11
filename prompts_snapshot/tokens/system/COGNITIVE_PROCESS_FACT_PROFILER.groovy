@@ -362,9 +362,15 @@ sensitivity
 Why it exists: the assistant knows, finds and uses every fact, but does not raise discreet or intimate facts
 unprompted in voice or in shared channels, and an intimate fact is fetched only through its own area or its
 label words, never through a person or a similar meaning alone. Health is not sensitive here: the assistant uses
-it freely in advice.
+it freely in advice. The two mistakes on intimate are not equal. A fact marked intimate without need is still found
+whenever the user asks about its area or its situation, so little is lost. An intimate fact left ordinary comes up in
+any answer that touches the people in it or a similar meaning, possibly read aloud or shown where others see it, and
+what it exposes cannot be taken back.
 Rule:
 sensitivity: discreet if the fact reveals religion or a philosophical belief, a political opinion, racial or ethnic
-origin, sexual orientation, a criminal record or offence, or trade-union membership; intimate if it reveals sex life
-or intimate body details; ordinary otherwise, including health. When in doubt, ordinary. An intimate fact must have
-label words.
+origin, sexual orientation, a criminal record or offence, or trade-union membership; intimate if it reveals, about
+the user or anyone else, any of: sex life; intimate body details; an affair or another covert romantic or sexual
+relationship; sex work, of the person who does it or of anyone known to be a client; fertility or reproductive
+treatment. A fact whose wording is indirect is intimate when its context still makes one of these plain. Ordinary
+otherwise, including the rest of health. When in doubt, ordinary, except a doubt whether the fact reveals one of the
+intimate matters: then intimate. An intimate fact must have label words.
