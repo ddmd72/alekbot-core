@@ -46,16 +46,25 @@ def _delegate_description(config: dict) -> str:
 
 class TestSwitchedOnXai:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", list(VoiceMode))
+    @pytest.mark.parametrize("mode", [mode for mode in VoiceMode if mode is not VoiceMode.INTERPRETER])
     async def test_the_delegate_tool_offers_no_light_web_search_in_any_mode(self, mode):
         config = await _config(_lelik("xai", native_web_search=True), mode)
 
         description = _delegate_description(config)
         assert "- search_web_light:" not in description
         assert "- ask_alek:" in description
-        # An interpreter call has no memory search (owner rule 2026-11-10); every other mode keeps it.
-        assert ("- search_memory:" in description) is (mode is not VoiceMode.INTERPRETER)
+        assert "- search_memory:" in description
         assert "send_to_chat" in {t["name"] for t in config["tools"]}
+
+    @pytest.mark.asyncio
+    async def test_an_interpreter_call_offers_no_search_of_any_kind(self):
+        # Owner decision 2026-11-11: the interpreter has no tools and no web search, the provider's own included.
+        agent = _lelik("xai", native_web_search=True)
+        config = await _config(agent, VoiceMode.INTERPRETER)
+
+        assert config["tools"] == []
+        assert agent.permitted_intents(VoiceMode.INTERPRETER) == frozenset()
+        assert VoiceSessionSpec.from_dict(config["voice"]).builtin_search is False
 
     @pytest.mark.asyncio
     async def test_the_session_spec_asks_the_relay_for_built_in_search(self):

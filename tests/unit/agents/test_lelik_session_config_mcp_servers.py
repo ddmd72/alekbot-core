@@ -106,15 +106,14 @@ class TestSearchMemoryLeavesOnlyTheInterpreter:
 
     @pytest.mark.parametrize("mcp_servers", [SERVERS, ()])
     async def test_an_interpreter_call_declares_and_permits_no_search_memory(self, mcp_servers):
-        """Owner rule 2026-11-10: an interpreter call (xAI only) has no memory search, with or without the MCP servers,
-        and still carries no server of its own."""
+        """Owner rule 2026-11-10, widened 2026-11-11: an interpreter call (xAI only) has no tools at all, so no memory
+        search and no other intent, with or without the MCP servers, and still carries no server of its own."""
         agent = _lelik(mcp_servers=mcp_servers)
         config = await _config(agent, VoiceMode.INTERPRETER)
 
         assert VOICE_MCP_SERVERS_FIELD not in config
-        assert Intent.SEARCH_MEMORY not in _declared_intents(config)
-        assert Intent.ASK_ALEK in _declared_intents(config)
-        assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.INTERPRETER)
+        assert config["tools"] == []
+        assert agent.permitted_intents(VoiceMode.INTERPRETER) == frozenset()
 
     async def test_a_model_naming_search_memory_on_the_mcp_call_is_dispatched(self):
         agent = _lelik()

@@ -34,7 +34,9 @@ async def test_a_companion_search_memory_delegation_is_not_refused():
     agent.coordinator.handle_delegation.assert_awaited_once()
 
 
-def test_the_interpreter_keeps_its_other_intents():
+def test_the_interpreter_permits_no_intent_while_the_companion_keeps_its_own():
+    # Owner decision 2026-11-11: the interpreter has no tools, so nothing is delegable from it, search_memory included.
     agent = _agent()
 
-    assert agent.permitted_intents(VoiceMode.INTERPRETER) == agent.permitted_intents(VoiceMode.LELIK) - {"search_memory"}
+    assert agent.permitted_intents(VoiceMode.INTERPRETER) == frozenset()
+    assert "search_memory" in agent.permitted_intents(VoiceMode.LELIK)
