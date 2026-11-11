@@ -42,7 +42,7 @@ single-purpose call with its own prompt profile, started from its own page. Mode
 
 **No tools (owner decision, 2026-11-11).** An interpreter call is built with an empty tool list: no `send_to_chat`,
 no `delegate_to_specialist` (so no memory, web search or `ask_alek`), no MCP server and no MCP token. It is a tool
-that only translates; anything it could act on is a way for a mistranslated or overheard phrase to do something.
+that only translates; the provider's built-in search (xAI `web_search`, `x_search`) is off too; anything it could act on is a way for a mistranslated or overheard phrase to do something.
 `LelikAgent` leaves the tools out where the session is built (`_tool_declarations`), and `permitted_intents` is empty
 for the mode, so `/voice/delegate` refuses every intent a call in this mode names.
 

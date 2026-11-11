@@ -143,7 +143,7 @@ class LelikAgent(BaseAgent):
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         mcp_servers = self._mcp_servers_for(mode)
         tools = self._tool_declarations(mode, available)
-        session = replace(self._voice_profile.session, builtin_search=native_search)
+        session = replace(self._voice_profile.session, builtin_search=native_search and mode is not VoiceMode.INTERPRETER)
         config: Dict[str, Any] = {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
         if mcp_servers:
             # Descriptors only: the tokens are minted at ticket redemption and never stored (O1).
