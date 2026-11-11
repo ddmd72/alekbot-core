@@ -647,6 +647,8 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
 for every account (`composition/fact_profiler_runner.py: profiler_model`). Claude ids only: the strategy's only provider
 is Claude and it has no fallback. Read with `os.getenv` where the container is built, never in `load_settings()`.
 
+**Memory-search slots model.** `FACT_QUERY_SLOTS_MODEL` (optional; empty = `claude-haiku-5-5`) pins the model of the slots call on the memory-search path (`composition/fact_query_slots_setup.py: search_slots_model`), which runs with thinking `low` on the Claude-only `fact_query_slots` provider entry whatever the user's provider preference. The router's slots call is not affected: it keeps the router's own model and no thinking. Claude ids only. Read with `os.getenv` where `UserAgentFactory` builds the agent, never in `load_settings()`.
+
 **Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (optional; empty = `20`) is the most model calls one profile step makes in a
 leased run (`composition/fact_profile_setup.py: max_per_run`); `0` turns the step into re-derivation only (no model call, so no spend),
 an unparsable or negative value is `20` with one WARNING. Read with `os.getenv` in `application_graph.py`, never in `load_settings()`.

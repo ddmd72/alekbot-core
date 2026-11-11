@@ -67,7 +67,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 | Tutor, TutorExtractor | `docs/10_rfcs/COMPANION_AGENTS_RFC.md`, `decisions/companion_write_path.md`, `decisions/companion_history_recent_full_turns_per_channel.md` |
 | Lelik, LelikSummarizer, AlekGateway | `docs/10_rfcs/VOICE_COMPANION_RFC.md` (§4.7, §4.8, §4.10, §4.15), `decisions/lelik_send_to_chat.md`, `docs/04_solution_strategy/current_implementation/STRUCTURE.md` |
 
-| FactQuerySlots | `docs/10_rfcs/FACT_PROFILE_RFC.md` §5.1. Internal and unregistered: runs on its caller's execution context (cheap model), degrades to one semantic list. The LIFE AREAS block is code (the domain registry); the `OUTPUT_FORMAT_FACT_QUERY_SLOTS` token is the measured P1 head |
+| FactQuerySlots | `docs/10_rfcs/FACT_PROFILE_RFC.md` §5.1. Internal and unregistered, degrades to one semantic list. The memory-search path runs it on `claude-haiku-5-5` with thinking low (knob `FACT_QUERY_SLOTS_MODEL`, Claude-only `fact_query_slots` provider entry); the router path keeps the router's model and no thinking. The LIFE AREAS block is code (the domain registry); the `OUTPUT_FORMAT_FACT_QUERY_SLOTS` token is the P1 head with its `latest` clause and home paragraph rewritten (draft2, measured 2026-11-11) |
 
 ### Traps by agent
 

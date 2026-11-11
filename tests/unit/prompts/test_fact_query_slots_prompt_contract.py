@@ -1,8 +1,10 @@
 """The query prompt and its response schema are one contract (fact profile RFC §5.1, §9 row 7).
 
-The token is the frozen P1 head (measured on the cheap model) followed by one paragraph on the owner's location block
-(OD-14 (b), measured and owner-approved); the LIFE AREAS block is rendered from the domain registry. The pins below
-change only with a deliberate re-measurement of the prompt. This file lives in
+The token is the frozen P1 head (measured on the cheap model) with one clause rewritten, the `latest` intent, then one
+paragraph on the owner's location block (OD-14 (b)). The latest clause and the home paragraph are the 2026-11-11
+measured draft2 (owner-approved); outside the latest clause the P1 head is byte-identical, and the head pin checks that
+by putting the P1 clause back. The LIFE AREAS block is rendered from the domain registry. The pins below change only
+with a deliberate re-measurement of the prompt. This file lives in
 `tests/unit/prompts` because `make test-unit` and `make ci` do not collect `tests/contracts/`."""
 import hashlib
 import re
@@ -16,9 +18,13 @@ from src.domain.fact_query_parse import QUERY_DOMAINS, QUERY_INTENTS
 from tests.support.prompt_render import render_static, rendered_token_ids
 
 _TOKEN = Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system" / "OUTPUT_FORMAT_FACT_QUERY_SLOTS.groovy"
-_HEAD_SHA256 = "b39657909aaeb0050e412181b31988e2d0b65c0952effca8c3d301b7e26fb088"
-_TOKEN_SHA256 = "533a648693d8385c84327ab0063293694f4177db16e2b8991dc4d0ea35878bf6"
-_WITH_BLOCK_SHA256 = "f6cafc0344f59ce0d4bd08eed68e185e3a442057cb089446140ef830de07ee3a"
+_HEAD_SHA256 = "b39657909aaeb0050e412181b31988e2d0b65c0952effca8c3d301b7e26fb088"   # the P1 head, as measured
+_P1_LATEST = "latest: it asks for the current or most recent state of something."
+_LATEST_SHA256 = "e37ee53fb5e4b5218d9d273d2416f342914fe8006d47e8622cb74d383dd4552b"  # 2026-11-11 draft2
+_HOME_SHA256 = "3749b67f4c4db9d6a52847bb70477a535647551bee1b945a773e9d702525fe4a"    # 2026-11-11 draft2
+_TOKEN_SHA256 = "6289d1f40caeb887eb1c8df204a01ea43bd08226791adb09a0b459ac97db1df9"
+# The 2026-11-11 measured draft2: the token followed by the rendered LIFE AREAS block.
+_WITH_BLOCK_SHA256 = "73f14b43cb2c70474758f034cad00dc2fecb06b9825e18cbb8d350e280ff9d38"
 _CYRILLIC = re.compile("[Ѐ-ӿ]")
 
 
@@ -30,15 +36,27 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def test_the_token_is_the_frozen_p1_head_and_the_home_paragraph():
+def _latest_clause(head: str) -> str:
+    """The `latest` clause: the rest of the intent line from `latest: ` on."""
+    line = next(row for row in head.split("\n") if row.startswith("- intent says"))
+    return line[line.index(" latest: ") + 1:]
+
+
+def test_the_token_is_the_frozen_p1_head_with_the_latest_clause_and_the_home_paragraph():
     head, _, home = _content().rpartition("\n\n")
-    assert len(head) == 5589 and _sha(head) == _HEAD_SHA256          # the P1 head, unchanged
+    latest = _latest_clause(head)
+    assert head.count(latest) == 1
+    p1_head = head.replace(latest, _P1_LATEST)
+    assert len(p1_head) == 5589 and _sha(p1_head) == _HEAD_SHA256    # the P1 head outside the latest clause, unchanged
+    assert _sha(latest) == _LATEST_SHA256
     assert home.startswith("The location block is where the user lives.") and "\n" not in home.rstrip("\n")
-    assert len(_content()) == 6009
+    assert _sha(home) == _HOME_SHA256
+    assert len(head) == 6380 and len(_content()) == 7164
     assert _sha(_content()) == _TOKEN_SHA256
 
 
 def test_the_token_with_the_rendered_life_areas_block_is_the_measured_prompt():
+    """The prompt the 2026-11-11 draft2 measurement ran: the token, then the LIFE AREAS block."""
     assert _sha(_content() + "\n\n" + render_life_areas_block() + "\n") == _WITH_BLOCK_SHA256
 
 
