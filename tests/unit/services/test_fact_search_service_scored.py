@@ -213,8 +213,8 @@ async def test_several_phrases_fuse_their_lists_and_log_one_line(world, caplog):
                                   query(subject="Clara's birthday is on 07-14"))
     assert got[:2] == ["f-Weekend in Coimbra with Clara Mar 6-8", "f-Clara's birthday is on 07-14"]
     (line,) = lines(caplog)
-    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 phrases=2 lists=semantic:3 cands=3 gate_dropped=0 "
-                        r"kept=3 unsnapped=0 snapshot=load:3 ms=\d+", line)
+    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 phrases=2 modes=top,top lists=semantic:3 cands=3 "
+                        r"gate_dropped=0 kept=3 unsnapped=0 snapshot=load:3 ms=\d+", line)
 
 
 async def test_one_phrase_is_the_plain_search(world):

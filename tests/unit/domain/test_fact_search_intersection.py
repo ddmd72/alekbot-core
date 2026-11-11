@@ -8,10 +8,11 @@ from src.domain.fact_search_snapshot import FactSearchSnapshot
 from tests.support.fact_search_kit import fact, query, search
 
 
-def scored(facts, q, *, semantic, sim, weights):
+def scored(facts, q, *, semantic, sim, weights, label_sim=None):
     """One search with injected weights, so the order does not depend on the fitted ones."""
     return run_search(FactSearchSnapshot.from_facts(list(facts)), q, semantic_ids=semantic, label_ids=None,
-                      similarity=sim, query_place_keys=frozenset(), is_duplicate=lambda a, b: False, weights=weights)
+                      similarity=sim, query_place_keys=frozenset(), is_duplicate=lambda a, b: False, weights=weights,
+                      label_similarity=label_sim)
 
 
 def test_one_domain_lists_every_fact_carrying_it():
@@ -50,8 +51,8 @@ def test_a_domain_list_is_capped_at_100_and_the_result_is_cut_at_30_only_after_s
     facts = [fact(f"f{n:03d}", domains=("money",)) for n in range(130)]
     top = search(facts, query(domains=["money"]))
     assert len(top.lists["domain"]) == 100 and len(top.kept) == 30
-    collect = search(facts, query(domains=["money"], scope="all"))
-    assert len(collect.lists["domain"]) == 100 and len(collect.kept) == 100
+    collect = search(facts, query(domains=["money"], scope="all"))       # list mode RFC §3.1: a filter key, no cap
+    assert list(collect.lists) == ["set"] and len(collect.lists["set"]) == 130 and len(collect.kept) == 130
 
 
 def test_the_cut_follows_the_order_of_the_whole_candidate_set():
@@ -63,9 +64,11 @@ def test_the_cut_follows_the_order_of_the_whole_candidate_set():
 def test_every_domain_list_member_is_a_candidate_and_its_in_list_order_does_not_rank():
     a, b, c = (fact(x, domains=("money",), role="state", reported=day)
                for x, day in (("a", date(2026, 11, 1)), ("b", date(2024, 1, 1)), ("c", date(2020, 1, 1))))
-    out = scored([a, b, c], query(subject="money", domains=["money"]), semantic=["c", "b"],
-                 sim={"a": 0.1, "b": 0.5, "c": 0.9}, weights={"sim_text": 1.0})
-    # domain (states newest first): a, b, c; semantic: c, b; a comes from the domain list alone
+    out = scored([a, b, c], query(subject="money", kind="savings", domains=["money"]), semantic=["c", "b"],
+                 sim={"a": 0.9, "b": 0.5, "c": 0.1}, label_sim={"a": 0.1, "b": 0.5, "c": 0.9},
+                 weights={"sim_label": 1.0})
+    # domain (by closeness to the subject, list mode RFC §5): a, b, c; semantic: c, b; a comes from the domain list
+    # alone; the score reads only the label similarity, so the fused order is the reverse of the in-list order
     assert out.lists["domain"] == ["a", "b", "c"]
     assert out.fused == ["c", "b", "a"]
 

@@ -1,5 +1,6 @@
-"""The duplicate pass and the cut of the fact search: `top` keeps the first 30 after the pass, `all` every kept fact;
-the pass compares each candidate with the facts already kept, in that argument order."""
+"""The duplicate pass and the cut of the fact search: `top` keeps the first 30 after the pass, `all` every kept fact of
+its set (list mode RFC §3.1: the keys define it, no cap, no kNN list); the pass compares each candidate with the facts
+already kept, in that argument order."""
 from tests.support.fact_search_kit import fact, query, search
 
 
@@ -14,14 +15,15 @@ def test_top_returns_the_first_30_kept():
 
 def test_all_has_no_cut_after_the_pass():
     out = search(crowd(130), query(domains=["money"], scope="all"))
-    assert len(out.lists["domain"]) == 100 and out.kept == out.fused and len(out.kept) == 100
+    assert len(out.lists["set"]) == 130 and out.kept == out.fused and len(out.kept) == 130
 
 
-def test_all_adds_the_semantic_hits_beyond_the_key_cut():
-    facts = crowd(130)
-    semantic = [f"f{k:03d}" for k in range(129, 89, -1)]
+def test_all_takes_every_key_match_from_the_key_and_no_semantic_hit():
+    facts = [*crowd(130), fact("stray", domains=("health",))]
+    semantic = ["stray", *(f"f{k:03d}" for k in range(129, 89, -1))]
     out = search(facts, query(domains=["money"], scope="all"), semantic=semantic)
-    assert len(out.kept) == 100 + len([i for i in semantic if i not in out.lists["domain"]])
+    assert list(out.lists) == ["set"] and "stray" not in out.kept
+    assert sorted(out.kept) == [f"f{k:03d}" for k in range(130)]
 
 
 def test_the_cut_counts_kept_facts_not_candidates():
