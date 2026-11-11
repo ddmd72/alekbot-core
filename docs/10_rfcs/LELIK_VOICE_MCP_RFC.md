@@ -55,6 +55,9 @@ memory or drive behaviour. Not replacing `ask_alek` (actions, mail, tasks) or `s
 > mode except the interpreter, which has no memory. The facts connector stays for claude.ai OAuth callers. The sections
 > below describe the original two-server design and are kept as history; where they say two servers, two tokens or that
 > `search_memory` leaves the call, this note wins.
+>
+> **Amendment, 2026-11-11:** the interpreter has no tools at all (not only no memory): no `send_to_chat`, no delegation,
+> no MCP server or token (`decisions/lelik_voice_modes.md`, § Interpreter behaviour).
 
 ## 3. Shape
 

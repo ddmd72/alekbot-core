@@ -40,6 +40,12 @@ single-purpose call with its own prompt profile, started from its own page. Mode
 
 ### Interpreter behaviour
 
+**No tools (owner decision, 2026-11-11).** An interpreter call is built with an empty tool list: no `send_to_chat`,
+no `delegate_to_specialist` (so no memory, web search or `ask_alek`), no MCP server and no MCP token. It is a tool
+that only translates; anything it could act on is a way for a mistranslated or overheard phrase to do something.
+`LelikAgent` leaves the tools out where the session is built (`_tool_declarations`), and `permitted_intents` is empty
+for the mode, so `/voice/delegate` refuses every intent a call in this mode names.
+
 Universal: the caller's language is the one they speak on the call, and the other language is learned
 from the other person's first words. Without a press of the **"Ask Lelik"** button Lelik only translates:
 everything either side says, even nonsense, even words that sound meant for him (owner, 2026-11-08). The
