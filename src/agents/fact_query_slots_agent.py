@@ -7,8 +7,9 @@ voice), or the Router's conversation messages. One cheap-model call writes the s
 survives. When the call cannot give a usable answer the agent degrades to one semantic list over the raw request: a
 memory search always runs, it only loses the narrowing lists.
 
-Internal: not manifest-registered, no tier of its own, and no caller yet. It is built by its caller with the caller's
-execution context (the model is the caller's cheap model), like `LelikSummarizerAgent`. The prompt is the P1 head
+Internal: not manifest-registered and no tier of its own. It is built by its caller with the caller's execution
+context, like `LelikSummarizerAgent`: the router passes its own cheap-model context and no thinking; the memory-search
+path passes a Claude context pinned to the slots model (`composition/fact_query_slots_setup.py`) and thinking `low`. The prompt is the P1 head
 (`OUTPUT_FORMAT_FACT_QUERY_SLOTS`) plus the LIFE AREAS block rendered from the domain registry, so a new life area
 reaches this prompt by code deploy alone. The call also carries the owner's location, so an implicit "here / to me"
 request can take the home town as its place.
@@ -95,8 +96,10 @@ class FactQuerySlotsAgent(BaseAgent):
         prompt_builder: PromptBuilderPort,
         user_timezone: Optional[str] = None,
         clock: Callable[[], datetime] = _utc_now,
+        thinking: Optional[str] = None,
     ) -> None:
         super().__init__(config)
+        self._thinking = thinking
         self._set_execution_context(execution_context)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
@@ -195,7 +198,7 @@ class FactQuerySlotsAgent(BaseAgent):
     def _request(self, system: str, history: List[Message]) -> LLMRequest:
         return LLMRequest(
             model_name=self.model_name, system_instruction=system, messages=list(history), tools=[],
-            max_tokens=self.MAX_TOKENS, disable_safety=True, thinking=None,
+            max_tokens=self.MAX_TOKENS, disable_safety=True, thinking=self._thinking,
             response_mime_type="application/json", response_schema=_RESPONSE_SCHEMA,
         )
 
