@@ -1,6 +1,7 @@
 # RFC: Fact search list mode — `scope=all` as a boolean set per phrase
 
-**Status:** Draft, design agreed with the owner 2026-11-11. Spec only; no code yet.
+**Status:** Design agreed with the owner 2026-11-11. Implemented in `src/domain/fact_search_lists.py` and
+`src/services/fact_search_service.py` (§8), except the z-score floor of §3.3, which is not built.
 **Owner:** Dmytro Deleur.
 **Amends:** `FACT_PROFILE_RFC.md` §5 (search). The rows and paragraphs it changes are listed in §7.
 
