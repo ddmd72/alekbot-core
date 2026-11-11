@@ -81,9 +81,12 @@ requests.
 
 ### 3.4 A phrase with no structural key
 
-An `all` phrase whose slots carry no domain, kind, person or named place (a subject only, or a subject with a time
-window) has no set to define. It falls back to `top` behaviour for that phrase: the full net, the scorer and the cut.
-A time window alone does not make a set, because almost every dated fact of a period would match it.
+An `all` phrase whose slots carry no domain, kind, person, named place or time window (a subject only) has no set to
+define. It falls back to `top` behaviour for that phrase: the full net, the scorer and the cut.
+
+A time window on its own does define a set: "everything from last March" asks for exactly the facts dated in that
+window, the way "everything about Clara" asks for the facts naming her. Such a slice can be large, and that is its
+answer; the result is ordered by closeness to the phrase like any other set.
 
 ### 3.5 The intimate gate
 
