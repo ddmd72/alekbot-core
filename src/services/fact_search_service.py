@@ -21,7 +21,8 @@ from ..domain.deduplication_service import SmartDeduplication
 from ..domain.entities import FactEntity
 from ..domain.fact_query import SCOPE_ALL, FactQuery
 from ..domain.fact_search_result import PhraseSearchResult
-from ..domain.fact_search_lists import CUT, DEPTH_KNN, SearchOutcome, is_set_phrase, keep_distinct, run_search
+from ..domain.fact_search_lists import (CUT, DEPTH_KNN, SearchOutcome, is_set_phrase, keep_distinct, run_search,
+                                        unresolved_keys)
 from ..domain.fact_search_rank import PRIORITY_WEIGHTS, CardRef, HomePlace, QueryPlaceKeys, card_ref, fuse_phrases
 from ..domain.fact_search_snapshot import FactSearchSnapshot
 from ..domain.place_names import PlaceNames, fold, local_place_key, resolve_home
@@ -126,7 +127,9 @@ class FactSearchService(FactSearchPort):
     async def _search(
         self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str], started: float
     ) -> PhraseSearchResult:
-        sets = [is_set_phrase(q) for q in queries]
+        # Places first: whether an `all` phrase is a set depends on its places reaching a key (list mode RFC §3.1).
+        resolved = list(await asyncio.gather(*(self._query_places(q) for q in queries)))
+        sets = [is_set_phrase(q, keys) for q, (keys, _) in zip(queries, resolved)]
         # A set phrase builds no kNN list and has no kind similarity: it embeds only what orders its set.
         texts = list(dict.fromkeys(t for q, is_set in zip(queries, sets)
                                    for t in ((q.subject, q.message) if is_set else (q.subject, q.kind, q.message)) if t))
@@ -142,14 +145,14 @@ class FactSearchService(FactSearchPort):
         (loaded, status), *hits = await asyncio.gather(self._snapshot(account_id, refreshed_at), *knn_calls)
         phrases = []
         for n, q in enumerate(queries):
-            phrases.append(await self._phrase(loaded, q, hits[2 * n], hits[2 * n + 1], by_text, exclude))
+            phrases.append(await self._phrase(loaded, q, hits[2 * n], hits[2 * n + 1], by_text, exclude, resolved[n]))
         snapshot = loaded.snapshot
         outcomes = [p.outcome for p in phrases]
         kept = self._union(loaded, outcomes)
         lists_of = [set(o.kept) if o.mode == SCOPE_ALL else set(o.kept[:CUT]) for o in outcomes]
         candidates = len({fact_id for o in outcomes for fact_id in o.fused})
         lists = self._lists_text(outcomes[0], loaded)
-        modes = ",".join(self._mode_text(q, o) for q, o in zip(queries, outcomes))
+        modes = ",".join(self._mode_text(q, o, keys) for q, o, (keys, _) in zip(queries, outcomes, resolved))
         logger.info(
             f"[FactSearch] path={queries[0].path} acc={account_id[:8]} phrases={len(queries)} modes={modes} "
             f"lists={lists} cands={candidates} gate_dropped={sum(o.gate_dropped for o in outcomes)} kept={len(kept)} "
@@ -177,12 +180,16 @@ class FactSearchService(FactSearchPort):
         return list(dict.fromkeys([*set_kept, *top_kept]))
 
     @staticmethod
-    def _mode_text(query: FactQuery, outcome: SearchOutcome) -> str:
+    def _mode_text(query: FactQuery, outcome: SearchOutcome, place_keys: AbstractSet[str]) -> str:
         """`top`; `all[keys]` for a set phrase (the keys that defined its set, `+`-joined); `all>top` for an `all`
-        phrase without a structural key, which ran `top`."""
+        phrase without a structural key, which ran `top`. An `all` phrase adds the keys it named that reached nothing
+        and were ignored: `all[domains;unresolved:place]`, `all>top[unresolved:place]`."""
+        if query.scope != SCOPE_ALL:
+            return "top"
+        unresolved = ";".join(f"unresolved:{key}" for key in unresolved_keys(query, place_keys))
         if outcome.mode == SCOPE_ALL:
-            return f"all[{'+'.join(outcome.keys)}]"
-        return "all>top" if query.scope == SCOPE_ALL else "top"
+            return f"all[{';'.join(part for part in ('+'.join(outcome.keys), unresolved) if part)}]"
+        return f"all>top[{unresolved}]" if unresolved else "all>top"
 
     @staticmethod
     def _lists_text(outcome: SearchOutcome, loaded: _Loaded) -> str:
@@ -203,6 +210,7 @@ class FactSearchService(FactSearchPort):
     async def _phrase(
         self, loaded: _Loaded, query: FactQuery, semantic: Optional[List[str]], labels: Optional[List[str]],
         by_text: Dict[str, List[float]], exclude: AbstractSet[str],
+        resolved: Tuple[FrozenSet[str], Tuple[QueryPlaceKeys, ...]],
     ) -> _Phrase:
         snapshot = loaded.snapshot
         in_snapshot = set(snapshot.ids)
@@ -215,8 +223,8 @@ class FactSearchService(FactSearchPort):
             knn.append([i for i in found if i in in_snapshot])
             unsnapped += len(found) - len(knn[-1] or [])
         similarity = self._similarity(snapshot.ids, loaded.matrix, loaded.has_vector, by_text, query.subject)
-        place_keys, places = await self._query_places(query)
-        if is_set_phrase(query):
+        place_keys, places = resolved
+        if is_set_phrase(query, place_keys):
             # The set's order needs only the subject or the message similarity: no message list, no home.
             message_similarity = self._similarity(snapshot.ids, loaded.matrix, loaded.has_vector, by_text, query.message)
             outcome = run_search(

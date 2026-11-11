@@ -158,19 +158,27 @@ def _query_kinds(query: FactQuery) -> FrozenSet[str]:
     return frozenset(k for k in query.kinds if k)
 
 
-def set_keys(query: FactQuery) -> Tuple[str, ...]:
+def set_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
     """The structural keys a phrase names (list mode RFC §3.1), in a fixed order: `domains`, `kinds`, `people`, `places`
-    (a named place, whether or not the atlas resolves it), `time` (a `period`, `future` or `past` window). `latest` is
-    no key: it only orders."""
+    (named places that reach at least one place key, `lp:` included: `query_place_keys`), `time` (a `period`, `future`
+    or `past` window). `latest` is no key: it only orders. A named place that reaches no key is no key either
+    (`unresolved_keys`): an empty set because the atlas lacks a town would be a silent wrong answer."""
     named = (("domains", bool(query_domains(query))), ("kinds", bool(_query_kinds(query))),
-             ("people", bool(query.people)), ("places", bool(query.places)), ("time", window(query) is not None))
+             ("people", bool(query.people)), ("places", bool(query.places and query_place_keys)),
+             ("time", window(query) is not None))
     return tuple(name for name, present in named if present)
 
 
-def is_set_phrase(query: FactQuery) -> bool:
+def unresolved_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
+    """The keys a phrase names that were ignored because they reach nothing: `place` when it names places and they
+    reach no place key."""
+    return ("place",) if query.places and not query_place_keys else ()
+
+
+def is_set_phrase(query: FactQuery, query_place_keys: AbstractSet[str]) -> bool:
     """An `all` phrase that names a structural key: it returns the set its keys define (list mode RFC §3). An `all`
     phrase without one runs `top` (§3.4)."""
-    return query.scope == SCOPE_ALL and bool(set_keys(query))
+    return query.scope == SCOPE_ALL and bool(set_keys(query, query_place_keys))
 
 
 def closeness(similarity: Mapping[str, float], message_similarity: Optional[Mapping[str, float]]) -> Mapping[str, float]:
@@ -197,18 +205,19 @@ class _Search:
 
     def set_members(self, place_keys: FrozenSet[str]) -> List[str]:
         """The facts every key of the phrase matches (list mode RFC §3.1), in snapshot order: OR within a key, AND across
-        keys. People match as `person_match`; a named place by the fact's place keys meeting `place_keys` (none: no fact
-        matches); a window by a point inside it (a recurring occasion by month and day)."""
+        keys. People match as `person_match`; a named place by the fact's place keys meeting `place_keys` (no keys: the
+        place is no condition, `set_keys`); a window by a point inside it (a recurring occasion by month and day)."""
         rows, query, span = self._rows, self._query, self._window
         domains, kinds = frozenset(query_domains(query)), _query_kinds(query)
         people = frozenset(self.person_match()) if query.people else None
+        places = place_keys if query.places else frozenset()
 
         def member(fact_id: str) -> bool:
             row = rows[fact_id]
             return ((not domains or bool(row.domains & domains))
                     and (not kinds or bool(row.kinds & kinds))
                     and (people is None or fact_id in people)
-                    and (not query.places or bool(row.place_keys & place_keys))
+                    and (not places or bool(row.place_keys & places))
                     and (span is None or any(self._gap(row, x, span) == 0 for x in row.intervals)))
 
         return [i for i in self._ids if member(i)]
@@ -429,7 +438,7 @@ def run_search(
 
     A set phrase (`is_set_phrase`) goes to `run_set`, which reads only `similarity`, `message_similarity`,
     `query_place_keys`, `is_duplicate` and `exclude`; any other `all` phrase runs `top` here, cut to `CUT`."""
-    if is_set_phrase(query):
+    if is_set_phrase(query, query_place_keys):
         return run_set(snapshot, query, similarity=similarity, message_similarity=message_similarity,
                        query_place_keys=query_place_keys, is_duplicate=is_duplicate, exclude=exclude)
     # Imported here: the scorer reads this module's time and people rules, so a module-level import would be a cycle.
@@ -469,4 +478,5 @@ def run_set(
     fused = [i for i in ordered if i not in exclude]
     kept = keep_distinct(fused, is_duplicate, None)
     return SearchOutcome(lists={"set": ordered}, gate_dropped=dropped, uncut={}, fused=fused, kept=kept,
-                         scores={i: float(close.get(i, 0.0)) for i in fused}, mode=SCOPE_ALL, keys=set_keys(query))
+                         scores={i: float(close.get(i, 0.0)) for i in fused}, mode=SCOPE_ALL,
+                         keys=set_keys(query, query_place_keys))

@@ -1,16 +1,21 @@
 """FactSearchService, list mode (list mode RFC §2, §8): an `all` phrase with a structural key makes no kNN call and
 returns its whole set; the request returns the union of the sets and the fused `top` phrases, each fact once, naming
-every phrase that found it; the `[FactSearch]` line marks each phrase's mode and a set's keys. Same world as the
-scored-search tests; examples from the invented universe."""
+every phrase that found it; the `[FactSearch]` line marks each phrase's mode, a set's keys and a place that reached no
+key. Same world as the scored-search tests; examples from the invented universe. Every test seeds the in-memory store,
+so all are `slow`."""
 import logging
 from dataclasses import replace
 from datetime import timedelta
+
+import pytest
 
 from src.domain.fact_search_lists import CUT
 from tests.unit.services.test_fact_search_service_scored import ACC, T1, World, embed, lines, query
 
 CLARA = {"name": "Clara Moreira", "role": "partner", "name_keys": [], "role_keys": []}
 FABIA = "Bought the 2015 Skoda Fabia"
+
+pytestmark = pytest.mark.slow
 
 
 async def _world() -> World:
@@ -99,3 +104,25 @@ async def test_a_seeded_partner_fact_is_found_by_relation_in_a_set():
     await world.baseline(T1 + timedelta(hours=1))
     q = replace(query(people=["my partner"]), scope="all")
     assert await world.phrases(q) == ["f-Weekend in Coimbra with Clara"]
+
+
+async def test_an_unresolved_place_is_ignored_and_named_in_the_log(caplog):
+    world = await _world()
+    nowhere = replace(query(domains=["sport"], places=[("", "Atlantis")]), scope="all")
+    only_nowhere = replace(query(subject="Iron Temple gym", places=[("", "Atlantis")]), scope="all")
+    with caplog.at_level(logging.INFO):
+        result = await world.service.search_phrases(ACC, [nowhere, only_nowhere])
+    (line,) = lines(caplog)
+    assert " modes=all[domains;unresolved:place],all>top[unresolved:place] " in line
+    gym = [f for f in result.facts if f.domain_keys == ["sport"]]
+    assert len(gym) == CUT + 5 and result.facts[:CUT + 5] == tuple(gym)
+
+
+async def test_a_resolved_place_is_a_key_of_the_set():
+    world = await _world()
+    await world.seed("Weekend in Coimbra with Clara", people=[CLARA], domain_keys=["travel"], primary_domain="travel",
+                     place_keys=["pl:9100004"])
+    await world.baseline(T1 + timedelta(hours=1))
+    q = replace(query(places=[("Coimbra", "Portugal")]), scope="all")
+    assert await world.phrases(q) == ["f-Weekend in Coimbra with Clara"]
+    assert world.repo.named("nearest_fact_ids") == []

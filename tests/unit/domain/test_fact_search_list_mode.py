@@ -6,7 +6,7 @@ Examples from the invented universe."""
 from datetime import date
 
 from src.domain.fact_search_lists import (CUT, DOMAIN_CAP, HOME_CAP, candidate_lists, is_set_phrase, run_search,
-                                          set_keys)
+                                          set_keys, unresolved_keys)
 from src.domain.fact_search_rank import HomePlace
 from src.domain.fact_search_snapshot import FactSearchSnapshot
 from tests.support.fact_search_kit import fact, person, point, query, search
@@ -31,15 +31,24 @@ def run(facts, q, *, sim=None, message_sim=None, semantic=None, place_keys=froze
 def test_the_keys_of_a_phrase_in_their_fixed_order_and_latest_is_none():
     q = query(intent="period", start=D("2026-03-01"), end=D("2026-03-31"), people=["Clara"], places=[("Coimbra", "")],
               kinds=["trip"], domains=["travel"], scope="all")
-    assert set_keys(q) == ("domains", "kinds", "people", "places", "time")
-    assert set_keys(query(subject="Skoda Fabia", intent="latest", scope="all")) == ()
-    assert set_keys(query(domains=["", ""], kinds=[""], scope="all")) == ()
+    assert set_keys(q, {COIMBRA}) == ("domains", "kinds", "people", "places", "time")
+    assert set_keys(query(subject="Skoda Fabia", intent="latest", scope="all"), set()) == ()
+    assert set_keys(query(domains=["", ""], kinds=[""], scope="all"), set()) == ()
+
+
+def test_a_named_place_that_reaches_no_key_is_no_key_and_is_reported_unresolved():
+    q = query(domains=["travel"], places=[("Atlantis", "")], scope="all")
+    assert set_keys(q, set()) == ("domains",) and unresolved_keys(q, set()) == ("place",)
+    assert set_keys(q, {COIMBRA}) == ("domains", "places") and unresolved_keys(q, {COIMBRA}) == ()
+    assert unresolved_keys(query(domains=["travel"], scope="all"), set()) == ()
 
 
 def test_only_an_all_phrase_with_a_key_is_a_set_phrase():
-    assert is_set_phrase(query(people=["Clara"], scope="all"))
-    assert not is_set_phrase(query(people=["Clara"]))
-    assert not is_set_phrase(query(subject="Clara", scope="all"))
+    assert is_set_phrase(query(people=["Clara"], scope="all"), set())
+    assert not is_set_phrase(query(people=["Clara"]), set())
+    assert not is_set_phrase(query(subject="Clara", scope="all"), set())
+    assert is_set_phrase(query(places=[("Coimbra", "")], scope="all"), {COIMBRA})
+    assert not is_set_phrase(query(places=[("Atlantis", "")], scope="all"), set())
 
 
 # ------------------------------------------------------------------------------------------------ membership
@@ -71,13 +80,25 @@ def test_people_match_by_name_or_relation():
     assert sorted(out.kept) == ["named", "related"]
 
 
-def test_a_named_place_matches_by_the_place_keys_and_an_unresolved_place_matches_nothing():
+def test_a_named_place_matches_by_the_place_keys():
     facts = [fact("coimbra", "Weekend in Coimbra", places=[COIMBRA]), fact("porto", "Visit Hanna in Porto",
                                                                            places=[PORTO])]
     out = search(facts, query(places=[("Coimbra", "")], scope="all"), place_keys=frozenset({COIMBRA}))
-    assert out.kept == ["coimbra"]
-    nowhere = search(facts, query(places=[("Atlantis", "")], scope="all"))
-    assert nowhere.mode == "all" and nowhere.kept == []
+    assert out.kept == ["coimbra"] and out.keys == ("places",)
+
+
+def test_an_unresolved_place_is_ignored_for_membership():
+    facts = [fact("coimbra", "Weekend in Coimbra", domains=("travel",), places=[COIMBRA]),
+             fact("porto", "Visit Hanna in Porto", domains=("travel",), places=[PORTO]),
+             fact("gym", "Iron Temple gym", domains=("sport",))]
+    out = search(facts, query(domains=["travel"], places=[("Atlantis", "")], scope="all"))
+    assert out.mode == "all" and out.keys == ("domains",) and sorted(out.kept) == ["coimbra", "porto"]
+
+
+def test_an_unresolved_place_alone_falls_back_to_top():
+    facts = [fact("coimbra", "Weekend in Coimbra", places=[COIMBRA])]
+    out = search(facts, query(subject="Atlantis trip", places=[("Atlantis", "")], scope="all"), semantic=["coimbra"])
+    assert out.mode == "top" and out.kept == ["coimbra"]
 
 
 def test_a_time_window_alone_defines_a_slice_with_a_recurring_occasion_by_month_and_day():
