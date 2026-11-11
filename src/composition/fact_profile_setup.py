@@ -10,6 +10,7 @@ place atlas is built lazily on the first run, off the event loop (about 0.9 s an
 README.md), and kept for the process: never at boot.
 """
 import asyncio
+import threading
 from typing import Any, Optional, Tuple
 
 from ..adapters.geo_place_table import load_place_rows
@@ -39,18 +40,36 @@ def max_per_run(raw: Optional[str]) -> int:
 
 
 class LazyAtlas:
-    """The place names and their digest, loaded once on first use (concurrent first calls share one load)."""
+    """The place names and their digest, loaded once (concurrent first calls share one load). The service loads it at
+    boot (`warm`); a failed boot load leaves the first use to load it. The fact search reads the same object through
+    `names`, so the process holds one copy of the table."""
 
     def __init__(self) -> None:
-        self._lock = asyncio.Lock()
+        # A threading lock, not asyncio.Lock: the load runs in a worker thread (`names` is called from the fact
+        # search's own to_thread), where an asyncio lock cannot be taken.
+        self._lock = threading.Lock()
         self._loaded: Optional[Tuple[PlaceNames, str]] = None
 
-    async def __call__(self) -> Tuple[PlaceNames, str]:
-        async with self._lock:
+    def _load(self) -> Tuple[PlaceNames, str]:
+        with self._lock:
             if self._loaded is None:
-                rows = await asyncio.to_thread(load_place_rows)
+                rows = load_place_rows()
                 self._loaded = (PlaceNames(rows), atlas_digest(rows))
             return self._loaded
+
+    async def __call__(self) -> Tuple[PlaceNames, str]:
+        return await asyncio.to_thread(self._load)
+
+    def names(self) -> PlaceNames:
+        """Blocking: the place names, loading the table on the first call. Call it off the event loop."""
+        return self._load()[0]
+
+    async def warm(self) -> None:
+        """Load the table now, off the event loop. A failure is logged and swallowed: the first use loads it."""
+        try:
+            await self()
+        except Exception:
+            logger.error("[PlaceTable] boot load failed, the first use loads it lazily", exc_info=True)
 
 
 def build_fact_profile_service(

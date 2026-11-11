@@ -1,6 +1,7 @@
-"""Lelik's session config carries the memory and drive MCP servers only on the plain companion call on xAI with the
-VOICE_MCP_TOOLS knob on, and such a call has no search_memory delegation, neither declared nor permitted
-(LELIK_VOICE_MCP_RFC §4, §8 O4, O6, O7; §11 S3).
+"""Lelik's session config carries the drive MCP server only on the plain companion call on xAI with the
+VOICE_MCP_TOOLS knob on (LELIK_VOICE_MCP_RFC §4, §8 O6, O7; §11 S3). Memory is no MCP server: such a call keeps its
+search_memory delegation, declared and permitted (§2 amendment 2026-11-10). An interpreter call has none, in any
+configuration: it has no memory at all (owner rule 2026-11-10).
 
 The knob reaches LelikAgent as its `mcp_servers` (composition: `voice_mcp_servers`): given = knob on, empty = off.
 Built over the real registry of ALL_DESCRIPTORS and the real coordinator.
@@ -54,14 +55,12 @@ def _declared_intents(config: dict) -> set:
 
 
 class TestServersOnlyForTheEligibleCall:
-    async def test_the_companion_call_on_xai_with_the_knob_on_carries_both_servers(self):
+    async def test_the_companion_call_on_xai_with_the_knob_on_carries_the_drive_server(self):
         config = await _config(_lelik())
 
         assert config[VOICE_MCP_SERVERS_FIELD] == [
-            {"label": "alek_memory", "url": "https://mcp.example.test/mcp",
-             "description": SERVERS[0].description, "allowed_tools": ["get_user_context"]},
             {"label": "alek_drive", "url": "https://mcp.example.test/drive-mcp",
-             "description": SERVERS[1].description, "allowed_tools": ["search_drive", "find_passages", "read_passages"]},
+             "description": SERVERS[0].description, "allowed_tools": ["search_drive", "find_passages", "read_passages"]},
         ]
 
     @pytest.mark.parametrize("mode", [VoiceMode.INTERPRETER, VoiceMode.TUTOR])
@@ -82,17 +81,17 @@ class TestServersOnlyForTheEligibleCall:
         assert all("token" not in d and "authorization" not in d for d in config[VOICE_MCP_SERVERS_FIELD])
 
 
-class TestSearchMemoryLeavesExactlyThen:
-    async def test_the_mcp_call_declares_no_search_memory_and_permits_none(self):
+class TestSearchMemoryLeavesOnlyTheInterpreter:
+    async def test_the_mcp_call_declares_and_permits_search_memory(self):
         agent = _lelik()
         config = await _config(agent)
 
-        assert Intent.SEARCH_MEMORY not in _declared_intents(config)
+        assert config[VOICE_MCP_SERVERS_FIELD]
+        assert Intent.SEARCH_MEMORY in _declared_intents(config)
         assert Intent.ASK_ALEK in _declared_intents(config)
-        assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.LELIK)
+        assert Intent.SEARCH_MEMORY in agent.permitted_intents(VoiceMode.LELIK)
 
     @pytest.mark.parametrize("provider,mcp_servers,mode", [
-        ("xai", SERVERS, VoiceMode.INTERPRETER),
         ("xai", SERVERS, VoiceMode.TUTOR),
         ("openai", SERVERS, VoiceMode.LELIK),
         ("xai", (), VoiceMode.LELIK),
@@ -105,7 +104,19 @@ class TestSearchMemoryLeavesExactlyThen:
         assert Intent.SEARCH_MEMORY in _declared_intents(config)
         assert Intent.SEARCH_MEMORY in agent.permitted_intents(mode)
 
-    async def test_a_model_naming_search_memory_on_the_mcp_call_is_refused_before_dispatch(self):
+    @pytest.mark.parametrize("mcp_servers", [SERVERS, ()])
+    async def test_an_interpreter_call_declares_and_permits_no_search_memory(self, mcp_servers):
+        """Owner rule 2026-11-10: an interpreter call (xAI only) has no memory search, with or without the MCP servers,
+        and still carries no server of its own."""
+        agent = _lelik(mcp_servers=mcp_servers)
+        config = await _config(agent, VoiceMode.INTERPRETER)
+
+        assert VOICE_MCP_SERVERS_FIELD not in config
+        assert Intent.SEARCH_MEMORY not in _declared_intents(config)
+        assert Intent.ASK_ALEK in _declared_intents(config)
+        assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.INTERPRETER)
+
+    async def test_a_model_naming_search_memory_on_the_mcp_call_is_dispatched(self):
         agent = _lelik()
         agent.coordinator.handle_delegation = AsyncMock(
             return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok"))
@@ -113,10 +124,20 @@ class TestSearchMemoryLeavesExactlyThen:
         outcome = await agent.delegate_outcome("usr-1", "acc-1", {"intent": "search_memory", "query": "q"},
                                                call_context=[], mode=VoiceMode.LELIK)
 
-        assert outcome.failed is True and outcome.text.startswith("Tool error:")
-        agent.coordinator.handle_delegation.assert_not_awaited()
+        assert outcome.failed is False and outcome.text == "ok"
+        agent.coordinator.handle_delegation.assert_awaited_once()
 
-    async def test_the_same_intent_on_an_interpreter_call_still_dispatches(self):
+    async def test_the_same_intent_on_a_tutor_call_still_dispatches(self):
+        agent = _lelik()
+        agent.coordinator.handle_delegation = AsyncMock(
+            return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok"))
+
+        outcome = await agent.delegate_outcome("usr-1", "acc-1", {"intent": "search_memory", "query": "q"},
+                                               call_context=[], mode=VoiceMode.TUTOR)
+
+        assert outcome.failed is False and outcome.text == "ok"
+
+    async def test_the_same_intent_on_an_interpreter_call_is_refused_before_dispatch(self):
         agent = _lelik()
         agent.coordinator.handle_delegation = AsyncMock(
             return_value=AgentResponse.success(task_id="t", agent_id="a", result="ok"))
@@ -124,4 +145,5 @@ class TestSearchMemoryLeavesExactlyThen:
         outcome = await agent.delegate_outcome("usr-1", "acc-1", {"intent": "search_memory", "query": "q"},
                                                call_context=[], mode=VoiceMode.INTERPRETER)
 
-        assert outcome.failed is False and outcome.text == "ok"
+        assert outcome.failed is True and outcome.text.startswith("Tool error:")
+        agent.coordinator.handle_delegation.assert_not_awaited()

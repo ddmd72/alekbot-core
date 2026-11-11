@@ -1,7 +1,7 @@
 """Cross-side: a token the real `VoiceMcpTokenService` mints pairs with the real descriptors `voice_mcp_servers` builds
 from the same config (LELIK_VOICE_MCP_RFC §4, §5.2). The mint's audience and the descriptors' URL are derived on two
-sides from `MCP_RESOURCE_URI`; if either derivation drifts, the relay's audience binding drops both servers and every
-call silently loses its tools.
+sides from `MCP_RESOURCE_URI`; if either derivation drifts, the relay's audience binding drops the drive server and
+every call silently loses its tools. Since the RFC §2 amendment (2026-11-10) the drive is the call's one server.
 
 Two configs: the sealed deploy environment (`tests/support/prod_env.py`: the real `load_settings()` over the
 `alek-bot-dev` step of `cloudbuild-dev.yaml`) and a plain config with an invented public base that needs canonicalising.
@@ -45,7 +45,7 @@ async def test_a_minted_token_pairs_with_the_descriptors_built_from_the_same_con
         key=key, store=FirestoreEphemeralStore(EvalDb(), collection=COLLECTION), digest_key=DIGEST_KEY,
         auth_config=AuthConfig(config), user_repo=user_repo, whitelist_repo=whitelist_repo, alert_sink=None)
     descriptors = voice_mcp_setup.voice_mcp_servers(config)
-    assert tokens_service is not None and len(descriptors) == 2
+    assert tokens_service is not None and len(descriptors) == 1
 
     tokens = (await tokens_service.mint(TICKET, USER, ACCOUNT)).to_wire()
     servers = session_servers({
@@ -54,10 +54,6 @@ async def test_a_minted_token_pairs_with_the_descriptors_built_from_the_same_con
         VOICE_MCP_TOKENS_FIELD: tokens,
     })
 
-    assert [(server.label, server.token) for server in servers] == [
-        ("alek_memory", tokens[MCPResource.FACTS.value]),
-        ("alek_drive", tokens[MCPResource.DRIVE.value]),
-    ]
+    assert [(server.label, server.token) for server in servers] == [("alek_drive", tokens[MCPResource.DRIVE.value])]
     # The paired token verifies at the resource its server's URL names.
-    for server, resource in zip(servers, (MCPResource.FACTS, MCPResource.DRIVE)):
-        assert (await tokens_service.verify(server.token, resource)).user_id == USER
+    assert (await tokens_service.verify(servers[0].token, MCPResource.DRIVE)).user_id == USER

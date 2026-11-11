@@ -26,9 +26,10 @@ def _token(aud: str, sig: str) -> str:
     return f"eyJh.{payload}.{sig}"
 
 
-# Each token carries the audience of its own server (`voice:` + the canonical URL of the descriptors below).
-TOKENS = {"facts": _token("voice:https://mcp.example.test/mcp", "facts-sig"),
-          "drive": _token("voice:https://mcp.example.test/drive-mcp", "drive-sig")}
+# The token carries the audience of its own server (`voice:` + the canonical URL of the descriptor below).
+TOKENS = {"drive": _token("voice:https://mcp.example.test/drive-mcp", "drive-sig")}
+# A facts-audience token: memory has no MCP server on a call (RFC §2 amendment 2026-11-10), so it pairs with nothing.
+FACTS_TOKEN = _token("voice:https://mcp.example.test/mcp", "facts-sig")
 
 
 def _config(**over) -> dict:
@@ -40,15 +41,13 @@ def _config(**over) -> dict:
 
 
 class TestDescriptors:
-    def test_both_servers_at_the_canonical_resource_uris_with_the_voice_tools(self):
-        facts, drive = voice_session_servers("https://MCP.example.test/mcp/")
+    def test_the_drive_server_alone_at_its_canonical_resource_uri_with_the_voice_tools(self):
+        (drive,) = voice_session_servers("https://MCP.example.test/mcp/")
 
-        assert (facts.label, facts.url, facts.allowed_tools) == (
-            "alek_memory", "https://mcp.example.test/mcp", ("get_user_context",))
         assert (drive.label, drive.url, drive.allowed_tools) == (
             "alek_drive", "https://mcp.example.test/drive-mcp", ("search_drive", "find_passages", "read_passages"))
-        assert all("never a request" in server.description for server in (facts, drive))
-        assert facts.token == "" and drive.token == ""
+        assert "never a request" in drive.description
+        assert drive.token == ""
 
     def test_a_server_value_never_shows_its_token(self):
         server = voice_session_servers("https://mcp.example.test/mcp")[0].with_token("eyJh.secret.sig")
@@ -62,8 +61,7 @@ class TestPairing:
     def test_an_eligible_call_gets_each_server_with_its_own_token(self):
         servers = session_servers(_config())
 
-        assert [(s.label, s.token) for s in servers] == [("alek_memory", TOKENS["facts"]),
-                                                         ("alek_drive", TOKENS["drive"])]
+        assert [(s.label, s.token) for s in servers] == [("alek_drive", TOKENS["drive"])]
 
     @pytest.mark.parametrize("over", [
         {VOICE_MCP_TOKENS_FIELD: None},
@@ -78,9 +76,9 @@ class TestPairing:
         assert session_servers(_config(**over)) == ()
 
     def test_a_server_without_its_token_is_not_offered(self):
-        servers = session_servers(_config(**{VOICE_MCP_TOKENS_FIELD: {"facts": TOKENS["facts"]}}))
+        servers = session_servers(_config(**{VOICE_MCP_TOKENS_FIELD: {"facts": FACTS_TOKEN}}))
 
-        assert [s.label for s in servers] == ["alek_memory"]
+        assert servers == ()
 
     def test_a_descriptor_with_a_foreign_label_or_broken_shape_is_skipped(self):
         descriptors = [{"label": "someone_else", "url": "https://x.test", "description": "d", "allowed_tools": []},

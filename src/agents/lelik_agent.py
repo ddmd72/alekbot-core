@@ -14,10 +14,11 @@ xAI) gets that search in the session, and search_web_light leaves delegate_to_sp
 send_to_chat call into the errand intent of the same name (domain/voice_errand.py), so delegate() runs both the
 same way.
 
-With the VOICE_MCP_TOOLS knob on, the plain companion call on xAI also carries the memory and drive MCP servers
-(LELIK_VOICE_MCP_RFC §4): session_config puts their descriptors (no token) under `mcp_servers`, and such a call has
-no search_memory delegation, neither declared nor permitted (O4). The relay pairs the descriptors with the tokens
-/voice/session-config mints at redemption.
+With the VOICE_MCP_TOOLS knob on, the plain companion call on xAI also carries the drive MCP server
+(LELIK_VOICE_MCP_RFC §4): session_config puts its descriptor (no token) under `mcp_servers`; the relay pairs it with
+the token /voice/session-config mints at redemption. Memory is not an MCP server of any call: it goes by the
+search_memory delegation, declared and permitted in every mode but the interpreter, which has no memory
+(§2, amendment 2026-11-10).
 
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
@@ -79,9 +80,9 @@ class LelikAgent(BaseAgent):
         (VOICE_MULTI_PROVIDER_RFC §4.2).
         native_web_search: the LELIK_XAI_NATIVE_SEARCH switch. On a provider whose profile has
         builtin_web_search, the session offers the provider's own search instead of search_web_light.
-        mcp_servers: the memory and drive MCP server descriptors (no token), given when the VOICE_MCP_TOOLS knob is on
-        (LELIK_VOICE_MCP_RFC §4). Only an eligible call carries them (the plain companion call on xAI, O6/O7), and
-        such a call has no search_memory delegation (O4)."""
+        mcp_servers: the drive MCP server descriptor (no token), given when the VOICE_MCP_TOOLS knob is on
+        (LELIK_VOICE_MCP_RFC §4). Only an eligible call carries it (the plain companion call on xAI, O6/O7); it keeps
+        its search_memory delegation."""
         super().__init__(config)
         self._native_web_search = native_web_search
         self._mcp_servers = tuple(mcp_servers)
@@ -141,8 +142,9 @@ class LelikAgent(BaseAgent):
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         mcp_servers = self._mcp_servers_for(mode)
-        if mcp_servers:
-            # The session reads memory through the MCP server itself: one memory path, not two (O4).
+        if mode is VoiceMode.INTERPRETER:
+            # An interpreter call has no memory at all (owner rule). Every other mode reaches memory by the
+            # search_memory delegation only (LELIK_VOICE_MCP_RFC §2, amendment 2026-11-10); the drive is the one MCP server.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_MEMORY]
         tools = [self._build_delegate_tool_declaration(available)] if available else []
         if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
@@ -165,13 +167,13 @@ class LelikAgent(BaseAgent):
 
     def permitted_intents(self, mode: VoiceMode = VoiceMode.LELIK) -> frozenset:
         """The intents a live call in `mode` may delegate: what session_config declares (LELIK.allowed_intents, minus
-        search_web_light when the provider searches natively, minus search_memory when the call carries the MCP
-        servers) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
+        search_web_light when the provider searches natively, minus search_memory in an interpreter call, which has
+        no memory) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
         this is what /voice/delegate enforces."""
         allowed = set(LELIK.allowed_intents or ()) | {Intent.SEND_TO_CHAT}
         if self._native_search_active():
             allowed.discard(Intent.SEARCH_WEB_LIGHT)
-        if self._mcp_servers_for(mode):
+        if mode is VoiceMode.INTERPRETER:
             allowed.discard(Intent.SEARCH_MEMORY)
         return frozenset(allowed)
 

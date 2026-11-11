@@ -1,6 +1,6 @@
 """/voice/delegate applies the allowlist of the call's own mode: with the VOICE_MCP_TOOLS knob on, the plain companion
-call (which reads memory through the MCP server) refuses search_memory, an interpreter call keeps it
-(LELIK_VOICE_MCP_RFC §8 O4, O7; §11 S3).
+call (which carries only the drive MCP server) and a tutor call keep search_memory, and an interpreter call refuses it:
+it has no memory at all (LELIK_VOICE_MCP_RFC §2 amendment 2026-11-10, §8 O7; §11 S3; owner rule 2026-11-10).
 
 The real blueprint, the real `VoiceCallSetupService.prepare` (it writes the call-mode record the route reads), the
 real `LelikAgent` over the real coordinator with only `handle_delegation` scripted, the store on the evaluating fake.
@@ -68,11 +68,12 @@ def transactions():
         yield
 
 
-async def test_the_companion_call_with_the_knob_on_refuses_search_memory():
+async def test_the_companion_call_with_the_knob_on_dispatches_search_memory():
+    # Memory reaches the call by delegation only (owner decision 2026-11-10, RFC §2 amendment).
     output, dispatched = await _delegate(VoiceMode.LELIK)
 
-    assert output.startswith("Tool error:")
-    dispatched.assert_not_awaited()
+    assert output == "Garage space 14 behind 12 Oak Street"
+    dispatched.assert_awaited_once()
 
 
 async def test_the_companion_call_still_dispatches_its_other_intents():
@@ -82,9 +83,16 @@ async def test_the_companion_call_still_dispatches_its_other_intents():
     dispatched.assert_awaited_once()
 
 
-@pytest.mark.parametrize("mode", [VoiceMode.INTERPRETER, VoiceMode.TUTOR])
-async def test_an_interpreter_or_tutor_call_keeps_search_memory(mode):
-    output, dispatched = await _delegate(mode)
+async def test_a_tutor_call_keeps_search_memory():
+    output, dispatched = await _delegate(VoiceMode.TUTOR)
 
     assert output == "Garage space 14 behind 12 Oak Street"
     dispatched.assert_awaited_once()
+
+
+async def test_an_interpreter_call_refuses_search_memory():
+    """Owner rule 2026-11-10: an interpreter call has no memory search, with or without the MCP servers."""
+    output, dispatched = await _delegate(VoiceMode.INTERPRETER)
+
+    assert output.startswith("Tool error:")
+    dispatched.assert_not_awaited()

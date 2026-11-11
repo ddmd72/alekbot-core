@@ -73,7 +73,7 @@ from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
 # `VOICE_MCP_TOKENS_FIELD` (re-exported from the domain): the session-config response field that carries a call's two
-# voice MCP tokens, `{"facts": <jwt>, "drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay pairs them with the
+# voice MCP token, `{"drive": <jwt>}` (LELIK_VOICE_MCP_RFC §5.2). The relay pairs them with the
 # ticket's `mcp_servers` descriptors into the session's `mcp` tools (slice S3); nothing logs it.
 __all__ = ["VOICE_MCP_TOKENS_FIELD", "create_voice_control_plane_blueprint"]
 
@@ -126,7 +126,7 @@ def create_voice_control_plane_blueprint(
     is empty (its error text is never kept). Without a sink such answers are kept, never posted.
 
     `voice_mcp_tokens` (LELIK_VOICE_MCP_RFC §5): the voice MCP token kind. With `voice_mcp_minting`
-    (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's two tokens
+    (the VOICE_MCP_TOOLS knob) on, `/voice/session-config` mints a plain companion call's token
     on xAI and returns them under `VOICE_MCP_TOKENS_FIELD`; `/voice/submit-transcript` deletes the
     call's live-call record whatever the knob, so every token of the call stops verifying.
 
@@ -136,7 +136,7 @@ def create_voice_control_plane_blueprint(
     bp = Blueprint("voice_control_plane", __name__)
 
     async def _voice_mcp_tokens_for(ticket: str, config: dict) -> Optional[dict]:
-        """The call's tokens on the wire (`{"facts", "drive"}`), or None: the knob off, no key, a call
+        """The call's tokens on the wire (`{"drive"}`), or None: the knob off, no key, a call
         other than the plain companion call on xAI (O6, O7), or a user the whitelist now refuses (the
         service alerts). A store error propagates: the session-config fails, closed."""
         if voice_mcp_tokens is None or not voice_mcp_minting:
@@ -183,6 +183,14 @@ def create_voice_control_plane_blueprint(
         # The only claim: two racing callers cannot both get the record back.
         claimed = await ephemeral_store.get_and_delete(result_key(digest_key, ticket, call_id))
         if claimed is None:
+            return
+        if claimed.get("mode") == VoiceMode.INTERPRETER.value:
+            # Owner rule: an interpreter call is a tool and never reports to the chat, an answer or a failure alike.
+            logger.info(f"voice call {fingerprint(ticket)}: late answer to {call_id} dropped: interpreter mode")
+            return
+        if claimed.get("failed"):
+            # Owner rule: a late failure never reaches the chat, in any mode.
+            logger.info(f"voice call {fingerprint(ticket)}: late answer to {call_id} dropped: failed")
             return
         if late_answer_sink is None:
             logger.warning(f"voice call {fingerprint(ticket)}: late answer to {call_id} dropped, no sink configured")
@@ -423,7 +431,8 @@ def create_voice_control_plane_blueprint(
 
         return jsonify({"ok": True}), 200
 
-    async def _keep_for_chat(body: dict, user_id: str, account_id: str, outcome: VoiceDelegationOutcome) -> None:
+    async def _keep_for_chat(body: dict, user_id: str, account_id: str, outcome: VoiceDelegationOutcome,
+                             call_mode: Optional[VoiceMode]) -> None:
         ticket, call_id = body.get("ticket"), body.get("call_id")
         if not (ticket and call_id):
             return
@@ -435,6 +444,11 @@ def create_voice_control_plane_blueprint(
         else:
             return  # Nothing to post.
         record.update(request=body.get("request", ""), user_id=user_id, account_id=account_id)
+        # The call's mode rides along so the late post can honour the interpreter rule. It is the mode the delegation
+        # already read (None with the VOICE_MCP_TOOLS knob off: no read, nothing stored). The companion mode is the
+        # default a record without `mode` already means, so it is left out.
+        if call_mode is not None and call_mode is not VoiceMode.LELIK:
+            record["mode"] = call_mode.value
         # Result first, abandoned check second — the abandon route writes and reads in the
         # opposite order, so whichever lands second always sees the other's marker.
         try:
@@ -447,8 +461,8 @@ def create_voice_control_plane_blueprint(
 
     async def _call_mode(ticket: Optional[str]) -> VoiceMode:
         """The call's mode from the record `prepare` wrote (the allowlist depends on it, LELIK_VOICE_MCP_RFC §8, O4).
-        Read only with the VOICE_MCP_TOOLS knob on, the one case where the mode changes the allowlist; missing,
-        unreadable or unknown = the companion call."""
+        Read only with the VOICE_MCP_TOOLS knob on; the delegation uses it for the allowlist and for the late answer's
+        record (interpreter rule). Missing, unreadable or unknown = the companion call."""
         if not ticket:
             return VoiceMode.LELIK
         try:
@@ -472,7 +486,8 @@ def create_voice_control_plane_blueprint(
                     agent = await lelik_agent_provider(user_id) if lelik_agent_provider else None
                     if agent is None:
                         raise _LelikNotConfigured()
-                    mode_kwargs = {"mode": await _call_mode(body.get("ticket"))} if voice_mcp_minting else {}
+                    delegation_mode = await _call_mode(body.get("ticket")) if voice_mcp_minting else None
+                    mode_kwargs = {"mode": delegation_mode} if delegation_mode is not None else {}
                     outcome = await agent.delegate_outcome(
                         user_id=user_id, account_id=account_id,
                         arguments=arguments, call_context=body.get("call_context") or [],
@@ -491,7 +506,7 @@ def create_voice_control_plane_blueprint(
                     await prompt_content_store.flush()
                 except Exception:
                     logger.error(f"voice delegate for user {user_id}: prompt content flush failed", exc_info=True)
-            await _keep_for_chat(body, user_id, account_id, outcome)
+            await _keep_for_chat(body, user_id, account_id, outcome, delegation_mode)
         return outcome.text
 
     @bp.route("/voice/delegate", methods=["POST"])

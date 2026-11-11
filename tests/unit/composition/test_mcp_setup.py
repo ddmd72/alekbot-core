@@ -27,6 +27,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition.mcp_setup import build_mcp_components
+from src.domain.fact_search_result import PhraseSearchResult
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.mcp_gate_fakes import allowing_repos
 from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
@@ -62,7 +63,7 @@ class RecordingMemoryAgent:
 
     async def search_facts(self, queries, *, path):
         self.calls.append(list(queries))
-        return []
+        return PhraseSearchResult((), ())
 
 
 @pytest.fixture

@@ -177,7 +177,9 @@ async def test_abandon_requires_oidc():
 
 
 @pytest.mark.asyncio
-async def test_failed_delegation_result_is_kept_as_a_flag_and_posted_without_its_error_text():
+async def test_failed_delegation_result_is_kept_as_a_flag_and_never_posted():
+    """Owner rule 2026-11-10: a late failure never reaches the chat, in any mode. The kept record still holds only
+    the flag, never the error text."""
     store, sink = _MemoryStore(), AsyncMock()
     client = _app(store, sink, output="SYSTEM: Specialist agent rejected: timeout", failed=True)
     response = await client.post("/voice/delegate", json=_BODY, headers=_AUTH)
@@ -187,8 +189,8 @@ async def test_failed_delegation_result_is_kept_as_a_flag_and_posted_without_its
                                        "user_id": "u1", "account_id": "a1"}
 
     await client.post("/voice/delegate/abandon", json={"ticket": "t1", "call_id": "c1"}, headers=_AUTH)
-    sink.assert_awaited_once_with(user_id="u1", account_id="a1", request="ask_alek: q", output="",
-                                  failed=True)
+    sink.assert_not_awaited()
+    assert _RESULT_KEY not in store.data
 
 
 @pytest.mark.asyncio

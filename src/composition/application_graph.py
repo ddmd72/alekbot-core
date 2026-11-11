@@ -192,9 +192,14 @@ class ApplicationGraph:
     # The voice MCP token kind's key (LELIK_VOICE_MCP_RFC §5.2), validated before anything else is built; consumed by
     # main()'s voice and MCP wiring. None: no key, every voice token refused. Never in a repr.
     voice_mcp_signing_key: Optional[str] = field(default=None, repr=False)
+    # The one place atlas, loaded by start() so the first memory search does not pay for it.
+    place_atlas: Optional[LazyAtlas] = None
 
     async def start(self) -> None:
-        """Create the agent-task queue if there is one, then start the billing and logger agents and the agent factory."""
+        """Create the agent-task queue if there is one, then start the billing and logger agents and the agent factory.
+        The place table is loaded first (about 6 s), so the first search of a new instance does not time out."""
+        if self.place_atlas is not None:
+            await self.place_atlas.warm()
         if self.agent_task_queue is not None:
             await self.agent_task_queue.create_queue_if_not_exists()
             logger.info(f"📬 Agent task queue initialized: {self.agent_task_queue.queue_name}")
@@ -607,7 +612,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The people cards (RFC §7) and the one fact search: built first, the agent factory hands the search to the
     # memory agent of every user.
     _person_cards = FirestorePersonCardRepository(db_client, env_config)
-    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards)
+    # The one place atlas: the fact search and the profile step read it; `start()` loads it before the instance serves.
+    _place_atlas = LazyAtlas()
+    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards,
+                                            atlas=_place_atlas)
 
     # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
     logger.info("🏭 Initializing User Agent Factory...")
@@ -735,7 +743,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # memory review; the cap is an optional knob, read here with os.getenv.
     # The people cards (RFC §7) it rebuilds are listed in the review's weekly digest.
     # The one place atlas: the step resolves places with it and the owner's word replies to profile questions read it.
-    _place_atlas = LazyAtlas()
     _fact_profile_step = build_fact_profile_service(
         container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
         person_cards=_person_cards, atlas=_place_atlas)
@@ -1185,6 +1192,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         logger_agent=logger_agent,
         html_renderer=html_renderer,
         fact_search=fact_search,
+        place_atlas=_place_atlas,
         voice_mcp_signing_key=voice_mcp_key,
     )
 

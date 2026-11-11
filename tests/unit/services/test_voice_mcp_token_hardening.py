@@ -25,10 +25,12 @@ class TestToolsAreTheServerSet:
         assert not tool_permitted(McpTokenKind.VOICE, verified.tools, "open_drive_file")
         assert not tool_permitted(McpTokenKind.VOICE, verified.tools, "get_download_link")
 
-    async def test_a_facts_token_claiming_drive_tools_gets_only_the_facts_tool(self, minted):
+    async def test_a_drive_token_claiming_the_facts_tool_gets_only_drive_tools(self, minted):
         kit, tokens = minted
-        widened = resign(tokens.facts, VOICE_KEY, tools=["get_user_context", "search_drive"])
-        assert (await kit.voice.verify(widened, MCPResource.FACTS)).tools == ["get_user_context"]
+        widened = resign(tokens.drive, VOICE_KEY, tools=["search_drive", "get_user_context"])
+        verified = await kit.voice.verify(widened, MCPResource.DRIVE)
+        assert verified.tools == ["search_drive"]
+        assert not tool_permitted(McpTokenKind.VOICE, verified.tools, "get_user_context")
 
     async def test_a_claim_can_narrow_the_set(self, minted):
         kit, tokens = minted
@@ -43,15 +45,13 @@ class TestTenantComesFromTheRecord:
 
     async def test_a_token_whose_account_differs_from_the_record_is_refused(self, minted):
         kit, tokens = minted
-        other_tenant = resign(tokens.facts, VOICE_KEY, account_id="acc-2")
-        assert await kit.voice.verify(other_tenant, MCPResource.FACTS) is None
         assert await kit.voice.verify(resign(tokens.drive, VOICE_KEY, account_id="acc-2"), MCPResource.DRIVE) is None
 
     async def test_a_record_without_an_account_refuses(self, minted):
         kit, tokens = minted
         await kit.store.inner.set(CALL_KEY, {"user_id": USER}, ttl_s=60)
-        assert await kit.voice.verify(tokens.facts, MCPResource.FACTS) is None
+        assert await kit.voice.verify(tokens.drive, MCPResource.DRIVE) is None
 
     async def test_the_minted_token_still_verifies(self, minted):
         kit, tokens = minted
-        assert (await kit.voice.verify(tokens.facts, MCPResource.FACTS)).account_id == ACCOUNT
+        assert (await kit.voice.verify(tokens.drive, MCPResource.DRIVE)).account_id == ACCOUNT

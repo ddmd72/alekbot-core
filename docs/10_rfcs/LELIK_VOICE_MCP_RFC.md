@@ -47,6 +47,15 @@ passes the relay.
 servers' claude.ai OAuth flow or tokens. No OpenAI realtime support (O6). No interpreter or tutor mode (O7). No new
 memory or drive behaviour. Not replacing `ask_alek` (actions, mail, tasks) or `search_web_light`.
 
+> **Amendment, 2026-11-10 (owner decision: memory by delegation, the drive by MCP).** Memory reaches Lelik by the `search_memory`
+> delegation only; the drive stays the one MCP server of a call. Under search v2 both memory paths run the same
+> `FactsMemoryAgent`, so the facts server only saved the relay hop, while adding its own token, its own failure mode
+> and xAI remote-tool quirks. So a plain companion call on xAI carries the drive server alone (no `alek_memory`, no
+> facts token, no `get_user_context` in a voice token's claim), and `search_memory` is declared and permitted in every
+> mode except the interpreter, which has no memory. The facts connector stays for claude.ai OAuth callers. The sections
+> below describe the original two-server design and are kept as history; where they say two servers, two tokens or that
+> `search_memory` leaves the call, this note wins.
+
 ## 3. Shape
 
 ```

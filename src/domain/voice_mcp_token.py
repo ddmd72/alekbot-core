@@ -21,16 +21,13 @@ VOICE_MCP_TOKEN_TYPE = "voice_mcp_access"
 VOICE_MCP_CLIENT = "voice"
 # The relay's 60-minute timeout is the only hard call cap (§5.2): the token and its live-call record live as long.
 VOICE_MCP_TOKEN_TTL_S = 3600
-# A voice token's tool results are cut here instead of the connector's 100 000 characters (§8, O5). The starting point;
-# the probe (§9) sets the final value.
+# A voice token's drive tool results are cut here instead of the connector's 100 000 characters (§8, O5).
 VOICE_RESULT_MAX_CHARS = 8000
 # The provider whose session carries the MCP tools (O6).
 VOICE_MCP_PROVIDER = "xai"
-# The facts resource's one tool (the facts app registers it under this name).
-FACTS_TOOL = "get_user_context"
-# The tools each resource's voice token carries (§4, O2): index reads only.
+# The tools each resource's voice token carries (§4, O2): index reads only. Only the drive resource has a voice token:
+# memory reaches a call by delegation (RFC §2 amendment, 2026-11-10).
 VOICE_ALLOWED_TOOLS: Mapping[MCPResource, Tuple[str, ...]] = {
-    MCPResource.FACTS: (FACTS_TOOL,),
     MCPResource.DRIVE: (SEARCH_DRIVE, FIND_PASSAGES, READ_PASSAGES),
 }
 

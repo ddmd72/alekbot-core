@@ -41,10 +41,12 @@ Window = Tuple[date, date]
 @dataclass(frozen=True)
 class SearchOutcome:
     """`lists`: the candidate lists after the gate, in insertion order; `gate_dropped`: entries the gate removed;
+    `uncut`: for a list a cap (`DOMAIN_CAP`, `HOME_CAP`) cut, its size before the cut;
     `fused`: the candidates (the `exclude`d ones removed) in scored order before the duplicate pass; `kept`: ids after it
     (cut to 30 for scope top); `scores`: the score of every candidate."""
     lists: Dict[str, List[str]]
     gate_dropped: int
+    uncut: Dict[str, int]
     fused: List[str]
     kept: List[str]
     scores: Dict[str, float]
@@ -256,8 +258,9 @@ def candidate_lists(
     similarity: Mapping[str, float],
     query_place_keys: FrozenSet[str],
     home_keys: AbstractSet[str],
-) -> Tuple[Dict[str, List[str]], int]:
-    """The gated candidate lists of one query and the count the gate dropped.
+) -> Tuple[Dict[str, List[str]], int, Dict[str, int]]:
+    """The gated candidate lists of one query, the count the gate dropped and, per list a cap cut, its size before the
+    cut.
 
     The key lists come whole (the `latest` time list is pooled over them before the lists below join). Then: `message`
     = `message_ids` when given; `domain` rebuilt when the query names domains (two domains: the facts carrying both,
@@ -269,13 +272,17 @@ def candidate_lists(
     lists = engine.lists(semantic_ids, label_ids, query_place_keys)
     if message_ids is not None:
         lists["message"] = list(message_ids)
+    uncut: Dict[str, int] = {}
     domains = [d for d in query.domains if d][:2]
     if domains:
         wanted = set(domains)
         both = [i for i in snapshot.ids if wanted <= rows[i].domains] if len(domains) == 2 else []
         in_both = set(both)
         either = [i for i in snapshot.ids if rows[i].domains & wanted and i not in in_both]
-        lists["domain"] = (engine.order(both) + engine.order(either))[:DOMAIN_CAP]
+        ordered = engine.order(both) + engine.order(either)
+        lists["domain"] = ordered[:DOMAIN_CAP]
+        if len(ordered) > DOMAIN_CAP:
+            uncut["domain"] = len(ordered)
     if query.people:
         people = engine.person_match()
         if people:
@@ -283,8 +290,12 @@ def candidate_lists(
     if not query.places and home_keys:
         at_home = [i for i in snapshot.ids if rows[i].place_keys & home_keys]
         if at_home:
-            lists["home"] = engine.order(at_home)[:HOME_CAP]
-    return engine.gate(lists)
+            ordered_home = engine.order(at_home)
+            lists["home"] = ordered_home[:HOME_CAP]
+            if len(ordered_home) > HOME_CAP:
+                uncut["home"] = len(ordered_home)
+    gated, dropped = engine.gate(lists)
+    return gated, dropped, uncut
 
 
 def keep_distinct(order: Sequence[str], is_duplicate: Callable[[str, str], bool], limit: Optional[int]) -> List[str]:
@@ -297,6 +308,12 @@ def keep_distinct(order: Sequence[str], is_duplicate: Callable[[str, str], bool]
         if not any(is_duplicate(fact_id, other) for other in kept):
             kept.append(fact_id)
     return kept
+
+
+def keep_within_cut(order: Sequence[str], cut: int, lifted: AbstractSet[str]) -> List[str]:
+    """The facts of `order` at a position within `cut`, plus the ones in `lifted` (the own matches of the phrases whose
+    scope lifts the cut) wherever they stand; every other fact past `cut` is dropped."""
+    return [fact_id for position, fact_id in enumerate(order) if position < cut or fact_id in lifted]
 
 
 def run_search(
@@ -327,7 +344,7 @@ def run_search(
     # Imported here: the scorer reads this module's time and people rules, so a module-level import would be a cycle.
     from .fact_search_rank import WEIGHTS, ScoreInputs, score_rows
 
-    lists, dropped = candidate_lists(
+    lists, dropped, uncut = candidate_lists(
         snapshot, query, semantic_ids=semantic_ids, label_ids=label_ids, message_ids=message_ids,
         similarity=similarity, query_place_keys=query_place_keys,
         home_keys=home.keys if home is not None else frozenset(),
@@ -338,4 +355,4 @@ def run_search(
     scores = score_rows(query, [snapshot.rows[i] for i in candidates], inputs, WEIGHTS if weights is None else weights)
     fused = sorted(candidates, key=lambda i: (-scores[i], i))
     kept = keep_distinct(fused, is_duplicate, None if query.scope == SCOPE_ALL else CUT)
-    return SearchOutcome(lists=lists, gate_dropped=dropped, fused=fused, kept=kept, scores=scores)
+    return SearchOutcome(lists=lists, gate_dropped=dropped, uncut=uncut, fused=fused, kept=kept, scores=scores)

@@ -2,8 +2,9 @@
 
 - Routing: the facts provider (`MCPSdkOAuthProvider.load_access_token`) and the drive verifier
   (`DriveTokenVerifier.verify_token`) send a `voice-mcp` kid to the voice verifier only and anything else to the OAuth
-  verifier only; each rejects the other's tokens, on key, type and audience, and a forged kid.
-- The facts tool over HTTP: the tools claim, the voice cap, logging (search phrases verbatim, never facts or the token).
+  verifier only; each rejects the other's tokens, on key, type and audience, and a forged kid. The facts resource has
+  no voice token since the RFC §2 amendment (2026-11-10): every voice token is refused there.
+- The facts tool over HTTP: every voice token gets 401; an OAuth call logs as before.
 - The drive tools over HTTP on the production drive services (`drive_mcp_access_world`): the tools claim (neutral
   refusal, no read), the audience left unset (connector access "Nothing" still sees chat's view), the voice cap.
 
@@ -25,6 +26,7 @@ from src.domain import drive_connector_contract as c
 from src.domain.drive_connector_access import ConnectorAccess
 from src.domain.mcp_resource import MCPResource
 from src.domain.entities import FactEntity, FactType
+from src.domain.fact_search_result import PhraseSearchResult
 from src.domain.voice_mcp_token import VOICE_MCP_KID, VOICE_RESULT_MAX_CHARS, McpTokenKind
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.drive_connector_texts import marker
@@ -70,12 +72,15 @@ def _drive_verifier(kit: Kit, voice: Any = "kit") -> DriveTokenVerifier:
 # ----------------------------------------------------------------------------- routing and cross-rejection
 
 
+def _aimed_at_facts(tokens) -> str:
+    """The call's voice token re-signed with the voice key for the facts audience, scope and tool: the shape a facts
+    voice token had before the RFC §2 amendment (2026-11-10)."""
+    return resign(tokens.drive, VOICE_KEY, aud=f"voice:{FACTS_URI}", scope="user_context", tools=["get_user_context"])
+
+
 class TestFactsResourceRouting:
-    async def test_a_voice_token_loads_as_the_voice_kind_with_its_tools(self, kit, tokens):
-        loaded = await _facts_provider(kit).load_access_token(tokens.facts)
-        assert (loaded.kind, loaded.tools, loaded.user_id, loaded.account_id) == (
-            McpTokenKind.VOICE, ["get_user_context"], USER, ACCOUNT)
-        assert loaded.client_id == "voice" and loaded.scopes == ["user_context"] and loaded.grant_id is None
+    async def test_no_voice_token_loads_here_even_one_aimed_at_the_facts_audience(self, kit, tokens):
+        assert await _facts_provider(kit).load_access_token(_aimed_at_facts(tokens)) is None
 
     async def test_an_oauth_token_loads_as_the_oauth_kind_and_reads_no_record(self, kit):
         loaded = await _facts_provider(kit).load_access_token(kit.oauth_token(MCPResource.FACTS))
@@ -87,7 +92,7 @@ class TestFactsResourceRouting:
 
     async def test_a_voice_signed_token_shaped_as_oauth_is_refused(self, kit, tokens):
         """No voice kid, OAuth type and audience: it reaches the OAuth verifier, which refuses the key."""
-        disguised = resign(tokens.facts, VOICE_KEY, header={}, type="mcp_access", aud=FACTS_URI, client_id="c")
+        disguised = resign(tokens.drive, VOICE_KEY, header={}, type="mcp_access", aud=FACTS_URI, client_id="c")
         assert await _facts_provider(kit).load_access_token(disguised) is None
 
     async def test_an_oauth_token_with_a_forged_voice_kid_is_refused(self, kit):
@@ -95,18 +100,15 @@ class TestFactsResourceRouting:
         assert await _facts_provider(kit).load_access_token(forged) is None
 
     async def test_an_oauth_signed_token_shaped_as_voice_is_refused(self, kit, tokens):
-        disguised = resign(tokens.facts, OAUTH_SECRET)
+        disguised = resign(_aimed_at_facts(tokens), OAUTH_SECRET)
         assert await _facts_provider(kit).load_access_token(disguised) is None
 
     async def test_a_voice_token_with_the_voice_kid_removed_is_refused_by_the_oauth_verifier(self, kit, tokens):
-        assert await _facts_provider(kit).load_access_token(resign(tokens.facts, VOICE_KEY, header={})) is None
+        stripped = resign(_aimed_at_facts(tokens), VOICE_KEY, header={})
+        assert await _facts_provider(kit).load_access_token(stripped) is None
 
     async def test_without_a_voice_service_every_voice_token_is_refused(self, kit, tokens):
-        assert await _facts_provider(kit, voice=None).load_access_token(tokens.facts) is None
-
-    async def test_after_revoke_the_token_is_refused(self, kit, tokens):
-        await kit.voice.revoke(TICKET)
-        assert await _facts_provider(kit).load_access_token(tokens.facts) is None
+        assert await _facts_provider(kit, voice=None).load_access_token(_aimed_at_facts(tokens)) is None
 
 
 class TestDriveResourceRouting:
@@ -119,8 +121,8 @@ class TestDriveResourceRouting:
         assert (loaded.kind, loaded.tools, loaded.grant_id) == (McpTokenKind.OAUTH, None, "g-1")
         assert kit.store.reads == []
 
-    async def test_the_facts_voice_token_is_refused_here(self, kit, tokens):
-        assert await _drive_verifier(kit).verify_token(tokens.facts) is None
+    async def test_a_voice_token_aimed_at_the_facts_audience_is_refused_here(self, kit, tokens):
+        assert await _drive_verifier(kit).verify_token(_aimed_at_facts(tokens)) is None
 
     async def test_a_voice_signed_token_shaped_as_oauth_is_refused(self, kit, tokens):
         disguised = resign(tokens.drive, VOICE_KEY, header={}, type="mcp_access", aud=DRIVE_URI, client_id="c")
@@ -153,9 +155,9 @@ class RecordingSearch:
         self.facts = facts
         self.queries: List[str] = []
 
-    async def search_facts(self, queries: List[str], *, path: str) -> List[FactEntity]:
+    async def search_facts(self, queries: List[str], *, path: str) -> PhraseSearchResult:
         self.queries.extend(queries)
-        return self.facts
+        return PhraseSearchResult(tuple(self.facts), tuple(() for _ in self.facts))
 
 
 FACTS_AUTH = SimpleNamespace(mcp_resource_uri=FACTS_URI, oauth_session_secret=OAUTH_SECRET, mcp_access_token_ttl=3600,
@@ -173,7 +175,7 @@ class FactsApp:
         components = build_mcp_components(
             db_client=EvalDb(), env_config=ENV, auth_config=FACTS_AUTH, memory_search=memory_search,
             cipher=AesGcmTestCipher(), digest_key=bytes(range(32)), user_repo=kit.user_repo,
-            whitelist_repo=kit.whitelist_repo, voice_tokens=kit.voice)
+            whitelist_repo=kit.whitelist_repo)
         # the components' own authorization service signs with the same OAuth secret as the kit's
         self.app = components.fastmcp
 
@@ -199,49 +201,15 @@ def _fact(i: int, content: str = FACT) -> FactEntity:
 
 
 class TestFactsTool:
-    async def test_a_voice_token_reads_memory(self, kit, tokens):
-        app = FactsApp(kit, [_fact(1)])
-        assert FACT in _text(await app.call(tokens.facts))
-        assert app.search.queries == [QUERY]
-
-    async def test_a_tool_outside_the_claim_gets_the_neutral_refusal_and_no_read(self, kit, tokens):
-        narrowed = resign(tokens.facts, VOICE_KEY, tools=["search_drive"])
-        app = FactsApp(kit, [_fact(1)])
-        text = _text(await app.call(narrowed))
-        assert text == "Refused: this tool is not available to this caller."
-        assert app.search.queries == []
-
     async def test_the_drive_voice_token_gets_401(self, kit, tokens):
         app = FactsApp(kit, [_fact(1)])
         assert (await app.call(tokens.drive)).status_code == 401
         assert app.search.queries == []
 
-    async def test_a_revoked_voice_token_gets_401(self, kit, tokens):
-        await kit.voice.revoke(TICKET)
+    async def test_a_voice_token_aimed_at_the_facts_audience_gets_401(self, kit, tokens):
         app = FactsApp(kit, [_fact(1)])
-        assert (await app.call(tokens.facts)).status_code == 401
-
-    async def test_a_voice_result_is_cut_at_the_voice_cap_and_an_oauth_one_is_not(self, kit, tokens):
-        many = [_fact(i, f"{FACT}, note {i:04d} " + "x" * 80) for i in range(200)]
-        voice_text = _text(await FactsApp(kit, many).call(tokens.facts))
-        oauth_text = _text(await FactsApp(kit, many).call(kit.oauth_token(MCPResource.FACTS)))
-        assert VOICE_RESULT_MAX_CHARS == 8000
-        assert len(voice_text) <= VOICE_RESULT_MAX_CHARS < len(oauth_text)
-        assert voice_text.endswith("ask a narrower question to see the rest.]") and oauth_text.startswith(voice_text
-                                                                                                       .split("\n")[0])
-
-    async def test_a_voice_call_logs_its_search_terms_never_facts_or_token(self, kit, tokens, caplog):
-        caplog.set_level(logging.DEBUG)
-        await FactsApp(kit, [_fact(1)]).call(tokens.facts)
-        lines = [r.getMessage() for r in caplog.records if "MCP get_user_context" in r.getMessage()]
-        assert len(lines) == 2 and all("client=voice" in line for line in lines)
-        # The search phrases, verbatim, as the call sent them.
-        assert f"queries={[QUERY]!r}" in lines[0]
-        # What reaches Cloud Logging (INFO and up): no fact. At any level: no token.
-        shipped = "\n".join(r.getMessage() for r in caplog.records if r.levelno >= logging.INFO)
-        assert FACT not in shipped
-        everything = "\n".join(r.getMessage() for r in caplog.records)
-        assert tokens.facts not in everything and tokens.facts.split(".")[2] not in everything
+        assert (await app.call(_aimed_at_facts(tokens))).status_code == 401
+        assert app.search.queries == []
 
     async def test_an_oauth_call_logs_as_before(self, kit, caplog):
         caplog.set_level(logging.DEBUG)
@@ -306,7 +274,7 @@ class TestDriveTools:
         assert text.split("\n") == NEUTRAL
         assert w.conversion.opened == [] and w.notes.reads == []
 
-    async def test_the_facts_voice_token_gets_401_on_the_drive(self, drive_world):
+    async def test_a_voice_token_aimed_at_the_facts_audience_gets_401_on_the_drive(self, drive_world):
         w, kit, tokens = drive_world
         app = build_drive_mcp_app(authorization_service=kit.oauth, auth_config=AUTH_CONFIG, tools=w.tools,
                                   voice_tokens=kit.voice)
@@ -314,7 +282,7 @@ class TestDriveTools:
         async with httpx.AsyncClient(transport=transport, base_url="https://mcp.example.test") as http:
             async with app.session_manager.run():
                 resp = await http.post("/drive-mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-                                       headers={**MCP_HEADERS, "Authorization": f"Bearer {tokens.facts}"})
+                                       headers={**MCP_HEADERS, "Authorization": f"Bearer {_aimed_at_facts(tokens)}"})
         assert resp.status_code == 401
 
     async def test_a_voice_result_is_cut_at_the_voice_cap_by_token_kind(self, drive_world, monkeypatch):

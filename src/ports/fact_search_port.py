@@ -3,6 +3,7 @@ from typing import AbstractSet, List, Sequence
 
 from ..domain.entities import FactEntity
 from ..domain.fact_query import FactQuery
+from ..domain.fact_search_result import PhraseSearchResult
 
 
 class FactSearchPort(ABC):
@@ -24,9 +25,15 @@ class FactSearchPort(ABC):
         """
         pass
 
+    async def warm(self, account_id: str) -> None:
+        """Load the account's search snapshot ahead of its first search. Optional: the default does nothing. A search
+        that arrives during the load waits for it. Errors: raised to the caller."""
+        return None
+
     @abstractmethod
-    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> List[FactEntity]:
-        """Return the facts that answer one to four phrases' queries, given in the caller's priority order.
+    async def search_phrases(self, account_id: str, queries: Sequence[FactQuery]) -> PhraseSearchResult:
+        """Return the facts that answer one to four phrases' queries, given in the caller's priority order, each with
+        the zero-based indices of the phrases whose own kept top-`CUT` list holds it (one phrase: every kept fact).
 
         Order: each query scored on its own candidates; the fused order of RFC §5.3 "Several phrases" (priority weight
             times σ of the score relative to that phrase's 30th kept score; a fact's best phrase counts); then
