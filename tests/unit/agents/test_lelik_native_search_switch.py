@@ -57,14 +57,14 @@ class TestSwitchedOnXai:
         assert "send_to_chat" in {t["name"] for t in config["tools"]}
 
     @pytest.mark.asyncio
-    async def test_an_interpreter_call_offers_no_search_of_any_kind(self):
-        # Owner decision 2026-11-11: the interpreter has no tools and no web search, the provider's own included.
+    async def test_an_interpreter_call_has_no_tools_but_keeps_the_provider_search(self):
+        # Owner decision 2026-11-11: the interpreter has no tools; the provider's own web and X search stay on.
         agent = _lelik("xai", native_web_search=True)
         config = await _config(agent, VoiceMode.INTERPRETER)
 
         assert config["tools"] == []
         assert agent.permitted_intents(VoiceMode.INTERPRETER) == frozenset()
-        assert VoiceSessionSpec.from_dict(config["voice"]).builtin_search is False
+        assert VoiceSessionSpec.from_dict(config["voice"]).builtin_search is True
 
     @pytest.mark.asyncio
     async def test_the_session_spec_asks_the_relay_for_built_in_search(self):
