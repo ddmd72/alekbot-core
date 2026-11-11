@@ -50,8 +50,10 @@ async def test_the_companion_call_on_xai_declares_search_memory_and_carries_only
 
 
 async def test_the_interpreter_call_still_has_no_search_memory():
+    # Owner decision 2026-11-11: the interpreter has no tools at all, so there is no delegate tool to declare it on.
     agent = _lelik()
     config = await agent.session_config(user_id="usr-1", account_id="acc-1", mode=VoiceMode.INTERPRETER)
 
-    assert Intent.SEARCH_MEMORY not in _declared(config)
+    assert config["tools"] == []
+    assert VOICE_MCP_SERVERS_FIELD not in config
     assert Intent.SEARCH_MEMORY not in agent.permitted_intents(VoiceMode.INTERPRETER)

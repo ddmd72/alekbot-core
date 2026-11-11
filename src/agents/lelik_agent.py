@@ -17,8 +17,8 @@ same way.
 With the VOICE_MCP_TOOLS knob on, the plain companion call on xAI also carries the drive MCP server
 (LELIK_VOICE_MCP_RFC §4): session_config puts its descriptor (no token) under `mcp_servers`; the relay pairs it with
 the token /voice/session-config mints at redemption. Memory is not an MCP server of any call: it goes by the
-search_memory delegation, declared and permitted in every mode but the interpreter, which has no memory
-(§2, amendment 2026-11-10).
+search_memory delegation, declared and permitted in every mode but the interpreter, which has no tools at
+all (§2, amendment 2026-11-10; owner decision 2026-11-11).
 
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
@@ -142,19 +142,24 @@ class LelikAgent(BaseAgent):
             # The provider searches the web itself inside the session; the delegated light search would be a second path.
             available = [intent for intent in available if intent["name"] != Intent.SEARCH_WEB_LIGHT]
         mcp_servers = self._mcp_servers_for(mode)
-        if mode is VoiceMode.INTERPRETER:
-            # An interpreter call has no memory at all (owner rule). Every other mode reaches memory by the
-            # search_memory delegation only (LELIK_VOICE_MCP_RFC §2, amendment 2026-11-10); the drive is the one MCP server.
-            available = [intent for intent in available if intent["name"] != Intent.SEARCH_MEMORY]
-        tools = [self._build_delegate_tool_declaration(available)] if available else []
-        if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
-            tools.append(_send_to_chat_tool_declaration())
+        tools = self._tool_declarations(mode, available)
         session = replace(self._voice_profile.session, builtin_search=native_search)
         config: Dict[str, Any] = {"instructions": instructions, "tools": tools, "voice": session.to_dict()}
         if mcp_servers:
             # Descriptors only: the tokens are minted at ticket redemption and never stored (O1).
             config[VOICE_MCP_SERVERS_FIELD] = [server.to_dict() for server in mcp_servers]
         return config
+
+    def _tool_declarations(self, mode: VoiceMode, available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The session's tools. An interpreter call has none (owner rule, 2026-11-11): it only translates, with no
+        memory, no drive, no delegation and no send_to_chat. Every other mode declares delegate_to_specialist over
+        `available` and, when the manifest has the errand, send_to_chat."""
+        if mode is VoiceMode.INTERPRETER:
+            return []
+        tools = [self._build_delegate_tool_declaration(available)] if available else []
+        if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
+            tools.append(_send_to_chat_tool_declaration())
+        return tools
 
     def _native_search_active(self) -> bool:
         return bool(self._native_web_search and self._voice_profile.builtin_web_search)
@@ -167,14 +172,14 @@ class LelikAgent(BaseAgent):
 
     def permitted_intents(self, mode: VoiceMode = VoiceMode.LELIK) -> frozenset:
         """The intents a live call in `mode` may delegate: what session_config declares (LELIK.allowed_intents, minus
-        search_web_light when the provider searches natively, minus search_memory in an interpreter call, which has
-        no memory) plus the errand intent of the send_to_chat tool. The declaration only shapes what the model is told;
-        this is what /voice/delegate enforces."""
+        search_web_light when the provider searches natively) plus the errand intent of the send_to_chat tool; none at
+        all in an interpreter call, which has no tools. The declaration only shapes what the model is told; this is
+        what /voice/delegate enforces."""
+        if mode is VoiceMode.INTERPRETER:
+            return frozenset()
         allowed = set(LELIK.allowed_intents or ()) | {Intent.SEND_TO_CHAT}
         if self._native_search_active():
             allowed.discard(Intent.SEARCH_WEB_LIGHT)
-        if mode is VoiceMode.INTERPRETER:
-            allowed.discard(Intent.SEARCH_MEMORY)
         return frozenset(allowed)
 
     async def delegate(
