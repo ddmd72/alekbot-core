@@ -12,16 +12,16 @@ account's people cards are read with each load too.
 """
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import AbstractSet, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from ..domain.deduplication_service import SmartDeduplication
 from ..domain.entities import FactEntity
-from ..domain.fact_query import SCOPE_ALL, FactQuery
+from ..domain.fact_query import SCOPE_ALL, SCOPE_TOP, FactQuery
 from ..domain.fact_search_result import PhraseSearchResult
-from ..domain.fact_search_lists import (CUT, DEPTH_KNN, SearchOutcome, is_set_phrase, keep_distinct, run_search,
+from ..domain.fact_search_lists import (CUT, DEPTH_KNN, SearchOutcome, is_set_phrase, keep_distinct, run_search, run_set,
                                         unresolved_keys)
 from ..domain.fact_search_rank import PRIORITY_WEIGHTS, CardRef, HomePlace, QueryPlaceKeys, card_ref, fuse_phrases
 from ..domain.fact_search_snapshot import FactSearchSnapshot
@@ -51,9 +51,11 @@ class _Loaded:
 
 @dataclass(frozen=True)
 class _Phrase:
-    """One query's outcome and the kNN hits the snapshot did not know."""
+    """One query's `top` outcome (every phrase has one), the set of an `all` phrase that names a structural key
+    (None for any other phrase) and the kNN hits the snapshot did not know."""
     outcome: SearchOutcome
     unsnapped: int
+    set_outcome: Optional[SearchOutcome] = None
 
 
 def _unit(vector: Sequence[float]) -> np.ndarray:
@@ -127,19 +129,17 @@ class FactSearchService(FactSearchPort):
     async def _search(
         self, account_id: str, queries: List[FactQuery], exclude: AbstractSet[str], started: float
     ) -> PhraseSearchResult:
-        # Places first: whether an `all` phrase is a set depends on its places reaching a key (list mode RFC §3.1).
+        # Places first: whether an `all` phrase also has a set depends on its places reaching a key (list mode RFC §3.1).
         resolved = list(await asyncio.gather(*(self._query_places(q) for q in queries)))
-        sets = [is_set_phrase(q, keys) for q, (keys, _) in zip(queries, resolved)]
-        # A set phrase builds no kNN list and has no kind similarity: it embeds only what orders its set.
-        texts = list(dict.fromkeys(t for q, is_set in zip(queries, sets)
-                                   for t in ((q.subject, q.message) if is_set else (q.subject, q.kind, q.message)) if t))
+        # Every phrase, a set phrase too, runs `top` (list mode RFC §2): its set only adds to the scored result.
+        texts = list(dict.fromkeys(t for q in queries for t in (q.subject, q.kind, q.message) if t))
         embedded, refreshed_at = await asyncio.gather(
             self._embed(texts), self._repository.get_baseline_refreshed_at(account_id))
         by_text = dict(zip(texts, embedded))
         knn_calls = []
-        for q, is_set in zip(queries, sets):
-            subject = by_text.get(q.subject) if q.subject and not is_set else None
-            kind = by_text.get(q.kind) if q.kind and not is_set else None
+        for q in queries:
+            subject = by_text.get(q.subject) if q.subject else None
+            kind = by_text.get(q.kind) if q.kind else None
             knn_calls.append(self._nearest(account_id, "vector", subject))
             knn_calls.append(self._nearest(account_id, "label_vector", kind))
         (loaded, status), *hits = await asyncio.gather(self._snapshot(account_id, refreshed_at), *knn_calls)
@@ -148,53 +148,53 @@ class FactSearchService(FactSearchPort):
             phrases.append(await self._phrase(loaded, q, hits[2 * n], hits[2 * n + 1], by_text, exclude, resolved[n]))
         snapshot = loaded.snapshot
         outcomes = [p.outcome for p in phrases]
-        kept = self._union(loaded, outcomes)
-        lists_of = [set(o.kept) if o.mode == SCOPE_ALL else set(o.kept[:CUT]) for o in outcomes]
+        sets = [p.set_outcome for p in phrases]
+        kept = self._union(loaded, outcomes, sets)
+        lists_of = [set(o.kept[:CUT]) | set(s.kept if s else ()) for o, s in zip(outcomes, sets)]
         candidates = len({fact_id for o in outcomes for fact_id in o.fused})
-        lists = self._lists_text(outcomes[0], loaded)
-        modes = ",".join(self._mode_text(q, o, keys) for q, o, (keys, _) in zip(queries, outcomes, resolved))
+        lists = self._lists_text(outcomes[0], loaded, sets[0])
+        modes = ",".join(self._mode_text(q, s, keys) for q, s, (keys, _) in zip(queries, sets, resolved))
         logger.info(
             f"[FactSearch] path={queries[0].path} acc={account_id[:8]} phrases={len(queries)} modes={modes} "
-            f"lists={lists} cands={candidates} gate_dropped={sum(o.gate_dropped for o in outcomes)} kept={len(kept)} "
+            f"lists={lists} cands={candidates} gate_dropped={sum(o.gate_dropped for o in (*outcomes, *filter(None, sets)))} kept={len(kept)} "
             f"unsnapped={sum(p.unsnapped for p in phrases)} snapshot={status} "
             f"ms={int((time.perf_counter() - started) * 1000)}")
         return PhraseSearchResult(
             tuple(snapshot.entities[fact_id] for fact_id in kept),
             tuple(tuple(n for n, found in enumerate(lists_of) if fact_id in found) for fact_id in kept))
 
-    def _union(self, loaded: _Loaded, outcomes: List[SearchOutcome]) -> List[str]:
-        """The request's result (list mode RFC §2): the whole set of each `all` phrase, in phrase order, then the `top`
-        phrases' result: one `top` phrase's kept list, or several fused among themselves (each at its own priority
-        position) and cut to `CUT` after the duplicate pass. A fact several phrases found appears once, at its first
-        place."""
-        top = [n for n, o in enumerate(outcomes) if o.mode != SCOPE_ALL]
-        if len(top) <= 1:
-            top_kept = outcomes[top[0]].kept if top else []
+    def _union(self, loaded: _Loaded, outcomes: List[SearchOutcome], sets: List[Optional[SearchOutcome]]) -> List[str]:
+        """The request's result (list mode RFC §2): the `top` result of every phrase (an `all` phrase's included): one
+        phrase's kept list, or several fused among themselves (each at its own priority position) and cut to `CUT`
+        after the duplicate pass; then the members of each `all` set that the `top` result lacks, set after set in
+        phrase order, each set in its own order. A fact several phrases found appears once, at its first place."""
+        if len(outcomes) == 1:
+            top_kept = outcomes[0].kept
         else:
             fused = fuse_phrases(
-                [[(fact_id, o.scores[fact_id]) for fact_id in o.fused] if n in top else []
-                 for n, o in enumerate(outcomes)],
-                [o.scores[o.kept[:CUT][-1]] if n in top and o.kept else 0.0 for n, o in enumerate(outcomes)])
+                [[(fact_id, o.scores[fact_id]) for fact_id in o.fused] for o in outcomes],
+                [o.scores[o.kept[:CUT][-1]] if o.kept else 0.0 for o in outcomes])
             top_kept = keep_distinct(fused, lambda a, b: self._is_duplicate(loaded, a, b), CUT)
-        set_kept = [fact_id for o in outcomes if o.mode == SCOPE_ALL for fact_id in o.kept]
-        return list(dict.fromkeys([*set_kept, *top_kept]))
+        set_kept = [fact_id for s in sets if s for fact_id in s.kept]
+        return list(dict.fromkeys([*top_kept, *set_kept]))
 
     @staticmethod
-    def _mode_text(query: FactQuery, outcome: SearchOutcome, place_keys: AbstractSet[str]) -> str:
-        """`top`; `all[keys]` for a set phrase (the keys that defined its set, `+`-joined); `all>top` for an `all`
-        phrase without a structural key, which ran `top`. An `all` phrase adds the keys it named that reached nothing
-        and were ignored: `all[domains;unresolved:place]`, `all>top[unresolved:place]`."""
+    def _mode_text(query: FactQuery, set_outcome: Optional[SearchOutcome], place_keys: AbstractSet[str]) -> str:
+        """`top`; `all[keys]+top` for a set phrase (the keys that defined its set, `+`-joined; it ran both `top` and the
+        set); `all>top` for an `all` phrase without a structural key, which ran `top` only. An `all` phrase adds the
+        keys it named that reached nothing and were ignored: `all[domains;unresolved:place]+top`,
+        `all>top[unresolved:place]`."""
         if query.scope != SCOPE_ALL:
             return "top"
         unresolved = ";".join(f"unresolved:{key}" for key in unresolved_keys(query, place_keys))
-        if outcome.mode == SCOPE_ALL:
-            return f"all[{';'.join(part for part in ('+'.join(outcome.keys), unresolved) if part)}]"
+        if set_outcome is not None:
+            return f"all[{';'.join(part for part in ('+'.join(set_outcome.keys), unresolved) if part)}]+top"
         return f"all>top[{unresolved}]" if unresolved else "all>top"
 
     @staticmethod
-    def _lists_text(outcome: SearchOutcome, loaded: _Loaded) -> str:
+    def _lists_text(outcome: SearchOutcome, loaded: _Loaded, set_outcome: Optional[SearchOutcome] = None) -> str:
         """`name:kept`; `name:kept/before` for a list a cap cut; a kNN list also shows `/eligible` (the facts that have
-        the vector it reads) when that is more than its depth."""
+        the vector it reads) when that is more than its depth. A set phrase ends with `set:size`."""
         eligible = {"semantic": int(loaded.has_vector.sum()), "labels": int(loaded.has_label.sum()),
                     "message": int(loaded.has_vector.sum())}
         parts = []
@@ -205,6 +205,8 @@ class FactSearchService(FactSearchPort):
             elif eligible.get(name, 0) > DEPTH_KNN:
                 part += f"/{eligible[name]}"
             parts.append(part)
+        if set_outcome is not None:
+            parts.append(f"set:{len(set_outcome.kept)}")
         return ",".join(parts) or "none"
 
     async def _phrase(
@@ -224,14 +226,14 @@ class FactSearchService(FactSearchPort):
             unsnapped += len(found) - len(knn[-1] or [])
         similarity = self._similarity(snapshot.ids, loaded.matrix, loaded.has_vector, by_text, query.subject)
         place_keys, places = resolved
+        set_outcome = None
         if is_set_phrase(query, place_keys):
-            # The set's order needs only the subject or the message similarity: no message list, no home.
-            message_similarity = self._similarity(snapshot.ids, loaded.matrix, loaded.has_vector, by_text, query.message)
-            outcome = run_search(
-                snapshot, query, semantic_ids=None, label_ids=None, similarity=similarity,
-                query_place_keys=place_keys, is_duplicate=lambda a, b: self._is_duplicate(loaded, a, b),
-                message_similarity=message_similarity, exclude=exclude)
-            return _Phrase(outcome, unsnapped)
+            # The set adds to the scored result; its order needs only the subject or the message similarity.
+            set_outcome = run_set(
+                snapshot, query, similarity=similarity, query_place_keys=place_keys,
+                is_duplicate=lambda a, b: self._is_duplicate(loaded, a, b), exclude=exclude,
+                message_similarity=self._similarity(snapshot.ids, loaded.matrix, loaded.has_vector, by_text,
+                                                    query.message))
         label_similarity = self._similarity(snapshot.ids, loaded.label_matrix, loaded.has_label, by_text, query.kind)
         message_ids: Optional[List[str]] = None
         message_similarity = {}
@@ -239,12 +241,12 @@ class FactSearchService(FactSearchPort):
             message_ids, message_similarity = self._message_list(loaded, by_text[query.message])
         home = await self._home(query.home)
         outcome = run_search(
-            snapshot, query, semantic_ids=knn[0], label_ids=knn[1], similarity=similarity,
+            snapshot, replace(query, scope=SCOPE_TOP), semantic_ids=knn[0], label_ids=knn[1], similarity=similarity,
             query_place_keys=place_keys, is_duplicate=lambda a, b: self._is_duplicate(loaded, a, b),
             message_ids=message_ids, label_similarity=label_similarity, message_similarity=message_similarity,
             query_places=places, home=home, cards=loaded.cards, exclude=exclude,
         )
-        return _Phrase(outcome, unsnapped)
+        return _Phrase(outcome, unsnapped, set_outcome)
 
     @staticmethod
     def _similarity(ids: Sequence[str], matrix: np.ndarray, present: np.ndarray, by_text: Dict[str, List[float]],

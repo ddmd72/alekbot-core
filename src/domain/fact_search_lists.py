@@ -1,12 +1,12 @@
-"""The fact search engine (fact profile RFC §5.3, list mode RFC), pure over an account snapshot. A phrase runs one of two
-algorithms:
+"""The fact search engine (fact profile RFC §5.3, list mode RFC), pure over an account snapshot. A request runs:
 
-- `top` (`run_search`): the candidate lists a query asks for, the intimate gate, the scored order
-  (`fact_search_rank.py`) and the near-duplicate pass, cut to `CUT`.
-- the set of an `all` phrase that names a structural key (`is_set_phrase`, `run_set`): a boolean filter over the
-  snapshot (OR within a key, AND across keys, a time window counts as a key), its own gate, ordered by closeness (or
-  newest first under `latest`), the near-duplicate pass with no limit. No kNN list, no home list, no cap, no scorer.
-  An `all` phrase without such a key runs `top` (list mode RFC §3.4); `run_search` dispatches.
+- `top` (`run_search`) for every phrase, an `all` phrase included: the candidate lists a query asks for, the intimate
+  gate, the scored order (`fact_search_rank.py`) and the near-duplicate pass, cut to `CUT`.
+- additionally, for an `all` phrase that names a structural key (`is_set_phrase`, `run_set`), its set: a boolean filter
+  over the snapshot (OR within a key, AND across keys, a time window counts as a key), its own gate, ordered by closeness
+  (or newest first under `latest`), the near-duplicate pass with no limit. No kNN list, no home list, no cap, no scorer.
+  The set only adds to the `top` result (list mode RFC §2); the caller unions them. `run_search` dispatches on the
+  query's scope, so the `top` run of an `all` phrase is a `run_search` of the query with `scope=top`.
 
 The `top` lists only generate candidates; none is cut before scoring except where a cap is named (`DOMAIN_CAP`,
 `HOME_CAP`, the kNN depth). The key lists are built in one fixed order (semantic, labels, domain, time, kinds, places,
@@ -350,8 +350,8 @@ class _Search:
         return lists
 
     def gate(self, lists: Dict[str, List[str]]) -> Tuple[Dict[str, List[str]], int]:
-        """An intimate fact stays only in the labels list and its own domain list. (An `all` phrase naming people never
-        gets here: it is a set phrase, gated by `set_gate`.)"""
+        """An intimate fact stays only in the labels list and its own domain list. (The set of an `all` phrase naming
+        people is gated by `set_gate`; its `top` run, scope `top`, is gated here like any `top` phrase.)"""
         kept ={name: [i for i in members if self._rows[i].sensitivity != "intimate" or name in ("labels", "domain")]
                 for name, members in lists.items()}
         dropped = sum(len(lists[name]) - len(kept[name]) for name in lists)
@@ -449,7 +449,8 @@ def run_search(
     each candidate against every fact already kept. Candidates are ordered by score, ties by id.
 
     A set phrase (`is_set_phrase`) goes to `run_set`, which reads only `similarity`, `message_similarity`,
-    `query_place_keys`, `is_duplicate` and `exclude`; any other `all` phrase runs `top` here, cut to `CUT`."""
+    `query_place_keys`, `is_duplicate` and `exclude`; any other phrase runs `top` here, cut to `CUT`. A caller that
+    wants a set phrase's `top` run too (list mode RFC §2) passes the query with `scope=top`."""
     if is_set_phrase(query, query_place_keys):
         return run_set(snapshot, query, similarity=similarity, message_similarity=message_similarity,
                        query_place_keys=query_place_keys, is_duplicate=is_duplicate, exclude=exclude)

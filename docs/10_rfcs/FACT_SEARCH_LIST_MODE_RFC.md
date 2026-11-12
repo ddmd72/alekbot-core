@@ -31,12 +31,19 @@ Each phrase of a request carries its own `scope`, and the two scopes are two alg
 
 - **`top`** stays as it is: the wide candidate net (every list of §5.3), the fitted linear scorer, multi-phrase fusion
   and the cut to 30. One thing changes, in §5.
-- **`all`** is a different algorithm. The phrase's structural keys define a set, and the phrase returns that set whole.
+- **`all`** adds an algorithm to `top`. The phrase's structural keys define a set, and the phrase returns that set
+  whole, on top of what it would return as a `top` phrase.
 
-A request is a union of strategies. Each `all` phrase supplies the complete set its keys define. The `top` phrases are
-scored and fused among themselves as today and bring what keys cannot reach. The request's result is the union of the
-`all` sets and the fused `top` result. A fact found by several phrases appears once and names every phrase that found it,
-in the one result format of PR #359.
+A request is a union of strategies. Every phrase, an `all` phrase with set keys included, runs `top` exactly as a `top`
+phrase does (same lists, scorer, cut and fusion). Each `all` phrase with set keys also supplies the complete set its keys
+define. The request's result is the fused `top` result, then the members of every `all` set it lacks, in union and
+without duplicates: each set in its own order (§3.2), set after set in phrase order. A fact found by several phrases
+appears once and names every phrase that found it, in the one result format of PR #359.
+
+Why the set never replaces `top`: on real chat turns the slots model infers `kinds` and `people` keys the needed facts
+lack, so a strict set comes back empty or near-empty (in 6 of 8 failing turns it held 0 facts), and a phrase that no
+longer ran the scored search lost the facts it used to find. Measured on real turns, `top` plus the unioned set matched
+production recall at a third of the result size, and on the synthetic evaluation it raised `all` recall.
 
 ## 3. The `all` set
 
@@ -89,7 +96,7 @@ requests.
 ### 3.4 A phrase with no structural key
 
 An `all` phrase whose slots carry no domain, kind, person, named place or time window (a subject only) has no set to
-define. It falls back to `top` behaviour for that phrase: the full net, the scorer and the cut.
+define. It runs `top` alone, as every `all` phrase does (§2): the full net, the scorer and the cut.
 
 A time window on its own does define a set: "everything from last March" asks for exactly the facts dated in that
 window, the way "everything about Clara" asks for the facts naming her. Such a slice can be large, and that is its
@@ -157,11 +164,11 @@ set cannot be limited to the user's own facts. There is no design yet.
 | §5.1 `scope` | `top`/`all` per query | per phrase; `all` selects the set of §3, falling back to `top` per §3.4 |
 | §5.3 lists table, row **domain** | "in-list order, capped at 100" | `top`: ordered by closeness to the phrase (both-domain facts first), capped at 100. `all`: not a list; the domain is a filter key (OR within, no cap) |
 | §5.3 lists table, row **home** | "in-list order, capped at 60" | `top`: ordered by closeness to the phrase, capped at 60. `all`: not built |
-| §5.3 lists table, rows **semantic**, **labels**, **message** | run whenever their text exists | unchanged for `top`; not built for an `all` phrase with a structural key |
-| §5.3 lists table, rows **time**, **places**, **people**, **kinds** | candidate lists | unchanged for `top`; for `all` they are AND conditions of the set (`latest` orders only) |
-| §5.3 "Intimate gate" | `scope=all` with people opens it | unchanged for `top`; for `all` as §3.5 |
+| §5.3 lists table, rows **semantic**, **labels**, **message** | run whenever their text exists | unchanged: built for every phrase, an `all` phrase with a structural key included (§2) |
+| §5.3 lists table, rows **time**, **places**, **people**, **kinds** | candidate lists | unchanged for `top`; for the set of an `all` phrase they are also AND conditions (`latest` orders only) |
+| §5.3 "Intimate gate" | `scope=all` with people opens it | unchanged for `top`; for the set of an `all` phrase as §3.5 |
 | §5.3 "Scoring", last sentence | "`scope=all` keeps every candidate after dedup" | an `all` phrase is not scored: its set is ordered by closeness (§3.2), and dedup runs with no limit |
-| §5.3 "Several phrases" | "`scope=all` on any phrase keeps every fused fact" | `top` phrases fuse and cut to 30 among themselves; the result is their union with the whole `all` sets (§2) |
+| §5.3 "Several phrases" | "`scope=all` on any phrase keeps every fused fact" | every phrase fuses and cuts to 30 among themselves; the result is that, then the members of the `all` sets it lacks (§2) |
 
 Every other part of §5 is unchanged, including the scorer, its weights, the windows and the recurring-occasion rule.
 
@@ -170,8 +177,11 @@ Every other part of §5 is unchanged, including the scorer, its weights, the win
 - **`src/domain/fact_search_lists.py`:** an `all` path beside `run_search`. It builds the set by the filter of §3.1 over
   the snapshot, applies the gate of §3.5, orders the set as in §3.2 and runs `keep_distinct` with no limit. The
   closeness order for the two capped lists of §5 also lands here.
-- **`src/services/fact_search_service.py`:** an `all` phrase skips its kNN calls. The `top` phrases are fused as today,
-  and the result is the union of §2.
-- **The `[FactSearch]` log line** marks each phrase with its mode, and for an `all` phrase the keys that defined its set.
+- **`src/services/fact_search_service.py`:** every phrase makes its kNN calls and runs `top`; an `all` phrase with set
+  keys also runs its set. All phrases are fused as today, and the result is the union of §2.
+- **The `[FactSearch]` log line** marks each phrase with what it ran: `top`; `all[keys]+top` for an `all` phrase with
+  set keys (the keys that defined its set, `+`-joined, then `+top` because it ran both); `all>top` for an `all` phrase
+  without one. A key the phrase named that reached nothing is added inside the brackets: `all[domains;unresolved:place]+top`,
+  `all>top[unresolved:place]`. `lists=` describes the first phrase and ends with `set:N` when that phrase has a set.
 - **Acceptance** uses the local control requests (gitignored) and adds list requests of the three shapes in §4. The
   z-score floor of §3.3 is decided on them.

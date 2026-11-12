@@ -126,3 +126,36 @@ async def test_a_resolved_place_is_a_key_of_the_set():
     q = replace(query(places=[("Coimbra", "Portugal")]), scope="all")
     assert await world.phrases(q) == ["f-Weekend in Coimbra with Clara"]
     assert world.repo.named("nearest_fact_ids") == []
+
+
+# ------------------------------------------------------------------------------------------------ the set only adds
+
+async def test_a_keyed_all_phrase_with_an_empty_set_still_returns_its_own_top_hits():
+    world = await _world()
+    nowhere = replace(query(subject="Skoda Fabia note 1", domains=["travel"]), scope="all")
+    result = await world.service.search_phrases(ACC, [nowhere])
+    top_only = await world.phrases(replace(nowhere, scope="top"))
+    assert top_only and [f.id for f in result.facts] == top_only
+    assert "f-Skoda Fabia note 1" in top_only
+    assert all(matches == (0,) for matches in result.phrase_matches)
+
+
+async def test_a_keyed_all_phrase_returns_its_top_hits_then_the_set_members_outside_the_cut_once_each():
+    world = await _world()
+    q = gym_set()
+    top_ids = await world.phrases(replace(q, scope="top"))
+    ids = await world.phrases(q)
+    gym = {i for i in ids if "gym" in i}
+    beyond = [i for i in ids if i not in top_ids]
+    assert len(top_ids) == CUT and len(gym) == CUT + 5
+    assert ids[:CUT] == top_ids and len(ids) == len(set(ids))
+    assert beyond and set(beyond) <= gym and gym <= set(ids)
+    assert set(top_ids) | gym == set(ids)
+
+
+async def test_the_log_shows_a_set_phrase_as_both_its_set_and_top(caplog):
+    world = await _world()
+    with caplog.at_level(logging.INFO):
+        await world.phrases(gym_set())
+    (line,) = lines(caplog)
+    assert " modes=all[domains]+top " in line and f"set:{CUT + 5}" in line
