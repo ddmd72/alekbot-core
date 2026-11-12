@@ -35,6 +35,9 @@ class _RecordingProvider(EmailProviderPort):
         self.calls.append({"date_from": date_from, "date_to": date_to})
         return [], None
 
+    async def list_headers(self, credentials, *, after=None, before=None, key=None, limit=100):
+        return [], False
+
     async def batch_get_full_content(self, credentials, email_ids, deep=False):
         return {}
 

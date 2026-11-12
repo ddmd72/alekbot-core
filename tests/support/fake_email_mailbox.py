@@ -22,6 +22,9 @@ class FakeEmailMailbox(EmailProviderPort):
                           query=None):
         return [], None
 
+    async def list_headers(self, credentials, *, after=None, before=None, key=None, limit=100):
+        return [], False
+
     async def batch_get_full_content(self, credentials, email_ids, deep=False):
         return {}
 
