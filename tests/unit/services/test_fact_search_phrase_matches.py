@@ -51,8 +51,8 @@ async def test_the_log_shows_each_lists_size_before_its_cap(caplog):
 
 
 async def test_an_all_phrase_lifts_the_cut_only_for_its_own_matches():
-    # List mode RFC §2: the result is the `all` phrase's whole set plus the `top` phrases fused and cut among themselves;
-    # a fact outside the set is returned only from within that cut.
+    # List mode RFC §2: every phrase, the `all` one included, is fused and cut among the others; the `all` phrase's
+    # whole set follows. A fact outside the set is returned only from within that cut.
     from dataclasses import replace
     world = World()
     for n in range(CUT + 20):
@@ -65,14 +65,18 @@ async def test_an_all_phrase_lifts_the_cut_only_for_its_own_matches():
              query(subject="Car wash 2 at the Springfield garage")]
     everything = replace(query(subject="Car service 3 at the Springfield garage", domains=["vehicles"]), scope="all")
     only_all = await world.service.search_phrases(ACC, [everything])
+    only_all_top = await world.service.search_phrases(ACC, [replace(everything, scope="top")])
     mixed = await world.service.search_phrases(ACC, [*plain, everything])
-    capped = await world.service.search_phrases(ACC, plain)
+    capped = await world.service.search_phrases(ACC, [*plain, replace(everything, scope="top")])
     own = {f.id for f in only_all.facts}
+    whole_set = {f.id for f in only_all.facts if f.domain_keys == ["vehicles"]}
+    own_top = {f.id for f in only_all_top.facts}
     top = {f.id for f in capped.facts}
-    outside = {f.id for f in mixed.facts} - own
-    assert len(only_all.facts) == CUT + 20 and len(capped.facts) == CUT
+    outside = {f.id for f in mixed.facts} - whole_set
+    assert len(whole_set) == CUT + 20 and len(only_all_top.facts) == CUT and len(capped.facts) == CUT
+    assert own == whole_set | own_top and len(only_all.facts) == len(whole_set | own_top)
     assert outside and outside <= top
-    assert {f.id for f in mixed.facts} == own | top and len(mixed.facts) == len(own | top)
+    assert {f.id for f in mixed.facts} == whole_set | top and len(mixed.facts) == len(whole_set | top)
 
 
 async def test_a_single_all_phrase_returns_every_fact_its_key_matches_and_a_keyless_one_is_cut():
