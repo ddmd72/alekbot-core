@@ -23,3 +23,27 @@ async def test_the_profile_step_runs_under_the_request_user(service, queue):
 
     assert seen == [_USER_ID]
     assert get_request_context()["user_id"] is None
+
+
+async def test_the_agent_run_bills_the_leased_account(service, queue, coordinator):
+    """The message names no account; the agent's ledger takes the one the service leased (the request context)."""
+    from src.agents.base_agent import BaseAgent, _EXECUTION_LEDGER
+    from src.domain.agent import AgentConfig, AgentResponse
+
+    ledger_accounts = []
+
+    class _Stub(BaseAgent):
+        async def can_handle(self, message):
+            return True
+
+        async def execute(self, message):
+            ledger_accounts.append(_EXECUTION_LEDGER.get().account_id)
+            return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result={})
+
+    agent = _Stub(config=AgentConfig(agent_id="stub", agent_type="stub"))
+    coordinator.route_message = AsyncMock(side_effect=agent.process)
+    queue.get_pending_batches.side_effect = [[_make_batch()], []]
+
+    await service.process_user_batches(user_id=_USER_ID)
+
+    assert ledger_accounts == ["acc-abc"]

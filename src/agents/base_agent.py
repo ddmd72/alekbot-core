@@ -16,6 +16,7 @@ from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
 from ..domain.billing import TokenLedger
 from ..domain.memory_telemetry import SCOPE_AGENT_EXECUTION
+from ..domain.request_context import get_current_account_id
 from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
     BothProvidersUnavailableError,
@@ -535,7 +536,9 @@ class BaseAgent(ABC):
         # executions of this same instance each get their own.
         # The request user scope makes the execution's prompt-content rows carry the user whichever entry point
         # started it (a Cloud Task, a scheduler, a background runner); a message without a user leaves the current one.
-        with self._execution_billing_scope(message.context.get("account_id")), \
+        # The message names the account; a run started inside a RequestContext without naming it (consolidation) bills
+        # the context's account. Only the account: get_effective_account_id() would fall back to a user id.
+        with self._execution_billing_scope(message.context.get("account_id") or get_current_account_id()), \
                 request_user_scope(message.context.get("user_id")), \
                 memory_scope(SCOPE_AGENT_EXECUTION, self.config.agent_type):
             return await self._run_retry_loop(message)
