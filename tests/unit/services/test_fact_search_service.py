@@ -304,7 +304,7 @@ async def test_one_line_per_search_names_the_path_the_lists_and_the_counts(world
     with caplog.at_level(logging.INFO):
         await world.search(subject="alpha", domains=["transport"])
     (line,) = lines(caplog)
-    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 phrases=1 lists=semantic:1,domain:1 cands=1 "
+    assert re.fullmatch(r"\[FactSearch\] path=test acc=acc-1 phrases=1 modes=top lists=semantic:1,domain:1 cands=1 "
                         r"gate_dropped=0 kept=1 unsnapped=0 snapshot=load:1 ms=\d+", line)
 
 

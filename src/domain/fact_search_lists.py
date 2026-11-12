@@ -1,11 +1,21 @@
-"""The fact search engine (fact profile RFC §5.3), pure over an account snapshot: the candidate lists a query asks for,
-the intimate gate, the scored order (`fact_search_rank.py`) and the near-duplicate pass.
+"""The fact search engine (fact profile RFC §5.3, list mode RFC), pure over an account snapshot. A request runs:
 
-The lists only generate candidates; none is cut before scoring except where a cap is named (`DOMAIN_CAP`, `HOME_CAP`,
-the kNN depth). The key lists are built in one fixed order (semantic, labels, domain, time, kinds, places, people,
-then the `latest` time list pooled over those), then the message, domain, people and home lists of
+- `top` (`run_search`) for every phrase, an `all` phrase included: the candidate lists a query asks for, the intimate
+  gate, the scored order (`fact_search_rank.py`) and the near-duplicate pass, cut to `CUT`.
+- additionally, for an `all` phrase that names a structural key (`is_set_phrase`, `run_set`), its set: a boolean filter
+  over the snapshot (OR within a key, AND across keys, a time window counts as a key), its own gate, ordered by closeness
+  (or newest first under `latest`), the near-duplicate pass with no limit. No kNN list, no home list, no cap, no scorer.
+  The set only adds to the `top` result (list mode RFC §2); the caller unions them. `run_search` dispatches on the
+  query's scope, so the `top` run of an `all` phrase is a `run_search` of the query with `scope=top`.
+
+The `top` lists only generate candidates; none is cut before scoring except where a cap is named (`DOMAIN_CAP`,
+`HOME_CAP`, the kNN depth). The key lists are built in one fixed order (semantic, labels, domain, time, kinds, places,
+people, then the `latest` time list pooled over those), then the message, domain, people and home lists of
 `candidate_lists`. The kNN lists arrive from the store as ids; every other list is set membership over the snapshot,
-ordered on its whole candidate set (the order feeds the caps and the log, not the ranking).
+ordered on its whole candidate set (the order feeds the caps and the log, not the ranking). The two capped lists
+(domain, home) are ordered by closeness, so a cap drops the facts farthest from the phrase.
+
+Closeness is the subject similarity, else (no subject: an empty map) the message similarity.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -14,7 +24,7 @@ from typing import (TYPE_CHECKING, AbstractSet, Callable, Dict, FrozenSet, List,
 
 from .drive_key_forms import primary as form_primary
 from .drive_key_forms import skeleton_key, token_spans
-from .fact_query import SCOPE_ALL, FactQuery
+from .fact_query import SCOPE_ALL, SCOPE_TOP, FactQuery
 from .fact_search_snapshot import FactSearchSnapshot, Interval, SnapshotRow, name_skeleton
 
 if TYPE_CHECKING:
@@ -43,13 +53,19 @@ class SearchOutcome:
     """`lists`: the candidate lists after the gate, in insertion order; `gate_dropped`: entries the gate removed;
     `uncut`: for a list a cap (`DOMAIN_CAP`, `HOME_CAP`) cut, its size before the cut;
     `fused`: the candidates (the `exclude`d ones removed) in scored order before the duplicate pass; `kept`: ids after it
-    (cut to 30 for scope top); `scores`: the score of every candidate."""
+    (cut to 30 for `top`); `scores`: the score of every candidate.
+    `mode`: `top` or `all` (the algorithm that ran: an `all` phrase without a structural key ran `top`). For `all`,
+    `lists` holds the one list `set` (the gated set in its order), `scores` the closeness of each member, `fused` the set
+    without the `exclude`d ids, `kept` all of it after the duplicate pass, and `keys` the keys that defined the set
+    (`set_keys`)."""
     lists: Dict[str, List[str]]
     gate_dropped: int
     uncut: Dict[str, int]
     fused: List[str]
     kept: List[str]
     scores: Dict[str, float]
+    mode: str = SCOPE_TOP
+    keys: Tuple[str, ...] = ()
 
 
 # ------------------------------------------------------------------------------------------------ time
@@ -131,15 +147,111 @@ def person_targets(people: Sequence[str]) -> Tuple[List[FrozenSet[str]], Set[str
     return targets, relations
 
 
+# ------------------------------------------------------------------------------------------------ the set of an all phrase
+
+def query_domains(query: FactQuery) -> List[str]:
+    """The domains a query names: the non-blank ones, the first two."""
+    return [d for d in query.domains if d][:2]
+
+
+def _query_kinds(query: FactQuery) -> FrozenSet[str]:
+    return frozenset(k for k in query.kinds if k)
+
+
+def set_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
+    """The structural keys a phrase names (list mode RFC §3.1), in a fixed order: `domains`, `kinds`, `people`, `places`
+    (named places that reach at least one place key, `lp:` included: `query_place_keys`), `time` (a `period`, `future`
+    or `past` window). `latest` is no key: it only orders. A named place that reaches no key is no key either
+    (`unresolved_keys`): an empty set because the atlas lacks a town would be a silent wrong answer."""
+    named = (("domains", bool(query_domains(query))), ("kinds", bool(_query_kinds(query))),
+             ("people", bool(query.people)), ("places", bool(query.places and query_place_keys)),
+             ("time", window(query) is not None))
+    return tuple(name for name, present in named if present)
+
+
+def set_domains(query: FactQuery, query_place_keys: AbstractSet[str]) -> FrozenSet[str]:
+    """The domains that take part in the membership of an `all` set (list mode RFC §3.1): the phrase's domains only when
+    it has none of kinds, people, a resolved named place or a time window. The slots model infers domains the question
+    never named, and the strict AND would drop every fact stored under another domain. `top` is untouched."""
+    others = tuple(k for k in set_keys(query, query_place_keys) if k != "domains")
+    return frozenset() if others else frozenset(query_domains(query))
+
+
+def membership_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
+    """The keys that formed the set: `set_keys` without the domains `set_domains` left out."""
+    return tuple(k for k in set_keys(query, query_place_keys) if k != "domains" or set_domains(query, query_place_keys))
+
+
+def unresolved_keys(query: FactQuery, query_place_keys: AbstractSet[str]) -> Tuple[str, ...]:
+    """The keys a phrase names that were ignored because they reach nothing: `place` when it names places and they
+    reach no place key."""
+    return ("place",) if query.places and not query_place_keys else ()
+
+
+def is_set_phrase(query: FactQuery, query_place_keys: AbstractSet[str]) -> bool:
+    """An `all` phrase that names a structural key: it returns the set its keys define (list mode RFC §3). An `all`
+    phrase without one runs `top` (§3.4)."""
+    return query.scope == SCOPE_ALL and bool(set_keys(query, query_place_keys))
+
+
+def closeness(similarity: Mapping[str, float], message_similarity: Optional[Mapping[str, float]]) -> Mapping[str, float]:
+    """Closeness to the phrase (list mode RFC §3.2): the subject similarity, else the message similarity. The subject
+    similarity is empty exactly when the phrase has no subject (or no fact has a vector)."""
+    return similarity if similarity else (message_similarity or {})
+
+
 # ------------------------------------------------------------------------------------------------ one search
 
 class _Search:
-    def __init__(self, snapshot: FactSearchSnapshot, query: FactQuery, similarity: Mapping[str, float]) -> None:
+    def __init__(self, snapshot: FactSearchSnapshot, query: FactQuery, similarity: Mapping[str, float],
+                 close: Optional[Mapping[str, float]] = None) -> None:
         self._rows = snapshot.rows
         self._ids = snapshot.ids
         self._query = query
         self._sim = similarity
+        self._close = similarity if close is None else close
         self._window = window(query)
+
+    def closest(self, candidates: Sequence[str]) -> List[str]:
+        """`candidates` by closeness to the phrase, nearest first (ties keep their order)."""
+        return sorted(candidates, key=lambda i: -float(self._close.get(i, 0.0)))
+
+    def set_members(self, place_keys: FrozenSet[str]) -> List[str]:
+        """The facts every key of the phrase matches (list mode RFC §3.1), in snapshot order: OR within a key, AND across
+        keys. People match as `person_match`; a named place by the fact's place keys meeting `place_keys` (no keys: the
+        place is no condition, `set_keys`); a window by a point inside it (a recurring occasion by month and day)."""
+        rows, query, span = self._rows, self._query, self._window
+        domains, kinds = set_domains(query, place_keys), _query_kinds(query)
+        people = frozenset(self.person_match()) if query.people else None
+        places = place_keys if query.places else frozenset()
+
+        def member(fact_id: str) -> bool:
+            row = rows[fact_id]
+            return ((not domains or bool(row.domains & domains))
+                    and (not kinds or bool(row.kinds & kinds))
+                    and (people is None or fact_id in people)
+                    and (not places or bool(row.place_keys & places))
+                    and (span is None or any(self._gap(row, x, span) == 0 for x in row.intervals)))
+
+        return [i for i in self._ids if member(i)]
+
+    def set_gate(self, members: Sequence[str], place_keys: FrozenSet[str]) -> Tuple[List[str], int]:
+        """The intimate gate of the set (list mode RFC §3.5): an intimate fact stays when the phrase names people, or when
+        it carries a domain that formed the set (`set_domains`: an ignored domain, usually inferred by the slots model, never
+        opens the gate); otherwise it is dropped."""
+        if self._query.people:
+            return list(members), 0
+        domains = set_domains(self._query, place_keys)
+        kept = [i for i in members if self._rows[i].sensitivity != "intimate" or self._rows[i].domains & domains]
+        return kept, len(members) - len(kept)
+
+    def set_order(self, members: Sequence[str]) -> List[str]:
+        """The order of the set (list mode RFC §3.2): by closeness; under `latest`, newest point first, closeness breaking
+        ties."""
+        if self._query.time.intent == "latest":
+            return sorted(members, key=lambda i: (-self._newest(self._rows[i]).toordinal(),
+                                                  -float(self._close.get(i, 0.0))))
+        return self.closest(members)
 
     def _gap(self, row: SnapshotRow, interval: Interval, span: Window) -> int:
         return gap_recurring(interval, span) if row.recurring else gap(interval, span)
@@ -238,11 +350,9 @@ class _Search:
         return lists
 
     def gate(self, lists: Dict[str, List[str]]) -> Tuple[Dict[str, List[str]], int]:
-        """An intimate fact stays only in the labels list and its own domain list; the exception is collecting all facts
-        about a person."""
-        if self._query.scope == SCOPE_ALL and self._query.people:
-            return lists, 0
-        kept = {name: [i for i in members if self._rows[i].sensitivity != "intimate" or name in ("labels", "domain")]
+        """An intimate fact stays only in the labels list and its own domain list. (The set of an `all` phrase naming
+        people is gated by `set_gate`; its `top` run, scope `top`, is gated here like any `top` phrase.)"""
+        kept ={name: [i for i in members if self._rows[i].sensitivity != "intimate" or name in ("labels", "domain")]
                 for name, members in lists.items()}
         dropped = sum(len(lists[name]) - len(kept[name]) for name in lists)
         return kept, dropped
@@ -258,16 +368,18 @@ def candidate_lists(
     similarity: Mapping[str, float],
     query_place_keys: FrozenSet[str],
     home_keys: AbstractSet[str],
+    message_similarity: Optional[Mapping[str, float]] = None,
 ) -> Tuple[Dict[str, List[str]], int, Dict[str, int]]:
-    """The gated candidate lists of one query, the count the gate dropped and, per list a cap cut, its size before the
-    cut.
+    """The gated candidate lists of one `top` query, the count the gate dropped and, per list a cap cut, its size before
+    the cut.
 
     The key lists come whole (the `latest` time list is pooled over them before the lists below join). Then: `message`
     = `message_ids` when given; `domain` rebuilt when the query names domains (two domains: the facts carrying both,
-    then the facts carrying either, each in-list order; capped at `DOMAIN_CAP`); `people` = every fact naming a queried
-    person, not narrowed by the domains; `home` = the facts at the owner's home town when the query names no place
-    (capped at `HOME_CAP`). The intimate gate runs over every list."""
-    engine = _Search(snapshot, query, similarity)
+    then the facts carrying either, each group by closeness; capped at `DOMAIN_CAP`); `people` = every fact naming a
+    queried person, not narrowed by the domains; `home` = the facts at the owner's home town when the query names no
+    place (by closeness, capped at `HOME_CAP`). Closeness: `closeness(similarity, message_similarity)`. The intimate
+    gate runs over every list."""
+    engine = _Search(snapshot, query, similarity, closeness(similarity, message_similarity))
     rows = snapshot.rows
     lists = engine.lists(semantic_ids, label_ids, query_place_keys)
     if message_ids is not None:
@@ -279,7 +391,7 @@ def candidate_lists(
         both = [i for i in snapshot.ids if wanted <= rows[i].domains] if len(domains) == 2 else []
         in_both = set(both)
         either = [i for i in snapshot.ids if rows[i].domains & wanted and i not in in_both]
-        ordered = engine.order(both) + engine.order(either)
+        ordered = engine.closest(both) + engine.closest(either)
         lists["domain"] = ordered[:DOMAIN_CAP]
         if len(ordered) > DOMAIN_CAP:
             uncut["domain"] = len(ordered)
@@ -290,7 +402,7 @@ def candidate_lists(
     if not query.places and home_keys:
         at_home = [i for i in snapshot.ids if rows[i].place_keys & home_keys]
         if at_home:
-            ordered_home = engine.order(at_home)
+            ordered_home = engine.closest(at_home)
             lists["home"] = ordered_home[:HOME_CAP]
             if len(ordered_home) > HOME_CAP:
                 uncut["home"] = len(ordered_home)
@@ -308,12 +420,6 @@ def keep_distinct(order: Sequence[str], is_duplicate: Callable[[str, str], bool]
         if not any(is_duplicate(fact_id, other) for other in kept):
             kept.append(fact_id)
     return kept
-
-
-def keep_within_cut(order: Sequence[str], cut: int, lifted: AbstractSet[str]) -> List[str]:
-    """The facts of `order` at a position within `cut`, plus the ones in `lifted` (the own matches of the phrases whose
-    scope lifts the cut) wherever they stand; every other fact past `cut` is dropped."""
-    return [fact_id for position, fact_id in enumerate(order) if position < cut or fact_id in lifted]
 
 
 def run_search(
@@ -340,19 +446,50 @@ def run_search(
     `query_place_keys` are the place keys the query's places reach and `query_places` the same per place;
     `home` the owner's resolved home town; `cards` the account's people cards; `exclude` ids that never become
     candidates; `weights` override the fitted ones (None = `WEIGHTS`). `is_duplicate(candidate, kept)` is asked for
-    each candidate against every fact already kept. Candidates are ordered by score, ties by id."""
+    each candidate against every fact already kept. Candidates are ordered by score, ties by id.
+
+    A set phrase (`is_set_phrase`) goes to `run_set`, which reads only `similarity`, `message_similarity`,
+    `query_place_keys`, `is_duplicate` and `exclude`; any other phrase runs `top` here, cut to `CUT`. A caller that
+    wants a set phrase's `top` run too (list mode RFC §2) passes the query with `scope=top`."""
+    if is_set_phrase(query, query_place_keys):
+        return run_set(snapshot, query, similarity=similarity, message_similarity=message_similarity,
+                       query_place_keys=query_place_keys, is_duplicate=is_duplicate, exclude=exclude)
     # Imported here: the scorer reads this module's time and people rules, so a module-level import would be a cycle.
     from .fact_search_rank import WEIGHTS, ScoreInputs, score_rows
 
     lists, dropped, uncut = candidate_lists(
         snapshot, query, semantic_ids=semantic_ids, label_ids=label_ids, message_ids=message_ids,
         similarity=similarity, query_place_keys=query_place_keys,
-        home_keys=home.keys if home is not None else frozenset(),
+        home_keys=home.keys if home is not None else frozenset(), message_similarity=message_similarity,
     )
     candidates = [i for i in dict.fromkeys(i for members in lists.values() for i in members) if i not in exclude]
     inputs = ScoreInputs(sim_text=similarity, sim_label=label_similarity or {}, sim_message=message_similarity or {},
                          places=tuple(query_places), home=home, cards=tuple(cards))
     scores = score_rows(query, [snapshot.rows[i] for i in candidates], inputs, WEIGHTS if weights is None else weights)
     fused = sorted(candidates, key=lambda i: (-scores[i], i))
-    kept = keep_distinct(fused, is_duplicate, None if query.scope == SCOPE_ALL else CUT)
+    kept = keep_distinct(fused, is_duplicate, CUT)
     return SearchOutcome(lists=lists, gate_dropped=dropped, uncut=uncut, fused=fused, kept=kept, scores=scores)
+
+
+def run_set(
+    snapshot: FactSearchSnapshot,
+    query: FactQuery,
+    *,
+    similarity: Mapping[str, float],
+    query_place_keys: FrozenSet[str],
+    is_duplicate: Callable[[str, str], bool],
+    message_similarity: Optional[Mapping[str, float]] = None,
+    exclude: AbstractSet[str] = frozenset(),
+) -> SearchOutcome:
+    """The set of an `all` phrase (list mode RFC §3): every fact its structural keys match (`_Search.set_members`), the
+    gate of §3.5, ordered by closeness or, under `latest`, newest first (§3.2), then the duplicate pass with no limit.
+    Arguments as `run_search`; the phrase must name a key (`set_keys`)."""
+    close = closeness(similarity, message_similarity)
+    engine = _Search(snapshot, query, similarity, close)
+    members, dropped = engine.set_gate(engine.set_members(query_place_keys), frozenset(query_place_keys))
+    ordered = engine.set_order(members)
+    fused = [i for i in ordered if i not in exclude]
+    kept = keep_distinct(fused, is_duplicate, None)
+    return SearchOutcome(lists={"set": ordered}, gate_dropped=dropped, uncut={}, fused=fused, kept=kept,
+                         scores={i: float(close.get(i, 0.0)) for i in fused}, mode=SCOPE_ALL,
+                         keys=membership_keys(query, query_place_keys))

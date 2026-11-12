@@ -51,30 +51,44 @@ async def test_the_log_shows_each_lists_size_before_its_cap(caplog):
 
 
 async def test_an_all_phrase_lifts_the_cut_only_for_its_own_matches():
+    # List mode RFC §2: every phrase, the `all` one included, is fused and cut among the others; the `all` phrase's
+    # whole set follows. A fact outside the set is returned only from within that cut.
     from dataclasses import replace
     world = World()
     for n in range(CUT + 20):
-        await world.seed(f"Car service {n} at the Springfield garage")
+        await world.seed(f"Car service {n} at the Springfield garage", domain_keys=["vehicles"],
+                         primary_domain="vehicles")
+    for n in range(CUT + 20):
+        await world.seed(f"Car wash {n} at the Springfield garage")
     await world.baseline()
     plain = [query(subject="Car service 1 at the Springfield garage"),
-             query(subject="Car service 2 at the Springfield garage")]
-    everything = replace(query(subject="Car service 3 at the Springfield garage"), scope="all")
+             query(subject="Car wash 2 at the Springfield garage")]
+    everything = replace(query(subject="Car service 3 at the Springfield garage", domains=["vehicles"]), scope="all")
     only_all = await world.service.search_phrases(ACC, [everything])
+    only_all_top = await world.service.search_phrases(ACC, [replace(everything, scope="top")])
     mixed = await world.service.search_phrases(ACC, [*plain, everything])
+    capped = await world.service.search_phrases(ACC, [*plain, replace(everything, scope="top")])
     own = {f.id for f in only_all.facts}
-    assert len(only_all.facts) > CUT
-    assert len(mixed.facts) > CUT
-    assert all(f.id in own for f in mixed.facts[CUT:])
-    capped = await world.service.search_phrases(ACC, plain)
-    assert len(capped.facts) == CUT
+    whole_set = {f.id for f in only_all.facts if f.domain_keys == ["vehicles"]}
+    own_top = {f.id for f in only_all_top.facts}
+    top = {f.id for f in capped.facts}
+    outside = {f.id for f in mixed.facts} - whole_set
+    assert len(whole_set) == CUT + 20 and len(only_all_top.facts) == CUT and len(capped.facts) == CUT
+    assert own == whole_set | own_top and len(only_all.facts) == len(whole_set | own_top)
+    assert outside and outside <= top
+    assert {f.id for f in mixed.facts} == whole_set | top and len(mixed.facts) == len(whole_set | top)
 
 
-async def test_a_single_all_phrase_returns_every_fact_as_before():
+async def test_a_single_all_phrase_returns_every_fact_its_key_matches_and_a_keyless_one_is_cut():
+    # List mode RFC §3.1 and §3.4: a key defines the set, returned whole; an `all` phrase with only a subject runs `top`.
     from dataclasses import replace
     world = World()
     for n in range(CUT + 20):
         await world.seed(f"Car service {n} at the Springfield garage")
     await world.baseline()
-    result = await world.service.search_phrases(
+    keyed = await world.service.search_phrases(
+        ACC, [replace(query(subject="Car service 3 at the Springfield garage", domains=["family"]), scope="all")])
+    assert len(keyed.facts) == CUT + 20
+    keyless = await world.service.search_phrases(
         ACC, [replace(query(subject="Car service 3 at the Springfield garage"), scope="all")])
-    assert len(result.facts) == CUT + 20
+    assert len(keyless.facts) == CUT

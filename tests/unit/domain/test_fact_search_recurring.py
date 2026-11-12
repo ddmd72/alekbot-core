@@ -54,9 +54,10 @@ def test_gap_recurring_is_the_nearest_projection_over_the_neighbouring_years():
 
 
 def test_now_order_and_latest_never_project_a_recurring_fact():
-    clara = fact("clara", points=[point("1982-07-14")], labels=["birthday"], domains=("family",), role="event")
-    recent = fact("recent", points=[point("2026-11-01")], role="event", domains=("family",))
-    out = search([clara, recent], query(domains=["family"]))
-    assert out.lists["domain"] == ["recent", "clara"]
-    latest = search([clara, recent], query(intent="latest", domains=["family"]))
-    assert latest.lists["domain"] == ["recent", "clara"] and latest.lists["time"] == ["recent", "clara"]
+    # The kinds list keeps the time-based order (the domain list is ordered by closeness, list mode RFC §5).
+    clara = fact("clara", points=[point("1982-07-14")], labels=["birthday"], kinds=["occasion"], role="event")
+    recent = fact("recent", points=[point("2026-11-01")], role="event", kinds=["occasion"])
+    out = search([clara, recent], query(kinds=["occasion"]))
+    assert out.lists["kinds"] == ["recent", "clara"]
+    latest = search([clara, recent], query(intent="latest", kinds=["occasion"]))
+    assert latest.lists["kinds"] == ["recent", "clara"] and latest.lists["time"] == ["recent", "clara"]

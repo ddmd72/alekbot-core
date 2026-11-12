@@ -13,8 +13,3 @@ def test_a_domain_list_cut_by_its_cap_reports_its_size_before_the_cut():
 def test_a_domain_list_under_its_cap_reports_nothing():
     facts = [fact(f"f{i}", f"Car service {i}", domains=("vehicles",)) for i in range(5)]
     assert search(facts, query(domains=["vehicles"])).uncut == {}
-
-
-def test_keep_within_cut_keeps_the_head_and_the_lifted_ones_past_it():
-    from src.domain.fact_search_lists import keep_within_cut
-    assert keep_within_cut(["a", "b", "c", "d", "e"], 2, {"d"}) == ["a", "b", "d"]

@@ -37,13 +37,13 @@ def test_each_other_list_drops_it(name):
 
 
 def test_collect_all_about_a_person_lifts_the_gate():
-    out = search([intimate()], query(people=["Taras"], scope="all"))
-    assert out.lists["people"] == ["secret"] and out.gate_dropped == 0 and out.kept == ["secret"]
+    out = search([intimate()], query(people=["Taras"], scope="all"))       # list mode RFC §3.5: one list, the set
+    assert out.lists == {"set": ["secret"]} and out.gate_dropped == 0 and out.kept == ["secret"]
 
 
 def test_collect_all_without_a_person_keeps_the_gate():
     out = search([intimate()], query(kinds=["document"], scope="all"))
-    assert out.lists["kinds"] == [] and out.gate_dropped == 1
+    assert out.lists == {"set": []} and out.gate_dropped == 1 and out.kept == []
 
 
 def test_a_person_without_collect_all_keeps_the_gate():
