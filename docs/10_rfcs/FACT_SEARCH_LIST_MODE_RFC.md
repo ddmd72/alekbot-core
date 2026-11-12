@@ -71,8 +71,8 @@ The structural keys are the four slots that the profile stores as exact fields:
 - **A time window is a filter too.** The `period`, `future` and `past` intents add one more AND condition: a point of
   the fact inside the window (a recurring occasion by month and day, as in §5.3).
 - **`latest` is not a filter.** It only sets the output order (§3.2).
-- **No nearness list takes part.** The semantic, labels and message kNN lists are not built. The home default list is
-  not used either: a phrase that names no place has no place condition, and the home town plays no part.
+- **No nearness list takes part in the set.** The semantic, labels and message kNN lists do not define it (they feed the
+  phrase's `top` run, §2). The home default list is not used either: a phrase that names no place has no place condition, and the home town plays no part.
 - **No count cut.** `DOMAIN_CAP`, `HOME_CAP` and `CUT` do not apply. The near-duplicate pass still runs over the set
   with no limit, as `scope=all` does today. It removes copies, not members.
 
@@ -167,7 +167,7 @@ set cannot be limited to the user's own facts. There is no design yet.
 | §5.3 lists table, rows **semantic**, **labels**, **message** | run whenever their text exists | unchanged: built for every phrase, an `all` phrase with a structural key included (§2) |
 | §5.3 lists table, rows **time**, **places**, **people**, **kinds** | candidate lists | unchanged for `top`; for the set of an `all` phrase they are also AND conditions (`latest` orders only) |
 | §5.3 "Intimate gate" | `scope=all` with people opens it | unchanged for `top`; for the set of an `all` phrase as §3.5 |
-| §5.3 "Scoring", last sentence | "`scope=all` keeps every candidate after dedup" | an `all` phrase is not scored: its set is ordered by closeness (§3.2), and dedup runs with no limit |
+| §5.3 "Scoring", last sentence | "`scope=all` keeps every candidate after dedup" | the set of an `all` phrase is not scored: it is ordered by closeness (§3.2), and dedup runs with no limit |
 | §5.3 "Several phrases" | "`scope=all` on any phrase keeps every fused fact" | every phrase fuses and cuts to 30 among themselves; the result is that, then the members of the `all` sets it lacks (§2) |
 
 Every other part of §5 is unchanged, including the scorer, its weights, the windows and the recurring-occasion rule.
