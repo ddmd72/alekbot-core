@@ -55,6 +55,9 @@ where they overlap). Two streams, joined by `trace_id`:
   capture must never break the LLM path). Single capture point: `BaseAgent._call_llm` →
   `record_turn(...)`. Table `alek_observability_dev.prompt_content`; `request_text` is rendered by
   `_render_messages` (text + tool_call/tool_response only — **never `file_data`/image bytes**).
+  `user_id` comes from the request-scoped telemetry context: set by the Slack and voice entry points and, for every
+  other path, by `BaseAgent.process()` from `message.context["user_id"]` (`request_user_scope`); a model call made outside
+  `process()` names its user itself. Where no caller knows the user, the column is NULL.
   **Correction 2026-07-30:** an earlier version of this section claimed the row "is populated even
   for failed (e.g. 400) calls". **It is not.** Both `_emit_llm_span` and `record_turn` sit on the
   success return path (`base_agent.py:1181,1185`); a raising call exits before them, so a failed LLM

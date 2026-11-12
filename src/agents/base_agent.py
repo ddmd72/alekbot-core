@@ -39,7 +39,7 @@ from ..ports.session_store import SessionStore
 from ..utils.logger import logger
 from ..utils.memory_scope import memory_scope
 from ..utils.retry import retry_async
-from ..utils.telemetry import get_tracer
+from ..utils.telemetry import get_tracer, request_user_scope
 
 if TYPE_CHECKING:
     from ..domain.llm import LLMRequest, LLMResponse
@@ -533,7 +533,10 @@ class BaseAgent(ABC):
         # The billing scope wraps the whole retry loop: retries of one execution share
         # one ledger (their tokens all belong to this execution), while concurrent
         # executions of this same instance each get their own.
+        # The request user scope makes the execution's prompt-content rows carry the user whichever entry point
+        # started it (a Cloud Task, a scheduler, a background runner); a message without a user leaves the current one.
         with self._execution_billing_scope(message.context.get("account_id")), \
+                request_user_scope(message.context.get("user_id")), \
                 memory_scope(SCOPE_AGENT_EXECUTION, self.config.agent_type):
             return await self._run_retry_loop(message)
 
