@@ -27,7 +27,7 @@ from tests.support.prompt_vocabulary import load_blueprint, load_profile, load_t
 from tests.unit.agents.drive_model_fakes import ScriptedLLM, context
 
 # The static part of the assembled prompt (everything before the cache boundary), as the model receives it.
-STATIC_SHA256 = "e5aa2e85904097c9c9831d6bde1a3e26c48cb8e8c6a4dd519848e2f397c348ef"
+STATIC_SHA256 = "239776ac536adbd50e547a028d1b0b88cc61aed7577c48b6b3d93e76b1d4545e"
 
 ANSWER = {
     "label_words": ["car cover"], "time_role": "validity",

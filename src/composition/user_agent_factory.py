@@ -78,6 +78,7 @@ from ..infrastructure.task_execution_resolver import TaskExecutionResolver
 from ..services.history_summary_service import HistorySummaryService
 from ..agents.core.router_agent import create_router_agent
 from ..agents.fact_query_slots_agent import FactQuerySlotsAgent
+from .fact_query_slots_setup import build_search_slots_agent, search_slots_model
 from ..agents.memory_search_agent import FactsMemoryAgent
 from ..agents.web_search_agent import WebSearchAgent
 from ..agents.web_search_light_agent import WebSearchLightAgent
@@ -503,12 +504,9 @@ class UserAgentFactory(AgentFactoryPort):
 
         account_id = user_profile.account_id
 
-        memory_search_context = self.context_builder.build("facts_memory", user_profile.config)
-        slots_agent = FactQuerySlotsAgent(
-            AgentConfig(agent_id=f"fact_query_slots_{user_id}", agent_type="fact_query_slots"),
-            execution_context=memory_search_context,
-            prompt_builder=prompt_builder,
-            user_timezone=user_profile.config.timezone,
+        slots_agent = build_search_slots_agent(
+            context_builder=self.context_builder, user_config=user_profile.config, prompt_builder=prompt_builder,
+            user_id=user_id, model=search_slots_model(os.getenv("FACT_QUERY_SLOTS_MODEL")),
         )
         memory_agent = FactsMemoryAgent(
             config=AgentConfig(

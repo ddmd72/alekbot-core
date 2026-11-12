@@ -134,8 +134,12 @@ class MemorySearchAgentConfig:
 
 @dataclass
 class FactQuerySlotsAgentConfig:
-    """The query step: one short JSON object per call, on the caller's cheap model."""
+    """The query step: one short JSON object per call. The router's call runs on the router's own cheap model; the
+    memory-search call runs on `search_model` with thinking `search_thinking`."""
     max_tokens: int = 2048
+    # Used when FACT_QUERY_SLOTS_MODEL is unset (read in composition, never here).
+    search_model: str = "claude-haiku-5-5"
+    search_thinking: str = "low"
 
 
 # ---------------------------------------------------------------------------
