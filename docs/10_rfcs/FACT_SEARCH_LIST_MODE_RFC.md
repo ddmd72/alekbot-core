@@ -40,10 +40,9 @@ define. The request's result is the fused `top` result, then the members of ever
 without duplicates: each set in its own order (§3.2), set after set in phrase order. A fact found by several phrases
 appears once and names every phrase that found it, in the one result format of PR #359.
 
-Why the set never replaces `top`: on real chat turns the slots model infers `kinds` and `people` keys the needed facts
-lack, so a strict set comes back empty or near-empty (in 6 of 8 failing turns it held 0 facts), and a phrase that no
-longer ran the scored search lost the facts it used to find. Measured on real turns, `top` plus the unioned set matched
-production recall at a third of the result size, and on the synthetic evaluation it raised `all` recall.
+Why the set never replaces `top`: the slots model often infers `kinds` and `people` keys that the needed facts lack, so
+a strict set can come back empty, and a phrase that no longer ran the scored search lost the facts it used to find. With
+`top` kept and the set only adding, recall held at the level of the scored search while results became much smaller.
 
 ## 3. The `all` set
 
