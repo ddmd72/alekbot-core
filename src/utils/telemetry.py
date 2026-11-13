@@ -237,13 +237,17 @@ def set_request_context(
 
 
 @contextlib.contextmanager
-def request_user_scope(user_id: str) -> Iterator[None]:
+def request_user_scope(user_id: Optional[str]) -> Iterator[None]:
     """`user_id` as the request context's user for the block, the previous one restored after.
 
-    For a background unit of work done for one user inside a request that names none (an email indexing page on
-    `/worker`): what reads the request context in the block (the prompt-content row's `user_id`) sees that user.
-    Concurrent blocks (`asyncio.gather`) each run in their own context copy and see their own user.
+    For a unit of work done for one user inside a request that names none (an email indexing page on `/worker`, an
+    agent execution started from a Cloud Task): what reads the request context in the block (the prompt-content
+    row's `user_id`) sees that user. A falsy `user_id` changes nothing: the current user stays, it is never reset to
+    None. Concurrent blocks (`asyncio.gather`) each run in their own context copy and see their own user.
     """
+    if not user_id:
+        yield
+        return
     token = _USER_ID_CTX.set(user_id)
     try:
         yield

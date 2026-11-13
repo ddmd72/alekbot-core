@@ -37,6 +37,7 @@ from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
+from ..utils.telemetry import request_user_scope
 
 if TYPE_CHECKING:
     from .fact_profile_service import FactProfileService
@@ -263,10 +264,13 @@ class ConsolidationService:
                     "✅ RequestContext set: user_id=%s, account_id=%s",
                     user_id[:8], account_id[:12],
                 )
-                step = await self._process_one_batch(user_id, owner_timezone, until, touched)
-                if self._profile_step is not None and step in (_Step.CONSOLIDATED, _Step.FAILED):
-                    await self._profile(account_id, until)
-                return step
+                # request_user_scope: the profile step calls its model outside any agent execution, so the
+                # prompt-content rows of this unit of work take their user from here.
+                with request_user_scope(user_id):
+                    step = await self._process_one_batch(user_id, owner_timezone, until, touched)
+                    if self._profile_step is not None and step in (_Step.CONSOLIDATED, _Step.FAILED):
+                        await self._profile(account_id, until)
+                    return step
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return _Step.ERROR
