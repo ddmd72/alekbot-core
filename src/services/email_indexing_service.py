@@ -44,6 +44,11 @@ from ..utils.logger import logger
 # Pass gmail_query=None to override (full mailbox, for debugging only).
 GMAIL_DEFAULT_QUERY = "{category:primary category:updates} -in:spam -in:trash"
 
+# The v1 `reindex` mode is refused (email index v2, card slice 1): it re-saves whole documents (`save_batch`), which
+# would wipe every v2 card field. Incremental and backfill skip stored ids and stay. The job ends `failed` with this
+# error, before any Gmail call.
+REINDEX_DISABLED = "reindex_disabled"
+
 
 class EmailIndexingService:
     """
@@ -127,7 +132,7 @@ class EmailIndexingService:
 
         mode:
           "incremental" — fetch emails newer than indexed_through (default)
-          "reindex"     — clear state, re-process all emails from now back 3 years (overwrites)
+          "reindex"     — refused: the job ends `failed` (REINDEX_DISABLED) before any Gmail call
           "backfill"    — fetch emails older than oldest_indexed_through, down to backfill_until
         """
         job = self.create_job(
@@ -302,13 +307,16 @@ class EmailIndexingService:
 
         mode controls cursor logic:
           "incremental": fetch after indexed_through+1d; advance indexed_through forward
-          "reindex":     clear state; fetch without upper bound; update both cursors
+          "reindex":     refused (REINDEX_DISABLED): the job is marked `failed` and returned, nothing fetched
           "backfill":    fetch between backfill_until and oldest_indexed_through-1d;
                          advance oldest_indexed_through backward
 
         Resume: if job.next_page_token is set, resumes from that cursor.
         Idempotent: uses email_id as Firestore doc ID; duplicate writes are no-ops.
         """
+        if mode == "reindex":
+            return await self._refuse_reindex(job)
+
         # ----------------------------------------------------------------
         # Mode-specific cursor setup
         # ----------------------------------------------------------------
@@ -317,15 +325,7 @@ class EmailIndexingService:
         )
         date_to: Optional[datetime] = None
 
-        if mode == "reindex":
-            # indexed_through is owned by incremental only — never clear it.
-            if date_from is None:
-                date_from = datetime.now(timezone.utc) - timedelta(days=3 * 365)
-            logger.info(
-                f"📧 Job {job.job_id[:8]} [reindex]: from={date_from.strftime('%Y-%m-%d')}"
-            )
-
-        elif mode == "backfill":
+        if mode == "backfill":
             if backfill_until is not None:
                 date_from = backfill_until
             elif date_from is None:
@@ -398,7 +398,7 @@ class EmailIndexingService:
                     break
 
                 # Boundary guard: each Cloud Task worker independently reads the lower-bound
-                # cursor (indexed_through / backfill_until / reindex start); the one whose
+                # cursor (indexed_through / backfill_until); the one whose
                 # page dips below date_from is terminal.  next_page_token is nulled so
                 # finalization runs and re-enqueue is skipped.
                 # Deduplication handles any overlap — no emails are dropped.
@@ -412,13 +412,12 @@ class EmailIndexingService:
                         )
                         next_page_token = None
 
-                # 1b. Already-indexed emails: incremental and backfill never re-process them (an incremental run
-                #     re-lists the whole day of its cursor); reindex re-processes them but keeps their
-                #     consolidation mark, so memory consolidation does not read them again.
+                # 1b. Already-indexed emails are never re-processed (an incremental run re-lists the whole day of
+                #     its cursor).
                 stored_marks = await self._email_repo.get_consolidation_marks(
                     job.user_id, [e.email_id for e in emails_page]
                 )
-                if mode != "reindex" and stored_marks:
+                if stored_marks:
                     already = [e for e in emails_page if e.email_id in stored_marks]
                     if already:
                         logger.info(
@@ -496,7 +495,6 @@ class EmailIndexingService:
                                         full_content_map,
                                         job,
                                         account_id,
-                                        stored_marks if mode == "reindex" else {},
                                     )
                                     for ec in valuable
                                 ]
@@ -609,6 +607,24 @@ class EmailIndexingService:
     # Private helpers
     # ------------------------------------------------------------------
 
+    async def _refuse_reindex(self, job: IndexingJob) -> IndexingJob:
+        """End a `reindex` job as `failed` with REINDEX_DISABLED, touching no mail and no cursor."""
+        now = datetime.now(timezone.utc)
+        job.status = "failed"
+        job.next_page_token = None
+        job.updated_at = now
+        job.completed_at = now
+        job.errors = [*job.errors, {"email_id": "", "stage": "mode", "error": REINDEX_DISABLED}][-100:]
+        await self._job_repo.update_job(job.job_id, {
+            "status": job.status, "next_page_token": None, "errors": job.errors,
+            "updated_at": now, "completed_at": now,
+        })
+        logger.warning(
+            f"⛔ Job {job.job_id[:8]} [reindex] refused: the v1 reindex mode is disabled (it re-saves whole "
+            f"documents and would wipe the email cards); use incremental or backfill"
+        )
+        return job
+
     async def _alert_classifier_failure(
         self, job_id: str, user_id: str, count: int, failure: Optional[str]
     ) -> None:
@@ -634,7 +650,6 @@ class EmailIndexingService:
         Each mode writes only its own cursor; others are preserved.
 
         backfill:    oldest_indexed_through = date_from (lower bound queried)
-        reindex:     cursor_reindex         = date_from (lower bound queried, ~now-3yr)
         incremental: indexed_through        = max(current_db, job.max_email_date)
         """
         current_state = await self._email_repo.get_indexing_state(job.user_id, job.provider)
@@ -655,21 +670,6 @@ class EmailIndexingService:
             logger.info(
                 f"📌 Job {job.job_id[:8]} [backfill] cursor finalized: "
                 f"oldest_indexed_through={date_from.strftime('%Y-%m-%d')}"
-            )
-
-        elif mode == "reindex":
-            if date_from is None:
-                return
-            new_state = IndexingState(
-                user_id=job.user_id,
-                provider=job.provider,
-                indexed_through=existing_indexed_through,
-                oldest_indexed_through=existing_oldest,
-                cursor_reindex=date_from,
-            )
-            logger.info(
-                f"📌 Job {job.job_id[:8]} [reindex] cursor finalized: "
-                f"cursor_reindex={date_from.strftime('%Y-%m-%d')}"
             )
 
         else:  # incremental
@@ -734,12 +734,9 @@ class EmailIndexingService:
         full_content_map: Dict[str, EmailFullContent],
         job: IndexingJob,
         account_id: str,
-        stored_marks: Optional[Dict[str, Optional[datetime]]] = None,
     ) -> Optional[IndexedEmail]:
-        """Generate 4-vector embeddings and build IndexedEmail. Parallel per email.
-
-        `stored_marks` (reindex): the consolidated_at of emails already stored; the rebuilt record carries it so the
-        save does not reset the mark."""
+        """Generate 4-vector embeddings and build IndexedEmail. Parallel per email (only emails not yet stored, so
+        the record starts unconsolidated)."""
         meta = email_meta_map.get(ec.email_id)
         content = full_content_map.get(ec.email_id)
         attachments = content.attachments if content else []
@@ -815,5 +812,5 @@ class EmailIndexingService:
             state="current",
             indexed_at=datetime.now(timezone.utc),
             embedding_pending=embedding_pending,
-            consolidated_at=(stored_marks or {}).get(ec.email_id),
+            consolidated_at=None,
         )
