@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.email_card import MailAnswer
@@ -53,6 +53,25 @@ class _PromptUnavailable(Exception):
     """The Firestore prompt could not be assembled whole: an outage."""
 
 
+class _SystemCache:
+    """The assembled system prompts by block digest, at most `_SYSTEMS_MAX` (the oldest dropped). Owns its lock, so the
+    agent instance shared by concurrent requests holds no mutable state of its own on the request path."""
+
+    def __init__(self) -> None:
+        self._items: "OrderedDict[str, str]" = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    async def get_or_assemble(self, key: str, assemble: Callable[[], Awaitable[str]]) -> str:
+        async with self._lock:
+            system = self._items.get(key)
+            if system is None:
+                system = await assemble()
+                self._items[key] = system
+                while len(self._items) > _SYSTEMS_MAX:
+                    self._items.popitem(last=False)
+            return system
+
+
 class EmailCardAgent(BaseAgent):
 
     def __init__(self, config: AgentConfig, execution_context: AgentExecutionContext,
@@ -61,8 +80,7 @@ class EmailCardAgent(BaseAgent):
         self._llm = execution_context.provider
         self._model_name = execution_context.model_name
         self._prompt_builder = prompt_builder
-        self._systems: "OrderedDict[str, str]" = OrderedDict()
-        self._system_lock = asyncio.Lock()
+        self._systems = _SystemCache()
         self._set_execution_context(execution_context)   # breaker accounting
 
     async def can_handle(self, message: AgentMessage) -> bool:
@@ -131,14 +149,7 @@ class EmailCardAgent(BaseAgent):
         oldest dropped). A prompt missing a section, or one code cannot render, is evicted from the assembly cache and
         is an outage; nothing is kept."""
         key = hashlib.sha256(static_block.encode("utf-8")).hexdigest()
-        async with self._system_lock:
-            system = self._systems.get(key)
-            if system is None:
-                system = await self._assemble(static_block)
-                self._systems[key] = system
-                while len(self._systems) > _SYSTEMS_MAX:
-                    self._systems.popitem(last=False)
-            return system
+        return await self._systems.get_or_assemble(key, lambda: self._assemble(static_block))
 
     async def _assemble(self, static_block: str) -> str:
         try:
