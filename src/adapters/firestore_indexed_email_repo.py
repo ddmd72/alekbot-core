@@ -45,6 +45,8 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
       (an `update`, so a missing state stays missing); `list_indexing_user_ids` is one equality query on `provider`.
     - `save_batch` and `mark_consolidated` write in batches of 500 (`batch.set` of the whole document / `batch.update`);
       `delete_by_user` deletes 500 per query until none is left.
+    - `get_consolidation_marks`: `get_all` of the `{user_id}_{email_id}` refs (500 per call) with
+      `field_paths=["consolidated_at"]`; a missing document is left out.
     - `find_nearest`: one `find_nearest` per vector field (COSINE, `distance_threshold` 0.4, `limit * 2`),
       pre-filtered by `user_id`, `state` and the `email_date` range, run concurrently; fused by RRF (k = 60). Needs the
       vector indexes (state, user_id[, email_date], <field>).
@@ -371,6 +373,23 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
         logger.debug(
             f"📌 Marked {len(email_ids)} emails consolidated at {consolidated_at}"
         )
+
+    async def get_consolidation_marks(
+        self, user_id: str, email_ids: List[str]
+    ) -> Dict[str, Optional[datetime]]:
+        """`get_all` on the documents `{user_id}_{email_id}`, reading only `consolidated_at`; 500 refs per call."""
+        marks: Dict[str, Optional[datetime]] = {}
+        prefix = f"{user_id}_"
+        chunk_size = 500
+        for i in range(0, len(email_ids), chunk_size):
+            chunk = email_ids[i : i + chunk_size]
+            refs = [self.collection.document(f"{prefix}{email_id}") for email_id in chunk]
+            async for snap in self.db.get_all(refs, field_paths=["consolidated_at"]):
+                if not snap.exists:
+                    continue
+                data = snap.to_dict() or {}
+                marks[snap.id[len(prefix):]] = self._strip_tz(data.get("consolidated_at"))
+        return marks
 
     # ------------------------------------------------------------------
     # Embedding repair

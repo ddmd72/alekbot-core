@@ -499,6 +499,9 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
     async def get_pending_embeddings(self, limit: int = 100) -> List[IndexedEmail]:
         return await self._real.get_pending_embeddings(limit)
 
+    async def get_consolidation_marks(self, user_id: str, email_ids: List[str]) -> Dict[str, Optional[datetime]]:
+        return await self._real.get_consolidation_marks(user_id, email_ids)
+
     async def mark_consolidated(self, user_id: str, email_ids: List[str], consolidated_at: datetime) -> None:
         self._marked.update((user_id, email_id) for email_id in email_ids)
         self.writes.append({"kind": "mark_consolidated", "user_id": user_id, "email_ids": list(email_ids)})

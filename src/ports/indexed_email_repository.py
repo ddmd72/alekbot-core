@@ -30,7 +30,8 @@ class IndexedEmailRepository(ABC):
 
         Atomicity: written in atomic chunks; a failed chunk writes none of its emails.
         Idempotency: re-saving an email keeps its consolidated_at (P11-G2-1: today it is cleared, so a re-indexed
-        email is consolidated again).
+        email is consolidated again; the indexing pipeline avoids this by carrying the mark from
+        get_consolidation_marks).
         """
 
     @abstractmethod
@@ -112,6 +113,16 @@ class IndexedEmailRepository(ABC):
         again.
 
         Atomicity: in atomic chunks. Errors: the backend's not-found error (NotFound today) when an id is gone (its chunk is not applied).
+        """
+
+    @abstractmethod
+    async def get_consolidation_marks(
+        self, user_id: str, email_ids: List[str]
+    ) -> Dict[str, Optional[datetime]]:
+        """The ids among `email_ids` already stored for user_id, each mapped to its consolidated_at (None while not
+        yet consolidated). An id that is not stored is absent from the result; no ids: {}.
+
+        Used by the indexing pipeline to skip emails already in the index and to keep the mark of one it re-processes.
         """
 
     @abstractmethod
