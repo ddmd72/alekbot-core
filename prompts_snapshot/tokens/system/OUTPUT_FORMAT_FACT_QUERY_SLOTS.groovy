@@ -2,9 +2,9 @@
 category: output_format
 class: output_format
 metadata:
-  description: FactQuerySlotsAgent - turns a memory request into the search query slots
-    (subject, kind, people, places, time, domains, kinds, scope); the LIFE AREAS block
-    is appended by code
+  description: FactQuerySlotsAgent - turns a memory request into the search query
+    slots (subject, kind, people, places, time, domains, kinds, scope); the LIFE AREAS
+    block is appended by code
   override_by:
   - SYSTEM
 token_id: OUTPUT_FORMAT_FACT_QUERY_SLOTS

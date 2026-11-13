@@ -4,10 +4,10 @@ class: protocols
 metadata:
   description: 'Lelik''s agents_registry (VOICE_COMPANION_RFC §4.15, revised 2026-10-29):
     the specialists he reaches with delegate_to_specialist — search_memory, search_web_light
-    (fast single lookup), and Alek as ask_alek (a question or an action, the answer comes
-    back to him) — and his separate send_to_chat tool (the caller''s chat, he does not hear
-    back), with the late-answer and attribution rules and ''nothing reaches chat unless sent
-    with send_to_chat''.'
+    (fast single lookup), and Alek as ask_alek (a question or an action, the answer
+    comes back to him) — and his separate send_to_chat tool (the caller''s chat, he
+    does not hear back), with the late-answer and attribution rules and ''nothing
+    reaches chat unless sent with send_to_chat''.'
   override_by:
   - SYSTEM
   - AGENT

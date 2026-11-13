@@ -4,9 +4,9 @@ class: cognitive_process
 metadata:
   description: DriveAgent — who it is, what it gets and returns, and the first decision
     (what the commission asks); refs and errors (DRIVE_SPECIALIST_RFC §5.2, §5.8;
-    rewritten as one procedure, owner 2026-10-28; answer from content (the routing order,
-    the commission as a hint for reads, off chat; USER_DRIVE_INDEXING_RFC §28.2, §28.3 A1, A2, A17);
-    the open bound and pages (USER_DRIVE_INDEXING_RFC §29))
+    rewritten as one procedure, owner 2026-10-28; answer from content (the routing
+    order, the commission as a hint for reads, off chat; USER_DRIVE_INDEXING_RFC §28.2,
+    §28.3 A1, A2, A17); the open bound and pages (USER_DRIVE_INDEXING_RFC §29))
   override_by:
   - SYSTEM
   - AGENT
