@@ -343,7 +343,7 @@ def test_a_selected_descendant_marks_its_ancestor_and_the_parent_replaces_it():
 
 @node
 def test_save_puts_the_draft_and_closes_the_dialog_on_success():
-    out = _picker('toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");')
+    out = _picker('toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);')
     assert out["calls"] == [["PUT", "/api/drive/connections/c1/scope", {"whole_drive": False, "folder_ids": ["f-proj", "f-inv"]}]]
     assert out["toasts"] == [["T:toast.drive_saved", "success"]] and out["reloads"] == 1 and not out["open"]
 
@@ -351,7 +351,7 @@ def test_save_puts_the_draft_and_closes_the_dialog_on_success():
 @node
 def test_a_refused_save_shows_the_servers_line_in_the_dialog_and_keeps_it_open():
     line = "The write folder Projects would be outside the folders indexed: choose another write folder first."
-    out = _picker('toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");',
+    out = _picker('toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);',
                   extra=f'const original = respond; respond = (m, p, b) => m === "PUT" ? {{ ok: false, data: {{ error: {json.dumps(line)} }} }} : original(m, p, b);')
     assert out["open"] and out["error"] == line and line in out["foot"]
     assert out["scopeError"] == "" and out["toasts"] == [] and out["reloads"] == 0
@@ -392,7 +392,7 @@ def test_the_whole_drive_choice_follows_empty_means():
 
 @node
 def test_ticking_the_whole_drive_on_an_account_drive_saves_whole_with_no_folders_and_unticking_restores_the_draft():
-    out = _picker('toggleDrivePickerWhole("c1", true); await saveDrivePicker("c1");')
+    out = _picker('toggleDrivePickerWhole("c1", true); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);')
     assert out["calls"] == [["PUT", "/api/drive/connections/c1/scope", {"whole_drive": True, "folder_ids": []}]]
     out = _picker('toggleDrivePickerWhole("c1", true); toggleDrivePickerWhole("c1", false);')
     assert out["n"] == 0
@@ -405,7 +405,7 @@ def test_an_area_drive_saves_whole_drive_false_even_when_one_was_stored():
     data = {"connections": [row], "add_kinds": [], "dr_copy": None}
     out = _run(LISTING + "const confirms = []; globalThis.confirm = (m) => { confirms.push(m); return true; };"
                + "driveData = " + json.dumps(data) + ';\nawait openDrivePicker("c1", "scope");\n'
-               + 'toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");'
+               + 'toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);'
                + "\nprocess.stdout.write(JSON.stringify({ calls: calls.filter((c) => c[0] === 'PUT'), confirms }));")
     assert out["calls"][0][2] == {"whole_drive": False, "folder_ids": ["f-inv"]}
     assert out["confirms"] == ["T:drive.scope_narrow_area_warning"]

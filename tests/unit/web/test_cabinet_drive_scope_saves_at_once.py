@@ -80,7 +80,7 @@ node = pytest.mark.skipif(shutil.which("node") is None, reason="node not install
 def test_picking_a_folder_already_in_the_scope_does_not_list_it_twice():
     # in the picker a stored folder starts ticked: picking it again unticks it, and the saved list names it once
     out = _picker('toggleDrivePickerFolder("c1", 0); toggleDrivePickerFolder("c1", 0); toggleDrivePickerFolder("c1", 1);'
-                  ' await saveDrivePicker("c1");')
+                  ' await saveDrivePicker("c1"); await saveDrivePicker("c1", true);')
     assert out["calls"] == [_put(False, ["f-proj", "f-inv"])]
 
 

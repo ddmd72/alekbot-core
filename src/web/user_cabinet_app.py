@@ -30,6 +30,7 @@ from ..domain.drive_setting_refused import DriveSettingRefused
 from ..domain.drive_connection_state import ConnectionState
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, scope_payload, toggle_task_key
 from ..domain.drive_ancestry import Ancestry
+from ..domain.drive_scope_preview import PreviewBucket
 from ..domain.user_drive import DriveItemNotFoundError, DriveNotConnectedError
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_review_answers import deciding_answer
@@ -1608,6 +1609,21 @@ def create_user_cabinet_blueprint(
             raise DriveNotConnectedError("The drive connection is absent")
         return connection
 
+    async def _new_scope_roots(service: UserDriveService, handle: Any, connection: DriveConnection,
+                               ids: list) -> list:
+        """The requested folders the saved scope does not already cover, without those inside another requested one:
+        the roots whose files would newly enter the index. A folder the drive no longer has is not new."""
+        memo: dict = {}
+        saved = list(connection.scope_folder_ids)
+        chains: dict = {}
+        for i in ids:
+            try:
+                chains[i] = await service.ancestry(handle, i, memo=memo)
+            except DriveItemNotFoundError:
+                continue
+        fresh = [i for i, chain in chains.items() if not any(chain.contains(old) for old in saved)]
+        return [i for i in fresh if not any(chains[i].contains(other) for other in fresh if other != i)]
+
     async def _json_body() -> dict:
         body = await request.get_json(force=True, silent=True)
         return body if isinstance(body, dict) else {}
@@ -1793,6 +1809,37 @@ def create_user_cabinet_blueprint(
         queued = await _nudge(stored)
         return jsonify({"whole_drive": stored.scope_whole_drive, "folder_ids": list(stored.scope_folder_ids),
                         "queued": queued}), 200
+
+    @bp.route("/api/drive/connections/<connection_id>/scope/preview", methods=["POST"])
+    @auth_required
+    @drive_route
+    async def drive_connection_scope_preview(connection_id: str):
+        """What saving this scope would newly bring into the index, counted before the owner commits (nothing is
+        written). Same body as PUT /scope. Only what the saved scope does not already cover counts: `{"new": false}`
+        when nothing is new, else `{"new": true, "files": {documents, images, recordings, other}, "total", "folders",
+        "capped", "large"}`. Folders the walk skips as the indexer does (dot names, generated, repository) are not read."""
+        body = await _json_body()
+        whole, ids = body.get("whole_drive"), body.get("folder_ids", [])
+        if not isinstance(whole, bool) or not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+            return jsonify({"error": "whole_drive (bool) and folder_ids (list of ids) required"}), 400
+        connection = await _own_connection(g.user_id, connection_id)
+        if user_drive_service is None:
+            return jsonify({"error": "Drive integration not configured"}), 501
+        handle = connection.handle
+        if whole:
+            roots = [] if connection.scope_whole_drive else [(await user_drive_service.access(handle))[0].root_item_id]
+        else:
+            roots = await _new_scope_roots(user_drive_service, handle, connection, list(dict.fromkeys(ids)))
+        if not roots:
+            return jsonify({"new": False}), 200
+        preview = await user_drive_service.scope_preview(handle, roots)
+        return jsonify({"new": True,
+                        "files": {"documents": preview.counts.get(PreviewBucket.DOCUMENT, 0),
+                                  "images": preview.counts.get(PreviewBucket.IMAGE, 0),
+                                  "recordings": preview.counts.get(PreviewBucket.RECORDING, 0),
+                                  "other": preview.counts.get(PreviewBucket.OTHER, 0)},
+                        "total": preview.total, "folders": preview.folders,
+                        "capped": preview.capped, "large": preview.large}), 200
 
     @bp.route("/api/drive/connections/<connection_id>/connector-access", methods=["PUT"])
     @auth_required

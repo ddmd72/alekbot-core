@@ -2016,6 +2016,20 @@
           "drive.pk_confirm_many": "Save {n} changes before closing?",
           "drive.pk_keep": "Keep editing",
           "drive.pk_discard": "Discard",
+          "drive.pk_add_title": "Add to the index?",
+          "drive.pk_add_counting": "Counting…",
+          "drive.pk_add_folders_one": "1 folder",
+          "drive.pk_add_folders_many": "{n} folders",
+          "drive.pk_add_total_one": "1 file in {f}",
+          "drive.pk_add_total_many": "{n} files in {f}",
+          "drive.pk_add_total_capped": "More than {n} files in {f}",
+          "drive.pk_add_documents": "Documents: {n}",
+          "drive.pk_add_images": "Images: {n}",
+          "drive.pk_add_recordings": "Recordings: {n}",
+          "drive.pk_add_other": "Other, not read: {n}",
+          "drive.pk_add_warn": "The first indexing of this much takes a long time and spends API money.",
+          "drive.pk_add_failed": "The size could not be counted. You can still add.",
+          "drive.pk_add_btn": "Add",
           "drive.name": "Name",
           "drive.save": "Save",
           "drive.primary_badge": "Primary",
@@ -2321,6 +2335,20 @@
           "drive.pk_confirm_many": "Зберегти зміни ({n}) перед закриттям?",
           "drive.pk_keep": "Продовжити редагування",
           "drive.pk_discard": "Відкинути",
+          "drive.pk_add_title": "Додати до індексу?",
+          "drive.pk_add_counting": "Підрахунок…",
+          "drive.pk_add_folders_one": "1 папці",
+          "drive.pk_add_folders_many": "{n} папках",
+          "drive.pk_add_total_one": "1 файл у {f}",
+          "drive.pk_add_total_many": "Файлів: {n}, у {f}",
+          "drive.pk_add_total_capped": "Файлів понад {n}, у {f}",
+          "drive.pk_add_documents": "Документи: {n}",
+          "drive.pk_add_images": "Зображення: {n}",
+          "drive.pk_add_recordings": "Записи: {n}",
+          "drive.pk_add_other": "Інше, не читається: {n}",
+          "drive.pk_add_warn": "Перша індексація такого обсягу триває довго і витрачає гроші на API.",
+          "drive.pk_add_failed": "Не вдалося підрахувати обсяг. Додати все одно можна.",
+          "drive.pk_add_btn": "Додати",
           "drive.name": "Назва",
           "drive.save": "Зберегти",
           "drive.primary_badge": "Основний",
@@ -2626,6 +2654,20 @@
           "drive.pk_confirm_many": "Enregistrer {n} modifications avant de fermer ?",
           "drive.pk_keep": "Continuer à modifier",
           "drive.pk_discard": "Abandonner",
+          "drive.pk_add_title": "Ajouter à l'index ?",
+          "drive.pk_add_counting": "Comptage…",
+          "drive.pk_add_folders_one": "1 dossier",
+          "drive.pk_add_folders_many": "{n} dossiers",
+          "drive.pk_add_total_one": "1 fichier dans {f}",
+          "drive.pk_add_total_many": "{n} fichiers dans {f}",
+          "drive.pk_add_total_capped": "Plus de {n} fichiers dans {f}",
+          "drive.pk_add_documents": "Documents : {n}",
+          "drive.pk_add_images": "Images : {n}",
+          "drive.pk_add_recordings": "Enregistrements : {n}",
+          "drive.pk_add_other": "Autres, non lus : {n}",
+          "drive.pk_add_warn": "La première indexation d'un tel volume est longue et consomme des crédits API.",
+          "drive.pk_add_failed": "La taille n'a pas pu être comptée. Vous pouvez quand même ajouter.",
+          "drive.pk_add_btn": "Ajouter",
           "drive.name": "Nom",
           "drive.save": "Enregistrer",
           "drive.primary_badge": "Principal",
@@ -2931,6 +2973,20 @@
           "drive.pk_confirm_many": "¿Guardar {n} cambios antes de cerrar?",
           "drive.pk_keep": "Seguir editando",
           "drive.pk_discard": "Descartar",
+          "drive.pk_add_title": "¿Añadir al índice?",
+          "drive.pk_add_counting": "Contando…",
+          "drive.pk_add_folders_one": "1 carpeta",
+          "drive.pk_add_folders_many": "{n} carpetas",
+          "drive.pk_add_total_one": "1 archivo en {f}",
+          "drive.pk_add_total_many": "{n} archivos en {f}",
+          "drive.pk_add_total_capped": "Más de {n} archivos en {f}",
+          "drive.pk_add_documents": "Documentos: {n}",
+          "drive.pk_add_images": "Imágenes: {n}",
+          "drive.pk_add_recordings": "Grabaciones: {n}",
+          "drive.pk_add_other": "Otros, sin leer: {n}",
+          "drive.pk_add_warn": "La primera indexación de este volumen tarda mucho y gasta dinero de API.",
+          "drive.pk_add_failed": "No se pudo contar el tamaño. Aun así puedes añadir.",
+          "drive.pk_add_btn": "Añadir",
           "drive.name": "Nombre",
           "drive.save": "Guardar",
           "drive.primary_badge": "Principal",
@@ -5314,6 +5370,7 @@
         p.trail = [];
         p.filter = "";
         p.confirm = false;
+        p.preview = null;
         loadDrivePickerFolders(id);
       }
 
@@ -5324,6 +5381,7 @@
         p.trail.push({ id: f.id, name: f.name });
         p.filter = "";
         p.confirm = false;
+        p.preview = null;
         loadDrivePickerFolders(id);
       }
 
@@ -5333,6 +5391,7 @@
         p.trail = p.trail.slice(0, index);
         p.filter = "";
         p.confirm = false;
+        p.preview = null;
         loadDrivePickerFolders(id);
       }
 
@@ -5354,6 +5413,7 @@
           p.sel.push({ id: f.id, path });
         }
         p.confirm = false;
+        p.preview = null;
         p.error = "";
         renderDrivePicker(id);
       }
@@ -5362,6 +5422,7 @@
         const p = driveUiOf(id).picker;
         p.sel.splice(index, 1);
         p.confirm = false;
+        p.preview = null;
         p.error = "";
         renderDrivePicker(id);
       }
@@ -5377,6 +5438,7 @@
           p.stash = null;
         }
         p.confirm = false;
+        p.preview = null;
         p.error = "";
         renderDrivePicker(id);
       }
@@ -5393,19 +5455,39 @@
           p.writePath = f.path || "";
         }
         p.confirm = false;
+        p.preview = null;
         p.error = "";
         renderDrivePicker(id);
       }
 
-      async function saveDrivePicker(id) {
+      // `added`: the owner pressed Add on the size confirmation, so the save goes ahead without counting again.
+      async function saveDrivePicker(id, added) {
         const ui = driveUiOf(id);
         const p = ui.picker;
         if (!p || p.busy || drivePickerChanges(p) === 0) return;
         // A drive on its default area (an app folder) leaving it for chosen folders: the default folder's
         // files leave the index; ask first, and a decline saves nothing.
-        if (p.purpose === "scope" && p.area && !p.whole && p.sel.length > 0 && !confirm(t("drive.scope_narrow_area_warning"))) return;
+        if (!added && p.purpose === "scope" && p.area && !p.whole && p.sel.length > 0 && !confirm(t("drive.scope_narrow_area_warning"))) return;
         p.busy = true;
         p.error = "";
+        if (p.purpose === "scope" && !added) {
+          // New folders (or the whole drive) are counted first, so the owner sees the size before the indexer spends money.
+          p.counting = true;
+          renderDrivePickerPart(id, "foot");
+          const out = await driveCall("POST", `/api/drive/connections/${encodeURIComponent(id)}/scope/preview`,
+            { whole_drive: p.whole, folder_ids: p.sel.map((s) => s.id) });
+          p.counting = false;
+          if (ui.picker !== p) return;                            // closed while counting
+          if (!(out.ok && out.data.new === false)) {
+            p.busy = false;
+            p.preview = out.ok && out.data && out.data.files ? out.data : { failed: true };   // a failed count still lets the owner add
+            renderDrivePickerPart(id, "foot");
+            const add = document.getElementById("drive-pk-add");
+            if (add) add.focus();
+            return;
+          }
+        }
+        p.preview = null;
         renderDrivePickerPart(id, "foot");
         if (p.purpose === "write") {
           await saveDriveWriteFolder(id, p.write === null ? "__none" : p.write === "" ? "__root" : p.write, true);
@@ -5421,9 +5503,18 @@
         renderDrivePicker(id);
       }
 
+      // Cancel on the size confirmation: nothing is saved, the picker stays open with its selection.
+      function cancelDrivePickerPreview(id) {
+        const p = driveUiOf(id).picker;
+        if (!p) return;
+        p.preview = null;
+        renderDrivePickerPart(id, "foot");
+      }
+
       function requestCloseDrivePicker(id) {
         const p = driveUiOf(id).picker;
         if (!p) return;
+        if (p.preview) { cancelDrivePickerPreview(id); return; }
         if (drivePickerChanges(p) > 0 && !p.busy) {
           p.confirm = true;
           renderDrivePickerPart(id, "foot");
@@ -5588,8 +5679,25 @@
             ${inside ? `<span class="dv-pill save">${t("drive.pk_saves_inside")}</span>` : ""}${navigable ? driveIcon("chevR", "dv-chevr") : ""}</button></div>`;
       }
 
+      // What the owner's addition would bring into the index (POST .../scope/preview), shown before the save.
+      function drivePickerPreviewText(pv) {
+        if (pv.failed) return `<span>${t("drive.pk_add_failed")}</span>`;
+        const f = driveText(pv.folders === 1 ? "drive.pk_add_folders_one" : "drive.pk_add_folders_many", { n: pv.folders });
+        const head = pv.capped ? driveText("drive.pk_add_total_capped", { n: pv.total, f })
+          : driveText(pv.total === 1 ? "drive.pk_add_total_one" : "drive.pk_add_total_many", { n: pv.total, f });
+        const kinds = [["documents", "drive.pk_add_documents"], ["images", "drive.pk_add_images"],
+          ["recordings", "drive.pk_add_recordings"], ["other", "drive.pk_add_other"]]
+          .filter(([k]) => (pv.files[k] || 0) > 0).map(([k, key]) => driveText(key, { n: pv.files[k] }));
+        return `<span><strong>${head}</strong>${kinds.length ? "<br>" + kinds.join(" · ") : ""}${pv.large ? `<br>${t("drive.pk_add_warn")}` : ""}</span>`;
+      }
+
       function drivePickerFoot(p, sv, q) {
         const n = drivePickerChanges(p);
+        if (p.preview && n > 0) {
+          return `<div class="dv-pk-confirm" role="alert"><span><strong>${t("drive.pk_add_title")}</strong><br>${drivePickerPreviewText(p.preview)}</span>
+            <div class="dv-btns"><button type="button" class="btn btn-secondary dv-btn-sm" onclick="cancelDrivePickerPreview('${q}')">${t("drive.cancel")}</button>
+            <button type="button" class="btn btn-primary dv-btn-sm" id="drive-pk-add" ${p.busy ? "disabled" : ""} onclick="saveDrivePicker('${q}', true)">${t("drive.pk_add_btn")}</button></div></div>`;
+        }
         if (p.confirm && n > 0) {
           return `<div class="dv-pk-confirm" role="alert"><span>${driveText(n === 1 ? "drive.pk_confirm_one" : "drive.pk_confirm_many", { n })}</span>
             <div class="dv-btns"><button type="button" class="dv-link" onclick="resumeDrivePicker('${q}')">${t("drive.pk_keep")}</button>
@@ -5618,7 +5726,7 @@
           ${narrow ? `<div class="dv-msg dv-warn-text" role="alert">${t("drive.scope_narrow_warning")}</div>` : ""}
           ${p.error ? `<div class="dv-msg err" role="alert">${escapeHtml(p.error)}</div>` : ""}
           <div class="dv-foot-row"><div class="dv-pk-actions"><button type="button" class="btn btn-secondary dv-btn-sm" onclick="closeDrivePicker('${q}')">${t("drive.cancel")}</button>
-          <button type="button" class="btn btn-primary dv-btn-sm" ${n && !p.busy ? "" : "disabled"} onclick="saveDrivePicker('${q}')">${t("drive.save")}${n ? " (" + n + ")" : ""}</button></div></div>`;
+          <button type="button" class="btn btn-primary dv-btn-sm" ${n && !p.busy ? "" : "disabled"} onclick="saveDrivePicker('${q}')">${p.counting ? t("drive.pk_add_counting") : t("drive.save") + (n ? " (" + n + ")" : "")}</button></div></div>`;
       }
 
       // Esc and a click outside ask before dropping a draft; Tab stays inside the dialog.

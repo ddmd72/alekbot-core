@@ -207,7 +207,7 @@ holds no drive id; the connection's `drive_identity` names the drive.
   is gone; plus `default_name`, `primary_connection_id` and `mirror_root`; a user with no live connection and a past one
   gets `reconnect_needed`. Actions, all `PUT` unless noted and each refused with `400 {error: line}` when a rule says no
   (a missing connection is 404): `/api/drive/connections/<id>/name`, `/scope`, `/write-folder`, `/searched-by-default`,
-  `/indexing`; `PUT /api/drive/primary`; `GET /api/drive/connections/<id>/folders?parent=` (the folder picker for scope
+  `/indexing`; `POST /api/drive/connections/<id>/scope/preview` (read-only: what saving this scope would newly bring into the index, as `{new: false}` or `{new: true, files: {documents, images, recordings, other}, total, folders, capped, large}`; `UserDriveService.scope_preview`); `PUT /api/drive/primary`; `GET /api/drive/connections/<id>/folders?parent=` (the folder picker for scope
   and write folder); `DELETE /api/drive/connections/<id>` (disconnect, optional `heir_id`). The scope and write-folder
   routes read the chains of the chosen folders first (the service makes no provider call). **"Add a drive":** the
   kind picker comes from `GET /api/connectors`; the button goes to `/auth/connect/<kind>?intent=add` (a reconnect uses
@@ -265,7 +265,7 @@ is built, not only behind the Microsoft keys.
   (sheets, books and data files without passage hints by policy are no gap for the owner; search still reads the
   counter), nor are `chunks` and the other enrichment keys. The folder picker is a dialog with a
   Save (n) button: closing with unsaved changes asks "Save N changes before closing?", and a refusal of the server
-  (for instance a scope that would leave the write folder outside) is shown in the dialog, which stays open. Toggles,
+  (for instance a scope that would leave the write folder outside) is shown in the dialog, which stays open. Saving a scope with new folders (or the whole drive) first asks the preview route and shows, in the dialog's foot, how many files by kind in how many folders would enter the index, with Add and Cancel; Cancel saves nothing and keeps the selection, and a failed count still lets the owner add (`decisions/drive_scope_add_preview.md`). Toggles,
   rename and the other settings still save on change.
 - **`∕` in names (G4).** A `/` inside a Google name prints as `∕` (U+2215) at every path join and is matched the same way,
   so `Garden plan 2026/27` prints as `Springfield/Garden plan 2026∕27` and resolves back. Reading by path accepts every
