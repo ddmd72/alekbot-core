@@ -544,9 +544,13 @@ class GeminiAdapter(LLMPort):
             um = response.usage_metadata
             total_input = getattr(um, "prompt_token_count", 0) or 0
             cached = getattr(um, "cached_content_token_count", 0) or 0
+            # Thought tokens are billed as output but reported apart from candidates_token_count;
+            # completion_tokens is the billed output (as for OpenAI/Claude, whose counts include reasoning).
+            visible = getattr(um, "candidates_token_count", 0) or 0
+            thoughts = getattr(um, "thoughts_token_count", 0) or 0
             usage_metadata = UsageMetadata(
                 prompt_tokens=total_input - cached,
-                completion_tokens=getattr(um, "candidates_token_count", 0) or 0,
+                completion_tokens=visible + thoughts,
                 total_tokens=getattr(um, "total_token_count", 0) or 0,
                 cache_read_tokens=cached,
             )

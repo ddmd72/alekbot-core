@@ -250,6 +250,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
 
 - **Usage legs never overlap:** `prompt_tokens` is always uncached input; `calculate_cost` bills it, `cache_read_tokens` and
   `cache_creation_tokens` as disjoint legs. OpenAI/Gemini report cached inside the input total, so the adapter subtracts both cache legs.
+  `completion_tokens` is the billed output: Gemini's `candidates_token_count` + `thoughts_token_count` (the SDK reports them apart); OpenAI/Claude counts already include reasoning.
 - **Claude counts a non-ASCII string nested in a tool call's `input` at ~7× its plain size.** Measured with `count_tokens`
   (20 000 Ukrainian characters): 8 750 tokens as a top-level parameter, 61 054 inside an object or a list (~3 tokens per
   character, as if `\uXXXX`-escaped); ASCII text is unaffected. The call sits in history, so it is re-sent on every later turn
