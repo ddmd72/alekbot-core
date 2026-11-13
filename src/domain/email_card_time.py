@@ -151,7 +151,8 @@ def _point(d: AnswerDate, sent_day: date, evidence: TextEvidence) -> TimePoint:
             return TimePoint(label=d.label, start=d.start, end=end, printed=d.printed, verified=True)
         return automatic
     first, last = sides
-    assert first.month is not None and first.day is not None       # `_read` returns sides with both
+    if first.month is None or first.day is None:       # `_read` returns sides with both
+        raise ValueError("_read returned a side without a month or day")
     if first.year is None and first.year2 is None:
         read_start = _yearless(first.month, first.day, sent_day, d.label == "issued")
         if read_start is None or (read_start.month, read_start.day) != (d.start.month, d.start.day):
@@ -178,14 +179,14 @@ def _read(printed: str, is_range: bool) -> Optional[Tuple[_Partial, Optional[_Pa
     if len(sides) not in (1, 2) or (len(sides) == 2) != is_range:
         return None
     parsed = [_side(s) for s in sides]
-    if any(p is None for p in parsed):
-        return None
     first = parsed[0]
-    assert first is not None
+    if first is None:
+        return None
     if len(parsed) == 1:
         return (first, None) if first.day is not None and first.month is not None else None
     last = parsed[1]
-    assert last is not None
+    if last is None:
+        return None
     own_first, own_last = first, last
     first = _Partial(day=first.day, month=first.month or last.month, year=first.year or last.year,
                      year2=first.year2 or last.year2, weekday=first.weekday)
@@ -262,7 +263,8 @@ def _valid(p: _Partial) -> Optional[_Partial]:
 
 def _full(p: _Partial, model_day: date) -> Optional[date]:
     """A side with a year: a two-digit year takes the model's century."""
-    assert p.month is not None and p.day is not None
+    if p.month is None or p.day is None:
+        raise ValueError("a date side needs both a month and a day")
     year = p.year if p.year is not None else (model_day.year // 100) * 100 + (p.year2 or 0)
     return _date(year, p.month, p.day)
 
@@ -279,7 +281,8 @@ def _yearless(month: int, day: int, sent_day: date, issued: bool) -> Optional[da
 
 def _after(start: date, p: _Partial) -> Optional[date]:
     """A yearless span's last day: in the start's year, or the next when it would fall before the start."""
-    assert p.month is not None and p.day is not None
+    if p.month is None or p.day is None:
+        raise ValueError("a date side needs both a month and a day")
     for year in (start.year, start.year + 1):
         found = _date(year, p.month, p.day)
         if found is not None and found >= start:
