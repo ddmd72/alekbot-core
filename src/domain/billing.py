@@ -157,6 +157,10 @@ class BillingAccount(BaseModel):
 # cache_read: multiplier for cached input tokens vs full input price.
 # Claude: 0.1 (90% discount), OpenAI: 0.1 (90% discount), Gemini: 0.25 (75% discount).
 # cache_write: multiplier for cache creation tokens. Claude: 1.25 (25% surcharge), others: 0.
+# Models that embed rather than generate. They are billed on the same ledger as the LLMs but are not "the model that ran
+# the turn": labels built from the ledger's legs (the drive agent's log line and turn-limit alert) leave them out.
+EMBEDDING_MODELS = frozenset({"gemini-embedding-2"})
+
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
     # These two price a MOVING alias, so they go stale whenever Google promotes a new

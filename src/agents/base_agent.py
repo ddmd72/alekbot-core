@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
-from ..domain.billing import TokenLedger, current_ledger, ledger_scope
+from ..domain.billing import EMBEDDING_MODELS, TokenLedger, current_ledger, ledger_scope
 from ..domain.memory_telemetry import SCOPE_AGENT_EXECUTION
 from ..domain.request_context import get_current_account_id
 from ..domain.exceptions import (
@@ -207,7 +207,7 @@ class BaseAgent(ABC):
         self._quota_service = None
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
         # NOTE: token accumulators are deliberately NOT instance state — see
-        # _EXECUTION_LEDGER / _execution_billing_scope.
+        # domain.billing's ledger ContextVar / _execution_billing_scope.
 
         logger.info(
             f"🤖 Agent initialized: {config.agent_id} "
@@ -710,11 +710,12 @@ class BaseAgent(ABC):
         """The models that served this execution's billed calls, in first-use order: the open TokenLedger's legs.
 
         Keyed by the model that ran (``_call_llm`` adds under the fallback model after a cross-provider failover),
-        so a log line built from it names what ran, not what was configured. Empty outside a billing scope
+        so a log line built from it names what ran, not what was configured. Embedding models (billed on the same
+        ledger) are left out: the label names LLMs only. Empty outside a billing scope
         (``process()`` opens one) or before any call was billed.
         """
         ledger = current_ledger()
-        return list(ledger.by_model) if ledger is not None else []
+        return [m for m in ledger.by_model if m not in EMBEDDING_MODELS] if ledger is not None else []
 
     async def _flush_billing(self) -> None:
         """Durably record this execution's usage. No-op if quota_service/account_id
