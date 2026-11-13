@@ -102,6 +102,12 @@ _DRIVE_UPGRADE_PASS = $(or $(DRIVE_UPGRADE_PASS_DEV),on)
 # like the code. A deploy-only key, never the local DRIVE_NOTES_ENABLED (CLAUDE.md, "Deploy-substitution trap").
 _DRIVE_NOTES_ENABLED = $(or $(DRIVE_NOTES_ENABLED_DEV),on)
 
+# The email card online step (email index v2, slice 6): the main service cards each new kept mail. EMAIL_CARD_ONLINE_DEV=0
+# in .env turns it off across deploys (the main step's --set-env-vars replaces every variable, so a switch set with
+# `gcloud run services update` alone would come back at the next deploy). Default 1 (on). A deploy-only key, never the
+# local EMAIL_CARD_ONLINE (CLAUDE.md, "Deploy-substitution trap").
+_EMAIL_CARD_ONLINE = $(or $(EMAIL_CARD_ONLINE_DEV),1)
+
 # Transcription of audio and video (USER_DRIVE_INDEXING_RFC §27.13). DRIVE_TRANSCRIBE_ENABLED_DEV is REQUIRED in .env and must be exactly on or off
 # (`make deploy` refuses otherwise, T-R34); the switch is on only for `on`; DRIVE_TRANSCRIBE_USD_CAP_DEV (a number, empty = the $20 monthly maximum) can only LOWER the cap. Both ride as
 # substitutions to the indexer (the cap to the main service too: the Cabinet shows it). Deploy-only keys, never the
@@ -364,9 +370,10 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		exit 1; fi
 	@echo "🎙  Transcription switch: _DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED), cap: _DRIVE_TRANSCRIBE_USD_CAP=$(if $(_DRIVE_TRANSCRIBE_USD_CAP),$(_DRIVE_TRANSCRIBE_USD_CAP),(empty = the \$$20 maximum))"
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"
+	@echo "✉️  Email card online step: _EMAIL_CARD_ONLINE=$(_EMAIL_CARD_ONLINE)"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_EMAIL_CARD_ONLINE=$(_EMAIL_CARD_ONLINE),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
 	@echo "✅ Deployment complete!"
 	$(PYTHON) scripts/infrastructure/check_env_drift.py --project=$(PROJECT_ID) --region=$(REGION)
 

@@ -650,7 +650,11 @@ is Claude and it has no fallback. Read with `os.getenv` where the container is b
 **Email card online step.** `EMAIL_CARD_ONLINE` (optional; empty or unset = off, `1` = on) makes the indexer also card each
 new kept mail (email index v2 slice 6): extra fields on the same facts document, v1 indexing unchanged. `EMAIL_CARD_MODEL`
 (optional; empty = the card agent's default) pins the card writer's model. Both are read with `os.getenv` in
-`composition/email_card_setup.py`, never in `load_settings()`. The v2 Firestore indexes (`make deploy-indexes`) must be
+`composition/email_card_setup.py`, never in `load_settings()`. The code default is off; `make deploy` sets it on the main
+service from the substitution `_EMAIL_CARD_ONLINE` (default `1`), fed by the deploy-only key `EMAIL_CARD_ONLINE_DEV`
+(`0` in `.env` turns it off across deploys). The card prompt tokens (`COGNITIVE_PROCESS_EMAIL_CARD`,
+`OUTPUT_FORMAT_EMAIL_CARD`, blueprint `email_card_agent_v1`, profile `email_card`) must be uploaded first: the card agent
+has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
 `READY` before switching it on together with a deploy that queries them (slice 8); the write path needs none.
 
 **Memory-search slots model.** `FACT_QUERY_SLOTS_MODEL` (optional; empty = `claude-haiku-5-5`) pins the model of the slots call on the memory-search path (`composition/fact_query_slots_setup.py: search_slots_model`), which runs with thinking `low` on the Claude-only `fact_query_slots` provider entry whatever the user's provider preference. The router's slots call is not affected: it keeps the router's own model and no thinking. Claude ids only. Read with `os.getenv` where `UserAgentFactory` builds the agent, never in `load_settings()`.
