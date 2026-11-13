@@ -102,7 +102,9 @@ request id, kind and a failure label, never text or a file name (`document_servi
 6. **Reader** (`DriveReaderRunner`, no tools): at most `MODEL_EXTRACT_MAX_PAGES` = 200 pages per file (the same for
    every store; `DocumentService.allowance`), a 60 000-character text budget (`reader_text_budget`, the store's
    presentation cap, so nothing is read past what can be shown), under the open's deadline. When the reader is
-   unavailable for a low-density file the parser's text is returned flagged incomplete.
+   unavailable for a low-density file the parser's text is returned flagged incomplete. The `index` caller (the email
+   index) never runs the reader, like the connector: what the router would hand it answers `NO_TEXT` with a
+   `READER_SKIPPED` detail.
 7. **Outcome** (`ReadOutcome`): status, raw text, pages total / read / skipped / `cut_within_pages`, links
    (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
 
@@ -122,7 +124,8 @@ through the quota service. The transcript is cached per account for 90 days (the
 There is no parser slot. The light service takes one request at a time per instance; when it is busy (HTTP 429 or 503)
 the open answers `PARSER_UNAVAILABLE` / `busy` (the "converter busy" note), and one retry follows a `recycling` answer
 (an instance replaced after a request). The same adapter object is the parser, the PDF splitter and the reader's window
-cutter.
+cutter. A caller that reads many files in a row backs off on `busy` (the email index: 2 in flight, retries after
+2 / 5 / 10 s, then the mail stays pending).
 
 ### Deadlines
 

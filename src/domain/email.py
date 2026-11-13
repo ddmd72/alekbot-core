@@ -71,12 +71,16 @@ class EmailPart:
     a hint only (the bytes decide); `size` the provider's size in bytes. `handle` is opaque to everything but the
     adapter that listed the part (Gmail: the attachment id, empty for a part whose data is inline): it is valid only
     with the listing it came from, so it is passed back to `get_part` within one open and never stored.
+    `displayed_inline` is True when the part's own headers ask to show it inside the body: `Content-Disposition:
+    inline`, or a `Content-ID` with no `attachment` disposition. Not about where the data sits: `handle == ""` (data
+    inside the message) is a different fact.
     """
     part_id: str
     filename: str
     mime: str
     size: int
     handle: str
+    displayed_inline: bool = False
 
 
 # ---------------------------------------------------------------------------

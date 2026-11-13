@@ -79,6 +79,8 @@ class EmailProviderPort(ABC):
         walk that names the attachments `batch_get_full_content` returns (the index stores those names): a part with
         a filename is an attachment, inline images with a Content-ID included; a forwarded `message/rfc822` part is
         one attachment and its children are not listed. Each part's `handle` is valid only with this listing.
+        Each part carries `displayed_inline` from its own headers; the listing itself is unchanged (inline parts stay
+        listed).
         Raises EmailMessageGone when the message does not exist (404), EmailPartUnavailable when the provider did
         not answer (429, 5xx, timeout), and the OAuth errors a revoked grant or a missing scope raises today.
         """

@@ -36,7 +36,7 @@ from ..domain.document_limits import (
     MAX_FILE_BYTES, parse_input_cap, reader_text_budget, text_export_cap,
 )
 from ..domain.document_read import (
-    CALLER_CONNECTOR, CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, READER_SKIPPED, TRANSCRIPT_CACHE_DAYS,
+    CALLER_CONNECTOR, CALLER_INDEX, CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, READER_SKIPPED, TRANSCRIPT_CACHE_DAYS,
     ReadOutcome, ReadRequest, ReadStatus,
 )
 from ..domain.drive_extraction import (
@@ -63,6 +63,8 @@ _RAW_TEXT_KINDS = IN_PROCESS_TEXT_KINDS | {"other", "data_dump", "mhtml"}
 # ERROR: systemic or a bug (Errors-dev pages on it); everything else that is not a success is a WARNING.
 _ERROR_STATUSES = frozenset({ReadStatus.ERROR, ReadStatus.MEMORY, ReadStatus.MODEL_UNAVAILABLE,
                              ReadStatus.PARSER_UNAVAILABLE})
+# Callers that never run the paid model reader: the drive connector and the email index.
+_NO_READER_CALLERS = frozenset({CALLER_CONNECTOR, CALLER_INDEX})
 _QUIET_STATUSES = frozenset({ReadStatus.TEXT, ReadStatus.NATIVE, ReadStatus.NO_TEXT})
 
 
@@ -196,8 +198,8 @@ class DocumentService(DocumentReadPort):
                 return _from_extraction(parsed)
             if _busy(parsed):
                 return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
-        if request.caller == CALLER_CONNECTOR:
-            # The drive connector never runs the paid reader: what the router would hand it answers NO_TEXT, with
+        if request.caller in _NO_READER_CALLERS:
+            # The drive connector and the email index never run the paid reader: what the router would hand it answers NO_TEXT, with
             # the parser's links and page count, and the route (or the reader-first kind) in the detail.
             return ReadOutcome(status=ReadStatus.NO_TEXT, links=_links(parsed) if parsed is not None else (),
                                pages_total=parsed.pages_total if parsed is not None else 0,

@@ -390,6 +390,16 @@ class EmailPartTooLarge(Exception):
         self.limit_bytes = limit_bytes
 
 
+class AttachmentParserUnavailable(Exception):
+    """The document service could not read a mail's attachments now (an outage or the caller's deadline): the mail
+    stays pending and is retried; it is never read as 'no attachment'. `reason`: busy | unavailable | misconfigured |
+    deadline | model_unavailable."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"attachment parser unavailable: {reason}")
+        self.reason = reason
+
+
 class MediaStreamFailed(Exception):
     """A file's bytes could not be streamed from its media source (a refused or failed upstream request, a broken
     connection). The message never carries the source's url or headers (they are secrets)."""
