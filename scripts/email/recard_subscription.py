@@ -268,7 +268,8 @@ async def run(args: argparse.Namespace) -> int:
         print("--out must be under scripts/memory/", file=sys.stderr)
         return 2
     out.parent.mkdir(parents=True, exist_ok=True)
-    ids = [i for i in read_ids(Path(args.ids), args.limit) if i not in done_ids(out)]
+    done = done_ids(out)   # read once: per id it re-parsed the whole output file and a resume hung for minutes
+    ids = [i for i in read_ids(Path(args.ids), args.limit) if i not in done]
     session = await open_session()
     embedder = None
     if args.embed:
