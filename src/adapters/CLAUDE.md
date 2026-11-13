@@ -24,7 +24,7 @@ mocks cannot detect translation regressions) + contract validators in
   which rejects `output_config.effort` (HTTP 400). `ClaudeAdapter.MODEL_TIERS` since 2026-10-15:
   ECO and TIER1–3 → `claude-haiku-5-5` (accepts effort; `CLAUDE_SMALL_MODEL` env repoints those, **not**
   BALANCED any more), BALANCED → `claude-sonnet-5-5`, PERFORMANCE → **`claude-opus-5-5`**, ULTRA →
-  `claude-fable-5-1`. ConsolidationAgent's default `PERFORMANCE` therefore resolves to Opus 5.5 unless
+  `claude-fable-5-2` (Fable 5.1 until 2026-11-13: cheaper successor, $8/$40 vs $10/$50; Smart is its only production user). ConsolidationAgent's default `PERFORMANCE` therefore resolves to Opus 5.5 unless
   `CLAUDE_PERFORMANCE_MODEL` pins it (instant rollback lever — `make claude-rollback` → Sonnet 5;
   `cloudbuild-dev.yaml` carries no pin since 2026-10-15, so a deploy returns to the Opus default). See
   `docs/05_building_blocks/provider_resolution/README.md` §2.1, §2.4 and the gates below.
@@ -40,7 +40,7 @@ mocks cannot detect translation regressions) + contract validators in
     a model that thinks by default: Sonnet 5 → `disabled`; **Sonnet 5.5 → `between_tools`**
     (`disabled` is a 400 there). Opus 5.5 / Fable cannot turn thinking off — the field is omitted
     and they run adaptive at their default effort (Opus 5.5 default = `medium`).
-  - `_NO_FORCED_TOOL_MODELS` — Sonnet 5.5 / Opus 5.5 / Fable 5.1 **400 on `tool_choice` any/tool**;
+  - `_NO_FORCED_TOOL_MODELS` — Sonnet 5.5 / Opus 5.5 / Fable 5.1 and 5.2 **400 on `tool_choice` any/tool**;
     a forced request is sent as `auto`.
   - All three are computed in `_model_dependent_params`, which runs again for the same-provider
     fallback model (`_MODEL_FALLBACK`: 5.5 → 5 → 4.6 on 529/503/5xx, never 4xx) — Sonnet 5 does not
