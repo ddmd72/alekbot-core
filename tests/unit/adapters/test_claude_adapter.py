@@ -41,7 +41,7 @@ def test_claude_model_for_tier():
     assert adapter.get_model_for_tier(PerformanceTier.ECO) == "claude-haiku-5-5"
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
     assert adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-opus-5-5"
-    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-2"
 
 
 def test_claude_performance_tier_env_override(monkeypatch):
@@ -56,7 +56,7 @@ def test_claude_performance_tier_env_override(monkeypatch):
     monkeypatch.setenv("CLAUDE_PERFORMANCE_MODEL", "claude-sonnet-4-6")
     env_adapter = ClaudeAdapter(api_key="k")
     assert env_adapter.get_model_for_tier(PerformanceTier.PERFORMANCE) == "claude-sonnet-4-6"
-    assert env_adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
+    assert env_adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-2"
 
 
 def test_claude_unsupported_tier_raises():
@@ -2062,7 +2062,7 @@ def test_claude_small_model_env_leaves_balanced_on_sonnet(monkeypatch):
     monkeypatch.setenv("CLAUDE_SMALL_MODEL", "claude-haiku-4-5-20251001")
     adapter = ClaudeAdapter(api_key="test-key")
     assert adapter.get_model_for_tier(PerformanceTier.BALANCED) == "claude-sonnet-5-5"
-    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-1"
+    assert adapter.get_model_for_tier(PerformanceTier.ULTRA) == "claude-fable-5-2"
 
 
 @pytest.mark.asyncio
