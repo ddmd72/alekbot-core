@@ -1,8 +1,8 @@
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
+from .genai_sdk_compat import GENAI_API_VERSION, TIMEOUT_ERRORS
 import asyncio
-import httpx
 import os
 from typing import List
 from ..domain.exceptions import (
@@ -65,8 +65,10 @@ class GeminiEmbeddingAdapter(EmbeddingService):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required for GeminiEmbeddingAdapter")
         self.api_key = api_key
+        # SDK 3.x defaults the Developer API to v1; staying on v1beta is deliberate, a v1 move is a separate decision.
         self.client = genai.Client(api_key=api_key,
-                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS))
+                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS,
+                                                                        api_version=GENAI_API_VERSION))
         concurrency = int(os.getenv("GEMINI_EMBED_CONCURRENCY", str(_DEFAULT_CONCURRENCY)))
         self._semaphore = asyncio.Semaphore(concurrency)
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
@@ -104,7 +106,7 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     # path); propagates so the caller degrades gracefully.
                     raise LLMServerError(str(exc), http_status=code) from exc
                 raise
-            except httpx.TimeoutException as exc:
+            except TIMEOUT_ERRORS as exc:
                 # No round trip completed: the same transient class as a 503, so it is retried here and the
                 # drive tick stops as systemic (USER_DRIVE_INDEXING_RFC §8.2).
                 raise LLMUnavailableError(f"Embedding request timed out ({type(exc).__name__})") from exc

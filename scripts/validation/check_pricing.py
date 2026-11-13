@@ -199,10 +199,12 @@ def _fetch_gemini_model_ids() -> list[str]:
     """Returns list of Gemini model names (models/...) from google-genai SDK."""
     try:
         from google import genai
+        from google.genai import types as genai_types
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return []
-        client = genai.Client(api_key=api_key)
+        # SDK 3.x defaults to v1; v1beta is the version the adapters use, and a v1 move is a separate decision.
+        client = genai.Client(api_key=api_key, http_options=genai_types.HttpOptions(api_version="v1beta"))
         return sorted(m.name for m in client.models.list())
     except Exception as e:
         print(f"  [warn] Gemini list_models failed: {e}", file=sys.stderr)
@@ -215,10 +217,12 @@ def _resolve_gemini_aliases(aliases: list[str]) -> dict[str, str]:
     """
     try:
         from google import genai
+        from google.genai import types as genai_types
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return {}
-        client = genai.Client(api_key=api_key)
+        # SDK 3.x defaults to v1; v1beta is the version the adapters use, and a v1 move is a separate decision.
+        client = genai.Client(api_key=api_key, http_options=genai_types.HttpOptions(api_version="v1beta"))
         result = {}
         for alias in aliases:
             try:
