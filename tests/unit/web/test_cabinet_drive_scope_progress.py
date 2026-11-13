@@ -292,7 +292,7 @@ def test_the_area_warning_exists_in_all_four_languages_and_is_translated():
 def test_onedrive_on_its_default_area_picking_folders_asks_once_and_accept_saves():
     area = page._row("c1", "Work", means="area")
     out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 0); toggleDrivePickerFolder("c1", 1);'
-                  ' await saveDrivePicker("c1");', area)
+                  ' await saveDrivePicker("c1"); await saveDrivePicker("c1", true);', area)
     assert out["confirms"] == [AREA_KEY]
     assert len(out["puts"]) == 1 and out["puts"][0][2]["whole_drive"] is False
     assert len(out["puts"][0][2]["folder_ids"]) == 2
@@ -308,14 +308,14 @@ def test_onedrive_on_its_default_area_declining_the_warning_saves_nothing():
 @page.node
 def test_onedrive_already_on_folders_adding_another_never_asks():
     row = page._row("c1", "Work", means="area", folders=[("f-rd", "R&D")])
-    out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1");', row)
+    out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 1); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);', row)
     assert out["confirms"] == [] and len(out["puts"]) == 1
 
 
 @page.node
 def test_google_picking_folders_on_its_default_gets_no_area_warning():
     google = page._row("c1", "Work", means="nothing")
-    out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 0); await saveDrivePicker("c1");', google)
+    out = _picker('confirmAnswer = true; toggleDrivePickerFolder("c1", 0); await saveDrivePicker("c1"); await saveDrivePicker("c1", true);', google)
     assert out["confirms"] == [] and len(out["puts"]) == 1
 
 

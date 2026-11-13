@@ -30,8 +30,10 @@ results inside both. With no audience nothing changes.
 """
 from __future__ import annotations
 
+import time
 import uuid
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
+from collections import deque
+from typing import TYPE_CHECKING, Callable, Deque, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..domain.user_drive import (
     DEFAULT_INBOX_FOLDER,
@@ -73,7 +75,10 @@ from ..domain.drive_connection_status import DriveConnectionStatus
 from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import Nudge
 from ..domain.drive_media_source import MediaSource
-from ..domain.drive_index_params import TICK_DEADLINE_S
+from ..domain.drive_index_params import TICK_DEADLINE_S, WALK_PAGE
+from ..domain.drive_scope_preview import (
+    PREVIEW_MAX_FILES, PREVIEW_MAX_FOLDERS, PreviewBucket, ScopePreview, bucket_of, descend_into, is_marked_opaque,
+)
 from ..domain.drive_mount_table import MountTable
 from ..domain.drive_mounts import canonical_path
 from ..domain.drive_ref_refusal import DriveRefRefusal
@@ -253,6 +258,53 @@ class UserDriveService:
         parent = folder_id if folder_id is not None else (await self._drive.get_root(handle)).item_id
         children = await self._drive.list_children(handle, parent)
         return sorted((c for c in children if c.is_folder), key=lambda c: c.name.casefold())
+
+    async def scope_preview(self, handle: DriveHandle, folder_ids: Sequence[str], *, deadline_s: float = 15.0,
+                            clock: Callable[[], float] = time.monotonic) -> ScopePreview:
+        """What adding these folders to the indexed scope would bring in (the Cabinet's confirmation, the owner's own
+        act: no policy). A read-only breadth-first walk by `list_children_changes`; files are bucketed by the indexer's
+        own rules and the walk descends only where the indexer does. It stops at PREVIEW_MAX_FILES files,
+        PREVIEW_MAX_FOLDERS folders or `deadline_s`, with `capped` set: the counts are then a lower bound. A root gone
+        from the drive is skipped. Writes nothing and shares no state with the indexer."""
+        started = clock()
+        counts: Dict[PreviewBucket, int] = {}
+        total = folders = 0
+        capped = False
+        queue: Deque[str] = deque(dict.fromkeys(folder_ids))
+        while queue and not capped:
+            if folders >= PREVIEW_MAX_FOLDERS or clock() - started >= deadline_s:
+                capped = True
+                break
+            folder_id = queue.popleft()
+            children: List = []
+            cursor: Optional[str] = None
+            try:
+                while True:
+                    page = await self._drive.list_children_changes(handle, folder_id, WALK_PAGE, cursor)
+                    children.extend(c for c in page.changes if not c.deleted)
+                    cursor = page.next_cursor
+                    if cursor is None:
+                        break
+                    if clock() - started >= deadline_s:
+                        capped = True
+                        break
+            except DriveItemNotFoundError:
+                continue
+            folders += 1
+            if capped or is_marked_opaque(children):
+                continue
+            for child in children:
+                if child.is_folder:
+                    if descend_into(child):
+                        queue.append(child.item_id)
+                    continue
+                if total >= PREVIEW_MAX_FILES:
+                    capped = True
+                    break
+                bucket = bucket_of(child)
+                counts[bucket] = counts.get(bucket, 0) + 1
+                total += 1
+        return ScopePreview(counts=counts, folders=folders, capped=capped)
 
     async def picker_outer_folders(self, handle: DriveHandle) -> List[DriveItem]:
         """The Cabinet picker's "Outside this drive's root" section (the owner's own act, no policy): the folders of
