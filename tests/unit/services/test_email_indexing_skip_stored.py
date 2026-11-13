@@ -1,5 +1,5 @@
-"""EmailIndexingService: an email already in the index is not re-processed (incremental, backfill); reindex
-re-processes it but keeps its consolidation mark."""
+"""EmailIndexingService: an email already in the index is not re-processed (incremental, backfill); reindex is
+refused and leaves the index, consolidation marks included, untouched."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -15,7 +15,7 @@ from src.ports.email_provider_port import EmailProviderPort
 from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.services import email_indexing_service as module
-from src.services.email_indexing_service import EmailIndexingService
+from src.services.email_indexing_service import REINDEX_DISABLED, EmailIndexingService
 from tests.unit.services.test_email_indexing_service import _make_credentials, _make_job, _make_meta
 
 MARK = datetime(2026, 10, 1, 8, 30)
@@ -92,14 +92,19 @@ async def test_nothing_stored_means_no_skip_line(monkeypatch):
     assert not any("already-indexed" in line for line in lines.info_lines)
 
 
-async def test_reindex_reprocesses_all_and_keeps_the_stored_marks():
+async def test_reindex_is_refused_and_the_stored_marks_stay():
+    # Email index v2 §6.4: the v1 reindex re-saved whole documents (save_batch -> batch.set), which would wipe the
+    # card fields; only stored ids are re-carded, by a separate job. A reindex job over a mailbox whose emails carry
+    # consolidation marks must leave the index wholly untouched: no read, no write, so every mark stays as stored.
     service, repo, classifier = _build({"m1": MARK, "m2": None})
 
-    await service.run_indexing_job(_make_job(), _make_credentials(), "acct-1", mode="reindex")
+    got = await service.run_indexing_job(_make_job(), _make_credentials(), "acct-1", mode="reindex")
 
-    assert [e.email_id for e in classifier.classify_batch.await_args.args[0]] == ["m1", "m2", "m3"]
-    saved = {e.email_id: e for e in repo.save_batch.await_args.args[0]}
-    assert set(saved) == {"m1", "m2", "m3"}
-    assert saved["m1"].consolidated_at == MARK
-    assert saved["m2"].consolidated_at is None
-    assert saved["m3"].consolidated_at is None
+    assert got.status == "failed" and got.next_page_token is None
+    assert got.errors[-1] == {"email_id": "", "stage": "mode", "error": REINDEX_DISABLED}
+    assert repo.mock_calls == []                      # no save_batch, no mark read: consolidated_at is never rewritten
+    assert classifier.mock_calls == []
+    assert service._gmail.mock_calls == []            # refused before any provider call
+    assert service._embedding.mock_calls == []
+    assert service._exclusions_repo.mock_calls == []
+    assert got.emails_fetched == 0 and got.emails_stored == 0
