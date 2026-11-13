@@ -127,6 +127,8 @@ class TestIndexedEmailRepository:
             "get_pending_embeddings", "update_vectors",
             # R1 (SECRETS_AT_REST_RFC §6.2 F1/F2): the flag/mark field update and the feature-store user listing
             "set_reconnect_flags", "list_indexing_user_ids",
+            # indexing skips stored emails and reindex keeps their consolidated_at
+            "get_consolidation_marks",
         }
 
     def test_save_batch_signature(self):
