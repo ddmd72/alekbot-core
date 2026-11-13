@@ -168,7 +168,7 @@ Specialist agent registered in `AgentRegistry`. Accessible exclusively via `Smar
 
 | Intent | Payload | What Happens |
 |---|---|---|
-| `search_emails` | `{"query": "..."}` | LLM key extraction → 7-stream multi-vector RRF search in `domain_email_facts_v1` |
+| `search_emails` | `{"query": "..."}` | LLM key extraction → 7-stream multi-vector RRF search in `domain_email_facts_v1`, plus live headers of mail newer than the index and literal matches of exact keys (§6.2) |
 | `get_email_details` | `{"email_id": "..."}` | Direct Gmail API fetch → full body returned as text |
 | `open_email_attachment` | `{"file_ref": "email:<message id>/<part>"}` or `{"email_id": "...", "name": "file.pdf"}` | Gmail API: one listing of the message, one download of the chosen part → `FileConversionService.open_email` → document service (scans through the reader, native PDF/image attached for models that read them) |
 
@@ -176,9 +176,28 @@ Specialist agent registered in `AgentRegistry`. Accessible exclusively via `Smar
 
 Mirrors the `SearchEnrichmentService` RRF pattern for facts:
 
-- LLM (BALANCED tier) extracts `keywords`, `primary_query`, `alternative_query`, `date_range`, `senders` from the user's question.
+- LLM (BALANCED tier) extracts `primary_query`, `alternative_query`, `tags`, `date_from`, `date_to` and `exact_keys` from the user's question (no sender field).
 - `EmailSearchService` runs 7 parallel Firestore queries across 4 vectors.
 - Results merged via Reciprocal Rank Fusion (RRF), top-K returned.
+
+The index holds a filtered subset of the mail (the classifier keeps factual mail) and lags by up to a day, so the same
+intent adds two live, header-only lists, decided by code (`EmailSearchAgent._handle_search_emails`; no new LLM call;
+`decisions/email_search_fresh_headers.md`). Each header is sender, subject, date (the user's local time) and snippet;
+the body is read with `get_email_details`. Both lists are appended to the index results, and an id already shown is not
+repeated. They read the mailbox through `EmailProviderPort.list_headers`: newest first, never promotions, spam or trash,
+bounds as epoch seconds.
+
+- **Fresh headers.** A listing of mail newer than the index, cap 100. The window opens at the older of the index
+  watermark (`indexed_through`) and 00:00 of yesterday in the user's timezone; with no watermark (indexing never ran)
+  there is no lower bound and the cap gives the newest 100. A requested period narrows the start (`date_from`, the
+  user's calendar day) and, when it ends in the past, sets the end. It is skipped when the request ends before the
+  window opens, since the index covers that period. A truncated list says so.
+- **Exact keys.** Up to 3 identifiers the extraction copied from the request (order, case, invoice, tracking numbers,
+  addresses; at least 3 characters, deduplicated) are matched literally as a phrase across the whole mailbox at any
+  date, cap 20 per key.
+- **Failures.** A failing live listing never fails the search: not connected adds the reconnect note, any other error
+  logs a warning and adds "the mailbox did not answer"; the index results still return. A failing index search fails
+  the search as before.
 
 ### 6.3 Live Access (`get_email_details`, `open_email_attachment`)
 
