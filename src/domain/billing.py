@@ -243,6 +243,7 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "gpt-6-luna":                        {"input": 0.10,  "output": 0.50,  "cache_read": 0.10, "cache_write": 1.25},
     "gpt-6-sol":                         {"input": 2.00,  "output": 10.00, "cache_read": 0.10, "cache_write": 1.25},
     "gpt-6.1-sol":                       {"input": 2.00,  "output": 10.00, "cache_read": 0.05, "cache_write": 1.25},
+    "gpt-6.1-terra":                     {"input": 1.00,  "output": 5.00,  "cache_read": 0.05, "cache_write": 1.25},
     "gpt-6-astra":                       {"input": 10.00, "output": 50.00, "cache_read": 0.10, "cache_write": 1.25},
     # --- OpenAI (gpt-5.4 family, Mar 2026; gpt-5.5-pro retained for rollback/history) ---
     "gpt-5.4-nano":                      {"input": 0.20,  "output": 1.25,  "cache_read": 0.10},
