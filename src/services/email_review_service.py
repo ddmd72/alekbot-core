@@ -106,7 +106,8 @@ class EmailReviewService:
             batch, page_token = await self._email_provider.list_emails(
                 credentials=creds,
                 date_from=date_from,
-                date_to=None,  # Gmail before: is day-exclusive; omit to include today's emails
+                date_to=None,
+                exact_instants=True,  # a rolling 24 h: Gmail reads a bare date as midnight Pacific, not our window
                 page_token=page_token,
                 max_results=min(100, _MAX_EMAILS - len(all_metadata)),
             )

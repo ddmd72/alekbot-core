@@ -107,9 +107,13 @@ class GmailProviderAdapter(EmailProviderPort):
         page_token: Optional[str] = None,
         max_results: int = 100,
         query: Optional[str] = None,
+        exact_instants: bool = False,
     ) -> Tuple[List[EmailMetadata], Optional[str]]:
         """
         Fetches up to max_results email metadata for one page.
+
+        `exact_instants=False` (indexing day cursors): `after:`/`before:` carry `YYYY/MM/DD` calendar dates, which Gmail
+        reads as midnight Pacific time. `True` (the daily review's rolling 24 h): both carry epoch seconds.
 
         Strategy (RFC §2.2):
           1. GET /messages?maxResults=N&q=QUERY&pageToken=TOKEN → list of {id, threadId}
@@ -133,9 +137,9 @@ class GmailProviderAdapter(EmailProviderPort):
                 if query:
                     q_parts.append(query)
                 if date_from:
-                    q_parts.append(f"after:{date_from.strftime('%Y/%m/%d')}")
+                    q_parts.append(f"after:{self._bound(date_from, exact_instants)}")
                 if date_to:
-                    q_parts.append(f"before:{date_to.strftime('%Y/%m/%d')}")
+                    q_parts.append(f"before:{self._bound(date_to, exact_instants)}")
                 if q_parts:
                     params["q"] = " ".join(q_parts)
                 logger.info(f"📬 Gmail list_emails: q={params.get('q')!r} date_from={date_from} date_to={date_to}")
@@ -240,6 +244,10 @@ class GmailProviderAdapter(EmailProviderPort):
                 logger.warning(f"⚠️ Failed to parse metadata for {meta.get('id')}: {exc}")
         emails.sort(key=lambda e: e.date if e.date.tzinfo else e.date.replace(tzinfo=timezone.utc), reverse=True)
         return emails, more
+
+    def _bound(self, moment: datetime, exact: bool) -> str:
+        """A `list_emails` date bound: epoch seconds for an exact instant, else the calendar date of its own fields."""
+        return str(self._epoch(moment)) if exact else moment.strftime("%Y/%m/%d")
 
     @staticmethod
     def _epoch(moment: datetime) -> int:

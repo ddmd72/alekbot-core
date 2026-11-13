@@ -23,6 +23,7 @@ class EmailProviderPort(ABC):
         page_token: Optional[str] = None,
         max_results: int = 100,
         query: Optional[str] = None,
+        exact_instants: bool = False,
     ) -> Tuple[List[EmailMetadata], Optional[str]]:
         """
         Fetch one page of email metadata (subject, from, date, snippet, labels).
@@ -30,6 +31,8 @@ class EmailProviderPort(ABC):
         date_from=None means no lower bound. date_to=None means no upper bound.
         query=None means no Gmail search filter (full mailbox).
         max_results=100 aligns with one LLM classification batch.
+        exact_instants=False: the bounds are calendar dates (day cursors; the provider may read a date in its own
+        zone). True: the bounds are exact instants (a rolling window such as "the last 24 hours").
         """
 
     @abstractmethod
