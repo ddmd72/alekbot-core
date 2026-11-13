@@ -82,11 +82,10 @@ the **provider wire format**, so it also reveals adapter translation and prompt-
 This produces two spans per call — the SDK's (content) and the custom `llm.call` (metadata:
 `agent_type`, `turn`, `provider`, which semconv lacks).
 
-**Gemini content is NOT captured** — `instrument_google_genai` needs
-`opentelemetry-instrumentation-google-genai` (requires `opentelemetry-api~=1.43`), which cannot
-co-install with `logfire==4.34.0` (`opentelemetry-sdk<1.42`). Gemini traffic (Router triage, Compute)
-stays metadata-only in Logfire and content-complete in BigQuery; Anthropic and OpenAI/Grok — incl.
-Smart's primary model — are unaffected.
+**Gemini SDK spans are off on google-genai 3.x** (since 2026-11): the vendor instrumentor
+(`opentelemetry-instrumentation-google-genai`) supports google-genai <3 only, so `telemetry.py` does not call it on 3.x
+and logs one startup WARNING. Gemini turns keep our own `llm.call` spans (metadata) and stay content-complete in
+BigQuery; re-enable when the instrumentation supports 3.x. Anthropic and OpenAI/Grok are unaffected.
 
 **Gating:** the BigQuery store is wired iff `DEBUG_PROMPTS=true` AND
 `BIGQUERY_PROMPT_DATASET` is set — `DEBUG_PROMPTS` is a global write on/off switch, not an adapter

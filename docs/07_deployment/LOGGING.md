@@ -230,7 +230,7 @@ enclosing span, and `trace_id` carries a `tr_` prefix that must be stripped befo
 
 Enabled by `LOGFIRE_CAPTURE_CONTENT=true` + `TRACING_BACKEND=both|logfire`. Design and threat model:
 [`decisions/logfire_prompt_content_capture.md`](../04_solution_strategy/decisions/logfire_prompt_content_capture.md).
-**Gemini content is absent** (dependency conflict — see that record); Gemini turns stay in BigQuery.
+**Gemini SDK spans are off on google-genai 3.x** (the instrumentation supports <3; re-enable when it does): Gemini turns carry only our `llm.call` spans and stay in BigQuery.
 
 **File contents in spans.** A file part of an LLM call (an image or PDF sent natively) is replaced by
 `{"type": "file_omitted", "orig_type": ..., "mime_type": ...}` in the exported `gen_ai.*` attributes
