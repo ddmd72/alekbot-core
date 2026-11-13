@@ -11,7 +11,7 @@ so the SDK's own millisecond-to-second conversion is exercised too.
 """
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
