@@ -746,7 +746,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The one place atlas: the step resolves places with it and the owner's word replies to profile questions read it.
     _fact_profile_step = build_fact_profile_service(
         container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
-        person_cards=_person_cards, atlas=_place_atlas)
+        person_cards=_person_cards, atlas=_place_atlas, quota=quota_service)
 
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).

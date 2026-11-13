@@ -17,6 +17,7 @@ from ..adapters.geo_place_table import load_place_rows
 from ..domain.place_names import PlaceNames, atlas_digest
 from ..infrastructure.agent_config import FACT_PROFILER
 from ..ports.person_card_repository import PersonCardRepository
+from ..ports.quota_service import QuotaService
 from ..services.fact_profile_service import FactProfileService
 from ..utils.logger import logger
 
@@ -74,11 +75,12 @@ class LazyAtlas:
 
 def build_fact_profile_service(
     container: Any, *, max_per_run: Optional[int], person_cards: Optional[PersonCardRepository] = None,
-    atlas: Optional[LazyAtlas] = None,
+    atlas: Optional[LazyAtlas] = None, quota: Optional[QuotaService] = None,
 ) -> FactProfileService:
     """The profile step over the container's repository, profiler and embedding service; `person_cards` is where it
     rebuilds the people cards (none: it builds no cards). `atlas` is the place atlas to share with the owner's word
-    replies (one atlas per process); none: the step loads its own."""
+    replies (one atlas per process); none: the step loads its own. `quota` is the graph's quota service, which bills the
+    step's label embeddings; none: they are not billed (and logged so)."""
     return FactProfileService(
         repo=container.repository,
         profiler=container.fact_profiler,
@@ -89,5 +91,5 @@ def build_fact_profile_service(
         person_cards=person_cards,
         confirmed_people=container.confirmed_people,
         profile_answers=container.profile_answers,
-        quota=getattr(container, "quota_service", None),
+        quota=quota,
     )

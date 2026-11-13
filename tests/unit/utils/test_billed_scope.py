@@ -86,3 +86,17 @@ async def test_an_inner_scope_bills_its_own_tokens_and_the_outer_the_rest():
     assert outer.by_model["gemini-flash-latest"].prompt_tokens == 150
     assert EMBED not in outer.by_model
     assert outer_quota.calls == []
+
+
+async def test_usage_with_no_quota_service_warns_once_a_minute_per_site(caplog, monkeypatch):
+    from src.utils import billed_scope as mod
+    monkeypatch.setattr(mod, "_last_no_quota_log", {})
+    for _ in range(2):
+        async with billed_scope(None, "account-a", "site one") as ledger:
+            ledger.add(EMBED, prompt_tokens=10)
+    async with billed_scope(None, "account-a", "site two") as ledger:
+        ledger.add(EMBED, prompt_tokens=10)
+    async with billed_scope(None, "account-a", "site one"):
+        pass   # nothing spent: nothing to say
+    lines = [r.getMessage() for r in caplog.records if "no quota service wired" in r.getMessage()]
+    assert len(lines) == 2 and "site one" in lines[0] and "site two" in lines[1]
