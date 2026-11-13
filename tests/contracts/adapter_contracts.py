@@ -974,6 +974,19 @@ BATCH_THOUGHTS_IN_OUTPUT_LEG = ContractRule(
     },
 )
 
+INTERACTIVE_THOUGHTS_IN_COMPLETION_TOKENS = ContractRule(
+    name="INTERACTIVE_THOUGHTS_IN_COMPLETION_TOKENS",
+    description=(
+        "Thought tokens are billed as output, so completion_tokens is candidates + thoughts (a missing thoughts "
+        "count is 0). Input: {usage: UsageMetadata, candidates: int, thoughts: int | None}."
+    ),
+    validators={
+        "gemini": lambda d: _eq(
+            d["usage"].completion_tokens, d["candidates"] + (d["thoughts"] or 0),
+            "Gemini: completion_tokens must be candidates + thought tokens",
+        ),
+    },
+)
 
 # ============================================================================
 # Cloud KMS cipher (SECRETS_AT_REST_RFC §2.2, §8 Cipher): validator key "gcp_kms".
