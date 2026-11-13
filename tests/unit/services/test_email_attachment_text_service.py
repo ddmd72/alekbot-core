@@ -303,6 +303,7 @@ class BlockingParser(ContentExtractorPort):
         self.in_flight = 0
         self.max_in_flight = 0
         self.release = asyncio.Event()
+        self.two_in_flight = asyncio.Event()
 
     @property
     def extractor_id(self) -> str:
@@ -315,6 +316,8 @@ class BlockingParser(ContentExtractorPort):
     async def extract(self, request: ExtractionRequest) -> ExtractionOutcome:
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        if self.in_flight >= 2:
+            self.two_in_flight.set()
         await self.release.wait()
         self.in_flight -= 1
         return text_out()
@@ -324,8 +327,10 @@ async def test_at_most_two_parser_calls_are_in_flight_per_service():
     parser = BlockingParser()
     rig = Rig({f"d{i}.pdf": pdf(str(i)) for i in range(3)}, parser=parser)
     tasks = [asyncio.create_task(rig.run(cache={})) for _ in range(4)]
-    for _ in range(50):
-        await asyncio.sleep(0)
+    # The path to the parser crosses asyncio.to_thread in the document service, so no fixed number of loop
+    # turns guarantees arrival: wait for the condition, then give a leaking semaphore time to let a third in.
+    await asyncio.wait_for(parser.two_in_flight.wait(), timeout=5)
+    await asyncio.sleep(0.2)
     assert parser.in_flight == 2          # the gather really overlapped, and the semaphore held the rest back
     parser.release.set()
     results = await asyncio.gather(*tasks)

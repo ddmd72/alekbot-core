@@ -77,6 +77,15 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": None
         },
+        # The email card writer (email index v2): one structured call per mail on the pinned Gemini Flash-Lite the
+        # probe measured. No fallback: an outage leaves the card pending (RFC 6.3), and a fallback model would write
+        # cards of another measured quality.
+        "email_card": {
+            "default_provider": "gemini",
+            "allowed_providers": ["gemini"],
+            "required_capabilities": [],
+            "fallback": None
+        },
         # Single LLM call (structured JSON, no multi-turn tool loop) — no
         # context_caching requirement, unlike consolidation's 8-step loop.
         # No cross-provider fallback by owner ruling 2026-10-23 (P9 D8): memory quality over availability.

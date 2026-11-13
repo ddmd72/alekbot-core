@@ -10,7 +10,7 @@ Import rules: only stdlib + pydantic. No adapters/, services/, config/.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -60,6 +60,9 @@ class EmailFullContent:
     body_text: str                          # Plain text body (HTML stripped by adapter)
     body_html: Optional[str]               # Original HTML (for structured extraction)
     attachments: List[str]                 # Attachment filenames only
+    # The address parts of the To and Cc headers, in header order, as written (no case change); () when neither
+    # header is present. Bcc is never visible.
+    recipients: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

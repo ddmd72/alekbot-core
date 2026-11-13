@@ -20,7 +20,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional, Tuple
@@ -302,6 +302,7 @@ class GmailProviderAdapter(EmailProviderPort):
                     body_text=body_text,
                     body_html=body_html,
                     attachments=attachment_names,
+                    recipients=self._recipients(msg.get("payload", {})),
                 )
             except Exception as exc:
                 logger.warning(f"⚠️ Failed to parse full content for {eid}: {exc}")
@@ -478,6 +479,17 @@ class GmailProviderAdapter(EmailProviderPort):
             labels=msg.get("labelIds", []),
             snippet=msg.get("snippet", ""),
         )
+
+    @staticmethod
+    def _recipients(payload: dict) -> Tuple[str, ...]:
+        """The address parts of the To and Cc headers, in header order, as written; () when neither is present.
+        A group or "undisclosed-recipients" header holds no address and adds none."""
+        found: List[str] = []
+        for header in payload.get("headers", []):
+            if str(header.get("name", "")).lower() in ("to", "cc"):
+                found.extend(addr.strip() for _, addr in getaddresses([str(header.get("value", ""))])
+                             if addr.strip())
+        return tuple(found)
 
     @classmethod
     def _parse_payload(

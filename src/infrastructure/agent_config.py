@@ -382,6 +382,17 @@ class FactProfilerAgentConfig:
     default_model: str = "claude-sonnet-5-5"
 
 
+# EmailCardAgent (email index v2): one structured call per mail. The probe measured the lean card on flash-lite (output
+# ~0.6 k tokens). `default_model` is used when EMAIL_CARD_MODEL is unset (read in composition and scripts, never here).
+@dataclass
+class EmailCardAgentConfig:
+    call_timeout_s: int = 60
+    max_tokens: int = 6_000
+    max_parse_retries: int = 1
+    thinking: str = "low"
+    default_model: str = "gemini-3.5-flash-lite"
+
+
 @dataclass
 class DriveTranscriberAgentConfig:
     """Batch transcription of one audio window (USER_DRIVE_INDEXING_RFC §27.5). Not a `_call_llm` agent: no timeout or
@@ -426,6 +437,7 @@ DRIVE_TRIAGE = DriveTriageAgentConfig()
 DRIVE_PROFILER = DriveProfilerAgentConfig()
 DRIVE_PASSAGES = DrivePassageAgentConfig()
 FACT_PROFILER = FactProfilerAgentConfig()
+EMAIL_CARD = EmailCardAgentConfig()
 DRIVE_TRANSCRIBER = DriveTranscriberAgentConfig()
 
 

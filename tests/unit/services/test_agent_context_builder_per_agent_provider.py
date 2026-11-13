@@ -462,9 +462,11 @@ def test_strategies_has_no_orphans():
     # - fact_profiler: built once by FactProfilerRunner (composition/, ServiceContainer.fact_profiler) with a default
     #   UserBotConfig and a pinned model — a system agent, not a per-user instance (FACT_PROFILE_RFC §4.1); its entry
     #   pins Claude with no fallback.
+    # - email_card: built once by EmailCardRunner (composition/) with a default UserBotConfig and a pinned model, the
+    #   same way as fact_profiler — the system's card writer, not a per-user instance; its entry pins Gemini, no fallback.
     _NON_FACTORY_STRATEGIES = {
         "email_classifier", "deep_research", "tutor_extractor", "lelik_summarizer", "drive_reader", "drive_triage",
-        "drive_profiler", "drive_passages", "fact_profiler",
+        "drive_profiler", "drive_passages", "fact_profiler", "email_card",
     }
 
     all_strategies = set(AgentProviderStrategy.STRATEGIES.keys())
