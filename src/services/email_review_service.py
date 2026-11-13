@@ -2,7 +2,7 @@
 EmailReviewService
 ==================
 
-Fetches the last 24h of Gmail emails for a user and builds a structured
+Fetches the last 25 h of Gmail emails (exact instants) for a user and builds a structured
 payload for SmartAgent daily inbox analysis.
 
 Responsibilities:
@@ -28,6 +28,8 @@ from ..utils.logger import logger
 
 
 _MAX_EMAILS = 200
+# 25 h, not 24: the fall-back day is 25 h long, so consecutive daily reviews overlap by about an hour and never leave a gap.
+_REVIEW_WINDOW = timedelta(hours=25)
 
 
 class EmailReviewService:
@@ -81,7 +83,7 @@ class EmailReviewService:
 
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:
         """
-        Fetch and structure the last 24h of Gmail emails for user_id.
+        Fetch and structure the last 25 h of Gmail emails (exact instants) for user_id.
         Returns None if credentials are missing or token refresh fails transiently.
         Returns an empty list if no emails were received in the period.
         Raises OAuthGrantRevokedError when Google rejected the refresh token — the
@@ -98,7 +100,7 @@ class EmailReviewService:
             return None
 
         now_utc = datetime.now(timezone.utc)
-        date_from = now_utc - timedelta(hours=24)
+        date_from = now_utc - _REVIEW_WINDOW
 
         all_metadata = []
         page_token = None
@@ -106,7 +108,8 @@ class EmailReviewService:
             batch, page_token = await self._email_provider.list_emails(
                 credentials=creds,
                 date_from=date_from,
-                date_to=None,  # Gmail before: is day-exclusive; omit to include today's emails
+                date_to=None,
+                exact_instants=True,  # a rolling window: Gmail reads a bare date as midnight Pacific, not our window
                 page_token=page_token,
                 max_results=min(100, _MAX_EMAILS - len(all_metadata)),
             )
