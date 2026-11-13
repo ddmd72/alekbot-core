@@ -1514,5 +1514,15 @@
     "collectionGroup": "development_drive_sync_state",
     "fieldPath": "note_checks",
     "indexes": []
-  }
+  },
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "about_keys", "arrayConfig": "CONTAINS"}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "name_keys", "arrayConfig": "CONTAINS"}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "people_keys", "arrayConfig": "CONTAINS"}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "month_keys", "arrayConfig": "CONTAINS"}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_vector", "vectorConfig": {"dimension": 768, "flat": {}}}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}]},
+  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "card", "indexes": []},
+  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "card_vector", "indexes": []},
+  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "about_keys", "indexes": []},
+  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "name_keys", "indexes": []}
 ]
