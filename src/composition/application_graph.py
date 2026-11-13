@@ -668,6 +668,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         cache_repo=companion_cache_repo,
         embedding_service=container.embedding_service,
         extractor=companion_extractor_runner,
+        quota=quota_service,
     )
 
     # ====================================================================
@@ -774,6 +775,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     _email_embedding_repair_service = EmailEmbeddingRepairService(
         email_repo=indexed_email_repo,
         embedding=container.embedding_service,
+        quota=quota_service,
     ) if (indexed_email_repo and container.embedding_service) else None
 
     # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.

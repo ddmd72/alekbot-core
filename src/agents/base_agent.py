@@ -10,11 +10,10 @@ import random
 import asyncio
 import contextlib
 from contextlib import contextmanager
-from contextvars import ContextVar
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
-from ..domain.billing import TokenLedger
+from ..domain.billing import TokenLedger, current_ledger, ledger_scope
 from ..domain.memory_telemetry import SCOPE_AGENT_EXECUTION
 from ..domain.exceptions import (
     _ERROR_TYPE_LOG_LABEL,
@@ -52,25 +51,8 @@ from ..domain.llm import (
     append_user_directive,
 )
 
-# ---------------------------------------------------------------------------
-# Per-execution token accounting.
-#
-# An agent instance is a per-user singleton in the AgentCoordinator registry, and
-# DelegationEngine dispatches a tool batch via ``asyncio.gather`` — so N executions of
-# ONE instance run concurrently. Instance-level accumulators therefore pooled unrelated
-# executions and each flush billed the running total, inflating the daily counter
-# (~3.6x in production, 2026-07-28). A ContextVar is the right scope: ``asyncio.gather``
-# wraps each coroutine in a Task, and a Task copies the context at creation, so a ``set()``
-# inside one execution is invisible to its siblings.
-#
-# ``None`` means "no execution in scope" — accumulation is skipped rather than silently
-# banked into an unowned ledger that nothing would ever flush. Every production
-# ``_call_llm`` call site sits inside an agent's ``execute()``, which only runs under
-# ``process()``, which always opens a scope.
-# ---------------------------------------------------------------------------
-_EXECUTION_LEDGER: ContextVar[Optional[TokenLedger]] = ContextVar(
-    "agent_execution_ledger", default=None
-)
+# Per-execution token accounting: the ledger ContextVar, ``current_ledger`` and ``ledger_scope`` live in domain/billing.py
+# (shared with the embedding adapter and the background ``billed_scope``). See the TokenLedger docstring for why per execution.
 
 
 class CircuitBreaker:
@@ -539,19 +521,9 @@ class BaseAgent(ABC):
 
     @contextmanager
     def _execution_billing_scope(self, account_id: Optional[str]) -> Iterator[TokenLedger]:
-        """Open a fresh TokenLedger for one execution, current for the duration.
-
-        ``reset(token)`` is mandatory, not hygiene: a specialist awaited *inline* by an
-        orchestrator (no intervening Task, so no context copy) would otherwise leave its
-        own ledger current, and the orchestrator's later turns — and its flush — would
-        land on the specialist's ledger.
-        """
-        ledger = TokenLedger(account_id=account_id)
-        token = _EXECUTION_LEDGER.set(ledger)
-        try:
+        """Open a fresh TokenLedger for one execution, current for the duration (domain.billing.ledger_scope)."""
+        with ledger_scope(account_id) as ledger:
             yield ledger
-        finally:
-            _EXECUTION_LEDGER.reset(token)
 
     def _effective_retry_policy(self, context: Dict[str, Any]):
         """Whole-execution transient retry policy for this message.
@@ -735,7 +707,7 @@ class BaseAgent(ABC):
         so a log line built from it names what ran, not what was configured. Empty outside a billing scope
         (``process()`` opens one) or before any call was billed.
         """
-        ledger = _EXECUTION_LEDGER.get()
+        ledger = current_ledger()
         return list(ledger.by_model) if ledger is not None else []
 
     async def _flush_billing(self) -> None:
@@ -748,7 +720,7 @@ class BaseAgent(ABC):
         buffered in-memory before writing — doubly lossy). Best-effort: the quota
         service swallows write errors, so billing never breaks the agent response.
         """
-        ledger = _EXECUTION_LEDGER.get()
+        ledger = current_ledger()
         if not self._quota_service or ledger is None or not ledger.account_id:
             return
         if ledger.is_empty:
@@ -1243,7 +1215,7 @@ class BaseAgent(ABC):
                         str(fb_client_e), http_status=fb_client_e.http_status,
                         provider_name=fallback_name or "",
                     ) from fb_client_e
-        ledger = _EXECUTION_LEDGER.get()
+        ledger = current_ledger()
         if response.usage_metadata and ledger is not None:
             m = response.usage_metadata
             try:

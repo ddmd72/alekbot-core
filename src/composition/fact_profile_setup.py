@@ -89,4 +89,5 @@ def build_fact_profile_service(
         person_cards=person_cards,
         confirmed_people=container.confirmed_people,
         profile_answers=container.profile_answers,
+        quota=getattr(container, "quota_service", None),
     )

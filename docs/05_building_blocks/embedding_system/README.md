@@ -125,6 +125,8 @@ The `SmartDeduplicationService` uses embeddings to calculate cosine similarity b
 
 ### Changelog
 
+- **2026-11:** Embedding calls are billed: the adapter adds each successful response's `usage_metadata.prompt_token_count` to
+  the ledger in scope (`billed_scope` outside an agent). See `decisions/billing_embeddings.md`.
 - **2026-04-25:** Added §2.3 Throttling and 429 retry. Production hit AI Studio
   per-second burst limiter on parallel consolidation flows even though Tier 2
   per-minute quota was barely used; adapter now caps concurrency at 20 and

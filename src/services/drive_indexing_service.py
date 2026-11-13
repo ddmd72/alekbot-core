@@ -11,7 +11,7 @@ Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
                          triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
                          transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, mirror_repo=None,
-                         mirror=None, localization=None, language=None, note_lifecycle=None, clock, monotonic)
+                         mirror=None, localization=None, language=None, note_lifecycle=None, connections, quota=None, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -216,6 +216,8 @@ from ..domain.user_drive import (
     DriveReauthRequired, DriveResyncRequired, DriveThrottled, DriveThumbnailTooLarge,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_note_repository import DriveNoteRepository
@@ -778,6 +780,7 @@ class DriveIndexingService:
                  notes: Optional[DriveNoteRepository] = None,
                  note_lifecycle: Optional["DriveNoteLifecycle"] = None,
                  connections: Optional["DriveConnectionService"] = None,
+                 quota: Optional[QuotaService] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         if connections is None:
             raise ValueError("the tick needs the drive connection service: it loads each tick's connection")
@@ -787,6 +790,7 @@ class DriveIndexingService:
         self._drive = drive
         self._repo = repo
         self._embeddings = embeddings
+        self._quota = quota   # the tick's embedding spend is written to the connection's account (billed_scope)
         self._queue = queue
         self._users = users
         self._place_of = place_of
@@ -948,8 +952,10 @@ class DriveIndexingService:
                        last_seen_at=state.observed_as_of)
             if self._notes is not None or self._note_lifecycle is not None else None)
         try:
-            return await self._run_spending(handle, state, nudge, now, enabled, budget, summary, cont, saved,
-                                            models, spend, connection)
+            # Embeddings have no agent around them, so the tick bills them itself: one write per model for the tick
+            async with billed_scope(self._quota, connection.account_id, "drive tick"):
+                return await self._run_spending(handle, state, nudge, now, enabled, budget, summary, cont, saved,
+                                                models, spend, connection)
         finally:
             _TICK_NOTES.reset(notes_token)
             _TICK_SCOPE.reset(scope_token)

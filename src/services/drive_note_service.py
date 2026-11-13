@@ -89,9 +89,11 @@ from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.ephemeral_store import EphemeralStore
+from ..ports.quota_service import QuotaService
 from ..ports.security_port import SecurityPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
+from ..utils.billed_scope import billed_scope
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -137,7 +139,7 @@ class DriveNoteService:
     def __init__(self, notes: DriveNoteRepository, drive: UserDrivePort, index: DriveIndexRepository,
                  embeddings: EmbeddingService, security: SecurityPort, connections: "DriveConnectionService", *,
                  embedding_space: str, access: "UserDriveService",
-                 nudge_queue: Optional[TaskQueue] = None, erase_requests: Optional[EphemeralStore] = None,
+                 nudge_queue: Optional[TaskQueue] = None, quota: Optional[QuotaService] = None, erase_requests: Optional[EphemeralStore] = None,
                  clock: Callable[[], datetime] = _utcnow,
                  new_note_id: Callable[[], str] = _new_note_id, new_code: Callable[[], str] = _new_code) -> None:
         """`drive` is the router over every drive kind, addressed by a connection's handle; `connections` resolves refs
@@ -152,6 +154,7 @@ class DriveNoteService:
         self._drive = drive
         self._index = index
         self._embeddings = embeddings
+        self._quota = quota   # a note write bills its one embedding to the account (billed_scope)
         self._security = security
         self._connections = connections
         self._space = embedding_space
@@ -321,7 +324,7 @@ class DriveNoteService:
                 # a drive note is never searched: no vector
                 vector, pending = None, False
             elif embedded != (content, name):                               # step 4: only when the content changed
-                vector, pending = await self._embed(user_id, content, name)
+                vector, pending = await self._embed(user_id, account_id, content, name)
                 embedded = (content, name)
             base = await self._base(user_id, account_id, existing, place.key if place is not None else "")
             expected = now_version
@@ -523,7 +526,7 @@ class DriveNoteService:
             state = state_after(note, content, NoteAction.RESTORE)
             name = note.snapshot.name if note.snapshot is not None else ""
             vector, pending = (None, False) if content.is_empty or is_drive_note(note) else await self._embed(
-                user_id, content, name)
+                user_id, account_id, content, name)
             now = self._clock()
             version = next_version(note.current_version, content, NoteAction.RESTORE, provenance, now,
                                    restored_from=source_v,
@@ -824,10 +827,12 @@ class DriveNoteService:
                         if item_id in records and records[item_id].owner_note_id == note_id)
         return held
 
-    async def _embed(self, user_id: str, content: NoteContent, name: str) -> Tuple[Optional[List[float]], bool]:
+    async def _embed(self, user_id: str, account_id: str, content: NoteContent,
+                     name: str) -> Tuple[Optional[List[float]], bool]:
         """One embedding call (§4.4 step 4); a failure stores the note with `embedding_pending` (the indexer repairs)."""
         try:
-            vector = await self._embeddings.get_embedding(note_embedding_text(content, name))
+            async with billed_scope(self._quota, account_id, "drive note"):
+                vector = await self._embeddings.get_embedding(note_embedding_text(content, name))
         except Exception as exc:
             logger.warning(f"[DriveNote] embedding failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
             return None, True

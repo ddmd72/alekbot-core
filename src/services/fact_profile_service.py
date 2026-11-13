@@ -60,7 +60,9 @@ from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
 from ..ports.person_card_repository import PersonCardRepository
 from ..ports.profile_answer_repository import ProfileAnswerRepository
+from ..ports.quota_service import QuotaService
 from ..ports.repository import FactRepository
+from ..utils.billed_scope import billed_scope
 from ..utils.logger import logger
 
 SYSTEM_ACCOUNT = "SYSTEM"
@@ -193,7 +195,9 @@ class FactProfileService:
         person_cards: Optional[PersonCardRepository] = None,
         confirmed_people: Optional[ConfirmedPeopleRepository] = None,
         profile_answers: Optional[ProfileAnswerRepository] = None,
+        quota: Optional[QuotaService] = None,
     ) -> None:
+        self._quota = quota   # bills the label embeddings (outside any agent execution) to the account
         self._repo = repo
         self._profiler = profiler
         self._embeddings = embeddings
@@ -223,7 +227,8 @@ class FactProfileService:
         tally = _Tally()
         points: Tuple[OpenPoint, ...] = ()
         try:
-            await self._run(account_id, deadline, tally)
+            async with billed_scope(self._quota, account_id, "fact profile"):
+                await self._run(account_id, deadline, tally)
             if collect_points and self._profile_answers is not None and tally.plan is not None:
                 points = self._collect_points(tally.plan, tally.written_open)
         except Exception:

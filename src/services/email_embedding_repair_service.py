@@ -8,10 +8,12 @@ When a full batch is processed, the worker handler re-enqueues another tick
 immediately so the queue drains without waiting for the next scheduler tick.
 """
 
-from typing import Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..domain.email import IndexedEmail
 from ..ports.embedding_service import EmbeddingService
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
@@ -27,9 +29,11 @@ class EmailEmbeddingRepairService:
         email_repo: IndexedEmailRepository,
         embedding: EmbeddingService,
         batch_size: int = 100,
+        quota: Optional[QuotaService] = None,
     ):
         self._email_repo = email_repo
         self._embedding = embedding
+        self._quota = quota
         self._batch_size = batch_size
         logger.info(
             f"🔧 EmailEmbeddingRepairService initialized. batch_size={batch_size}"
@@ -54,15 +58,21 @@ class EmailEmbeddingRepairService:
         logger.info(f"🔧 Repairing embeddings for {len(pending)} emails")
         repaired = 0
 
+        # One billing scope per account: a repair run spans accounts and each pays for its own embeddings
+        by_account: Dict[str, List[IndexedEmail]] = {}
         for email in pending:
-            try:
-                vectors = await self._generate_vectors(email)
-                await self._email_repo.update_vectors(email.user_id, email.email_id, vectors)
-                repaired += 1
-            except Exception as exc:
-                logger.error(
-                    f"💥 Repair failed for {email.email_id}: {exc}"
-                )
+            by_account.setdefault(email.account_id, []).append(email)
+        for account_id, emails in by_account.items():
+            async with billed_scope(self._quota, account_id, "email embedding repair"):
+                for email in emails:
+                    try:
+                        vectors = await self._generate_vectors(email)
+                        await self._email_repo.update_vectors(email.user_id, email.email_id, vectors)
+                        repaired += 1
+                    except Exception as exc:
+                        logger.error(
+                            f"💥 Repair failed for {email.email_id}: {exc}"
+                        )
 
         has_more = len(pending) >= self._batch_size
         logger.info(

@@ -84,6 +84,8 @@ from ..domain.user_drive import (
 )
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.voice_mcp_token_service import VoiceMcpTokenService, is_voice_token
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 from ..infrastructure.drive_note_tools import read_note_for_connector
@@ -179,7 +181,7 @@ def build_drive_mcp_app(
 
 def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
     ops = tools.operations
-    call = _Caller(app)
+    call = _Caller(app, tools.quota)
 
     @app.tool(name=SEARCH_DRIVE, meta={MAX_RESULT_SIZE_META_KEY: RESULT_MAX_CHARS})
     async def search_drive(ctx: Context, query: _Text = "", folder: _Text = "", drives: _Joined = "",
@@ -259,8 +261,9 @@ def _register_tools(app: TokenTextFastMCP, tools: DriveConnectorTools) -> None:
 class _Caller:
     """Runs one tool call: auth, texts, context, timeout, compose, guard, span, log."""
 
-    def __init__(self, app: TokenTextFastMCP) -> None:
+    def __init__(self, app: TokenTextFastMCP, quota: Optional[QuotaService] = None) -> None:
         self._app = app
+        self._quota = quota
 
     async def run(self, tool: str, op: DriveOp, ctx: Context, run: _Run, *,
                   paging: Optional[ConnectorPaging] = None) -> CallToolResult:
@@ -289,8 +292,10 @@ class _Caller:
             else:
                 context = {"user_id": user_id, "account_id": account_id, "run_origin": RUN_ORIGIN}
                 audience = nullcontext() if voice else connector_audience()
-                with RequestContext(user_id=user_id, account_id=account_id), audience:
-                    answered = await _outcome(tool, op, run, context, user_id, account_id)
+                # an MCP call has no agent around it: its query embeddings are billed to the account here
+                async with billed_scope(self._quota, account_id, f"drive mcp {tool}"):
+                    with RequestContext(user_id=user_id, account_id=account_id), audience:
+                        answered = await _outcome(tool, op, run, context, user_id, account_id)
             outcome, link = (answered.outcome, answered.link) if isinstance(answered, ConnectorCall) else (answered, None)
             limit = VOICE_RESULT_MAX_CHARS if voice else RESULT_MAX_CHARS
             text = cap_result(compose_connector_result(outcome, texts, link=link, paging=paging),
