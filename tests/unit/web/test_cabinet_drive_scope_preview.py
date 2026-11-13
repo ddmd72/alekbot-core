@@ -24,7 +24,7 @@ async def test_a_new_folder_is_counted_by_kind():
     w = World()
     conn = await w.connect(writable=False)
     rd = await w.folder(conn, "R&D")
-    _plant(w, conn, rd, "Tom's plan.docx", "lease_porto.pdf", "wa_dentist_ru.jpg", "meeting_2026_09_14.m4a",
+    _plant(w, conn, rd, "Tom's plan.docx", "lease_porto.pdf", "wa_dentist_ru.jpg", "audio-1.m4a",
            "archive.bin")
     status, body = await call(w.app(), "post", _path(conn), {"whole_drive": False, "folder_ids": [rd]})
     assert status == 200
@@ -36,7 +36,7 @@ async def test_a_folder_inside_a_saved_one_is_not_new():
     w = World()
     conn = await w.connect(writable=False)
     rd = await w.folder(conn, "R&D")
-    inner = await w.folder(conn, "Archive", parent=rd)
+    inner = await w.folder(conn, "sub-1", parent=rd)
     _plant(w, conn, inner, "lease_porto.pdf")
     await _save_scope(w, conn, [rd])
     status, body = await call(w.app(), "post", _path(conn), {"whole_drive": False, "folder_ids": [rd, inner]})
@@ -58,7 +58,7 @@ async def test_a_requested_parent_and_child_are_counted_once():
     w = World()
     conn = await w.connect(writable=False)
     rd = await w.folder(conn, "R&D")
-    inner = await w.folder(conn, "Archive", parent=rd)
+    inner = await w.folder(conn, "sub-1", parent=rd)
     _plant(w, conn, rd, "Tom's plan.docx")
     _plant(w, conn, inner, "lease_porto.pdf")
     _, body = await call(w.app(), "post", _path(conn), {"whole_drive": False, "folder_ids": [inner, rd]})

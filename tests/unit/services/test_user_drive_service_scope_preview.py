@@ -43,9 +43,9 @@ async def test_a_nested_tree_is_counted_by_kind_and_folders(world):
     rd = world.folder(world.root, "R&D")
     world.file(rd, "Tom's plan.docx")
     world.file(rd, "wa_dentist_ru.jpg")
-    sub = world.folder(rd, "Archive")
+    sub = world.folder(rd, "sub-1")
     world.file(sub, "lease_porto.pdf")
-    world.file(sub, "meeting_2026_09_14.m4a")
+    world.file(sub, "audio-1.m4a")
     world.file(sub, "archive.bin")
     result = await world.service.scope_preview(world.handle, [rd])
     assert result.counts == {PreviewBucket.DOCUMENT: 2, PreviewBucket.IMAGE: 1, PreviewBucket.RECORDING: 1,

@@ -21,7 +21,7 @@ def _folder(name: str) -> DriveChange:
     (_file("lease_porto.pdf"), PreviewBucket.DOCUMENT),
     (_file("Tom's plan.docx"), PreviewBucket.DOCUMENT),
     (_file("wa_dentist_ru.jpg"), PreviewBucket.IMAGE),
-    (_file("meeting_2026_09_14.m4a"), PreviewBucket.RECORDING),
+    (_file("audio-1.m4a"), PreviewBucket.RECORDING),
     (_file("archive.bin"), PreviewBucket.OTHER),
     (_file(".hidden.pdf"), PreviewBucket.OTHER),          # a dot name is never read, whatever its kind
     (_file("id_rsa"), PreviewBucket.OTHER),               # a secret name
