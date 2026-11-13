@@ -1,0 +1,144 @@
+{
+ "id": "18f0a1b2c3d4e5f7",
+ "threadId": "18f0a1b2c3d4e5f7",
+ "labelIds": [
+  "INBOX"
+ ],
+ "snippet": "Documents attached",
+ "payload": {
+  "partId": "",
+  "mimeType": "multipart/mixed",
+  "filename": "",
+  "headers": [
+   {
+    "name": "Subject",
+    "value": "Documents attached"
+   },
+   {
+    "name": "From",
+    "value": "lukas@acme.example"
+   }
+  ],
+  "body": {
+   "size": 0
+  },
+  "parts": [
+   {
+    "partId": "0",
+    "mimeType": "text/plain",
+    "filename": "",
+    "body": {
+     "size": 9,
+     "data": "RG9jcyBhdHQ"
+    }
+   },
+   {
+    "partId": "1",
+    "mimeType": "image/png",
+    "filename": "logo.png",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-1"
+    },
+    "headers": [
+     {
+      "name": "Content-ID",
+      "value": "<logo@acme.example>"
+     },
+     {
+      "name": "Content-Disposition",
+      "value": "inline"
+     }
+    ]
+   },
+   {
+    "partId": "2",
+    "mimeType": "image/png",
+    "filename": "image001.png",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-2"
+    },
+    "headers": [
+     {
+      "name": "Content-ID",
+      "value": "<image001@acme.example>"
+     }
+    ]
+   },
+   {
+    "partId": "3",
+    "mimeType": "application/pdf",
+    "filename": "LAB-2025-03-0417.pdf",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-3"
+    },
+    "headers": [
+     {
+      "name": "Content-ID",
+      "value": "<lab@acme.example>"
+     },
+     {
+      "name": "Content-Disposition",
+      "value": "attachment; filename=\"LAB-2025-03-0417.pdf\""
+     }
+    ]
+   },
+   {
+    "partId": "4",
+    "mimeType": "application/pdf",
+    "filename": "RM-55120.pdf",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-4"
+    },
+    "headers": [
+     {
+      "name": "Content-Disposition",
+      "value": "INLINE; filename=\"RM-55120.pdf\""
+     }
+    ]
+   },
+   {
+    "partId": "5",
+    "mimeType": "text/csv",
+    "filename": "expenses_2025.csv",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-5"
+    }
+   },
+   {
+    "partId": "6",
+    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "filename": "budget_2026.xlsx",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-6"
+    },
+    "headers": [
+     {
+      "name": "content-disposition",
+      "value": "inline"
+     }
+    ]
+   },
+   {
+    "partId": "7",
+    "mimeType": "application/pdf",
+    "filename": "inline-notes.pdf",
+    "body": {
+     "size": 5000,
+     "attachmentId": "ATT-7"
+    },
+    "headers": [
+     {
+      "name": "Content-Disposition",
+      "value": "attachment; filename=\"inline-notes.pdf\""
+     }
+    ]
+   }
+  ]
+ }
+}
