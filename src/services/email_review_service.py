@@ -28,6 +28,8 @@ from ..utils.logger import logger
 
 
 _MAX_EMAILS = 200
+# 25 h, not 24: the fall-back day is 25 h long, so consecutive daily reviews overlap by about an hour and never leave a gap.
+_REVIEW_WINDOW = timedelta(hours=25)
 
 
 class EmailReviewService:
@@ -98,7 +100,7 @@ class EmailReviewService:
             return None
 
         now_utc = datetime.now(timezone.utc)
-        date_from = now_utc - timedelta(hours=24)
+        date_from = now_utc - _REVIEW_WINDOW
 
         all_metadata = []
         page_token = None
@@ -107,7 +109,7 @@ class EmailReviewService:
                 credentials=creds,
                 date_from=date_from,
                 date_to=None,
-                exact_instants=True,  # a rolling 24 h: Gmail reads a bare date as midnight Pacific, not our window
+                exact_instants=True,  # a rolling window: Gmail reads a bare date as midnight Pacific, not our window
                 page_token=page_token,
                 max_results=min(100, _MAX_EMAILS - len(all_metadata)),
             )
