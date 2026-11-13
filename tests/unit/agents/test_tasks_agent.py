@@ -110,11 +110,13 @@ def _llm_responses(tool_name: str, tool_args: dict, final_text: str):
     tool_resp.tool_calls = [ToolCall(name=tool_name, args=tool_args, id="tc-1")]
     tool_resp.text = ""
     tool_resp.raw_content = None
+    tool_resp.finish_reason = None
 
     text_resp = MagicMock(spec=LLMResponse)
     text_resp.tool_calls = []
     text_resp.text = final_text
     text_resp.raw_content = None
+    text_resp.finish_reason = None
 
     return [tool_resp, text_resp]
 
@@ -382,6 +384,7 @@ class TestExecuteEdgeCases:
             resp.tool_calls = []
             resp.text = "Done."
             resp.raw_content = None
+            resp.finish_reason = None
             return resp
 
         agent._call_llm = capture
@@ -413,6 +416,7 @@ class TestExecuteEdgeCases:
             resp.tool_calls = []
             resp.text = "Done."
             resp.raw_content = None
+            resp.finish_reason = None
             return resp
 
         agent._call_llm = capture
@@ -452,11 +456,13 @@ class TestExecuteEdgeCases:
         tool_resp.tool_calls = [ToolCall(name="list_tasks", args={}, id="tc")]
         tool_resp.text = ""
         tool_resp.raw_content = None
+        tool_resp.finish_reason = None
 
         final_resp = MagicMock(spec=LLMResponse)
         final_resp.tool_calls = []
         final_resp.text = "Summary after max turns."
         final_resp.raw_content = None
+        final_resp.finish_reason = None
 
         # 6 tool responses (MAX_TURNS=6) + 1 forced format response
         with patch.object(agent, "_call_llm") as mock_call:
@@ -475,6 +481,7 @@ class TestExecuteEdgeCases:
             empty_resp.tool_calls = []
             empty_resp.text = ""
             empty_resp.raw_content = None
+            empty_resp.finish_reason = None
             mock_call.return_value = empty_resp
             response = await agent.execute(_make_message("list tasks"))
 
@@ -798,3 +805,70 @@ class TestParseDatetime:
         from src.agents.tasks_agent import TasksAgent
         result = TasksAgent._parse_datetime("not-a-date")
         assert result is None
+
+
+# =============================================================================
+# Output length limit: cut text is never a plain success
+# =============================================================================
+
+
+class TestOutputLengthLimit:
+
+    @staticmethod
+    def _cut(text: str):
+        from src.domain.llm import FinishReason
+
+        resp = MagicMock(spec=LLMResponse)
+        resp.tool_calls = []
+        resp.text = text
+        resp.raw_content = None
+        resp.finish_reason = FinishReason.MAX_TOKENS
+        return resp
+
+    async def test_cut_answer_is_not_reported_as_success(self):
+        from src.domain.agent import AgentStatus
+
+        agent, provider, indexing = _make_agent()
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.return_value = self._cut("1. Buy milk\n2. Call dad")
+            response = await agent.execute(_make_message("list tasks"))
+
+        assert response.status == AgentStatus.FAILED
+        assert not response.result
+
+    async def test_cut_final_answer_turn_returns_tool_results_not_cut_text(self):
+        from src.domain.agent import AgentStatus
+
+        agent, provider, indexing = _make_agent()
+        provider.list_tasks.return_value = []
+        tool_resp = MagicMock(spec=LLMResponse)
+        tool_resp.tool_calls = [ToolCall(name="list_tasks", args={}, id="tc")]
+        tool_resp.text = ""
+        tool_resp.raw_content = None
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = [tool_resp] * 6 + [self._cut("1. Buy milk\n2. Call d")]
+            response = await agent.execute(_make_message("list tasks"))
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.result.startswith("Tool note:")
+        assert "Call d" not in response.result.split("Tool results:")[0]
+
+    async def test_cut_answer_after_tools_ran_keeps_tool_results_not_failure(self):
+        from src.domain.agent import AgentStatus
+
+        agent, provider, indexing = _make_agent()
+        provider.list_tasks.return_value = []
+        tool_resp = MagicMock(spec=LLMResponse)
+        tool_resp.tool_calls = [ToolCall(name="list_tasks", args={}, id="tc")]
+        tool_resp.text = ""
+        tool_resp.raw_content = None
+
+        with patch.object(agent, "_call_llm") as mock_call:
+            mock_call.side_effect = [tool_resp, self._cut("1. Buy milk\n2. Call d")]
+            response = await agent.execute(_make_message("list tasks"))
+
+        assert response.status == AgentStatus.SUCCESS
+        assert response.result.startswith("Tool note:")
+        assert "Call d" not in response.result.split("Tool results:")[0]
+        assert mock_call.call_count == 2

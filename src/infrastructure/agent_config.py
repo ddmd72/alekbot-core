@@ -451,7 +451,7 @@ NOTES = NotesAgentConfig()
 
 @dataclass
 class TasksAgentConfig:
-    max_tokens: int = 1024        # Tool-calling loop: tool calls + final text response
+    max_tokens: int = 4096        # Reasoning models eat budget before output; tool args + final text need headroom
     timeout_ms: int = 30_000      # The run's budget: tool turns stop 8 s before it, then one answer turn (tasks_agent.py)
 
 
