@@ -7,9 +7,11 @@ local script needs the one `format=full` read per mail, and production slice 6 g
 `list_emails` + `batch_get_full_content`."""
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -59,6 +61,9 @@ class CardSession:
     zone: str
     people: Optional[ConfirmedPeople]
     attachments: EmailAttachmentTextService
+    stored: Optional[OAuthCredential] = None       # the stored credential, refreshed again before the access token expires
+    refreshed_at: float = 0.0
+    refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def owner_addresses(self) -> Tuple[str, ...]:
@@ -88,11 +93,30 @@ async def open_session(user_id: Optional[str] = None, account_id: Optional[str] 
     zone = owner_zone(profile.config.timezone if profile is not None else None)
     extractor = SubprocessContentExtractor()
     attachments = EmailAttachmentTextService(gmail, DocumentService(extractor, _NoReader(), extractor))
-    return CardSession(user_id, account_id, credential, gmail, mailbox, zone, people, attachments)
+    return CardSession(user_id, account_id, credential, gmail, mailbox, zone, people, attachments,
+                       stored=stored, refreshed_at=time.monotonic())
+
+
+# A Gmail access token lives about an hour; a run of thousands of mails outlives it (a 2026-11 run lost most of its
+# mail to 401 after the first hour). Refresh well before that.
+REFRESH_AFTER_S = 40 * 60
+
+
+async def keep_fresh(session: CardSession, now: Optional[float] = None) -> None:
+    """Refresh the session's access token once it is older than REFRESH_AFTER_S; one refresh for concurrent callers."""
+    if session.stored is None:
+        return
+    async with session.refresh_lock:
+        current = time.monotonic() if now is None else now
+        if current - session.refreshed_at < REFRESH_AFTER_S:
+            return
+        session.credential = await session.gmail.refresh_token(session.stored)
+        session.refreshed_at = current
 
 
 async def fetch_source(session: CardSession, email_id: str) -> Tuple[Optional[MailSource], str]:
     """One `format=full` read of one mail: (source, "") or (None, "gone" | "unavailable")."""
+    await keep_fresh(session)
     try:
         msg = await session.gmail._fetch_message(session.credential, email_id)
     except EmailMessageGone:
