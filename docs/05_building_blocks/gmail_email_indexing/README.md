@@ -95,9 +95,10 @@ A job is created with `triggered_by` = `"user"` (manual via Cabinet UI), `"sched
 
 ### 4.2 Per-Page Processing (one Cloud Tasks invocation)
 
-Chunk size: **100 emails per page** (`GMAIL_DEFAULT_QUERY` filters Primary + Updates tabs, excludes spam/trash).
+Chunk size: **150 emails per page** (`run_indexing_job(page_size=150)`; `GMAIL_DEFAULT_QUERY` filters Primary + Updates tabs, excludes spam/trash).
 
 1. **List:** `GmailProviderAdapter.list_emails(query, page_token)` → `[EmailMetadata]`
+1a. **Skip the stored:** `IndexedEmailRepository.get_consolidation_marks(user_id, ids)` is called once for the page, before classification. In `incremental` and `backfill` mode an email already in the index is dropped (never re-classified, re-fetched, re-embedded or re-saved; one INFO line counts them): the incremental run starts from the day of `indexed_through`, so it re-lists that day. `reindex` re-processes every email, and the rebuilt record carries the stored `consolidated_at`, so the overwrite does not reset it and memory consolidation does not read the email again.
 2. **Exclusion pre-filter:** Skip senders/domains in `email_exclusions` collection.
 3. **Classify:** `classify_batch(emails, user_id, account_id=job.account_id)` on the classifier port → each email gets `category` + `tags` + `should_index` boolean.
    A model-provider outage (`PROVIDER_OUTAGE_TYPES`, incl. both providers down) is not a classification failure: it propagates, the job stays `running`, `/worker` answers 503 and Cloud Tasks retries the page; when the attempts run out the job stays `running` until the watchdog (§4.4) marks it `failed`.
