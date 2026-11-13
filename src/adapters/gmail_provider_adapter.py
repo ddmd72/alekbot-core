@@ -380,7 +380,22 @@ class GmailProviderAdapter(EmailProviderPort):
             mime=raw.get("mimeType", ""),
             size=int(body.get("size") or 0),
             handle=body.get("attachmentId") or "",
+            displayed_inline=GmailProviderAdapter._displayed_inline(raw.get("headers") or []),
         )
+
+    @staticmethod
+    def _displayed_inline(headers: list) -> bool:
+        """`Content-Disposition: inline`, or a `Content-ID` with no `attachment` disposition. The disposition type is
+        the first `;`-separated token (a filename that contains the word "attachment" or "inline" decides nothing)."""
+        disposition = ""
+        has_content_id = False
+        for header in headers:
+            name = str(header.get("name", "")).strip().lower()
+            if name == "content-disposition":
+                disposition = str(header.get("value", "")).split(";", 1)[0].strip().lower()
+            elif name == "content-id":
+                has_content_id = True
+        return disposition == "inline" or (has_content_id and disposition != "attachment")
 
     @classmethod
     def _iter_attachment_parts(cls, payload: dict, prefix: str = ""):

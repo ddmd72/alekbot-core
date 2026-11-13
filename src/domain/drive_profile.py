@@ -12,6 +12,8 @@ Public interface:
     stored_text(chunks) -> str                                   the reassembled stored text
     profile_input(record, chunks, kind) -> Optional[ProfileInput]   None: the policy sends no model input
     input_fingerprint(kind, inp) -> str                          `profile_input_fingerprint` (not the name)
+    head_and_tail(text, head_chars, tail_chars) -> (head, tail)     the profiler's cut, for other inputs (the mail)
+    sheet_head(text) -> str                                          the sheet rule's head
     readme_excerpt(readme_text, child_names) -> str              a collapsed folder's `readme_excerpt`
     template_profile(reason, kind, text) -> DriveProfile         `profile_source = template`
     GradeCounts; grade(profile, chunks, name, *, key_values=True) -> (DriveProfile, GradeCounts)
@@ -483,6 +485,11 @@ def _head_tail(text: str, head_chars: int, tail_chars: int) -> Tuple[str, str]:
     return _cut_head(text, head_chars), _cut_tail(text, tail_chars)
 
 
+def head_and_tail(text: str, head_chars: int, tail_chars: int) -> Tuple[str, str]:
+    """The profiler's head/tail cut (paragraph or sentence boundaries); `("whole text", "")` when it fits."""
+    return _head_tail(text, head_chars, tail_chars)
+
+
 def _headings(text: str) -> Tuple[str, ...]:
     out: List[str] = []
     used = 0
@@ -531,6 +538,11 @@ def _sheets(text: str) -> Tuple[str, Tuple[str, ...]]:
         out.append(line)
         used += len(line) + 1
     return "\n".join(out), tuple(n for n in names if n)
+
+
+def sheet_head(text: str) -> str:
+    """The sheet rule's head: sheet names, header rows and the first PROFILE_SHEET_ROWS rows, within the head cap."""
+    return _sheets(text)[0]
 
 
 def _epub_parts(text: str) -> Tuple[str, str]:
