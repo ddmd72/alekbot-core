@@ -27,7 +27,7 @@ _build_companion_context_block for the prompt-cache trade-off this now carries.
 
 The retrieval phrase fed to the assembler is cleaned of AgentCoordinator's
 delegation timestamp prefix (``handle_delegation`` prepends
-``[Mon DD, HH:MM UTC] `` to every delegated query — see ``_strip_delegation_timestamp``)
+``[Day DD Mon YYYY, HH:MM UTC] `` to every delegated query — see ``_strip_delegation_timestamp``)
 so the embedded vector is the user's actual utterance, not noise that changes
 every minute.
 """
