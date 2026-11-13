@@ -164,7 +164,7 @@ agents_registry {
     email_search_agent {
         intent: "search_emails"
         when: "User asks to find, search, or recall their emails by topic, sender, event, or document type. Use for email archive lookups, not personal KB facts."
-        how: "Pass the user's question as query. Keep it natural and complete. Use the language the user wrote in. The agent extracts optimized search terms and runs vector search."
+        how: "Pass the user's question as query. Keep it natural and complete. Use the language the user wrote in. The agent extracts search terms, searches the index by meaning, lists the newest mail outside the index, and matches any exact number, code or address literally."
         note: "Call multiple times with different phrasings if the first result is insufficient."
 
         examples: [

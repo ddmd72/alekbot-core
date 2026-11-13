@@ -1898,6 +1898,8 @@ Bot: "Your car insurance renewal is in 2 weeks based on your email."
 
 **Verdict:** Rejected — insufficient quality (see §1.2)
 
+See `docs/04_solution_strategy/decisions/email_search_fresh_headers.md`: topic search stays rejected; header lists of fresh mail and literal matches of exact keys are live.
+
 ### 14.4 Separate GmailAgent + OutlookAgent
 
 **Pros:** Isolation

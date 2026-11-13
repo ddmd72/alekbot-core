@@ -34,6 +34,15 @@ ATTACHMENT_EMPTY_NOTE = "[Tool note: That attachment is empty.]"
 MAILBOX_UNAVAILABLE_NOTE = "[Tool note: The mailbox did not answer; try again shortly.]"
 EMAIL_NOT_CONNECTED_NOTE = (
     "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]")
+# The kinds of a failed live listing the search agent stores in its result; the delegation formatter maps them to text.
+LIVE_NOTE_NOT_CONNECTED = "not_connected"
+LIVE_NOTE_UNAVAILABLE = "unavailable"
+LIVE_MAILBOX_NOT_CONNECTED_NOTE = (
+    "Tool note: The live mailbox could not be read because Gmail is not connected (the user reconnects via "
+    "/link-gmail): recent mail and exact-number matches are missing; the index search ran normally.")
+LIVE_MAILBOX_UNAVAILABLE_NOTE = (
+    "Tool note: The live mailbox did not answer: recent mail and exact-number matches are missing this time; "
+    "the index search ran normally.")
 NO_ATTACHMENTS_NOTE = "[Tool note: That email has no attachments.]"
 EMAIL_OPEN_NOT_CONFIGURED_NOTE = "[Tool note: Attachment opening is not configured.]"
 EMAIL_FILE_NOT_TRANSFERABLE_NOTE = (

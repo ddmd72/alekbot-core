@@ -548,6 +548,7 @@ class UserAgentFactory(AgentFactoryPort):
             email_search_service=self.email_search_service,
             user_id=user_id,
             file_conversion=self.file_conversion_service,
+            user_timezone=user_profile.config.timezone,
         )
 
         maps_search_context = self.context_builder.build("maps_search", user_profile.config)

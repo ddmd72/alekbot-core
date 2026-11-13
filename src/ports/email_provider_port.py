@@ -33,6 +33,23 @@ class EmailProviderPort(ABC):
         """
 
     @abstractmethod
+    async def list_headers(
+        self,
+        credentials: OAuthCredential,
+        *,
+        after: Optional[datetime] = None,
+        before: Optional[datetime] = None,
+        key: Optional[str] = None,
+        limit: int = 100,
+    ) -> Tuple[List[EmailMetadata], bool]:
+        """
+        Message headers (subject, from, date, snippet), the newest first; never promotions, spam or trash.
+        `after` / `before` are exact instants (aware datetimes; a naive one is read as UTC). `key` is matched
+        literally as a phrase anywhere in the message. Returns (emails, more): `more` says further messages match
+        beyond `limit`.
+        """
+
+    @abstractmethod
     async def batch_get_full_content(
         self,
         credentials: OAuthCredential,
