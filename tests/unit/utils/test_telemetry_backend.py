@@ -109,7 +109,12 @@ class TestInstrumentLlmSdks:
 
     @pytest.fixture
     def fake_instrumentor(self, monkeypatch):
-        """Stand in for GoogleGenAiSdkInstrumentor, imported inside the function."""
+        """Stand in for GoogleGenAiSdkInstrumentor, imported inside the function.
+
+        Pins the installed google-genai to a 2.x the instrumentor supports: on 3.x it is skipped on purpose
+        (TestGoogleGenaiInstrumentationDecision), and these tests are about wiring, not the installed version.
+        """
+        monkeypatch.setattr(telem, "_installed_google_genai_version", lambda: "2.17.0")
         instance = MagicMock()
         module = MagicMock()
         module.GoogleGenAiSdkInstrumentor.return_value = instance
@@ -160,6 +165,18 @@ class TestInstrumentLlmSdks:
         # Tracing is diagnostic, never load-bearing: the rest still gets wired.
         fake_logfire.instrument_openai.assert_called_once_with(version="latest")
         assert fake_instrumentor.instrument.call_count == 1
+
+    def test_on_google_genai_3_the_other_two_sdks_are_still_instrumented(
+            self, monkeypatch, fake_logfire, fake_instrumentor):
+        monkeypatch.setattr(telem, "_installed_google_genai_version", lambda: "3.3.0")
+
+        telem._instrument_llm_sdks(fake_logfire)
+
+        # Skipping Gemini on 3.x turns off only Gemini spans; Anthropic and OpenAI keep their semconv wiring.
+        fake_logfire.instrument_anthropic.assert_called_once_with(version="latest")
+        fake_logfire.instrument_openai.assert_called_once_with(version="latest")
+        fake_logfire.instrument_google_genai.assert_not_called()
+        assert fake_instrumentor.instrument.call_count == 0
 
 
 class TestInitLogfireContentGate:
