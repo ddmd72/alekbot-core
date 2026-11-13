@@ -1,4 +1,5 @@
 import contextlib
+import logging
 import os
 import time
 from contextvars import ContextVar
@@ -85,6 +86,33 @@ def _logfire_redacting_processor(token: str):
     return BatchSpanProcessor(RedactingExporter(exporter, drop_pending=True))
 
 
+GENAI_SPANS_OFF_WARNING = "Gemini SDK spans off: instrumentation supports google-genai <3; re-enable when it does"
+
+
+def google_genai_instrumentation_decision(version: Optional[str]) -> bool:
+    """Whether to drive the vendor Gemini instrumentor for the installed google-genai `version`.
+
+    `opentelemetry-instrumentation-google-genai` declares support for google-genai <3: on 3.x its `instrument()` logs an
+    ERROR and patches nothing, and bypassing its dependency check would patch an SDK it was not written for. So the
+    decision is explicit, from the major version; an unreadable version (None) keeps the old behaviour (instrument).
+    """
+    if version is None:
+        return True
+    try:
+        return int(version.split(".", 1)[0]) < 3
+    except ValueError:
+        return True
+
+
+def _installed_google_genai_version() -> Optional[str]:
+    from importlib import metadata
+
+    try:
+        return metadata.version("google-genai")
+    except metadata.PackageNotFoundError:
+        return None
+
+
 def _instrument_llm_sdks(logfire) -> None:
     """Attach Logfire's LLM instrumentation to the provider SDKs.
 
@@ -120,6 +148,9 @@ def _instrument_llm_sdks(logfire) -> None:
     os.environ.setdefault("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
 
     def _instrument_google_genai() -> None:
+        if not google_genai_instrumentation_decision(_installed_google_genai_version()):
+            logging.getLogger(__name__).warning(GENAI_SPANS_OFF_WARNING)
+            return
         from opentelemetry.instrumentation.google_genai import GoogleGenAiSdkInstrumentor
 
         GoogleGenAiSdkInstrumentor().instrument()
