@@ -100,3 +100,14 @@ async def test_usage_with_no_quota_service_warns_once_a_minute_per_site(caplog, 
         pass   # nothing spent: nothing to say
     lines = [r.getMessage() for r in caplog.records if "no quota service wired" in r.getMessage()]
     assert len(lines) == 2 and "site one" in lines[0] and "site two" in lines[1]
+
+
+async def test_a_zero_token_leg_is_not_written():
+    """`TokenLedger.add` creates the model's leg even for zero usage (a call that reported none), so a ledger can hold
+    one; writing it would add an empty record."""
+    quota = RecordingQuota()
+    async with billed_scope(quota, "account-a") as ledger:
+        ledger.add("gemini-flash-latest")
+        ledger.add(EMBED, prompt_tokens=10)
+        assert ledger.by_model["gemini-flash-latest"].total_tokens == 0
+    assert quota.calls == [("account-a", EMBED, 10, calculate_cost(EMBED, 10, 0))]
