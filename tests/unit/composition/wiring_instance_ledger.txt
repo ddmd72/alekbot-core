@@ -28,6 +28,7 @@ src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-de
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
 src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 2  # by-design one per collection: the drive notes' erase requests (drive_note_setup.py) and the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2)
+src.adapters.firestore_email_card_store.FirestoreEmailCardStore 1  # by-design the one card store, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py:43)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
@@ -103,6 +104,7 @@ src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-desi
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
+src.composition.email_card_runner.EmailCardRunner 1  # by-design the card step's one writer; it builds its agent once, lazily, on the pinned model (email_card_setup.py:35, email_card_runner.py:51-55)
 src.composition.email_classifier_runner.EmailClassifierRunner 1  # by-design the email indexing service's one classifier; it builds the agent per batch for the job's user (service_container.py)
 src.composition.fact_profile_setup.LazyAtlas 1  # by-design the one place atlas, held by the one FactProfileService and loaded on its first run (fact_profile_setup.py:61, FACT_PROFILE_RFC 4.4)
 src.composition.fact_profiler_runner.FactProfilerRunner 1  # by-design the one fact profiler, held by the ServiceContainer as fact_profiler; it builds its internal agent once, lazily, on the pinned model (service_container.py:392, FACT_PROFILE_RFC 4.1)
@@ -137,6 +139,9 @@ src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design sin
 src.services.drive_note_service.DriveNoteService 1  # by-design single instance
 src.services.drive_search_service.DriveSearchService 1  # by-design single instance
 src.services.drive_sync_scheduler_service.DriveSyncSchedulerService 1  # by-design single instance
+src.services.email_attachment_text_service.EmailAttachmentTextService 1  # by-design the card step's one attachment reader over the container's mailbox provider and the graph's one document service (email_card_setup.py:40)
+src.services.email_card_indexer.EmailCardIndexer 1  # by-design the one card step, attached to the one EmailIndexingService by attach_email_card_step (email_card_setup.py:42, email_indexing_service.py:93)
+src.services.email_card_service.EmailCardService 1  # by-design single instance, held by the one EmailCardIndexer (email_card_setup.py:39)
 src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-design single instance
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
@@ -165,7 +170,7 @@ src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one co
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
 src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
 src.services.profile_question_answers.ProfileQuestionAnswers 1  # by-design single instance, built once in application_graph.py and held by the one FactAnswerService (FACT_PROFILE_RFC 4.7, PR 5d)
-src.services.prompt_builder.PromptBuilder 4  # by-design four plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:385), FactProfilerRunner's (service_container.py:394, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (application_graph.py:625) and the document service reader's (document_service_setup.py:33); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
+src.services.prompt_builder.PromptBuilder 5  # by-design five plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:385), FactProfilerRunner's (service_container.py:394, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (application_graph.py:625), the document service reader's (document_service_setup.py:33) and EmailCardRunner's (email_card_setup.py:37; its invalidate_agent_prompt drops only the card writer's own key, prompt_builder.py:285-292); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
 src.services.prompt_v3.biographical_formatter.BiographicalFactsFormatter 1  # by-design single instance
