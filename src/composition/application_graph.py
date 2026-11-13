@@ -63,6 +63,7 @@ from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_service
+from src.composition.email_card_setup import attach_email_card_step
 from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
@@ -398,8 +399,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
     # The document service (EXTERNAL_FILES_RFC §4.4): the sandbox parse adapter, the reader over the main context builder and
     # the graph's one quota service, attached to the file conversion service as soon as the container has built it.
+    documents = None
     if container.file_conversion_service:
-        container.file_conversion_service.attach_documents(build_document_service(
+        documents = build_document_service(
             context_builder=container.context_builder,
             users=user_repo,
             assembly_service=container.assembly_service,
@@ -407,7 +409,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             transcriber=audio_service,
             transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
             parser=parse_adapter,
-        ), containers=parse_adapter)   # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
+        )
+        container.file_conversion_service.attach_documents(documents, containers=parse_adapter)   # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
@@ -703,6 +706,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     oauth_credentials_port = container.oauth_credentials
     indexed_email_repo = container.indexed_email_repo
     email_indexing_service = container.email_indexing_service
+    attach_email_card_step(email_indexing_service, container, documents, db_client, env_config, user_repo,
+                           quota_service)
 
     # MS To Do services — reuse adapters from ServiceContainer
     task_setup_service = None

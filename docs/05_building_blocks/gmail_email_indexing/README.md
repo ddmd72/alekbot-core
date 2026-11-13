@@ -110,6 +110,7 @@ Chunk size: **150 emails per page** (`run_indexing_job(page_size=150)`; `GMAIL_D
    - `metadata_vector` — sender, subject, date
    - `attachments_vector` — attachment filenames + types
 7. **Store:** `FirestoreIndexedEmailRepository.save(IndexedEmail)` — upsert by `email_id`.
+7a. **Card (email index v2, optional):** when `EMAIL_CARD_ONLINE` is on, `EmailCardIndexer.card_page` makes the v2 card of each mail just saved and stores it with one compare-and-set field update (`expect = absent`) on the same document, after the v1 save. A failure of this step is logged (`[EmailCard] page step failed`) and never stops the page; only a revoked grant propagates. See "Card fields on the facts document" below.
 8. **Advance:** Update `IndexingJob.next_page_token`, increment counters.
 9. **Re-enqueue:** If `next_page_token` present → enqueue next Cloud Task.
 10. **Complete:** If no more pages → mark job `COMPLETED`, call `UserNotificationService.send_system_alert()`.
@@ -134,6 +135,30 @@ See [../../07_deployment/SCHEDULERS.md](../../07_deployment/SCHEDULERS.md) for s
 `task_type=email_indexing_watchdog` is triggered by Cloud Scheduler (periodic). It scans all jobs in `RUNNING` state older than 2 hours and marks them `FAILED`. This handles Cloud Tasks timeouts and crash-recovery scenarios.
 
 ---
+
+### 4.5 Card fields on the facts document (email index v2, slice 6)
+
+The v2 card is stored as extra fields on the mail's v1 document (`{user_id}_{email_id}` in the v1 facts collection); the
+write is a field update through `FirestoreEmailCardStore.write_card` (one transaction: read `card_version` and
+`people_digest`, compare with what the writer read, update). **It never touches a v1 field and never touches
+`consolidated_at`; it never creates a document.** `IndexedEmail` ignores the extra fields when v1 reads the document.
+
+- Lifecycle: `card_state` (`pending`, `carded`, `empty`, `source_gone`; `abandoned` is slice 7's), `card_version`,
+  `people_digest` (fingerprint of the confirmed-people entries the card depends on), `card_model`, `carded_at`,
+  `card_failures` (charged failures on this input), `card_reason` (`invalid`, `refused`, `outage`, `attachments`,
+  `budget`, `source`, `error`, `gone`), `card_vector_pending` (card kept, vector to be re-embedded).
+- Settled cards (`carded`, `empty`) also hold `about_keys`, `name_keys`, `people_keys`, `month_keys`, `template_key`, the
+  `card` map (slice 3's document) and, for a carded card with a vector, `card_vector` (768).
+- Rules live in `src/domain/email_card_lifecycle.py`; a page spends at most 240 s on cards, four in flight; mail not
+  started by then is stored `pending` (reason `budget`).
+- **Switch:** `EMAIL_CARD_ONLINE` (optional, **default off**; `1` carding on, anything else off), read with `os.getenv` in
+  `src/composition/email_card_setup.py`. Off: v1 indexing is exactly as before. Rollback: unset it; no data change.
+- **Indexes** (`config/firestore.indexes.json`, collection group `development_domain_email_facts_v1`): six composites
+  (`user_id`, `card_state`, plus each of `about_keys`, `name_keys`, `people_keys`, `month_keys` as CONTAINS; the
+  `card_state`, `user_id`, `card_vector` vector index; `user_id`, `card_state` for counts and the re-card scan) and four
+  single-field exemptions (`card`, `card_vector`, `about_keys`, `name_keys`). They must be `READY` before the code that
+  queries them deploys (nothing queries them before slice 8; the write path needs none).
+- Check: `python scripts/email/card_store_status.py [--since YYYY-MM-DD]` prints counts per `card_state` (counts only).
 
 ## 5. EmailClassificationAgent
 
@@ -280,8 +305,8 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/adapters/gmail_provider_adapter.py`: Gmail API client.
 - `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
-- `src/domain/email_attachment.py`, `src/domain/email_attachment_policy.py`, `src/services/email_attachment_text_service.py`: attachment text for the email index v2 (noise filter, the readable kinds, the input cut, one outcome per listed file). Email index v2, not wired yet (slice 6).
-- `src/domain/email_card_source.py`, `email_card_prompt.py`, `email_card_reply.py`, `email_card_document.py`, `src/ports/email_card_writer_port.py`, `src/agents/email_card_agent.py`, `src/composition/email_card_runner.py`, `src/services/email_card_service.py`: the email index v2 card writer (one Flash-Lite call per mail, then build and embed). Not wired yet (slice 6). `EmailFullContent.recipients` carries the To and Cc addresses (the "owner is a direct recipient" input).
+- `src/domain/email_attachment.py`, `src/domain/email_attachment_policy.py`, `src/services/email_attachment_text_service.py`: attachment text for the email index v2 (noise filter, the readable kinds, the input cut, one outcome per listed file). Email index v2; read by the card step (slice 6).
+- `src/domain/email_card_source.py`, `email_card_prompt.py`, `email_card_reply.py`, `email_card_document.py`, `src/ports/email_card_writer_port.py`, `src/agents/email_card_agent.py`, `src/composition/email_card_runner.py`, `src/services/email_card_service.py`: the email index v2 card writer (one Flash-Lite call per mail, then build and embed). Wired online by `src/composition/email_card_setup.py` behind `EMAIL_CARD_ONLINE` (slice 6; stores through `src/services/email_card_indexer.py`, `src/adapters/firestore_email_card_store.py`, `src/domain/email_card_lifecycle.py`). `EmailFullContent.recipients` carries the To and Cc addresses (the "owner is a direct recipient" input).
 - Email search v2, offline only, not wired (slice 8): `src/domain/email_search_*.py` (query, time, merge, fold, texts, render, params), `src/ports/email_card_index.py` with `src/adapters/in_memory_email_card_index.py`, `src/services/email_card_search_service.py`, and the snapshot harness `scripts/validation/email_eval/search_v2_snapshot.py`.
 
 ---

@@ -12,6 +12,7 @@ LoggerAgent.log_sink  # off-in-prod APP_ENV=development in cloudbuild-dev.yaml:2
 AuthConfig.firebase_service_account  # optional-knob GOOGLE_APPLICATION_CREDENTIALS is not in the deploy (config/auth.py:62, Cloud Run uses ADC)
 OpenAIDeepResearchAdapter._model_override  # optional-knob OPENAI_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
 ClaudeDeepResearchAdapter._model_override  # optional-knob CLAUDE_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
+app.container.email_indexing_service._card_step  # optional-knob None while EMAIL_CARD_ONLINE is off (default; the deploy does not set it): attach_email_card_step returns before attach_card_step (email_card_setup.py email_card_online_enabled, email_indexing_service.py:90)
 SmartResponseAgent._default_thinking_effort  # optional-knob UserBotConfig.agent_thinking is unset for the seeded user (user_agent_factory.py:427)
 
 # ---- lazy clients and caches, built on first use

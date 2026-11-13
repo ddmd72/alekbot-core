@@ -10,7 +10,7 @@ Pipeline per chunk (100 emails/page):
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from ..domain.email_dates import to_naive_utc
@@ -25,7 +25,8 @@ from ..domain.email import (
     IndexingState,
 )
 from ..domain.connector_spec import ConnectorSpec
-from ..domain.exceptions import PROVIDER_OUTAGE_TYPES
+from ..domain.email_card_page import MailForCard
+from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.email_exclusions_port import EmailExclusionsPort
@@ -38,6 +39,9 @@ from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .email_card_indexer import EmailCardIndexer
 
 # Gmail search filter applied to every indexing job.
 # Restricts fetch to Primary + Updates tabs and excludes spam — matches POC LABEL_FILTER.
@@ -83,7 +87,13 @@ class EmailIndexingService:
         self._quota = quota   # bills each page's embeddings to the account (billed_scope)
         self._oauth = oauth
         self._alert_sink = alert_sink
+        self._card_step: Optional["EmailCardIndexer"] = None
         logger.info("📧 EmailIndexingService initialized")
+
+    def attach_card_step(self, step: "EmailCardIndexer") -> None:
+        """Card each page's saved mail right after its v1 save (email index v2 §6.5). Composition attaches it; without
+        one the pipeline is exactly v1."""
+        self._card_step = step
 
     # ------------------------------------------------------------------
     # Public API
@@ -507,6 +517,8 @@ class EmailIndexingService:
                 saved = 0
                 if indexed_emails:
                     saved = await self._email_repo.save_batch(indexed_emails)
+                    await self._card_saved(job, account_id, credentials, indexed_emails, email_meta_map,
+                                           full_content_map)
 
                 # 7. Track max/min email dates across all Cloud Tasks invocations.
                 #    Persisted to job doc — cursors in IndexingState written ONLY at completion.
@@ -726,6 +738,22 @@ class EmailIndexingService:
                 filtered.append(email)
 
         return filtered
+
+    async def _card_saved(self, job: Any, account_id: str, credentials: OAuthCredential,
+                          saved: List[IndexedEmail], metas: Dict[str, EmailMetadata],
+                          contents: Dict[str, EmailFullContent]) -> None:
+        """The card step for the mail just saved. The v1 page is done: a failure here is logged and never stops the
+        page (job progress, cursors); only a revoked grant propagates (the job's auth path)."""
+        if self._card_step is None:
+            return
+        try:
+            await self._card_step.card_page(
+                credentials=credentials, user_id=job.user_id, account_id=account_id,
+                mails=[MailForCard(meta=metas[e.email_id], content=contents.get(e.email_id)) for e in saved])
+        except OAuthGrantRevokedError:
+            raise
+        except Exception as exc:
+            logger.error(f"[EmailCard] page step failed: {type(exc).__name__} (job {job.job_id[:8]})")
 
     async def _embed_email(
         self,
