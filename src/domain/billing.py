@@ -217,6 +217,9 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "claude-sonnet-5-5":                 {"input": 2.00,  "output": 10.00, "cache_read": 0.05, "cache_write": 1.25},
     # Fable 5.1 (ULTRA since 2026-10-03): $10/$50, cache reads at 2.5% of input ($0.25).
     "claude-fable-5-1":                  {"input": 10.00, "output": 50.00, "cache_read": 0.025, "cache_write": 1.25},
+    # Fable 5.2 (ULTRA since 2026-11-13, Smart only): $8/$40, cache reads 0.025x input ($0.20),
+    # 5-minute cache write 1.25x input (same interpretation as the 5.1 row above).
+    "claude-fable-5-2":                  {"input": 8.00,  "output": 40.00, "cache_read": 0.025, "cache_write": 1.25},
     "claude-opus-5-5":                   {"input": 4.00,  "output": 20.00, "cache_read": 0.05, "cache_write": 1.25},
     # --- OpenAI GPT-5.6 family (Luna/Terra/Sol, GA 2026-07-09) — active tier defaults ---
     # cache_write 1.25: GPT-5.6 bills cache writes at 1.25x uncached input (new vs 5.4/5.5 = free).

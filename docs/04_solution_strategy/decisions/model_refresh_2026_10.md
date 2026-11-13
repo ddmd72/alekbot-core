@@ -69,3 +69,9 @@ Nothing selects `tier1` by default: only an explicit per-user override does, so 
 
 - the PERFORMANCE latency on gpt-6.1-sol hurts in daily use. Try effort `low` before changing the model.
 - refusals show up in alerts on routine traffic.
+
+## Update 2026-11-13: ULTRA = Fable 5.2
+
+ULTRA on Claude moved from `claude-fable-5-1` to `claude-fable-5-2` ($8/$40 per MTok instead of $10/$50, same
+cache legs). Smart is the only production user of ULTRA; its tool loop was probed live on 5.2 before the switch.
+The reason is price. Deep research keeps its own model pin and is untouched.
