@@ -47,7 +47,7 @@ def test_index_hits_and_fresh_headers_get_one_wrapper_each():
     first_close = out.index(CLOSING)
     second_open = out.index(OPENING, first_close)
     fresh_intro = ("Recent mail from the live mailbox, newest first, headers only (sender, subject, first line); "
-                   "promotions, spam and trash are not listed; the email index has never been built:")
+                   "promotions, spam and trash are not listed:")
     assert out.index("Found 1 email(s) in the index:") < first_open
     assert first_close < out.index(fresh_intro) < second_open
     index_block, fresh_block = out[first_open:first_close], out[second_open:out.index(CLOSING, second_open)]

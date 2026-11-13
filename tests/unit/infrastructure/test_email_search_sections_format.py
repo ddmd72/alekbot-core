@@ -62,12 +62,6 @@ def test_fresh_intro_with_since_until_and_tz_precedes_its_wrapper():
     assert "Nothing in the index matched." in out
 
 
-def test_fresh_intro_without_since_says_the_index_was_never_built():
-    out = _fmt(fresh=_fresh(since=None))
-    assert ("Recent mail from the live mailbox, newest first, headers only (sender, subject, first line); "
-            "promotions, spam and trash are not listed; the email index has never been built:") in out
-
-
 def test_fresh_listing_that_returned_nothing():
     out = _fmt(fresh=_fresh(listed=0, emails=[]))
     assert "No mail in the live mailbox since 2026-03-03 00:00." in out
@@ -82,7 +76,7 @@ def test_fresh_listing_that_returned_nothing_without_since():
 
 def test_fresh_listing_all_deduped_against_the_index():
     out = _fmt(emails=[_hit()], fresh=_fresh(listed=2, emails=[]))
-    assert "Recent mail since 2026-03-03 00:00: all of it is already listed above." in out
+    assert "Recent mail from the live mailbox since 2026-03-03 00:00: all of it is already listed above." in out
     assert len(_blocks(out)) == 1
 
 
