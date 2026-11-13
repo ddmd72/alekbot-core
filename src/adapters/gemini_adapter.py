@@ -3,7 +3,7 @@ import base64
 from typing import List, Any, Optional, Tuple, cast
 from google import genai
 from google.genai import types, errors as genai_errors
-from .genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
 from ..ports.llm_port import (
     LLMPort,
     LLMResponse,

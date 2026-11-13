@@ -1,7 +1,7 @@
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
-from .genai_sdk_compat import GENAI_API_VERSION, TIMEOUT_ERRORS
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, TIMEOUT_ERRORS
 import asyncio
 import os
 from typing import List

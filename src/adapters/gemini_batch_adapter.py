@@ -29,7 +29,7 @@ import aiohttp
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
-from .genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
 
 from ..domain.batch_transcription import BatchRef, BatchRequest, BatchResult, BatchStatus, FileRef
 from ..domain.billing import BatchUsage

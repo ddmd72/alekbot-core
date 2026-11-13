@@ -6,7 +6,7 @@ google-cloud-bigquery>=3.0.0  # queryable LLM prompt/response content store (TTL
 google-re2>=1.1,<2  # RE2 for the workspace `grep` regex mode: linear time, so a model-supplied pattern cannot stall the service (AGENT_WORKSPACE_RFC §7.4)
 # 3.3.0 = the first release that maps the Developer API's usageMetadata onto EmbedContentResponse.usage_metadata (embedding
 # spend is billed from it, decisions/billing_embeddings.md); 2.x drops the field. 3.x defaults the API to v1 and its HTTP client is
-# httpx2, so every genai.Client pins api_version="v1beta" (adapters/genai_sdk_compat.py) and transport errors are caught from
+# httpx2, so every genai.Client pins api_version="v1beta" (utils/genai_sdk_compat.py) and transport errors are caught from
 # both httpx and httpx2. Only the Models API is used (generate_content / embed_content / files / batches).
 google-genai>=3.3.0,<4.0.0
 # Floor was 0.97.0 (first release with output_config.effort + the model capabilities API); pinned
