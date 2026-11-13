@@ -15,6 +15,10 @@ The Claude column is brought in line with `ClaudeAdapter.MODEL_TIERS` (`src/adap
 
 ULTRA is the top model of each provider. Nothing used ULTRA in the 14 days before the change.
 
+2026-11-13: OpenAI's reserved `TIER1` slot carries `gpt-6.1-terra` ($1/$5, half of Sol) for an owner trial on Smart.
+A local eval on synthetic cases found it about equal to Sol and ~1.5× faster, slightly weaker on the reminder agent.
+Nothing selects `tier1` by default: only an explicit per-user override does, so no live path changes.
+
 ## Evidence
 
 - **Consolidation:** `scripts/consolidation/ab_cross_provider.py`, 2 runs each on a real window.

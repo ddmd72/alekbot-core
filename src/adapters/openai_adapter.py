@@ -98,9 +98,11 @@ class OpenAIAdapter(LLMPort):
     # ECO:         gpt-6-luna   ($0.10/$0.50) — fetch_url A/B vs gpt-5.4-nano: 4:4, -56% cost
     # BALANCED:    gpt-6-luna   — Smart dry-run A/B vs gpt-5.6-luna 7:1 (-37%), search_web 6:2 (-40%),
     #                             maps geo suite on par, no fabrication
-    # PERFORMANCE: gpt-6.1-sol  ($2/$10, cache read 0.05x) — terra has no GPT-6 successor
+    # PERFORMANCE: gpt-6.1-sol  ($2/$10, cache read 0.05x)
     # ULTRA:       gpt-6-astra  ($10/$50) — top of the family; ULTRA saw no traffic in 14 days
-    # TIERx:       gpt-6-luna   (reserved slots, default to ECO)
+    # TIER1:       gpt-6.1-terra ($1/$5, cache read 0.05x) — trial slot: half of Sol, ~1.5x faster, ≈ quality in a
+    #                             2026-11-13 eval; selected only by an explicit tier1 override in a user's config
+    # TIER2/3:     gpt-6-luna   (reserved slots, default to ECO)
     # gpt-6-luna reasons when `reasoning` is omitted, so a no-thinking caller gets effort "none"
     # (_THINKING_OFF_EFFORT) — the default-reasoning latency that kept gpt-5.6-luna off ECO.
     # Instant rollback without a redeploy: OPENAI_TIER_OVERRIDES / `make openai-rollback`.
@@ -112,7 +114,7 @@ class OpenAIAdapter(LLMPort):
         PerformanceTier.BALANCED:    "gpt-6-luna",
         PerformanceTier.PERFORMANCE: "gpt-6.1-sol",
         PerformanceTier.ULTRA:       "gpt-6-astra",
-        PerformanceTier.TIER1:       "gpt-6-luna",
+        PerformanceTier.TIER1:       "gpt-6.1-terra",
         PerformanceTier.TIER2:       "gpt-6-luna",
         PerformanceTier.TIER3:       "gpt-6-luna",
     }
