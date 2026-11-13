@@ -3,7 +3,7 @@ Unit tests for EmailSearchAgent.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -89,6 +89,10 @@ def mock_prompt_builder():
 def mock_search_service():
     svc = AsyncMock(spec=EmailSearchService)
     svc.vector_search.return_value = SEARCH_RESULT
+    # reviewer (email fresh headers): search_emails now also reads the index watermark and lists live headers;
+    # an indexed mailbox with nothing newer keeps these tests on the index path they check
+    svc.index_watermark.return_value = datetime(2026, 1, 16, tzinfo=timezone.utc)
+    svc.list_headers.return_value = ([], False)
     return svc
 
 
@@ -137,7 +141,13 @@ class TestExecuteSuccess:
     async def test_result_contains_search_json(self, agent):
         msg = _make_message()
         response = await agent.execute(msg)
-        assert response.result == SEARCH_RESULT
+        # reviewer (email fresh headers): the index hits now sit in one object beside the live lists; they pass
+        # through unchanged and nothing else is added when the live lists are empty
+        result = json.loads(response.result)
+        assert result["count"] == 2
+        assert result["emails"] == json.loads(SEARCH_RESULT)["emails"]
+        assert result["by_key"] == [] and result["notes"] == []
+        assert result["fresh"]["emails"] == []
 
     async def test_metadata_contains_queries(self, agent):
         msg = _make_message()
