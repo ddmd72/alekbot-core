@@ -40,9 +40,9 @@ from ..domain.document_presentation import present_text
 from ..domain.document_read import OPEN_MARGIN_S, ReadOutcome, ReadStatus
 from ..domain.email import EmailMetadata
 from ..domain.email_open_texts import (
-    EMAIL_NOT_CONNECTED_NOTE,
     EMAIL_OPEN_NOT_CONFIGURED_NOTE,
-    MAILBOX_UNAVAILABLE_NOTE,
+    LIVE_NOTE_NOT_CONNECTED,
+    LIVE_NOTE_UNAVAILABLE,
 )
 from ..domain.exceptions import EmailNotConnected
 from ..domain.email_ref import EMAIL_FILE_CONTEXT_KEY, parse_email_ref
@@ -350,7 +350,7 @@ class EmailSearchAgent(BaseAgent):
             )
 
         result = self._assemble_result(
-            vector_res, fresh_res if run_fresh else None, run_fresh, fresh_after, exact_keys, key_res
+            vector_res, fresh_res if run_fresh else None, run_fresh, fresh_after, fresh_before, exact_keys, key_res
         )
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -448,10 +448,11 @@ class EmailSearchAgent(BaseAgent):
 
     @staticmethod
     def _note_for(exc: BaseException) -> str:
+        """The note KIND of a failed live listing (the formatter owns the text)."""
         if isinstance(exc, EmailNotConnected):
-            return EMAIL_NOT_CONNECTED_NOTE
+            return LIVE_NOTE_NOT_CONNECTED
         logger.warning(f"📬 EmailSearchAgent: live mailbox listing failed: {exc}", exc_info=exc)
-        return MAILBOX_UNAVAILABLE_NOTE
+        return LIVE_NOTE_UNAVAILABLE
 
     def _assemble_result(
         self,
@@ -459,6 +460,7 @@ class EmailSearchAgent(BaseAgent):
         fresh_res: Any,
         run_fresh: bool,
         fresh_after: Optional[datetime],
+        fresh_before: Optional[datetime],
         exact_keys: List[str],
         key_res: List[Any],
     ) -> str:
@@ -492,6 +494,8 @@ class EmailSearchAgent(BaseAgent):
                         seen.add(m.email_id)
                 fresh = {
                     "since": self._local_stamp(fresh_after) if fresh_after else None,
+                    "until": self._local_stamp(fresh_before) if fresh_before else None,
+                    "listed": len(metas),
                     "tz": self._tz_name,
                     "truncated": bool(more),
                     "emails": entries,
@@ -508,7 +512,7 @@ class EmailSearchAgent(BaseAgent):
                 if m.email_id not in seen:
                     entries.append(self._header_entry(m))
                     seen.add(m.email_id)
-            by_key.append({"key": key, "truncated": bool(more), "emails": entries})
+            by_key.append({"key": key, "truncated": bool(more), "listed": len(metas), "emails": entries})
 
         empty = not index_emails and not notes and not (fresh and fresh["emails"]) \
             and not any(g["emails"] for g in by_key)

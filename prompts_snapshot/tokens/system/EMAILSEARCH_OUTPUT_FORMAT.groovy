@@ -42,7 +42,7 @@ field_guidelines {
     ]
 
     alternative_query: [
-        "Orthogonal aspect of the same subject — counterparty, amount, reference, outcome, or category.",
+        "Orthogonal aspect of the same subject — counterparty, amount, outcome, or category.",
         "Zero verbatim overlap with primary_query.",
         "In ENGLISH. Max 60 characters."
     ]

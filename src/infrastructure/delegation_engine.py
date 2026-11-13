@@ -20,6 +20,12 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 from ..domain.agent import AgentStatus, DeliveryItem
+from ..domain.email_open_texts import (
+    LIVE_MAILBOX_NOT_CONNECTED_NOTE,
+    LIVE_MAILBOX_UNAVAILABLE_NOTE,
+    LIVE_NOTE_NOT_CONNECTED,
+    LIVE_NOTE_UNAVAILABLE,
+)
 from ..domain.file_ref import FileRefKind
 from ..domain.messaging import SmartResponse
 from ..domain.untrusted_text import EXTERNAL_REMINDER, neutralize_system_tag, wrap_untrusted
@@ -154,6 +160,12 @@ def _email_nonce() -> str:
     return secrets.token_hex(8)
 
 
+_LIVE_NOTE_TEXTS = {
+    LIVE_NOTE_NOT_CONNECTED: LIVE_MAILBOX_NOT_CONNECTED_NOTE,
+    LIVE_NOTE_UNAVAILABLE: LIVE_MAILBOX_UNAVAILABLE_NOTE,
+}
+
+
 def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_nonce) -> str:
     """Compact text representation of email search results for the LLM.
 
@@ -177,9 +189,18 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
     if not emails and fresh is None and not by_key and not notes:
         return result
 
-    inside: List[str] = []
-    outside_before: List[str] = []  # the tool's introducing lines, ahead of the one wrapper
-    outside_after: List[str] = []   # the tool's closing lines, after it
+    # Sections in print order. Each list's sender/subject/snippet lines sit in its OWN wrapper (a fresh nonce per
+    # block); every statement of the tool (intro, status, "none", truncation, notes, hints) stays outside.
+    body: List[str] = []
+    wrappers = 0
+    header_lines_printed = 0
+    ids_printed = 0
+    index_has_attachments = False
+
+    def wrapped(lines: List[str]) -> str:
+        nonlocal wrappers
+        wrappers += 1
+        return wrap_untrusted("\n".join(lines), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label="")
 
     def header_lines(items: List[Dict[str, Any]]) -> List[str]:
         out: List[str] = []
@@ -192,51 +213,82 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
         return out
 
     if emails:
-        outside_before.append(f"Found {len(emails)} email(s) in the index:")
+        index_lines: List[str] = []
         for e in emails:
             line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
             atts = e.get("attachments") or []
             if atts:
                 line += f" | 📎 {', '.join(atts)}"
-            inside.append(line)
+                index_has_attachments = True
+            index_lines.append(line)
             text = e.get("text") or ""
             if text:
-                inside.append(f"  → {text[:150]}")
+                index_lines.append(f"  → {text[:150]}")
+        ids_printed += len(emails)
+        body.append(f"Found {len(emails)} email(s) in the index:")
+        body.append(wrapped(index_lines))
+    elif fresh is not None or by_key:
+        body.append("Nothing in the index matched.")
 
     if fresh is not None:
-        since = fresh.get("since")
+        since, until, tz = fresh.get("since"), fresh.get("until"), fresh.get("tz", "UTC")
         fresh_emails = fresh.get("emails") or []
-        if since:
-            outside_before.append(f"Mail not yet in the index, newest first since {since} ({fresh.get('tz', 'UTC')}), "
-                                 "headers only (sender, subject, first line):")
+        listed = fresh.get("listed", len(fresh_emails))
+        if listed == 0:
+            body.append(f"No mail in the live mailbox since {since}." if since
+                        else "The live mailbox listing returned no mail.")
+        elif not fresh_emails:
+            body.append(f"Recent mail since {since}: all of it is already listed above." if since
+                        else "Recent mail: all of it is already listed above.")
         else:
-            outside_before.append("Newest mail, headers only (sender, subject, first line); the index has never "
-                                 "been built:")
-        if fresh_emails:
-            inside.extend(header_lines(fresh_emails))
-        else:
-            outside_after.append("No mail newer than the index.")
+            if since:
+                window = f"since {since}" + (f" until {until}" if until else "")
+                body.append(f"Recent mail from the live mailbox {window} ({tz}), newest first, headers only "
+                            "(sender, subject, first line); promotions, spam and trash are not listed:")
+            else:
+                body.append("Recent mail from the live mailbox, newest first, headers only (sender, subject, first "
+                            "line); promotions, spam and trash are not listed; the email index has never been built:")
+            body.append(wrapped(header_lines(fresh_emails)))
+            header_lines_printed += len(fresh_emails)
+            ids_printed += len(fresh_emails)
         if fresh.get("truncated"):
-            outside_after.append("Only the newest 100 are listed; older mail outside the index is not shown.")
+            body.append("Only the newest 100 were fetched; older mail in this window is not listed.")
 
     for group in by_key:
-        inside.append(f"Matches for \"{group.get('key', '')}\" (any date):")
+        heading = f"Matches for \"{group.get('key', '')}\" (any date):"
         group_emails = group.get("emails") or []
-        inside.extend(header_lines(group_emails) if group_emails else ["none"])
+        listed = group.get("listed", len(group_emails))
+        if listed == 0:
+            body.append(f"{heading} none.")
+        elif not group_emails:
+            body.append(f"{heading} all already listed above.")
+        else:
+            body.append(heading)
+            body.append(wrapped(header_lines(group_emails)))
+            header_lines_printed += len(group_emails)
+            ids_printed += len(group_emails)
         if group.get("truncated"):
-            inside.append("(more exist; only 20 shown)")
+            body.append("(more exist than the 20 fetched)")
 
-    parts: List[str] = [EXTERNAL_REMINDER]
-    parts.extend(outside_before)
-    if inside:
-        parts.append(wrap_untrusted("\n".join(inside), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label=""))
-    parts.extend(outside_after)
-    parts.extend(f"Tool note: {n}" for n in notes)
-    parts.append(
-        "\nTo read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}"
-        "\nTo read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", \"name\": \"<filename>\"}"
-        "\nA header line is only the sender and subject: read the body with get_email_details before relying on it."
-    )
+    parts: List[str] = []
+    if wrappers:
+        parts.append(EXTERNAL_REMINDER)
+    parts.extend(body)
+    for kind in notes:
+        text = _LIVE_NOTE_TEXTS.get(kind)
+        if text:
+            parts.append(text)
+    hints: List[str] = []
+    if ids_printed:
+        hints.append("To read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}")
+    if index_has_attachments:
+        hints.append("To read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", "
+                     "\"name\": \"<filename>\"}")
+    if header_lines_printed:
+        hints.append("A header line has no body and no attachment names: read the email with get_email_details "
+                     "before relying on it or opening its attachments.")
+    if hints:
+        parts.append("\n" + "\n".join(hints))
     return "\n".join(parts)
 
 

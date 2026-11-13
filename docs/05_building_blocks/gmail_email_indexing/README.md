@@ -183,8 +183,11 @@ Mirrors the `SearchEnrichmentService` RRF pattern for facts:
 The index holds a filtered subset of the mail (the classifier keeps factual mail) and lags by up to a day, so the same
 intent adds two live, header-only lists, decided by code (`EmailSearchAgent._handle_search_emails`; no new LLM call;
 `decisions/email_search_fresh_headers.md`). Each header is sender, subject, date (the user's local time) and snippet;
-the body is read with `get_email_details`. Both lists are appended to the index results, and an id already shown is not
-repeated. They read the mailbox through `EmailProviderPort.list_headers`: newest first, never promotions, spam or trash,
+the body and the attachment names come with `get_email_details`. Both lists are appended to the index results, and an id
+already shown is not repeated. The agent returns one JSON object (`emails`, `fresh` with `since`, `until`, `listed`,
+`truncated`; `by_key` with `listed` per key; `notes` as kinds). `_format_email_search_compact` renders one section per
+list: the tool's intro and status lines outside, the list's own sender/subject/snippet lines in their own
+`wrap_untrusted` block; a note kind maps to its text there, and the follow-up hints print only when they apply. They read the mailbox through `EmailProviderPort.list_headers`: newest first, never promotions, spam or trash,
 bounds as epoch seconds.
 
 - **Fresh headers.** A listing of mail newer than the index, cap 100. The window opens at the older of the index
@@ -195,8 +198,8 @@ bounds as epoch seconds.
 - **Exact keys.** Up to 3 identifiers the extraction copied from the request (order, case, invoice, tracking numbers,
   addresses; at least 3 characters, deduplicated) are matched literally as a phrase across the whole mailbox at any
   date, cap 20 per key.
-- **Failures.** A failing live listing never fails the search: not connected adds the reconnect note, any other error
-  logs a warning and adds "the mailbox did not answer"; the index results still return. A failing index search fails
+- **Failures.** A failing live listing never fails the search: not connected adds the `not_connected` note kind, any
+  other error logs a warning and adds `unavailable`; the index results still return. A failing index search fails
   the search as before.
 
 ### 6.3 Live Access (`get_email_details`, `open_email_attachment`)

@@ -9,6 +9,8 @@
 Inside the same `search_emails` intent, code (not Smart) appends two live, header-only lists to the index results:
 mail newer than the index (newest first, cap 100) and literal matches of up to 3 identifiers the extraction copied from
 the request (any date, cap 20 per key). Promotions, spam and trash are never listed. No new LLM call.
+The result renders one section per list, each with its own untrusted wrapper and the tool's statements outside; header
+lines carry no body and no attachment names, and the result says so.
 
 ## Why
 

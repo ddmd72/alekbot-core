@@ -16,7 +16,7 @@ steps: [
 
     "2. PRIMARY: Compose a phrase describing what the indexer's extracted fact would say about this subject — the captured event or information, not the email framing. Example: for a flight booking, think 'flight booked to Berlin departure date airline', not 'email about booking'.",
 
-    "3. ALTERNATIVE: Choose an orthogonal angle the indexer might have used — a different aspect of the same event (counterparty, amount, reference number, outcome). Zero verbatim overlap with primary.",
+    "3. ALTERNATIVE: Choose an orthogonal angle the indexer might have used — a different aspect of the same event (counterparty, amount, outcome). Zero verbatim overlap with primary.",
 
     "4. TAGS: Pick 3–5 short English terms (1–2 words each) that an indexer would assign as category tags for this type of fact. Must not repeat words already in primary_query or alternative_query. Minimum 3, maximum 5.",
 
