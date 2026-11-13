@@ -236,7 +236,9 @@ class ClaudeAdapter(LLMPort):
     # (same as GrokAdapter.TERMINAL_TOOL_NAME).
     DELIVER_RESPONSE_TOOL_NAME = "deliver_response"
 
-    _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")
+    # Fable thinks always (adaptive, cannot be turned off) and takes `output_config.effort`; without
+    # `claude-fable` here the caller's effort was silently dropped for it.
+    _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5", "claude-fable")
 
     # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).
     # Haiku 4.5 only supports the legacy web_search_20250305 (no dynamic filtering, no code_execution).
