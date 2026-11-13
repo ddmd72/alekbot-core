@@ -262,6 +262,8 @@ _EXPECTED_CACHE: dict[str, dict[str, float]] = {
     # Current Gemini generation (3.x) caches at 10% of input; it was 25% before.
     # The preview/legacy entries below keep their own expectations.
     "gemini-":         {"cache_read": 0.10},
+    # Embeddings have no cache legs; the longer prefix beats "gemini-" so the row is not judged by chat expectations.
+    "gemini-embedding-": {},
     "models/gemini-":  {"cache_read": 0.25},
     "deep-research-":  {"cache_read": 0.25},
     # GPT-5.6 bills cache WRITES at 1.25x uncached input (the 5.4/5.5 families do not).
