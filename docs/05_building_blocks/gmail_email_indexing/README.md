@@ -281,6 +281,7 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
 - `src/domain/email_attachment.py`, `src/domain/email_attachment_policy.py`, `src/services/email_attachment_text_service.py`: attachment text for the email index v2 (noise filter, the readable kinds, the input cut, one outcome per listed file). Email index v2, not wired yet (slice 6).
+- `src/domain/email_card_source.py`, `email_card_prompt.py`, `email_card_reply.py`, `email_card_document.py`, `src/ports/email_card_writer_port.py`, `src/agents/email_card_agent.py`, `src/composition/email_card_runner.py`, `src/services/email_card_service.py`: the email index v2 card writer (one Flash-Lite call per mail, then build and embed). Not wired yet (slice 6). `EmailFullContent.recipients` carries the To and Cc addresses (the "owner is a direct recipient" input).
 
 ---
 

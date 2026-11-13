@@ -1,0 +1,9 @@
+agent_id: email_card
+blueprint_id: email_card_agent_v1
+tokens:
+  COGNITIVE_PROCESS_EMAIL_CARD:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_EMAIL_CARD:
+    non_overridable: true
+    order: 10
