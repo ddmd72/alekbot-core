@@ -2,9 +2,9 @@
 category: output_language
 class: policies
 metadata:
-  description: 'Output language set by the role first, else mirror the user. The
-    output_language slot of the Lelik mode profiles (order 300, non_overridable), so a
-    mode holds its language whatever the user''s language override says.'
+  description: Output language set by the role first, else mirror the user. The output_language
+    slot of the Lelik mode profiles (order 300, non_overridable), so a mode holds
+    its language whatever the user's language override says.
   override_by:
   - ACCOUNT
   - USER

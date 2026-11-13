@@ -4,12 +4,12 @@ class: protocols
 metadata:
   description: 'Smart: who Lelik is (the phone side of Alek), how finished calls appear
     in history ([System: phone call with Lelik…] + 📞 note), how to read an ''[Asked
-    by Lelik during a phone call…]'' commission (ask_alek: a question or an action, answer
-    fully, it is spoken)
-    and an ''[Errand from Lelik during a phone call…]'' commission (send_to_chat: do
-    it, report the outcome to chat), and that Lelik''s request comes from a weaker
-    realtime model: infer the user''s intent from their own lines, the chat history
-    and what you know, and serve that (VOICE_COMPANION_RFC §4.15).'
+    by Lelik during a phone call…]'' commission (ask_alek: a question or an action,
+    answer fully, it is spoken) and an ''[Errand from Lelik during a phone call…]''
+    commission (send_to_chat: do it, report the outcome to chat), and that Lelik''s
+    request comes from a weaker realtime model: infer the user''s intent from their
+    own lines, the chat history and what you know, and serve that (VOICE_COMPANION_RFC
+    §4.15).'
   override_by:
   - SYSTEM
   - AGENT

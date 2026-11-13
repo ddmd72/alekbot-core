@@ -2,12 +2,12 @@
 category: mcp_drive
 class: mcp_texts
 metadata:
-  description: Drive MCP connector — the result lines by key (status and what to
-    do, every reading line R_*, the withheld-media lines W_*, the too-long route,
-    the next-page line, the refusal line and its guidance, the size-guard line,
-    the one-time download link line LINK, the paging lines BATCH_* and SEARCH_MORE*),
-    formatted by code with the chat constants' placeholders (DRIVE_MCP_CONNECTOR_RFC
-    §5.2, §5.5, §6.2, §7.7, §8, §14.4). A draft, tuned live; no profile references it.
+  description: Drive MCP connector — the result lines by key (status and what to do,
+    every reading line R_*, the withheld-media lines W_*, the too-long route, the
+    next-page line, the refusal line and its guidance, the size-guard line, the one-time
+    download link line LINK, the paging lines BATCH_* and SEARCH_MORE*), formatted
+    by code with the chat constants' placeholders (DRIVE_MCP_CONNECTOR_RFC §5.2, §5.5,
+    §6.2, §7.7, §8, §14.4). A draft, tuned live; no profile references it.
   override_by:
   - SYSTEM
   - AGENT

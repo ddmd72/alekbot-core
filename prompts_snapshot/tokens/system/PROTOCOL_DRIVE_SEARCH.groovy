@@ -6,8 +6,8 @@ metadata:
     result, search again only when, open, change); the former drive search skill's
     specialist rules and the Step 1 rules, rewritten as one procedure (DRIVE_SPECIALIST_RFC
     §5.2, §5.7, §2.3.11; owner 2026-10-28); answer from content (the passages ladder,
-    the last-resort opens, the value rule by capture; USER_DRIVE_INDEXING_RFC §28.2, §28.3
-    A2, A15, A18, OQ-A2); the open bound and pages (§29))
+    the last-resort opens, the value rule by capture; USER_DRIVE_INDEXING_RFC §28.2,
+    §28.3 A2, A15, A18, OQ-A2); the open bound and pages (§29))
   override_by:
   - SYSTEM
   - AGENT
