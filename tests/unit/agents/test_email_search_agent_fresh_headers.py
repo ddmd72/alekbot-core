@@ -10,7 +10,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.email_search_agent import EmailSearchAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.email import EmailMetadata
-from src.domain.email_open_texts import EMAIL_NOT_CONNECTED_NOTE, MAILBOX_UNAVAILABLE_NOTE
+from src.domain.email_open_texts import LIVE_NOTE_NOT_CONNECTED, LIVE_NOTE_UNAVAILABLE
 from src.domain.exceptions import EmailNotConnected
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, LLMResponse, ProviderCapabilities
@@ -203,11 +203,11 @@ async def test_result_carries_index_fresh_and_key_groups():
 
     assert body["count"] == 1 and body["emails"][0]["email_id"] == "e1"
     assert body["fresh"] == {
-        "since": "2026-03-03 00:00", "tz": "America/New_York", "truncated": True,
+        "since": "2026-03-03 00:00", "until": None, "listed": 1, "tz": "America/New_York", "truncated": True,
         "emails": [{"email_id": "m1", "from": "shop@example.com", "subject": "Flight booking AAA→BBB",
                     "date": "2026-03-04 04:00", "snippet": "first line"}],
     }
-    assert body["by_key"] == [{"key": "FA-0137", "truncated": False, "emails": [
+    assert body["by_key"] == [{"key": "FA-0137", "truncated": False, "listed": 1, "emails": [
         {"email_id": "m2", "from": "shop@example.com", "subject": "Invoice FA-0137",
          "date": "2026-03-04 04:00", "snippet": "first line"}]}]
     assert body["notes"] == []
@@ -233,7 +233,7 @@ async def test_not_connected_adds_the_note_and_keeps_the_index_results():
 
     assert body["emails"][0]["email_id"] == "e1"
     assert body["fresh"] is None and body["by_key"] == []
-    assert body["notes"] == [EMAIL_NOT_CONNECTED_NOTE]
+    assert body["notes"] == [LIVE_NOTE_NOT_CONNECTED]
 
 
 async def test_any_other_listing_failure_is_a_note_not_a_failure():
@@ -243,7 +243,7 @@ async def test_any_other_listing_failure_is_a_note_not_a_failure():
     _, body = await _search(_agent(service, {}))
 
     assert body["count"] == 1
-    assert body["notes"] == [MAILBOX_UNAVAILABLE_NOTE]
+    assert body["notes"] == [LIVE_NOTE_UNAVAILABLE]
 
 
 async def test_a_failed_key_listing_leaves_the_other_groups():
@@ -254,7 +254,7 @@ async def test_a_failed_key_listing_leaves_the_other_groups():
     _, body = await _search(_agent(service, {"exact_keys": ["FA-0137", "HW-55812"]}))
 
     assert [g["key"] for g in body["by_key"]] == ["HW-55812"]
-    assert body["notes"] == [MAILBOX_UNAVAILABLE_NOTE]
+    assert body["notes"] == [LIVE_NOTE_UNAVAILABLE]
 
 
 async def test_a_vector_failure_still_fails_the_search():
@@ -275,7 +275,7 @@ async def test_everything_empty_without_notes_is_the_plain_message():
 async def test_an_empty_fresh_listing_with_an_index_hit_still_reports_the_listing():
     service = FakeService(index=[_hit("e1")], watermark=None)
     _, body = await _search(_agent(service, {}))
-    assert body["fresh"] == {"since": None, "tz": "UTC", "truncated": False, "emails": []}
+    assert body["fresh"] == {"since": None, "until": None, "listed": 0, "tz": "UTC", "truncated": False, "emails": []}
 
 
 # ----------------------------------------------------------------- history
