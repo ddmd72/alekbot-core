@@ -213,7 +213,7 @@ class ClaudeAdapter(LLMPort):
         PerformanceTier.ECO:         "claude-haiku-5-5",
         PerformanceTier.BALANCED:    "claude-sonnet-5-5",
         PerformanceTier.PERFORMANCE: "claude-opus-5-5",
-        PerformanceTier.ULTRA:       "claude-fable-5-1",
+        PerformanceTier.ULTRA:       "claude-fable-5-2",
         PerformanceTier.TIER1:       "claude-haiku-5-5",
         PerformanceTier.TIER2:       "claude-haiku-5-5",
         PerformanceTier.TIER3:       "claude-haiku-5-5",
@@ -254,7 +254,8 @@ class ClaudeAdapter(LLMPort):
 
     # Models that reject forced tool use (`tool_choice` any/tool → 400). For these a forced
     # request degrades to `auto`, the provider's documented replacement.
-    _NO_FORCED_TOOL_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1")
+    _NO_FORCED_TOOL_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5",
+                              "claude-fable-5-1", "claude-fable-5-2")
 
     # Same-provider model fallback: a brand-new model that flakes on a transient/capacity
     # error (529/503/5xx) retries once on the previous Sonnet before the request propagates
@@ -614,7 +615,7 @@ class ClaudeAdapter(LLMPort):
             params["thinking"] = thinking_param
         if force_tool_use:
             # Forced tool use is incompatible with thinking, and rejected outright by the
-            # 5.5 / Fable 5.1 generation — `auto` is the documented fallback for both.
+            # 5.5 / Fable 5.x generation — `auto` is the documented fallback for both.
             forced_ok = not thinking_param and not any(
                 m in model_name for m in self._NO_FORCED_TOOL_MODELS
             )

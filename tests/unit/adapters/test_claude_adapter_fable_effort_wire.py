@@ -55,3 +55,18 @@ async def test_no_effort_never_sends_a_thinking_off_switch():
     assert "effort" not in (sent.get("output_config") or {})
     for param in ("temperature", "top_p", "top_k"):
         assert param not in sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", [None, "medium"])
+async def test_forced_tool_request_degrades_to_auto_with_or_without_effort(effort):
+    """5.2 rejects tool_choice any/tool; with no thinking param sent the forced path must still
+    become `auto`, not stay `any`."""
+    sent = await _sent(
+        thinking=effort,
+        tools=[{"name": "search_memory", "description": "d",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}],
+        force_tool_use=True,
+    )
+
+    assert sent["tool_choice"] == {"type": "auto"}
