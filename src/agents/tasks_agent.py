@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
+from ..domain.llm import FinishReason
 from ..domain.task import (
     RecurrencePattern,
     RecurrenceRange,
@@ -474,6 +475,20 @@ class TasksAgent(BaseAgent):
                 break
 
             if not response.tool_calls:
+                if response.finish_reason is FinishReason.MAX_TOKENS:
+                    # Cut text is not an answer: a list ending mid-item reads as the whole list.
+                    logger.warning(f"📋 TasksAgent: turn {turn + 1} hit the output length limit")
+                    if any(part.tool_response for m in messages for part in m.parts):
+                        # A tool already ran (a task may be created): never report failure, the
+                        # orchestrator could repeat the work. The tool results are the answer.
+                        final_text = self._facts_answer(messages, "the summary was cut off at the output length limit")
+                        answered = True
+                        break
+                    return AgentResponse.failure(
+                        task_id=message.task_id,
+                        agent_id=self.agent_id,
+                        error="TasksAgent answer was cut off at the output length limit",
+                    )
                 final_text = response.text or ""
                 answered = True
                 break
@@ -556,6 +571,9 @@ class TasksAgent(BaseAgent):
             )
             try:
                 response = await asyncio.wait_for(self._call_llm(request, turn=turn), timeout=left)
+                if response.finish_reason is FinishReason.MAX_TOKENS:
+                    logger.warning("📋 TasksAgent: the final answer turn hit the output length limit, returning the tool results")
+                    return self._facts_answer(messages, "the summary was cut off at the output length limit")
                 if response.text:
                     return response.text
                 logger.warning("📋 TasksAgent: the final answer turn returned no text, returning the tool results")
@@ -564,13 +582,13 @@ class TasksAgent(BaseAgent):
         return self._facts_answer(messages)
 
     @staticmethod
-    def _facts_answer(messages: List[Message]) -> str:
+    def _facts_answer(messages: List[Message], why: str = "the task lookup reached its time limit before a summary was written") -> str:
         """The tool results of the run, latest last, as a code-written note for the orchestrator."""
         results = [part.tool_response for m in messages for part in m.parts if part.tool_response]
         facts = json.dumps(results, ensure_ascii=False, default=str)
         if len(facts) > _FACTS_MAX_CHARS:
             facts = facts[:_FACTS_MAX_CHARS] + " …(cut)"
-        return f"Tool note: the task lookup reached its time limit before a summary was written. Tool results: {facts}"
+        return f"Tool note: {why}. Tool results: {facts}"
 
     # ------------------------------------------------------------------
     # Tool execution
