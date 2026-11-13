@@ -281,6 +281,7 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
 - `src/domain/email_attachment.py`, `src/domain/email_attachment_policy.py`, `src/services/email_attachment_text_service.py`: attachment text for the email index v2 (noise filter, the readable kinds, the input cut, one outcome per listed file). Email index v2, not wired yet (slice 6).
+- Email search v2, offline only, not wired (slice 8): `src/domain/email_search_*.py` (query, time, merge, fold, texts, render, params), `src/ports/email_card_index.py` with `src/adapters/in_memory_email_card_index.py`, `src/services/email_card_search_service.py`, and the snapshot harness `scripts/validation/email_eval/search_v2_snapshot.py`.
 
 ---
 
