@@ -109,7 +109,12 @@ class TestInstrumentLlmSdks:
 
     @pytest.fixture
     def fake_instrumentor(self, monkeypatch):
-        """Stand in for GoogleGenAiSdkInstrumentor, imported inside the function."""
+        """Stand in for GoogleGenAiSdkInstrumentor, imported inside the function.
+
+        Pins the installed google-genai to a 2.x the instrumentor supports: on 3.x it is skipped on purpose
+        (TestGoogleGenaiInstrumentationDecision), and these tests are about wiring, not the installed version.
+        """
+        monkeypatch.setattr(telem, "_installed_google_genai_version", lambda: "2.17.0")
         instance = MagicMock()
         module = MagicMock()
         module.GoogleGenAiSdkInstrumentor.return_value = instance
@@ -160,6 +165,18 @@ class TestInstrumentLlmSdks:
         # Tracing is diagnostic, never load-bearing: the rest still gets wired.
         fake_logfire.instrument_openai.assert_called_once_with(version="latest")
         assert fake_instrumentor.instrument.call_count == 1
+
+    def test_on_google_genai_3_the_other_two_sdks_are_still_instrumented(
+            self, monkeypatch, fake_logfire, fake_instrumentor):
+        monkeypatch.setattr(telem, "_installed_google_genai_version", lambda: "3.3.0")
+
+        telem._instrument_llm_sdks(fake_logfire)
+
+        # Skipping Gemini on 3.x turns off only Gemini spans; Anthropic and OpenAI keep their semconv wiring.
+        fake_logfire.instrument_anthropic.assert_called_once_with(version="latest")
+        fake_logfire.instrument_openai.assert_called_once_with(version="latest")
+        fake_logfire.instrument_google_genai.assert_not_called()
+        assert fake_instrumentor.instrument.call_count == 0
 
 
 class TestInitLogfireContentGate:
@@ -235,3 +252,36 @@ class TestGoogleGenAiContentMode:
 
     def test_default_is_not_a_boolean_string(self, wired):
         assert wired.lower() not in {"true", "false", "1", "0", "yes", "no"}
+
+
+class TestGoogleGenaiInstrumentationDecision:
+    """The vendor instrumentor supports google-genai <3 only: on 3.x it patches nothing, so it is not called."""
+
+    @pytest.mark.parametrize("version,expected", [("2.17.0", True), ("2.34.0", True), ("3.0.0", False),
+                                                  ("3.3.0", False), ("4.1.0", False), (None, True), ("dev", True)])
+    def test_the_decision_follows_the_major_version(self, version, expected):
+        assert telem.google_genai_instrumentation_decision(version) is expected
+
+    @pytest.fixture
+    def instrumentor(self, monkeypatch):
+        module = MagicMock()
+        monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.google_genai", module)
+        return module.GoogleGenAiSdkInstrumentor.return_value
+
+    def _run(self, monkeypatch, version):
+        monkeypatch.setattr(telem, "_installed_google_genai_version", lambda: version)
+        telem._instrument_llm_sdks(MagicMock())
+
+    def test_on_sdk_3_the_instrumentor_is_not_called_and_one_warning_names_the_reason(
+            self, monkeypatch, instrumentor, caplog):
+        with caplog.at_level("WARNING"):
+            self._run(monkeypatch, "3.3.0")
+        instrumentor.instrument.assert_not_called()
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings == [telem.GENAI_SPANS_OFF_WARNING]
+
+    def test_on_sdk_2_the_instrumentor_runs_without_a_warning(self, monkeypatch, instrumentor, caplog):
+        with caplog.at_level("WARNING"):
+            self._run(monkeypatch, "2.17.0")
+        instrumentor.instrument.assert_called_once_with()
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]

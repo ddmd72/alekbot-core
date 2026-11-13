@@ -1,9 +1,9 @@
 import asyncio
 import base64
 from typing import List, Any, Optional, Tuple, cast
-import httpx
 from google import genai
 from google.genai import types, errors as genai_errors
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
 from ..ports.llm_port import (
     LLMPort,
     LLMResponse,
@@ -108,7 +108,8 @@ class GeminiAdapter(LLMPort):
     )
 
     def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
+        # SDK 3.x defaults the Developer API to v1; staying on v1beta is deliberate, a v1 move is a separate decision.
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version=GENAI_API_VERSION))
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
         model_name = request.model_name
@@ -260,12 +261,12 @@ class GeminiAdapter(LLMPort):
                 # 500/502/504 — distinct from 503 maintenance; counted separately by breaker.
                 raise LLMServerError(str(e), http_status=code) from e
             raise
-        except httpx.TimeoutException as e:
+        except TIMEOUT_ERRORS as e:
             # SDK-level transport timeout (when request.timeout is None and the
             # httpx client default fires). Map to LLMTimeoutError so the breaker
             # sees the same trigger type as our wait_for path.
             raise LLMTimeoutError(str(e)) from e
-        except httpx.NetworkError as e:
+        except NETWORK_ERRORS as e:
             # TCP/DNS/SSL handshake failure before any HTTP response.
             raise LLMNetworkError(str(e)) from e
         candidate_count = len(getattr(response, "candidates", []) or [])

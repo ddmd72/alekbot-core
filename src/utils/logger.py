@@ -132,9 +132,10 @@ def quiet_third_party_loggers() -> None:
 
     ``httpx``/``httpcore`` log each request at INFO with the full URL; for the Telegram
     Bot API that URL contains the bot token (``/bot<token>/sendMessage``), which would
-    land in Cloud Logging. WARNING keeps real failures visible and drops the URLs.
+    land in Cloud Logging. WARNING keeps real failures visible and drops the URLs. ``httpx2``/``httpcore2`` are the
+    same libraries under google-genai 3.x's HTTP client (an INFO line per embedding call otherwise).
     """
-    for name in ("slack_bolt", "slack_sdk", "websocket", "httpx", "httpcore"):
+    for name in ("slack_bolt", "slack_sdk", "websocket", "httpx", "httpcore", "httpx2", "httpcore2"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
 

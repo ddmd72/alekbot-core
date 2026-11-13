@@ -6,12 +6,12 @@ calling worker thread (and a drive tick) indefinitely. The client is built with 
 timeout reaches callers as LLMUnavailableError, the class a 503 already maps to: transient, retried
 here, and a systemic stop for the drive tick.
 
-Mock boundary: httpx.Client.send, under the real genai client (docs/how_to/ADAPTER_WIRE_TESTING.md),
+Mock boundary: httpx2.Client.send (SDK 3.x's client library), under the real genai client (docs/how_to/ADAPTER_WIRE_TESTING.md),
 so the SDK's own millisecond-to-second conversion is exercised too.
 """
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter

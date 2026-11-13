@@ -205,7 +205,7 @@ Map: agent → where it is documented (intents: `src/infrastructure/agent_manife
 ## Traps from the root CLAUDE.md
 
 - **Token accounting is per execution:** usage goes into the `TokenLedger` of `_execution_billing_scope()` (a `ContextVar`),
-  never onto the instance (per-user singletons, `asyncio.gather` fan-out); its `reset(token)` is load-bearing (`decisions/billing_execution_scoped_ledger.md`).
+  never onto the instance (per-user singletons, `asyncio.gather` fan-out); its `reset(token)` is load-bearing (`decisions/billing_execution_scoped_ledger.md`). The ContextVar and `ledger_scope` live in `domain/billing.py`; embeddings land on the same ledger (`decisions/billing_embeddings.md`).
 - **Consolidator input:** model parts serialize as `p.text`, never `p.full_text` (verbose + web search context); user parts as
   `p.consolidation_text or p.text` (`domain/consolidation_serialization.py`).
 - **Time:** `include_datetime=False` by default; time reaches the model via `_inject_timestamps()` in user messages and a UTC

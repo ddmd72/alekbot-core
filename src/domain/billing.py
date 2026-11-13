@@ -1,6 +1,8 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
-from typing import Dict, List, TYPE_CHECKING, Optional, Tuple
+from typing import Dict, Iterator, List, TYPE_CHECKING, Optional, Tuple
 from .language import LanguageCode
 from .audio_transcript import AudioTranscript
 from datetime import date, datetime, timezone
@@ -155,6 +157,10 @@ class BillingAccount(BaseModel):
 # cache_read: multiplier for cached input tokens vs full input price.
 # Claude: 0.1 (90% discount), OpenAI: 0.1 (90% discount), Gemini: 0.25 (75% discount).
 # cache_write: multiplier for cache creation tokens. Claude: 1.25 (25% surcharge), others: 0.
+# Models that embed rather than generate. They are billed on the same ledger as the LLMs but are not "the model that ran
+# the turn": labels built from the ledger's legs (the drive agent's log line and turn-limit alert) leave them out.
+EMBEDDING_MODELS = frozenset({"gemini-embedding-2"})
+
 _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     # --- Gemini ("latest" aliases resolve to current stable generation) ---
     # These two price a MOVING alias, so they go stale whenever Google promotes a new
@@ -258,6 +264,8 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "grok-4.6":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.25},
     "grok-4.5":                          {"input": 2.00,  "output": 6.00,  "cache_read": 0.15},
     "grok-4.3":                          {"input": 1.25,  "output": 2.50,  "cache_read": 0.16},
+    # Embeddings: input tokens only. $0.20 / 1M input tokens (provider price list). No output tokens, no cache legs.
+    "gemini-embedding-2":                {"input": 0.20,  "output": 0.0},
     # Retired IDs, retained for historical rows only — xAI now silently serves
     # grok-4.3 for these, so anything billed at these rates before 2026-08-14 is
     # under-reported ~5-6x. Do not route new traffic here.
@@ -654,6 +662,36 @@ class TokenLedger:
             return None
         return max(self.by_model, key=lambda m: self.by_model[m].cost(m))
 
+
+
+# ---------------------------------------------------------------------------
+# The ledger in scope: one TokenLedger per unit of work, held in a ContextVar
+# ---------------------------------------------------------------------------
+# ``asyncio.gather`` wraps each coroutine in a Task and a Task copies the context, so a ``set()`` inside one unit is
+# invisible to its siblings. ``None`` means "no unit in scope": accumulation is skipped (LLM) or counted as unbilled
+# (embeddings) rather than banked into a ledger nothing would flush. A nested scope REPLACES the current ledger for its
+# block and resets after, so an inner scope bills its own tokens and the outer unit bills the rest, never twice.
+_EXECUTION_LEDGER: ContextVar[Optional[TokenLedger]] = ContextVar("agent_execution_ledger", default=None)
+
+
+def current_ledger() -> Optional[TokenLedger]:
+    """The TokenLedger of the unit of work in scope, or None."""
+    return _EXECUTION_LEDGER.get()
+
+
+@contextmanager
+def ledger_scope(account_id: Optional[str]) -> Iterator[TokenLedger]:
+    """Open a fresh TokenLedger, current for the block, and reset on exit.
+
+    ``reset(token)`` is mandatory, not hygiene: a unit awaited *inline* by another (no intervening Task, so no context
+    copy) would otherwise leave its own ledger current and the outer unit's later usage and flush would land on it.
+    """
+    ledger = TokenLedger(account_id=account_id)
+    token = _EXECUTION_LEDGER.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _EXECUTION_LEDGER.reset(token)
 
 # ---------------------------------------------------------------------------
 # Audio transcription of an opened file (EXTERNAL_FILES_RFC §4.4 P21)

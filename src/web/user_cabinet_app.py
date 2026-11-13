@@ -51,6 +51,8 @@ from ..ports.task_queue import TaskQueue
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.recurrence_port import RecurrencePort
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..utils.logger import exc_brief, logger
 from .cabinet_auth import make_auth_required
 
@@ -98,6 +100,7 @@ def create_user_cabinet_blueprint(
     connectors: Optional[ConnectorRegistry] = None,
     drive_connections: Optional[DriveConnectionService] = None,
     drive_notes: Optional[DriveNoteService] = None,
+    quota_service: Optional[QuotaService] = None,
     drive_disconnect: Optional[DriveDisconnectService] = None,
 ) -> Blueprint:
     """
@@ -997,7 +1000,8 @@ def create_user_cabinet_blueprint(
             if not query:
                 return jsonify({"error": "query is required"}), 400
 
-            vector = await embedding_service.get_embedding(query, task_type="RETRIEVAL_QUERY")
+            async with billed_scope(quota_service, g.account_id, "cabinet fact search"):
+                vector = await embedding_service.get_embedding(query, task_type="RETRIEVAL_QUERY")
             facts = await fact_repo.search_facts(
                 query_vector=vector,
                 limit=50,

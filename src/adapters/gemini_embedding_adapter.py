@@ -1,10 +1,11 @@
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, TIMEOUT_ERRORS
 import asyncio
-import httpx
 import os
-from typing import List
+import time
+from typing import Any, List, Optional
 from ..domain.exceptions import (
     LLMClientError,
     LLMRateLimitError,
@@ -12,6 +13,7 @@ from ..domain.exceptions import (
     LLMUnavailableError,
     TRANSIENT_RETRY_TYPES,
 )
+from ..domain.billing import current_ledger
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY
 from ..ports.embedding_service import EmbeddingService
 from ..utils.logger import logger
@@ -41,6 +43,67 @@ _TASK_PREFIXES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Usage metering (decisions/billing_embeddings.md). SDK >= 3.3 maps the Developer API's usageMetadata onto
+# EmbedContentResponse.usage_metadata. A successful response adds its prompt tokens to the TokenLedger in scope (an agent
+# execution or a `billed_scope`); with none in scope they land on UNBILLED_EMBEDDING_TOKENS and are logged, never lost
+# silently. Retries are separate API calls: only the response that came back is metered.
+# ---------------------------------------------------------------------------
+_LOG_INTERVAL_S = 60.0
+
+
+class _RateLimitedLog:
+    """Lets a log line through at most once per interval (a hot path must not flood the log)."""
+
+    def __init__(self, interval_s: float = _LOG_INTERVAL_S):
+        self._interval_s = interval_s
+        self._last: Optional[float] = None
+
+    def due(self) -> bool:
+        now = time.monotonic()
+        if self._last is None or now - self._last >= self._interval_s:
+            self._last = now
+            return True
+        return False
+
+
+class UnbilledEmbeddingTokens:
+    """Process-level tally of embedding tokens spent with no billing scope in force: a visible gap, not a silent one.
+
+    Touched only from the event-loop thread with no await between read and write, so it needs no lock.
+    """
+
+    def __init__(self) -> None:
+        self.tokens = 0
+        self.calls = 0
+        self._log = _RateLimitedLog()
+
+    def add(self, tokens: int) -> None:
+        self.tokens += tokens
+        self.calls += 1
+        if self._log.due():
+            logger.info(f"[GeminiEmbedding] unbilled tokens={self.tokens} calls={self.calls} (no billing scope)")
+
+
+UNBILLED_EMBEDDING_TOKENS = UnbilledEmbeddingTokens()
+_NO_USAGE_LOG = _RateLimitedLog()
+
+
+def _record_embedding_usage(response: Any) -> None:
+    """Meter one successful embed_content response: its prompt tokens go to the ledger in scope, else the unbilled tally."""
+    usage = getattr(response, "usage_metadata", None)
+    tokens = getattr(usage, "prompt_token_count", None)
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
+        if _NO_USAGE_LOG.due():
+            logger.warning("[GeminiEmbedding] response carried no usage_metadata; tokens unbilled")
+        return
+    ledger = current_ledger()
+    if ledger is None:
+        UNBILLED_EMBEDDING_TOKENS.add(tokens)
+    else:
+        ledger.add(_MODEL, prompt_tokens=tokens)
+
+
 def _apply_task_prefix(text: str, task_type: str) -> str:
     """Translate legacy v1 task_type into a v2 instruction-prefixed input string."""
     template = _TASK_PREFIXES.get(task_type)
@@ -65,8 +128,10 @@ class GeminiEmbeddingAdapter(EmbeddingService):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required for GeminiEmbeddingAdapter")
         self.api_key = api_key
+        # SDK 3.x defaults the Developer API to v1; staying on v1beta is deliberate, a v1 move is a separate decision.
         self.client = genai.Client(api_key=api_key,
-                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS))
+                                   http_options=genai_types.HttpOptions(timeout=_HTTP_TIMEOUT_MS,
+                                                                        api_version=GENAI_API_VERSION))
         concurrency = int(os.getenv("GEMINI_EMBED_CONCURRENCY", str(_DEFAULT_CONCURRENCY)))
         self._semaphore = asyncio.Semaphore(concurrency)
         logger.info(f"[GeminiEmbedding] concurrency cap = {concurrency}, model = {_MODEL}")
@@ -104,13 +169,13 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     # path); propagates so the caller degrades gracefully.
                     raise LLMServerError(str(exc), http_status=code) from exc
                 raise
-            except httpx.TimeoutException as exc:
+            except TIMEOUT_ERRORS as exc:
                 # No round trip completed: the same transient class as a 503, so it is retried here and the
                 # drive tick stops as systemic (USER_DRIVE_INDEXING_RFC §8.2).
                 raise LLMUnavailableError(f"Embedding request timed out ({type(exc).__name__})") from exc
 
         async with self._semaphore:
-            return await retry_async(
+            response = await retry_async(
                 _call,
                 policy=DEFAULT_RETRY_POLICY,
                 retryable=tuple(TRANSIENT_RETRY_TYPES),
@@ -120,6 +185,8 @@ class GeminiEmbeddingAdapter(EmbeddingService):
                     f"{attempt}, backing off {backoff:.1f}s"
                 ),
             )
+        _record_embedding_usage(response)
+        return response
 
     async def get_embedding(
         self,

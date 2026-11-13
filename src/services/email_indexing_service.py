@@ -32,6 +32,8 @@ from ..ports.email_exclusions_port import EmailExclusionsPort
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -63,6 +65,7 @@ class EmailIndexingService:
         alert_sink: Optional[AlertSinkPort] = None,
         *,
         connector: ConnectorSpec,
+        quota: Optional[QuotaService] = None,
     ):
         """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
         self._kind = connector.kind
@@ -72,6 +75,7 @@ class EmailIndexingService:
         self._exclusions_repo = exclusions_repo
         self._classifier = classifier
         self._embedding = embedding
+        self._quota = quota   # bills each page's embeddings to the account (billed_scope)
         self._oauth = oauth
         self._alert_sink = alert_sink
         logger.info("📧 EmailIndexingService initialized")
@@ -482,21 +486,22 @@ class EmailIndexingService:
                 # 5. Build IndexedEmail objects with embeddings (parallel)
                 indexed_emails: List[IndexedEmail] = []
                 if valuable:
-                    indexed_emails = list(
-                        await asyncio.gather(
-                            *[
-                                self._embed_email(
-                                    ec,
-                                    email_meta_map,
-                                    full_content_map,
-                                    job,
-                                    account_id,
-                                    stored_marks if mode == "reindex" else {},
-                                )
-                                for ec in valuable
-                            ]
+                    async with billed_scope(self._quota, account_id, "email indexing page"):
+                        indexed_emails = list(
+                            await asyncio.gather(
+                                *[
+                                    self._embed_email(
+                                        ec,
+                                        email_meta_map,
+                                        full_content_map,
+                                        job,
+                                        account_id,
+                                        stored_marks if mode == "reindex" else {},
+                                    )
+                                    for ec in valuable
+                                ]
+                            )
                         )
-                    )
                     # Filter out None (embed failures that exceeded retry)
                     indexed_emails = [e for e in indexed_emails if e is not None]
 

@@ -223,6 +223,7 @@ def build_app() -> Quart:
         notes=note_repo,
         note_lifecycle=note_lifecycle,
         connections=connections,
+        quota=models.quota,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

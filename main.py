@@ -197,6 +197,7 @@ async def main():
             user_drive_service=app.container.user_drive_service,
             drive_search_service=app.container.drive_search_service,
             drive_task_queue=app.container.drive_task_queue,
+            quota_service=app.quota_service,
             drive_transcribe_switch_on=app.container.drive_transcribe_switch_on,
             cabinet_facts=app.cabinet_facts,
             fact_review_store=app.container.fact_review_store,
@@ -624,7 +625,7 @@ async def main():
                             auth_config=app.auth_config,
                         )
                         drive_tools = await build_drive_connector_tools_from_container(
-                            app.container, alert_sink=app.alert_sink, links=drive_links)
+                            app.container, alert_sink=app.alert_sink, links=drive_links, quota=app.quota_service)
                     except Exception as drive_err:
                         drive_mcp = None
                         logger.error(f"❌ Failed to initialize drive MCP connector tools: {drive_err}", exc_info=True)

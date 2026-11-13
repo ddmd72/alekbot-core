@@ -25,6 +25,7 @@ from ..infrastructure.drive_read_operations import DriveReadOperations
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.prompt_v3.token_repository import TokenRepository
 from ..services.connector_text_service import ConnectorTextService
+from ..ports.quota_service import QuotaService
 from ..services.drive_link_service import DriveLinkService
 from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
@@ -50,6 +51,7 @@ class DriveConnectorTools:
     notes: Optional[DriveNoteService]
     items: Optional[ConnectorItemReader]
     links: DriveLinkService
+    quota: Optional[QuotaService] = None   # bills a call's query embeddings (no agent around an MCP call)
 
 
 async def build_drive_connector_tools(*, conversion_service: Optional[FileConversionService],
@@ -58,7 +60,8 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
                                       drive_notes: Optional[DriveNoteService],
                                       token_repo: Optional[TokenRepository],
                                       alert_sink: Optional[AlertSinkPort],
-                                      links: DriveLinkService) -> DriveConnectorTools:
+                                      links: DriveLinkService,
+                                      quota: Optional[QuotaService] = None) -> DriveConnectorTools:
     """Raises when the tools cannot run (see the module docstring)."""
     if conversion_service is None:
         raise RuntimeError("drive connector tools need file conversion, which this deployment does not have")
@@ -74,16 +77,17 @@ async def build_drive_connector_tools(*, conversion_service: Optional[FileConver
     logger.info("[DriveMCP] tools built: texts loaded, notes %s",
                 "on" if drive_notes is not None and drive_service is not None else "off")
     return DriveConnectorTools(texts=texts, initial_texts=initial, operations=DriveReadOperations(operations),
-                               notes=drive_notes, items=drive_service, links=links)
+                               notes=drive_notes, items=drive_service, links=links, quota=quota)
 
 
 async def build_drive_connector_tools_from_container(container: "ServiceContainer", *,
                                                     alert_sink: Optional[AlertSinkPort],
-                                                    links: DriveLinkService) -> DriveConnectorTools:
+                                                    links: DriveLinkService,
+                                                    quota: Optional[QuotaService] = None) -> DriveConnectorTools:
     """`build_drive_connector_tools` over the container's singletons (the prompt token store is the assembly
     service's; None when the assembly service did not initialize)."""
     assembly = container.assembly_service
     return await build_drive_connector_tools(
         conversion_service=container.file_conversion_service, drive_service=container.user_drive_service,
         drive_search=container.drive_search_service, drive_notes=container.drive_note_service,
-        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=alert_sink, links=links)
+        token_repo=assembly.token_repo if assembly is not None else None, alert_sink=alert_sink, links=links, quota=quota)

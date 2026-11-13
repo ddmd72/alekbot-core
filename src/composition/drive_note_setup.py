@@ -30,6 +30,7 @@ from ..config.environment import EnvironmentConfig
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.quota_service import QuotaService
 from ..ports.security_port import SecurityPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
@@ -60,7 +61,8 @@ def build_drive_note_repository(db_client: Any, env_config: EnvironmentConfig) -
 def build_drive_note_service(db_client: Any, env_config: EnvironmentConfig, *, notes: DriveNoteRepository,
                              drive: UserDrivePort, index: DriveIndexRepository, embeddings: EmbeddingService,
                              connections: "DriveConnectionService", security_port: SecurityPort,
-                             nudge_queue: Optional[TaskQueue], access: "UserDriveService") -> DriveNoteService:
+                             nudge_queue: Optional[TaskQueue], access: "UserDriveService",
+                             quota: Optional[QuotaService] = None) -> DriveNoteService:
     """The note service over the process's note store (`notes`, from `build_drive_note_repository`) and the erase
     requests' ephemeral store (`{prefix}drive_note_erase_requests`, TTL policy on `expires_at`: an owner step).
     `drive` is the drive router; `connections` the process's DriveConnectionService (refs, each connection's indexing
@@ -72,6 +74,7 @@ def build_drive_note_service(db_client: Any, env_config: EnvironmentConfig, *, n
         access=access,
         embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
         nudge_queue=nudge_queue,
+        quota=quota,
         erase_requests=FirestoreEphemeralStore(db_client, env_config.drive_note_erase_requests_collection),
     )
 

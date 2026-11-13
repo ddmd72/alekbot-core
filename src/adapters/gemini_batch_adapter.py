@@ -26,10 +26,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, TypeVar
 
 import aiohttp
-import httpx
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+from ..utils.genai_sdk_compat import GENAI_API_VERSION, NETWORK_ERRORS, TIMEOUT_ERRORS
 
 from ..domain.batch_transcription import BatchRef, BatchRequest, BatchResult, BatchStatus, FileRef
 from ..domain.billing import BatchUsage
@@ -95,7 +95,8 @@ def _hash(text: str) -> str:
 class GeminiBatchAdapter(BatchTranscriptionPort):
     def __init__(self, api_key: str, model: str, *, file_base_url: str = DEFAULT_FILE_BASE_URL,
                  call_timeout_s: float = 120.0, upload_timeout_s: float = 600.0) -> None:
-        self.client = genai.Client(api_key=api_key)
+        # SDK 3.x defaults the Developer API to v1; staying on v1beta is deliberate, a v1 move is a separate decision.
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version=GENAI_API_VERSION))
         self._model = model
         self._file_base_url = file_base_url.rstrip("/")
         self._call_timeout_s = call_timeout_s
@@ -279,7 +280,7 @@ class GeminiBatchAdapter(BatchTranscriptionPort):
             code = getattr(e, "code", None)
             logger.warning("[GeminiBatch] %s server error status=%s", what, code)
             raise LLMUnavailableError(f"{what}: provider error", http_status=code if isinstance(code, int) else None) from e
-        except (httpx.TimeoutException, httpx.NetworkError, aiohttp.ClientError) as e:
+        except (*TIMEOUT_ERRORS, *NETWORK_ERRORS, aiohttp.ClientError) as e:
             logger.warning("[GeminiBatch] %s transport failure (%s)", what, type(e).__name__)
             raise LLMUnavailableError(f"{what}: transport failure") from e
 

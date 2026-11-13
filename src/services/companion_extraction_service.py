@@ -24,6 +24,8 @@ from ..ports.companion_extraction_queue import CompanionExtractionQueue
 from ..ports.companion_extractor_port import CompanionExtractorPort
 from ..ports.companion_memory_repository import CompanionMemoryRepository
 from ..ports.embedding_service import EmbeddingService
+from ..ports.quota_service import QuotaService
+from ..utils.billed_scope import billed_scope
 from ..utils.logger import logger
 
 
@@ -36,7 +38,9 @@ class CompanionExtractionService:
         cache_repo: CompanionCacheRepository,
         embedding_service: EmbeddingService,
         extractor: CompanionExtractorPort,
+        quota: Optional[QuotaService] = None,
     ) -> None:
+        self._quota = quota   # bills the records' embeddings (outside the extractor agent) to the batch's account
         self._queue = queue
         self._companion_repo = companion_repo
         self._cache_repo = cache_repo
@@ -147,7 +151,8 @@ class CompanionExtractionService:
             return []
 
         texts = [r["text"] for r in valid_records]
-        vectors = await self._embedding.get_embeddings_batch(texts)
+        async with billed_scope(self._quota, batch.account_id, "companion extraction"):
+            vectors = await self._embedding.get_embeddings_batch(texts)
         return [
             CompanionRecord(
                 id=f"{batch.batch_id}-{i}",  # Deterministic ID ensures retry idempotency: Firestore set() overwrites same doc, no duplicates on re-fetch.

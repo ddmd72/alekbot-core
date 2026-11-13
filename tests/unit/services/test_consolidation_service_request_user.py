@@ -27,7 +27,8 @@ async def test_the_profile_step_runs_under_the_request_user(service, queue):
 
 async def test_the_agent_run_bills_the_leased_account(service, queue, coordinator):
     """The message names no account; the agent's ledger takes the one the service leased (the request context)."""
-    from src.agents.base_agent import BaseAgent, _EXECUTION_LEDGER
+    from src.agents.base_agent import BaseAgent
+    from src.domain.billing import _EXECUTION_LEDGER
     from src.domain.agent import AgentConfig, AgentResponse
 
     ledger_accounts = []
