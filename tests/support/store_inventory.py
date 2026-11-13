@@ -132,6 +132,9 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_drive_connection_repo.FirestoreDriveConnectionRepository": (
         _A + "test_drive_connection_store_kit.py",),
     _STORE + "firestore_drive_link_store.FirestoreDriveLinkStore": (_A + "test_drive_link_store_kit.py",),
+    # Email index v2 slice 6: the card fields on the v1 facts document
+    _STORE + "firestore_email_card_store.FirestoreEmailCardStore": (
+        _A + "test_email_card_store_kit.py", _A + "test_firestore_email_card_store.py"),
     # Fact profile RFC §7: the people cards
     _STORE + "firestore_person_card_repo.FirestorePersonCardRepository": (_A + "test_person_card_store_kit.py",),
     # Fact profile RFC §4.5: the owner-confirmed people list
