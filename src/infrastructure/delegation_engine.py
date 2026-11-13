@@ -227,7 +227,7 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
         ids_printed += len(emails)
         body.append(f"Found {len(emails)} email(s) in the index:")
         body.append(wrapped(index_lines))
-    elif fresh is not None or by_key:
+    elif fresh is not None or by_key or notes:
         body.append("Nothing in the index matched.")
 
     if fresh is not None:
@@ -238,8 +238,8 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
             body.append(f"No mail in the live mailbox since {since}." if since
                         else "The live mailbox listing returned no mail.")
         elif not fresh_emails:
-            body.append(f"Recent mail since {since}: all of it is already listed above." if since
-                        else "Recent mail: all of it is already listed above.")
+            body.append(f"Recent mail from the live mailbox since {since}: all of it is already listed above." if since
+                        else "Recent mail from the live mailbox: all of it is already listed above.")
         else:
             if since:
                 window = f"since {since}" + (f" until {until}" if until else "")
@@ -247,7 +247,7 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
                             "(sender, subject, first line); promotions, spam and trash are not listed:")
             else:
                 body.append("Recent mail from the live mailbox, newest first, headers only (sender, subject, first "
-                            "line); promotions, spam and trash are not listed; the email index has never been built:")
+                            "line); promotions, spam and trash are not listed:")
             body.append(wrapped(header_lines(fresh_emails)))
             header_lines_printed += len(fresh_emails)
             ids_printed += len(fresh_emails)
