@@ -110,11 +110,13 @@ def _llm_responses(tool_name: str, tool_args: dict, final_text: str):
     tool_resp.tool_calls = [ToolCall(name=tool_name, args=tool_args, id="tc-1")]
     tool_resp.text = ""
     tool_resp.raw_content = None
+    tool_resp.finish_reason = None
 
     text_resp = MagicMock(spec=LLMResponse)
     text_resp.tool_calls = []
     text_resp.text = final_text
     text_resp.raw_content = None
+    text_resp.finish_reason = None
 
     return [tool_resp, text_resp]
 
@@ -382,6 +384,7 @@ class TestExecuteEdgeCases:
             resp.tool_calls = []
             resp.text = "Done."
             resp.raw_content = None
+            resp.finish_reason = None
             return resp
 
         agent._call_llm = capture
@@ -413,6 +416,7 @@ class TestExecuteEdgeCases:
             resp.tool_calls = []
             resp.text = "Done."
             resp.raw_content = None
+            resp.finish_reason = None
             return resp
 
         agent._call_llm = capture
@@ -452,11 +456,13 @@ class TestExecuteEdgeCases:
         tool_resp.tool_calls = [ToolCall(name="list_tasks", args={}, id="tc")]
         tool_resp.text = ""
         tool_resp.raw_content = None
+        tool_resp.finish_reason = None
 
         final_resp = MagicMock(spec=LLMResponse)
         final_resp.tool_calls = []
         final_resp.text = "Summary after max turns."
         final_resp.raw_content = None
+        final_resp.finish_reason = None
 
         # 6 tool responses (MAX_TURNS=6) + 1 forced format response
         with patch.object(agent, "_call_llm") as mock_call:
@@ -475,6 +481,7 @@ class TestExecuteEdgeCases:
             empty_resp.tool_calls = []
             empty_resp.text = ""
             empty_resp.raw_content = None
+            empty_resp.finish_reason = None
             mock_call.return_value = empty_resp
             response = await agent.execute(_make_message("list tasks"))
 
