@@ -64,6 +64,7 @@ GET /og.png
 GET /robots.txt
 GET /s/<code>
 GET /static/<path:filename>
+POST /api/drive/connections/<connection_id>/scope/preview
 POST /api/gmail/index
 POST /api/gmail/jobs/<job_id>/cancel
 POST /api/tasks/microsoft/reindex
