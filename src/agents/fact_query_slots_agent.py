@@ -29,6 +29,7 @@ from ..infrastructure.agent_config import FACT_QUERY_SLOTS
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, Message, MessagePart
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
+from ..utils.telemetry import request_user_scope
 from .base_agent import BaseAgent
 
 AGENT_TYPE = "fact_query_slots"
@@ -175,7 +176,9 @@ class FactQuerySlotsAgent(BaseAgent):
         reason = "invalid_output"
         for attempt in range(2):
             try:
-                response = await self._call_llm(self._request(system, history), turn=attempt)
+                # Called without process(): the caller's user is named here, so the prompt-content row carries it.
+                with request_user_scope(user_id):
+                    response = await self._call_llm(self._request(system, history), turn=attempt)
             except Exception as e:
                 logger.warning(f"[FactQuery] model call failed: {type(e).__name__}: {e}")
                 return degraded("call_failed")
