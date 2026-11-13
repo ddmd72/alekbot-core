@@ -168,26 +168,76 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
         parsed = json.loads(result)
     except (ValueError, TypeError):
         return result
-    emails = parsed.get("emails") if isinstance(parsed, dict) else None
-    if not emails:
+    if not isinstance(parsed, dict):
         return result
-    lines: List[str] = []
-    for e in emails:
-        line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
-        atts = e.get("attachments") or []
-        if atts:
-            line += f" | 📎 {', '.join(atts)}"
-        lines.append(line)
-        text = e.get("text") or ""
-        if text:
-            lines.append(f"  → {text[:150]}")
-    return "\n".join([
-        EXTERNAL_REMINDER,
-        f"Found {len(emails)} email(s):",
-        wrap_untrusted("\n".join(lines), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label=""),
+    emails = parsed.get("emails") or []
+    fresh = parsed.get("fresh")
+    by_key = parsed.get("by_key") or []
+    notes = parsed.get("notes") or []
+    if not emails and fresh is None and not by_key and not notes:
+        return result
+
+    inside: List[str] = []
+    outside_before: List[str] = []  # the tool's introducing lines, ahead of the one wrapper
+    outside_after: List[str] = []   # the tool's closing lines, after it
+
+    def header_lines(items: List[Dict[str, Any]]) -> List[str]:
+        out: List[str] = []
+        for h in items:
+            out.append(f"• [{h.get('email_id', '?')}] {h.get('from', '?')} | {h.get('date', '?')} | "
+                       f"{h.get('subject', '')}")
+            snippet = h.get("snippet") or ""
+            if snippet:
+                out.append(f"  → {snippet[:150]}")
+        return out
+
+    if emails:
+        outside_before.append(f"Found {len(emails)} email(s) in the index:")
+        for e in emails:
+            line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
+            atts = e.get("attachments") or []
+            if atts:
+                line += f" | 📎 {', '.join(atts)}"
+            inside.append(line)
+            text = e.get("text") or ""
+            if text:
+                inside.append(f"  → {text[:150]}")
+
+    if fresh is not None:
+        since = fresh.get("since")
+        fresh_emails = fresh.get("emails") or []
+        if since:
+            outside_before.append(f"Mail not yet in the index, newest first since {since} ({fresh.get('tz', 'UTC')}), "
+                                 "headers only (sender, subject, first line):")
+        else:
+            outside_before.append("Newest mail, headers only (sender, subject, first line); the index has never "
+                                 "been built:")
+        if fresh_emails:
+            inside.extend(header_lines(fresh_emails))
+        else:
+            outside_after.append("No mail newer than the index.")
+        if fresh.get("truncated"):
+            outside_after.append("Only the newest 100 are listed; older mail outside the index is not shown.")
+
+    for group in by_key:
+        inside.append(f"Matches for \"{group.get('key', '')}\" (any date):")
+        group_emails = group.get("emails") or []
+        inside.extend(header_lines(group_emails) if group_emails else ["none"])
+        if group.get("truncated"):
+            inside.append("(more exist; only 20 shown)")
+
+    parts: List[str] = [EXTERNAL_REMINDER]
+    parts.extend(outside_before)
+    if inside:
+        parts.append(wrap_untrusted("\n".join(inside), nonce=nonce(), store=FileRefKind.EMAIL, ref="", label=""))
+    parts.extend(outside_after)
+    parts.extend(f"Tool note: {n}" for n in notes)
+    parts.append(
         "\nTo read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}"
-        "\nTo read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", \"name\": \"<filename>\"}",
-    ])
+        "\nTo read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", \"name\": \"<filename>\"}"
+        "\nA header line is only the sender and subject: read the body with get_email_details before relying on it."
+    )
+    return "\n".join(parts)
 
 
 # ------------------------------------------------------------------ #

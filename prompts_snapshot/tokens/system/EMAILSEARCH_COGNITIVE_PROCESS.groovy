@@ -22,5 +22,7 @@ steps: [
 
     "5. DATE RANGE: If the request contains a time signal — a year, month, quarter, season, or relative expression ('last 3 months', 'in 2023', 'since January', 'this year') — derive the exact calendar interval and set date_from and date_to as YYYY-MM-DD strings. Use current_date_time to resolve relative expressions. If no time signal → set both to null.",
 
-    "6. OUTPUT: Emit valid JSON with exactly five fields: primary_query, alternative_query, tags, date_from, date_to. ALL string values in ENGLISH. Nothing before { or after }."
+    "6. EXACT KEYS: The index is searched by meaning, and a bare identifier carries none, so the search also matches identifiers literally across the whole mailbox, at any date. List each identifier the request gives — an order, invoice, case, ticket, tracking, account or reference number or code, or an email address — copied exactly as written: never translate, reformat or complete it. Never put a topic word, a name or a phrase here: a literal match on a common word floods the result with unrelated mail. None → an empty list. At most 3.",
+
+    "7. OUTPUT: Emit valid JSON with exactly six fields: primary_query, alternative_query, tags, date_from, date_to, exact_keys. All string values in ENGLISH except exact_keys, which keep the identifiers as written. Nothing before { or after }."
 ]

@@ -16,7 +16,7 @@ output_schema {
     json_schema: {
         "$schema": "http://json-schema.org/draft-07/schema",
         "type": "object",
-        "required": ["primary_query", "alternative_query", "tags", "date_from", "date_to"],
+        "required": ["primary_query", "alternative_query", "tags", "date_from", "date_to", "exact_keys"],
         "additionalProperties": false,
         "properties": {
             "primary_query":     { "type": "string", "maxLength": 60 },
@@ -28,7 +28,8 @@ output_schema {
                 "maxItems": 5
             },
             "date_from": { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
-            "date_to":   { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+            "date_to":   { "type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+            "exact_keys": { "type": "array", "items": { "type": "string" }, "maxItems": 3 }
         }
     }
 }
@@ -59,5 +60,9 @@ field_guidelines {
     date_to: [
         "End of the date range inferred from the query (inclusive). YYYY-MM-DD format.",
         "Null if the query contains no time signal."
+    ]
+    exact_keys: [
+        "Identifiers the request gives, copied exactly as written, matched literally across all mail.",
+        "Empty list when the request names no identifier. Never topic words or names."
     ]
 }

@@ -30,7 +30,7 @@ from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
 from ..domain.connector_spec import ConnectorSpec
-from ..domain.email import EmailPart, IndexedEmail
+from ..domain.email import GMAIL_INDEX_PROVIDER, EmailMetadata, EmailPart, IndexedEmail
 from ..domain.email_details import EmailDetails
 from ..domain.email_open_texts import EMAIL_NOT_CONNECTED_NOTE, MAILBOX_UNAVAILABLE_NOTE
 from ..domain.email_ref import email_file_label, format_email_ref
@@ -162,6 +162,33 @@ class EmailSearchService:
             })
 
         return json.dumps({"count": len(emails), "emails": emails}, ensure_ascii=False)
+
+    # ------------------------------------------------------------------
+    # Live headers (mail newer than the index, exact keys)
+    # ------------------------------------------------------------------
+
+    async def list_headers(
+        self,
+        user_id: str,
+        *,
+        after: Optional[datetime] = None,
+        before: Optional[datetime] = None,
+        key: Optional[str] = None,
+        limit: int = 100,
+    ) -> Tuple[List[EmailMetadata], bool]:
+        """Live headers from the mailbox (port `list_headers`), under the user's refreshed credential.
+        Raises EmailNotConnected without a usable credential."""
+        creds = await self._connected_credential(user_id)
+        return await self._gmail.list_headers(creds, after=after, before=before, key=key, limit=limit)
+
+    async def index_watermark(self, user_id: str) -> Optional[datetime]:
+        """The newest mail date the incremental indexing has seen, as an aware UTC datetime; None when the
+        indexing never ran."""
+        state = await self._email_repo.get_indexing_state(user_id, GMAIL_INDEX_PROVIDER)
+        through = state.indexed_through if state else None
+        if through is None:
+            return None
+        return through.replace(tzinfo=timezone.utc) if through.tzinfo is None else through.astimezone(timezone.utc)
 
     # ------------------------------------------------------------------
     # Get full email body

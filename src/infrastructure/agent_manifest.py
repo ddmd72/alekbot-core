@@ -220,9 +220,9 @@ EMAIL_SEARCH = AgentDescriptor(
     description="Email archive specialist",
     capability_descriptions={
         Intent.SEARCH_EMAILS: (
-            "Semantic search across the user's indexed email archive "
-            "by topic, sender, date, or document type. "
-            "Returns a list of emails with their ids and attachment filenames."
+            "Search the user's mail. The indexed archive (the mail kept for its facts) is searched by meaning; "
+            "mail newer than the index is listed by headers on every search; an exact number, code or address in "
+            "the query is matched across all mail. Returns emails with their ids and attachment filenames."
         ),
         Intent.GET_EMAIL_DETAILS: (
             "Fetch the full body of a specific email; it lists each attachment with its email: ref. "

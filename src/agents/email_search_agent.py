@@ -25,18 +25,26 @@ Routing: execute() dispatches on payload["intent"]:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import time
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from datetime import date, datetime, time as dt_time, timedelta, timezone, tzinfo
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.document_open import EmailOpening
 from ..domain.document_presentation import present_text
 from ..domain.document_read import OPEN_MARGIN_S, ReadOutcome, ReadStatus
-from ..domain.email_open_texts import EMAIL_OPEN_NOT_CONFIGURED_NOTE
+from ..domain.email import EmailMetadata
+from ..domain.email_open_texts import (
+    EMAIL_NOT_CONNECTED_NOTE,
+    EMAIL_OPEN_NOT_CONFIGURED_NOTE,
+    MAILBOX_UNAVAILABLE_NOTE,
+)
+from ..domain.exceptions import EmailNotConnected
 from ..domain.email_ref import EMAIL_FILE_CONTEXT_KEY, parse_email_ref
 from ..domain.file_ref import EMAIL_REF_PREFIX
 from ..domain.native_format import NATIVE_FORMATS_KEY, from_plain
@@ -50,6 +58,14 @@ from ..ports.llm_port import (
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..infrastructure.agent_config import EMAIL_SEARCH
+
+# Fresh-header listing: the newest mail outside the index, and the per-key cap (see the decision record
+# docs/04_solution_strategy/decisions/email_search_fresh_headers.md).
+FRESH_LIMIT = 100
+KEY_LIMIT = 20
+MAX_EXACT_KEYS = 3
+MIN_KEY_LENGTH = 3
+_NO_EMAILS_FOUND = "No emails found matching your query."
 
 if TYPE_CHECKING:
     from ..services.email_search_service import EmailSearchService
@@ -74,6 +90,8 @@ class EmailSearchAgent(BaseAgent):
         email_search_service: EmailSearchService,
         user_id: Optional[str] = None,
         file_conversion: Optional[FileConversionService] = None,
+        user_timezone: str = "UTC",
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         super().__init__(config)
         self.execution_context = execution_context
@@ -83,6 +101,14 @@ class EmailSearchAgent(BaseAgent):
         self._search_service = email_search_service
         self._file_conversion = file_conversion
         self.user_id = user_id
+        self._clock = clock
+        self._tz_name = user_timezone or "UTC"
+        try:
+            self._tz: tzinfo = ZoneInfo(self._tz_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning(f"📬 EmailSearchAgent: unknown timezone {user_timezone!r}, using UTC")
+            self._tz_name = "UTC"
+            self._tz = timezone.utc
 
         logger.info(
             f"📬 EmailSearchAgent initialized "
@@ -291,23 +317,41 @@ class EmailSearchAgent(BaseAgent):
             f"date_from={date_from} date_to={date_to}"
         )
 
-        # Step 2: 7-stream multi-vector RRF search
-        try:
-            result = await self._search_service.vector_search(
-                primary_query=primary_query,
-                alternative_query=alternative_query,
-                tags=tags,
-                user_id=user_id,
-                date_from=date_from,
-                date_to=date_to,
-            )
-        except Exception as exc:
-            logger.error(f"📬 EmailSearchAgent: vector_search failed: {exc}", exc_info=True)
+        # Step 2: the index (7-stream RRF), the live headers newer than the index, and the exact keys, together
+        uid = user_id or ""
+        watermark = await self._safe_watermark(uid)
+        fresh_after, run_fresh = self._fresh_window(watermark, date_from, date_to)
+        fresh_before = self._fresh_before(date_to)
+        exact_keys = self._exact_keys(keys.get("exact_keys"))
+
+        vector_task = self._search_service.vector_search(
+            primary_query=primary_query,
+            alternative_query=alternative_query,
+            tags=tags,
+            user_id=user_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        fresh_task = (
+            self._search_service.list_headers(uid, after=fresh_after, before=fresh_before, limit=FRESH_LIMIT)
+            if run_fresh else self._none()
+        )
+        key_tasks = [self._search_service.list_headers(uid, key=k, limit=KEY_LIMIT) for k in exact_keys]
+        vector_res, fresh_res, *key_res = await asyncio.gather(
+            vector_task, fresh_task, *key_tasks, return_exceptions=True
+        )
+
+        if isinstance(vector_res, BaseException):
+            logger.error(f"📬 EmailSearchAgent: vector_search failed: {vector_res}", exc_info=vector_res)
             return AgentResponse.failure(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
-                error=f"Email search failed: {exc}",
+                error=f"Email search failed: {vector_res}",
             )
+
+        result = self._assemble_result(
+            vector_res, fresh_res if run_fresh else None, run_fresh, fresh_after, exact_keys, key_res
+        )
 
         duration_ms = int((time.time() - start_time) * 1000)
         logger.info(f"📬 EmailSearchAgent done in {duration_ms}ms")
@@ -331,6 +375,149 @@ class EmailSearchAgent(BaseAgent):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _none() -> None:
+        return None
+
+    async def _safe_watermark(self, user_id: str) -> Optional[datetime]:
+        """The index watermark; a failed read counts as "unknown" (no lower bound), logged."""
+        try:
+            return await self._search_service.index_watermark(user_id)
+        except Exception as exc:
+            logger.warning(f"📬 EmailSearchAgent: index watermark unavailable: {exc}", exc_info=True)
+            return None
+
+    def _local_to_utc(self, naive: datetime) -> datetime:
+        """A wall-clock time of the user's calendar, as an aware UTC instant."""
+        return naive.replace(tzinfo=self._tz).astimezone(timezone.utc)
+
+    def _start_of_yesterday(self) -> datetime:
+        today: date = self._clock().astimezone(self._tz).date()
+        return self._local_to_utc(datetime.combine(today - timedelta(days=1), dt_time.min))
+
+    def _fresh_window(
+        self, watermark: Optional[datetime], date_from: Optional[datetime], date_to: Optional[datetime]
+    ) -> Tuple[Optional[datetime], bool]:
+        """`(after, run)` of the live listing. The window opens at the older of the index watermark and the
+        start of yesterday (the user's day); never-indexed has no lower bound. A request bounded to a period the
+        index already covers (its end is before the window) skips the listing. A requested start narrows `after`."""
+        window_start = min(watermark, self._start_of_yesterday()) if watermark else None
+        range_from = self._local_to_utc(date_from) if date_from else None
+        range_to = self._local_to_utc(date_to) if date_to else None
+        if range_to is not None and window_start is not None and range_to < window_start:
+            return None, False
+        after = window_start
+        if range_from is not None and (after is None or range_from > after):
+            after = range_from
+        return after, True
+
+    def _fresh_before(self, date_to: Optional[datetime]) -> Optional[datetime]:
+        if not date_to:
+            return None
+        range_to = self._local_to_utc(date_to)
+        return range_to if range_to < self._clock() else None
+
+    @staticmethod
+    def _exact_keys(raw: object) -> List[str]:
+        """The identifiers to match literally: strings only, stripped, at least MIN_KEY_LENGTH, unique, first
+        MAX_EXACT_KEYS."""
+        if not isinstance(raw, list):
+            return []
+        out: List[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            key = item.strip()
+            if len(key) >= MIN_KEY_LENGTH and key not in out:
+                out.append(key)
+        return out[:MAX_EXACT_KEYS]
+
+    def _local_stamp(self, moment: datetime) -> str:
+        aware = moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+        return aware.astimezone(self._tz).strftime("%Y-%m-%d %H:%M")
+
+    def _header_entry(self, m: EmailMetadata) -> Dict[str, Any]:
+        return {
+            "email_id": m.email_id,
+            "from": m.from_address,
+            "subject": m.subject,
+            "date": self._local_stamp(m.date),
+            "snippet": m.snippet,
+        }
+
+    @staticmethod
+    def _note_for(exc: BaseException) -> str:
+        if isinstance(exc, EmailNotConnected):
+            return EMAIL_NOT_CONNECTED_NOTE
+        logger.warning(f"📬 EmailSearchAgent: live mailbox listing failed: {exc}", exc_info=exc)
+        return MAILBOX_UNAVAILABLE_NOTE
+
+    def _assemble_result(
+        self,
+        vector_res: str,
+        fresh_res: Any,
+        run_fresh: bool,
+        fresh_after: Optional[datetime],
+        exact_keys: List[str],
+        key_res: List[Any],
+    ) -> str:
+        """One JSON object: the index hits, the fresh headers, the per-key headers and the notes. A listing that
+        failed adds a note and no entry; ids already shown earlier are dropped from later lists."""
+        index_emails: List[dict] = []
+        try:
+            parsed = json.loads(vector_res)
+            if isinstance(parsed, dict):
+                index_emails = parsed.get("emails") or []
+        except (ValueError, TypeError):
+            index_emails = []
+        seen = {e.get("email_id") for e in index_emails}
+        notes: List[str] = []
+
+        def add_note(exc: BaseException) -> None:
+            note = self._note_for(exc)
+            if note not in notes:
+                notes.append(note)
+
+        fresh: Optional[Dict[str, Any]] = None
+        if run_fresh:
+            if isinstance(fresh_res, BaseException):
+                add_note(fresh_res)
+            elif fresh_res is not None:
+                metas, more = fresh_res
+                entries = []
+                for m in metas:
+                    if m.email_id not in seen:
+                        entries.append(self._header_entry(m))
+                        seen.add(m.email_id)
+                fresh = {
+                    "since": self._local_stamp(fresh_after) if fresh_after else None,
+                    "tz": self._tz_name,
+                    "truncated": bool(more),
+                    "emails": entries,
+                }
+
+        by_key: List[Dict[str, Any]] = []
+        for key, res in zip(exact_keys, key_res):
+            if isinstance(res, BaseException):
+                add_note(res)
+                continue
+            metas, more = res
+            entries = []
+            for m in metas:
+                if m.email_id not in seen:
+                    entries.append(self._header_entry(m))
+                    seen.add(m.email_id)
+            by_key.append({"key": key, "truncated": bool(more), "emails": entries})
+
+        empty = not index_emails and not notes and not (fresh and fresh["emails"]) \
+            and not any(g["emails"] for g in by_key)
+        if empty:
+            return _NO_EMAILS_FOUND
+        return json.dumps(
+            {"count": len(index_emails), "emails": index_emails, "fresh": fresh, "by_key": by_key, "notes": notes},
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _parse_date(value: object, *, end_of_day: bool = False) -> Optional[datetime]:
@@ -366,8 +553,15 @@ class EmailSearchAgent(BaseAgent):
             parsed = json.loads(result)
         except (ValueError, TypeError):
             return None
-        emails = parsed.get("emails") if isinstance(parsed, dict) else None
-        if not emails:
+        if not isinstance(parsed, dict):
+            return None
+        emails = parsed.get("emails") or []
+        fresh = parsed.get("fresh") or {}
+        by_key = parsed.get("by_key") or []
+        headers = list(fresh.get("emails") or [])
+        for group in by_key:
+            headers.extend(group.get("emails") or [])
+        if not emails and not headers:
             return None
         received = []
         for e in emails:
@@ -381,6 +575,13 @@ class EmailSearchAgent(BaseAgent):
             if atts:
                 entry["attachments"] = atts
             received.append(entry)
+        for h in headers:
+            received.append({
+                "id": h.get("email_id", ""),
+                "from": h.get("from", ""),
+                "date": h.get("date", ""),
+                "summary": (h.get("subject") or "")[:200],
+            })
         return {"you_searched": query, "you_received": received}
 
     # ------------------------------------------------------------------
