@@ -44,6 +44,11 @@ from ..utils.logger import logger
 # Pass gmail_query=None to override (full mailbox, for debugging only).
 GMAIL_DEFAULT_QUERY = "{category:primary category:updates} -in:spam -in:trash"
 
+# The v1 `reindex` mode is refused (email index v2, card slice 1): it re-saves whole documents (`save_batch`), which
+# would wipe every v2 card field. Incremental and backfill skip stored ids and stay. The job ends `failed` with this
+# error, before any Gmail call.
+REINDEX_DISABLED = "reindex_disabled"
+
 
 class EmailIndexingService:
     """
@@ -127,7 +132,7 @@ class EmailIndexingService:
 
         mode:
           "incremental" — fetch emails newer than indexed_through (default)
-          "reindex"     — clear state, re-process all emails from now back 3 years (overwrites)
+          "reindex"     — refused: the job ends `failed` (REINDEX_DISABLED) before any Gmail call
           "backfill"    — fetch emails older than oldest_indexed_through, down to backfill_until
         """
         job = self.create_job(
@@ -302,13 +307,16 @@ class EmailIndexingService:
 
         mode controls cursor logic:
           "incremental": fetch after indexed_through+1d; advance indexed_through forward
-          "reindex":     clear state; fetch without upper bound; update both cursors
+          "reindex":     refused (REINDEX_DISABLED): the job is marked `failed` and returned, nothing fetched
           "backfill":    fetch between backfill_until and oldest_indexed_through-1d;
                          advance oldest_indexed_through backward
 
         Resume: if job.next_page_token is set, resumes from that cursor.
         Idempotent: uses email_id as Firestore doc ID; duplicate writes are no-ops.
         """
+        if mode == "reindex":
+            return await self._refuse_reindex(job)
+
         # ----------------------------------------------------------------
         # Mode-specific cursor setup
         # ----------------------------------------------------------------
@@ -608,6 +616,24 @@ class EmailIndexingService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _refuse_reindex(self, job: IndexingJob) -> IndexingJob:
+        """End a `reindex` job as `failed` with REINDEX_DISABLED, touching no mail and no cursor."""
+        now = datetime.now(timezone.utc)
+        job.status = "failed"
+        job.next_page_token = None
+        job.updated_at = now
+        job.completed_at = now
+        job.errors = [*job.errors, {"email_id": "", "stage": "mode", "error": REINDEX_DISABLED}][-100:]
+        await self._job_repo.update_job(job.job_id, {
+            "status": job.status, "next_page_token": None, "errors": job.errors,
+            "updated_at": now, "completed_at": now,
+        })
+        logger.warning(
+            f"⛔ Job {job.job_id[:8]} [reindex] refused: the v1 reindex mode is disabled (it re-saves whole "
+            f"documents and would wipe the email cards); use incremental or backfill"
+        )
+        return job
 
     async def _alert_classifier_failure(
         self, job_id: str, user_id: str, count: int, failure: Optional[str]
