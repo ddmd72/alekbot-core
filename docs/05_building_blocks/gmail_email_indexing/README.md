@@ -280,6 +280,7 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/adapters/gmail_provider_adapter.py`: Gmail API client.
 - `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
+- Email search v2, offline only, not wired (slice 8): `src/domain/email_search_*.py` (query, time, merge, fold, texts, render, params), `src/ports/email_card_index.py` with `src/adapters/in_memory_email_card_index.py`, `src/services/email_card_search_service.py`, and the snapshot harness `scripts/validation/email_eval/search_v2_snapshot.py`.
 
 ---
 
