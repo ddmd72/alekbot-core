@@ -16,7 +16,7 @@ Public interface:
     ReadRequest                    one file's bytes and how to read them
     ReadOutcome                    what the read gave, raw and unmarked (§4.6)
     OPEN_MARGIN_S, INTERACTIVE_OPEN_S, PREFETCH_OPEN_S     the deadlines (§4.4 "Long scans: Deadline")
-    CALLER_OPEN, CALLER_PREFETCH, CALLER_CONNECTOR         `ReadRequest.caller` values
+    CALLER_OPEN, CALLER_PREFETCH, CALLER_CONNECTOR, CALLER_INDEX   `ReadRequest.caller` values
     READER_SKIPPED, reader_skipped(outcome) -> bool         a connector read the reader would have taken (no paid call)
     IN_PROCESS_TEXT_KINDS          the kinds with no converter, read as UTF-8 in the caller (sandbox S-Δ2, A3)
     PARSE_KINDS                    the child readers' kinds that are not in IN_PROCESS_TEXT_KINDS
@@ -44,6 +44,9 @@ CALLER_PREFETCH = "prefetch"
 # the reader (a scan, a thin or garbled text layer, a parser error on a PDF; any image) answers NO_TEXT with a
 # `READER_SKIPPED` detail instead, and the parser's links. Chat and prefetch never pass it.
 CALLER_CONNECTOR = "connector"
+# The email index (email index v2): text layer only. Like the connector, never runs the paid reader: what the router
+# would hand it answers `NO_TEXT` with a `READER_SKIPPED` detail. Scans are read by a later slice.
+CALLER_INDEX = "index"
 READER_SKIPPED = "reader_skipped"
 
 # A3: the kinds that have no converter; reading UTF-8 is not parsing, so the caller reads them in process.
@@ -83,7 +86,7 @@ class ReadRequest:
     name: str                                  # for log lines and the sandbox's `ext`; never addresses anything
     declared_mime: str
     store: str                                 # a `FileRefKind` value: keys the caps (§4.5)
-    caller: str                                # CALLER_OPEN | CALLER_PREFETCH | CALLER_CONNECTOR: keys the deadline,
+    caller: str                                # CALLER_OPEN | CALLER_PREFETCH | CALLER_CONNECTOR | CALLER_INDEX: keys the deadline,
                                                # the presentation and whether the reader may run
     native_formats: Tuple[NativeFormat, ...]   # what the consumer reads natively (§4.3); empty: text only
     user_id: str                               # the reader bills and configures by these two
