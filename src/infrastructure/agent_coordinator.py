@@ -431,8 +431,11 @@ class AgentCoordinator:
             await self._ensure_lazy_agent(manifest.agent_type, context)
 
         # Inject current datetime into query so specialists have temporal context.
-        # Analogous to _inject_timestamps for user messages.
-        ts = datetime.now(timezone.utc).strftime("[%b %d, %H:%M UTC]")
+        # Analogous to _inject_timestamps for user messages. Specialists resolve relative
+        # dates ("in October", "last week", "next Friday") against this stamp, so it must
+        # carry the year and weekday — without them they guess the year.
+        # Format is mirrored by domain/delegation_timestamp.py (the strip regex).
+        ts = datetime.now(timezone.utc).strftime("[%a %d %b %Y, %H:%M UTC]")
         query = f"{ts} {query}"
 
         # Span wraps the actual specialist dispatch — the specialist's llm.call

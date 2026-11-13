@@ -63,8 +63,9 @@ The central hub for all agent interactions.
 5. **Specialization (Bound channel path):** `ConversationHandler` calls `coordinator.handle_delegation()` directly with the binding's intent. Bound agents (e.g. `DomainResearcherAgent`) use `DelegationEngine` for tool calling when `allowed_intents` is configured on their descriptor.
 6. **Aggregation:** Results are synthesized and returned to the user.
 
-**Delegation details.** `AgentCoordinator.handle_delegation()` prepends a `[Mon DD, HH:MM UTC]` timestamp to every
-delegation query, so every specialist has temporal context. `DelegationResult` carries `text` (also the text written
+**Delegation details.** `AgentCoordinator.handle_delegation()` prepends a `[Fri 13 Nov 2026, 09:05 UTC]`-shaped
+timestamp (weekday, day, month, year, time) to every delegation query, so every specialist resolves relative dates
+against the right year; `domain/delegation_timestamp.py` strips it (old and new shape) where the raw text is needed. `DelegationResult` carries `text` (also the text written
 beside a terminal call), `terminal_tool_args`, `total_tokens`, `delivery_items`, `history_contexts`, `structured_data`,
 `messages`, `failed` and `async_dispatches` (work dispatched that the user receives later: ASYNC intents, and SYNC intents
 that acknowledge and deliver in the background; a turn that has one is not an `empty_answer`, and the skip logs INFO

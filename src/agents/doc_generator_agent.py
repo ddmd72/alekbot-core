@@ -115,7 +115,7 @@ class DocGeneratorAgent(BaseAgent):
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         # payload["query"] is JSON, not commission text — handle_delegation() prepends a
-        # "[Mon DD, HH:MM UTC] " timestamp to every delegated query regardless, which breaks
+        # "[Day DD Mon YYYY, HH:MM UTC] " timestamp to every delegated query regardless, which breaks
         # JSON.parse() on the Node side (prod log audit C-10). Strip it before using the spec.
         raw_query = strip_delegation_timestamp(message.payload.get("query", ""))
         if not raw_query:
