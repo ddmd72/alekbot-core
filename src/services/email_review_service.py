@@ -2,7 +2,7 @@
 EmailReviewService
 ==================
 
-Fetches the last 24h of Gmail emails for a user and builds a structured
+Fetches the last 25 h of Gmail emails (exact instants) for a user and builds a structured
 payload for SmartAgent daily inbox analysis.
 
 Responsibilities:
@@ -83,7 +83,7 @@ class EmailReviewService:
 
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:
         """
-        Fetch and structure the last 24h of Gmail emails for user_id.
+        Fetch and structure the last 25 h of Gmail emails (exact instants) for user_id.
         Returns None if credentials are missing or token refresh fails transiently.
         Returns an empty list if no emails were received in the period.
         Raises OAuthGrantRevokedError when Google rejected the refresh token — the

@@ -113,7 +113,7 @@ class GmailProviderAdapter(EmailProviderPort):
         Fetches up to max_results email metadata for one page.
 
         `exact_instants=False` (indexing day cursors): `after:`/`before:` carry `YYYY/MM/DD` calendar dates, which Gmail
-        reads as midnight Pacific time. `True` (the daily review's rolling 24 h): both carry epoch seconds.
+        reads as midnight Pacific time. `True` (the daily review's rolling 25 h window): both carry epoch seconds.
 
         Strategy (RFC §2.2):
           1. GET /messages?maxResults=N&q=QUERY&pageToken=TOKEN → list of {id, threadId}
