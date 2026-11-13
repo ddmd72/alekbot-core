@@ -412,9 +412,25 @@ class EmailIndexingService:
                         )
                         next_page_token = None
 
+                # 1b. Already-indexed emails: incremental and backfill never re-process them (an incremental run
+                #     re-lists the whole day of its cursor); reindex re-processes them but keeps their
+                #     consolidation mark, so memory consolidation does not read them again.
+                stored_marks = await self._email_repo.get_consolidation_marks(
+                    job.user_id, [e.email_id for e in emails_page]
+                )
+                if mode != "reindex" and stored_marks:
+                    already = [e for e in emails_page if e.email_id in stored_marks]
+                    if already:
+                        logger.info(
+                            f"⏭️ Job {job.job_id[:8]} [{mode}]: skipped {len(already)} already-indexed emails"
+                        )
+                    candidates = [e for e in emails_page if e.email_id not in stored_marks]
+                else:
+                    candidates = emails_page
+
                 # 2. Pre-filter via exclusions (no LLM cost)
-                filtered = self._apply_exclusions(emails_page, exclusions)
-                excluded_count = len(emails_page) - len(filtered)
+                filtered = self._apply_exclusions(candidates, exclusions)
+                excluded_count = len(candidates) - len(filtered)
                 if excluded_count:
                     logger.info(
                         f"🚫 Excluded {excluded_count} emails via patterns"
@@ -480,6 +496,7 @@ class EmailIndexingService:
                                         full_content_map,
                                         job,
                                         account_id,
+                                        stored_marks if mode == "reindex" else {},
                                     )
                                     for ec in valuable
                                 ]
@@ -717,8 +734,12 @@ class EmailIndexingService:
         full_content_map: Dict[str, EmailFullContent],
         job: IndexingJob,
         account_id: str,
+        stored_marks: Optional[Dict[str, Optional[datetime]]] = None,
     ) -> Optional[IndexedEmail]:
-        """Generate 4-vector embeddings and build IndexedEmail. Parallel per email."""
+        """Generate 4-vector embeddings and build IndexedEmail. Parallel per email.
+
+        `stored_marks` (reindex): the consolidated_at of emails already stored; the rebuilt record carries it so the
+        save does not reset the mark."""
         meta = email_meta_map.get(ec.email_id)
         content = full_content_map.get(ec.email_id)
         attachments = content.attachments if content else []
@@ -794,4 +815,5 @@ class EmailIndexingService:
             state="current",
             indexed_at=datetime.now(timezone.utc),
             embedding_pending=embedding_pending,
+            consolidated_at=(stored_marks or {}).get(ec.email_id),
         )

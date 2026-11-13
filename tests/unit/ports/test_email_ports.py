@@ -49,8 +49,9 @@ class TestEmailProviderPort:
 
     def test_abstract_method_count(self):
         # reviewer (U4a, EXTERNAL_FILES_RFC §4.7 P8a): the part listing and the part download join the port
+        # reviewer (email fresh headers, decisions/email_search_fresh_headers.md): the live header listing joins it
         assert _abstract_methods(EmailProviderPort) == {
-            "list_emails", "batch_get_full_content", "refresh_token", "list_parts", "get_part"
+            "list_emails", "list_headers", "batch_get_full_content", "refresh_token", "list_parts", "get_part"
         }
 
     def test_list_emails_signature(self):
@@ -127,6 +128,8 @@ class TestIndexedEmailRepository:
             "get_pending_embeddings", "update_vectors",
             # R1 (SECRETS_AT_REST_RFC §6.2 F1/F2): the flag/mark field update and the feature-store user listing
             "set_reconnect_flags", "list_indexing_user_ids",
+            # indexing skips stored emails and reindex keeps their consolidated_at
+            "get_consolidation_marks",
         }
 
     def test_save_batch_signature(self):

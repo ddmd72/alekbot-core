@@ -37,7 +37,8 @@ def test_the_result_lines_sit_in_one_email_block_with_sender_date_and_text_reada
     assert "  → Acme sent Alex the onboarding pack." in inside
     assert "• [msg-18] clara@example.com | 2026-10-02" in inside
     before, after = out[:out.index(OPENING)], out[out.index(CLOSING):]
-    assert "Found 2 email(s):" in before
+    # reviewer (email fresh headers): the count line names the index, apart from the live header lists
+    assert "Found 2 email(s) in the index:" in before
     assert "get_email_details" in after and "get_email_details" not in inside
 
 

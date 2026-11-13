@@ -832,7 +832,8 @@ class TestFormatEmailSearchCompact:
         result = _format_email_search_compact(data)
         assert "abc" in result
         assert "a@example.com" in result
-        assert "Found 1 email(s):" in result
+        # reviewer (email fresh headers): the count line names the index, apart from the live header lists
+        assert "Found 1 email(s) in the index:" in result
 
     def test_email_with_text_snippet(self):
         import json
@@ -1120,7 +1121,8 @@ class TestDelegateQuickSearchEmails:
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
         assert "abc123" in result.result_str
-        assert "Found 1 email(s):" in result.result_str
+        # reviewer (email fresh headers): the count line names the index, apart from the live header lists
+        assert "Found 1 email(s) in the index:" in result.result_str
 
 
 # =============================================================================

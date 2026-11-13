@@ -153,26 +153,7 @@ class GmailProviderAdapter(EmailProviderPort):
                 return [], next_page_token
 
             # Step 2: Fetch metadata per message in parallel
-            async def fetch_meta(msg_id: str) -> Optional[dict]:
-                async with sem:
-                    try:
-                        async with session.get(
-                            f"{_GMAIL_BASE}/messages/{msg_id}",
-                            headers=headers,
-                            params={
-                                "format": "metadata",
-                                "metadataHeaders": ["Subject", "From", "Date"],
-                            },
-                        ) as resp:
-                            await _raise_for_gmail_status(resp)
-                            return await resp.json()
-                    except Exception as exc:
-                        logger.warning(
-                            f"⚠️ Failed to fetch metadata for {msg_id}: {exc}"
-                        )
-                        return None
-
-            metas = await asyncio.gather(*[fetch_meta(mid) for mid in message_ids])
+            metas = await asyncio.gather(*[self._fetch_meta(session, headers, sem, mid) for mid in message_ids])
 
             emails = []
             for meta in metas:
@@ -190,6 +171,82 @@ class GmailProviderAdapter(EmailProviderPort):
             f"next_page={'yes' if next_page_token else 'no'}"
         )
         return emails, next_page_token
+
+    async def _fetch_meta(self, session, headers: Dict, sem: asyncio.Semaphore, msg_id: str) -> Optional[dict]:
+        """One message's metadata (Subject/From/Date); None when the fetch fails (logged)."""
+        async with sem:
+            try:
+                async with session.get(
+                    f"{_GMAIL_BASE}/messages/{msg_id}",
+                    headers=headers,
+                    params={
+                        "format": "metadata",
+                        "metadataHeaders": ["Subject", "From", "Date"],
+                    },
+                ) as resp:
+                    await _raise_for_gmail_status(resp)
+                    return await resp.json()
+            except Exception as exc:
+                logger.warning(f"⚠️ Failed to fetch metadata for {msg_id}: {exc}")
+                return None
+
+    # ------------------------------------------------------------------
+    # list_headers
+    # ------------------------------------------------------------------
+
+    async def list_headers(
+        self,
+        credentials: OAuthCredential,
+        *,
+        after: Optional[datetime] = None,
+        before: Optional[datetime] = None,
+        key: Optional[str] = None,
+        limit: int = 100,
+    ) -> Tuple[List[EmailMetadata], bool]:
+        """One `GET /messages` (newest first) plus the metadata of each id; see the port for the contract.
+
+        `after:` / `before:` carry epoch seconds: Gmail reads a `YYYY/MM/DD` date as midnight Pacific time.
+        """
+        q_parts: List[str] = []
+        if after:
+            q_parts.append(f"after:{self._epoch(after)}")
+        if before:
+            q_parts.append(f"before:{self._epoch(before)}")
+        if key:
+            q_parts.append('"' + key.replace('"', "") + '"')
+        q_parts.append("-category:promotions -in:spam -in:trash")
+        params: Dict = {"maxResults": limit, "q": " ".join(q_parts)}
+        headers = {"Authorization": f"Bearer {credentials.access_token}"}
+        sem = asyncio.Semaphore(_FETCH_SEMAPHORE_LIMIT)
+        logger.info(f"📬 Gmail list_headers: q={params['q']!r} limit={limit}")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{_GMAIL_BASE}/messages", headers=headers, params=params) as resp:
+                await _raise_for_gmail_status(resp)
+                list_data = await resp.json()
+            message_ids = [m["id"] for m in list_data.get("messages", [])]
+            more = bool(list_data.get("nextPageToken"))
+            if not message_ids:
+                return [], more
+            metas = await asyncio.gather(*[self._fetch_meta(session, headers, sem, mid) for mid in message_ids])
+
+        emails: List[EmailMetadata] = []
+        for meta in metas:
+            if meta is None:
+                continue
+            try:
+                emails.append(self._parse_metadata(meta))
+            except Exception as exc:
+                logger.warning(f"⚠️ Failed to parse metadata for {meta.get('id')}: {exc}")
+        emails.sort(key=lambda e: e.date if e.date.tzinfo else e.date.replace(tzinfo=timezone.utc), reverse=True)
+        return emails, more
+
+    @staticmethod
+    def _epoch(moment: datetime) -> int:
+        """Epoch seconds of an instant; a naive datetime is read as UTC."""
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return int(moment.timestamp())
 
     # ------------------------------------------------------------------
     # batch_get_full_content
