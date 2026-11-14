@@ -46,6 +46,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 X3_DIR = HERE / "card_prompts_x3"
 SNAPSHOT_TOKENS = REPO / "prompts_snapshot" / "tokens" / "system"
+# A full model id, never the bare alias: `sonnet` resolved to an older Sonnet than the latest (seen 2026-11-14).
+DEFAULT_MODEL = "claude-sonnet-5-5"
 PATH_X3 = "subscription-sonnet-x3"
 PATH_X1 = "subscription-sonnet-x1"
 GROUP_SIZE = 3
@@ -147,8 +149,8 @@ def child_env(thinking: str) -> Dict[str, str]:
     return env
 
 
-def claude_command(system: str) -> List[str]:
-    return ["claude", "-p", "--model", "sonnet", "--output-format", "json", "--tools", "", "--no-session-persistence",
+def claude_command(system: str, model: str = DEFAULT_MODEL) -> List[str]:
+    return ["claude", "-p", "--model", model, "--output-format", "json", "--tools", "", "--no-session-persistence",
             "--disable-slash-commands", "--strict-mcp-config", "--system-prompt", system]
 
 
@@ -164,14 +166,15 @@ def answer_text(stdout: str) -> Optional[str]:
     return result if isinstance(result, str) else None
 
 
-def make_call(thinking: str, cwd: str, sem: asyncio.Semaphore, timings: List[float]) -> Call:
+def make_call(thinking: str, cwd: str, sem: asyncio.Semaphore, timings: List[float],
+              model: str = DEFAULT_MODEL) -> Call:
     env = child_env(thinking)
 
     async def call(system: str, user: str) -> Optional[str]:
         async with sem:
             started = time.time()
             proc = await asyncio.create_subprocess_exec(
-                *claude_command(system), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                *claude_command(system, model), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, cwd=cwd, env=env)
             try:
                 stdout, _ = await asyncio.wait_for(proc.communicate(user.encode("utf-8")), CALL_TIMEOUT_S)
@@ -268,7 +271,8 @@ async def run(args: argparse.Namespace) -> int:
         print("--out must be under scripts/memory/", file=sys.stderr)
         return 2
     out.parent.mkdir(parents=True, exist_ok=True)
-    ids = [i for i in read_ids(Path(args.ids), args.limit) if i not in done_ids(out)]
+    done = done_ids(out)   # read once: per id it re-parsed the whole output file and a resume hung for minutes
+    ids = [i for i in read_ids(Path(args.ids), args.limit) if i not in done]
     session = await open_session()
     embedder = None
     if args.embed:
@@ -284,10 +288,10 @@ async def run(args: argparse.Namespace) -> int:
     deadline_at = time.time() + 3600 * 12
     cache: Dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="recard_cwd_") as cwd, out.open("a", encoding="utf-8") as sink:
-        call = make_call(args.thinking, cwd, asyncio.Semaphore(args.concurrency), timings)
+        call = make_call(args.thinking, cwd, asyncio.Semaphore(args.concurrency), timings, args.model)
 
         def emit(email_id: str, document: Any, vector: Any, path: str, state: str, reason: str) -> None:
-            sink.write(json.dumps({"email_id": email_id, "document": document, "vector": vector, "path": path,
+            sink.write(json.dumps({"email_id": email_id, "document": document, "vector": vector, "path": path, "model": args.model,
                                    "state": state, "reason": reason}, ensure_ascii=False) + "\n")
             sink.flush()
             totals.states[state] += 1
@@ -358,6 +362,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=30, help="claude -p calls in flight")
     ap.add_argument("--thinking", choices=("on", "off"), default="on")
+    ap.add_argument("--model", default=DEFAULT_MODEL, help="full Claude model id for claude -p (never a bare alias)")
     ap.add_argument("--embed", action="store_true")
     ap.add_argument("--max-usd", type=float, default=1.00, help="embedding spend cap")
     args = ap.parse_args(argv)
