@@ -7,7 +7,7 @@ as the online path does: `settled_fields` + `write_card` with compare-and-set, t
 already carries a card is skipped unless `--overwrite`.
 
     python scripts/email/load_cards.py --in scripts/memory/email_cards/full.jsonl [--limit N] [--apply]
-        [--max-usd 2.00] [--overwrite] [--model-label subscription-sonnet-x3]
+        [--max-usd 2.00] [--overwrite] [--model-label claude-sonnet-5]
 
 Dry run is the default: the store is read, nothing is written, no embedding is called. `--apply` writes and embeds.
 Embedding spend is metered from the tokens the adapter reports (a ledger scope around each call; an adapter that reports
@@ -45,7 +45,7 @@ EMBED_MODEL = "gemini-embedding-2"
 READ_BATCH = 500
 EMBED_CONCURRENCY = 10
 REPORT_EVERY = 500
-DEFAULT_MODEL_LABEL = "subscription-sonnet-x3"
+DEFAULT_MODEL_LABEL = "claude-sonnet-5"
 
 
 def under_scripts_memory(path: Path) -> bool:
@@ -127,6 +127,7 @@ async def load(rows: Mapping[str, Mapping[str, Any]], store: EmailCardStore, emb
     report = Report(meter=Meter(max_usd))
     counts = report.counts
     settled: List[Tuple[str, EmailCard, Optional[List[float]]]] = []
+    models: Dict[str, str] = {}
     for email_id, row in rows.items():
         if row.get("document") is None:
             counts[f"not_carded:{row.get('state') or '-'}:{row.get('reason') or '-'}"] += 1
@@ -141,6 +142,9 @@ async def load(rows: Mapping[str, Mapping[str, Any]], store: EmailCardStore, emb
             continue
         vector = row.get("vector")
         settled.append((email_id, card, list(vector) if vector else None))
+        row_model = row.get("model")
+        if isinstance(row_model, str) and row_model.strip():
+            models[email_id] = row_model.strip()
     if limit:
         settled = settled[:limit]
 
@@ -175,7 +179,7 @@ async def load(rows: Mapping[str, Mapping[str, Any]], store: EmailCardStore, emb
                 if not report.meter.exhausted:
                     vector = await _embed(embedder, card, report.meter)
         pending = card.state is CardState.CARDED and vector is None
-        fields = settled_fields(card, digest=people_digest(card, people), model=model_label, now=stamp,
+        fields = settled_fields(card, digest=people_digest(card, people), model=models.get(email_id, model_label), now=stamp,
                                 vector_pending=pending)
         result = await store.write_card(user_id, email_id, fields, vector, expect)
         counts[result.value] += 1

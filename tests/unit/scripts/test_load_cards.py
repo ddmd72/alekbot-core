@@ -67,11 +67,11 @@ async def _load(rows, store, embedder=None, *, apply=True, **kw):
 
 async def test_carded_card_is_written_with_vector_and_lifecycle_fields():
     store, emb = _store("m1"), FakeEmbeddings()
-    report = await _load([_row("m1")], store, emb, model_label="subscription-sonnet-x3")
+    report = await _load([_row("m1")], store, emb, model_label="claude-sonnet-5")
     doc = store.docs[(USER, "m1")]
     assert report.counts["written"] == 1 and emb.calls == 1
     assert doc["card_state"] == "carded" and doc["card_vector"] == VECTOR and doc["card_vector_pending"] is False
-    assert doc["card_model"] == "subscription-sonnet-x3" and doc["carded_at"] == NOW and doc["subject"] == "v1 field"
+    assert doc["card_model"] == "claude-sonnet-5" and doc["carded_at"] == NOW and doc["subject"] == "v1 field"
     assert doc["people_digest"]
 
 
@@ -106,7 +106,7 @@ async def test_already_carded_is_skipped_and_overwrite_rewrites():
     store = _store("m1")
     await _load([_row("m1")], store)
     skipped = await _load([_row("m1")], store, model_label="other")
-    assert skipped.counts["already_carded"] == 1 and store.docs[(USER, "m1")]["card_model"] == "subscription-sonnet-x3"
+    assert skipped.counts["already_carded"] == 1 and store.docs[(USER, "m1")]["card_model"] == "claude-sonnet-5"
     rewritten = await _load([_row("m1")], store, overwrite=True, model_label="other")
     assert rewritten.counts["written"] == 1 and store.docs[(USER, "m1")]["card_model"] == "other"
 
@@ -185,3 +185,12 @@ def test_input_must_be_under_scripts_memory(tmp_path):
 
 def test_cas_expect_of_a_card_free_document_is_absent():
     assert CardExpect.absent() == CardExpect(None, None)
+
+
+async def test_row_model_is_stored_and_a_row_without_it_gets_the_label():
+    store = _store("m1", "m2", "m3")
+    rows = [_row("m1", model="claude-sonnet-5-5"), _row("m2"), _row("m3", model="")]
+    await _load(rows, store, model_label="claude-sonnet-5")
+    assert store.docs[(USER, "m1")]["card_model"] == "claude-sonnet-5-5"
+    assert store.docs[(USER, "m2")]["card_model"] == "claude-sonnet-5"
+    assert store.docs[(USER, "m3")]["card_model"] == "claude-sonnet-5"
