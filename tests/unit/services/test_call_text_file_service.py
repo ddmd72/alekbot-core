@@ -138,8 +138,8 @@ class World:
 async def test_the_drive_file_lands_in_the_inbox_with_the_rendered_markdown():
     w = World()
     out = await w.service.save("usr-1", "acc-1", w.request())
-    assert out.saved and out.path == f"Acme/R&D/Inbox/{NAME}"
-    data = w.files()[f"R&D/Inbox/{NAME}"].decode("utf-8")
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Voice calls/{NAME}"
+    data = w.files()[f"R&D/Inbox/Voice calls/{NAME}"].decode("utf-8")
     assert data.startswith("# Check-in at Albergo Immaginario\n\n2025-08-10 14:00–14:10\n\nAlex Doe checked in at Albergo Immaginario with booking RM-55120.")
     assert "> We have a booking under RM-55120.\n\nAbbiamo una prenotazione con il codice RM-55120.\n" in data
 
@@ -205,8 +205,8 @@ async def test_an_unexpected_drive_error_is_failed():
 async def test_a_summarizer_error_still_saves_with_the_fallback_title():
     w = World(extractor=ScriptedExtractor(error=RuntimeError("llm down")))
     out = await w.service.save("usr-1", "acc-1", w.request())
-    assert out.saved and out.path == "Acme/R&D/Inbox/2025-08-10 14.00 Call.md"
-    assert w.files()["R&D/Inbox/2025-08-10 14.00 Call.md"].decode("utf-8").startswith("# Call\n\n2025-08-10 14:00–14:10\n\n---")
+    assert out.saved and out.path == "Acme/R&D/Inbox/Voice calls/2025-08-10 14.00 Call.md"
+    assert w.files()["R&D/Inbox/Voice calls/2025-08-10 14.00 Call.md"].decode("utf-8").startswith("# Call\n\n2025-08-10 14:00–14:10\n\n---")
 
 
 async def test_a_summarizer_past_its_budget_still_saves_without_a_summary():

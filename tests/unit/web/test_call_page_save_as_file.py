@@ -48,6 +48,11 @@ const labels = () => btns().map((b) => b.textContent);
 const result = () => (rowEl() ? rowEl().querySelector(".save-result").textContent : null);
 const tick = () => new Promise((r) => setTimeout(r, 0));
 """
+# A chat or drive save answers in the result sheet; the inline `.save-result` line is Copy text's only.
+_SHEET = """
+const sheetOf = () => document.body.querySelector(".save-sheet");
+const sheetLine = () => (sheetOf() ? sheetOf().querySelector(".save-sheet-text").textContent : null);
+"""
 
 
 # ---------------------------------------------------------------- static
@@ -181,10 +186,10 @@ release(); await tick();
 
 @needs_node
 def test_filing_to_drive_posts_the_entries_and_shows_the_path():
-    out = _run(_FETCH + _CALL + """
+    out = _run(_FETCH + _SHEET + _CALL + """
 callLiveAt = Date.now() - 125000; callFileToDrive = true; endLiveText();
 btns()[2].click(); await tick();
-""" + _out(call="calls[0]", result="result()", disabled="btns().map((b) => b.disabled)"))
+""" + _out(call="calls[0]", result="sheetLine()", disabled="btns().map((b) => b.disabled)"))
     call = out["call"]
     assert call["url"] == "/api/voice/call-text/file"
     assert call["init"]["method"] == "POST" and call["init"]["credentials"] == "same-origin"
@@ -195,7 +200,8 @@ btns()[2].click(); await tick();
         "question": "Lelik, how do I say thank you in Italian?", "answer": "Grazie.",
     }
     assert out["result"] == "save.saved Inbox/2026-11-16 10.00 Call.md"
-    assert out["disabled"] == [False, False, False]
+    # the filed drive target stays disabled for the rest of this text; the others are free again
+    assert out["disabled"] == [False, False, True]
 
 
 @pytest.mark.parametrize(
@@ -211,23 +217,23 @@ btns()[2].click(); await tick();
 )
 @needs_node
 def test_file_to_chat_result_line_per_status(status, body, expected):
-    out = _run(_FETCH + _CALL + f"reply = {{ status: {status}, body: {__import__('json').dumps(body)} }};\n"
-               + "endLiveText(); btns()[1].click(); await tick();\n" + _out(call="calls[0].body.target", result="result()"))
+    out = _run(_FETCH + _SHEET + _CALL + f"reply = {{ status: {status}, body: {__import__('json').dumps(body)} }};\n"
+               + "endLiveText(); btns()[1].click(); await tick();\n" + _out(call="calls[0].body.target", result="sheetLine()"))
     assert out["call"] == "chat" and out["result"] == expected
 
 
 @pytest.mark.parametrize("reason", ("not_connected", "refused"))
 @needs_node
 def test_file_to_drive_409_reasons(reason):
-    out = _run(_FETCH + _CALL + f'reply = {{ status: 409, body: {{ ok: false, reason: "{reason}" }} }};\n'
-               + "callFileToDrive = true; endLiveText(); btns()[2].click(); await tick();\n" + _out(result="result()"))
+    out = _run(_FETCH + _SHEET + _CALL + f'reply = {{ status: 409, body: {{ ok: false, reason: "{reason}" }} }};\n'
+               + "callFileToDrive = true; endLiveText(); btns()[2].click(); await tick();\n" + _out(result="sheetLine()"))
     assert out["result"] == f"save.{reason}"
 
 
 @needs_node
 def test_a_network_error_gives_the_generic_line_and_frees_the_buttons():
-    out = _run(_FETCH + _CALL + "globalThis.fetch = async () => { throw new Error('down'); };\n"
-               + "endLiveText(); btns()[1].click(); await tick();\n" + _out(result="result()", d="btns().map((b) => b.disabled)"))
+    out = _run(_FETCH + _SHEET + _CALL + "globalThis.fetch = async () => { throw new Error('down'); };\n"
+               + "endLiveText(); btns()[1].click(); await tick();\n" + _out(result="sheetLine()", d="btns().map((b) => b.disabled)"))
     assert out["result"] == "save.failed" and out["d"] == [False, False]
 
 
@@ -247,8 +253,8 @@ btns()[0].click(); await tick();
 
 @needs_node
 def test_text_in_the_result_goes_through_textcontent():
-    out = _run(_FETCH + _CALL + """
+    out = _run(_FETCH + _SHEET + _CALL + """
 reply = { status: 200, body: { ok: true, path: "<img src=x onerror=alert(1)>" } };
 callFileToDrive = true; endLiveText(); btns()[2].click(); await tick();
-""" + _out(result="result()", kids="rowEl().querySelector('.save-result').children.length"))
+""" + _out(result="sheetLine()", kids="sheetOf().querySelector('.save-sheet-text').children.length"))
     assert "<img" in out["result"] and out["kids"] == 0
