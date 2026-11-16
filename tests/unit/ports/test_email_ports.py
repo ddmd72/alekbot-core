@@ -122,10 +122,10 @@ class TestIndexedEmailRepository:
 
     def test_abstract_method_count(self):
         assert _abstract_methods(IndexedEmailRepository) == {
-            "save_batch", "find_nearest", "get_indexing_state",
+            "save_batch", "get_indexing_state",
             "update_indexing_state", "clear_indexing_state", "count_by_user",
             "delete_by_user", "get_unconsolidated_batch", "mark_consolidated",
-            "get_pending_embeddings", "update_vectors",
+            # email index v2 slice 10: find_nearest, get_pending_embeddings and update_vectors left with the v1 vectors
             # R1 (SECRETS_AT_REST_RFC §6.2 F1/F2): the flag/mark field update and the feature-store user listing
             "set_reconnect_flags", "list_indexing_user_ids",
             # indexing skips stored emails and reindex keeps their consolidated_at
