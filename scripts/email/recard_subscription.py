@@ -7,12 +7,19 @@ written to Firestore, GCS or any store: each card becomes one JSON line in a loc
 (gitignored), read back by slice 4 with `card_from_document`. The Gemini embedding API is used only with `--embed`.
 
     python scripts/email/recard_subscription.py --ids IDS_FILE --out scripts/memory/email_cards/run.jsonl
-        [--limit N] [--concurrency 30] [--thinking on|off] [--embed --max-usd 1.00]
+        [--limit N] [--concurrency 30] [--thinking on|off] [--embed] [--max-reader-pages N] [--max-usd 1.00]
+        [--dry-run]
 
 `--thinking on` (the default) keeps Claude's extended thinking: measured, switching it off was 2.7x faster but invented
 content rose from 4 to 11 of 27 cards. `off` sets MAX_THINKING_TOKENS=0 on the child. A call whose answer is not valid
 JSON, or lacks a mail's card, is retried once; the mails still missing are logged as failed, never guessed (re-run them
 with `--ids`). Ids already carded in `--out` are skipped. Stdout carries counts only, never mail text.
+
+Scans (slice 5): `--max-reader-pages N` (default 0: scans are not read) lets the paid reader read scans of 10 pages or
+fewer, N pages in all. `--max-usd` is the one money cap of the run, over the reader plus the embeddings. `--dry-run`
+fetches the mail and runs the parser only, with a reader budget of 0 pages: no `claude -p`, no reader, no embedding and
+no output line. It prints the scans seen, the admissible ones, their pages and the projected dollars (pages x the page
+estimate for the reader, and an assumed cost per scanned mail for the whole card).
 """
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.domain.billing import calculate_cost  # noqa: E402
+from src.domain.drive_index_params import READER_PAGE_USD_ESTIMATE  # noqa: E402
 from src.domain.email_card import CardState  # noqa: E402
 from src.domain.email_card_answer import parse_mail_answer  # noqa: E402
 from src.domain.email_card_document import card_document  # noqa: E402
@@ -55,6 +63,7 @@ CHUNK = 60
 GMAIL_CONCURRENCY = 5
 CALL_TIMEOUT_S = 900
 EMBED_MODEL = "gemini-embedding-2"
+SCAN_MAIL_USD_ESTIMATE = 3 * READER_PAGE_USD_ESTIMATE   # assumed: a 3-page scan
 _SINGLE_SENTENCE = "Write the card of this mail as the output format says."
 _TRIPLE_SENTENCE = "Write one card for each of the three mails above, in their order, as the output format says."
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
@@ -263,19 +272,33 @@ def under_scripts_memory(path: Path) -> bool:
 
 
 async def run(args: argparse.Namespace) -> int:
-    from scripts.email.card_script_support import fetch_source, open_session, read_ids
+    from scripts.email.card_script_support import (
+        MeteredAttachmentText, SpendCap, fetch_source, open_session, page_gate, read_ids, reader_document_service,
+    )
+    from src.adapters.job_reader_page_budget import JobReaderPageBudget
     from src.services.email_card_service import EmailCardService, PreparedMail  # noqa: E402
 
     out = Path(args.out)
     if not under_scripts_memory(out):
         print("--out must be under scripts/memory/", file=sys.stderr)
         return 2
-    out.parent.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        out.parent.mkdir(parents=True, exist_ok=True)
     done = done_ids(out)   # read once: per id it re-parsed the whole output file and a resume hung for minutes
     ids = [i for i in read_ids(Path(args.ids), args.limit) if i not in done]
-    session = await open_session()
+    cap = SpendCap(args.max_usd)
+    reading = args.max_reader_pages > 0 and not args.dry_run
+    documents = reader_document_service() if reading else None
+    session = await open_session(documents=documents)
+    metered = MeteredAttachmentText(session.gmail, session.documents, cap)
+    session.attachments = metered
+    reader_budget = None
+    if args.dry_run:
+        reader_budget = JobReaderPageBudget(0)   # counts the scans it would be asked about; reads none
+    elif reading:
+        reader_budget = JobReaderPageBudget(args.max_reader_pages, gate=page_gate(cap))
     embedder = None
-    if args.embed:
+    if args.embed and not args.dry_run:
         from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
         embedder = GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"])
     service = EmailCardService(session.gmail, session.attachments, _NoWriter(), embedder or _NoEmbeddings())  # type: ignore[arg-type]
@@ -287,6 +310,9 @@ async def run(args: argparse.Namespace) -> int:
     gmail_sem = asyncio.Semaphore(GMAIL_CONCURRENCY)
     deadline_at = time.time() + 3600 * 12
     cache: Dict[str, Any] = {}
+    if args.dry_run:
+        await _dry_run(ids, session, service, reader_budget, metered, fetch_source, cache, deadline_at, gmail_sem)
+        return 0
     with tempfile.TemporaryDirectory(prefix="recard_cwd_") as cwd, out.open("a", encoding="utf-8") as sink:
         call = make_call(args.thinking, cwd, asyncio.Semaphore(args.concurrency), timings, args.model)
 
@@ -306,7 +332,7 @@ async def run(args: argparse.Namespace) -> int:
                 try:
                     return await service.prepare(session.credential, session.account_id, source, zone=session.zone,
                                                  owner_addresses=session.owner_addresses, deadline_at=deadline_at,
-                                                 cache=cache)
+                                                 cache=cache, reader_budget=reader_budget)
                 except EmailMessageGone:
                     emit(email_id, None, None, "", CardState.SOURCE_GONE.value, "gone")
                 except (AttachmentParserUnavailable, EmailPartUnavailable):
@@ -324,10 +350,13 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 card = service.finish(p, parse_mail_answer(json.dumps(got[email_id])), session.people)
                 vector = None
-                if args.embed and card.state is CardState.CARDED and totals.embed_usd < args.max_usd:
+                if args.embed and card.state is CardState.CARDED:
                     from src.domain.email_card_text import card_embedding_text
-                    totals.embed_usd += calculate_cost(EMBED_MODEL, len(card_embedding_text(card)) // 3, 0)
-                    vector = await service.embed(card)
+                    projected = calculate_cost(EMBED_MODEL, len(card_embedding_text(card)) // 3, 0)
+                    if await cap.reserve(projected):
+                        vector = await service.embed(card)
+                        await cap.settle(projected, projected)
+                        totals.embed_usd += projected
                 emit(email_id, card_document(card), vector, path, card.state.value, "")
 
         for start in range(0, len(ids), CHUNK):
@@ -336,13 +365,46 @@ async def run(args: argparse.Namespace) -> int:
             await asyncio.gather(*(one_group([by_id[i] for i in g]) for g in triples([p.mail.email_id for p in prepared])))
     mean = sum(timings) / len(timings) if timings else 0.0
     print(f"mails={len(ids)} calls={len(timings)} wall={time.time() - started:.0f}s mean_call={mean:.1f}s "
-          f"embed_usd={totals.embed_usd:.4f}")
+          f"embed_usd={totals.embed_usd:.4f} spent_usd={cap.spent:.4f} (cap {args.max_usd})")
+    print(f"reader: {metered.summary()}")
     print("states:", dict(totals.states))
     print("reasons:", dict(totals.reasons))
     failed = totals.reasons.get("failed", 0)
     if failed:
         print(f"{failed} mail(s) failed; re-run them with --ids (resume skips the carded ones)")
     return 0
+
+
+def dry_run_projection(scans_seen: int, admissible: int, pages: int) -> str:
+    """The dry run's summary line: what a real run with `--max-reader-pages` >= the pages would spend on the reader and
+    on whole scanned mails (counts only)."""
+    return (f"scans_seen={scans_seen} admissible={admissible} admissible_pages={pages} "
+            f"projected_reader_usd=${pages * READER_PAGE_USD_ESTIMATE:.4f} "
+            f"projected_scan_mail_usd=${admissible * SCAN_MAIL_USD_ESTIMATE:.4f}")
+
+
+async def _dry_run(ids: Sequence[str], session: Any, service: Any, budget: Any, metered: Any, fetch_source: Any,
+                   cache: Dict[str, Any], deadline_at: float, gmail_sem: asyncio.Semaphore) -> None:
+    """Gmail fetch and the parser only: no model call of any kind, nothing written or printed per mail."""
+    unreachable = 0
+
+    async def one(email_id: str) -> None:
+        nonlocal unreachable
+        async with gmail_sem:
+            source, _why = await fetch_source(session, email_id)
+            if source is None:
+                unreachable += 1
+                return
+            try:
+                await service.prepare(session.credential, session.account_id, source, zone=session.zone,
+                                      owner_addresses=session.owner_addresses, deadline_at=deadline_at, cache=cache,
+                                      reader_budget=budget)
+            except (EmailMessageGone, AttachmentParserUnavailable, EmailPartUnavailable):
+                unreachable += 1
+
+    await asyncio.gather(*(one(i) for i in ids))
+    print(f"dry run: mails={len(ids)} unreachable={unreachable}")
+    print(dry_run_projection(metered.scans_not_read, budget.asked, budget.asked_pages))
 
 
 class _NoWriter:
@@ -364,7 +426,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--thinking", choices=("on", "off"), default="on")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="full Claude model id for claude -p (never a bare alias)")
     ap.add_argument("--embed", action="store_true")
-    ap.add_argument("--max-usd", type=float, default=1.00, help="embedding spend cap")
+    ap.add_argument("--max-reader-pages", type=int, default=0, help="pages the paid reader may read (0: scans are not read)")
+    ap.add_argument("--max-usd", type=float, default=1.00, help="cap over every paid call of the run: reader plus embeddings")
+    ap.add_argument("--dry-run", action="store_true", help="Gmail and the parser only: print the scan counts and the projected dollars")
     args = ap.parse_args(argv)
     return asyncio.run(run(args))
 

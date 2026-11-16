@@ -159,6 +159,19 @@ write is a field update through `FirestoreEmailCardStore.write_card` (one transa
   single-field exemptions (`card`, `card_vector`, `about_keys`, `name_keys`). They must be `READY` before the code that
   queries them deploys (nothing queries them before slice 8; the write path needs none).
 - Check: `python scripts/email/card_store_status.py [--since YYYY-MM-DD]` prints counts per `card_state` (counts only).
+- **Scanned PDFs (slice 5).** A PDF the router would hand to the reader (`no_text`, `low_density`, `garbage_text`,
+  `parser_error`) is read by the paid reader when it has 10 pages or fewer (all or nothing; an 11-page scan or one with
+  no page count is not read) and the page budget allows it; its outcome is `read_by_reader` and its text feeds the card
+  writer and grading like text-layer text. The attachment service reads in two passes (the parser-only read, whose
+  page count decides, then a second read with `reader_pages`), asks a `ReaderPageBudget` (online: per user and UTC day,
+  one document in `{p}email_reader_pages`, default 40 pages, refusing when the store errors), and starts a read only
+  with at least 60 s left before the mail's deadline. A refusal by budget, time or a reader outage (`MODEL_UNAVAILABLE`)
+  stays `scan_not_read` and is not cached; the reader's own cost is billed by the reader's ledger. Knob:
+  `EMAIL_READER_PAGES_PER_DAY` (optional, default 40, `0` turns the online scan reader off; read with `os.getenv` in
+  `composition/email_card_setup.py`). There is no `CARD_VERSION` bump: stored mail whose scans were skipped is selected by
+  `python scripts/email/card_store_status.py --scans [--ids-out scripts/memory/email_cards/scans.txt]` and re-carded with
+  `recard_subscription.py --max-reader-pages N --max-usd X` (`--dry-run` projects the pages and dollars first;
+  `card_probe.py --max-reader-pages N` is the paid probe).
 
 ## 5. EmailClassificationAgent
 

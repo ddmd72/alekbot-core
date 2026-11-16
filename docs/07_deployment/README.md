@@ -657,6 +657,11 @@ service from the substitution `_EMAIL_CARD_ONLINE` (default `1`), fed by the dep
 has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
 `READY` before switching it on together with a deploy that queries them (slice 8); the write path needs none.
 
+**Email scan reader.** `EMAIL_READER_PAGES_PER_DAY` (optional; unset = 40, `0` = the online scan reader off, a non-number
+= 40 plus one WARNING) caps the pages per user and UTC day that the email card step may hand to the paid reader for
+scanned PDFs of 10 pages or fewer (email index v2 slice 5). Read with `os.getenv` in `composition/email_card_setup.py`,
+never in `load_settings()`; it needs no deploy key (the code default applies) and no index.
+
 **Memory-search slots model.** `FACT_QUERY_SLOTS_MODEL` (optional; empty = `claude-haiku-5-5`) pins the model of the slots call on the memory-search path (`composition/fact_query_slots_setup.py: search_slots_model`), which runs with thinking `low` on the Claude-only `fact_query_slots` provider entry whatever the user's provider preference. The router's slots call is not affected: it keeps the router's own model and no thinking. Claude ids only. Read with `os.getenv` where `UserAgentFactory` builds the agent, never in `load_settings()`.
 
 **Fact profile step cap.** `FACT_PROFILER_MAX_PER_RUN` (optional; empty = `20`) is the most model calls one profile step makes in a

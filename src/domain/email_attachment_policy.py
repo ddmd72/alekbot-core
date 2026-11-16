@@ -4,10 +4,12 @@ the model's input (email index v2 RFC §3 "Attachments"). Pure, mypy --strict: n
 
 Public interface:
     MIN_ATTACHMENT_BYTES, MAX_READ_ATTACHMENTS, ATTACHMENT_HEAD_CHARS, ATTACHMENT_TAIL_CHARS
+    SCAN_MAX_PAGES, SCAN_READ_MIN_REMAINING_S, EMAIL_READER_PAGES_PER_DAY_DEFAULT      the scan reader's limits
     PARSE_CONCURRENCY, BUSY_RETRY_DELAYS_S                         the parser's load limits
     NOISE_EXTS, NOISE_MIMES, NOISE_KINDS, MAIL_READ_KINDS, SHEET_KINDS
     declared_kind(part), declared_mime(part)                       what the name and the listing say
     is_noise(part) -> bool, noise_reason(part) -> str              never listed, never downloaded
+    scan_admissible(pages_total) -> bool                           1..SCAN_MAX_PAGES pages
     skip_before_download(part) -> str                              "" = download; else the skip reason
     sniffed_kind(content, part) -> str                             what the bytes prove
     input_slices(kind, text) -> (head, tail)                       the model-input cut of a read text
@@ -27,6 +29,9 @@ MIN_ATTACHMENT_BYTES = 2_048                     # under it: noise
 MAX_READ_ATTACHMENTS = 3                         # document-service reads per mail
 ATTACHMENT_HEAD_CHARS = 6_000
 ATTACHMENT_TAIL_CHARS = 1_500
+SCAN_MAX_PAGES = 10                              # a scan over it is not read by the paid reader (all or nothing)
+SCAN_READ_MIN_REMAINING_S = 60.0                 # a scan read starts only with this much left before the mail's deadline
+EMAIL_READER_PAGES_PER_DAY_DEFAULT = 40          # online daily reader pages per user (knob EMAIL_READER_PAGES_PER_DAY)
 PARSE_CONCURRENCY = 2                            # parser calls in flight per service instance
 BUSY_RETRY_DELAYS_S: Tuple[float, ...] = (2.0, 5.0, 10.0)
 NOISE_EXTS: FrozenSet[str] = frozenset({".vcf", ".ics", ".p7s", ".p7m", ".pkpass"})
@@ -84,6 +89,11 @@ def skip_before_download(part: EmailPart) -> str:
     if part.size > parse_input_cap("email"):
         return SKIP_TOO_LARGE
     return ""
+
+
+def scan_admissible(pages_total: int) -> bool:
+    """A scan the paid reader may read: its page count is known and at most `SCAN_MAX_PAGES`."""
+    return 0 < pages_total <= SCAN_MAX_PAGES
 
 
 def sniffed_kind(content: bytes, part: EmailPart) -> str:

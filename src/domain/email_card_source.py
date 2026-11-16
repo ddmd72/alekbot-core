@@ -80,7 +80,7 @@ def card_attachments_of(attachments: Sequence[EmailAttachment]) -> Tuple[Tuple[C
     texts: List[str] = []
     for a in attachments:
         cards.append(CardAttachment(name=a.name, kind=a.kind, size=a.size, read=a.outcome))
-        if a.read is _SliceTwoRead.TEXT:
+        if a.read in (_SliceTwoRead.TEXT, _SliceTwoRead.READ_BY_READER):
             texts.append(a.head if a.kind in SHEET_KINDS else (a.text if a.text is not None else a.head))
         else:
             texts.append("")
