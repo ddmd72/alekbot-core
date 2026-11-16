@@ -174,6 +174,9 @@ main page stays byte-for-byte the same in behaviour.
 - **Layout while live** (`.screen`, max-width 420 px, `call.html:105-116`): the identity block shrinks to one row
   (48 px avatar, title, status), the text panel takes the middle (`flex: 1`, scrolls), the call button stays in the
   thumb zone. Before and after a call the page looks as today.
+  On the interpreter page the call row has two side slots of equal width (`#call-slot-left`, `#call-slot-right`) that
+  keep the call button centred: left holds the Speaker button (`decisions/lelik_voice_modes.md`), right is reserved
+  for "Show".
 - **Text:** Lelik's lines `--text-main`, 20 px / 1.4; caller's lines `--text-muted`, 17 px, a small "You" label.
   Sizes via `font: -apple-system-body` scaling so iOS Dynamic Type applies. Light and dark from the existing tokens
   (`call.html:24-62`). Readable at arm's length on a phone is the target; P2 includes a look at it.

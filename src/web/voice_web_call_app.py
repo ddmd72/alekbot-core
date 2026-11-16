@@ -42,13 +42,14 @@ _MODE_PAGES = {VoiceMode.INTERPRETER: "Lelik Translator", VoiceMode.TUTOR: "Leli
 _HANGUP_TRIGGERS = frozenset({"button", "status_ended", "start_failed", "superseded"})
 
 # The page's playback snapshots (observation only): the closed sets of stages and keys the report route accepts.
-_CLIENT_REPORT_STAGES = frozenset({"track", "live_3s", "live_10s"})
+_CLIENT_REPORT_STAGES = frozenset({"track", "live_3s", "live_10s", "route"})
 _CLIENT_REPORT_KEYS = frozenset({
     "el_paused", "el_ready_state", "el_current_time", "el_muted", "el_volume", "el_has_src", "el_error",
     "el_playing_events", "el_first_playing_ms",
     "tr_ready_state", "tr_muted", "tr_enabled",
     "rx_packets", "rx_bytes", "rx_audio_level", "rx_samples", "rx_concealed",
     "pc_state", "ice_state", "ctx_state", "session_type",
+    "route", "ok", "err", "outs",
 })
 _CLIENT_REPORT_MAX_BYTES = 4096
 _CLIENT_REPORT_STR_MAX = 40
