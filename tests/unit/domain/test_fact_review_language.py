@@ -68,8 +68,10 @@ def test_the_label_set_is_the_fifteen_ui_strings_of_the_plan():
         # fact profile §4.7 (5d): the 7 profile strings, 35 in all
         "PROFILE_PLACE_QUESTION", "PROFILE_PERSON_QUESTION", "PROFILE_DATE_QUESTION", "OPTION_KEEP_AS_WRITTEN",
         "OPTION_NOT_LISTED", "PROFILE_NOT_READ", "PROFILE_DATE_NOT_READ",
+        # fact profile §4.7 amended (OD-13 (c)): the date question's reply hint, 36 in all
+        "PROFILE_DATE_REPLY_HINT",
     ]
-    assert len(names) == len(LABEL_KEYS) == 35
+    assert len(names) == len(LABEL_KEYS) == 36
     assert LABEL_KEYS == {UIMessage[f"MEMORY_{name}"].value for name in names}
     assert set(CANONICAL_LABELS) == LABEL_KEYS
     assert list(OPTION_KEYS) == list(AnswerKind)
