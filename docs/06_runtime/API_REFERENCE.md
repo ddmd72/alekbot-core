@@ -48,7 +48,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `PUT`, `DELETE` | `/api/user/reminders/<note_id>` | Edit / delete a reminder |
 | `GET` | `/api/connectors` | The connectors the Cabinet offers a connect button for: `kind`, `integration`, `label` (a kind whose realm has no OAuth client here is left out) |
 | `GET` | `/api/gmail/status` | Gmail connection, `needs_reconnect`, indexing cursor |
-| `POST` | `/api/gmail/index` | Start an indexing job (`incremental` / `backfill` / `reindex`) |
+| `POST` | `/api/gmail/index` | Start an indexing job (`incremental` / `backfill`; `reindex` is refused with 400) |
 | `GET` | `/api/gmail/jobs/<job_id>` | Job status |
 | `POST` | `/api/gmail/jobs/<job_id>/cancel` | Cancel a running job |
 | `GET`, `PUT` | `/api/gmail/auto-index` | Scheduled indexing settings |
