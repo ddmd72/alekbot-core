@@ -35,7 +35,7 @@ def test_scan_selection_takes_carded_and_empty_mail_with_a_scan_not_read():
 
 def test_ids_are_only_written_under_scripts_memory():
     assert under_scripts_memory(Path("scripts/memory/email_cards/scans.txt"))
-    assert not under_scripts_memory(Path("docs/scans.txt"))
+    assert not under_scripts_memory(Path("out/scans.txt"))
 
 
 async def test_the_cap_is_settled_with_the_measured_reader_cost_not_the_estimate():
