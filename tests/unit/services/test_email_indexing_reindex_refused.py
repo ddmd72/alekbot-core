@@ -38,7 +38,7 @@ class World:
     def __init__(self) -> None:
         self.db = EvalDb(indexes=INDEXES_FILE, groups={JOBS: "development_email_indexing_jobs_v1"})
         self.jobs = FirestoreEmailJobRepository(self.db, SimpleNamespace(email_indexing_jobs_collection=JOBS))
-        self.service = EmailIndexingService(None, None, self.jobs, None, None, None, None,
+        self.service = EmailIndexingService(None, None, self.jobs, None, None, None,
                                             connector=ConnectorRegistry().get("gmail"))
 
     @property

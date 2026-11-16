@@ -43,7 +43,7 @@ def _build(marks):
     embedding.get_embeddings_batch.return_value = [[0.1] * 4, [0.2] * 4, [0.3] * 4]
     service = EmailIndexingService(
         gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
-        exclusions_repo=exclusions, classifier=classifier, embedding=embedding, oauth=None,
+        exclusions_repo=exclusions, classifier=classifier, oauth=None,
         alert_sink=None, connector=ConnectorRegistry().get("gmail"),
     )
     return service, repo, classifier
