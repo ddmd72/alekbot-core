@@ -18,7 +18,7 @@ async def test_a_failing_watermark_read_lists_fresh_mail_with_no_lower_bound():
     _, body = await _search(_agent(service, {}))
 
     assert service.fresh_calls()[0]["after"] is None
-    assert body["count"] == 1 and body["fresh"]["since"] is None
+    assert body["index"]["shown_ids"] == ["e1"] and body["fresh"]["since"] is None
     assert [e["email_id"] for e in body["fresh"]["emails"]] == ["m1"]
 
 
