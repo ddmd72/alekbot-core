@@ -8,16 +8,20 @@ Frames are JSON text objects, each with a string `type`. Rules every later featu
 - An unknown `type` is ignored by both sides (forward compatibility). A new capability is a new `features` entry in
   `welcome`, never a changed meaning of an existing message.
 - The limits below apply to what the PAGE sends (`MAX_INBOUND_FRAME_BYTES`, `MAX_INBOUND_FRAMES_PER_S`). Relay -> page
-  frames are not capped here: the live-text RFC's `snapshot` frame is up to 20 KB (VOICE_CALL_LIVE_TEXT_RFC §4.7).
-- Relay -> page frames may carry more fields than the builders below set (live text adds `v` and a per-call `seq`
-  to its `line`/`status`/`snapshot` frames); a page ignores fields it does not know.
-- Messages carry enums, `seq` numbers and booleans. A frame is never logged: `hello` holds the token and future
-  `line` frames hold call content.
+  frames are not capped here: the live-text `snapshot` frame is up to 20 KB (VOICE_CALL_LIVE_TEXT_RFC §4.7).
+- Relay -> page frames may carry more fields than the builders below set; a page ignores fields it does not know.
+- Messages carry enums, `seq` numbers, booleans and, for the `text` feature, call content. A frame is never logged:
+  `hello` holds the token and `line`/`snapshot` frames hold what the caller and Lelik said.
+
+The `text` feature (VOICE_CALL_LIVE_TEXT_RFC §4.7, mode calls) is relay -> page only: `line` frames
+(`set`/`append`/`end`) and one `snapshot` per (re)connect, each with `v` and the call's own `seq`, one counter shared by
+both frame types. The page joins `append` texts verbatim, reads `end` as a status only and orders lines by the number
+in `l<n>`. Nothing goes page -> relay, so the feature has no `FEATURE_COMMANDS` entry.
 """
 import hashlib
 import json
 from enum import Enum
-from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional
+from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional, Sequence
 
 PROTOCOL_VERSION = 1
 
@@ -30,12 +34,25 @@ PING_INTERVAL_S = 20.0
 
 # Feature names offered in `welcome.features`. Only features a call actually serves are offered.
 FEATURE_ASK = "ask"  # slice 4: the "Ask Lelik" latch, interpreter mode only (RFC §5)
+FEATURE_TEXT = "text"  # live call text, mode calls only (VOICE_CALL_LIVE_TEXT_RFC §4.7); relay -> page only
 
 # "Ask Lelik" frames (RFC §4.2): the page presses (`ask_arm {seq}`) or presses again before speaking
 # (`ask_disarm {seq}`); the relay answers every transition with `ask_state {state, seq?, reason?}`.
 ASK_ARM = "ask_arm"
 ASK_DISARM = "ask_disarm"
 ASK_STATE = "ask_state"
+
+# Live text frames, relay -> page (VOICE_CALL_LIVE_TEXT_RFC §4.7).
+LINE = "line"
+SNAPSHOT = "snapshot"
+LINE_SET = "set"        # a caller line's whole text ("as heard")
+LINE_APPEND = "append"  # more of a Lelik line, joined to what it has verbatim
+LINE_END = "end"        # a Lelik line is finished: `status` done or interrupted
+WHO_CALLER = "caller"
+WHO_LELIK = "lelik"
+LINE_DONE = "done"
+LINE_INTERRUPTED = "interrupted"
+KIND_ASK = "ask"  # both lines of an "Ask Lelik" exchange
 
 # Page -> relay command types each feature accepts; the hub queues only these for the session (slice 4 onward).
 # Everything else the page sends, apart from the core frames, is ignored.
@@ -122,6 +139,26 @@ def ask_state_frame(state: str, seq: Optional[int] = None, reason: Optional[str]
     if reason is not None:
         frame["reason"] = reason
     return frame
+
+
+def line_frame(seq: int, line: str, op: str, *, who: Optional[str] = None, text: Optional[str] = None,
+               status: Optional[str] = None, kind: Optional[str] = None) -> Dict[str, Any]:
+    """`line {v, seq, line, op, who?, text?, status?, kind?}`: one change to one line of the call text. `op` is
+    set|append|end; an `end` frame carries `status` and no `who`. Keys left None are left out."""
+    frame: Dict[str, Any] = {"v": PROTOCOL_VERSION, "seq": seq, "type": LINE, "line": line}
+    if who is not None:
+        frame["who"] = who
+    frame["op"] = op
+    for key, value in (("text", text), ("status", status), ("kind", kind)):
+        if value is not None:
+            frame[key] = value
+    return frame
+
+
+def snapshot_frame(seq: int, lines: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """`snapshot {v, seq, lines}`: the visible lines, oldest first, each `{line, who, text, status?, kind?}`. Sent on
+    every (re)connect; it replaces the page's view."""
+    return {"v": PROTOCOL_VERSION, "seq": seq, "type": SNAPSHOT, "lines": [dict(line) for line in lines]}
 
 
 def command_seq(frame: Mapping[str, Any]) -> Optional[int]:

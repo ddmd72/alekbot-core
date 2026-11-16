@@ -12,16 +12,15 @@ import html as html_lib
 import re
 from datetime import date
 
-from .user_drive import sanitize_drive_filename
+from .user_drive import MAX_STAMPED_NAME_BYTES, stamped_drive_filename
 
 # Cloud Task context key set by deliver_deep_research on the HtmlPageGenerator task: its presence marks the
 # delivered HTML as a deep research report, its value is the research question (the name fallback).
 DEEP_RESEARCH_REPORT_CONTEXT_KEY = "deep_research_report_query"
 MAX_MARKER_QUERY_CHARS = 500
 
-# The whole name, extension included. OneDrive allows 255 characters per name; bytes are the stricter
-# measure for non-Latin titles, and a margin leaves room for the drive's own " 1" clash suffix.
-MAX_REPORT_NAME_BYTES = 200
+# The whole name, extension included (the byte cap is the generic stamped-name one).
+MAX_REPORT_NAME_BYTES = MAX_STAMPED_NAME_BYTES
 MAX_QUERY_TITLE_CHARS = 80
 REPORT_EXTENSION = ".html"
 REPORT_CONTENT_TYPE = "text/html; charset=utf-8"
@@ -55,16 +54,7 @@ def _shorten_query(query: str) -> str:
     return cut.rstrip(" .,;:-") + "…"
 
 
-def _truncate_utf8(text: str, limit: int) -> str:
-    """At most `limit` UTF-8 bytes, never splitting a character."""
-    return text.encode("utf-8")[:max(limit, 0)].decode("utf-8", errors="ignore")
-
-
 def deep_research_drive_filename(day: date, title: str, query: str) -> str:
     """`YYYY-MM-DD <title>.html`, drive-safe and at most MAX_REPORT_NAME_BYTES bytes."""
     subject = _WS_RE.sub(" ", title or "").strip() or _shorten_query(query) or _FALLBACK_TITLE
-    prefix = f"{day.isoformat()} "
-    budget = MAX_REPORT_NAME_BYTES - len(prefix.encode("utf-8")) - len(REPORT_EXTENSION.encode("utf-8"))
-    # sanitize, cap, then sanitize again: the cut may leave a trailing space or dot.
-    stem = sanitize_drive_filename(_truncate_utf8(sanitize_drive_filename(subject), budget))
-    return f"{prefix}{stem}{REPORT_EXTENSION}"
+    return stamped_drive_filename(day.isoformat(), subject, REPORT_EXTENSION)

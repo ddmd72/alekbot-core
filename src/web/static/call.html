@@ -392,6 +392,277 @@
         color: var(--text-muted);
         line-height: 1.4;
       }
+
+      /* ── Live text panel (VOICE_CALL_LIVE_TEXT_RFC §4.8): classes only the live-text script creates; nothing here
+         moves, so reduced motion holds by construction. ── */
+      .screen.text-live {
+        height: 100dvh;
+        min-height: 0;
+      }
+      .screen.text-live .identity {
+        flex: none;
+        width: 100%;
+        display: grid;
+        grid-template-columns: 48px auto 1fr;
+        column-gap: 12px;
+        row-gap: 0;
+        align-items: center;
+        justify-items: start;
+        text-align: left;
+      }
+      .screen.text-live .avatar {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        width: 48px;
+        height: 48px;
+      }
+      .screen.text-live h1 {
+        grid-column: 2 / 4;
+        grid-row: 1;
+        font-size: 20px;
+      }
+      .screen.text-live #state {
+        grid-column: 2;
+        grid-row: 2;
+        min-height: 0;
+      }
+      .screen.text-live #timer {
+        grid-column: 3;
+        grid-row: 2;
+        min-height: 0;
+      }
+      .screen.text-live .controls {
+        padding-top: 12px;
+      }
+      .text-wrap {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        display: flex;
+        margin-top: 12px;
+      }
+      .text-panel {
+        flex: 1;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        text-align: left;
+        font-size: 17px;
+        font-family: var(--font-sans);
+        color: var(--text-main);
+      }
+      @supports (font: -apple-system-body) {
+        .text-panel {
+          font: -apple-system-body;
+          font-family: var(--font-sans);
+        }
+      }
+      .text-hint {
+        font-size: 0.765em;
+        color: var(--text-muted);
+        margin: 0 0 12px;
+      }
+      .text-line {
+        margin: 0 0 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .text-line.lelik {
+        font-size: 1.1765em;
+        line-height: 1.4;
+        color: var(--text-main);
+      }
+      .text-line.caller {
+        font-size: 1em;
+        color: var(--text-muted);
+      }
+      .text-label {
+        display: block;
+        font-size: 0.765em;
+        font-weight: 600;
+        color: var(--text-muted);
+      }
+      .text-block {
+        margin: 0 0 12px;
+        padding: 12px 14px 2px;
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 16px;
+      }
+      .text-block > .text-label {
+        color: var(--accent);
+      }
+      .text-block .text-line.lelik {
+        font-size: 1em;
+      }
+      .text-block .text-line.caller {
+        font-size: 0.882em;
+      }
+      .text-pill {
+        position: absolute;
+        left: 50%;
+        bottom: 8px;
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        font-family: var(--font-sans);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--accent);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 999px;
+        box-shadow: var(--shadow-md);
+        cursor: pointer;
+      }
+      .text-pill[hidden] {
+        display: none;
+      }
+
+      /* ── Show view (VOICE_CALL_LIVE_TEXT_RFC §4.8): the interpreter's card for the person across the table.
+         Same look as the speaker control under its own class names; nothing here moves. ── */
+      .show-ctl {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .show-ctl.off {
+        visibility: hidden;
+      }
+      .show-btn {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        border: 1px solid var(--border-light);
+        background: var(--bg-panel-solid);
+        color: var(--text-main);
+        box-shadow: var(--shadow-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      .show-btn svg {
+        width: 28px;
+        height: 28px;
+      }
+      .show-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-align: center;
+      }
+      .show-view {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+        background: var(--bg-panel-solid);
+        color: var(--text-main);
+        font-family: var(--font-sans);
+      }
+      .show-view[hidden] {
+        display: none;
+      }
+      .show-card {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 20px;
+        text-align: left;
+        font-size: 17px;
+        font-family: var(--font-sans);
+      }
+      @supports (font: -apple-system-body) {
+        .show-card {
+          font: -apple-system-body;
+          font-family: var(--font-sans);
+        }
+      }
+      .show-card.flipped {
+        transform: rotate(180deg);
+      }
+      .show-source {
+        font-size: 1em;
+        line-height: 1.4;
+        color: var(--text-muted);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .show-translation {
+        font-size: 2em;
+        font-weight: 600;
+        line-height: 1.25;
+        color: var(--text-main);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .show-bar {
+        flex: none;
+        display: flex;
+        gap: 12px;
+        padding-top: 16px;
+      }
+      .show-back,
+      .show-flip {
+        flex: 1;
+        min-height: 48px;
+        padding: 0 16px;
+        font-family: var(--font-sans);
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 14px;
+        cursor: pointer;
+      }
+      /* ── Save as file (VOICE_CALL_LIVE_TEXT_RFC §4.11): the after-call buttons under the text panel. ── */
+      .save-row {
+        flex: none;
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 12px;
+        font-family: var(--font-sans);
+      }
+      .save-result {
+        flex-basis: 100%;
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-muted);
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+      .save-result:empty {
+        display: none;
+      }
+      .save-btn:disabled {
+        color: var(--text-muted);
+      }
+      .save-btn {
+        min-height: 44px;
+        padding: 8px 16px;
+        font-family: var(--font-sans);
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--accent);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 999px;
+        box-shadow: var(--shadow-md);
+        touch-action: manipulation;
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
@@ -451,6 +722,25 @@
           "ask.button": "Ask Lelik",
           "ask.armed": "Speak now · tap to cancel",
           "ask.busy": "Lelik is answering…",
+          "text.panel": "Call text",
+          "text.you": "You",
+          "text.lelik": "Lelik",
+          "text.latest": "Latest ↓",
+          "text.heard_hint": "Your words as the recogniser heard them",
+          "show.button": "Show",
+          "show.back": "Back",
+          "show.flip": "Flip",
+          "save.copy": "Copy text",
+          "save.chat": "File to chat",
+          "save.drive": "File to drive",
+          "save.copied": "Copied",
+          "save.sent": "Sent to the chat",
+          "save.saved": "Saved to the drive:",
+          "save.not_connected": "The drive is not connected",
+          "save.refused": "The drive refused the file",
+          "save.no_chat": "No chat to send to",
+          "save.failed": "Could not save, try again",
+          "save.too_long": "The call text is too long to file",
           "route.speaker": "Speaker",
           "mic.label": "Microphone",
           "mic.default": "Default microphone",
@@ -476,6 +766,25 @@
           "ask.button": "Спитати Леліка",
           "ask.armed": "Говоріть · натисніть, щоб скасувати",
           "ask.busy": "Лелік відповідає…",
+          "text.panel": "Текст розмови",
+          "text.you": "Ви",
+          "text.lelik": "Лелік",
+          "text.latest": "Останнє ↓",
+          "text.heard_hint": "Ваші слова — так, як їх почув розпізнавач",
+          "show.button": "Показати",
+          "show.back": "Назад",
+          "show.flip": "Перевернути",
+          "save.copy": "Копіювати текст",
+          "save.chat": "Файл у чат",
+          "save.drive": "Файл на диск",
+          "save.copied": "Скопійовано",
+          "save.sent": "Надіслано в чат",
+          "save.saved": "Збережено на диску:",
+          "save.not_connected": "Диск не підключено",
+          "save.refused": "Диск відхилив файл",
+          "save.no_chat": "Немає чату для надсилання",
+          "save.failed": "Не вдалося зберегти, спробуйте ще раз",
+          "save.too_long": "Текст дзвінка задовгий для файлу",
           "route.speaker": "Динамік",
           "mic.label": "Мікрофон",
           "mic.default": "Мікрофон за замовчуванням",
@@ -501,6 +810,25 @@
           "ask.button": "Demander à Lelik",
           "ask.armed": "Parlez · touchez pour annuler",
           "ask.busy": "Lelik répond…",
+          "text.panel": "Texte de l'appel",
+          "text.you": "Vous",
+          "text.lelik": "Lelik",
+          "text.latest": "Dernier ↓",
+          "text.heard_hint": "Vos paroles telles que la reconnaissance les a comprises",
+          "show.button": "Montrer",
+          "show.back": "Retour",
+          "show.flip": "Retourner",
+          "save.copy": "Copier le texte",
+          "save.chat": "Fichier dans le chat",
+          "save.drive": "Fichier sur le drive",
+          "save.copied": "Copié",
+          "save.sent": "Envoyé dans le chat",
+          "save.saved": "Enregistré sur le drive :",
+          "save.not_connected": "Le drive n'est pas connecté",
+          "save.refused": "Le drive a refusé le fichier",
+          "save.no_chat": "Aucun chat où envoyer",
+          "save.failed": "Échec de l'enregistrement, réessayez",
+          "save.too_long": "Le texte de l'appel est trop long pour un fichier",
           "route.speaker": "Haut-parleur",
           "mic.label": "Microphone",
           "mic.default": "Microphone par défaut",
@@ -526,6 +854,25 @@
           "ask.button": "Preguntar a Lelik",
           "ask.armed": "Habla · toca para cancelar",
           "ask.busy": "Lelik está respondiendo…",
+          "text.panel": "Texto de la llamada",
+          "text.you": "Tú",
+          "text.lelik": "Lelik",
+          "text.latest": "Lo último ↓",
+          "text.heard_hint": "Tus palabras tal como las entendió el reconocedor",
+          "show.button": "Mostrar",
+          "show.back": "Volver",
+          "show.flip": "Girar",
+          "save.copy": "Copiar texto",
+          "save.chat": "Archivo al chat",
+          "save.drive": "Archivo al drive",
+          "save.copied": "Copiado",
+          "save.sent": "Enviado al chat",
+          "save.saved": "Guardado en el drive:",
+          "save.not_connected": "El drive no está conectado",
+          "save.refused": "El drive rechazó el archivo",
+          "save.no_chat": "No hay chat al que enviar",
+          "save.failed": "No se pudo guardar, inténtalo de nuevo",
+          "save.too_long": "El texto de la llamada es demasiado largo para un archivo",
           "route.speaker": "Altavoz",
           "mic.label": "Micrófono",
           "mic.default": "Micrófono predeterminado",
@@ -617,6 +964,7 @@
       function startTimer() {
         if (timerInterval) return;
         const startedAt = Date.now();
+        callLiveAt = startedAt;
         const tick = () => {
           const total = Math.floor((Date.now() - startedAt) / 1000);
           const m = Math.floor(total / 60);
@@ -1483,6 +1831,564 @@
       }
       speakerInit();
 
+      /* ── Live text ───────────────────────────────────── */
+      // Mode pages only (VOICE_CALL_LIVE_TEXT_RFC §4.7-§4.9): the relay's `line` / `snapshot` frames become a
+      // scrolling text panel between the identity row and the call button. Every entry point returns at the
+      // mode gate, so /cabinet/call is untouched. The channel's own reconnect is all the recovery there is:
+      // each (re)connect brings a `snapshot`. All frame text goes in with textContent; nothing is stored.
+      // `liveText.lines` is the list a later "save as file" reads: display order, at most LIVE_TEXT_LIST_CAP.
+      const LIVE_TEXT_MODES = ["interpreter", "tutor"];
+      const LIVE_TEXT_DOM_CAP = 50;
+      const LIVE_TEXT_LIST_CAP = 2000;
+      const LIVE_TEXT_ID = /^l\d+$/;
+      const liveText = { live: false, lastSeq: -1, lines: [], els: null /* {wrap, panel, pill, hint} */, follow: true };
+      const LIVE_TEXT_LINGER_MS = 3000;
+      let liveTextLinger = null; // timer of a hang-up still waiting for the relay's `bye`
+      const liveTextEls = new Map(); // line id -> { el, body } for the lines currently in the DOM
+
+      function liveTextNum(id) {
+        return Number(id.slice(1));
+      }
+
+      function liveTextWho(who) {
+        return who === "lelik" || who === "caller";
+      }
+
+      // The list is ordered by the relay's allocation number, not by arrival (§4.4).
+      function liveTextInsert(rec) {
+        const lines = liveText.lines;
+        let i = lines.length;
+        while (i > 0 && liveTextNum(lines[i - 1].line) > liveTextNum(rec.line)) i--;
+        lines.splice(i, 0, rec);
+      }
+
+      function liveTextTrim() {
+        const extra = liveText.lines.length - LIVE_TEXT_LIST_CAP;
+        if (extra <= 0) return false;
+        liveText.lines.splice(0, extra);
+        return true;
+      }
+
+      function liveTextShown(rec) {
+        return rec.status === "interrupted" ? rec.text + "…" : rec.text;
+      }
+
+      function liveTextAtBottom(panel) {
+        return panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
+      }
+
+      function liveTextNotify() {
+        // The Show view (interpreter only) follows every change of the list.
+        if (typeof renderShow === "function") renderShow();
+      }
+
+      function liveTextBuildDom() {
+        if (liveText.els) return;
+        const controls = document.querySelector(".controls");
+        const screen = document.querySelector(".screen");
+        if (!controls || !screen) return;
+        const wrap = document.createElement("div");
+        wrap.className = "text-wrap";
+        const panel = document.createElement("div");
+        panel.className = "text-panel";
+        panel.setAttribute("role", "log");
+        panel.setAttribute("aria-live", "off"); // a screen reader must not talk over Lelik
+        panel.setAttribute("aria-label", t("text.panel"));
+        const hint = document.createElement("p");
+        hint.className = "text-hint";
+        hint.textContent = t("text.heard_hint");
+        panel.append(hint);
+        const pill = document.createElement("button");
+        pill.type = "button";
+        pill.className = "text-pill";
+        pill.textContent = t("text.latest");
+        pill.hidden = true;
+        wrap.append(panel, pill);
+        screen.insertBefore(wrap, controls);
+        screen.classList.add("text-live");
+        panel.addEventListener("scroll", () => {
+          if (liveTextAtBottom(panel)) {
+            liveText.follow = true;
+            pill.hidden = true;
+          }
+        });
+        pill.addEventListener("click", () => {
+          panel.scrollTop = panel.scrollHeight;
+          liveText.follow = true;
+          pill.hidden = true;
+        });
+        liveText.els = { wrap, panel, pill, hint };
+        liveText.follow = true;
+      }
+
+      function liveTextTearDown() {
+        const screen = document.querySelector(".screen");
+        if (screen) screen.classList.remove("text-live");
+        if (liveText.els) liveText.els.wrap.remove();
+        liveText.els = null;
+        liveTextEls.clear();
+      }
+
+      function liveTextLineEl(rec, inBlock) {
+        const el = document.createElement("div");
+        el.className = "text-line " + rec.who;
+        const body = document.createElement("span");
+        body.className = "text-body";
+        body.textContent = liveTextShown(rec);
+        if (rec.who === "caller" && !inBlock) {
+          const label = document.createElement("span");
+          label.className = "text-label";
+          label.textContent = t("text.you");
+          el.append(label, body);
+        } else {
+          el.append(body);
+        }
+        if (rec.who === "lelik" && !inBlock && window.VOICE_MODE === "interpreter") {
+          el.addEventListener("click", () => {
+            if (typeof openShow === "function") openShow();
+          });
+        }
+        liveTextEls.set(rec.line, { el, body });
+        return el;
+      }
+
+      // A new line, a removal, a snapshot or a cap trim: rebuild the last LIVE_TEXT_DOM_CAP lines.
+      function liveTextRebuild() {
+        const els = liveText.els;
+        if (!els) return;
+        Array.from(els.panel.children).forEach((child) => {
+          if (child !== els.hint) child.remove();
+        });
+        liveTextEls.clear();
+        let block = null; // the open "Ask Lelik" block (a question split by a pause is several caller lines), waiting for its answer
+        liveText.lines.slice(-LIVE_TEXT_DOM_CAP).forEach((rec) => {
+          if (rec.kind !== "ask") {
+            block = null;
+            els.panel.append(liveTextLineEl(rec, false));
+            return;
+          }
+          if (!block) {
+            block = document.createElement("div");
+            block.className = "text-block";
+            const label = document.createElement("span");
+            label.className = "text-label";
+            label.textContent = t("text.lelik");
+            block.append(label);
+            els.panel.append(block);
+          }
+          block.append(liveTextLineEl(rec, true));
+          if (rec.who === "lelik") block = null;
+        });
+      }
+
+      function liveTextRefresh(wasBottom, rebuild, touched) {
+        if (liveText.lines.length && !liveText.els) {
+          liveTextBuildDom();
+          rebuild = true;
+        }
+        const els = liveText.els;
+        if (els) {
+          if (rebuild) {
+            liveTextRebuild();
+          } else if (touched) {
+            const hit = liveTextEls.get(touched.line);
+            if (hit) hit.body.textContent = liveTextShown(touched);
+          }
+          if (wasBottom) {
+            els.panel.scrollTop = els.panel.scrollHeight; // instant, never smooth
+            liveText.follow = true;
+            els.pill.hidden = true;
+          } else {
+            liveText.follow = false;
+            els.pill.hidden = false;
+          }
+        }
+        liveTextNotify();
+      }
+
+      // Returns { rebuild, touched } for a valid frame, null for one to ignore.
+      function liveTextApplyLine(msg) {
+        if (typeof msg.line !== "string" || !LIVE_TEXT_ID.test(msg.line)) return null;
+        const text = typeof msg.text === "string" ? msg.text : "";
+        let rec = liveText.lines.find((l) => l.line === msg.line);
+        let rebuild = false;
+        if (msg.op === "end") {
+          if (!rec) return null;
+          if (msg.status === "done" || msg.status === "interrupted") rec.status = msg.status;
+          return { rebuild, touched: rec };
+        }
+        if (msg.op !== "append" && msg.op !== "set") return null;
+        if (msg.op === "set" && text === "") {
+          // An empty transcript removes the caller's line (§4.4).
+          if (!rec) return null;
+          liveText.lines.splice(liveText.lines.indexOf(rec), 1);
+          return { rebuild: true, touched: null };
+        }
+        if (!rec) {
+          if (!liveTextWho(msg.who)) return null;
+          rec = { line: msg.line, who: msg.who, kind: undefined, text: "", status: "open" };
+          liveTextInsert(rec);
+          rebuild = true;
+        }
+        rec.text = msg.op === "append" ? rec.text + text : text;
+        if (msg.kind === "ask" && rec.kind !== "ask") {
+          rec.kind = "ask";
+          rebuild = true;
+        }
+        if (liveTextTrim()) rebuild = true;
+        return { rebuild, touched: rec };
+      }
+
+      function liveTextApplySnapshot(msg) {
+        if (!Array.isArray(msg.lines)) return;
+        msg.lines.forEach((item) => {
+          if (!item || typeof item.line !== "string" || !LIVE_TEXT_ID.test(item.line)) return;
+          if (typeof item.text !== "string") return;
+          const status = item.status === "done" || item.status === "interrupted" ? item.status : "open";
+          const kind = item.kind === "ask" ? "ask" : undefined;
+          const rec = liveText.lines.find((l) => l.line === item.line);
+          if (rec) {
+            rec.text = item.text;
+            rec.status = status;
+            rec.kind = kind;
+          } else if (liveTextWho(item.who) && item.text !== "") {
+            liveTextInsert({ line: item.line, who: item.who, kind, text: item.text, status });
+          }
+        });
+        liveTextTrim();
+      }
+
+      function onLiveTextFrame(msg) {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return;
+        if (liveTextLinger !== null && (msg === null || msg.type === "bye")) {
+          finishLiveTextLinger();
+          return;
+        }
+        if (!msg || !liveText.live) return; // null = the socket closed: the view stays, the snapshot restores it
+        if (msg.v !== 1 || (msg.type !== "line" && msg.type !== "snapshot" && msg.type !== "status")) return;
+        // `ask_state` frames carry their own `seq` (the press counter): they never reach this check.
+        if (!Number.isInteger(msg.seq) || msg.seq <= liveText.lastSeq) return;
+        liveText.lastSeq = msg.seq;
+        if (msg.type === "status") return; // S3's: the seq advances, nothing else
+        const els = liveText.els;
+        const wasBottom = els ? liveTextAtBottom(els.panel) : true;
+        if (msg.type === "snapshot") {
+          liveTextApplySnapshot(msg);
+          liveTextRefresh(wasBottom, true, null);
+          return;
+        }
+        const done = liveTextApplyLine(msg);
+        if (done) liveTextRefresh(wasBottom, done.rebuild, done.touched);
+      }
+
+      function showLiveText() {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return;
+        liveText.live = true;
+      }
+
+      function resetLiveText() {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return;
+        if (typeof closeShow === "function") closeShow();
+        clearTimeout(liveTextLinger);
+        liveTextLinger = null;
+        if (typeof clearSaveRow === "function") clearSaveRow();
+        liveText.lines = [];
+        liveText.lastSeq = -1;
+        liveText.live = false;
+        liveText.follow = true;
+        liveTextTearDown();
+        liveTextNotify();
+      }
+
+      // A user hang-up: the relay's last frames (the cut, the final tick) come before its `bye`, and they
+      // complete the last line. Keep the socket and keep applying frames until `bye` (or the socket going
+      // away) or LIVE_TEXT_LINGER_MS, then close it and end the live text. Returns false when there is
+      // nothing to wait for (the caller then closes at once).
+      function lingerLiveText(trigger) {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return false;
+        if (trigger !== "button" || !liveText.live || !control || !control.ws || control.done) return false;
+        clearTimeout(liveTextLinger);
+        liveTextLinger = setTimeout(finishLiveTextLinger, LIVE_TEXT_LINGER_MS);
+        return true;
+      }
+
+      function finishLiveTextLinger() {
+        if (liveTextLinger === null) return;
+        clearTimeout(liveTextLinger);
+        liveTextLinger = null;
+        closeControl();
+        endLiveText();
+      }
+
+      function endLiveText() {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return;
+        liveText.live = false;
+        if (!liveText.lines.length) liveTextTearDown();
+        if (typeof showSaveRow === "function") showSaveRow();
+      }
+      onControl(onLiveTextFrame);
+
+      /* ── Show view ───────────────────────────────────── */
+      // Interpreter page only (VOICE_CALL_LIVE_TEXT_RFC §4.8): a full-screen card with the latest translation
+      // large and its source small above it, for the person across the table. It follows the list live (the
+      // live-text block calls renderShow after every change) and closes ONLY through Back: no listener on the
+      // overlay, the card or a key, so a stray tap by either person cannot dismiss it. Flip turns the card
+      // alone, so Back and Flip keep facing the owner. A translation is a Lelik line that is not an Ask block.
+      const show = { ctl: null, view: null, card: null, source: null, translation: null, back: null };
+
+      // The latest translation and its source: the nearest caller line before it that comes after the
+      // previous translation (otherwise there is none, e.g. an interrupted or unanswered turn).
+      function showCurrent() {
+        const lines = liveText.lines;
+        const isTranslation = (l) => l.who === "lelik" && l.kind !== "ask";
+        let at = lines.length - 1;
+        while (at >= 0 && !isTranslation(lines[at])) at--;
+        if (at < 0) return null;
+        let source = null;
+        for (let i = at - 1; i >= 0 && !isTranslation(lines[i]); i--) {
+          if (lines[i].who === "caller" && lines[i].kind !== "ask") {
+            source = lines[i];
+            break;
+          }
+        }
+        return { translation: lines[at], source };
+      }
+
+      function renderShow() {
+        if (window.VOICE_MODE !== "interpreter") return;
+        const cur = showCurrent();
+        if (show.ctl) show.ctl.classList.toggle("off", !cur);
+        if (!show.view || show.view.hidden) return;
+        show.source.textContent = cur && cur.source ? cur.source.text : "";
+        show.source.hidden = !(cur && cur.source);
+        show.translation.textContent = cur ? liveTextShown(cur.translation) : "";
+      }
+
+      function buildShowView() {
+        if (show.view) return;
+        const view = document.createElement("div");
+        view.className = "show-view";
+        view.setAttribute("role", "dialog");
+        view.setAttribute("aria-modal", "true");
+        view.setAttribute("aria-label", t("show.button"));
+        view.hidden = true;
+        const card = document.createElement("div");
+        card.className = "show-card";
+        const source = document.createElement("div");
+        source.className = "show-source";
+        const translation = document.createElement("div");
+        translation.className = "show-translation";
+        card.append(source, translation);
+        const bar = document.createElement("div");
+        bar.className = "show-bar";
+        const back = document.createElement("button");
+        back.type = "button";
+        back.className = "show-back";
+        back.textContent = t("show.back");
+        back.addEventListener("click", closeShow);
+        const flip = document.createElement("button");
+        flip.type = "button";
+        flip.className = "show-flip";
+        flip.textContent = t("show.flip");
+        flip.addEventListener("click", () => card.classList.toggle("flipped"));
+        bar.append(back, flip);
+        view.append(card, bar);
+        document.body.append(view);
+        Object.assign(show, { view, card, source, translation, back });
+      }
+
+      function openShow() {
+        if (window.VOICE_MODE !== "interpreter") return;
+        if (!showCurrent()) return;
+        buildShowView();
+        show.view.hidden = false;
+        renderShow();
+        show.back.focus();
+      }
+
+      function closeShow() {
+        if (!show.view) return;
+        show.view.hidden = true;
+        show.card.classList.remove("flipped");
+      }
+
+      function showViewInit() {
+        if (window.VOICE_MODE !== "interpreter" || show.ctl) return;
+        const slot = document.getElementById("call-slot-right");
+        if (!slot) return;
+        const ctl = document.createElement("div");
+        ctl.className = "show-ctl off";
+        const btn = document.createElement("button");
+        btn.id = "show-btn";
+        btn.type = "button";
+        btn.className = "show-btn";
+        btn.setAttribute("aria-label", t("show.button"));
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "currentColor");
+        svg.setAttribute("aria-hidden", "true");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute(
+          "d",
+          "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm3 4v2h10V9H7zm0 4v2h7v-2H7z",
+        );
+        svg.append(path);
+        btn.append(svg);
+        btn.addEventListener("click", openShow);
+        const label = document.createElement("div");
+        label.className = "show-label";
+        label.textContent = t("show.button");
+        ctl.append(btn, label);
+        slot.append(ctl);
+        show.ctl = ctl;
+        renderShow();
+      }
+      showViewInit();
+
+      /* ── Save as file ────────────────────────────────── */
+      // Mode pages only (VOICE_CALL_LIVE_TEXT_RFC §4.11): once the call has ended with at least one line, a row under
+      // the text panel offers "Copy text", "File to chat" and, when the start response said the drive is reachable,
+      // "File to drive". The file is built on the server from `liveText.lines`, sent as the page holds them. The
+      // row goes away on the next Call tap or on pagehide (the live-text reset calls clearSaveRow). Nothing is stored.
+      let callLiveAt = 0; // ms timestamp of the call going live (startTimer); 0 before
+      let callFileToDrive = false; // start response `file_to_drive`
+      const saveFile = { row: null, buttons: [], result: null, busy: false, gen: 0, duration: 0 };
+
+      // Display-order lines -> request entries: an ask caller line + the Lelik line after it is one {question, answer};
+      // a caller line + the next Lelik line is {source, translation, interrupted}; a lone line pairs with "".
+      function callTextEntries(lines) {
+        const out = [];
+        for (let i = 0; i < lines.length; i++) {
+          const a = lines[i];
+          const b = lines[i + 1];
+          const ask = a.kind === "ask";
+          if (a.who === "caller" && b && b.who === "lelik" && (b.kind === "ask") === ask) {
+            out.push(
+              ask
+                ? { question: a.text, answer: b.text }
+                : { source: a.text, translation: b.text, interrupted: b.status === "interrupted" },
+            );
+            i++;
+          } else if (ask) {
+            out.push(a.who === "caller" ? { question: a.text, answer: "" } : { question: "", answer: a.text });
+          } else if (a.who === "caller") {
+            out.push({ source: a.text, translation: "", interrupted: false });
+          } else {
+            out.push({ source: "", translation: a.text, interrupted: a.status === "interrupted" });
+          }
+        }
+        return out;
+      }
+
+      // The same entries as plain text: source then translation (or question then answer), a blank line between.
+      function callTextPlain(entries) {
+        return entries
+          .map((e) => {
+            const second = "question" in e ? e.answer : e.translation + (e.interrupted ? " …" : "");
+            return [("question" in e ? e.question : e.source), second].filter((s) => s !== "").join("\n");
+          })
+          .filter((s) => s !== "")
+          .join("\n\n");
+      }
+
+      function saveSetBusy(busy) {
+        saveFile.busy = busy;
+        saveFile.buttons.forEach((b) => {
+          b.disabled = busy;
+        });
+      }
+
+      function saveSay(key, extra) {
+        if (saveFile.result) saveFile.result.textContent = t(key) + (extra ? ` ${extra}` : "");
+      }
+
+      async function saveCopy() {
+        if (saveFile.busy) return;
+        const gen = saveFile.gen;
+        try {
+          await navigator.clipboard.writeText(callTextPlain(callTextEntries(liveText.lines)));
+          if (gen === saveFile.gen) saveSay("save.copied");
+        } catch (e) {
+          if (gen === saveFile.gen) saveSay("save.failed");
+        }
+      }
+
+      const SAVE_REASONS = { not_connected: "save.not_connected", refused: "save.refused", no_chat: "save.no_chat" };
+
+      async function saveToTarget(target) {
+        if (saveFile.busy) return;
+        const gen = saveFile.gen;
+        saveSetBusy(true);
+        let key = "save.failed";
+        let extra = "";
+        try {
+          const resp = await fetch("/api/voice/call-text/file", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              target,
+              mode: window.VOICE_MODE,
+              duration_s: saveFile.duration,
+              entries: callTextEntries(liveText.lines),
+            }),
+          });
+          const body = await resp.json().catch(() => ({}));
+          if (resp.status === 200 && body.ok) {
+            key = target === "drive" ? "save.saved" : "save.sent";
+            extra = target === "drive" && typeof body.path === "string" ? body.path : "";
+          } else if (resp.status === 409 && SAVE_REASONS[body.reason]) {
+            key = SAVE_REASONS[body.reason];
+          } else if (resp.status === 413) {
+            key = "save.too_long";
+          }
+        } catch (e) {
+          // network error: the generic line
+        }
+        if (gen !== saveFile.gen) return; // a new call or pagehide cleared the row meanwhile
+        saveSay(key, extra);
+        saveSetBusy(false);
+      }
+
+      function clearSaveRow() {
+        saveFile.gen++;
+        if (saveFile.row) saveFile.row.remove();
+        Object.assign(saveFile, { row: null, buttons: [], result: null, busy: false, duration: 0 });
+        callFileToDrive = false;
+        callLiveAt = 0;
+      }
+
+      // Called when the call ends (endLiveText): the row appears only when there is text to keep.
+      function showSaveRow() {
+        if (!LIVE_TEXT_MODES.includes(window.VOICE_MODE)) return;
+        if (saveFile.row || !liveText.lines.length) return;
+        const controls = document.querySelector(".controls");
+        const screen = document.querySelector(".screen");
+        if (!controls || !screen) return;
+        const seconds = callLiveAt ? (Date.now() - callLiveAt) / 1000 : 0;
+        saveFile.duration = Math.min(Math.max(seconds, 0), 6 * 3600);
+        const row = document.createElement("div");
+        row.className = "save-row";
+        const actions = [["save.copy", saveCopy]];
+        actions.push(["save.chat", () => saveToTarget("chat")]);
+        if (callFileToDrive) actions.push(["save.drive", () => saveToTarget("drive")]);
+        saveFile.buttons = actions.map(([key, handler]) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "save-btn";
+          b.textContent = t(key);
+          b.addEventListener("click", handler);
+          row.append(b);
+          return b;
+        });
+        const result = document.createElement("p");
+        result.className = "save-result";
+        result.setAttribute("role", "status");
+        row.append(result);
+        screen.insertBefore(row, controls);
+        Object.assign(saveFile, { row, result });
+      }
+
       async function pollStatus() {
         if (!callId) return;
         try {
@@ -1518,9 +2424,13 @@
         }
         setAudioSessionType("auto");
         stopStatusPolling();
-        closeControl();
         hideAsk();
         hideSpeaker();
+        // A user hang-up keeps the control socket a moment so the relay's last text frames land first.
+        if (!lingerLiveText(trigger)) {
+          closeControl();
+          endLiveText();
+        }
         inCall = false;
         const endingCallId = callId;
         callId = null;
@@ -1557,6 +2467,7 @@
       async function startCall() {
         const myToken = ++callToken;
         inCall = true;
+        resetLiveText();
         renderButton("connecting");
         setState(t("state.connecting"));
         // Must run synchronously in this tap handler, before any await — iOS only allows
@@ -1688,6 +2599,7 @@
             return;
           }
           callId = startedCallId;
+          callFileToDrive = startBody.file_to_drive === true;
           await pc.setRemoteDescription({ type: "answer", sdp: startBody.sdp });
           await waitForConnected(pc);
 
@@ -1727,6 +2639,7 @@
           // Shown disabled; the control channel's `welcome` enables it when the call offers `ask`.
           // Interpreter page only: showAsk() checks the mode.
           if (connectBody.control) showAsk();
+          if (connectBody.control) showLiveText();
           // /renegotiate is done: the page hears Lelik's track, so the relay may greet now (the frame
           // goes out once the channel is welcomed). Never awaited; the call does not wait on it.
           controlListening(myToken);
@@ -1774,6 +2687,7 @@
       window.addEventListener("pagehide", () => {
         // No hangup here: a backgrounded page keeps its call (VOICE_CALL_CONTROL_CHANNEL_RFC §7.2).
         stopRingback();
+        resetLiveText();
       });
 
       applyTranslations();

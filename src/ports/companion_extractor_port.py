@@ -23,5 +23,7 @@ class CompanionExtractorPort(ABC):
     ) -> Dict[str, Any]:
         """Run the companion_type's extractor over a batch of messages.
 
-        Returns {"records": [{"text": str, "domain": str, "tags": [str]}], "summary": str}.
+        Returns {"records": [{"text": str, "domain": str, "tags": [str]}], "summary": str}
+        (the voice summarizer's types — "voice" and each CALL_FILE_SUMMARIZER_TYPES value — add "title": str and
+        always return no records).
         Raises on failure (unknown companion_type, missing user, LLM/parse error)."""

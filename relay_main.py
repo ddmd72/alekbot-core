@@ -110,6 +110,23 @@ def _dead_peer_timeout_s() -> float:
     return value if value > 0 else DEAD_PEER_TIMEOUT_S
 
 
+def _live_text_lag_ms() -> int:
+    """LIVE_TEXT_LAG_MS, an optional knob read here (root CLAUDE.md: `os.getenv`, never settings): how much audio the
+    live call text waits behind the played audio, in ms (the ear's lag behind the SFU; VOICE_CALL_LIVE_TEXT_RFC §4.3).
+    Unset gives 0; anything that is not an integer >= 0 gives 0 with a warning."""
+    raw = os.getenv("LIVE_TEXT_LAG_MS", "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        logger.warning("relay: LIVE_TEXT_LAG_MS is not an integer >= 0, using 0")
+        return 0
+    return value
+
+
 def _load_thinking_cue() -> bytes:
     return _THINKING_CUE_PATH.read_bytes()
 
@@ -215,6 +232,7 @@ async def main() -> None:
         # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
         control_hub=control_hub,
         web_pickup_max_wait_s=_WEB_PICKUP_MAX_WAIT_S,
+        live_text_lag_ms=_live_text_lag_ms(),
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service, dead_peer_timeout_s=_dead_peer_timeout_s())
     control_handler = CallControlHandler(control_hub)

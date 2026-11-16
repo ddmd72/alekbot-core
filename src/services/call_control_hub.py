@@ -21,13 +21,15 @@ feature (slice 4 "Ask Lelik", the live-text RFC) uses, and nothing else:
 - `commands` — the page's command frames for the features this call offers (`voice_control_protocol.FEATURE_COMMANDS`),
   in arrival order, for the session's control task.
 - `set_state(**fields)` — fields the next `welcome` carries (e.g. `ask="armed"`), so a reconnecting page re-syncs.
+- `set_snapshot(build)` — a hook that builds the `snapshot` frame (live text, VOICE_CALL_LIVE_TEXT_RFC §4.7); `attach`
+  writes it right after `welcome`, under the same lock, so a (re)connecting page gets welcome, snapshot, then live frames.
 - `listened` — set once the page said `listening` (it hears Lelik's audio); the web greeting waits on it, capped.
 
 Three public classes in one module, on purpose: the link is created and torn down only by the hub, and `ControlSocket`
 exists only as their parameter type; a split would also be a cross-service import (REQ-ARCH-22).
 """
 import asyncio
-from typing import Any, Dict, FrozenSet, Iterable, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Protocol, Tuple
 
 from src.domain.voice_control_protocol import ByeReason, accepted_commands, bye_frame, encode, welcome_frame
 from src.utils.logger import logger
@@ -132,6 +134,7 @@ class CallControlLink:
         self.listened = asyncio.Event()
         self._accepted = accepted_commands(self.features)
         self._state: Dict[str, Any] = {}
+        self._snapshot: Optional[Callable[[], Dict[str, Any]]] = None
         self._socket: Optional[ControlSocket] = None
         self._closed = False
         self._send_timeout_s = send_timeout_s
@@ -152,6 +155,11 @@ class CallControlLink:
     def set_state(self, **fields: Any) -> None:
         """Fields the next `welcome` carries next to `v` and `features` (each feature's current state)."""
         self._state.update(fields)
+
+    def set_snapshot(self, build: Optional[Callable[[], Dict[str, Any]]]) -> None:
+        """The hook that builds the `snapshot` frame every newly attached socket gets right after `welcome`; None
+        removes it. Set before any socket can attach."""
+        self._snapshot = build
 
     async def send(self, frame: Dict[str, Any]) -> bool:
         """Send a relay -> page frame to the current socket. False when no socket is attached or the write failed or
@@ -191,7 +199,20 @@ class CallControlLink:
                 return False, None
             previous, self._socket = self._socket, socket
             await self._write(socket, welcome_frame(self.features, self._state))
+            await self._write_snapshot(socket)
         return True, previous
+
+    async def _write_snapshot(self, socket: ControlSocket) -> None:
+        """Under the lock, after `welcome`: no live frame can slip in between. A hook that raises leaves the socket
+        attached with `welcome` only."""
+        if self._snapshot is None:
+            return
+        try:
+            frame = self._snapshot()
+        except Exception as exc:
+            logger.warning(f"control {self.call_fp}: snapshot not built ({type(exc).__name__})")
+            return
+        await self._write(socket, frame)
 
     def detach(self, socket: ControlSocket) -> bool:
         """Forget `socket` if it is still the current one (a replaced socket detaching later changes nothing)."""

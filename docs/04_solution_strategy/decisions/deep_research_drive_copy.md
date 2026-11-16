@@ -24,7 +24,7 @@ Code: `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_driv
   there is no `ru` UI language). Named `YYYY-MM-DD <title>.html`: the date is the user's local day, the title is the
   report's `<title>`, else the research question shortened at a word (≤ 80 chars), else "report"; sanitized with
   `sanitize_drive_filename` and capped at 200 UTF-8 bytes on a character boundary.
-- **How:** `UserDriveService.save` — never overwrites; same bytes → the existing file; otherwise the drive's suffixed
+- **How:** `UserDriveService.save_to_primary` (the primary's write folder, the named folder inside it, then `save`) — never overwrites; same bytes → the existing file; otherwise the drive's suffixed
   name; it nudges the indexer. Zero LLM, deterministic.
 - **Where in the flow: one seam.** Every deep research entry point (the Claude runner via `agent_execution`, the Cloud
   Run Job, OpenAI's webhook, the polling path) ends in `deliver_deep_research`, which enqueues the HtmlPageGenerator

@@ -94,6 +94,7 @@ from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
+from src.services.call_text_file_service import CallTextFileService
 from src.services.channel_binding_service import ChannelBindingService
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
 from src.services.companion_extraction_service import CompanionExtractionService
@@ -177,6 +178,7 @@ class ApplicationGraph:
     media_storage: Optional[GcsMediaAdapter]
     short_link_service: Optional[ShortLinkService]
     companion_extractor_runner: CompanionExtractorRunner
+    call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
     language_service: LanguagePreferenceService
     localization: _LocalizationService
     # the stored-secrets cipher and the verify-only digest key (SECRETS_AT_REST_RFC §2.6), consumed by main()'s MCP wiring
@@ -663,6 +665,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         prompt_builder=companion_prompt_builder,
         quota_service=quota_service,
         prompt_content_store=container.prompt_content_store,
+        language_service=_language_service,
+    )
+    call_text_files = CallTextFileService(
+        extractor=companion_extractor_runner,
+        drive=container.user_drive_service,
+        notifications=notification_service,
+        users=user_repo,
+        prompt_content=container.prompt_content_store,
     )
     companion_extraction_service = CompanionExtractionService(
         queue=companion_extraction_queue,
@@ -1183,6 +1193,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         media_storage=gcs_media_adapter,
         short_link_service=short_link_service,
         companion_extractor_runner=companion_extractor_runner,
+        call_text_files=call_text_files,
         language_service=_language_service,
         localization=_localization,
         cipher=cipher,

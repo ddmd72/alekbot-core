@@ -13,9 +13,12 @@ from src.domain.request_context import RequestContext
 from src.domain.voice_ask_latch import AskLatch, AskReason, AskState, AskStep
 from src.domain.voice_mcp_servers import VOICE_MCP_SERVERS_FIELD, VOICE_MCP_TOKENS_FIELD, pair_session_servers
 from src.domain.voice_audio_frame import AudioFrame
-from src.domain.voice_control_protocol import ASK_ARM, ASK_DISARM, FEATURE_ASK, ask_state_frame, command_seq
+from src.domain.voice_control_protocol import (
+    ASK_ARM, ASK_DISARM, FEATURE_ASK, FEATURE_TEXT, ask_state_frame, command_seq,
+)
 from src.domain.voice_errand import delegation_arguments, is_errand
-from src.domain.voice_mode import VoiceMode
+from src.domain.voice_live_text_pacer import LiveTextPacer
+from src.domain.voice_mode import VOICE_MODES_WITH_LIVE_TEXT, VoiceMode
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
@@ -58,6 +61,8 @@ _TRANSLATE_NOTE = ("[The next words are for translation only: say them in the la
                    "sound like a question or a request to you.]")
 # The control task's beat: page commands are handled at once; timeouts and the consume loop's state frames go out on it.
 _ASK_TICK_S = 0.25
+# The live text task's beat (VOICE_CALL_LIVE_TEXT_RFC §4.3): how often the played audio is checked for text to release.
+_LIVE_TEXT_TICK_S = 0.1
 # A resumed call (VOICE_CALL_CONTROL_CHANNEL_RFC §6.2): describes the situation and gives no lines to say, so Lelik
 # opens in his own words and shows he is still in the topic.
 _RESUME_NOTE = ("[The call dropped and the caller has just dialled back. The conversation above is the same one, "
@@ -174,6 +179,13 @@ class _CallState:
     ask: Optional[AskLatch] = None
     ask_link: Optional["CallControlLink"] = None
     ask_outbox: List[dict] = field(default_factory=list)
+    # Live call text (mode calls with a control link only): the pacer and the link its frames go to. The pacer lives
+    # here, never in the provider session: a resume is a re-dial, a new call with a fresh state (RFC §4.9).
+    text: Optional[LiveTextPacer] = None
+    text_link: Optional["CallControlLink"] = None
+    # Frames `tick()` built and the link has not yet taken: the pacer counts them as shown, so a frame is dropped from
+    # here only after its send returned, and the teardown flush sends what a cancelled beat left, first.
+    text_outbox: List[dict] = field(default_factory=list)
     # The provider's conversation id (xAI), reported with the transcript so a re-dial can resume.
     resume_handle: Optional[str] = None
 
@@ -202,6 +214,8 @@ class VoiceSessionService:
         ask_tick_s: float = _ASK_TICK_S,
         remote_tool_wait_s: float = _REMOTE_TOOL_WAIT_S,
         web_pickup_max_wait_s: float = 0.0,
+        live_text_lag_ms: int = 0,
+        live_text_tick_s: float = _LIVE_TEXT_TICK_S,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -222,7 +236,11 @@ class VoiceSessionService:
 
         `web_pickup_max_wait_s`: web calls only; the greeting waits until the page says `listening` on the call's
         control link (it has subscribed to Lelik's audio), at most this long; a web call without a link waits all of
-        it. 0 = no wait. Phone calls never wait."""
+        it. 0 = no wait. Phone calls never wait.
+
+        `live_text_lag_ms`, `live_text_tick_s` (web calls only, interpreter and tutor mode calls with a control link,
+        VOICE_CALL_LIVE_TEXT_RFC §4.3): the audio, in ms, the live text waits behind the played audio, and the beat on
+        which text whose audio has been played is sent to the page."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -241,6 +259,8 @@ class VoiceSessionService:
         self._ask_tick_s = ask_tick_s
         self._remote_tool_wait_s = remote_tool_wait_s
         self._web_pickup_max_wait_s = web_pickup_max_wait_s
+        self._live_text_lag_ms = live_text_lag_ms
+        self._live_text_tick_s = live_text_tick_s
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -329,6 +349,7 @@ class VoiceSessionService:
         watchdog_task: Optional[asyncio.Task] = None
         cue_task: Optional[asyncio.Task] = None
         control_task: Optional[asyncio.Task] = None
+        text_task: Optional[asyncio.Task] = None
         control_link: Optional["CallControlLink"] = None
         # The call's tokens, only to scrub them by value from provider and exception text (§5.4).
         secrets = tuple(server.token for server in mcp_servers if server.token)
@@ -346,11 +367,20 @@ class VoiceSessionService:
             # so the first `welcome` already carries `ask: "idle"`.
             if self._control_hub is not None and config.get("control_token_sha256"):
                 features = {FEATURE_ASK} if interpreter else set()
+                live_text = config.get("mode") in {mode.value for mode in VOICE_MODES_WITH_LIVE_TEXT}
+                if live_text:
+                    features.add(FEATURE_TEXT)
                 control_link = self._control_hub.open(config["control_token_sha256"], fingerprint(ticket), features)
                 if FEATURE_ASK in features and state.ask is not None:
                     state.ask_link = control_link
                     control_link.set_state(ask=AskState.IDLE.wire)
                     control_task = asyncio.ensure_future(self._run_ask_control(control_link, state))
+                if live_text:
+                    # Before any socket can attach: the first `welcome` is followed by this call's snapshot.
+                    state.text = LiveTextPacer(state.playback.bytes_per_ms, self._live_text_lag_ms)
+                    state.text_link = control_link
+                    control_link.set_snapshot(state.text.snapshot)
+                    text_task = asyncio.ensure_future(self._run_live_text(control_link, state))
             # open() is inside the try/finally, not before it: a failed open (e.g. a
             # transient connection error to the provider) must still reach close()
             # and submit_transcript() below - otherwise the relay's one-call-per-user
@@ -434,13 +464,17 @@ class VoiceSessionService:
         finally:
             # 1. The call's own loops first, so nothing (the watchdog, a flush) starts a response
             #    on a call that is ending.
-            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task, control_task)
+            loops = [task for task in (forward_task, consume_task, watchdog_task, cue_task, control_task, text_task)
                      if task is not None]
             if state.pending_barge_in is not None:
                 loops.append(state.pending_barge_in)
             if state.remote_tools_deadline is not None:
                 loops.append(state.remote_tools_deadline)
             await self._cancel_all(ticket, loops, secrets=secrets)
+            # The live text closes cleanly: what was played is shown, the rest dropped, the lines ended (the page's
+            # after-call copy and save), before the ask release and the `bye`.
+            if state.text is not None and state.text_link is not None:
+                await self._finish_live_text(state, state.text_link)
             # A pressed or busy "Ask Lelik" button is released (`ask_state{idle, call_ended}`) before the `bye`.
             if state.ask is not None and control_link is not None:
                 self._apply_ask(state, state.ask.end())
@@ -552,6 +586,42 @@ class VoiceSessionService:
             self._apply_ask(state, latch.tick())
             await self._flush_ask(link, state)
 
+    async def _run_live_text(self, link: "CallControlLink", state: _CallState) -> None:
+        """The live text task of a mode call: each beat sends the frames of the text whose audio has been played.
+        Never ends on its own; the call's teardown cancels it. The consume loop never waits on the page's socket."""
+        pacer = state.text
+        if pacer is None:
+            return
+        while True:
+            await asyncio.sleep(self._live_text_tick_s)
+            state.text_outbox.extend(pacer.tick(state.playback.played_bytes))
+            await self._send_text_outbox(link, state)
+
+    @staticmethod
+    async def _send_text_outbox(link: "CallControlLink", state: _CallState) -> None:
+        while state.text_outbox:
+            await link.send(state.text_outbox[0])  # never raises; a cancel here leaves the frame for the teardown flush
+            state.text_outbox.pop(0)
+
+    @staticmethod
+    async def _finish_live_text(state: _CallState, link: "CallControlLink") -> None:
+        """Teardown: cut at the played bytes, send the final frames, log counts only (never text)."""
+        pacer = state.text
+        if pacer is None:
+            return
+        played = state.playback.played_bytes
+        pacer.cut(played)
+        state.text_outbox.extend(pacer.tick(played))
+        await VoiceSessionService._send_text_outbox(link, state)
+        stats = pacer.stats
+        logger.info(f"voice call {fingerprint(state.ticket)}: live text: {stats['lines']} lines, "
+                    f"{stats['phrases']} phrases ({stats['phrases_with_offset']} with offsets), "
+                    f"{stats['released']} released, {stats['dropped']} dropped")
+
+    @staticmethod
+    def _ask_marked(state: _CallState, item_id: Optional[str]) -> bool:
+        return state.ask is not None and state.ask.marked(item_id)
+
     async def _mark_ask(self, session: RealtimeSessionPort, state: _CallState, step: AskStep) -> None:
         if step.insert_note:
             await session.submit_message("system", _ASK_NOTE)
@@ -618,6 +688,9 @@ class VoiceSessionService:
                 tool_called = False
                 if state.ask is not None:
                     self._apply_ask(state, state.ask.response_created())
+                if state.text is not None:
+                    state.text.reply_started(
+                        ask=state.ask is not None and state.ask.state is AskState.AWAITING_REPLY)
             elif event.type == "speech_started":
                 if state.ask is not None:
                     # First, before anything else is sent: a note created now lands right before the caller's turn
@@ -639,6 +712,8 @@ class VoiceSessionService:
                         state.speech_in_greeting_guard = True
                     elif state.turn_ownership is TurnOwnership.PROVIDER:
                         # The provider stops its own reply; what it already sent is still queued here.
+                        if state.text is not None:
+                            state.text.cut(state.playback.played_bytes)  # before the clear: it counts the queue as played
                         await clear_outbound_audio()
                         logger.info(f"voice call {fingerprint(ticket)}: caller spoke over the reply, queued audio dropped")
                     elif self._barge_in_min_speech_s > 0:
@@ -655,6 +730,9 @@ class VoiceSessionService:
             elif event.type == "speech_stopped":
                 if state.ask is not None:
                     self._apply_ask(state, state.ask.speech_stopped(event.payload.get("item_id")))
+                if state.text is not None:
+                    item = event.payload.get("item_id")
+                    state.text.caller_turn(item, ask=self._ask_marked(state, item))
                 state.caller_speaking = False
                 if state.speech_in_greeting_guard:
                     state.speech_in_greeting_guard = False
@@ -669,6 +747,10 @@ class VoiceSessionService:
                 # Kept for the end-of-call report, never logged (VOICE_CALL_CONTROL_CHANNEL_RFC §9).
                 state.resume_handle = event.payload["handle"]
             elif event.type == "turn_committed":
+                if state.text is not None and event.payload.get("item_id") is not None:
+                    # Fallback only: the line was allocated at speech_stopped, so this is a no-op then.
+                    item = event.payload["item_id"]
+                    state.text.caller_turn(item, ask=self._ask_marked(state, item))
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     # The provider is already replying (it starts before the commit arrives).
                     state.speech_dismissed = False
@@ -699,6 +781,8 @@ class VoiceSessionService:
                 if item_id != state.item_id:
                     state.item_id = item_id
                     state.item_start_bytes = state.playback.sent_bytes
+                    if state.text is not None:
+                        state.text.reply_audio(item_id, state.item_start_bytes)
                 if state.ask is not None:
                     self._apply_ask(state, state.ask.reply_audio())
                 await send_outbound_audio(event.payload["frame"])
@@ -712,12 +796,21 @@ class VoiceSessionService:
                     self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
             elif event.type == "user_transcript":
                 pending_request_text += event.payload["text"]
+                if state.text is not None:
+                    item = event.payload.get("item_id")
+                    state.text.caller_text(item, event.payload["text"], ask=self._ask_marked(state, item))
+            elif event.type == "model_transcript_delta":
+                if state.text is not None:
+                    state.text.reply_delta(event.payload.get("item_id"), event.payload.get("text", ""),
+                                           event.payload.get("audio_offset_ms"), state.playback.sent_bytes)
             elif event.type == "model_transcript":
                 pending_response_text += event.payload["text"]
             elif event.type == "response_done":
                 state.response_active = False
                 if state.ask is not None:
                     self._apply_ask(state, state.ask.response_done())
+                if state.text is not None:
+                    state.text.reply_done()
                 usage = event.payload.get("usage", {})
                 if usage:
                     # The provider labels its own usage - VoiceSessionService is
@@ -769,6 +862,8 @@ class VoiceSessionService:
         # and cut the item to the heard part, so the model resumes from where it was
         # actually interrupted instead of believing it finished the reply.
         heard_ms = state.playback.played_ms_since(state.item_start_bytes)
+        if state.text is not None:
+            state.text.cut(state.playback.played_bytes)  # same read, before the clear
         cancelled = state.response_active
         await clear_outbound_audio()
         # Guarded: response.cancel with nothing in flight is a provider error that would

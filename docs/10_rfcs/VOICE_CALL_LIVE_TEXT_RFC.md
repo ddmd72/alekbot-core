@@ -1,6 +1,6 @@
 # RFC: Live call text on the web call screen
 
-**Status:** Accepted (owner decisions recorded 2026-11-08, §8), amended 2026-11-16 (§8). Not built.
+**Status:** Accepted (owner decisions recorded 2026-11-08, §8), amended 2026-11-16 (§8). Built: S1 (relay pacer, adapter deltas, barge-in cut, line/snapshot frames, `text` feature; text panel on both mode pages), S2 (interpreter Show view), S2a (save as file). Probe P1 not run: the barge-in cut is the relay's alone (§4.3). P2 (ear lag) at the first UAT call. Not built: S3–S5.
 **Date:** 2026-11-08
 **Owner:** Dmytro
 **Milestone:** Voice — modes, next
@@ -111,7 +111,9 @@ the caller interrupts, so the provider cannot know which part was heard.
 
 ### 4.4 The caller's lines: "as heard"
 
-- Order is fixed by the relay, not by arrival: the caller's line id is allocated at `turn_committed`, Lelik's at
+- Order is fixed by the relay, not by arrival: the caller's line id is allocated at `speech_stopped` (on xAI the reply's
+  `response.created` comes before `input_audio_buffer.committed`, so allocating at the commit would put the caller's
+  line under Lelik's; `turn_committed` only allocates when no line exists yet for its item), Lelik's at
   `response_created`; a line's text fills in when it comes. On OpenAI the transcription may finish after Lelik starts
   speaking; the caller's line still sits above his reply. An empty transcript removes the line.
 - Shown in the secondary colour, smaller, with a one-time hint "as the recogniser heard it". No editing (the model
@@ -211,6 +213,7 @@ main page stays byte-for-byte the same in behaviour.
 - **Reconnect:** the channel's own; this feature needs only the snapshot.
 - **Resumed provider session** (proposed in parallel): the pacer and the line list live in the relay's per-call
   state, not in the provider session, so a resumed session continues the same lines. A relay restart loses them.
+  The built resume is a re-dial, which is a new call: it starts with a fresh pacer and a fresh line list.
 - **Call end:** the text stays on screen until the next Call tap or `pagehide`, then is cleared. Never written to
   `localStorage`; the canonical record stays `/voice/submit-transcript`. Modes get no after-call summary
   (`decisions/lelik_voice_modes.md:35-38`), so the only ways to keep a lesson or a conversation are the owner's own
@@ -246,6 +249,15 @@ by construction: nothing new is persisted server-side, and what barge-in cut (§
   - **Title and summary:** the existing `LelikSummarizerAgent` through `CompanionExtractorPort`
     (`composition/companion_extractor_runner.py:60-105`), its output extended by one `title` field. Its `records`
     (always `[]`, `lelik_summarizer_agent.py:93`) are ignored here, and nothing on this path writes memory or history.
+    Each mode reads its own prompt, because its turns mean something else (an interpreter's are two people and the
+    translations, a tutor's a learner and the lesson): the service passes `CALL_FILE_SUMMARIZER_TYPES[mode]`
+    (`src/domain/voice_mode.py`) as the companion type; the runner maps it to the profile `lelik_summarizer_interpreter`
+    or `lelik_summarizer_tutor` on the same agent and agent type (tier, provider, output token) and sends the owner's UI
+    language (`resolve_ui_language`, USER → ACCOUNT → SYSTEM) as an `owner_language` block, so the note is in the
+    owner's language, never the one the transcript leans to. The companion call keeps `voice` and its own profile.
+    Each turn the summarizer reads keeps what the page knew (`summarizer_turns`, `src/domain/call_text_file.py`): `kind`
+    is `ask` for an "Ask Lelik" block (the owner's question and Lelik's answer, never a translation) or `exchange` for
+    a heard line and Lelik's line after it, which also carries `interrupted` (Lelik was cut off, the line is incomplete).
   - **The file:** a pure domain renderer builds the `.md`: title, date and time, duration, summary, then the entries
     (source small → translation; Lelik blocks labelled "Lelik").
   - **The name:** `deep_research_drive_filename` (`src/domain/deep_research_drive_copy.py:63-70`) generalised to

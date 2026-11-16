@@ -124,6 +124,12 @@ class AskLatch:
         """The provider's id of the caller's turn the note marked last (None before the first note)."""
         return self._item_id
 
+    def marked(self, item_id: Optional[str]) -> bool:
+        """True when `item_id` is the caller's turn the note marked and the latch still holds it (active or awaiting
+        the reply): the live text shows that turn as the question of an "Ask Lelik" exchange. Changes no state."""
+        return (item_id is not None and item_id == self._item_id
+                and self._state in (AskState.ACTIVE, AskState.AWAITING_REPLY))
+
     # ------------------------------------------------------------------ page commands
 
     def arm(self, seq: Optional[int] = None) -> AskStep:

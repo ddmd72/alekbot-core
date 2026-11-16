@@ -292,12 +292,20 @@ A Cabinet switch in the Drive card, "Copy deep research reports to my drive" (`U
 report on the drive ([decision](../../04_solution_strategy/decisions/deep_research_drive_copy.md)). One seam: every
 deep research path ends in `deliver_deep_research`, which marks the HtmlPageGenerator task's context with the question
 (`deep_research_report_query`); when `AgentWorkerHandler` has delivered that task's HTML link,
-`DeepResearchDriveCopyService` saves the same HTML through `UserDriveService.save` (never overwrites, same bytes →
+`DeepResearchDriveCopyService` saves the same HTML through `UserDriveService.save_to_primary` (a thin step over `save`: never overwrites, same bytes →
 existing file) into a folder named in the UI language ("Deep research", "Глибокі дослідження", "Recherches
 approfondies", "Investigaciones") as `YYYY-MM-DD <title>.html` (the `<title>`, else the question shortened; drive-safe,
 ≤ 200 UTF-8 bytes). One localized line follows the link: copied (with the path), not connected, or failed. No retry,
 no queue; the copy never fails the delivery. The copy is an ordinary file: with indexing on, it is indexed like any
 HTML, with no indexer change.
+
+**Call text files.** An interpreter or tutor web call can keep its text as one `.md` file
+(`CallTextFileService`, `POST /api/voice/call-text/file`, [RFC](../../10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md) §4.11): in the
+chat, or on the drive through `UserDriveService.save_to_primary` into the `Inbox` folder of the primary's write folder,
+named `YYYY-MM-DD HH.MM <title>.md` (the call's start in the user's timezone; the title comes from the voice summarizer,
+the fallback is "Call"). It never overwrites (the drive's suffixed name on a clash). `can_save_to_primary` is the
+predicate behind the page's "File to drive" button: a primary with a write folder on a writable drive, the same condition
+the save's refusal uses.
 
 ---
 

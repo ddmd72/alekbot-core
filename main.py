@@ -491,6 +491,7 @@ async def main():
                         relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
                         cipher=app.cipher,
                         digest_key=app.digest_key,
+                        call_text_files=app.call_text_files,
                     ))
                     logger.info(
                         "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"
