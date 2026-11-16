@@ -3,7 +3,8 @@ Email memory mail — one stored mail as Stage 3 of consolidation reads it (emai
 
 The v1 record (`email`) and the card fields stored beside it: `card_state` ("" when the document has no card fields) and
 `card_doc`, the stored card fields as `card_from_document` reads them (None when there are none). Whether the mail
-enters memory as its card or as the v1 one-line candidate is decided by `email_memory_candidate`.
+enters memory as its card, as its headers or not at all is decided by the consolidation agent with
+`email_memory_candidate`.
 """
 from __future__ import annotations
 

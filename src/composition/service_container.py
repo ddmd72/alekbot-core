@@ -385,7 +385,6 @@ class ServiceContainer:
             context_builder=self.context_builder,
             user_repo=user_repo,
             prompt_builder=PromptBuilder(repo=None, assembly_service=self.assembly_service),
-            gmail=self.gmail_provider,
             quota_service=quota_service,
             prompt_content_store=self.prompt_content_store,
         )

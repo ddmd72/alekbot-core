@@ -672,15 +672,13 @@ outcome=degraded` line each), and the card vector index must be `READY`: `make d
 so it is created by `scripts/infrastructure/create_email_card_vector_index.sh` (without it the meaning list is skipped
 with one WARNING per search and only the key lists answer).
 
-**Email card memory feed.** `EMAIL_CARD_MEMORY` (optional; empty or unset = off, `1` = on) makes Stage 3 of consolidation
-read settled email cards instead of the one-line candidates (email index v2 slice 9; `docs/05_building_blocks/memory/
-README.md` Step 8). Read with `os.getenv` in `composition/email_card_setup.py`, never in `load_settings()`. The code
-default is off; `make deploy` sets it on the main service from the substitution `_EMAIL_CARD_MEMORY` (default `1`), fed by
-the deploy-only key `EMAIL_CARD_MEMORY_DEV`. Rollback: `EMAIL_CARD_MEMORY_DEV=0` in `.env`, then `make deploy`. **Upload the
-token first:** `CONSOLIDATION_EMAIL_CANDIDATES`, profile `consolidation_email` and blueprint `consolidation_email_v1`
-(`firestore_utils/snapshot_upload.py --apply`) before the deploy; without them every Stage 3 run fails (logged as
-`Stage 3 (email) failed`, the mail stays unconsolidated, nothing is lost). The composite (user_id, consolidated_at,
-card_state, indexed_at) must be `READY` (`make deploy-indexes`) before the deploy too.
+**Email card memory feed.** Stage 3 of consolidation always reads mail with its card (email index v2 slices 9 and 9b;
+`docs/05_building_blocks/memory/README.md` Step 8): there is no switch since slice 9b, so `EMAIL_CARD_MEMORY` and the
+deploy-only key `EMAIL_CARD_MEMORY_DEV` are gone and a leftover `EMAIL_CARD_MEMORY_DEV` in `.env` is dead. Its prompt is
+`CONSOLIDATION_EMAIL_CANDIDATES` with profile `consolidation_email` and blueprint `consolidation_email_v1`
+(`firestore_utils/snapshot_upload.py --apply`); without them every Stage 3 run fails (logged as `Stage 3 (email) failed`,
+the mail stays unconsolidated, nothing is lost). The composite (user_id, consolidated_at, card_state, indexed_at) must be
+`READY` (`make deploy-indexes`). With `EMAIL_CARD_ONLINE` off, kept mail gets no card and memory sees its headers only.
 
 **Memory-search slots model.** `FACT_QUERY_SLOTS_MODEL` (optional; empty = `claude-haiku-5-5`) pins the model of the slots call on the memory-search path (`composition/fact_query_slots_setup.py: search_slots_model`), which runs with thinking `low` on the Claude-only `fact_query_slots` provider entry whatever the user's provider preference. The router's slots call is not affected: it keeps the router's own model and no thinking. Claude ids only. Read with `os.getenv` where `UserAgentFactory` builds the agent, never in `load_settings()`.
 
