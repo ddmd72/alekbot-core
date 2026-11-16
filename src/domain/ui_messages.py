@@ -173,3 +173,5 @@ class UIMessage(Enum):
     DRIVE_NOTE_ERASED = "drive_note_erased"
     DRIVE_NOTE_ERASE_PARTIAL = "drive_note_erase_partial"
     DRIVE_NOTE_ERASE_ALL_PARTIAL = "drive_note_erase_all_partial"
+    # Name of the drive Inbox subfolder that holds saved voice-call text files (VOICE_CALL_LIVE_TEXT_RFC §4.11).
+    CALL_FILES_DRIVE_FOLDER = "call_files_drive_folder"

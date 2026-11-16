@@ -433,14 +433,18 @@ class UserDriveService:
         return _takes_writes(access, capabilities)
 
     async def save_to_primary(self, user_id: str, data: bytes, filename: str, content_type: str,
-                              folder: Optional[str] = None) -> Tuple[SaveOutcome, str]:
+                              folder: Union[str, Tuple[str, ...], None] = None) -> Tuple[SaveOutcome, str]:
         """Save a file the bot makes into the primary connection's write folder: `folder` (created inside it) or the
-        Inbox (D7). Returns the outcome and the file's canonical path (`<mount>/<path>`). Raises what `primary` and
+        Inbox (D7). A str is one folder name (its "/" is escaped); a tuple is nested folder names, each one name,
+        joined onto the write folder in order; an empty tuple or None is the Inbox.
+        Returns the outcome and the file's canonical path (`<mount>/<path>`). Raises what `primary` and
         `save` raise (DriveNotConnectedError, DriveAccessRefused, ...)."""
         primary = await self.primary(user_id)
         base = await self.write_folder_path(primary.handle)
-        name = folder or DEFAULT_INBOX_FOLDER
-        target = join_drive_path(base, name) if base else name
+        names = ((folder,) if folder else ()) if isinstance(folder, str) else tuple(folder or ())
+        target = base or ""
+        for name in names or (DEFAULT_INBOX_FOLDER,):
+            target = join_drive_path(target, name)
         saved = await self.save(primary.handle, data, filename, content_type, target)
         path = canonical_path(primary.mount_name, saved.item.path or join_drive_path(target, saved.item.name))
         return saved, path

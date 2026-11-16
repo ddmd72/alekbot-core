@@ -301,7 +301,8 @@ HTML, with no indexer change.
 
 **Call text files.** An interpreter or tutor web call can keep its text as one `.md` file
 (`CallTextFileService`, `POST /api/voice/call-text/file`, [RFC](../../10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md) §4.11): in the
-chat, or on the drive through `UserDriveService.save_to_primary` into the `Inbox` folder of the primary's write folder,
+chat, or on the drive through `UserDriveService.save_to_primary` into the `Inbox/<voice calls folder>` folder of the primary's write folder (the folder's name is the owner's UI-language
+string, created when missing and reused when present; a later UI-language change starts a new folder and leaves the old one),
 named `YYYY-MM-DD HH.MM <title>.md` (the call's start in the user's timezone; the title comes from the voice summarizer,
 the fallback is "Call"). It never overwrites (the drive's suffixed name on a clash). `can_save_to_primary` is the
 predicate behind the page's "File to drive" button: a primary with a write folder on a writable drive, the same condition

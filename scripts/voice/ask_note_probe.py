@@ -198,6 +198,10 @@ class Case:
         self.billable_audio_seconds = 0.0
         self.last_speech_stopped_at: Optional[float] = None
         self.reply_done_after_speech = False
+        # Raw shapes for the live-text pacer (VOICE_CALL_LIVE_TEXT_RFC §2): every transcript delta as received, and
+        # each audio delta without its payload (keys, payload length, arrival time).
+        self.transcript_deltas: List[Dict[str, Any]] = []
+        self.audio_deltas: List[Dict[str, Any]] = []
 
     def now(self) -> float:
         return time.monotonic() - self.t0
@@ -243,7 +247,13 @@ class Case:
         elif kind == "response.created":
             if self.latch is not None:
                 self.latch.response_created()
-        elif kind in ("response.output_audio.delta", "response.audio.delta"):
+        elif kind == "response.output_audio_transcript.delta":
+            self.transcript_deltas.append({"at": round(self.now(), 3), "event": event})
+        if kind in ("response.output_audio.delta", "response.audio.delta"):
+            payload = event.get("delta")
+            self.audio_deltas.append({"at": round(self.now(), 3), "keys": sorted(event),
+                                      "item_id": event.get("item_id"),
+                                      "payload_len": len(payload) if isinstance(payload, str) else None})
             if self.latch is not None:
                 self.latch.reply_audio()
         elif kind == "response.output_audio_transcript.done":
@@ -273,6 +283,7 @@ class Case:
             "user_transcripts": self.user_transcripts, "replies": self.replies,
             "response_statuses": self.response_statuses, "billable_audio_seconds": self.billable_audio_seconds,
             "errors": self.errors,
+            "transcript_deltas": self.transcript_deltas, "audio_deltas": self.audio_deltas,
         }
 
 

@@ -11,10 +11,14 @@ import pytest
 from src.domain.call_text_file import CallTextEntry, CallTextRequest
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.language import LanguageCode
 from src.domain.notification import NotificationChannel
+from src.domain.ui_messages import StatusType, UIMessage
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.voice_mode import VoiceMode
 from src.ports.companion_extractor_port import CompanionExtractorPort
+from src.ports.language_service_port import LanguageServicePort
+from src.ports.localization_port import LocalizationPort
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
 from src.ports.prompt_content_store import PromptContentStore
@@ -46,6 +50,43 @@ class ScriptedExtractor(CompanionExtractorPort):
         if self.error:
             raise self.error
         return self.result
+
+
+FOLDER_NAMES = {LanguageCode.EN: "Voice calls", LanguageCode.UK: "Голосові дзвінки"}
+
+
+class FakeLocalization(LocalizationPort):
+    """Only the call-files folder name is real; the rest of the port is unused by the service."""
+
+    def get_status_phrases(self, lang: LanguageCode, status: StatusType) -> List[str]:
+        return []
+
+    def get_entertainment_intros(self, lang: LanguageCode) -> List[str]:
+        return []
+
+    def get_file_prompt(self, lang: LanguageCode, mime_type: str) -> str:
+        return ""
+
+    def get_ui_string(self, lang: LanguageCode, message: UIMessage) -> str:
+        assert message is UIMessage.CALL_FILES_DRIVE_FOLDER
+        return FOLDER_NAMES[lang]
+
+    def get_ui_string_variants(self, message: UIMessage) -> List[str]:
+        return list(FOLDER_NAMES.values())
+
+
+class FakeLanguage(LanguageServicePort):
+    def __init__(self, lang: LanguageCode = LanguageCode.EN, error: Exception | None = None):
+        self.lang, self.error, self.calls = lang, error, []
+
+    async def resolve_ui_language(self, user_id: str) -> LanguageCode:
+        self.calls.append(user_id)
+        if self.error:
+            raise self.error
+        return self.lang
+
+    async def get_preference(self, user_id: str):
+        return None, False
 
 
 class World:
@@ -81,7 +122,9 @@ class World:
                                                        config=UserBotConfig(timezone=tz))
         self.extractor = extractor or ScriptedExtractor()
         self.prompt_content = AsyncMock(spec=PromptContentStore)
+        self.language = FakeLanguage()
         self.service = CallTextFileService(self.extractor, self.drive, self.notifications, self.users,
+                                           localization=FakeLocalization(), language=self.language,
                                            prompt_content=self.prompt_content, now=lambda: NOW, **kw)
 
     def request(self, target="drive", entries=ENTRIES):
@@ -95,8 +138,8 @@ class World:
 async def test_the_drive_file_lands_in_the_inbox_with_the_rendered_markdown():
     w = World()
     out = await w.service.save("usr-1", "acc-1", w.request())
-    assert out.saved and out.path == f"Acme/R&D/Inbox/{NAME}"
-    data = w.files()[f"R&D/Inbox/{NAME}"].decode("utf-8")
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Voice calls/{NAME}"
+    data = w.files()[f"R&D/Inbox/Voice calls/{NAME}"].decode("utf-8")
     assert data.startswith("# Check-in at Albergo Immaginario\n\n2025-08-10 14:00–14:10\n\nAlex Doe checked in at Albergo Immaginario with booking RM-55120.")
     assert "> We have a booking under RM-55120.\n\nAbbiamo una prenotazione con il codice RM-55120.\n" in data
 
@@ -138,7 +181,8 @@ async def test_no_primary_is_not_connected():
 
 async def test_no_drive_on_the_deployment_is_not_connected():
     w = World()
-    service = CallTextFileService(w.extractor, None, w.notifications, w.users, now=lambda: NOW)
+    service = CallTextFileService(w.extractor, None, w.notifications, w.users, localization=FakeLocalization(),
+                               language=w.language, now=lambda: NOW)
     out = await service.save("usr-1", "acc-1", w.request())
     assert (out.saved, out.reason) == (False, "not_connected")
 
@@ -161,8 +205,8 @@ async def test_an_unexpected_drive_error_is_failed():
 async def test_a_summarizer_error_still_saves_with_the_fallback_title():
     w = World(extractor=ScriptedExtractor(error=RuntimeError("llm down")))
     out = await w.service.save("usr-1", "acc-1", w.request())
-    assert out.saved and out.path == "Acme/R&D/Inbox/2025-08-10 14.00 Call.md"
-    assert w.files()["R&D/Inbox/2025-08-10 14.00 Call.md"].decode("utf-8").startswith("# Call\n\n2025-08-10 14:00–14:10\n\n---")
+    assert out.saved and out.path == "Acme/R&D/Inbox/Voice calls/2025-08-10 14.00 Call.md"
+    assert w.files()["R&D/Inbox/Voice calls/2025-08-10 14.00 Call.md"].decode("utf-8").startswith("# Call\n\n2025-08-10 14:00–14:10\n\n---")
 
 
 async def test_a_summarizer_past_its_budget_still_saves_without_a_summary():
@@ -213,7 +257,8 @@ async def test_drive_available_is_true_for_a_writable_primary():
 async def test_drive_available_is_false_without_a_primary_or_a_drive():
     w = World(primary=False)
     assert await w.service.drive_available("usr-1") is False
-    nodrive = CallTextFileService(w.extractor, None, w.notifications, w.users)
+    nodrive = CallTextFileService(w.extractor, None, w.notifications, w.users, localization=FakeLocalization(),
+                               language=w.language)
     assert await nodrive.drive_available("usr-1") is False
 
 
@@ -221,3 +266,45 @@ async def test_drive_available_is_false_on_an_error():
     w = World()
     w.drive.can_save_to_primary = AsyncMock(side_effect=RuntimeError("boom"))
     assert await w.service.drive_available("usr-1") is False
+
+
+async def test_the_first_drive_save_creates_the_voice_calls_folder_and_files_into_it():
+    w = World()
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Voice calls/{NAME}"
+    assert list(w.files()) == [f"R&D/Inbox/Voice calls/{NAME}"]
+
+
+async def test_a_second_drive_save_reuses_the_folder():
+    w = World()
+    await w.service.save("usr-1", "acc-1", w.request())
+    out = await w.service.save("usr-1", "acc-1", replace(w.request(), duration_s=300))   # another start, another name
+    assert out.saved
+    tree = w.fake.tree(w.conn.handle)
+    folders = sorted(tree.path(n) for n in tree.nodes.values() if n.is_folder)
+    assert [f for f in folders if "Voice calls" in f] == ["R&D/Inbox/Voice calls"]
+    assert len(w.files()) == 2
+    assert all(path.startswith("R&D/Inbox/Voice calls/") for path in w.files())
+
+
+async def test_the_folder_name_follows_the_owners_ui_language():
+    w = World()
+    await w.service.save("usr-1", "acc-1", w.request())
+    w.language.lang = LanguageCode.UK
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Голосові дзвінки/{NAME}"
+    assert sorted(p.rsplit("/", 1)[0] for p in w.files()) == ["R&D/Inbox/Voice calls", "R&D/Inbox/Голосові дзвінки"]
+
+
+async def test_an_unresolvable_ui_language_fails_and_writes_nothing():
+    w = World()
+    w.language.error = RuntimeError("down")
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert (out.saved, out.reason) == (False, "failed")
+    assert w.files() == {}
+
+
+async def test_the_chat_target_writes_nothing_to_the_drive():
+    w = World()
+    out = await w.service.save("usr-1", "acc-1", w.request("chat"))
+    assert out.saved and w.files() == {}

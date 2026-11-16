@@ -95,3 +95,29 @@ async def test_the_predicate_is_false_without_a_write_folder():
     w = World()
     w.settings(write_folder_id=None)
     assert await w.drive.can_save_to_primary("usr-1") is False
+
+
+async def test_a_tuple_creates_nested_folders_and_the_second_save_reuses_them():
+    w = World()
+    w.settings(write_folder_id=w.rd)
+    _, path = await w.drive.save_to_primary("usr-1", b"x", NAME, TYPE, ("Inbox", "Calls"))
+    assert path == f"Acme/R&D/Inbox/Calls/{NAME}"
+    _, again = await w.drive.save_to_primary("usr-1", b"y", "Second.md", TYPE, ("Inbox", "Calls"))
+    assert again == "Acme/R&D/Inbox/Calls/Second.md"
+    folders = [p for p in w.paths() if p.endswith("Calls") or p.endswith("Inbox")]
+    assert sorted(folders) == ["R&D/Inbox", "R&D/Inbox/Calls"]
+
+
+async def test_a_slash_inside_one_tuple_element_stays_one_escaped_name():
+    w = World()
+    w.settings(write_folder_id=w.rd)
+    await w.drive.save_to_primary("usr-1", b"x", NAME, TYPE, ("Inbox", "A/B"))
+    assert "R&D/Inbox/A∕B" in w.paths()
+    assert "R&D/Inbox/A" not in w.paths()
+
+
+async def test_an_empty_tuple_is_the_inbox():
+    w = World()
+    w.settings(write_folder_id=w.rd)
+    _, path = await w.drive.save_to_primary("usr-1", b"x", NAME, TYPE, ())
+    assert path == f"Acme/R&D/Inbox/{NAME}"

@@ -672,6 +672,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive=container.user_drive_service,
         notifications=notification_service,
         users=user_repo,
+        localization=_localization_port,
+        language=_language_service,
         prompt_content=container.prompt_content_store,
     )
     companion_extraction_service = CompanionExtractionService(
