@@ -91,7 +91,7 @@ owner asked for it.
 ## Not in v1 / next
 
 - Switching mode mid-call, and entering or leaving a mode by voice.
-- On-screen text.
+- On-screen text: `VOICE_CALL_LIVE_TEXT_RFC.md` (accepted, amended 2026-11-16: Show view, save as file).
 - The tutor's lesson plan made outside the call and fed back from it.
 - Periodic pace reminders.
 - Modes as agent skills.
