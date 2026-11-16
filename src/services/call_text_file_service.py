@@ -25,7 +25,7 @@ from ..domain.call_text_markdown import (
 from ..domain.local_time import local_moment
 from ..domain.voice_mode import CALL_FILE_SUMMARIZER_TYPES
 from ..domain.ui_messages import UIMessage
-from ..domain.user_drive import DEFAULT_INBOX_FOLDER, DriveAccessRefused, DriveNotConnectedError, join_drive_path
+from ..domain.user_drive import DEFAULT_INBOX_FOLDER, DriveAccessRefused, DriveNotConnectedError
 from ..ports.companion_extractor_port import CompanionExtractorPort
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.localization_port import LocalizationPort
@@ -138,8 +138,7 @@ class CallTextFileService:
         try:
             # The folder follows the owner's UI language; no other language's folder is ever a fallback.
             lang = await self._language.resolve_ui_language(user_id)
-            folder = join_drive_path(DEFAULT_INBOX_FOLDER,
-                                     self._localization.get_ui_string(lang, UIMessage.CALL_FILES_DRIVE_FOLDER))
+            folder = (DEFAULT_INBOX_FOLDER, self._localization.get_ui_string(lang, UIMessage.CALL_FILES_DRIVE_FOLDER))
         except Exception:
             logger.error("[CallTextFile] folder name unresolved for user=%s", user_id[:8], exc_info=True)
             return CallTextFileOutcome(saved=False, reason="failed")

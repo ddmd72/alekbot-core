@@ -278,7 +278,7 @@ async def test_the_first_drive_save_creates_the_voice_calls_folder_and_files_int
 async def test_a_second_drive_save_reuses_the_folder():
     w = World()
     await w.service.save("usr-1", "acc-1", w.request())
-    out = await w.service.save("usr-1", "acc-1", w.request())
+    out = await w.service.save("usr-1", "acc-1", replace(w.request(), duration_s=300))   # another start, another name
     assert out.saved
     tree = w.fake.tree(w.conn.handle)
     folders = sorted(tree.path(n) for n in tree.nodes.values() if n.is_folder)
