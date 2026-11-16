@@ -8,6 +8,9 @@ tokens:
   LANG_MIRROR:
     non_overridable: false
     order: 300
+  OUTPUT_FORMAT_LELIK_SUMMARIZER:
+    non_overridable: true
+    order: 400
   VOICE_CARE_LELIK:
     non_overridable: true
     order: 25

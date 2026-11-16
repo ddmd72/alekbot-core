@@ -163,6 +163,10 @@ relay; only the main service needs credentials, to mint SFU sessions.
    `VOICE_DEAD_PEER_TIMEOUT_S` (seconds, default `600`). A web call with no inbound audio packet for that long ends
    itself through the normal end path (`VOICE_CALL_CONTROL_CHANNEL_RFC.md` §7.4); a value that is not a positive number
    keeps the default. Lowering it far risks ending backgrounded calls: iOS pauses the web app's audio in the background.
+7. One optional relay knob for the live call text, read with `os.getenv` at boot (`relay_main._live_text_lag_ms`):
+   `LIVE_TEXT_LAG_MS` (ms, default `0`). It delays the release of Lelik's text on interpreter and tutor calls by that
+   much audio, for the ear's lag behind the SFU; set it from probe P2 (`docs/10_rfcs/VOICE_CALL_LIVE_TEXT_RFC.md` §4.3).
+   A value that is not an integer >= 0 gives `0` with a warning.
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
 (`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.

@@ -26,10 +26,9 @@ from ..domain.deep_research_drive_copy import (
     deep_research_drive_filename,
     report_title_from_html,
 )
-from ..domain.drive_mounts import canonical_path
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
-from ..domain.user_drive import DriveAccessRefused, DriveNotConnectedError, join_drive_path
+from ..domain.user_drive import DriveAccessRefused, DriveNotConnectedError
 from ..ports.language_service_port import LanguageServicePort
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
@@ -99,10 +98,7 @@ class DeepResearchDriveCopyService:
         title = report_title_from_html(html.decode("utf-8", errors="replace"))
         filename = deep_research_drive_filename(day, title, query)
         try:
-            primary = await self._drive.primary(user_id)
-            base = await self._drive.write_folder_path(primary.handle)
-            saved = await self._drive.save(primary.handle, html, filename, REPORT_CONTENT_TYPE,
-                                           join_drive_path(base, folder) if base else folder)
+            saved, path = await self._drive.save_to_primary(user_id, html, filename, REPORT_CONTENT_TYPE, folder)
         except DriveNotConnectedError:
             logger.info("[DeepResearchDriveCopy] drive not connected for user=%s; not copied", user_id[:8])
             return UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED, ""
@@ -114,7 +110,6 @@ class DeepResearchDriveCopyService:
             logger.error("[DeepResearchDriveCopy] save failed for user=%s; not copied", user_id[:8],
                          exc_info=True)
             return UIMessage.DEEP_RESEARCH_DRIVE_COPY_FAILED, ""
-        path = canonical_path(primary.mount_name, saved.item.path or f"{folder}/{saved.item.name}")
         logger.info("[DeepResearchDriveCopy] copied for user=%s (%d bytes, existed=%s)", user_id[:8],
                     len(html), saved.already_existed)
         return UIMessage.DEEP_RESEARCH_DRIVE_COPIED, path

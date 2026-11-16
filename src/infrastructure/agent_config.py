@@ -321,14 +321,15 @@ class TutorExtractorAgentConfig:
 
 @dataclass
 class VoiceSummarizerAgentConfig:
-    # Single-shot plain-text summary call over one call's turns — no structured
-    # JSON, no records (Lelik has no CompanionRecord store, RFC §4.9), so this
+    # Single-shot summary call over one call's turns — one small {title, summary}
+    # JSON object, no records (Lelik has no CompanionRecord store, RFC §4.9), so this
     # is far cheaper than TutorExtractorAgentConfig's 5-min JSON-extraction
     # budget. A phone call's transcript is bounded by call duration, not an
     # accumulating batch window like the tutor's. Confirm this value against
     # real turn counts during Task 20's manual verification.
     timeout_ms: int = 60_000  # 1 min
     max_tokens: int = 2048
+    max_parse_retries: int = 1   # one LLM retry on invalid JSON before giving up
 
 
 # ---------------------------------------------------------------------------

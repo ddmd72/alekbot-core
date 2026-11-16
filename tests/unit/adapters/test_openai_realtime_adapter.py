@@ -248,7 +248,7 @@ async def test_receive_events_normalizes_user_transcript():
     events = [event async for event in adapter.receive_events()]
 
     assert events[0].type == "user_transcript"
-    assert events[0].payload == {"text": "hello there"}
+    assert events[0].payload == {"text": "hello there", "item_id": None}  # the event carries no item_id
 
 
 @pytest.mark.asyncio

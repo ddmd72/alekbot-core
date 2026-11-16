@@ -95,8 +95,8 @@ JSON text frames, each `{"type": …}`; unknown types are ignored (forward-compa
 
 - **Versioning.** `hello.v` is the page's version; the relay answers `welcome` with the version it speaks or
   `bye{version}`. New capability = a new `features` entry, never a changed meaning of an old message.
-- **Features per call.** `ask` is offered only when the session config's `mode` is `interpreter`. Future: `transcript`
-  (relay → page `line {who, text, final}`), `mode` (page → relay `switch_mode`).
+- **Features per call.** `ask` is offered only when the session config's `mode` is `interpreter`. `text` (relay → page `line` and
+  `snapshot`, `VOICE_CALL_LIVE_TEXT_RFC.md` §4.7) is offered on mode calls (interpreter, tutor). Future: `mode` (page → relay `switch_mode`).
 - **Reconnect.** The page re-dials with the same token (backoff 1, 2, 4 … 10 s) while the call is live. A new socket
   replaces the old one (`bye{replaced}` to the old). `welcome` carries the current `ask` state, so the button re-syncs.
 - **Relay is authoritative.** The page shows "pressed" on tap (optimistic) and rolls back if no `ask_state` arrives in 2 s.

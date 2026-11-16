@@ -80,7 +80,10 @@ class RealtimeSessionPort(ABC):
         response spoke after its last call), cancelled (the response was cut)),
         remote_tool_done (payload: item_id, label, ok - one remote MCP call the provider ran has finished; the
         provider does not speak its result until request_response()), user_transcript (payload: text - final transcript of
-        the caller's speech), model_transcript (payload: text - final
+        the caller's speech, item_id - the caller's turn; None when the provider sends none),
+        model_transcript_delta (payload: item_id, text - one phrase of the spoken reply's transcript as it streams,
+        audio_offset_ms - where that phrase starts in its item's audio, in ms; None when the provider gives no offset),
+        model_transcript (payload: text - final
         transcript of the model's spoken response), error (payload: message, already redacted for a log line),
         remote_tools_failed (payload: label - one of the session's `mcp_servers` labels or "unknown", reason - the
         provider's error text redacted for a log line: the provider could not list that server's tools, so the session

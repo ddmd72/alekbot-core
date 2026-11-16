@@ -1,0 +1,11 @@
+agent_id: lelik_summarizer_interpreter
+blueprint_id: lelik_summarizer_agent_v1
+source_file: firestore_utils/uploads/lelik_summarizer_interpreter.json
+tokens:
+  COGNITIVE_PROCESS_LELIK_SUMMARIZER_INTERPRETER:
+    non_overridable: true
+    order: 10
+  OUTPUT_FORMAT_LELIK_SUMMARIZER:
+    non_overridable: true
+    order: 400
+uploaded_by: call_file_summarizer

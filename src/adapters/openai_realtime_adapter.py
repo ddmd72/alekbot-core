@@ -257,7 +257,16 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
         # audio-transcript events; OpenAI's leg in that spike used text-modality events
         # throughout and never exercised either event below.
         if event_type == "conversation.item.input_audio_transcription.completed":
-            return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
+            return RealtimeSessionEvent(type="user_transcript",
+                                        payload={"text": event.get("transcript", ""), "item_id": event.get("item_id")})
+        # OpenAI's transcript delta carries no audio offset: the live text anchors it where it arrives
+        # (VOICE_CALL_LIVE_TEXT_RFC §4.2). Mapped for port honesty; modes run on xAI only.
+        if event_type == "response.output_audio_transcript.delta":
+            text = event.get("delta")
+            if not text or not isinstance(text, str):
+                return None
+            return RealtimeSessionEvent(type="model_transcript_delta",
+                                        payload={"item_id": event.get("item_id"), "text": text, "audio_offset_ms": None})
         if event_type == "response.output_audio_transcript.done":
             return RealtimeSessionEvent(type="model_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "input_audio_buffer.committed":

@@ -240,7 +240,7 @@ async def test_a_reconnecting_page_gets_the_current_state_in_welcome():
     second = FakeControlSocket()
     await call.attach(second)
     await call.end()
-    assert second.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask"], "ask": "armed"}
+    assert second.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "text"], "ask": "armed"}
     assert call.page.frames()[-1] == {"type": "bye", "reason": "replaced"}
 
 
@@ -258,12 +258,13 @@ async def test_the_call_ending_releases_a_pressed_button_before_the_bye():
 async def test_only_the_interpreter_call_offers_ask():
     call = await _interpreter_call()
     await call.end()
-    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask"], "ask": "idle"}
+    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": ["ask", "text"], "ask": "idle"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["lelik", "tutor"])
-async def test_other_modes_offer_no_ask_and_ignore_a_press(mode):
+@pytest.mark.parametrize(("mode", "features"), [pytest.param("lelik", [], id="lelik"),
+                                               pytest.param("tutor", ["text"], id="tutor")])
+async def test_other_modes_offer_no_ask_and_ignore_a_press(mode, features):
     call = await _Call(mode).start()
     await call.page_says({"type": "ask_arm", "seq": 1})
     await call.provider_says("speech_started", item_id="item-u1")
@@ -271,7 +272,7 @@ async def test_other_modes_offer_no_ask_and_ignore_a_press(mode):
     await call.provider_says("turn_committed", item_id="item-u1")
     await call.end()
 
-    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": []}
+    assert call.page.frames()[0] == {"type": "welcome", "v": 1, "features": features}
     assert call.ask_states() == [] and call.notes() == [_WEB_PICKUP_NOTE]
 
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import time
 from collections import deque
 from typing import Any, AsyncIterator, Callable, Deque, Dict, List, Optional, Sequence, Set, Tuple
@@ -88,6 +89,17 @@ def _is_replayed(event: dict) -> bool:
     item = event.get("item")
     return event.get("type") == "conversation.item.added" and bool(
         event.get("replayed") or (item.get("replayed") if isinstance(item, dict) else False))
+
+
+# _OFFSET: where a phrase of Lelik's transcript starts in its item's audio. VOICE_CALL_LIVE_TEXT_RFC §2 (probe
+# 2026-11-08): each `response.output_audio_transcript.delta` carries `start_time`, "seconds into the reply's audio",
+# which "lands 70–110 ms after the summed audio before it". The live text paces each phrase by it; the delta's `rid`
+# (shared with its audio chunks) is not read.
+def _audio_offset_ms(start_time: Any) -> Optional[int]:
+    """`start_time` in whole ms, or None when it is missing, a bool, not a number or not finite."""
+    if isinstance(start_time, bool) or not isinstance(start_time, (int, float)) or not math.isfinite(start_time):
+        return None
+    return round(start_time * 1000)
 
 
 def _strip_cache_boundary(instructions: str) -> str:
@@ -359,7 +371,15 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
                 payload["remote_tools"] = remote_tools
             return RealtimeSessionEvent(type="response_done", payload=payload)
         if event_type == "conversation.item.input_audio_transcription.completed":
-            return RealtimeSessionEvent(type="user_transcript", payload={"text": event.get("transcript", "")})
+            return RealtimeSessionEvent(type="user_transcript",
+                                        payload={"text": event.get("transcript", ""), "item_id": event.get("item_id")})
+        if event_type == "response.output_audio_transcript.delta":
+            text = event.get("delta")
+            if not text or not isinstance(text, str):
+                return None
+            return RealtimeSessionEvent(type="model_transcript_delta", payload={
+                "item_id": event.get("item_id"), "text": text,
+                "audio_offset_ms": _audio_offset_ms(event.get("start_time"))})
         if event_type == "response.output_audio_transcript.done":
             return RealtimeSessionEvent(type="model_transcript", payload={"text": event.get("transcript", "")})
         if event_type == "input_audio_buffer.committed":

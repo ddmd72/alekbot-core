@@ -198,7 +198,7 @@ async def test_caller_side_events_are_normalized():
         ("speech_started", {"item_id": "u1"}),
         ("speech_stopped", {"item_id": "u1"}),
         ("turn_committed", {"item_id": "u1"}),
-        ("user_transcript", {"text": "Привет"}),
+        ("user_transcript", {"text": "Привет", "item_id": "u1"}),
     ]
 
 

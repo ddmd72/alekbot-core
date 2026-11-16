@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,13 +12,16 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilit
 from src.ports.prompt_builder_port import PromptBuilderPort
 
 _SUMMARY_TEXT = "Discussed the Q3 budget with Lukas Weber."
+# The summarizer's output contract (OUTPUT_FORMAT_LELIK_SUMMARIZER, VOICE_CALL_LIVE_TEXT_RFC §4.11): one {title, summary}
+# JSON object; the summary is the text the call's note carries.
+_SUMMARY_JSON = json.dumps({"title": "Budget call", "summary": _SUMMARY_TEXT})
 
 
 @pytest.fixture
 def mock_llm():
     llm = AsyncMock(spec=LLMPort)
     llm.generate_content.return_value = MagicMock(
-        text=_SUMMARY_TEXT,
+        text=_SUMMARY_JSON,
         usage_metadata=MagicMock(total_tokens=42),
     )
     return llm

@@ -307,6 +307,26 @@ def sanitize_drive_filename(name: str) -> str:
     return cleaned or "file"
 
 
+# The whole stamped name, extension included. OneDrive allows 255 characters per name; bytes are the stricter
+# measure for non-Latin subjects, and a margin leaves room for the drive's own " 1" clash suffix.
+MAX_STAMPED_NAME_BYTES = 200
+
+
+def _truncate_utf8(text: str, limit: int) -> str:
+    """At most `limit` UTF-8 bytes, never splitting a character."""
+    return text.encode("utf-8")[:max(limit, 0)].decode("utf-8", errors="ignore")
+
+
+def stamped_drive_filename(stamp: str, subject: str, extension: str) -> str:
+    """`<stamp> <subject><extension>`, drive-safe and at most MAX_STAMPED_NAME_BYTES UTF-8 bytes (a Cyrillic
+    character costs 2), the subject cut on a character boundary. The caller passes `subject` already non-empty."""
+    prefix = f"{stamp} "
+    budget = MAX_STAMPED_NAME_BYTES - len(prefix.encode("utf-8")) - len(extension.encode("utf-8"))
+    # sanitize, cap, then sanitize again: the cut may leave a trailing space or dot.
+    stem = sanitize_drive_filename(_truncate_utf8(sanitize_drive_filename(subject), budget))
+    return f"{prefix}{stem}{extension}"
+
+
 def drive_filename(requested: Optional[str], source_ref: str) -> str:
     """The name a saved file gets (§4.7): requested if given, else the source name without
     a delivered-document uuid prefix and the chat store's " (N)" dedup suffix (so a re-sent file

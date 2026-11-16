@@ -117,6 +117,12 @@ def _require_valid_name(name: str) -> None:
                              "(\" * : < > ? / \\ |), or ends with a dot or space")
 
 
+def _takes_writes(access: ConnectionAccess, capabilities: DriveCapabilities) -> bool:
+    """True when a save can land: the drive accepts changes and the connection has a write folder. The one condition
+    behind both the read-only refusal and `can_save_to_primary`."""
+    return capabilities.writable and access.write_folder_id is not None
+
+
 class UserDriveService:
     def __init__(self, drive: UserDrivePort, connections: "DriveConnectionService",
                  nudge_queue: Optional[TaskQueue] = None,
@@ -384,7 +390,7 @@ class UserDriveService:
         """Before any walk: a drive that accepts no change, or has no write folder, refuses with its line and the
         provider is not called (the decision needs no chain then). `policy`: the operation's one `access` read."""
         access, capabilities = policy
-        if not capabilities.writable or access.write_folder_id is None:
+        if not _takes_writes(access, capabilities):
             await self.check_access(handle, op, policy=policy)
 
     async def ensure_folder(self, handle: DriveHandle, folder: str) -> FolderResolution:
@@ -415,6 +421,29 @@ class UserDriveService:
         item = await self._drive.upload(handle, resolution.folder.item_id, filename, data, content_type)
         await self._nudge(handle, created_ids + [item.item_id])
         return SaveOutcome(item=item, created=resolution.created, renamed=name_key(item.name) != wanted)
+
+    async def can_save_to_primary(self, user_id: str) -> bool:
+        """True when `save_to_primary` can land a file now: a primary connection that takes writes and has a write
+        folder. No primary, or a disconnected or reauth-pending one, is False; any other error is the caller's."""
+        try:
+            primary = await self.primary(user_id)
+            access, capabilities = await self.access(primary.handle)
+        except DriveNotConnectedError:
+            return False
+        return _takes_writes(access, capabilities)
+
+    async def save_to_primary(self, user_id: str, data: bytes, filename: str, content_type: str,
+                              folder: Optional[str] = None) -> Tuple[SaveOutcome, str]:
+        """Save a file the bot makes into the primary connection's write folder: `folder` (created inside it) or the
+        Inbox (D7). Returns the outcome and the file's canonical path (`<mount>/<path>`). Raises what `primary` and
+        `save` raise (DriveNotConnectedError, DriveAccessRefused, ...)."""
+        primary = await self.primary(user_id)
+        base = await self.write_folder_path(primary.handle)
+        name = folder or DEFAULT_INBOX_FOLDER
+        target = join_drive_path(base, name) if base else name
+        saved = await self.save(primary.handle, data, filename, content_type, target)
+        path = canonical_path(primary.mount_name, saved.item.path or join_drive_path(target, saved.item.name))
+        return saved, path
 
     async def _inbox_path(self, handle: DriveHandle,
                           policy: Tuple[ConnectionAccess, DriveCapabilities]) -> str:

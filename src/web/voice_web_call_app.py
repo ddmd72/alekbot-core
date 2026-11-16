@@ -15,6 +15,7 @@ button marker, so the relay's end-of-call report keeps its resume handle; the st
 released and then claims it, so the new call's session config resumes. The marker names its call (`owner`), so a
 replaced call releases it only while it is still its own.
 """
+import asyncio
 import json
 import os
 import secrets
@@ -22,8 +23,9 @@ import uuid
 
 from quart import Blueprint, Response, g, jsonify, request, send_file
 
+from src.domain.call_text_file import MAX_CALL_TEXT_BODY_BYTES, CallTextTooLarge, parse_call_text_request
 from src.domain.voice_control_protocol import control_token_digest
-from src.domain.voice_mode import UnsupportedVoiceMode, VoiceMode
+from src.domain.voice_mode import VOICE_MODES_WITH_CALL_FILE, UnsupportedVoiceMode, VoiceMode
 from src.domain.voice_resume import BUTTON_END_TTL_S
 from src.domain.voice_ticket_keys import button_end_key
 from src.ports.media_room_port import MediaRoomError
@@ -73,7 +75,7 @@ def _control_channel_on() -> bool:
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes, replace_wait_s: float = _REPLACE_WAIT_S,
-                                    replace_poll_s: float = _REPLACE_POLL_S) -> Blueprint:
+                                    replace_poll_s: float = _REPLACE_POLL_S, call_text_files=None) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(session_service)
     web_calls = WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
@@ -117,6 +119,17 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
                            f"the new call is refused")
             return False
         return await call_setup.claim(g.user_id, holder_fields, ttl_s=_TICKET_TTL_S)
+
+    async def _drive_flag(mode: VoiceMode, user_id: str) -> bool:
+        """Whether the page may offer "File to drive": only the modes with a call file, and only when the service says
+        the user's drive takes a save. `drive_available` never raises."""
+        if call_text_files is None or mode not in VOICE_MODES_WITH_CALL_FILE:
+            return False
+        try:
+            return await call_text_files.drive_available(user_id)
+        except Exception:  # the flag only hides a button; it never fails the start
+            logger.warning("web call: drive flag unreadable", exc_info=True)
+            return False
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -231,7 +244,8 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # marker and ticket rather than escape as a bare 500 and hold them for the ticket's
         # full 300s TTL.
         try:
-            leg = await media_room.open_caller(body["sdp"], str(body["mid"]))
+            leg, file_to_drive = await asyncio.gather(
+                media_room.open_caller(body["sdp"], str(body["mid"])), _drive_flag(mode, g.user_id))
             await ephemeral_store.set(f"voice_web_call:{call_id}", {
                 "user_id": g.user_id, "account_id": g.account_id, "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/voice_web_call:{call_id}"),
                 "session_id": leg.session_id, "adapter_ids": [],
@@ -246,7 +260,35 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # (`voice_control_plane_app.session_config`), not just because the offer/answer
         # succeeded here. Extending it this early would hold the marker for up to an hour even
         # if the relay never shows up.
-        return jsonify({"call_id": call_id, "sdp": leg.answer_sdp}), 201
+        return jsonify({"call_id": call_id, "sdp": leg.answer_sdp, "file_to_drive": file_to_drive}), 201
+
+    @bp.route("/api/voice/call-text/file", methods=["POST"])
+    @auth_required
+    async def call_text_file():
+        """Keep the call's text as a file in the chat or the drive Inbox (VOICE_CALL_LIVE_TEXT_RFC §4.11). The owner is
+        always the JWT user."""
+        if call_text_files is None:
+            return jsonify({"error": "unavailable"}), 503
+        if (request.content_length or 0) > MAX_CALL_TEXT_BODY_BYTES:
+            return jsonify({"error": "too large"}), 413
+        raw = await request.get_data()
+        if len(raw) > MAX_CALL_TEXT_BODY_BYTES:  # a body without Content-Length is not capped by Quart
+            return jsonify({"error": "too large"}), 413
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            return jsonify({"error": "bad request"}), 400
+        try:
+            parsed = parse_call_text_request(body)
+        except CallTextTooLarge:
+            return jsonify({"error": "too large"}), 413
+        except ValueError:
+            return jsonify({"error": "bad request"}), 400
+        outcome = await call_text_files.save(g.user_id, g.account_id, parsed)
+        if outcome.saved:
+            return jsonify({"ok": True, "path": outcome.path})
+        status = 502 if outcome.reason == "failed" else 409
+        return jsonify({"ok": False, "reason": outcome.reason}), status
 
     @bp.route("/api/voice/web-call/<call_id>/connect", methods=["POST"])
     @auth_required
