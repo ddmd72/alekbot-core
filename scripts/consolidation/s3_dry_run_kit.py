@@ -8,6 +8,7 @@ from Firestore, where the S3 tokens are not uploaded yet. The kit lets the REAL 
 - `NoWriteFactRepository`: reads go to the live repository; every write lands in an in-memory overlay that the next
   read of the same pass sees (a part created earlier in the pass can be named by the compound that is retired).
 - `NoWriteIndexedEmails`: reads delegate, `mark_consolidated` and every other write is recorded only.
+- `NoWriteMemoryBatches`: Stage 3's card reads delegate, without the mail this run marked (the marks are the kit's).
 - `RecordingCounters`: replaces the agent's live lifecycle-counters store.
 - `SnapshotTokenOverlay`: serves the five edited `CONSOLIDATION_*` tokens from `prompts_snapshot/`.
 - `CostMeter`: prices every model call and stops the run before the next call when the cumulative spend (kept across
@@ -40,6 +41,7 @@ from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.domain.billing import calculate_cost
 from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
+from src.domain.email_memory_mail import MemoryMail
 from src.domain.entities import FactEntity, FactState
 from src.domain.consolidation import REVIEW_PROFILE_ID
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
@@ -63,6 +65,7 @@ from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.search import EnrichedFact, consolidation_hit
 from src.domain.stored_fact import StoredFact
 from src.ports.alert_sink import AlertSinkPort
+from src.ports.email_memory_batches import EmailMemoryBatches
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
@@ -528,6 +531,22 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
 
     async def update_vectors(self, user_id: str, email_id: str, vectors: Dict[str, List[float]]) -> None:
         self.writes.append({"kind": "update_vectors", "email_id": email_id})
+
+
+class NoWriteMemoryBatches(EmailMemoryBatches):
+    """Stage 3's card reads for a kit run: the live batch without the mail this run marked consolidated (the marks land
+    in `marks`, the kit's `NoWriteIndexedEmails`, and never reach the live store)."""
+
+    def __init__(self, real: EmailMemoryBatches, marks: NoWriteIndexedEmails) -> None:
+        self._real = real
+        self._marks = marks
+
+    async def memory_batch(self, user_id: str, limit: int, settled: Sequence[str],
+                           stale_before: datetime) -> List[MemoryMail]:
+        marked = self._marks._marked
+        hidden = sum(1 for marked_user, _ in marked if marked_user == user_id)
+        batch = await self._real.memory_batch(user_id, limit + hidden, settled, stale_before)
+        return [m for m in batch if (user_id, m.email.email_id) not in marked][:limit]
 
 
 # ------------------------------------------------------------------------------------------------ counters and alerts
@@ -1107,6 +1126,8 @@ class DryRunKit:
         if getattr(agent, "_indexed_email_repo", None) is not None:
             self.emails = NoWriteIndexedEmails(agent._indexed_email_repo)
             agent._indexed_email_repo = self.emails
+            if getattr(agent, "_email_memory_batches", None) is not None:
+                agent._email_memory_batches = NoWriteMemoryBatches(agent._email_memory_batches, self.emails)
         token_ids = (*S3_TOKEN_IDS, *REVIEW_TOKEN_IDS) if self.with_review else S3_TOKEN_IDS
         service.token_repo = SnapshotTokenOverlay(service.token_repo, service.security_port, self.snapshot_dir, token_ids)
         if self.with_review:

@@ -159,6 +159,13 @@ write is a field update through `FirestoreEmailCardStore.write_card` (one transa
   single-field exemptions (`card`, `card_vector`, `about_keys`, `name_keys`). They must be `READY` before the code that
   queries them deploys (nothing queries them before slice 8; the write path needs none).
 - Check: `python scripts/email/card_store_status.py [--since YYYY-MM-DD]` prints counts per `card_state` (counts only).
+- **Memory reads the cards** (slice 9): the repository also implements `EmailMemoryBatches` (`memory_batch`), the batch
+  consolidation's Stage 3 reads behind `EMAIL_CARD_MEMORY`: unconsolidated mail whose card is settled (`carded`, `empty`,
+  `abandoned`, `source_gone`) plus any mail indexed more than 6 h ago, oldest first, projected to the v1 fields without
+  vectors plus `card_state`, `card_version`, `template_key`, `card`. Its settled read needs one more composite
+  (`user_id`, `consolidated_at`, `card_state`, `indexed_at`); the stale read uses the v1 consolidation index. Because the
+  card write never touches `consolidated_at`, a mail consolidated once (as a line or as a card) never re-enters. What
+  memory is sent of a card: `docs/05_building_blocks/memory/README.md` Step 8.
 
 ## 5. EmailClassificationAgent
 

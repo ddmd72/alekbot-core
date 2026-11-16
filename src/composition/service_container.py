@@ -529,6 +529,7 @@ class ServiceContainer:
             "fact_management_adapter_factory": self.create_fact_management_adapter,
             "email_search_service": self.email_search_service,
             "indexed_email_repo": self.indexed_email_repo,
+            "confirmed_people": self.confirmed_people,
             "tasks_provider": self.ms_todo_adapter,
             "task_indexing": self.task_indexing,
             "notes_provider": self.notes_adapter,

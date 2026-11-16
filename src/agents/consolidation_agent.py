@@ -48,7 +48,15 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation import REVIEW_PROFILE_ID
+from ..domain.consolidation import EMAIL_PROFILE_ID, REVIEW_PROFILE_ID
+from ..domain.confirmed_people import ConfirmedPeople
+from ..domain.email import IndexedEmail
+from ..domain.email_memory_candidate import (
+    EMAIL_CANDIDATES_HEADER, MEMORY_CARD_WAIT, SETTLED_FOR_MEMORY, card_candidate, memory_card,
+)
+from ..domain.email_memory_mail import MemoryMail
+from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
+from ..ports.email_memory_batches import EmailMemoryBatches
 from ..domain.consolidation_pass_stats import (
     OUTCOME_ERROR, OUTCOME_OK, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
 )
@@ -819,6 +827,8 @@ class ConsolidationAgent(BaseAgent):
         lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
         *,
         fact_updates: FactUpdatePort,
+        email_memory_batches: Optional[EmailMemoryBatches] = None,
+        confirmed_people: Optional[ConfirmedPeopleRepository] = None,
     ):
         """
         Initialize Consolidation Agent v3.
@@ -839,6 +849,8 @@ class ConsolidationAgent(BaseAgent):
             principles_limit: Principles cache limit
             lifecycle_counters: Per-day lifecycle numbers; the refused calls of each pass are added to it
             fact_updates: The typed write path (code-built updates, the review's writes); required
+            email_memory_batches: Stage 3's card reads (EMAIL_CARD_MEMORY); None keeps the v1 one-line candidates
+            confirmed_people: The owner's people list, read once per Stage 3 run to withhold a card's title and summary
         """
         if not isinstance(fact_updates, FactUpdatePort):
             raise TypeError(
@@ -860,6 +872,8 @@ class ConsolidationAgent(BaseAgent):
         self.facts_limit = facts_limit
         self.principles_limit = principles_limit
         self._indexed_email_repo = indexed_email_repo
+        self._email_memory_batches = email_memory_batches
+        self._confirmed_people = confirmed_people
         self._alert_sink = alert_sink
         # TEMPORARY per-pass 📊 stats (Sonnet 5.5 stall monitoring, 2026-10-20); the factory reads
         # CONSOLIDATION_STATS_ALERTS (REQ-ARCH-01 forbids env access in agents/).
@@ -1217,6 +1231,9 @@ class ConsolidationAgent(BaseAgent):
                 metadata={"total_duration_ms": 0},
             )
 
+        if self._email_memory_batches is not None:
+            return await self._consolidate_email_cards(message, user_id, account_id, bio_context_raw, start_time)
+
         n_passes = message.payload.get("number_of_batches", CONSOLIDATION.email_triage_passes)
         batch_size = message.payload.get("batch_size", CONSOLIDATION.email_triage_batch_size)
 
@@ -1306,6 +1323,126 @@ class ConsolidationAgent(BaseAgent):
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
+
+    async def _consolidate_email_cards(
+        self,
+        message: AgentMessage,
+        user_id: str,
+        account_id: str,
+        bio_context_raw: List[Dict],
+        start_time: float,
+    ) -> AgentResponse:
+        """Stage 3 reading email cards (email index v2 §6.7): the `consolidation_email` prompt, settled mail through
+        `EmailMemoryBatches` (`SETTLED_FOR_MEMORY`, or unsettled past `MEMORY_CARD_WAIT`); each mail as its code-filtered
+        card (`card_candidate`) when its card reads back, else as the v1 one-line candidate. Every mail of a batch is
+        marked consolidated after its pass. A prompt failure propagates before anything is read or marked."""
+        n_passes = message.payload.get("number_of_batches", CONSOLIDATION.email_triage_passes)
+        batch_size = message.payload.get("batch_size", CONSOLIDATION.email_card_batch_size)
+        system_prompt = await self.prompt_builder.build_for_agent(
+            agent_type=EMAIL_PROFILE_ID,
+            user_id=user_id,
+            account_id=account_id,
+            routing_metadata=None,
+            include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
+            biographical_facts=bio_context_raw or [],
+            conversation_history=[],
+        )
+        people, list_unreadable = await self._read_confirmed_people(account_id)
+
+        total_facts_affected = 0
+        batches_processed = 0
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        refreshed = False
+        owner_timezone = self._owner_timezone(message)
+        try:
+            for pass_num in range(1, n_passes + 1):
+                mails = await self._email_memory_batches.memory_batch(
+                    user_id, batch_size, SETTLED_FOR_MEMORY, datetime.now(timezone.utc) - MEMORY_CARD_WAIT
+                )
+                if not mails:
+                    logger.info(f"📧 [ConsolidationAgent] Email cards pass {pass_num}: no unconsolidated emails")
+                    break
+
+                candidates_text = self._format_memory_candidates(
+                    mails, owner_timezone, people, list_unreadable, pass_num)
+                ops = await self._run_consolidation_loop(
+                    user_message_text=f"{EMAIL_CANDIDATES_HEADER}\n{candidates_text}",
+                    system_prompt=system_prompt,
+                    user_id=user_id,
+                    account_id=account_id,
+                    fact_management=tracker,
+                    write_context=self._write_context(
+                        "email", owner_timezone,
+                        self._times_span([m.email.email_date for m in mails], "email dates"),
+                    ),
+                )
+
+                await self._indexed_email_repo.mark_consolidated(
+                    user_id, [m.email.email_id for m in mails], datetime.now(timezone.utc))
+
+                facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
+                total_facts_affected += facts_affected
+                batches_processed += 1
+                logger.info(
+                    f"✅ [ConsolidationAgent] Email cards pass {pass_num} done: "
+                    f"{len(ops)} ops, {facts_affected} facts affected"
+                )
+                if len(mails) < batch_size:
+                    break
+
+            if batches_processed > 0:
+                await self._refresh_biographical_cache(account_id)
+                refreshed = True
+        finally:
+            if tracker.wrote and not refreshed:
+                await self._refresh_biographical_cache(account_id)
+
+        total_duration = time.time() - start_time
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result={"batches_processed": batches_processed, "facts_affected": total_facts_affected},
+            confidence=1.0,
+            metadata={"total_duration_ms": int(total_duration * 1000)},
+        )
+
+    async def _read_confirmed_people(self, account_id: str) -> Tuple[Optional[ConfirmedPeople], bool]:
+        """The owner's people list and whether it was unreadable (a stored list that does not parse)."""
+        if self._confirmed_people is None:
+            return None, False
+        try:
+            return await self._confirmed_people.get(account_id), False
+        except ValueError as e:
+            logger.error(f"❌ [ConsolidationAgent] confirmed people list unreadable ({e}); "
+                         f"every card's title and summary are withheld this run")
+            return None, True
+
+    def _format_memory_candidates(
+        self, mails: List[MemoryMail], owner_timezone: str, people: Optional[ConfirmedPeople],
+        list_unreadable: bool, pass_num: int,
+    ) -> str:
+        """The numbered candidates of one pass (a card or the one-line form per mail) and the pass's INFO line."""
+        line_reasons = {"empty": "empty", "abandoned": "abandoned", "source_gone": "gone", "carded": "unreadable"}
+        counts: Counter = Counter()
+        lines = []
+        for i, mail in enumerate(mails, 1):
+            card = memory_card(mail)
+            if card is not None:
+                candidate = card_candidate(card, owner_timezone, people, list_unreadable=list_unreadable)
+                fields = candidate.fields
+                counts["cards"] += 1
+                counts["withheld"] += int(candidate.withheld)
+            else:
+                fields = self._email_line_candidate(mail.email, owner_timezone)
+                counts["lines"] += 1
+                counts[line_reasons.get(mail.card_state, "stale")] += 1
+            lines.append(f"{i}. {json.dumps(fields, ensure_ascii=False)}")
+        logger.info(
+            f"📧 [ConsolidationAgent] Email cards pass {pass_num}: cards={counts['cards']} lines={counts['lines']} "
+            f"(empty={counts['empty']} abandoned={counts['abandoned']} gone={counts['gone']} stale={counts['stale']} "
+            f"unreadable={counts['unreadable']}) withheld={counts['withheld']}"
+        )
+        return "\n".join(lines)
 
     async def _refresh_biographical_cache(self, account_id: str) -> None:
         """Rebuild the account's biographical cache and drop the PromptBuilder's copy; the repo never raises."""
@@ -1523,21 +1660,27 @@ class ConsolidationAgent(BaseAgent):
         import json as _json
         lines = []
         for i, email in enumerate(emails, 1):
-            candidate = {
-                "email_id": email.email_id,
-                "fact": email.text,
-                "category": email.category,
-                "tags": email.tags,
-                "date": local_moment(as_utc(email.email_date), timezone).isoformat(timespec="seconds"),
-                "from": email.from_address,
-                "subject": email.subject,
-            }
-            if email.attachments:
-                candidate["attachments"] = email.attachments
-            if email.metadata:
-                candidate["metadata"] = email.metadata
+            candidate = ConsolidationAgent._email_line_candidate(email, timezone)
             lines.append(f"{i}. {_json.dumps(candidate, ensure_ascii=False)}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _email_line_candidate(email: IndexedEmail, timezone: str) -> Dict[str, Any]:
+        """The v1 one-line candidate of a mail: the classifier's fact sentence and the mail's fields."""
+        candidate: Dict[str, Any] = {
+            "email_id": email.email_id,
+            "fact": email.text,
+            "category": email.category,
+            "tags": email.tags,
+            "date": local_moment(as_utc(email.email_date), timezone).isoformat(timespec="seconds"),
+            "from": email.from_address,
+            "subject": email.subject,
+        }
+        if email.attachments:
+            candidate["attachments"] = email.attachments
+        if email.metadata:
+            candidate["metadata"] = email.metadata
+        return candidate
 
     async def _execute_deliberate_process_v3(
         self,

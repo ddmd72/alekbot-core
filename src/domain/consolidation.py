@@ -6,6 +6,9 @@ import uuid
 
 # The review pass's agent profile (prompt profile id and the `agent_type` its prompt is built for).
 REVIEW_PROFILE_ID = "consolidation_review"
+# Stage 3's agent profile when it reads email cards (email index v2 §6.7): consolidation's tokens plus the one that
+# explains the card candidates.
+EMAIL_PROFILE_ID = "consolidation_email"
 
 
 def consolidation_agent_id(user_id: str) -> str:

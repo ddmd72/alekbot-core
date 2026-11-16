@@ -200,6 +200,9 @@ class ConsolidationAgentConfig:
     # number_of_batches / batch_size are absent from payload.
     email_triage_passes: int = 1
     email_triage_batch_size: int = 100
+    # Stage 3 reading email cards (EMAIL_CARD_MEMORY on): a card is several times a line and the tool loop re-sends the
+    # batch every turn, so a smaller default batch; the payload's batch_size still overrides. Tune from the dry run.
+    email_card_batch_size: int = 50
     # 15 min: covers consolidate_full (Stage 1 ~4 min + Stage 2 ~3 min + Stage 3 ~4 min).
     # Cloud Tasks consolidation tasks should have matching or higher deadline.
     timeout_ms: int = 900_000
