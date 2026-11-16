@@ -36,3 +36,9 @@ async def test_agent_notes_are_forwarded():
 async def test_include_datetime_is_forwarded():
     assert (await _assemble_kwargs(include_datetime=True))["include_datetime"] is True
     assert (await _assemble_kwargs())["include_datetime"] is False
+
+
+async def test_kb_preamble_is_forwarded():
+    """5419249e: kb_preamble reaches the assembly service."""
+    assert (await _assemble_kwargs(kb_preamble=True))["kb_preamble"] is True
+    assert (await _assemble_kwargs())["kb_preamble"] is False
