@@ -1,6 +1,7 @@
 # RFC: Email Indexing System (Gmail + Future Providers)
 
 **Status:** Phases 1–7 Complete
+**Superseded in part by EMAIL_INDEX_V2_RFC:** §2.4 and §3.2 now; §4 at slice 9.
 **Date:** 2026-02-11
 **Updated:** 2026-03-01
 **Owner:** AI Engineering
