@@ -23,6 +23,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentConfig, AgentResponse
 from src.domain.billing import BillingAccount
 from src.domain.email import IndexedEmail
+from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER, SETTLED_FOR_MEMORY
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
@@ -297,7 +298,7 @@ def _real_agent(store: FactStore, email_repo=None):
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
-        prompt_builder=pb, indexed_email_repo=email_repo,
+        prompt_builder=pb, indexed_email_repo=email_repo, email_memory_batches=email_repo,
     )
     agent.INLINE_CLUSTER_REVIEW = False
     store.repo.refresh_biographical_context_cache = AsyncMock()
@@ -311,7 +312,7 @@ def _real_agent(store: FactStore, email_repo=None):
                           "tags": ["t"], "metadata": {}, "type": "event", "expiry": on(TRIP_DAY)}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "trip to Rome", "fact_attributes": attributes})])
-        if "system_alert" in first and "email" not in spent:
+        if EMAIL_CANDIDATES_HEADER in first and "email" not in spent:
             spent.add("email")
             attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
                           "tags": ["t"], "metadata": {}, "type": "event", "expiry": on(TRIP_DAY)}
@@ -367,8 +368,7 @@ async def test_consolidate_full_carries_the_owners_zone_into_the_email_pass_too(
     env = SimpleNamespace(domain_email_facts_collection="eval_email_facts", email_indexing_state_collection="eval_email_state")
     emails = FirestoreIndexedEmailRepository(store.db, env)
     await emails.save_batch([IndexedEmail(
-        email_id="e1", user_id=FACT_USER, account_id=FACT_ACC, source="gmail", text="mail e1", tags=["mail"],
-        category="travel", metadata={"subject": "e1"}, subject="e1", from_address="a@example.com",
+        email_id="e1", user_id=FACT_USER, account_id=FACT_ACC, source="gmail", subject="e1", from_address="a@example.com",
         email_date=datetime(2026, 10, 10, 9, 0), indexed_at=datetime(2026, 10, 13, 1),
     )])
     users = Users(profile(FACT_USER, "UTC", account_id=FACT_ACC), profile(OWNER, owner_zone, account_id=FACT_ACC))
@@ -386,4 +386,4 @@ async def test_consolidate_full_carries_the_owners_zone_into_the_email_pass_too(
     flight = [d for d in store.docs.values() if d["text"] == "flight booked"]
     assert len(flight) == 1, "the email pass ran and wrote its fact"
     assert flight[0]["expires_at"].astimezone(timezone.utc) == expected_expiry
-    assert await emails.get_unconsolidated_batch(FACT_USER) == []
+    assert await emails.memory_batch(FACT_USER, 10, SETTLED_FOR_MEMORY, datetime.now(timezone.utc)) == []  # marked

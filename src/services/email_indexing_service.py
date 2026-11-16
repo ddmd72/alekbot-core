@@ -3,11 +3,13 @@ EmailIndexingService — orchestrates the full email indexing pipeline.
 See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §6, §2.2 Flow 1.
 
 Pipeline per chunk (100 emails/page):
-  list_emails → exclusion pre-filter → classify → fetch full content
+  list_emails → skip stored → exclusion pre-filter → gate (keep/drop) → fetch full content of kept
   → save → card → advance cursor → update job
+Email index v2 (docs/10_rfcs/EMAIL_INDEX_V2_RFC.md §4): the gate leans to keep; the card is the mail's content.
 """
 
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -25,6 +27,7 @@ from ..domain.email import (
 )
 from ..domain.connector_spec import ConnectorSpec
 from ..domain.email_card_page import MailForCard
+from ..domain.email_gate import DROP_REASONS, KEEP_REASONS
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.oauth_credential import OAuthCredential
 from ..ports.alert_sink import AlertSinkPort
@@ -437,57 +440,42 @@ class EmailIndexingService:
                         f"🚫 Excluded {excluded_count} emails via patterns"
                     )
 
-                # 3. Classify remaining emails (agentic loop, Gemini Flash + tool calling)
+                # 3. The gate: keep or drop each remaining email (one call, headers and snippet only)
                 classifications: List[EmailClassificationResult] = []
                 if filtered:
                     classifications = await self._classifier.classify_batch(
-                        filtered, job.user_id, credentials=credentials, account_id=account_id
+                        filtered, job.user_id, account_id=account_id
                     )
-                valuable = [
-                    c for c in classifications if c.valuable and c.fact
-                ]
+                kept = [c for c in classifications if c.keep]
                 failed = [c for c in classifications if c.failure]
                 if failed:
                     job.emails_failed += len(failed)
                     await self._alert_classifier_failure(
                         job.job_id, job.user_id, len(failed), failed[0].failure
                     )
+                elif classifications:
+                    self._log_gate_page(classifications)
 
-                # 4. Fetch full content for ALL valuable emails (attachment filenames).
-                #    Always re-fetches regardless of what was already fetched during
-                #    tool calling — storage needs authoritative data, not the truncated
-                #    3000-char snippets sent to the LLM.
+                # 4. Fetch full content for the kept emails (attachment names, the card step's input).
                 email_meta_map: Dict[str, EmailMetadata] = {
                     e.email_id: e for e in filtered
                 }
                 full_content_map: Dict[str, EmailFullContent] = {}
-                if valuable:
-                    valuable_ids = [c.email_id for c in valuable]
+                if kept:
                     try:
                         full_content_map = await self._gmail.batch_get_full_content(
                             credentials=credentials,
-                            email_ids=valuable_ids,
+                            email_ids=[c.email_id for c in kept],
                         )
                     except Exception as exc:
                         logger.warning(
                             f"⚠️ batch_get_full_content partial failure: {exc}"
                         )
 
-                    # Log final candidates with attachments for inspection
-                    for c in valuable:
-                        meta = email_meta_map.get(c.email_id)
-                        content = full_content_map.get(c.email_id)
-                        attachments = content.attachments if content else []
-                        logger.info(
-                            f"  📧 {c.email_id[:8]} | [{c.category}] {c.fact} "
-                            f"| from={meta.from_address if meta else '?'} "
-                            f"| attachments={attachments if attachments else '—'}"
-                        )
-
                 # 5. Build IndexedEmail objects
                 indexed_emails: List[IndexedEmail] = [
-                    self._build_indexed_email(ec, email_meta_map, full_content_map, job, account_id)
-                    for ec in valuable
+                    self._build_indexed_email(c.email_id, email_meta_map, full_content_map, job, account_id)
+                    for c in kept
                 ]
 
                 # 6. Save batch (idempotent upserts by email_id)
@@ -528,7 +516,7 @@ class EmailIndexingService:
 
                 logger.info(
                     f"✅ Chunk done: fetched={len(emails_page)} "
-                    f"valuable={len(valuable)} saved={saved} "
+                    f"kept={len(kept)} saved={saved} "
                     f"next={'yes' if next_page_token else 'no'}"
                 )
 
@@ -732,32 +720,34 @@ class EmailIndexingService:
             logger.error(f"[EmailCard] page step failed: {type(exc).__name__} (job {job.job_id[:8]})")
 
     @staticmethod
+    def _log_gate_page(decisions: List[EmailClassificationResult]) -> None:
+        """One INFO line per answered page: counts only, never a subject, sender or snippet."""
+        reasons = Counter(d.reason for d in decisions if not d.forced)
+        kept = sum(1 for d in decisions if d.keep)
+        per_reason = " ".join(f"{r}={reasons[r]}" for r in (*KEEP_REASONS, *DROP_REASONS))
+        logger.info(
+            f"[EmailGate] page: listed={len(decisions)} kept={kept} dropped={len(decisions) - kept} "
+            f"forced={sum(1 for d in decisions if d.forced)} ({per_reason})"
+        )
+
+    @staticmethod
     def _build_indexed_email(
-        ec: EmailClassificationResult,
+        email_id: str,
         email_meta_map: Dict[str, EmailMetadata],
         full_content_map: Dict[str, EmailFullContent],
         job: IndexingJob,
         account_id: str,
     ) -> IndexedEmail:
-        """Build the v1 IndexedEmail (only emails not yet stored, so the record starts unconsolidated)."""
-        meta = email_meta_map.get(ec.email_id)
-        content = full_content_map.get(ec.email_id)
+        """The stored record of a kept mail (only emails not yet stored, so the record starts unconsolidated)."""
+        meta = email_meta_map.get(email_id)
+        content = full_content_map.get(email_id)
         attachments = content.attachments if content else []
 
         return IndexedEmail(
-            email_id=ec.email_id,
+            email_id=email_id,
             user_id=job.user_id,
             account_id=account_id,
             source=job.provider,
-            text=ec.fact or "",
-            tags=ec.tags,
-            category=ec.category or "personal",
-            metadata={
-                "subject": meta.subject if meta else "",
-                "from_address": meta.from_address if meta else "",
-                "snippet": meta.snippet if meta else "",
-                "labels": meta.labels if meta else [],
-            },
             subject=meta.subject if meta else "",
             from_address=meta.from_address if meta else "",
             email_date=meta.date if meta else datetime.now(timezone.utc),

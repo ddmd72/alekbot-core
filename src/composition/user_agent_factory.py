@@ -116,7 +116,6 @@ from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.email_memory_batches import EmailMemoryBatches
-from .email_card_setup import email_card_memory_enabled
 from ..ports.agent_factory_port import AgentFactoryPort
 from ..ports.long_turn_registry import LongTurnRegistry
 from ..utils.logger import logger
@@ -629,10 +628,9 @@ class UserAgentFactory(AgentFactoryPort):
             facts_limit=facts_limit,
             principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,
-            # Stage 3 reads email cards behind EMAIL_CARD_MEMORY (os.getenv, default off in code; the deploy sets it on)
+            # Stage 3 reads mail with its card; a repository without those reads skips email triage
             email_memory_batches=(
-                self.indexed_email_repo
-                if email_card_memory_enabled() and isinstance(self.indexed_email_repo, EmailMemoryBatches) else None
+                self.indexed_email_repo if isinstance(self.indexed_email_repo, EmailMemoryBatches) else None
             ),
             confirmed_people=self.confirmed_people,
             alert_sink=self.alert_sink,

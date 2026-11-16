@@ -8,16 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.email_classification_agent import EmailClassificationAgent, MAX_TURNS
+from src.agents.email_classification_agent import EmailClassificationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.email import EmailClassificationResult, EmailFullContent, EmailMetadata
-from src.domain.integration import Integration
-from src.domain.oauth_credential import OAuthCredential
-from src.domain.provider_account import ProviderAccount
+from src.domain.email import EmailClassificationResult, EmailMetadata
 from src.domain.user import PerformanceTier
-from src.ports.email_provider_port import EmailProviderPort
 from src.ports.llm_port import (
-    AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, ProviderCapabilities, ToolCall,
+    AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -76,38 +72,39 @@ def agent(mock_llm, mock_prompt_builder):
 class TestEmailClassificationAgent:
 
     async def test_classify_batch_returns_all_emails(self, agent, mock_llm):
-        """All input emails appear in output, even if not all returned by LLM."""
+        """Every input email appears in the output with the gate's decision and reason."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "travel",
-             "fact": "User booked flight", "tags": ["flight"]},
-            {"email_id": "id2", "valuable": False, "category": None,
-             "fact": None, "tags": []},
+            {"email_id": "id1", "decision": "keep", "reason": "record"},
+            {"email_id": "id2", "decision": "drop", "reason": "promotion"},
         ])
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         assert results[0].email_id == "id1"
-        assert results[0].valuable is True
-        assert results[0].category == "travel"
-        assert results[0].fact == "User booked flight"
+        assert results[0].keep is True
+        assert results[0].reason == "record"
+        assert results[0].forced is False
         assert results[1].email_id == "id2"
-        assert results[1].valuable is False
+        assert results[1].keep is False
+        assert results[1].reason == "promotion"
 
     async def test_classify_batch_fills_missing_emails(self, agent, mock_llm):
-        """If LLM omits an email_id, it is added as not-valuable."""
+        """If the LLM omits an email_id, it is added as a forced keep (lean to keep, email index v2 §4)."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "finance",
-             "fact": "Invoice paid", "tags": ["invoice"]},
+            {"email_id": "id1", "decision": "drop", "reason": "newsletter"},
         ])
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         missing = next(r for r in results if r.email_id == "id2")
-        assert missing.valuable is False
+        assert missing.keep is True
+        assert missing.forced is True
+        assert missing.reason is None
+        assert missing.failure is None
 
     async def test_classify_batch_handles_invalid_json(self, agent, mock_llm):
         """Invalid JSON on all retries → parse_error after MAX_PARSE_RETRIES+1 attempts."""
@@ -119,19 +116,21 @@ class TestEmailClassificationAgent:
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
-        assert results[0].valuable is False
+        assert results[0].keep is False
+        assert results[0].failure == "parse_error"
         # One initial attempt + one retry (MAX_PARSE_RETRIES=1)
         assert mock_llm.generate_content.call_count == 2
 
     async def test_classify_batch_handles_llm_error(self, agent, mock_llm):
-        """LLM exception → all emails returned as not-valuable."""
+        """LLM exception → all emails returned failed and not kept."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.side_effect = RuntimeError("API error")
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
-        assert all(not r.valuable for r in results)
+        assert all(not r.keep for r in results)
+        assert all(r.failure == "RuntimeError" for r in results)
 
     async def test_classify_batch_empty_input(self, agent, mock_llm):
         """Empty input → no LLM call, empty list returned."""
@@ -162,24 +161,11 @@ class TestEmailClassificationAgent:
         assert len(req.messages) == 1
         assert req.messages[0].role == "user"
 
-    async def test_classify_batch_tags_lowercased(self, agent, mock_llm):
-        """Tags returned by LLM are normalized to lowercase."""
-        emails = [_make_meta("id1")]
-        mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "travel",
-             "fact": "Flight booked", "tags": ["Flight", "RYANAIR"]},
-        ])
-
-        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
-
-        assert results[0].tags == ["flight", "ryanair"]
-
     async def test_classify_batch_retries_on_invalid_json(self, agent, mock_llm):
         """Invalid JSON on first attempt → LLM retry → valid JSON on second attempt → success."""
         emails = [_make_meta("id1")]
         valid_response = _llm_response([
-            {"email_id": "id1", "valuable": False, "category": None,
-             "fact": None, "tags": []},
+            {"email_id": "id1", "decision": "drop", "reason": "promotion"},
         ])
         mock_llm.generate_content.side_effect = [
             LLMResponse(text="not json at all", tool_calls=[]),
@@ -189,7 +175,9 @@ class TestEmailClassificationAgent:
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
-        assert results[0].valuable is False
+        assert results[0].keep is False
+        assert results[0].reason == "promotion"
+        assert results[0].failure is None
         assert mock_llm.generate_content.call_count == 2
 
     async def test_classify_batch_requires_prompt_builder(self, mock_llm):
@@ -228,87 +216,3 @@ class TestEmailClassificationAgent:
         )
         response = await agent.execute(msg)
         assert response.status == AgentStatus.FAILED
-
-    async def test_classify_batch_tool_calling_path(self, mock_llm, mock_prompt_builder):
-        """LLM calls get_email_details → gmail fetched → final classification returned."""
-        gmail_mock = AsyncMock(spec=EmailProviderPort)
-        gmail_mock.batch_get_full_content.return_value = {
-            "id1": EmailFullContent(
-                email_id="id1",
-                body_text="Booking confirmed. Reference: XY123.",
-                body_html=None,
-                attachments=[],
-            )
-        }
-        credentials = OAuthCredential(
-            user_id="user123",
-            account_id="acct-1",
-            kind="gmail",
-            integration=Integration.MAIL,
-            account=ProviderAccount(realm="google", subject="", label="user@example.test"),
-            access_token="tok",
-            refresh_token="ref",
-            token_expiry=datetime(2099, 1, 1),
-            scopes=["gmail.readonly"],
-        )
-        config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
-        agent_with_tools = EmailClassificationAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=mock_prompt_builder,
-            gmail=gmail_mock,
-        )
-
-        mock_llm.generate_content.side_effect = [
-            # Turn 1: LLM requests full content for id1
-            LLMResponse(tool_calls=[ToolCall(name="get_email_details", args={"email_ids": ["id1"]})]),
-            # Turn 2: final classification
-            _llm_response([
-                {"email_id": "id1", "valuable": True, "category": "travel",
-                 "fact": "Booking confirmed ref XY123", "tags": ["booking"]},
-            ]),
-        ]
-
-        results = await agent_with_tools.classify_batch(
-            [_make_meta("id1", subject="Booking confirmed")], "user123", credentials=credentials, account_id="acc-1"
-        )
-
-        assert len(results) == 1
-        assert results[0].valuable is True
-        assert results[0].category == "travel"
-        gmail_mock.batch_get_full_content.assert_awaited_once()
-        assert mock_llm.generate_content.call_count == 2
-
-    async def test_classify_batch_max_turns_reached(self, mock_llm, mock_prompt_builder):
-        """If LLM never produces a final answer — always returns tool_calls — max_turns_reached."""
-        gmail_mock = AsyncMock(spec=EmailProviderPort)
-        gmail_mock.batch_get_full_content.return_value = {}
-        credentials = OAuthCredential(
-            user_id="user123",
-            account_id="acct-1",
-            kind="gmail",
-            integration=Integration.MAIL,
-            account=ProviderAccount(realm="google", subject="", label=""),
-            access_token="tok",
-            refresh_token="ref",
-            token_expiry=datetime(2099, 1, 1),
-            scopes=[],
-        )
-        config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
-        agent_with_tools = EmailClassificationAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=mock_prompt_builder,
-            gmail=gmail_mock,
-        )
-        mock_llm.generate_content.return_value = LLMResponse(
-            tool_calls=[ToolCall(name="get_email_details", args={"email_ids": ["id1"]})]
-        )
-
-        results = await agent_with_tools.classify_batch(
-            [_make_meta("id1")], "user123", credentials=credentials, account_id="acc-1"
-        )
-
-        assert len(results) == 1
-        assert results[0].valuable is False
-        assert mock_llm.generate_content.call_count == MAX_TURNS

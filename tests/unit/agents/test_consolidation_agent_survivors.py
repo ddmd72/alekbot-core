@@ -21,7 +21,8 @@ from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
-from src.domain.email import IndexedEmail
+from src.domain.consolidation import EMAIL_PROFILE_ID
+from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
 from src.domain.entities import FactDomain
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.request_context import RequestContext
@@ -30,13 +31,14 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilit
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, OTHER, USER, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.stored_mail import mail_store_with, stored_mail
 
 OTHER_USER = "usr-2"
 REPORT = LLMResponse(text='{"operations": []}')
 STAGE1 = "Begin deliberate consolidation."
 CLUSTER = "FACT CLUSTER REVIEW"
 RULEBOOK = "STANDING DIRECTIVES REVIEW"
-EMAIL = "[system_alert]"
+EMAIL = EMAIL_CANDIDATES_HEADER
 ATTRS = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium", "tags": ["t"],
          "metadata": {}, "type": "event", "expiry": {"kind": "none"}}
 PASSED = [{"id": "b-1", "text": "the user's mother is Maria", "domain": "biographical", "tags": []}]
@@ -78,28 +80,18 @@ class TenantPrompts:
         pass
 
 
-def tenant_prompt(facts: List[str]) -> str:
-    return "\n".join(["class consolidation", "ACCOUNT OVERRIDE of acc-1", "USER OVERRIDE of usr-1", f"facts: {facts}"])
+def tenant_prompt(facts: List[str], agent_type: str = "consolidation") -> str:
+    return "\n".join([f"class {agent_type}", "ACCOUNT OVERRIDE of acc-1", "USER OVERRIDE of usr-1", f"facts: {facts}"])
 
 
 def create(content: str) -> ToolCall:
     return ToolCall(name="create_fact", args={"content": content, "fact_attributes": dict(ATTRS)})
 
 
-class OneBatchOfEmails:
-    def __init__(self) -> None:
-        when = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
-        self.batch = [IndexedEmail(
-            email_id="e1", user_id=USER, account_id=ACC, source="gmail", text="mail e1", tags=["mail"],
-            category="travel", metadata={"subject": "e1"}, subject="e1", from_address="a@example.com",
-            email_date=when, indexed_at=when,
-        )]
-
-    async def get_unconsolidated_batch(self, user_id: str, limit: int = 10) -> List[IndexedEmail]:
-        return self.batch
-
-    async def mark_consolidated(self, user_id: str, ids: List[str], when: Any) -> None:
-        self.batch = []
+async def one_stored_email() -> Any:
+    """One mail with no card, indexed long ago: the email pass sends it in the header form."""
+    when = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    return await mail_store_with(stored_mail("e1", user_id=USER, account_id=ACC, sent=when))
 
 
 @pytest.fixture
@@ -121,6 +113,7 @@ def make_agent(store: FactStore, *, email_repo: Any = None) -> ConsolidationAgen
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port, prompt_builder=TenantPrompts(), indexed_email_repo=email_repo,
+        email_memory_batches=email_repo,
     )
     seen: List[Tuple[str, str]] = []
     agent.seen = seen
@@ -187,12 +180,13 @@ async def test_the_cluster_task_prompt_is_the_tenants(store):
 
 
 async def test_the_email_task_prompt_is_the_tenants(store):
-    agent = make_agent(store, email_repo=OneBatchOfEmails())
+    agent = make_agent(store, email_repo=await one_stored_email())
     with RequestContext(user_id=USER, account_id=ACC):
         response = await agent._handle_consolidate_email(
             message("consolidate_email", {"number_of_batches": 1}), USER, ACC, PASSED, 0.0)
     assert response.status.value == "success", response
-    assert prompt_of(agent, EMAIL) == tenant_prompt(["the user's mother is Maria"])
+    # The email pass builds the `consolidation_email` profile (email index v2 §6.7) for the same tenant.
+    assert prompt_of(agent, EMAIL) == tenant_prompt(["the user's mother is Maria"], EMAIL_PROFILE_ID)
 
 
 async def test_the_legacy_v2_prompt_is_the_tenants(store):

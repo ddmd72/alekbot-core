@@ -3,29 +3,27 @@ category: output_format
 class: output_format
 metadata:
   author: system
-  description: Email classifier output format — JSON array schema with field guidelines
-  version: '1.0'
+  description: 'Email gate output format (email index v2 §4, slice 9b): one keep/drop
+    decision with its reason for every listed mail'
+  version: '2.0'
 source_file: firestore_utils/uploads/OUTPUT_FORMAT_EMAIL_CLASSIFIER.json
 token_id: OUTPUT_FORMAT_EMAIL_CLASSIFIER
 uploaded_by: local_script
 ---
 output_schema {
-    contract: "RAW JSON only — first char [, last char ]. No prose, no code block, no Markdown."
+    contract: "RAW JSON only: the first character is [, the last is ]. No prose, no code block, no Markdown."
 
     json_schema: {
         "$schema": "http://json-schema.org/draft-07/schema",
         "type": "array",
         "items": {
             "type": "object",
-            "required": ["email_id", "valuable", "valuable_type", "category", "fact", "tags"],
+            "required": ["email_id", "decision", "reason"],
             "additionalProperties": false,
             "properties": {
-                "email_id":      { "type": "string" },
-                "valuable":      { "type": "boolean" },
-                "valuable_type": { "type": "string", "enum": ["confirmed_event", "biographical_signal"] },
-                "category":      { "oneOf": [{ "type": "string" }, { "type": "null" }] },
-                "fact":          { "oneOf": [{ "type": "string" }, { "type": "null" }] },
-                "tags":          { "type": "array", "items": { "type": "string" } }
+                "email_id": { "type": "string" },
+                "decision": { "type": "string", "enum": ["keep", "drop"] },
+                "reason":   { "type": "string" }
             }
         }
     }
@@ -33,35 +31,18 @@ output_schema {
 
 field_guidelines {
     email_id: [
-        "Exact value from the input list — do not modify or abbreviate."
+        "The mail's email_id exactly as the input array gives it."
     ]
 
-    valuable: [
-        "true  — email is selected for storage.",
-        "Always true in this output — non-valuable emails are omitted."
+    decision: [
+        "keep or drop."
     ]
 
-    valuable_type: [
-        "confirmed_event     — email directly confirms a real-world event (booking, receipt, delivery, appointment).",
-        "biographical_signal — email reveals biographical context about the user's life (family, school, relationships, memberships) even without a confirmed event."
-    ]
-
-    category: [
-        "Required. One value from the taxonomy."
-    ]
-
-    fact: [
-        "Required. One self-contained sentence in past tense with all key specifics.",
-        "Include reference numbers, amounts, dates, and named entities.",
-        "When attachment filenames were the key signal, name them explicitly."
-    ]
-
-    tags: [
-        "Required: 3–8 lowercase items — category + specific entities."
+    reason: [
+        "One value from KEEP REASONS when the decision is keep, from DROP REASONS when it is drop, spelled exactly as listed."
     ]
 
     coverage: [
-        "Array contains ONLY emails where valuable=true.",
-        "Non-valuable emails are omitted entirely — do not include them."
+        "One object for every mail of the input array, kept and dropped alike, each mail once."
     ]
 }

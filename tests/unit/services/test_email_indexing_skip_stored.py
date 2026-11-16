@@ -23,7 +23,7 @@ MARK = datetime(2026, 10, 1, 8, 30)
 
 def _valuable(email_id: str) -> EmailClassificationResult:
     return EmailClassificationResult(
-        email_id=email_id, valuable=True, category="travel", fact="Flight booked.", tags=["flight"]
+        email_id=email_id, keep=True
     )
 
 

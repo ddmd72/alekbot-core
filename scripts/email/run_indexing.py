@@ -260,7 +260,6 @@ async def main(args):
         context_builder=context_builder,
         user_repo=users,
         prompt_builder=prompt_builder,
-        gmail=gmail,
         quota_service=FirestoreQuotaService(account_repo),
         prompt_content_store=None,
     )

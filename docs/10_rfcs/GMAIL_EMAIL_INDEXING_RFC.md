@@ -1,7 +1,7 @@
 # RFC: Email Indexing System (Gmail + Future Providers)
 
 **Status:** Phases 1–7 Complete
-**Superseded in part by EMAIL_INDEX_V2_RFC:** §2.4 and §3.2 now; §4 at slice 9.
+**Superseded in part by EMAIL_INDEX_V2_RFC:** §2.4, §3.2 and §4 (slice 9b).
 **Date:** 2026-02-11
 **Updated:** 2026-03-01
 **Owner:** AI Engineering
@@ -914,6 +914,10 @@ subscription — recurring service notifications (low value, often excluded)
 ---
 
 ## 4. Email Classification (Agentic, Tool-Assisted)
+
+> **Superseded by EMAIL_INDEX_V2_RFC slice 9b** (`docs/10_rfcs/EMAIL_INDEX_V2_RFC.md` §4): the classifier is a one-shot
+> gate that answers keep or drop with a closed reason, in JSON mode with no tool, and writes no fact, tags or category.
+> This section describes the v1 design.
 
 Model: Gemini Flash (BALANCED tier, `AgentExecutionContext`). One agent invocation per batch of up to 300 emails (default page size).
 

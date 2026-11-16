@@ -3,9 +3,8 @@ EmailClassifierRunner — the email classifier as an EmailClassifierPort, built 
 (docs/05_building_blocks/gmail_email_indexing/README.md).
 
 Public interface:
-    EmailClassifierRunner(context_builder, user_repo, prompt_builder, gmail=None, quota_service=None,
-                          prompt_content_store=None)
-        async classify_batch(emails, user_id, credentials=None, *, account_id) -> List[EmailClassificationResult]
+    EmailClassifierRunner(context_builder, user_repo, prompt_builder, quota_service=None, prompt_content_store=None)
+        async classify_batch(emails, user_id, *, account_id) -> List[EmailClassificationResult]
             an empty `account_id` logs one WARNING (the batch runs, unbilled: the ledger has no account to flush to);
             raises RuntimeError when the user is unknown or the classifier cannot be built (the indexing job fails
             and the page is retried; nothing is classified under another configuration)
@@ -22,9 +21,7 @@ from typing import Any, List, Optional
 from ..agents.email_classification_agent import EmailClassificationAgent
 from ..domain.agent import AgentConfig
 from ..domain.email import EmailClassificationResult, EmailMetadata
-from ..domain.oauth_credential import OAuthCredential
 from ..ports.email_classifier_port import EmailClassifierPort
-from ..ports.email_provider_port import EmailProviderPort
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.prompt_content_store import PromptContentStore
 from ..ports.quota_service import QuotaService
@@ -42,14 +39,12 @@ class EmailClassifierRunner(EmailClassifierPort):
         context_builder: Any,
         user_repo: Optional[UserRepository],
         prompt_builder: PromptBuilderPort,
-        gmail: Optional[EmailProviderPort] = None,
         quota_service: Optional[QuotaService] = None,
         prompt_content_store: Optional[PromptContentStore] = None,
     ) -> None:
         self._context_builder = context_builder
         self._user_repo = user_repo
         self._prompt_builder = prompt_builder
-        self._gmail = gmail
         self._quota_service = quota_service
         self._prompt_content_store = prompt_content_store
 
@@ -57,7 +52,6 @@ class EmailClassifierRunner(EmailClassifierPort):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredential] = None,
         *,
         account_id: str,
     ) -> List[EmailClassificationResult]:
@@ -68,7 +62,7 @@ class EmailClassifierRunner(EmailClassifierPort):
                            f"this batch will not be billed")
         agent = await self._agent(user_id)
         with request_user_scope(user_id):
-            return await agent.classify_batch(emails, user_id, credentials, account_id=account_id)
+            return await agent.classify_batch(emails, user_id, account_id=account_id)
 
     async def _agent(self, user_id: str) -> EmailClassificationAgent:
         """The classifier with this user's tier and model; RuntimeError when it cannot be built."""
@@ -88,7 +82,6 @@ class EmailClassifierRunner(EmailClassifierPort):
             config=AgentConfig(agent_id=f"{AGENT_TYPE}_{user_id}", agent_type=AGENT_TYPE),
             execution_context=context,
             prompt_builder=self._prompt_builder,
-            gmail=self._gmail,
             user_id=user_id,
         )
         # Mirror UserAgentFactory's post-construction wiring: without it _flush_billing and the content capture in

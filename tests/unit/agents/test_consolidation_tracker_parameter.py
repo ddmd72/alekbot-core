@@ -5,6 +5,7 @@ document written, `status`), and it records which pass made each call. The LLM i
 two runs gathered on one agent can be told apart. Every concurrency test asserts the interleaving happened.
 """
 import asyncio
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +22,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
+from tests.support.stored_mail import mail_store_with, marked, stored_mail
 from tests.support.typed_writes import typed_port_for
 
 REPORT = LLMResponse(text='{"operations": []}')
@@ -362,22 +364,11 @@ async def test_execute_refreshes_once_on_success_and_once_on_a_failure_after_a_w
 
 # ---------------------------------------------------------------------------------------------- the email pass
 
-class Email:
-    def __init__(self, n):
-        self.email_id, self.text, self.category, self.tags = f"e{n}", f"fact {n}", "x", []
-        self.email_date = __import__("datetime").datetime(2026, 1, 1)
-        self.from_address, self.subject, self.attachments, self.metadata = "a@b", "s", [], {}
-
-
-class EmailRepo:
-    def __init__(self, batches):
-        self.batches, self.marked = list(batches), []
-
-    async def get_unconsolidated_batch(self, user_id, limit):
-        return self.batches.pop(0) if self.batches else []
-
-    async def mark_consolidated(self, user_id, ids, now):
-        self.marked.append(ids)
+async def stored_emails(n: int):
+    """`n` mails with no card, indexed long ago and one hour apart (e1 oldest): the email pass reads them oldest first
+    and sends each in the header form."""
+    return await mail_store_with(*[stored_mail(f"e{i}", user_id=USER, account_id=ACC,
+                                               sent=datetime(2026, 1, 1) + timedelta(hours=i)) for i in range(1, n + 1)])
 
 
 def email_message():
@@ -391,14 +382,18 @@ async def run_email(agent):
         return await agent._handle_consolidate_email(email_message(), USER, ACC, [], 0.0)
 
 
-def email_agent(repo_batches):
+async def email_agent(n_emails):
     agent, repo, pb = make_agent(ScriptedPort())
-    agent._indexed_email_repo = EmailRepo(repo_batches)
+    agent._indexed_email_repo = agent._email_memory_batches = agent.emails = await stored_emails(n_emails)
     return agent, repo, pb
 
 
+async def marked_emails(agent, n_emails):
+    return await marked(agent.emails, USER, [f"e{i}" for i in range(1, n_emails + 1)])
+
+
 async def test_email_pass_failure_after_a_write_refreshes_the_cache():
-    agent, repo, pb = email_agent([[Email(1)], [Email(2)]])
+    agent, repo, pb = await email_agent(2)
     calls = []
 
     async def loop(**kw):
@@ -413,27 +408,31 @@ async def test_email_pass_failure_after_a_write_refreshes_the_cache():
         await run_email(agent)
 
     assert len(calls) == 2 and calls[0] is calls[1] and isinstance(calls[0], _TrackingFactManagement)
-    assert agent._indexed_email_repo.marked == [["e1"]]               # the failed pass is not marked consolidated
+    assert await marked_emails(agent, 2) == ["e1"]                    # the failed pass is not marked consolidated
     repo.refresh_biographical_context_cache.assert_awaited_once()
     pb.invalidate_biographical_cache.assert_called_once_with(ACC)
 
 
 async def test_email_pass_clean_failure_does_not_refresh_and_success_refreshes_once():
-    agent, repo, _ = email_agent([[Email(1)]])
+    agent, repo, _ = await email_agent(1)
     agent._run_consolidation_loop = AsyncMock(side_effect=RuntimeError("provider down"))
     with pytest.raises(RuntimeError):
         await run_email(agent)
     repo.refresh_biographical_context_cache.assert_not_awaited()
 
-    ok, repo_ok, _ = email_agent([[Email(1)], [Email(2)], []])
+    ok, repo_ok, _ = await email_agent(2)
+
+    sent = []
 
     async def loop(**kw):
+        sent.append(kw["user_message_text"])
         await kw["fact_management"].create_fact("from email", {}, context=kw["write_context"])
         return [{"action": "CREATE"}]
 
     ok._run_consolidation_loop = loop
     response = await run_email(ok)
-    assert response.status == AgentStatus.SUCCESS and ok._indexed_email_repo.marked == [["e1"], ["e2"]]
+    assert response.status == AgentStatus.SUCCESS and await marked_emails(ok, 2) == ["e1", "e2"]
+    assert len(sent) == 2 and '"email_id": "e1"' in sent[0] and '"email_id": "e2"' in sent[1]    # one mail per pass
     repo_ok.refresh_biographical_context_cache.assert_awaited_once()
 
 

@@ -46,8 +46,7 @@ def world():
 
 def email(email_id: str, hour: int, user_id: str = "user-1", **over) -> IndexedEmail:
     fields = dict(email_id=email_id, user_id=user_id, account_id="acct-1", source="gmail",
-                  text="Hotel booking RM-55120 confirmed.", tags=["hotel"], category="travel",
-                  metadata={"subject": "Booking"}, subject="Booking", from_address="booking@albergo.example",
+                  subject="Booking", from_address="booking@albergo.example",
                   email_date=T0, indexed_at=T0 + timedelta(hours=hour))
     fields.update(over)
     return IndexedEmail(**fields)
@@ -112,7 +111,8 @@ async def test_a_carded_mail_carries_its_card_and_the_v1_record_without_vectors(
 
     (got,) = await batch(repo)
 
-    assert got.card_state == "carded" and got.email.text == "Hotel booking RM-55120 confirmed."
+    assert got.card_state == "carded" and got.email.email_id == "carded" and got.email.subject == "Booking"
+    assert got.email.from_address == "booking@albergo.example"
     assert not {"vector", "tags_vector", "embedding_pending"} & set(got.email.model_dump())
     assert got.email.indexed_at == T0 + timedelta(hours=6)
     assert memory_card(got).mail.email_id == "msg_rome01"

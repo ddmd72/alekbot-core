@@ -5,7 +5,6 @@ Mock boundary: LLMPort, FactRepository, FactWritePort, FactManagementPort, Promp
 """
 
 import json
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,7 +31,8 @@ _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
 
 
-def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexed_email_repo=None):
+def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexed_email_repo=None,
+                email_memory_batches=None):
     config = AgentConfig(agent_id="consolidation_agent", agent_type="consolidation")
     mock_provider = MagicMock(spec=LLMPort)
     if mock_llm:
@@ -73,6 +73,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         fact_updates=typed_port_for(fact_management),  # reviewer edit (S4 T6b): the typed port is required
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
+        email_memory_batches=email_memory_batches,
     )
     agent._llm = mock_provider
     return agent, repo, fact_write, pb
@@ -975,65 +976,6 @@ class TestHandleConsolidateEmailDirect:
         assert response.status == AgentStatus.SUCCESS
         assert response.result["message"] == "No email repo"
 
-    async def test_with_emails_batch_processes_and_marks_consolidated(self):
-        email_repo = AsyncMock()
-        agent, repo, fact_write, pb = _make_agent(indexed_email_repo=email_repo)
-
-        email = MagicMock()
-        email.email_id = "em-1"
-        email.text = "user subscribed to newsletter"
-        email.category = "NEWSLETTER"
-        email.tags = ["newsletter"]
-        # Reviewer edit (Facts S4 T6c, L4): `as_utc` takes a datetime only; IndexedEmail.email_date is one.
-        email.email_date = datetime(2026, 1, 1)  # naive = UTC, as email dates are stored
-        email.from_address = "news@example.com"
-        email.subject = "Weekly digest"
-        email.attachments = []
-        email.metadata = {}
-
-        # First call returns one email; second call returns empty (no more batches)
-        email_repo.get_unconsolidated_batch = AsyncMock(side_effect=[[email], []])
-        email_repo.mark_consolidated = AsyncMock()
-
-        ops = [{"action": "CREATE", "fact_id": "new-1", "reason": "new newsletter fact"}]
-        agent._run_consolidation_loop = AsyncMock(return_value=ops)
-
-        msg = _make_message(
-            "consolidate_email",
-            payload_extra={"number_of_batches": 2, "batch_size": 10},
-        )
-
-        import time
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent._handle_consolidate_email(
-                msg, _USER_ID, _ACCOUNT_ID, [], time.time()
-            )
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result["batches_processed"] == 1
-        assert response.result["facts_affected"] == 1
-        email_repo.mark_consolidated.assert_called_once()
-        repo.refresh_biographical_context_cache.assert_called_once()
-
-    async def test_empty_batch_on_first_pass_returns_zero_batches(self):
-        email_repo = AsyncMock()
-        agent, repo, fact_write, pb = _make_agent(indexed_email_repo=email_repo)
-
-        email_repo.get_unconsolidated_batch = AsyncMock(return_value=[])
-
-        msg = _make_message("consolidate_email", payload_extra={"number_of_batches": 3})
-
-        import time
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent._handle_consolidate_email(
-                msg, _USER_ID, _ACCOUNT_ID, [], time.time()
-            )
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result["batches_processed"] == 0
-        # No cache refresh when zero batches
-        repo.refresh_biographical_context_cache.assert_not_called()
-
 
 # ==============================================================================
 # TestHandleConsolidateFullDirect  (lines 629-651)
@@ -1088,75 +1030,6 @@ class TestHandleConsolidateFullDirect:
         assert response.result["stage1_operations"] == 3
         assert response.result["stage1_facts_affected"] == 2
         assert response.result["email_batches"] == 0
-
-
-# ==============================================================================
-# TestFormatEmailCandidates  (lines 667-684)
-# ==============================================================================
-
-class TestFormatEmailCandidates:
-    """_format_email_candidates static method."""
-    # Reviewer edit (facts S3, T6 re-review; plan §3.9 one calendar, review F1 as arbitrated): the candidate's `date` is
-    # the email's moment in the owner's zone with its offset, so the formatter takes the zone and reads a real datetime
-    # (a naive stored date is UTC). The stubbed `strftime` dates become real naive-UTC datetimes; the date form is
-    # pinned exactly in test_basic_formatting; every other assertion is unchanged.
-
-    def test_basic_formatting(self):
-        email = MagicMock()
-        email.email_id = "em-abc"
-        email.text = "user bought a laptop"
-        email.category = "PURCHASE"
-        email.tags = ["purchase", "tech"]
-        email.email_date = datetime(2026, 7, 1, 9, 0)                  # naive = UTC
-        email.from_address = "shop@example.com"
-        email.subject = "Your order #123"
-        email.attachments = []
-        email.metadata = {}
-
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
-
-        assert "em-abc" in result
-        assert "user bought a laptop" in result
-        assert "2026-07-01" in result
-        assert '"date": "2026-07-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
-        assert "shop@example.com" in result
-        assert "Your order #123" in result
-        assert result.startswith("1. ")
-
-    def test_attachments_included_when_present(self):
-        email = MagicMock()
-        email.email_id = "em-1"
-        email.text = "invoice attached"
-        email.category = "INVOICE"
-        email.tags = []
-        email.email_date = datetime(2026, 1, 15, 9, 0)
-        email.from_address = "billing@acme.example"
-        email.subject = "Invoice Q1"
-        email.attachments = ["invoice.pdf"]
-        email.metadata = {}
-
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
-        assert "invoice.pdf" in result
-
-    def test_multiple_emails_numbered(self):
-        emails = []
-        for i in range(3):
-            e = MagicMock()
-            e.email_id = f"em-{i}"
-            e.text = f"fact {i}"
-            e.category = "INFO"
-            e.tags = []
-            e.email_date = datetime(2026, 1, 1, 9, 0)
-            e.from_address = "x@example.net"
-            e.subject = f"Subject {i}"
-            e.attachments = []
-            e.metadata = {}
-            emails.append(e)
-
-        result = ConsolidationAgent._format_email_candidates(emails, "Europe/Lisbon")
-        assert "1. " in result
-        assert "2. " in result
-        assert "3. " in result
 
 
 # ==============================================================================
@@ -1509,33 +1382,6 @@ class TestGetAlternativeAgents:
         agent, _, _, _ = _make_agent()
         result = agent._get_alternative_agents()
         assert result == []
-
-
-# ==============================================================================
-# TestFormatEmailCandidatesMetadata  (line 682)
-# ==============================================================================
-
-class TestFormatEmailCandidatesMetadata:
-    """_format_email_candidates includes metadata when truthy."""
-    # Reviewer edit (facts S3, T6 re-review, review F1): the formatter takes the owner's zone and a real datetime; the
-    # metadata assertions are unchanged.
-
-    def test_metadata_included_when_present(self):
-        email = MagicMock()
-        email.email_id = "em-meta"
-        email.text = "subscription renewed"
-        email.category = "SUBSCRIPTION"
-        email.tags = ["subscription"]
-        email.email_date = datetime(2026, 3, 15, 9, 0)
-        email.from_address = "billing@service.example"
-        email.subject = "Renewal notice"
-        email.attachments = []
-        email.metadata = {"amount": 9.99, "currency": "USD"}
-
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
-
-        assert "amount" in result
-        assert "9.99" in result
 
 
 # ==============================================================================

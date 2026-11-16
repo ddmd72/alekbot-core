@@ -2,10 +2,10 @@
 category: consolidation_email
 class: email_candidates
 metadata:
-  description: 'ConsolidationAgent Stage 3 on email cards (email index v2 §6.7): what
-    an email candidate is (a card a model wrote from mail other people sent, or the
-    older one-sentence form), which keys the mail prints and which a model wrote, the
-    date rule, whose fact it is, and how many facts a mail yields'
+  description: 'ConsolidationAgent Stage 3 on email cards (email index v2 §6.7, §4):
+    what an email candidate is (a card a model wrote from mail other people sent, or
+    the headers of a mail with no readable card), which keys the mail prints and which
+    a model wrote, the date rule, whose fact it is, and how many facts a mail yields'
   override_by:
   - AGENT
 source_file: prompts_snapshot/tokens/system/CONSOLIDATION_EMAIL_CANDIDATES.groovy
@@ -27,7 +27,7 @@ rule Email_Candidates() {
 
     the_two_forms: {
         card: "A candidate with email_id, date, from, subject, doc_type and about is a card. A key with nothing to show is left out, so any other key may be absent."
-        line: "A candidate with a fact key is the older one-sentence form, sent for mail that has no readable card: a classifier's one sentence about the mail (fact), its category and tags, and the mail's date, from, subject, attachment names and metadata (the mail's opening words and its mailbox labels). Its fact, category and tags are the classifier's reading, never checked against the mail. It has no times: the dates of things are in its fact and its opening words, and the time rule below applies to them."
+        header: "A candidate with email_id, date, from and subject and no doc_type is a header: a mail with no readable card, so only its headers are known and no model has described it. Its from is the sender line as the mail sent it, a display name with an address or an address alone. It has no times: a date written in its subject or in an attachment's name is the only date of a thing it shows, and the time rule below applies to it. Its attachments, when present, are names only, each read false. Take from it only what its subject, its sender and its attachments' names state about the owner's life, never what the mail or its files might hold."
     }
 
     printed_keys: {
@@ -50,14 +50,14 @@ rule Email_Candidates() {
 
     mail_keys: {
         email_id: "The mail's id."
-        from: "The sender's address; from_name is the sender's name as the mail shows it."
+        from: "In a card, the sender's address, and from_name is the sender's name as the mail shows it; in a header, the sender line as described above."
         subject: "The mail's subject line, as sent."
         date: "When the mail was sent, as a moment in the owner's timezone with its offset, on the same calendar as the Today line. Copy it, as given, into reported_date of every fact you take from this mail: reported_date is when the information reached the owner."
     }
 
-    time_rule: "date says when the mail was sent; times say when the things in it happen or hold. Compare times with Today, never with date. A plan, an appointment, a deadline or a validity is past when its last day is before Today: to for a span, else from; a valid_from or issued day before Today says only when something began or was issued, not that it is over. What is past falls under the taxonomy's date rules (history or noise). Decide expiry from times and the content, as the kinds table says."
+    time_rule: "date says when the mail was sent; times, which only a card can carry, say when the things in it happen or hold. Compare times with Today, never with date. A plan, an appointment, a deadline or a validity is past when its last day is before Today: to for a span, else from; a valid_from or issued day before Today says only when something began or was issued, not that it is over. What is past falls under the taxonomy's date rules (history or noise). Decide expiry from times and the content, as the kinds table says. In a header, a date its subject or an attachment's name writes takes the place of times: compare it with Today the same way, never with date."
 
-    about: "Whose matter the mail is, derived by code: owner (the owner's own), household (the owner together with people of his life, or several of them), person (one person of his life, named in people, not the owner himself; when people names more than one, the content tells which), unknown (code could not tie it to the owner or to one person of his life; people may still name whom it concerns). Write the fact about the person it concerns: a person's matter is a fact about that person in the owner's life, never about the owner. With unknown, decide from the content whose it is, if anyone's."
+    about: "Whose matter the mail is, derived by code: owner (the owner's own), household (the owner together with people of his life, or several of them), person (one person of his life, named in people, not the owner himself; when people names more than one, the content tells which), unknown (code could not tie it to the owner or to one person of his life; people may still name whom it concerns). Write the fact about the person it concerns: a person's matter is a fact about that person in the owner's life, never about the owner. With unknown, decide from the content whose it is, if anyone's. A header has no about: decide from what it shows whose matter it is, if anyone's."
 
     yield: "Each mail yields zero or more candidate facts: none when it records nothing the owner would want his assistant to know later; one or several when it records separate things that would each be asked about on their own. Every candidate fact then goes through steps 2 to 7 as usual."
 }

@@ -40,4 +40,5 @@ def test_the_indexing_service_classifies_through_the_runner_with_the_users_quota
     assert runner._quota_service is quota
     assert runner._prompt_content_store is container.prompt_content_store is not None
     assert runner._context_builder is container.context_builder
-    assert runner._gmail is container.gmail_provider
+    # The gate decides from headers and the snippet only (email index v2 §4, slice 9b): it is given no mail client.
+    assert not hasattr(runner, "_gmail")
