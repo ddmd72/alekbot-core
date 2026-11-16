@@ -6,14 +6,16 @@ The fact profile step's wiring and knob (docs/10_rfcs/FACT_PROFILE_RFC.md §4.4)
     build_fact_profile_service(container, max_per_run=...) -> FactProfileService
 
 The knob is an optional one, read with `os.getenv` by the caller (never in services/, never in `load_settings()`). The
-place atlas is built lazily on the first run, off the event loop (about 0.9 s and 32 MB retained, src/assets/geo/
-README.md), and kept for the process: never at boot.
+place atlas is loaded off the event loop at service start (`LazyAtlas.warm`; a few seconds of CPU and about 32 MB
+retained, src/assets/geo/README.md) and kept for the process: the parsed table is shared by every `LazyAtlas` of the
+process, since the bundled table never changes while it runs.
 """
 import asyncio
 import threading
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..adapters.geo_place_table import load_place_rows
+from ..domain.place_lookup import PlaceRow
 from ..domain.place_names import PlaceNames, atlas_digest
 from ..infrastructure.agent_config import FACT_PROFILER
 from ..ports.person_card_repository import PersonCardRepository
@@ -40,6 +42,24 @@ def max_per_run(raw: Optional[str]) -> int:
     return parsed
 
 
+_TABLE_LOCK = threading.Lock()
+_TABLES: Dict[Callable[[], List[PlaceRow]], Tuple[PlaceNames, str]] = {}
+
+
+def _process_table() -> Tuple[PlaceNames, str]:
+    """The place names and digest of the current loader's table, parsed once per process. Building the names costs
+    seconds of CPU, and a process can build the graph many times (a test process, a mutation run's child), so a second
+    `LazyAtlas` reuses the first one's result instead of parsing the table again. The entry is keyed by the loader: in
+    production that is always the bundled table's loader; a substituted loader gets its own entry and its own reads. A
+    failed load stores nothing, so the next call tries again."""
+    loader = load_place_rows
+    with _TABLE_LOCK:
+        if loader not in _TABLES:
+            rows = loader()
+            _TABLES[loader] = (PlaceNames(rows), atlas_digest(rows))
+        return _TABLES[loader]
+
+
 class LazyAtlas:
     """The place names and their digest, loaded once (concurrent first calls share one load). The service loads it at
     boot (`warm`); a failed boot load leaves the first use to load it. The fact search reads the same object through
@@ -54,8 +74,7 @@ class LazyAtlas:
     def _load(self) -> Tuple[PlaceNames, str]:
         with self._lock:
             if self._loaded is None:
-                rows = load_place_rows()
-                self._loaded = (PlaceNames(rows), atlas_digest(rows))
+                self._loaded = _process_table()
             return self._loaded
 
     async def __call__(self) -> Tuple[PlaceNames, str]:
