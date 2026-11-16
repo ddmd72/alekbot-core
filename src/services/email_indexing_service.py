@@ -4,10 +4,9 @@ See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §6, §2.2 Flow 1.
 
 Pipeline per chunk (100 emails/page):
   list_emails → exclusion pre-filter → classify → fetch full content
-  → embed (4 vectors) → save → advance cursor → update job
+  → save → card → advance cursor → update job
 """
 
-import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -32,9 +31,6 @@ from ..ports.alert_sink import AlertSinkPort
 from ..ports.email_exclusions_port import EmailExclusionsPort
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.email_provider_port import EmailProviderPort
-from ..ports.embedding_service import EmbeddingService
-from ..ports.quota_service import QuotaService
-from ..utils.billed_scope import billed_scope
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -69,12 +65,10 @@ class EmailIndexingService:
         job_repo: EmailIndexingJobRepository,
         exclusions_repo: EmailExclusionsPort,
         classifier: EmailClassifierPort,
-        embedding: EmbeddingService,
         oauth: Optional[OAuthCredentialsPort],
         alert_sink: Optional[AlertSinkPort] = None,
         *,
         connector: ConnectorSpec,
-        quota: Optional[QuotaService] = None,
     ):
         """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
         self._kind = connector.kind
@@ -83,8 +77,6 @@ class EmailIndexingService:
         self._job_repo = job_repo
         self._exclusions_repo = exclusions_repo
         self._classifier = classifier
-        self._embedding = embedding
-        self._quota = quota   # bills each page's embeddings to the account (billed_scope)
         self._oauth = oauth
         self._alert_sink = alert_sink
         self._card_step: Optional["EmailCardIndexer"] = None
@@ -492,26 +484,11 @@ class EmailIndexingService:
                             f"| attachments={attachments if attachments else '—'}"
                         )
 
-                # 5. Build IndexedEmail objects with embeddings (parallel)
-                indexed_emails: List[IndexedEmail] = []
-                if valuable:
-                    async with billed_scope(self._quota, account_id, "email indexing page"):
-                        indexed_emails = list(
-                            await asyncio.gather(
-                                *[
-                                    self._embed_email(
-                                        ec,
-                                        email_meta_map,
-                                        full_content_map,
-                                        job,
-                                        account_id,
-                                    )
-                                    for ec in valuable
-                                ]
-                            )
-                        )
-                    # Filter out None (embed failures that exceeded retry)
-                    indexed_emails = [e for e in indexed_emails if e is not None]
+                # 5. Build IndexedEmail objects
+                indexed_emails: List[IndexedEmail] = [
+                    self._build_indexed_email(ec, email_meta_map, full_content_map, job, account_id)
+                    for ec in valuable
+                ]
 
                 # 6. Save batch (idempotent upserts by email_id)
                 saved = 0
@@ -542,7 +519,6 @@ class EmailIndexingService:
                         "emails_fetched": job.emails_fetched,
                         "emails_stored": job.emails_stored,
                         "emails_failed": job.emails_failed,
-                        "embedding_pending": job.embedding_pending,
                         "next_page_token": next_page_token,
                         "updated_at": job.updated_at,
                         "max_email_date": job.max_email_date,
@@ -755,65 +731,18 @@ class EmailIndexingService:
         except Exception as exc:
             logger.error(f"[EmailCard] page step failed: {type(exc).__name__} (job {job.job_id[:8]})")
 
-    async def _embed_email(
-        self,
+    @staticmethod
+    def _build_indexed_email(
         ec: EmailClassificationResult,
         email_meta_map: Dict[str, EmailMetadata],
         full_content_map: Dict[str, EmailFullContent],
         job: IndexingJob,
         account_id: str,
-    ) -> Optional[IndexedEmail]:
-        """Generate 4-vector embeddings and build IndexedEmail. Parallel per email (only emails not yet stored, so
-        the record starts unconsolidated)."""
+    ) -> IndexedEmail:
+        """Build the v1 IndexedEmail (only emails not yet stored, so the record starts unconsolidated)."""
         meta = email_meta_map.get(ec.email_id)
         content = full_content_map.get(ec.email_id)
         attachments = content.attachments if content else []
-
-        tags_text = " ".join(ec.tags) if ec.tags else (ec.fact or "")
-        meta_text = " ".join(
-            filter(
-                None,
-                [
-                    meta.subject if meta else "",
-                    meta.from_address if meta else "",
-                    meta.date.strftime("%Y-%m") if meta else "",
-                    ec.fact or "",
-                ],
-            )
-        )
-
-        vector: Optional[List[float]] = None
-        tags_vector: Optional[List[float]] = None
-        metadata_vector: Optional[List[float]] = None
-        attachments_vector: Optional[List[float]] = None
-        embedding_pending = False
-
-        try:
-            # 3 vectors in one batch call (efficient: ~5s vs ~15s sequential)
-            batch_texts = [ec.fact or "", tags_text, meta_text]
-            vectors = await self._embedding.get_embeddings_batch(
-                batch_texts, "RETRIEVAL_DOCUMENT"
-            )
-            vector, tags_vector, metadata_vector = (
-                vectors[0],
-                vectors[1],
-                vectors[2],
-            )
-
-            # 4th vector: attachment filenames (separate call, skipped if no attachments)
-            if attachments:
-                attach_text = " ".join(attachments)
-                attachments_vector = await self._embedding.get_embedding(
-                    attach_text, "RETRIEVAL_DOCUMENT"
-                )
-
-        except Exception as exc:
-            logger.error(
-                f"💥 Embedding failed for {ec.email_id}: {exc} — "
-                f"will be repaired by EmailEmbeddingRepairService"
-            )
-            embedding_pending = True
-            job.embedding_pending += 1
 
         return IndexedEmail(
             email_id=ec.email_id,
@@ -821,10 +750,6 @@ class EmailIndexingService:
             account_id=account_id,
             source=job.provider,
             text=ec.fact or "",
-            vector=vector,
-            tags_vector=tags_vector,
-            metadata_vector=metadata_vector,
-            attachments_vector=attachments_vector,
             tags=ec.tags,
             category=ec.category or "personal",
             metadata={
@@ -839,6 +764,5 @@ class EmailIndexingService:
             attachments=attachments,
             state="current",
             indexed_at=datetime.now(timezone.utc),
-            embedding_pending=embedding_pending,
             consolidated_at=None,
         )

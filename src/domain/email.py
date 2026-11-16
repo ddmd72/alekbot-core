@@ -117,7 +117,8 @@ class EmailClassificationResult:
 class IndexedEmail(BaseModel):
     """
     Stored in Firestore ({env}_domain_email_facts_v1).
-    Mirrors FactEntity structure to enable identical RRF search pattern.
+    The v1 record the consolidation line form reads; the search reads the cards (email index v2). Stored documents
+    that still carry the removed v1 vector fields parse: unknown fields are ignored.
     Doc ID = email_id (idempotent upsert on retry).
     """
     # Identifiers
@@ -126,12 +127,8 @@ class IndexedEmail(BaseModel):
     account_id: str
     source: str             # "gmail" | "outlook"
 
-    # Content — mirrors FactEntity
+    # Content
     text: str                                       # extracted fact sentence
-    vector: Optional[List[float]] = None            # embed(text)
-    tags_vector: Optional[List[float]] = None       # embed(tags joined)
-    metadata_vector: Optional[List[float]] = None   # embed(structured values: amounts, dates, refs)
-    attachments_vector: Optional[List[float]] = None  # embed(attachment filenames); None if no attachments
 
     # Classification
     tags: List[str]
@@ -147,7 +144,6 @@ class IndexedEmail(BaseModel):
     # Lifecycle
     state: str = "current"       # "current" | "archived"
     indexed_at: datetime
-    embedding_pending: bool = False   # True if vectors not yet computed (repair job picks these up)
     consolidated_at: Optional[datetime] = None  # set when batch sent to ConsolidationAgent
 
 
@@ -205,7 +201,6 @@ class IndexingJob(BaseModel):
     emails_fetched: int = 0
     emails_stored: int = 0
     emails_failed: int = 0
-    embedding_pending: int = 0
     errors: List[Dict[str, Any]] = []       # capped at 100: {email_id, stage, error}
     started_at: datetime
     updated_at: datetime

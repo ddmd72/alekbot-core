@@ -487,20 +487,11 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
         batch = await self._real.get_unconsolidated_batch(user_id, limit + hidden)
         return [e for e in batch if (user_id, e.email_id) not in self._marked][:limit]
 
-    async def find_nearest(
-        self, user_id: str, vectors: Dict[str, List[float]], limit: int = 10, state: str = "current",
-        date_from: Optional[datetime] = None, date_to: Optional[datetime] = None,
-    ) -> List[IndexedEmail]:
-        return await self._real.find_nearest(user_id, vectors, limit, state, date_from, date_to)
-
     async def get_indexing_state(self, user_id: str, provider: str) -> Optional[IndexingState]:
         return await self._real.get_indexing_state(user_id, provider)
 
     async def count_by_user(self, user_id: str, provider: Optional[str] = None) -> int:
         return await self._real.count_by_user(user_id, provider)
-
-    async def get_pending_embeddings(self, limit: int = 100) -> List[IndexedEmail]:
-        return await self._real.get_pending_embeddings(limit)
 
     async def get_consolidation_marks(self, user_id: str, email_ids: List[str]) -> Dict[str, Optional[datetime]]:
         return await self._real.get_consolidation_marks(user_id, email_ids)
@@ -528,9 +519,6 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
 
     async def delete_by_user(self, user_id: str) -> None:
         self.writes.append({"kind": "delete_by_user"})
-
-    async def update_vectors(self, user_id: str, email_id: str, vectors: Dict[str, List[float]]) -> None:
-        self.writes.append({"kind": "update_vectors", "email_id": email_id})
 
 
 class NoWriteMemoryBatches(EmailMemoryBatches):

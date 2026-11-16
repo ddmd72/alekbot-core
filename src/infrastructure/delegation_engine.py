@@ -170,13 +170,9 @@ _LIVE_NOTE_TEXTS = {
 def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_nonce) -> str:
     """Compact text representation of email search results for the LLM.
 
-    The result lines carry the sender's text (address, attachment names, the fact sentence drawn from the email), so
-    they go inside ONE `<external_content>` wrapper after its reminder (EXTERNAL_FILES_RFC §4.6, P14); the count line
-    and the follow-up hints are the tool's own and stay outside. One wrapper, not one per result: a search returns
-    every hit past the distance filter, and a wrapper per hit would double the lines; the nonce, not the count of
-    wrappers, is what a forged closing tag cannot guess.
-
-    A v2 result (email index v2, slice 8) carries an `index` block instead of `emails`: its sections come in print
+    Every line that carries the sender's text goes inside an `<external_content>` wrapper after its reminder
+    (EXTERNAL_FILES_RFC §4.6, P14); the tool's own statements and hints stay outside. The result carries an `index`
+    block (email index v2): its sections come in print
     order, a tool section printed as it is and each mail section (card lines, fold lines) in a wrapper of its own; the
     head that tells Smart to open a mail before quoting it is the tool's instruction, so it never sits inside one."""
     if not isinstance(result, str):
@@ -187,12 +183,11 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
         return result
     if not isinstance(parsed, dict):
         return result
-    emails = parsed.get("emails") or []
     index = parsed.get("index") if isinstance(parsed.get("index"), dict) else None
     fresh = parsed.get("fresh")
     by_key = parsed.get("by_key") or []
     notes = parsed.get("notes") or []
-    if not emails and index is None and fresh is None and not by_key and not notes:
+    if index is None and fresh is None and not by_key and not notes:
         return result
 
     # Sections in print order. Each list's sender/subject/snippet lines sit in its OWN wrapper (a fresh nonce per
@@ -223,23 +218,6 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
             body.append(wrapped(text.split("\n")) if kind == SECTION_MAIL else text)
         ids_printed += len(index.get("shown_ids") or [])
         index_has_attachments = bool(index.get("has_attachments"))
-    elif emails:
-        index_lines: List[str] = []
-        for e in emails:
-            line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
-            atts = e.get("attachments") or []
-            if atts:
-                line += f" | 📎 {', '.join(atts)}"
-                index_has_attachments = True
-            index_lines.append(line)
-            text = e.get("text") or ""
-            if text:
-                index_lines.append(f"  → {text[:150]}")
-        ids_printed += len(emails)
-        body.append(f"Found {len(emails)} email(s) in the index:")
-        body.append(wrapped(index_lines))
-    elif fresh is not None or by_key or notes:
-        body.append("Nothing in the index matched.")
 
     if fresh is not None:
         since, until, tz = fresh.get("since"), fresh.get("until"), fresh.get("tz", "UTC")

@@ -140,7 +140,6 @@ async def main(args):
     from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
     from src.adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
     from src.adapters.gemini_adapter import GeminiAdapter
-    from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
     from src.adapters.claude_adapter import ClaudeAdapter
     from src.adapters.firestore_account_repo import FirestoreAccountRepository
     from src.adapters.firestore_quota_service import FirestoreQuotaService
@@ -202,11 +201,10 @@ async def main(args):
     job_repo = FirestoreEmailJobRepository(db_client=db, env_config=env_config)
     exclusions_repo = FirestoreEmailExclusionsAdapter(db_client=db, env_config=env_config)
 
-    # --- LLM + embedding ---
+    # --- LLM ---
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
     llm = GeminiAdapter(api_key=gemini_api_key)
     claude_llm = ClaudeAdapter(api_key=anthropic_api_key)
-    embedding = GeminiEmbeddingAdapter(api_key=gemini_api_key)
 
     # --- Prompt builder (same wiring as ServiceContainer) ---
     security_port = CompositeAdapter(
@@ -272,7 +270,6 @@ async def main(args):
         job_repo=job_repo,
         exclusions_repo=exclusions_repo,
         classifier=classifier,
-        embedding=embedding,
         oauth=None,
         connector=ConnectorRegistry().get(GMAIL),
     )
@@ -336,13 +333,8 @@ async def main(args):
     print(f"  Emails fetched:   {job.emails_fetched}")
     print(f"  Emails stored:    {job.emails_stored}")
     print(f"  Emails failed:    {job.emails_failed}")
-    print(f"  Embedding pending:{job.embedding_pending}")
     print(f"  Elapsed:          {elapsed:.1f}s")
     print("=" * 60)
-
-    if job.embedding_pending:
-        print(f"\nNote: {job.embedding_pending} emails need embedding repair.")
-        print("Run EmailEmbeddingRepairService (or re-run this script) to fix them.")
 
 
 if __name__ == "__main__":
