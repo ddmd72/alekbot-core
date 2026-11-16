@@ -441,7 +441,7 @@ class UserDriveService:
         `save` raise (DriveNotConnectedError, DriveAccessRefused, ...)."""
         primary = await self.primary(user_id)
         base = await self.write_folder_path(primary.handle)
-        names = (folder,) if isinstance(folder, str) else tuple(folder or ())
+        names = ((folder,) if folder else ()) if isinstance(folder, str) else tuple(folder or ())
         target = base or ""
         for name in names or (DEFAULT_INBOX_FOLDER,):
             target = join_drive_path(target, name)
