@@ -664,6 +664,108 @@
         cursor: pointer;
       }
     </style>
+    <style>
+      /* ── Save result sheet + saving spinner (kept apart from the Show view CSS block above) ── */
+      .save-btn.saved {
+        color: var(--text-muted);
+      }
+      .save-spin {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        margin-inline-start: 8px;
+        vertical-align: -0.1em;
+        border: 2px solid var(--border-light);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: save-spin 0.8s linear infinite;
+      }
+      @keyframes save-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .save-spin {
+          animation-duration: 3s;
+        }
+      }
+      /* The result sheet: modal like the Show view (no outside-tap dismissal), a card centred over a dimmed page. */
+      .save-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 110;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+        background: var(--border-light);
+        background: color-mix(in srgb, var(--text-main) 45%, transparent);
+        font-family: var(--font-sans);
+        font-size: 17px;
+      }
+      @supports (font: -apple-system-body) {
+        .save-sheet {
+          font: -apple-system-body;
+          font-family: var(--font-sans);
+        }
+      }
+      .save-sheet[hidden] {
+        display: none;
+      }
+      .save-sheet-card {
+        width: 100%;
+        max-width: 420px;
+        max-height: 100%;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 24px 20px 20px;
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 20px;
+        box-shadow: var(--shadow-md);
+        text-align: center;
+      }
+      .save-sheet-mark {
+        font-size: 2em;
+        line-height: 1;
+        color: var(--accent);
+      }
+      .save-sheet-mark:empty {
+        display: none;
+      }
+      .save-sheet-text {
+        margin: 0;
+        font-size: 1em;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+      .save-sheet-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .save-sheet-btn {
+        flex: 1 1 120px;
+        min-height: 48px;
+        padding: 0 16px;
+        font-family: var(--font-sans);
+        font-size: 1em;
+        font-weight: 600;
+        color: var(--text-main);
+        background: var(--bg-panel-solid);
+        border: 1px solid var(--border-light);
+        border-radius: 14px;
+        touch-action: manipulation;
+        cursor: pointer;
+      }
+      .save-sheet-btn.primary {
+        color: var(--accent);
+      }
+    </style>
   </head>
   <body>
     <a class="back-link" href="/cabinet?tab=integrations" id="back-link">← Cabinet</a>
@@ -741,6 +843,10 @@
           "save.no_chat": "No chat to send to",
           "save.failed": "Could not save, try again",
           "save.too_long": "The call text is too long to file",
+          "save.saving": "Saving…",
+          "save.done": "Done",
+          "save.more": "Save more",
+          "save.back": "Back",
           "route.speaker": "Speaker",
           "mic.label": "Microphone",
           "mic.default": "Default microphone",
@@ -785,6 +891,10 @@
           "save.no_chat": "Немає чату для надсилання",
           "save.failed": "Не вдалося зберегти, спробуйте ще раз",
           "save.too_long": "Текст дзвінка задовгий для файлу",
+          "save.saving": "Зберігаю…",
+          "save.done": "Готово",
+          "save.more": "Зберегти ще",
+          "save.back": "Назад",
           "route.speaker": "Динамік",
           "mic.label": "Мікрофон",
           "mic.default": "Мікрофон за замовчуванням",
@@ -829,6 +939,10 @@
           "save.no_chat": "Aucun chat où envoyer",
           "save.failed": "Échec de l'enregistrement, réessayez",
           "save.too_long": "Le texte de l'appel est trop long pour un fichier",
+          "save.saving": "Enregistrement…",
+          "save.done": "Terminé",
+          "save.more": "Enregistrer autre chose",
+          "save.back": "Retour",
           "route.speaker": "Haut-parleur",
           "mic.label": "Microphone",
           "mic.default": "Microphone par défaut",
@@ -873,6 +987,10 @@
           "save.no_chat": "No hay chat al que enviar",
           "save.failed": "No se pudo guardar, inténtalo de nuevo",
           "save.too_long": "El texto de la llamada es demasiado largo para un archivo",
+          "save.saving": "Guardando…",
+          "save.done": "Listo",
+          "save.more": "Guardar más",
+          "save.back": "Atrás",
           "route.speaker": "Altavoz",
           "mic.label": "Micrófono",
           "mic.default": "Micrófono predeterminado",
@@ -2252,7 +2370,10 @@
       // row goes away on the next Call tap or on pagehide (the live-text reset calls clearSaveRow). Nothing is stored.
       let callLiveAt = 0; // ms timestamp of the call going live (startTimer); 0 before
       let callFileToDrive = false; // start response `file_to_drive`
-      const saveFile = { row: null, buttons: [], result: null, busy: false, gen: 0, duration: 0 };
+      const saveFile = {
+        row: null, buttons: [], result: null, busy: false, gen: 0, duration: 0,
+        pressed: null, saved: { chat: false, drive: false }, sheet: null,
+      };
 
       // Display-order lines -> request entries: an ask caller line + the Lelik line after it is one {question, answer};
       // a caller line + the next Lelik line is {source, translation, interrupted}; a lone line pairs with "".
@@ -2291,11 +2412,31 @@
           .join("\n\n");
       }
 
-      function saveSetBusy(busy) {
-        saveFile.busy = busy;
-        saveFile.buttons.forEach((b) => {
-          b.disabled = busy;
+      // Buttons are [copy, chat, drive?]; a target already filed stays disabled and marked for the rest of this text.
+      const SAVE_TARGET_BUTTON = { chat: 1, drive: 2 };
+
+      function saveRefreshButtons() {
+        saveFile.buttons.forEach((b, i) => {
+          const target = i === SAVE_TARGET_BUTTON.chat ? "chat" : i === SAVE_TARGET_BUTTON.drive ? "drive" : null;
+          const filed = target !== null && saveFile.saved[target];
+          b.disabled = saveFile.busy || filed;
+          b.classList.toggle("saved", filed);
+          const label = b.getAttribute("data-label") || "";
+          const saving = saveFile.busy && b === saveFile.pressed;
+          b.textContent = saving ? t("save.saving") : filed ? `✓ ${label}` : label;
+          if (saving) {
+            const spin = document.createElement("span");
+            spin.className = "save-spin";
+            spin.setAttribute("aria-hidden", "true");
+            b.append(spin);
+          }
         });
+      }
+
+      function saveSetBusy(busy, pressed) {
+        saveFile.busy = busy;
+        saveFile.pressed = busy ? pressed || null : null;
+        saveRefreshButtons();
       }
 
       function saveSay(key, extra) {
@@ -2316,11 +2457,12 @@
       const SAVE_REASONS = { not_connected: "save.not_connected", refused: "save.refused", no_chat: "save.no_chat" };
 
       async function saveToTarget(target) {
-        if (saveFile.busy) return;
+        if (saveFile.busy || saveFile.saved[target]) return; // a target already filed is never filed twice
         const gen = saveFile.gen;
-        saveSetBusy(true);
+        saveSetBusy(true, saveFile.buttons[SAVE_TARGET_BUTTON[target]]);
         let key = "save.failed";
         let extra = "";
+        let ok = false;
         try {
           const resp = await fetch("/api/voice/call-text/file", {
             method: "POST",
@@ -2335,6 +2477,7 @@
           });
           const body = await resp.json().catch(() => ({}));
           if (resp.status === 200 && body.ok) {
+            ok = true;
             key = target === "drive" ? "save.saved" : "save.sent";
             extra = target === "drive" && typeof body.path === "string" ? body.path : "";
           } else if (resp.status === 409 && SAVE_REASONS[body.reason]) {
@@ -2345,15 +2488,80 @@
         } catch (e) {
           // network error: the generic line
         }
-        if (gen !== saveFile.gen) return; // a new call or pagehide cleared the row meanwhile
-        saveSay(key, extra);
+        if (gen !== saveFile.gen) return; // Done, a new call or pagehide cleared the row meanwhile: no sheet
+        if (ok) saveFile.saved[target] = true;
         saveSetBusy(false);
+        openSaveSheet(ok, key, extra);
+      }
+
+      // A Save more is offered while some target is still unfiled: the chat, or the drive when this call allows it.
+      function saveMoreLeft() {
+        return !saveFile.saved.chat || (callFileToDrive && !saveFile.saved.drive);
+      }
+
+      function saveSheetButton(bar, key, primary, handler) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "save-sheet-btn" + (primary ? " primary" : "");
+        b.textContent = t(key);
+        b.addEventListener("click", handler);
+        bar.append(b);
+        return b;
+      }
+
+      // The result sheet: modal, closes ONLY through its buttons (no listener on the backdrop or a key).
+      function openSaveSheet(ok, key, extra) {
+        closeSaveSheet();
+        const sheet = document.createElement("div");
+        sheet.className = "save-sheet";
+        sheet.setAttribute("role", "dialog");
+        sheet.setAttribute("aria-modal", "true");
+        sheet.setAttribute("aria-label", t(ok ? "save.done" : "save.failed"));
+        const card = document.createElement("div");
+        card.className = "save-sheet-card";
+        const mark = document.createElement("div");
+        mark.className = "save-sheet-mark";
+        mark.setAttribute("aria-hidden", "true");
+        mark.textContent = ok ? "✓" : "";
+        const text = document.createElement("p");
+        text.className = "save-sheet-text";
+        text.textContent = t(key) + (extra ? ` ${extra}` : "");
+        const bar = document.createElement("div");
+        bar.className = "save-sheet-bar";
+        let first = null;
+        if (ok && saveMoreLeft()) first = saveSheetButton(bar, "save.more", true, closeSaveSheet);
+        else if (!ok) first = saveSheetButton(bar, "save.back", true, closeSaveSheet);
+        const done = saveSheetButton(bar, "save.done", !first, saveSheetDone);
+        card.append(mark, text, bar);
+        sheet.append(card);
+        document.body.append(sheet);
+        saveFile.sheet = sheet;
+        (first || done).focus();
+      }
+
+      function closeSaveSheet() {
+        if (saveFile.sheet) saveFile.sheet.remove();
+        saveFile.sheet = null;
+      }
+
+      // Done: the page goes back to what a fresh load shows, without starting a call. resetLiveText drops the text
+      // panel, the Show view, the save row and the sheet; the state line and the Call button are what the next
+      // Call tap would otherwise leave "Ended"-looking.
+      function saveSheetDone() {
+        closeSaveSheet();
+        resetLiveText();
+        if (typeof setState === "function") setState(t("state.idle"));
+        if (typeof renderButton === "function") renderButton("idle");
       }
 
       function clearSaveRow() {
         saveFile.gen++;
+        closeSaveSheet();
         if (saveFile.row) saveFile.row.remove();
-        Object.assign(saveFile, { row: null, buttons: [], result: null, busy: false, duration: 0 });
+        Object.assign(saveFile, {
+          row: null, buttons: [], result: null, busy: false, duration: 0, pressed: null,
+          saved: { chat: false, drive: false },
+        });
         callFileToDrive = false;
         callLiveAt = 0;
       }
@@ -2377,6 +2585,7 @@
           b.type = "button";
           b.className = "save-btn";
           b.textContent = t(key);
+          b.setAttribute("data-label", t(key));
           b.addEventListener("click", handler);
           row.append(b);
           return b;
