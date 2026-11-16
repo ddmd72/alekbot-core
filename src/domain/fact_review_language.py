@@ -66,6 +66,7 @@ _TEXT_KEYS: Final[tuple[str, ...]] = (
     UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value, UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value,
     UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value,
     UIMessage.MEMORY_PROFILE_NOT_READ.value, UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value,
+    UIMessage.MEMORY_PROFILE_DATE_REPLY_HINT.value,
 )
 LABEL_KEYS: Final[frozenset[str]] = frozenset((
     *OPTION_KEYS.values(), *QUESTION_KEYS.values(), *PROFILE_QUESTION_KEYS.values(), *PROFILE_OPTION_KEYS.values(),
@@ -116,7 +117,9 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_PROFILE_NOT_READ.value: (
         "Not understood. Reply with a digit, or write city, country or a name."),
     UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: (
-        "Not understood. Reply with a digit, or write a year, month or full date."),
+        "Not understood. Reply with a digit, or write YYYY-MM-DD (or YYYY-MM, YYYY); a period is two dates with a dash."),
+    UIMessage.MEMORY_PROFILE_DATE_REPLY_HINT.value: (
+        "Reply with a digit, or write the date as YYYY-MM-DD (or YYYY-MM, YYYY); a period is two dates with a dash."),
 })
 
 

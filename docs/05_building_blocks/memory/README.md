@@ -727,8 +727,10 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   `ProfileQuestionAnswers`), the answer is recorded and the question closes (owner, no answer kind, source `digit`,
   `button` or `words`). A reply that is not an option is read by code only (`profile_reply_words`, no model): a place
   as `city, country`, a city the atlas places in one row or a country naming one shown option; a person as a name or form
-  of one shown list entry; a date as a year, a year and month, a full date or a range of two, read by the derivation's
-  own date reader (`owner_time_point`). Anything else leaves the question open and tells the owner the form read.
+  of one shown list entry; a date as a year, a year and month, a full date or a range of two (joined by a hyphen, a dash or `to`), read by the
+  derivation's own date reader (`owner_time_point`). The date question offers the candidate dates as options (up to three,
+  ISO form: the points read from the flagged words and the points overlapping them) and its hint states the ISO form; a date
+  answer replaces those candidate points. Anything else leaves the question open and tells the owner the form read.
   **Creation (PR 5e):** the daily review run, after its profile step and inside the lease, asks the step for the open
   points (`FactProfileService.run(..., collect_points=True)`: unresolved places across the account, `people` items that
   fit a list entry, one `time_points` item per lineage; `open_points`), queues the ones with no open question (most facts

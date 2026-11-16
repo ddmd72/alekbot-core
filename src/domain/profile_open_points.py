@@ -9,7 +9,8 @@
   point.
 - *person* — a `people` review item whose mention fits at least one confirmed list entry; one point per fact lineage and
   folded mention (two facts printing the same words may mean two people).
-- *date* — the first `time_points` review item of a fact lineage; one point per lineage (a date belongs to one fact).
+- *date* — the first `time_points` review item of a fact lineage; one point per lineage (a date belongs to one fact). The
+  options are the candidate points of the mention (`date_candidates`), up to three, in ISO form.
 
 A key that already has an answer (`unknown` included) is no point. The order is the most facts first, then the newest
 quoted fact, then the key.
@@ -20,7 +21,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .confirmed_people import ConfirmedPeople, ConfirmedPerson, people_named_in_texts
-from .fact_profile import ProfileReviewItem, UnresolvedPlace
+from .fact_profile import ProfileReviewItem, ProfileTimePoint, UnresolvedPlace
+from .fact_profile_derive import date_candidates
 from .interactive_option import MAX_LABEL_CHARS
 from .place_lookup import PlaceRow
 from .place_names import PlaceNames
@@ -32,14 +34,15 @@ _ELLIPSIS = "…"
 
 @dataclass(frozen=True)
 class PointFact:
-    """One current fact as the open points read it: its id and lineage, its text and creation time, and what its profile
-    keeps open."""
+    """One current fact as the open points read it: its id and lineage, its text and creation time, what its profile
+    keeps open and its time points (the date question's candidates)."""
     fact_id: str
     lineage_id: str
     text: str
     created_at: datetime
     places_unresolved: Tuple[UnresolvedPlace, ...] = ()
     review_items: Tuple[ProfileReviewItem, ...] = ()
+    time_points: Tuple[ProfileTimePoint, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,27 @@ def _person_options(entries: Sequence[ConfirmedPerson]) -> Tuple[OpenPointOption
         OpenPointOption(id=f"pick{n}", label=_label(entry.name if entry.is_user else f"{entry.name} — {entry.relation}"),
                         value=entry.name)
         for n, entry in enumerate(entries[:MAX_PICKS], start=1))
+
+
+def _span_text(point: ProfileTimePoint) -> str:
+    return f"{point.start} – {point.end}" if point.end and point.end != point.start else point.start
+
+
+def _date_options(points: Sequence[ProfileTimePoint], mention: str) -> Tuple[OpenPointOption, ...]:
+    """The candidate points of `mention` as options, distinct by (start, end, precision), in ISO form: `start` or
+    `start – end`, the form the date reader reads back."""
+    options: List[OpenPointOption] = []
+    seen = set()
+    for point in date_candidates(points, mention):
+        shape = (point.start, point.end, point.precision)
+        if shape in seen:
+            continue
+        seen.add(shape)
+        if len(options) == MAX_PICKS:
+            break
+        text = _span_text(point)
+        options.append(OpenPointOption(id=f"pick{len(options) + 1}", label=_label(text), value=text))
+    return tuple(options)
 
 
 def _newest(facts: Sequence[PointFact]) -> PointFact:
@@ -149,7 +173,8 @@ def _date_points(view: Sequence[PointFact], answers: ProfileAnswers) -> List[Ope
             continue
         points.append(OpenPoint(
             ProfileOpenPoint(key=date_point_key(fact.lineage_id), field="time_points", printed=item.mention,
-                             lineage_id=fact.lineage_id, mention=item.mention),
+                             lineage_id=fact.lineage_id, mention=item.mention,
+                             options=_date_options(fact.time_points, item.mention)),
             fact.fact_id, fact.text, 1, fact.created_at))
     return points
 

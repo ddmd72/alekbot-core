@@ -362,13 +362,14 @@ question whose point is gone (answered, placed by an atlas update, its facts no 
 there is one), the options, the usual reply hint. Place: up to three atlas rows of that name, heaviest first, labelled
 by name and country (and the large neighbour where two rows of one country would read alike), then "keep as written"
 (a real place the atlas lacks) and "don't remember". Person: up to three fitting entries (name and relation), then "not
-on my list" and "don't remember". Date: the printed words, then "don't remember"; the reply names the date. A digit or a
-button picks an option.
+on my list" and "don't remember". Date: the candidate dates (the points read from the flagged words and the points that overlap them, up to three, in
+ISO form), then "don't remember"; the question states the ISO form it reads, and a reply in words names another date. A
+digit or a button picks an option.
 
 **Words, read by code only.** A place reply of a city and a known country, a city the atlas places in one row, or a
 country that names one shown option; a person reply of a name or form of a shown entry; a date reply in one of the
 forms the derivation already accepts from the profiler (a year, a year and month, a full date, a range of two of
-these), read by the same parser. Anything else is not
+these joined by a hyphen, a dash or `to`), read by the same parser. Anything else is not
 applied: the question stays open, the owner is told what form is read, and nothing is recorded for the review model. No
 model reads a reply: the question states the form, replies are short, and a failed read costs one more reply; a model
 would add a prompt, its contract tests, a failure path and a cost per reply. If the counters ever show replies that
@@ -389,7 +390,8 @@ asked again.
 **Effect without a model call.** `derive_profile` reads the answers the fact names. A place answer is applied before
 the atlas: `atlas` gives that row's keys as resolution would, `local` gives `lp:<folded city>` and the country key when
 the atlas knows the country, `unknown` leaves the place unresolved; a row that has left the atlas falls back to
-resolution and is counted. A `places` review item naming an answered place is dropped. A person answer applies the
+resolution and is counted. A date answer replaces the candidate points (those read from the mention and those whose span
+overlaps them) with the owner's point. A `places` review item naming an answered place is dropped. A person answer applies the
 rules of §4.5 to that mention: a printed name is kept and takes the entry's relation, a relation alone takes the
 entry's full name with `from_list`; the user means no person entry; `not_listed` keeps what the fact prints; the item
 is dropped. The flag clears when the owner answered every item the model gave. The answers digest in
@@ -767,7 +769,7 @@ same chat channel. An answer fixes the profile without asking the model again wh
 - (c) *Time-point items are asked, one question per fact.* The owner's rule is that everything the profiler could not
   decide goes to chat. A date answer belongs to one fact, so it is stored for that fact's lineage. The reply is read only
   in the date forms the derivation already parses; a reply in other words is not applied and the question says which
-  form is read. No model and no new free-word date parser.
+  form is read. No model and no new free-word date parser. (amended 2026-11-16, owner): the candidate points are offered as options, so a confirmation is one click; a date answer replaces the overlapping points as well, so a contradiction in the fact does not survive the answer.
 - (d) *The atlas reason is not stored on the fact.* The question needs the candidate rows anyway, read from the same
   atlas when it is built; storing the reason would change the stored shape and re-derive every profile once for a
   value nothing else reads.
