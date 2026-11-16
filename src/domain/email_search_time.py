@@ -7,8 +7,11 @@ clock (Today is the owner's, passed in).
 (`filters`): a model's time slot alone never removes a card (the slot may have misread the request), it only adds the
 window's mail to the candidates. `latest` never filters.
 
-A bare month name means the latest such month that has started by Today (asked on 2026-11-13: September is 2026-09,
-December is 2025-12).
+A month name or a day named without a year (`NamedDay`) takes its year from the slot's span when the request names no
+year anywhere and the slot's span touches that month or day: the model read "August last year" or "the appointment in
+December" in context, code only knows the month. Otherwise it is the latest such month or day that has started by
+Today (asked on 2026-11-13 with no slot: September is 2026-09, December is 2025-12). A month with its year, a full date
+and a year are read by code alone, and the window still filters.
 
 A card is **in** a window by its sent day, or by a verified time point (an unverified point is automatic and never a
 time filter, §2.4); an `upcoming` window reads verified points only (what is still ahead: an event, a due date, a
@@ -17,7 +20,7 @@ validity end).
 Public interface:
     TimeWindow                                       intent, start, end, filters, label
     text_names_time(concepts) -> bool
-    named_window(time_concepts, today) -> Optional[TimeWindow]
+    named_window(time_concepts, today, days=(), anchor=None) -> Optional[TimeWindow]
     choose_window(concepts, slots, today) -> Optional[TimeWindow]
     window_months(window, today) -> ("m:YYYY-MM", ...)    oldest first
     in_window(card, window, today) -> bool
@@ -36,7 +39,7 @@ from .drive_keys import TIME_WORDS
 from .drive_match import Concept, KeyFamily
 from .email_card import EmailCard
 from .email_search_params import UPCOMING_DAYS
-from .email_search_query import MailConcepts, MailQuerySlots
+from .email_search_query import MailConcepts, MailQuerySlots, NamedDay
 
 INTENT_PERIOD, INTENT_PAST, INTENT_UPCOMING, INTENT_LATEST = "period", "past", "upcoming", "latest"
 _FORWARD_LABELS = frozenset({"event", "due", "valid_until"})
@@ -60,18 +63,27 @@ class TimeWindow:
 
 
 def text_names_time(concepts: MailConcepts) -> bool:
-    """The request's text holds a time concept, or a removed word of the drive's time words ("last", "month")."""
-    if concepts.time:
+    """The request's text holds a time concept or a named day, or a removed word of the drive's time words ("last",
+    "month")."""
+    if concepts.time or concepts.days:
         return True
     return any(unicodedata.normalize("NFC", w).casefold() in TIME_WORDS for w in concepts.ignored)
 
 
-def named_window(time_concepts: Sequence[Concept], today: date) -> Optional[TimeWindow]:
-    """The window the text names by itself, `filters=True`; several time concepts make one window from the earliest
-    start to the latest end (module docstring)."""
+def named_window(time_concepts: Sequence[Concept], today: date, days: Sequence[NamedDay] = (),
+                 anchor: Optional[TimeWindow] = None) -> Optional[TimeWindow]:
+    """The window the text names by itself, `filters=True`; several time concepts and days make one window from the
+    earliest start to the latest end. When nothing the text names carries a year, a month name or a day takes its
+    year from `anchor` (the slot's window) when that touches it (module docstring)."""
+    dated = any(c.is_number for c in time_concepts)
+    year_from = anchor if not dated and anchor is not None and anchor.start and anchor.end else None
     spans: List[Tuple[date, date]] = []
     for concept in time_concepts:
-        span = _concept_span(concept, today)
+        span = _concept_span(concept, today, year_from)
+        if span is not None:
+            spans.append(span)
+    for named in days:
+        span = _day_span(named, today, year_from)
         if span is not None:
             spans.append(span)
     if not spans:
@@ -81,27 +93,11 @@ def named_window(time_concepts: Sequence[Concept], today: date) -> Optional[Time
 
 
 def choose_window(concepts: MailConcepts, slots: Optional[MailQuerySlots], today: date) -> Optional[TimeWindow]:
-    """`named_window` when the text names one (code beats the model on absolute periods), else the slot's time
-    (module docstring), else None."""
-    named = named_window(concepts.time, today)
-    if named is not None:
-        return named
-    slot = slots.time if slots is not None else None
-    if slot is None:
-        return None
-    filters = text_names_time(concepts)
-    if slot.intent == INTENT_LATEST:
-        return TimeWindow(INTENT_LATEST, None, None, False, "")
-    if slot.intent == INTENT_UPCOMING:
-        end = slot.end or today + timedelta(days=UPCOMING_DAYS)
-        return TimeWindow(INTENT_UPCOMING, today, end, filters, _label(today, end))
-    if slot.start is None and slot.end is None:
-        return None
-    end = slot.end or today
-    start = slot.start or date(end.year, 1, 1)
-    if start > end:
-        return None
-    return TimeWindow(slot.intent, start, end, filters, _label(start, end))
+    """`named_window` when the text names one (code beats the model on absolute periods; the slot only gives a month
+    or day named without a year its year), else the slot's time (module docstring), else None."""
+    slot_window = _slot_window(concepts, slots, today)
+    named = named_window(concepts.time, today, concepts.days, slot_window)
+    return named if named is not None else slot_window
 
 
 def window_months(window: TimeWindow, today: date) -> Tuple[str, ...]:
@@ -132,11 +128,62 @@ def in_window(card: EmailCard, window: TimeWindow, today: date) -> bool:
 
 # -- implementation -------------------------------------------------------------------------------------------------
 
+def _slot_window(concepts: MailConcepts, slots: Optional[MailQuerySlots], today: date) -> Optional[TimeWindow]:
+    """The window of the slot's time alone; it filters when the request's text names a time."""
+    slot = slots.time if slots is not None else None
+    if slot is None:
+        return None
+    filters = text_names_time(concepts)
+    if slot.intent == INTENT_LATEST:
+        return TimeWindow(INTENT_LATEST, None, None, False, "")
+    if slot.intent == INTENT_UPCOMING:
+        end = slot.end or today + timedelta(days=UPCOMING_DAYS)
+        return TimeWindow(INTENT_UPCOMING, today, end, filters, _label(today, end))
+    if slot.start is None and slot.end is None:
+        return None
+    end = slot.end or today
+    start = slot.start or date(end.year, 1, 1)
+    if start > end:
+        return None
+    return TimeWindow(slot.intent, start, end, filters, _label(start, end))
+
+
+def _anchored_year(month: int, day: Optional[int], anchor: Optional[TimeWindow]) -> Optional[int]:
+    """The latest year whose month (or day) lies in the anchor's span, or None."""
+    if anchor is None or anchor.start is None or anchor.end is None:
+        return None
+    for year in range(anchor.end.year, anchor.start.year - 1, -1):
+        if day is None:
+            first, last = _month_span(year, month)
+        else:
+            try:
+                first = last = date(year, month, day)
+            except ValueError:
+                continue
+        if first <= anchor.end and last >= anchor.start:
+            return year
+    return None
+
+
+def _day_span(named: NamedDay, today: date, anchor: Optional[TimeWindow]) -> Optional[Tuple[date, date]]:
+    """A day named without a year: the anchor's year when it touches the day, else the latest such day by Today."""
+    year = _anchored_year(named.month, named.day, anchor)
+    candidates = [year] if year is not None else list(range(today.year, today.year - 8, -1))
+    for y in candidates:
+        try:
+            day = date(y, named.month, named.day)
+        except ValueError:
+            continue
+        if year is not None or day <= today:
+            return day, day
+    return None
+
 def _month_span(year: int, month: int) -> Tuple[date, date]:
     return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
 
 
-def _concept_span(concept: Concept, today: date) -> Optional[Tuple[date, date]]:
+def _concept_span(concept: Concept, today: date,
+                  anchor: Optional[TimeWindow] = None) -> Optional[Tuple[date, date]]:
     if concept.is_number:
         for key in concept.about_keys:
             if key.startswith(_KEY_MONTH):
@@ -157,8 +204,10 @@ def _concept_span(concept: Concept, today: date) -> Optional[Tuple[date, date]]:
     month = _GRADE_MONTH_OF.get(unicodedata.normalize("NFC", concept.word).casefold())
     if month is None:
         return None
-    year = today.year if date(today.year, month, 1) <= today else today.year - 1
-    return _month_span(year, month)
+    anchored = _anchored_year(month, None, anchor)
+    if anchored is not None:
+        return _month_span(anchored, month)
+    return _month_span(today.year if date(today.year, month, 1) <= today else today.year - 1, month)
 
 
 def _day_text(day: date, with_year: bool) -> str:

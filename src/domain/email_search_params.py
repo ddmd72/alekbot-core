@@ -4,8 +4,10 @@ constants.
 
 The caps are lines, not mails: a folded group is one line. `MAIL_GENERIC_WORDS` are the words a mail request carries
 that no card holds as a topic (the mail nouns and the arrival verbs: "what did Example School send in March"), removed
-from the request before its concepts are made, in the product languages (en, es, fr, uk, ru); the drive keeps its own
-Russian forms in its tables the same way. Never `message` / `messages`: a mail-only doc type's name.
+from the request before its concepts are made, in the product languages (en, es, fr, pt, uk, ru); the drive keeps its own
+Russian forms in its tables the same way. Never `message` / `messages`: a mail-only doc type's name. The Portuguese
+`mensagem` and `fatura` are removed all the same: no card and no label table is written in Portuguese, so either word
+could only block the search as a word no card holds, and the slots carry the document type.
 """
 from typing import FrozenSet
 
@@ -29,6 +31,7 @@ MAIL_GENERIC_WORDS: FrozenSet[str] = frozenset("""
 email emails e-mail e-mails mail mails inbox mailbox send sends sent received receive came come arrived
 correo correos buzón enviado enviada enviaron envió recibido recibida recibí llegó llegaron
 courriel courriels boîte envoyé envoyée reçu reçue reçus
+mensagem mensagens fatura faturas correio enviou enviaram recebi recebeu recebidos recebidas chegou chegaram
 лист листи листів листа листом пошта пошти пошту надіслав надіслала надіслали прийшов прийшла прийшло прийшли отримав
 письмо письма писем почта почты почту прислал прислала прислали пришло пришли пришел получил
 """.split())

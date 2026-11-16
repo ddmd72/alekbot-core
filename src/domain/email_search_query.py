@@ -8,7 +8,9 @@ the card's.
 A request's **words** are the drive's query concepts (`drive_keys.query_concepts`), after the mail words that no card
 holds as a topic are removed (`MAIL_GENERIC_WORDS`: the mail nouns and the arrival verbs). Concepts that name a time
 (a month with a year, a date, a year, a month name) are split off: they choose the search window (`email_search_time`),
-they are never required words, so "mail from September" does not block on a word no card holds.
+they are never required words, so "mail from September" does not block on a word no card holds. A day with a month and
+no year ("5 жовтня", "October 5th") is read first and taken out of the text: it is one `NamedDay`, never a month concept
+and a number word (a year beside it makes it a full date, which the drive's concepts already read).
 
 **Slots** are optional and already validated: the model's query reading is slice 8's, this module only turns what it
 returned into a closed shape (`parse_query_slots`, never raises: a value of the wrong type empties that slot alone). The
@@ -16,7 +18,7 @@ slots add to the meaning list and re-rank, they never filter (`email_search_merg
 only when the request's own text names a time.
 
 Public interface:
-    TimeSlot, MailQuerySlots, MailSearchRequest, MailConcepts
+    TimeSlot, MailQuerySlots, MailSearchRequest, MailConcepts, NamedDay
     parse_query_slots(raw, request_text) -> MailQuerySlots
     mail_concepts(text) -> MailConcepts
     people_query_keys(values, people) -> (key, ...)     printed-name keys of the entries a slot value names
@@ -32,6 +34,7 @@ from datetime import date
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .confirmed_people import ConfirmedPeople
+from .drive_content_terms import _MONTH, _ORDINAL
 from .drive_grade import _GRADE_MONTH_OF
 from .drive_keys import phrase_keys, query_concepts
 from .drive_labels import LIFE_DOMAINS
@@ -48,6 +51,10 @@ _FULL_DATE_KEY = re.compile(r"v:\d{4}-\d{2}-\d{2}")
 _MAIL_TOKEN = re.compile(r"[^\W_]+(?:[-'’][^\W_]+)*")
 _LABEL_TYPE = "l:type:"
 _LABEL_DOMAIN = "l:domain:"
+_NO_YEAR = r"(?!\d)(?!,?\s+(?:(?:de|del)\s+)?\d{4}(?!\d))"   # a year after it makes a full date: not a NamedDay
+# "5 жовтня", "5th of October", "12 de marzo"; "October 5", "Oct 5th"
+_DAY_MONTH = re.compile(rf"(?<![\w.,/-])(\d{{1,2}}){_ORDINAL}\s+(?:(?:de|of)\s+)?{_MONTH}{_NO_YEAR}", re.IGNORECASE)
+_MONTH_DAY = re.compile(rf"(?<![\w]){_MONTH}\s+(\d{{1,2}}){_ORDINAL}(?![\w]){_NO_YEAR}", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -79,13 +86,22 @@ class MailSearchRequest:
 
 
 @dataclass(frozen=True)
+class NamedDay:
+    """A day the request names with its month and no year (module docstring); the window gives it its year."""
+    month: int
+    day: int
+
+
+@dataclass(frozen=True)
 class MailConcepts:
     """The request's concepts: the topic ones (strict-AND words and ids), the time ones (they pick the window), the
-    words removed (mail words and the drive's function, generic and time words) and the concepts cut past the cap."""
+    words removed (mail words and the drive's function, generic and time words), the concepts cut past the cap and the
+    days named without a year."""
     topic: Tuple[Concept, ...]
     time: Tuple[Concept, ...]
     ignored: Tuple[str, ...]
     cut: Tuple[str, ...]
+    days: Tuple[NamedDay, ...] = ()
 
 
 def empty_slots() -> MailQuerySlots:
@@ -121,11 +137,12 @@ def mail_concepts(text: str) -> MailConcepts:
         return match.group(0)
 
     kept = _MAIL_TOKEN.sub(drop, text)
+    days, kept = _named_days(kept)
     found = query_concepts(kept)
     topic = tuple(c for c in found.concepts if not is_time_concept(c))
     time = tuple(c for c in found.concepts if is_time_concept(c))
     ignored = tuple(dict.fromkeys((*removed, *found.ignored)))
-    return MailConcepts(topic=topic, time=time, ignored=ignored, cut=found.cut)
+    return MailConcepts(topic=topic, time=time, ignored=ignored, cut=found.cut, days=days)
 
 
 def is_time_concept(concept: Concept) -> bool:
@@ -179,6 +196,35 @@ def exact_query_keys(slots: Optional[MailQuerySlots]) -> Tuple[str, ...]:
 
 
 # -- implementation -------------------------------------------------------------------------------------------------
+
+def _named_days(text: str) -> Tuple[Tuple[NamedDay, ...], str]:
+    """The days named with a month and no year, each once in order, and the text with them blanked out (module
+    docstring). A day no year has (31 April) is not a day and stays in the text."""
+    found: List[Tuple[int, NamedDay]] = []
+    spans: List[Tuple[int, int]] = []
+    for pattern, day_group, month_group in ((_DAY_MONTH, 1, 2), (_MONTH_DAY, 2, 1)):
+        for m in pattern.finditer(text):
+            if any(m.start() < end and start < m.end() for start, end in spans):
+                continue
+            month = _GRADE_MONTH_OF.get(unicodedata.normalize("NFC", m.group(month_group)).casefold())
+            day = int(m.group(day_group))
+            if month is None or not _is_day(month, day):
+                continue
+            found.append((m.start(), NamedDay(month, day)))
+            spans.append((m.start(), m.end()))
+    for start, end in spans:
+        text = text[:start] + " " * (end - start) + text[end:]
+    days = tuple(dict.fromkeys(d for _, d in sorted(found, key=lambda pair: pair[0])))
+    return days, text
+
+
+def _is_day(month: int, day: int) -> bool:
+    try:
+        date(2000, month, day)      # a leap year: 29 February is a day some years have
+    except ValueError:
+        return False
+    return True
+
 
 def _strings(raw: Any, limit: int) -> Tuple[str, ...]:
     """The non-empty strings of a list, whitespace collapsed, each once, at most `limit`; () for anything else."""
