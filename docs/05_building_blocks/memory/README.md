@@ -675,7 +675,8 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   then one compare-and-set write per fact, stopping when the lease has no time left. `SYSTEM` facts are out.
 - **Confirmed people:** the step reads the account's owner-confirmed people list once per run
   (`ConfirmedPeopleRepository.get`, collection `{prefix}confirmed_people`, `FACT_PROFILE_RFC.md` §4.5) before it
-  classifies. Every call carries the whole list as a block before the fact; a fact's fingerprint holds only the entries it
+  classifies (each person on it has a stable `entry_id` the store assigns on `replace`; it is never rendered or
+  fingerprinted). Every call carries the whole list as a block before the fact; a fact's fingerprint holds only the entries it
   names (by a name form or a relation word), so a list edit re-profiles only the facts naming the edited person. An
   unreadable list ends the step with `error=True` (nothing classified, called or written). A date a fact prints without a
   year takes the recording year (the earlier of `reported_date` and `created_at`), which is part of the derivation string.

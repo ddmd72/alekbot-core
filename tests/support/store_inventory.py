@@ -139,7 +139,7 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_person_card_repo.FirestorePersonCardRepository": (_A + "test_person_card_store_kit.py",),
     # Fact profile RFC §4.5: the owner-confirmed people list
     _STORE + "firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository": (
-        _A + "test_confirmed_people_store_kit.py",),
+        _A + "test_confirmed_people_store_kit.py", _A + "test_confirmed_people_entry_ids_kit.py"),
     # Fact profile RFC §4.7: the owner's answers to profile questions
     _STORE + "firestore_profile_answer_repo.FirestoreProfileAnswerRepository": (
         _A + "test_profile_answer_store_kit.py",),
