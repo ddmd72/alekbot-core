@@ -34,6 +34,7 @@ from src.ports.llm_port import ProviderCapabilities
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver, ExecutionOverride
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.domain.exceptions import TranscriptLockedError, LLMError
+from tests.unit.domain.email_search_fixtures import index_block
 
 
 # =========================================================================
@@ -701,14 +702,12 @@ class TestFormatEmailSearchCompact:
 
     def test_email_with_attachments_and_text(self):
         import json as _json
-        data = _json.dumps({"emails": [{
-            "email_id": "e1", "from": "a@example.com", "date": "2026",
-            "attachments": ["report.pdf"], "text": "See attached"
-        }]})
+        # a v2 index line counts its files and names none (slice 8): the attachment hint asks for the email id
+        data = _json.dumps({"index": index_block("e1", has_attachments=True)})
         result = _format_email_search_compact(data)
         assert "e1" in result
-        assert "report.pdf" in result
-        assert "See attached" in result
+        assert "open_email_attachment" in result
+        assert "Example School writes about news." in result
         assert "get_email_details" in result
 
 

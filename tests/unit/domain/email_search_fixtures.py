@@ -11,6 +11,9 @@ from src.domain.email_card import CardAttachment, EmailCard
 from src.domain.email_card_answer import parse_mail_answer
 from src.domain.email_card_build import build_card
 from src.domain.email_card_input import build_card_input
+from src.domain.email_card_text import render_result_line
+from src.domain.email_search_render import MODE_NOTHING, MODE_RANKED, SECTION_MAIL, SECTION_TOOL
+from src.domain.email_search_texts import HEAD_RANKED, NOTHING_LINE
 from tests.unit.domain.email_card_fixtures import BOOKING_BODY, BOOKING_PDF, NONCE, PEOPLE, answer_json, mail
 
 RECEIPT_DAYS = (date(2025, 1, 14), date(2025, 2, 11), date(2025, 4, 9), date(2025, 5, 20), date(2025, 7, 3),
@@ -116,3 +119,16 @@ def everything() -> List[EmailCard]:
     return [booking(), invoice(), school_notice(), school_news("msg_school_feb", "Example School news, February",
                                                                date(2026, 2, 10)),
             school_news("msg_school_apr", "Example School news, April", date(2026, 4, 2)), policy(), *receipts()]
+
+
+def index_block(*email_ids: str, has_attachments: bool = False,
+                subject: str = "Example School news, February") -> Dict[str, Any]:
+    """The `index` block of a search_emails result as EmailSearchAgent sends it (email index v2 §5.4), for the
+    result-formatter tests: the ranked head (the tool's own words) and one mail section of real card lines, one Example
+    School card per id (no folding); no id is the nothing result."""
+    if not email_ids:
+        return {"mode": MODE_NOTHING, "sections": [[SECTION_TOOL, NOTHING_LINE]], "shown_ids": [], "folded_ids": {},
+                "has_attachments": False}
+    lines = [render_result_line(school_news(i, subject, date(2026, 2, 10))) for i in email_ids]
+    return {"mode": MODE_RANKED, "sections": [[SECTION_TOOL, HEAD_RANKED], [SECTION_MAIL, "\n".join(lines)]],
+            "shown_ids": list(email_ids), "folded_ids": {}, "has_attachments": has_attachments}
