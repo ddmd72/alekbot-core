@@ -108,7 +108,12 @@ def test_the_remote_audio_is_started_explicitly_when_the_track_arrives():
     attach = handler.index("remoteAudio.srcObject = new MediaStream([ev.track]);")
     play = handler.index("remoteAudio.play().catch(")
     assert attach < play
-    assert len(re.findall(_PLAY, HTML)) == 1
+    assert len(re.findall(_PLAY, handler)) == 1
+    # The page's one other play() is the interpreter speaker bridge's own hidden <audio>, on the tap
+    # (lelik_voice_modes.md § "Speaker switch (interpreter)"); remoteAudio is started nowhere else.
+    bridge = re.search(r"async function speakerToLoud\(\) \{.*?\n      }\n", HTML, re.S).group(0)
+    assert re.findall(_PLAY, bridge) == [".play("] and "await speaker.el.play();" in bridge
+    assert len(re.findall(_PLAY, HTML)) == 2
 
 
 def test_the_page_keys_equal_the_server_allowlist():
@@ -116,3 +121,32 @@ def test_the_page_keys_equal_the_server_allowlist():
     keys = set(re.findall(r'put\("(\w+)"', fn)) | set(re.findall(r'take\("(\w+)"', fn))
     assert keys == set(_CLIENT_REPORT_KEYS)
     json.dumps(sorted(keys))
+
+
+def test_the_route_stage_and_its_keys_are_allowed():
+    assert "route" in _CLIENT_REPORT_STAGES
+    assert {"route", "ok", "err", "outs", "ctx_state"} <= _CLIENT_REPORT_KEYS
+
+
+@pytest.mark.asyncio
+async def test_a_route_report_logs_one_sorted_line_with_its_fields(caplog):
+    client, call_id = await _started()
+    caplog.set_level(logging.INFO)
+    data = {"route": "speaker", "ok": True, "err": "", "outs": 4, "ctx_state": "running"}
+    resp = await client.post(f"/api/voice/web-call/{call_id}/client-report", headers=AUTH,
+                             json={"stage": "route", "data": data})
+    assert resp.status_code == 200
+    assert _report_lines(caplog) == [
+        f"web call {call_id}: client route ctx_state=running err= ok=True outs=4 route=speaker ua=Quart"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_route_report_keeps_the_rejection_name(caplog):
+    client, call_id = await _started()
+    caplog.set_level(logging.INFO)
+    resp = await client.post(f"/api/voice/web-call/{call_id}/client-report", headers=AUTH,
+                             json={"stage": "route", "data": {"route": "phones", "ok": False, "err": "NotAllowedError",
+                                                              "outs": 3, "extra": "dropped"}})
+    assert resp.status_code == 200
+    line = _report_lines(caplog)[0]
+    assert "err=NotAllowedError ok=False outs=3 route=phones" in line and "extra" not in line

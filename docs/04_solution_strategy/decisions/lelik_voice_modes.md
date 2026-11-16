@@ -61,6 +61,24 @@ every utterance the button does not mark, from either side, also carries a silen
 the button the model still answered phrases it took for questions to it. The prompt change ships as a
 token upload after the relay with the button is live (RFC §12).
 
+**Speaker switch (interpreter, 2026-11-16).** With Bluetooth headphones connected, the interpreter page shows a round
+"Speaker" button (left of the call button; the slot on the right is reserved for the "Show text" button of
+`VOICE_CALL_LIVE_TEXT_RFC.md` §4.8). One tap moves Lelik's voice to the phone's loudspeaker, a second tap brings it
+back, like the Speaker button of the phone's own call screen. It is **off by default** (`SPEAKER_DEFAULT_ON`), appears
+only while the call is live, when the browser supports `setSinkId` and `enumerateDevices` lists both a loudspeaker and
+a headphones output, and re-checks on `devicechange`. **Why a bridge:** WebKit ignores `HTMLMediaElement.setSinkId` on
+an `<audio>` that plays a remote WebRTC track (WebKit bug 320087; measured on iOS 27.2, where `AudioContext.setSinkId`
+does not exist either). What works is remote track → `MediaStreamAudioSourceNode` → `MediaStreamAudioDestinationNode` →
+a second hidden `<audio>` whose `setSinkId` the loudspeaker obeys. The bridge is built lazily on the first tap; the
+bridge plays before the direct `remoteAudio` is muted, so there is no silent gap. **Fall-back to the headphones
+(direct path unmuted, button off):** a rejected `setSinkId` or `play()`, an AudioContext that is not `running` after
+the tap's resume, the context going `suspended`/`interrupted`/`closed` while on, and the headphones or loudspeaker
+disappearing. The end of the call tears the bridge down. Each switch sends one `route` client report
+(`route`, `ok`, `err`, `ctx_state`, `outs`). **Interpreter only:** the main call keeps playback off WebAudio so a
+suspended or interrupted context can never silence it and the browser's echo cancellation keeps covering it
+(`call.html`, the comment at `ensureAudioContext`); the bridge trades that for the loudspeaker on a page where the
+owner asked for it.
+
 ## Alternatives rejected
 
 - **Mode buttons on the main call page.** The owner wants that page to stay as it is, and a button

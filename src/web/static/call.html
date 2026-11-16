@@ -275,6 +275,82 @@
         .ask-btn.busy { animation: none; }
       }
 
+      /* Interpreter page only: the script wraps the call button into [left slot] [call] [right slot]. */
+      .call-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 12px;
+        width: 100%;
+      }
+      .call-mid {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      .call-slot {
+        flex: none;
+        width: 88px;
+        margin-top: 28px; /* centres a 64 px control on the 120 px call button */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .call-slot:empty {
+        visibility: hidden;
+      }
+      .speaker-ctl {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .speaker-ctl.off {
+        visibility: hidden;
+      }
+      .speaker-btn {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        border: 1px solid var(--border-light);
+        background: var(--bg-panel-solid);
+        color: var(--text-main);
+        box-shadow: var(--shadow-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: var(--transition-fast);
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      .speaker-btn svg {
+        width: 28px;
+        height: 28px;
+      }
+      .speaker-btn:active {
+        transform: scale(0.94);
+      }
+      .speaker-btn.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .speaker-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-align: center;
+      }
+      .speaker-ctl.on .speaker-label {
+        color: var(--text-main);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .speaker-btn { transition: none; }
+        .speaker-btn:active { transform: none; }
+      }
+
       .mic-settings {
         width: 100%;
         margin-top: 16px;
@@ -375,6 +451,7 @@
           "ask.button": "Ask Lelik",
           "ask.armed": "Speak now · tap to cancel",
           "ask.busy": "Lelik is answering…",
+          "route.speaker": "Speaker",
           "mic.label": "Microphone",
           "mic.default": "Default microphone",
           "mic.unnamed": "Microphone",
@@ -399,6 +476,7 @@
           "ask.button": "Спитати Леліка",
           "ask.armed": "Говоріть · натисніть, щоб скасувати",
           "ask.busy": "Лелік відповідає…",
+          "route.speaker": "Динамік",
           "mic.label": "Мікрофон",
           "mic.default": "Мікрофон за замовчуванням",
           "mic.unnamed": "Мікрофон",
@@ -423,6 +501,7 @@
           "ask.button": "Demander à Lelik",
           "ask.armed": "Parlez · touchez pour annuler",
           "ask.busy": "Lelik répond…",
+          "route.speaker": "Haut-parleur",
           "mic.label": "Microphone",
           "mic.default": "Microphone par défaut",
           "mic.unnamed": "Microphone",
@@ -447,6 +526,7 @@
           "ask.button": "Preguntar a Lelik",
           "ask.armed": "Habla · toca para cancelar",
           "ask.busy": "Lelik está respondiendo…",
+          "route.speaker": "Altavoz",
           "mic.label": "Micrófono",
           "mic.default": "Micrófono predeterminado",
           "mic.unnamed": "Micrófono",
@@ -733,7 +813,7 @@
         }
       });
 
-      async function sendClientReport(stage, token) {
+      async function sendClientReport(stage, token, extra = {}) {
         try {
           if (token !== callToken || !callId) return;
           const reportCallId = callId;
@@ -763,6 +843,11 @@
           put("ice_state", () => pc.iceConnectionState);
           put("ctx_state", () => (audioCtx ? audioCtx.state : "none"));
           put("session_type", () => (navigator.audioSession ? navigator.audioSession.type : "none"));
+          // the `route` stage's own fields (the speaker switch)
+          put("route", () => extra.route);
+          put("ok", () => extra.ok);
+          put("err", () => extra.err);
+          put("outs", () => extra.outs);
           try {
             const receiver = pc.getReceivers().find((r) => r.track && r.track.kind === "audio");
             const stats = await receiver.getStats();
@@ -1173,6 +1258,231 @@
 
       onControl(onAskFrame);
 
+      /* ── Speaker route ───────────────────────────────── */
+      // Interpreter page only: moves Lelik's voice from the headphones to the phone's loudspeaker and back.
+      // WebKit ignores setSinkId on an <audio> playing a remote WebRTC track (bug 320087), so ON routes the
+      // track through WebAudio into a second, hidden <audio> that setSinkId does steer. The direct remoteAudio
+      // path stays the default and is only muted while the bridge plays. The main call page keeps playback off
+      // WebAudio (see the AudioContext comment above) and never gets this.
+      const SPEAKER_DEFAULT_ON = false;
+      const SPEAKER_LABEL_RE = /speaker|динамік|динамик|haut-parleur|altavoz/i;
+      const EARPIECE_LABEL_RE = /receiver|earpiece|écouteur|auricular|приймач/i;
+      const speaker = {
+        live: false, on: SPEAKER_DEFAULT_ON, available: false, gen: 0, busy: false,
+        speakerId: null, phonesId: null, outs: 0, track: null,
+        el: null, src: null, dest: null, srcTrack: null, ctx: null,
+        row: null, ctl: null, btn: null, label: null,
+      };
+
+      function speakerSupported() {
+        return typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+      }
+
+      function buildSpeakerRow() {
+        if (window.VOICE_MODE !== "interpreter" || speaker.row) return;
+        const row = document.createElement("div");
+        row.className = "call-row";
+        const left = document.createElement("div");
+        left.id = "call-slot-left";
+        left.className = "call-slot";
+        const mid = document.createElement("div");
+        mid.className = "call-mid";
+        // Reserved for the "Show text" button (VOICE_CALL_LIVE_TEXT_RFC §4.8); same width keeps the call button centred.
+        const right = document.createElement("div");
+        right.id = "call-slot-right";
+        right.className = "call-slot";
+        const ctl = document.createElement("div");
+        ctl.className = "speaker-ctl off";
+        const sbtn = document.createElement("button");
+        sbtn.id = "speaker-btn";
+        sbtn.type = "button";
+        sbtn.className = "speaker-btn";
+        sbtn.setAttribute("aria-pressed", "false");
+        sbtn.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3z"/>' +
+          '<path d="M16.5 12a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/>' +
+          '<path d="M14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+        sbtn.addEventListener("click", toggleSpeaker);
+        const slabel = document.createElement("div");
+        slabel.className = "speaker-label";
+        ctl.append(sbtn, slabel);
+        left.append(ctl);
+        btn.parentNode.insertBefore(row, btn);
+        mid.append(btn, callLabel);
+        row.append(left, mid, right);
+        Object.assign(speaker, { row, ctl, btn: sbtn, label: slabel });
+        renderSpeaker();
+      }
+
+      function renderSpeaker() {
+        if (!speaker.row) return;
+        const visible = speaker.live && speaker.available;
+        speaker.ctl.classList.toggle("off", !visible);
+        speaker.ctl.classList.toggle("on", speaker.on);
+        speaker.btn.classList.toggle("on", speaker.on);
+        speaker.btn.setAttribute("aria-pressed", String(speaker.on));
+        speaker.label.textContent = t("route.speaker");
+      }
+
+      async function scanOutputs() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const outs = devices.filter((d) => d.kind === "audiooutput");
+        const loud = outs.find((d) => d.deviceId !== "default" && SPEAKER_LABEL_RE.test(d.label));
+        const phones = outs.find(
+          (d) => d.deviceId !== "default" && d !== loud && !SPEAKER_LABEL_RE.test(d.label) && !EARPIECE_LABEL_RE.test(d.label)
+        );
+        return { outs: outs.length, speakerId: loud ? loud.deviceId : null, phonesId: phones ? phones.deviceId : null };
+      }
+
+      function reportRoute(route, ok, err) {
+        sendClientReport("route", callToken, { route, ok, err, outs: speaker.outs });
+      }
+
+      // Direct path back on first, then the bridge silent: both paths are never muted together.
+      function speakerToPhones() {
+        remoteAudio.muted = false;
+        if (speaker.el) {
+          speaker.el.muted = true;
+          try {
+            speaker.el.pause();
+          } catch (e) {}
+        }
+        speaker.on = false;
+        renderSpeaker();
+      }
+
+      async function refreshSpeaker() {
+        const gen = speaker.gen;
+        if (!speaker.live || !speakerSupported()) return;
+        let found = null;
+        try {
+          found = await scanOutputs();
+        } catch (e) {}
+        if (gen !== speaker.gen || !speaker.live) return;
+        speaker.outs = found ? found.outs : 0;
+        speaker.speakerId = found ? found.speakerId : null;
+        speaker.phonesId = found ? found.phonesId : null;
+        speaker.available = !!(speaker.speakerId && speaker.phonesId);
+        if (speaker.on && !speaker.available) {
+          speakerToPhones();
+          reportRoute("phones", false, "devices");
+        }
+        renderSpeaker();
+      }
+
+      function onSpeakerCtxState() {
+        const state = speaker.ctx ? speaker.ctx.state : "closed";
+        if (!speaker.on || (state !== "suspended" && state !== "interrupted" && state !== "closed")) return;
+        speakerToPhones();
+        reportRoute("phones", false, `ctx_${state}`);
+      }
+
+      function buildSpeakerBridge(ctx) {
+        if (!speaker.el) {
+          speaker.el = document.createElement("audio");
+          speaker.el.setAttribute("playsinline", "");
+          speaker.el.hidden = true;
+          document.body.append(speaker.el);
+        }
+        if (speaker.src && speaker.srcTrack === speaker.track) return;
+        dropSpeakerGraph();
+        speaker.src = ctx.createMediaStreamSource(new MediaStream([speaker.track]));
+        speaker.dest = ctx.createMediaStreamDestination();
+        speaker.src.connect(speaker.dest);
+        speaker.srcTrack = speaker.track;
+        speaker.el.srcObject = speaker.dest.stream;
+        speaker.ctx = ctx;
+        ctx.addEventListener("statechange", onSpeakerCtxState);
+      }
+
+      function dropSpeakerGraph() {
+        if (speaker.ctx) speaker.ctx.removeEventListener("statechange", onSpeakerCtxState);
+        try {
+          if (speaker.src) speaker.src.disconnect();
+        } catch (e) {}
+        speaker.src = null;
+        speaker.dest = null;
+        speaker.srcTrack = null;
+        speaker.ctx = null;
+      }
+
+      async function speakerToLoud() {
+        // The tap is the user gesture: the context is created or resumed here, before any await.
+        const ctx = ensureAudioContext();
+        const resumed = ctx && ctx.state !== "running" ? ctx.resume() : null;
+        const gen = speaker.gen;
+        let err = "";
+        try {
+          if (!ctx || !speaker.track || !speaker.speakerId) throw new Error("NoRoute");
+          if (resumed) await resumed;
+          if (ctx.state !== "running") throw new Error("CtxNotRunning");
+          buildSpeakerBridge(ctx);
+          await speaker.el.setSinkId(speaker.speakerId);
+          if (gen !== speaker.gen) return;
+          speaker.el.muted = false;
+          await speaker.el.play();
+          if (gen !== speaker.gen) return;
+          remoteAudio.muted = true;
+          speaker.on = true;
+        } catch (e) {
+          err = (e && e.name) || "Error";
+          if (gen !== speaker.gen) return;
+          speakerToPhones();
+        }
+        renderSpeaker();
+        reportRoute(speaker.on ? "speaker" : "phones", err === "", err);
+      }
+
+      async function toggleSpeaker() {
+        if (!speaker.live || !speaker.available || speaker.busy) return;
+        speaker.busy = true;
+        try {
+          if (speaker.on) {
+            speakerToPhones();
+            reportRoute("phones", true, "");
+          } else {
+            await speakerToLoud();
+          }
+        } finally {
+          speaker.busy = false;
+        }
+      }
+
+      function showSpeaker() {
+        if (window.VOICE_MODE !== "interpreter" || !speakerSupported()) return Promise.resolve();
+        buildSpeakerRow();
+        speaker.live = true;
+        return refreshSpeaker();
+      }
+
+      function hideSpeaker() {
+        speaker.gen += 1;
+        speaker.live = false;
+        speaker.available = false;
+        speaker.busy = false;
+        dropSpeakerGraph();
+        if (speaker.el) {
+          speaker.el.muted = true;
+          try {
+            speaker.el.pause();
+          } catch (e) {}
+          speaker.el.srcObject = null;
+        }
+        speaker.track = null;
+        speaker.on = SPEAKER_DEFAULT_ON;
+        remoteAudio.muted = false;
+        renderSpeaker();
+      }
+
+      function speakerInit() {
+        if (window.VOICE_MODE !== "interpreter") return;
+        buildSpeakerRow();
+        try {
+          navigator.mediaDevices.addEventListener("devicechange", refreshSpeaker);
+        } catch (e) {}
+      }
+      speakerInit();
+
       async function pollStatus() {
         if (!callId) return;
         try {
@@ -1210,6 +1520,7 @@
         stopStatusPolling();
         closeControl();
         hideAsk();
+        hideSpeaker();
         inCall = false;
         const endingCallId = callId;
         callId = null;
@@ -1311,6 +1622,7 @@
           pc.ontrack = (ev) => {
             // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
+            speaker.track = ev.track; // the speaker bridge taps this track (see Speaker route)
             // Safari 27 never starts an autoplay element with no renderer (an <audio> without controls) that has not
             // played yet (WebKit bug 326969), so autoplay alone leaves Lelik silent there. Start it explicitly; a
             // refusal shows in the playback report (el_paused), never in the call flow.
@@ -1409,6 +1721,7 @@
           setTimeout(() => sendClientReport("live_3s", myToken), 3000);
           setTimeout(() => sendClientReport("live_10s", myToken), 10000);
           renderButton("live");
+          showSpeaker();
           statusTimer = setInterval(pollStatus, 2000);
           if (connectBody.control) openControl(connectBody.control, myToken);
           // Shown disabled; the control channel's `welcome` enables it when the call offers `ask`.
