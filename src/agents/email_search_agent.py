@@ -5,9 +5,10 @@ Email Search Agent
 Specialist agent for the user's indexed email archive.
 Three intents, all routed through one agent instance:
 
-  search_emails           — semantic search via 7-stream multi-vector RRF.
+  search_emails           — v1: semantic search via 7-stream multi-vector RRF (LLM key extraction).
+                            v2 (a card search is wired, EMAIL_SEARCH_V2): one slots call reads the request, then
+                            EmailCardSearchService searches the cards (email index v2 §5).
                             payload: {"query": "..."}
-                            Requires LLM (key extraction) + embedding + Firestore.
 
   get_email_details       — fetch full Gmail body for a known email_id.
                             payload: {"email_id": "..."}
@@ -30,7 +31,7 @@ import json
 import secrets
 import time
 from datetime import date, datetime, time as dt_time, timedelta, timezone, tzinfo
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
@@ -39,6 +40,7 @@ from ..domain.document_open import EmailOpening
 from ..domain.document_presentation import present_text
 from ..domain.document_read import OPEN_MARGIN_S, ReadOutcome, ReadStatus
 from ..domain.email import EmailMetadata
+from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.email_open_texts import (
     EMAIL_OPEN_NOT_CONFIGURED_NOTE,
     LIVE_NOTE_NOT_CONNECTED,
@@ -47,6 +49,12 @@ from ..domain.email_open_texts import (
 from ..domain.exceptions import EmailNotConnected
 from ..domain.email_ref import EMAIL_FILE_CONTEXT_KEY, parse_email_ref
 from ..domain.file_ref import EMAIL_REF_PREFIX
+from ..domain.email_query_slots import (
+    SLOTS_PROFILE, render_slots_prompt, slots_response_schema, slots_retry_message, slots_user_message,
+)
+from ..domain.email_search_query import MailQuerySlots, MailSearchRequest, mail_concepts, parse_query_slots
+from ..domain.email_search_render import MailSearchResult
+from ..domain.email_search_time import INTENT_PAST, INTENT_PERIOD, choose_window
 from ..domain.native_format import NATIVE_FORMATS_KEY, from_plain
 from ..domain.untrusted_text import attached_reminder
 from ..ports.llm_port import (
@@ -67,7 +75,11 @@ MAX_EXACT_KEYS = 3
 MIN_KEY_LENGTH = 3
 _NO_EMAILS_FOUND = "No emails found matching your query."
 
+_SLOTS_ATTEMPTS = 2
+_HISTORY_TURNS = 3
+
 if TYPE_CHECKING:
+    from ..services.email_card_search_service import EmailCardSearchService
     from ..services.email_search_service import EmailSearchService
     from ..services.file_conversion_service import FileConversionService
 
@@ -92,6 +104,7 @@ class EmailSearchAgent(BaseAgent):
         file_conversion: Optional[FileConversionService] = None,
         user_timezone: str = "UTC",
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        card_search: Optional[EmailCardSearchService] = None,
     ) -> None:
         super().__init__(config)
         self.execution_context = execution_context
@@ -100,6 +113,7 @@ class EmailSearchAgent(BaseAgent):
         self.prompt_builder = prompt_builder
         self._search_service = email_search_service
         self._file_conversion = file_conversion
+        self._card_search = card_search
         self.user_id = user_id
         self._clock = clock
         self._tz_name = user_timezone or "UTC"
@@ -280,7 +294,9 @@ class EmailSearchAgent(BaseAgent):
     async def _handle_search_emails(
         self, message: AgentMessage, user_id: Optional[str]
     ) -> AgentResponse:
-        """LLM key extraction + 7-stream multi-vector RRF search."""
+        """v2 when a card search is wired, else LLM key extraction + 7-stream multi-vector RRF search."""
+        if self._card_search is not None:
+            return await self._handle_search_emails_v2(message, user_id, self._card_search)
         query = message.payload.get("query", "")
         account_id = message.context.get("account_id")
         history: List[dict] = message.payload.get("history", [])
@@ -371,6 +387,174 @@ class EmailSearchAgent(BaseAgent):
             },
             history_context={"email_search_context": history_context_value} if history_context_value else None,
         )
+
+    # ------------------------------------------------------------------
+    # Intent: search_emails, v2 (email index v2 §5; slice 8)
+    # ------------------------------------------------------------------
+
+    async def _handle_search_emails_v2(
+        self, message: AgentMessage, user_id: Optional[str], card_search: EmailCardSearchService
+    ) -> AgentResponse:
+        """The slots call, then the card search, the live headers newer than the index and the per-key lists
+        together. The delegation timestamp is stripped first: left in, it would read as a one-day period and as words
+        no mail holds. A card-search error fails the search (the switch is the only fallback). The request text is
+        never logged."""
+        request = strip_delegation_timestamp(message.payload.get("query", "") or "").strip()
+        if not request:
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error="No query provided")
+        account_id = message.context.get("account_id")
+        history: List[dict] = message.payload.get("history") or []
+        uid = user_id or ""
+        start_time = time.time()
+        local_now = self._clock().astimezone(self._tz)
+        today = local_now.date()
+
+        slots = await self._read_slots(request, history, user_id, account_id, local_now)
+        date_from, date_to = self._v2_bounds(request, slots, today)
+        watermark = await self._safe_watermark(uid)
+        fresh_after, run_fresh = self._fresh_window(watermark, date_from, date_to)
+        fresh_before = self._fresh_before(date_to)
+        exact_keys = self._exact_keys(list(slots.exact_keys) if slots else [])
+
+        search_task = card_search.search(uid, account_id or "", MailSearchRequest(request, today, slots))
+        fresh_task = (
+            self._search_service.list_headers(uid, after=fresh_after, before=fresh_before, limit=FRESH_LIMIT)
+            if run_fresh else self._none()
+        )
+        key_tasks = [self._search_service.list_headers(uid, key=k, limit=KEY_LIMIT) for k in exact_keys]
+        search_res, fresh_res, *key_res = await asyncio.gather(
+            search_task, fresh_task, *key_tasks, return_exceptions=True
+        )
+        if isinstance(search_res, BaseException):
+            logger.error(f"📬 EmailSearchAgent: card search failed: {search_res}", exc_info=search_res)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"Email search failed: {search_res}")
+
+        found = cast(MailSearchResult, search_res)
+        seen = {*found.shown_ids, *(i for ids in found.folded_ids.values() for i in ids)}
+        fresh, by_key, notes = self._live_lists(
+            fresh_res if run_fresh else None, run_fresh, fresh_after, fresh_before, exact_keys, key_res, seen)
+        payload = {
+            "index": {
+                "mode": found.mode,
+                "sections": [[section.kind, section.text] for section in found.sections],
+                "shown_ids": list(found.shown_ids),
+                "folded_ids": {k: list(v) for k, v in found.folded_ids.items()},
+                "has_attachments": any(card.attachments for card in found.shown),
+            },
+            "fresh": fresh,
+            "by_key": by_key,
+            "notes": notes,
+        }
+        duration_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"📬 EmailSearchAgent v2 done in {duration_ms}ms mode={found.mode} shown={len(found.shown_ids)} "
+                    f"slots={'ok' if slots is not None else 'degraded'}")
+        received = self._v2_received(found, fresh, by_key)
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result=json.dumps(payload, ensure_ascii=False),
+            confidence=1.0,
+            metadata={"duration_ms": duration_ms, "mode": found.mode, "shown": len(found.shown_ids),
+                      "slots": "ok" if slots is not None else "degraded"},
+            history_context=(
+                {"email_search_context": {"you_searched": request, "you_received": received}} if received else None),
+        )
+
+    async def _read_slots(
+        self, request: str, history: List[dict], user_id: Optional[str], account_id: Optional[str],
+        local_now: datetime,
+    ) -> Optional[MailQuerySlots]:
+        """The validated slots of the request, or None (degraded, logged): no prompt means no model call, an output
+        that is not a JSON object is retried once, a failed call is not retried. Never raises."""
+        started = time.monotonic()
+
+        def degraded(reason: str) -> None:
+            logger.info(f"[EmailQuerySlots] user={(user_id or '?')[:8]} outcome=degraded:{reason} "
+                        f"ms={int((time.monotonic() - started) * 1000)}")
+
+        try:
+            system = render_slots_prompt(await self.prompt_builder.build_for_agent(
+                SLOTS_PROFILE, user_id=user_id, account_id=account_id, include_biographical=False,
+                include_directives=False, include_location=False))
+        except Exception as exc:
+            logger.warning(f"[EmailQuerySlots] prompt build failed: {type(exc).__name__}: {exc}")
+            degraded("prompt_build_failed")
+            return None
+
+        messages: List[Message] = []
+        for turn in history[-_HISTORY_TURNS:]:
+            text = turn.get("text", "")
+            if text:
+                messages.append(Message(role=turn.get("role", "user"), parts=[MessagePart(text=text)]))
+        messages.append(Message(role="user", parts=[MessagePart(text=slots_user_message(
+            request, local_now, self._tz_name))]))
+
+        for attempt in range(_SLOTS_ATTEMPTS):
+            try:
+                response = await self._call_llm(LLMRequest(
+                    model_name=self.model_name, system_instruction=system, messages=list(messages), tools=[],
+                    max_tokens=EMAIL_SEARCH.slots_max_tokens, disable_safety=True,
+                    response_mime_type="application/json", response_schema=slots_response_schema(),
+                ), turn=attempt)
+            except Exception as exc:
+                logger.warning(f"[EmailQuerySlots] model call failed: {type(exc).__name__}: {exc}")
+                degraded("call_failed")
+                return None
+            text = (response.text or "").strip()
+            try:
+                raw = json.loads(text)
+            except ValueError as exc:
+                reason = f"not JSON: {exc}"
+            else:
+                if isinstance(raw, dict):
+                    slots = parse_query_slots(raw, request)
+                    logger.info(
+                        f"[EmailQuerySlots] user={(user_id or '?')[:8]} outcome=slots "
+                        f"types={','.join(slots.doc_types) or '-'} domains={','.join(slots.domains) or '-'} "
+                        f"people={len(slots.people)} time={slots.time.intent if slots.time else '-'} "
+                        f"exact={len(slots.exact_keys)} ms={int((time.monotonic() - started) * 1000)}")
+                    return slots
+                reason = "not a JSON object"
+            logger.warning(f"[EmailQuerySlots] invalid output on attempt {attempt + 1}/{_SLOTS_ATTEMPTS}: {reason}")
+            messages.append(Message(role="model", parts=[MessagePart(text=text)]))
+            messages.append(Message(role="user", parts=[MessagePart(text=slots_retry_message(reason))]))
+        degraded("invalid_output")
+        return None
+
+    @staticmethod
+    def _v2_bounds(request: str, slots: Optional[MailQuerySlots], today: date) -> Tuple[Optional[datetime],
+                                                                                       Optional[datetime]]:
+        """The live listing's bounds (naive local, as `_parse_date` gives them): the search window's first and last
+        day, only when the window filters and looks back (`period`, `past`); else none."""
+        window = choose_window(mail_concepts(request), slots, today)
+        if (window is None or not window.filters or window.intent not in (INTENT_PERIOD, INTENT_PAST)
+                or window.start is None or window.end is None):
+            return None, None
+        return datetime.combine(window.start, dt_time.min), datetime.combine(window.end, dt_time.max)
+
+    @staticmethod
+    def _v2_received(found: MailSearchResult, fresh: Optional[Dict[str, Any]],
+                     by_key: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The `you_received` entries (v1 shape): the cards on a line of their own, then the header lines."""
+        received: List[Dict[str, Any]] = []
+        for card in found.shown:
+            entry: Dict[str, Any] = {
+                "id": card.mail.email_id,
+                "from": card.mail.from_name or card.mail.from_address,
+                "date": card.mail.sent_day.isoformat(),
+                "summary": (card.profile.title or card.mail.subject)[:200],
+            }
+            if card.attachments:
+                entry["attachments"] = [a.name for a in card.attachments]
+            received.append(entry)
+        headers = list((fresh or {}).get("emails") or [])
+        for group in by_key:
+            headers.extend(group.get("emails") or [])
+        for h in headers:
+            received.append({"id": h.get("email_id", ""), "from": h.get("from", ""), "date": h.get("date", ""),
+                             "summary": (h.get("subject") or "")[:200]})
+        return received
 
     # ------------------------------------------------------------------
     # Helpers
@@ -474,6 +658,30 @@ class EmailSearchAgent(BaseAgent):
         except (ValueError, TypeError):
             index_emails = []
         seen = {e.get("email_id") for e in index_emails}
+        fresh, by_key, notes = self._live_lists(fresh_res, run_fresh, fresh_after, fresh_before, exact_keys, key_res,
+                                                seen)
+
+        empty = not index_emails and not notes and not (fresh and fresh["emails"]) \
+            and not any(g["emails"] for g in by_key)
+        if empty:
+            return _NO_EMAILS_FOUND
+        return json.dumps(
+            {"count": len(index_emails), "emails": index_emails, "fresh": fresh, "by_key": by_key, "notes": notes},
+            ensure_ascii=False,
+        )
+
+    def _live_lists(
+        self,
+        fresh_res: Any,
+        run_fresh: bool,
+        fresh_after: Optional[datetime],
+        fresh_before: Optional[datetime],
+        exact_keys: List[str],
+        key_res: List[Any],
+        seen: Set[Any],
+    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
+        """The fresh headers, the per-key headers and the notes. A listing that failed adds a note and no entry; an
+        id in `seen` (shown earlier) is dropped, and every id listed here joins it."""
         notes: List[str] = []
 
         def add_note(exc: BaseException) -> None:
@@ -514,14 +722,7 @@ class EmailSearchAgent(BaseAgent):
                     seen.add(m.email_id)
             by_key.append({"key": key, "truncated": bool(more), "listed": len(metas), "emails": entries})
 
-        empty = not index_emails and not notes and not (fresh and fresh["emails"]) \
-            and not any(g["emails"] for g in by_key)
-        if empty:
-            return _NO_EMAILS_FOUND
-        return json.dumps(
-            {"count": len(index_emails), "emails": index_emails, "fresh": fresh, "by_key": by_key, "notes": notes},
-            ensure_ascii=False,
-        )
+        return fresh, by_key, notes
 
     @staticmethod
     def _parse_date(value: object, *, end_of_day: bool = False) -> Optional[datetime]:

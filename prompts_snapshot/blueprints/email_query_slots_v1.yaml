@@ -1,0 +1,4 @@
+blueprint_id: email_query_slots_v1
+class_order:
+- output_format
+outer_class: EmailQuerySlots extends Agent

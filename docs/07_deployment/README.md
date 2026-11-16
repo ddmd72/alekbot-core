@@ -662,6 +662,19 @@ has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
 scanned PDFs of 10 pages or fewer (email index v2 slice 5). Read with `os.getenv` in `composition/email_card_setup.py`,
 never in `load_settings()`; it needs no deploy key (the code default applies) and no index.
 
+**Email search v2.** `EMAIL_SEARCH_V2` (optional; empty or unset = off, `1` = on) makes the email agent's `search_emails`
+answer from the cards (email index v2 slice 8): one slots call reads the request, then the card search runs; the live
+headers, the per-key Gmail lists, `get_email_details` and `open_email_attachment` are unchanged. Off, the v1 search runs
+unchanged; the switch is the only fallback (a v2 error fails the search). Read with `os.getenv` in
+`composition/email_search_setup.py`, never in `load_settings()`. The code default is off; `make deploy` sets it on the
+main service from the substitution `_EMAIL_SEARCH_V2` (default `1`), fed by the deploy-only key `EMAIL_SEARCH_V2_DEV`
+(`0` in `.env` rolls back to v1 across deploys; never `gcloud run services update`, which the next deploy undoes). Before
+the deploy: the slots prompt (`OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile
+`email_query_slots`) must be uploaded (without it every search runs without slots, one `[EmailQuerySlots]
+outcome=degraded` line each), and the card vector index must be `READY`: `make deploy-indexes` skips vector indexes,
+so it is created by `scripts/infrastructure/create_email_card_vector_index.sh` (without it the meaning list is skipped
+with one WARNING per search and only the key lists answer).
+
 **Email card memory feed.** `EMAIL_CARD_MEMORY` (optional; empty or unset = off, `1` = on) makes Stage 3 of consolidation
 read settled email cards instead of the one-line candidates (email index v2 slice 9; `docs/05_building_blocks/memory/
 README.md` Step 8). Read with `os.getenv` in `composition/email_card_setup.py`, never in `load_settings()`. The code

@@ -220,10 +220,11 @@ EMAIL_SEARCH = AgentDescriptor(
     description="Email archive specialist",
     capability_descriptions={
         Intent.SEARCH_EMAILS: (
-            "Search the user's mail. The indexed archive (the mail kept for its facts) is searched by meaning; "
+            "Search the user's mail. The indexed archive (the mail kept for its facts) is searched by its words, "
+            "identifiers, names, period and meaning; "
             "mail newer than the index is also listed by headers; an exact number, code or address in the query is "
-            "matched across all mail. Returns emails with their ids; index results also name their attachments, "
-            "header lines do not."
+            "matched across all mail. Returns emails with their ids; get_email_details lists an email's attachments "
+            "by name."
         ),
         Intent.GET_EMAIL_DETAILS: (
             "Fetch the full body of a specific email; it lists each attachment with its email: ref. "
@@ -235,7 +236,8 @@ EMAIL_SEARCH = AgentDescriptor(
             "attached). Use after search_emails or get_email_details when the email has an attachment. "
             "One attachment per call; for several, one call per attachment (they run in parallel). "
             'Requires: context={"file_ref": "<email: ref from an [Email file: …] label>"} or '
-            'context={"email_id": "<id from search_emails result>", "name": "<attachment name>"}'
+            'context={"email_id": "<id from search_emails result>"}, adding "name": "<attachment name>" when you '
+            'know it'
         ),
     },
     context_schemas={
@@ -245,7 +247,8 @@ EMAIL_SEARCH = AgentDescriptor(
         Intent.OPEN_EMAIL_ATTACHMENT: {
             "file_ref": FILE_REF_DESCRIPTION,
             "email_id": "Email message ID from a prior search_emails result",
-            "name": "open_email_attachment only: the attachment's filename as search_emails or the [Email file: …] label shows it",
+            "name": ("open_email_attachment only: the attachment's filename as get_email_details or an [Email file: …] "
+                     "label shows it; leave it out to open an email's only attachment or to get the list of its files"),
         },
     },
 )
@@ -577,7 +580,7 @@ FILE_MANAGEMENT = AgentDescriptor(
             "Send one file to the user's chat as a file attachment: a chat file, a document you delivered, a "
             "workspace or skill file, a drive file or an email attachment. One file per call. "
             "Get the ref first: an email attachment's email: ref from the [Email file: …] label get_email_details "
-            "prints (search_emails gives only names); a drive file's drive: ref from work_with_drive_files. "
+            "prints (search_emails gives no ref); a drive file's drive: ref from work_with_drive_files. "
             "Only when the user asks to receive the file itself; to read it or answer from it, open it instead. "
             "A drive audio or video recording is shared as a link by work_with_drive_files, not sent here. "
             "Email attachments of "

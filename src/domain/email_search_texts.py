@@ -7,10 +7,12 @@ A line that says what the index does not hold (`NOTHING_LINE`, `ABSENT_LINE`) is
 only: the recard line says how much mail is not searched yet. A count of 1 has its own singular line.
 """
 
-HEAD_RANKED = ("Indexed mail, best match first. Each card was written from its mail when it was indexed; on a matched: "
+# What a card line can and cannot be trusted for: the ranked head carries it, and a list carries it after its count line.
+CARD_CAVEAT = ("Each card was written from its mail when it was indexed; on a matched: "
                "line, (printed) means the mail prints it as shown, (by translation) another spelling of it, "
                "(automatic) a word the indexer wrote. A file shown as not read (a scan or a locked file) was not read: "
                "its content is unknown. Open the mail before quoting a detail that is not on its card.")
+HEAD_RANKED = "Indexed mail, best match first. " + CARD_CAVEAT
 HEAD_MEANING = "Closest by meaning only (no word of the request matched these cards):"
 NOTHING_LINE = "No indexed mail matches: for the index this answer is final."
 ABSENT_LINE = 'No indexed mail names "{word}".'

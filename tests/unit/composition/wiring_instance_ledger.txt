@@ -28,6 +28,7 @@ src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-de
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
 src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 2  # by-design one per collection: the drive notes' erase requests (drive_note_setup.py) and the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2)
+src.adapters.firestore_email_card_index.FirestoreEmailCardIndex 1  # by-design the one card search reader, built once by build_email_card_search and held by the container's one EmailCardSearchService (email_search_setup.py:28)
 src.adapters.firestore_email_card_store.FirestoreEmailCardStore 1  # by-design the one card store, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py:43)
 src.adapters.firestore_email_reader_budget.FirestoreEmailReaderBudget 1  # by-design the one scan-reader page budget, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
@@ -142,6 +143,7 @@ src.services.drive_search_service.DriveSearchService 1  # by-design single insta
 src.services.drive_sync_scheduler_service.DriveSyncSchedulerService 1  # by-design single instance
 src.services.email_attachment_text_service.EmailAttachmentTextService 1  # by-design the card step's one attachment reader over the container's mailbox provider and the graph's one document service (email_card_setup.py:40)
 src.services.email_card_indexer.EmailCardIndexer 1  # by-design the one card step, attached to the one EmailIndexingService by attach_email_card_step (email_card_setup.py:42, email_indexing_service.py:93)
+src.services.email_card_search_service.EmailCardSearchService 1  # by-design the container's one card search (service_container.py, email_search_setup.py:28), shared by every user's EmailSearchAgent through UserAgentFactory
 src.services.email_card_service.EmailCardService 1  # by-design single instance, held by the one EmailCardIndexer (email_card_setup.py:39)
 src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-design single instance
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance

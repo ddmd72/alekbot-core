@@ -8,7 +8,7 @@ from src.domain.email_search_merge import (
     GROUP_ABOUT, GROUP_LABELLED, GROUP_MEANING, GROUP_SLOT, GROUP_TRANSLATED, Candidate, RankedResult,
 )
 from src.domain.email_search_render import render_list, render_ranked
-from src.domain.email_search_texts import HEAD_MEANING, HEAD_RANKED
+from src.domain.email_search_texts import CARD_CAVEAT, HEAD_MEANING, HEAD_RANKED
 from src.domain.email_search_time import TimeWindow
 from tests.unit.domain.email_search_fixtures import booking, invoice, receipts, school_news
 
@@ -122,6 +122,7 @@ def test_a_list_block_all_shown_with_the_fold_and_the_recard_line():
     assert out.mode == "list" and out.total == 3
     assert out.text.splitlines() == [
         "3 indexed mails for September 2026, all shown, newest first.",
+        CARD_CAVEAT,
         *render_result_line(cards[0], ()).splitlines(),
         "  + 1 more of the same kind from supermercado.example, Sep 2026",
         *render_result_line(cards[1], ()).splitlines(),

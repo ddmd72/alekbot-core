@@ -1,0 +1,6 @@
+agent_id: email_query_slots
+blueprint_id: email_query_slots_v1
+tokens:
+  OUTPUT_FORMAT_EMAIL_QUERY_SLOTS:
+    non_overridable: true
+    order: 10
