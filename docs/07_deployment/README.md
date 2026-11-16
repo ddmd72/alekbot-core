@@ -657,14 +657,11 @@ service from the substitution `_EMAIL_CARD_ONLINE` (default `1`), fed by the dep
 has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
 `READY` before switching it on together with a deploy that queries them (slice 8); the write path needs none.
 
-**Email search v2.** `EMAIL_SEARCH_V2` (optional; empty or unset = off, `1` = on) makes the email agent's `search_emails`
-answer from the cards (email index v2 slice 8): one slots call reads the request, then the card search runs; the live
-headers, the per-key Gmail lists, `get_email_details` and `open_email_attachment` are unchanged. Off, the v1 search runs
-unchanged; the switch is the only fallback (a v2 error fails the search). Read with `os.getenv` in
-`composition/email_search_setup.py`, never in `load_settings()`. The code default is off; `make deploy` sets it on the
-main service from the substitution `_EMAIL_SEARCH_V2` (default `1`), fed by the deploy-only key `EMAIL_SEARCH_V2_DEV`
-(`0` in `.env` rolls back to v1 across deploys; never `gcloud run services update`, which the next deploy undoes). Before
-the deploy: the slots prompt (`OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile
+**Email card search.** The email agent's `search_emails` answers from the cards (email index v2 slice 8): one slots call
+reads the request, then the card search runs; the live headers, the per-key Gmail lists, `get_email_details` and
+`open_email_attachment` are unchanged. There is no switch and no v1 search since slice 10 (a card-search error fails the
+search); `EMAIL_SEARCH_V2` and the deploy-only key `EMAIL_SEARCH_V2_DEV` are gone, so a leftover `EMAIL_SEARCH_V2_DEV` in
+`.env` is dead and can be removed. Before the deploy: the slots prompt (`OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile
 `email_query_slots`) must be uploaded (without it every search runs without slots, one `[EmailQuerySlots]
 outcome=degraded` line each), and the card vector index must be `READY`: `make deploy-indexes` skips vector indexes,
 so it is created by `scripts/infrastructure/create_email_card_vector_index.sh` (without it the meaning list is skipped

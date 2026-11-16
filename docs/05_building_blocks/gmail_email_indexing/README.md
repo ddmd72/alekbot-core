@@ -13,8 +13,10 @@ from the full body and the text of the readable attachments; neither is stored. 
 `docs/10_rfcs/EMAIL_INDEX_V2_RFC.md`.
 
 **The card lives on the mail's v1 document** (§4.5). The v1 fields (`text` = the classifier's fact sentence, `tags`,
-`category`, `metadata`, the four v1 vectors) are still written. Memory consolidation reads the fact and the other text fields
-until the memory feed (RFC slice 9b) is complete, and the four v1 vectors are removed by RFC slice 10.
+`category`, `metadata`) are still written; the four v1 vectors and `embedding_pending` are gone (RFC slice 10: no embedding
+at indexing, no vector search over them, no repair). Memory consolidation reads the fact and the other text fields until
+the memory feed (RFC slice 9b) is complete. A stored document that still carries the old vector fields parses (unknown
+fields are ignored); `scripts/email/drop_v1_vectors.py` deletes them to free storage.
 
 **Provider-agnostic design:** Adding Outlook = one new `OutlookProviderAdapter`. Zero changes to domain, services, or agents.
 
@@ -34,7 +36,6 @@ Driven side (background processing):
     → WorkerHandler → EmailIndexingService
         → GmailProviderAdapter (list + fetch)
         → EmailClassificationAgent (classify + tag)
-        → GeminiEmbeddingAdapter (4 v1 vectors)
         → FirestoreIndexedEmailRepository (store)
         → EmailCardIndexer (card, optional: EMAIL_CARD_ONLINE)
         → re-enqueue if more pages
@@ -43,8 +44,8 @@ Driven side (background processing):
 Query side (SmartAgent delegation):
   SmartResponseAgent.delegate_to_specialist(intent, query)
     → AgentCoordinator → EmailSearchAgent
-        → EmailCardSearchService (search_emails, over the card index; EMAIL_SEARCH_V2)
-        → EmailSearchService (v1 search when the switch is off / fetch / attachment)
+        → EmailCardSearchService (search_emails, over the card index)
+        → EmailSearchService (live headers / fetch / attachment)
         → GmailProviderAdapter (live fetch for details/attachments)
 ```
 
@@ -113,22 +114,17 @@ A job is created with `triggered_by` = `"user"` (manual via Cabinet UI), `"sched
 Chunk size: **150 emails per page** (`run_indexing_job(page_size=150)`; `GMAIL_DEFAULT_QUERY` filters Primary + Updates tabs, excludes spam/trash).
 
 1. **List:** `GmailProviderAdapter.list_emails(query, page_token)` → `[EmailMetadata]`
-1a. **Skip the stored:** `IndexedEmailRepository.get_consolidation_marks(user_id, ids)` is called once for the page, before classification. In `incremental` and `backfill` mode an email already in the index is dropped (never re-classified, re-fetched, re-embedded or re-saved; one INFO line counts them): the incremental run starts from the day of `indexed_through`, so it re-lists that day. The `reindex` mode is refused (email index v2, card slice 1): `run_indexing_job` ends such a job `failed` with the error `reindex_disabled` before any Gmail call, since its whole-document re-save would wipe the v2 card fields. The Cabinet does not offer it, and `POST /api/gmail/index` refuses it with 400 `reindex_disabled`; the worker refusal stays for any other caller.
+1a. **Skip the stored:** `IndexedEmailRepository.get_consolidation_marks(user_id, ids)` is called once for the page, before classification. In `incremental` and `backfill` mode an email already in the index is dropped (never re-classified, re-fetched or re-saved; one INFO line counts them): the incremental run starts from the day of `indexed_through`, so it re-lists that day. The `reindex` mode is refused (email index v2, card slice 1): `run_indexing_job` ends such a job `failed` with the error `reindex_disabled` before any Gmail call, since its whole-document re-save would wipe the v2 card fields. The Cabinet does not offer it, and `POST /api/gmail/index` refuses it with 400 `reindex_disabled`; the worker refusal stays for any other caller.
 2. **Exclusion pre-filter:** Skip senders/domains in `email_exclusions` collection.
 3. **Classify:** `classify_batch(emails, user_id, account_id=job.account_id)` on the classifier port → each email gets `category` + `tags` + `should_index` boolean.
    A model-provider outage (`PROVIDER_OUTAGE_TYPES`, incl. both providers down) is not a classification failure: it propagates, the job stays `running`, `/worker` answers 503 and Cloud Tasks retries the page; when the attempts run out the job stays `running` until the watchdog (§4.4) marks it `failed`.
 4. **Filter:** Drop emails where `should_index=False` (noise).
 5. **Fetch:** `GmailProviderAdapter.get_email_content(email_id)` → full body + attachments list.
-6. **Embed:** `GeminiEmbeddingAdapter.embed_text()` × 4 vectors:
-   - `text_vector` — full body embedding
-   - `tags_vector` — category + tags
-   - `metadata_vector` — sender, subject, date
-   - `attachments_vector` — attachment filenames + types
-7. **Store:** `FirestoreIndexedEmailRepository.save(IndexedEmail)` — upsert by `email_id`.
-7a. **Card (email index v2, optional):** when `EMAIL_CARD_ONLINE` is on, `EmailCardIndexer.card_page` makes the v2 card of each mail just saved and stores it with one compare-and-set field update (`expect = absent`) on the same document, after the v1 save. A failure of this step is logged (`[EmailCard] page step failed`) and never stops the page; only a revoked grant propagates. See "Card fields on the facts document" below.
-8. **Advance:** Update `IndexingJob.next_page_token`, increment counters.
-9. **Re-enqueue:** If `next_page_token` present → enqueue next Cloud Task.
-10. **Complete:** If no more pages → mark job `COMPLETED`, call `UserNotificationService.send_system_alert()`.
+6. **Store:** `FirestoreIndexedEmailRepository.save(IndexedEmail)` — upsert by `email_id`.
+6a. **Card (email index v2, optional):** when `EMAIL_CARD_ONLINE` is on, `EmailCardIndexer.card_page` makes the v2 card of each mail just saved and stores it with one compare-and-set field update (`expect = absent`) on the same document, after the v1 save. A failure of this step is logged (`[EmailCard] page step failed`) and never stops the page; only a revoked grant propagates. See "Card fields on the facts document" below.
+7. **Advance:** Update `IndexingJob.next_page_token`, increment counters.
+8. **Re-enqueue:** If `next_page_token` present → enqueue next Cloud Task.
+9. **Complete:** If no more pages → mark job `COMPLETED`, call `UserNotificationService.send_system_alert()`.
 
 ### 4.3 Scheduled Auto-Indexing
 
@@ -234,7 +230,7 @@ Specialist agent registered in `AgentRegistry`. Accessible exclusively via `Smar
 
 | Intent | Payload | What Happens |
 |---|---|---|
-| `search_emails` | `{"query": "..."}` | One small slots call, then `EmailCardSearchService` over the card index (§6.2), plus live headers of mail newer than the index and literal matches of exact keys. With `EMAIL_SEARCH_V2` off: the v1 path (LLM key extraction, 7-stream RRF over four vectors) |
+| `search_emails` | `{"query": "..."}` | One small slots call, then `EmailCardSearchService` over the card index (§6.2), plus live headers of mail newer than the index and literal matches of exact keys. |
 | `get_email_details` | `{"email_id": "..."}` | Direct Gmail API fetch → full body returned as text |
 | `open_email_attachment` | `{"file_ref": "email:<message id>/<part>"}` or `{"email_id": "...", "name": "file.pdf"}` | Gmail API: one listing of the message, one download of the chosen part → `FileConversionService.open_email` → document service (scans through the reader, native PDF/image attached for models that read them) |
 
@@ -283,11 +279,10 @@ Specialist agent registered in `AgentRegistry`. Accessible exclusively via `Smar
 5. **Result.** One JSON object: `index` (`mode`, `sections` as `[kind, text]` pairs, `shown_ids`, `folded_ids`,
    `has_attachments`), `fresh`, `by_key`, `notes`. A section is `tool` text (heads, count lines, footers, hints) or `mail`
    text (card lines and fold lines). `_format_email_search_compact` prints tool sections as they are and wraps each mail
-   section in its own `wrap_untrusted` block. A JSON without `index` renders as v1 did.
-6. **Switch.** `EMAIL_SEARCH_V2` (optional, read with `os.getenv` in `src/composition/email_search_setup.py`; code default
-   off; `make deploy` sets it on through `EMAIL_SEARCH_V2_DEV`, default `1`; `0` rolls back to v1). Off: the v1 path (`emails`
-   key, one wrapped block) runs unchanged. Logs: `[EmailSearchV2]` (mode, shown, uncarded), `[EmailQuerySlots]` (outcome),
-   `meaning list skipped` (the vector index is missing); never the request text or mail content.
+   section in its own `wrap_untrusted` block.
+6. **No switch.** The v1 path and `EMAIL_SEARCH_V2` are gone (RFC slice 10): a card-search error fails the search. Logs:
+   `[EmailSearchV2]` (mode, shown, uncarded), `[EmailQuerySlots]` (outcome), `meaning list skipped` (the vector index is
+   missing); never the request text or mail content.
 
 ### 6.3 Live Access (`get_email_details`, `open_email_attachment`)
 
@@ -359,7 +354,7 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/services/oauth_connect_service.py`: the connect flow (start, complete); `src/adapters/google/google_oauth_provider.py`: Google consent URL, code exchange, revoke. Token refresh lives in `GmailProviderAdapter`.
 - `src/adapters/firestore_credential_store.py`: encrypted credential store.
 - `src/services/user_notification_service.py`: System alert delivery.
-- `src/agents/email_search_agent.py`: Specialist agent (3 intents); `search_emails` runs the slots call and `EmailCardSearchService` when it holds a `card_search`.
+- `src/agents/email_search_agent.py`: Specialist agent (3 intents); `search_emails` runs the slots call and `EmailCardSearchService`.
 - `src/agents/email_classification_agent.py`: Batch classifier (built per batch).
 - `src/composition/email_classifier_runner.py`: `EmailClassifierPort` — builds the classifier per batch for the job's user and account.
 - `src/handlers/worker_handler.py`: Cloud Tasks dispatcher.
@@ -368,7 +363,7 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
 - `src/domain/email_attachment.py`, `src/domain/email_attachment_policy.py`, `src/services/email_attachment_text_service.py`: attachment text for the email index v2 (noise filter, the readable kinds, the input cut, one outcome per listed file). Email index v2; read by the card step (slice 6).
 - `src/domain/email_card_source.py`, `email_card_prompt.py`, `email_card_reply.py`, `email_card_document.py`, `src/ports/email_card_writer_port.py`, `src/agents/email_card_agent.py`, `src/composition/email_card_runner.py`, `src/services/email_card_service.py`: the email index v2 card writer (one Flash-Lite call per mail, then build and embed). Wired online by `src/composition/email_card_setup.py` behind `EMAIL_CARD_ONLINE` (slice 6; stores through `src/services/email_card_indexer.py`, `src/adapters/firestore_email_card_store.py`, `src/domain/email_card_lifecycle.py`). `EmailFullContent.recipients` carries the To and Cc addresses (the "owner is a direct recipient" input).
-- Email search v2 (slice 8, wired behind `EMAIL_SEARCH_V2`): `src/domain/email_search_*.py` (query, time, merge, fold, texts, render, params), `src/domain/email_query_slots.py` (the slots prompt, schema and user message), `src/ports/email_card_index.py` with `src/adapters/firestore_email_card_index.py` and `src/adapters/in_memory_email_card_index.py`, `src/services/email_card_search_service.py`, `src/composition/email_search_setup.py` (the switch and the build), `scripts/infrastructure/create_email_card_vector_index.sh`, and the offline snapshot harness `scripts/validation/email_eval/search_v2_snapshot.py`. Tokens: `OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile `email_query_slots`.
+- Email card search (slice 8): `src/domain/email_search_*.py` (query, time, merge, fold, texts, render, params), `src/domain/email_query_slots.py` (the slots prompt, schema and user message), `src/ports/email_card_index.py` with `src/adapters/firestore_email_card_index.py` and `src/adapters/in_memory_email_card_index.py`, `src/services/email_card_search_service.py`, `src/composition/email_search_setup.py` (the build), `scripts/infrastructure/create_email_card_vector_index.sh`, and the offline snapshot harness `scripts/validation/email_eval/search_v2_snapshot.py`. Tokens: `OUTPUT_FORMAT_EMAIL_QUERY_SLOTS`, blueprint `email_query_slots_v1`, profile `email_query_slots`.
 - Memory feed (slice 9, behind `EMAIL_CARD_MEMORY`): the filtered card to Stage 3 email triage; see `docs/05_building_blocks/memory/README.md` and RFC §6.7.
 
 ---
@@ -377,8 +372,8 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 
 **Status:** Phases 1–7 complete (v1 pipeline). Email index v2 (RFC `docs/10_rfcs/EMAIL_INDEX_V2_RFC.md` §9 has the per-slice
 table): the card, attachment text, extraction, the online path and the re-card are built and live; scanned PDFs are built;
-search v2 is on by default with the `EMAIL_SEARCH_V2_DEV=0` deploy kill switch; the memory feed is on by default with a
-switch back to the one-line form; removing the v1 vectors (slice 10) is next, with no rollback; the classifier's fact
-sentence stops with slice 9b.
+the card search is the only email search (no switch); the memory feed is on by default with a switch back to the one-line
+form; the v1 vectors, their indexes, the v1 search and the embedding repair are removed (slice 10, no rollback); the
+classifier's fact sentence stops with slice 9b.
 
 **Last Updated:** 2026-11-16
