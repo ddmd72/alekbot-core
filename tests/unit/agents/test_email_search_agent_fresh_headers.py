@@ -1,20 +1,21 @@
 """EmailSearchAgent.search_emails - fresh headers (mail newer than the index) and exact keys, decided by code."""
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock
 
-import pytest
 
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.email_search_agent import EmailSearchAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.email import EmailMetadata
 from src.domain.email_open_texts import LIVE_NOTE_NOT_CONNECTED, LIVE_NOTE_UNAVAILABLE
+from src.domain.email_search_render import MODE_NOTHING, MODE_RANKED, MailSearchResult
 from src.domain.exceptions import EmailNotConnected
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, LLMResponse, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
+from tests.unit.domain.email_search_fixtures import school_news
 
 UTC = timezone.utc
 NOW = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
@@ -39,16 +40,7 @@ class FakeService:
         self.watermark = watermark
         self.listing: Dict[Optional[str], object] = {}
         self.calls: List[dict] = []
-        self.vector_calls: List[dict] = []
-        self.vector_error: Optional[Exception] = None
 
-    async def vector_search(self, **kwargs) -> str:
-        self.vector_calls.append(kwargs)
-        if self.vector_error:
-            raise self.vector_error
-        if not self.index:
-            return NO_EMAILS
-        return json.dumps({"count": len(self.index), "emails": self.index})
 
     async def index_watermark(self, user_id: str) -> Optional[datetime]:
         return self.watermark
@@ -67,24 +59,51 @@ class FakeService:
         return [c for c in self.calls if c["key"] is not None]
 
 
+class FakeCardSearch:
+    """The card search: answers with the service's `index` hits as ranked cards (a card per hit id), or nothing."""
+
+    def __init__(self, service: FakeService):
+        self.service = service
+
+    async def search(self, user_id, account_id, request):
+        cards = tuple(school_news(h["email_id"], h["text"], date(2026, 2, 10)) for h in self.service.index)
+        ids = tuple(c.mail.email_id for c in cards)
+        return MailSearchResult(text="", mode=MODE_RANKED if cards else MODE_NOTHING, shown_ids=ids, folded_ids={},
+                                ranked_ids=ids, total=len(ids), sections=(), shown=cards)
+
+
+def _slots_of(extraction: dict) -> dict:
+    """The v1 extraction's period and exact keys, as the slots call's answer."""
+    start, end = extraction.get("date_from"), extraction.get("date_to")
+    time = ({"intent": "period", "from": start or "", "to": end or ""} if start or end
+            else {"intent": "none", "from": "", "to": ""})
+    keys = extraction.get("exact_keys")
+    return {"subject": "", "doc_types": [], "domains": [], "people": [], "time": time,
+            "exact_keys": keys if isinstance(keys, list) else [], "scope": "top"}
+
+
 def _agent(service: FakeService, extraction: dict, tz: str = "UTC") -> EmailSearchAgent:
     llm = AsyncMock(spec=LLMPort)
-    base = {"primary_query": "invoice", "alternative_query": "payment", "tags": ["billing"],
-            "date_from": None, "date_to": None, "exact_keys": []}
-    llm.generate_content.return_value = LLMResponse(text=json.dumps({**base, **extraction}), tool_calls=[])
+    llm.generate_content.return_value = LLMResponse(text=json.dumps(_slots_of(extraction)), tool_calls=[])
     builder = AsyncMock(spec=PromptBuilderPort)
     builder.build_for_agent.return_value = "prompt"
     context = AgentExecutionContext(agent_type="email_search", provider=llm, model_name="m", tier=PerformanceTier.ECO,
                                     capabilities=ProviderCapabilities(), resilience_port=InMemoryProviderResilience())
-    return EmailSearchAgent(
+    agent = EmailSearchAgent(
         config=AgentConfig(agent_id="email_search_agent_user123", agent_type="email_search"),
         execution_context=context, prompt_builder=builder, email_search_service=service,  # type: ignore[arg-type]
+        card_search=FakeCardSearch(service),  # type: ignore[arg-type]
         user_id="user123", user_timezone=tz, clock=lambda: NOW,
     )
+    # the slots keep only the keys the request text holds, and a window filters only when the text names it
+    days = [d for d in (extraction.get("date_from"), extraction.get("date_to")) if d]   # a window filters only when named
+    agent.test_request = " ".join(  # type: ignore[attr-defined]
+        ["mail", *days, *[k for k in _slots_of(extraction)["exact_keys"] if isinstance(k, str)]])
+    return agent
 
 
 async def _search(agent: EmailSearchAgent) -> Tuple[object, dict]:
-    msg = AgentMessage(intent=AgentIntent.QUERY, payload={"query": "mail", "history": []}, sender="s",
+    msg = AgentMessage(intent=AgentIntent.QUERY, payload={"query": agent.test_request, "history": []}, sender="s",  # type: ignore[attr-defined]
                        recipient="r", task_id="t", context={"user_id": "user123", "account_id": "acc1"})
     response = await agent.execute(msg)
     assert response.status == AgentStatus.SUCCESS
@@ -169,13 +188,6 @@ async def test_an_end_date_in_the_future_leaves_before_open():
     assert service.fresh_calls()[0]["before"] is None
 
 
-async def test_the_index_search_keeps_its_naive_dates():
-    service = FakeService(watermark=None)
-    await _search(_agent(service, {"date_from": "2026-03-02", "date_to": "2026-03-04"}))
-    call = service.vector_calls[0]
-    assert call["date_from"] == datetime(2026, 3, 2) and call["date_to"].tzinfo is None
-
-
 # ----------------------------------------------------------------- exact keys
 
 async def test_keys_are_cleaned_deduplicated_and_capped_at_three():
@@ -255,15 +267,6 @@ async def test_a_failed_key_listing_leaves_the_other_groups():
 
     assert [g["key"] for g in body["by_key"]] == ["HW-55812"]
     assert body["notes"] == [LIVE_NOTE_UNAVAILABLE]
-
-
-async def test_a_vector_failure_still_fails_the_search():
-    service = FakeService()
-    service.vector_error = RuntimeError("Firestore error")
-    msg = AgentMessage(intent=AgentIntent.QUERY, payload={"query": "mail", "history": []}, sender="s",
-                       recipient="r", task_id="t", context={"user_id": "user123"})
-    response = await _agent(service, {}).execute(msg)
-    assert response.status == AgentStatus.FAILED and "Email search failed" in response.error
 
 
 async def test_everything_empty_without_notes_is_the_plain_message():
