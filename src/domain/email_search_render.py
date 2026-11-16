@@ -3,18 +3,21 @@ Email search render — the result block Smart reads (email index v2 §5.4, §2.
 
 The lines are the card's own result lines (`email_card_text.render_result_line`, code-built, at most 350 characters),
 a folded group's line carries a `+ N more of the same kind` line under it. The untrusted-content wrapper is the
-caller's: the agent wraps the whole block, as today's index part.
+caller's: the result carries its text as `sections`, each either the tool's own words (`SECTION_TOOL`: the heads, the
+absent, count and recard lines) or mail text (`SECTION_MAIL`: the card lines and their fold lines), so the caller wraps
+only the mail text (formatter rule P14); joined by new lines the sections are the text, byte for byte.
 
 **Ranked** result: the head (what a matched: line means), the lines of rank groups 0-3 capped by group (0 up to ten
 lines, groups 1-3 together up to eight; `scope=all` raises groups 0-3 to fifty together), the meaning-only section
 (up to five lines) under its own head, each request word no card holds, one line counting the cards that match the
 rest, the exact-footer when an exact hit stands first, how many matches are not shown, and the recard line. **List**
-result (a request that names only a period): the count line, then every card of the period, newest first, folded, at
-most LIST_LINES_MAX lines. **Nothing**: the final answer, the absent words, the recard line.
+result (a request that names only a period): the count line, the card caveat (what a card line can be trusted for, as
+the ranked head says it), then every card of the period, newest first, folded, at most LIST_LINES_MAX lines. **Nothing**: the final answer, the absent words, the recard line.
 
 This module holds the result value and its two renderers: one shape, one waiver (as `drive_search`).
 
 Public interface:
+    SECTION_TOOL, SECTION_MAIL, ResultSection
     MailSearchResult
     render_ranked(result, lines, meaning_lines, *, total, scope_all, uncarded, has_topic) -> MailSearchResult
     render_list(window, lines, *, count, uncarded) -> MailSearchResult
@@ -32,26 +35,37 @@ from .email_search_fold import FoldedLine
 from .email_search_merge import GROUP_ABOUT, GROUP_MEANING, RankedResult
 from .email_search_params import LIST_LINES_MAX, SCOPE_ALL_LINES, SHOWN_FIRST, SHOWN_MEANING, SHOWN_REST
 from .email_search_texts import (
-    ABSENT_LINE, FOLD_LINE, FOOTER_EXACT, HEAD_MEANING, HEAD_RANKED, LIST_ALL_LINE, LIST_ALL_LINE_SINGULAR,
+    ABSENT_LINE, CARD_CAVEAT, FOLD_LINE, FOOTER_EXACT, HEAD_MEANING, HEAD_RANKED, LIST_ALL_LINE, LIST_ALL_LINE_SINGULAR,
     LIST_FIRST_LINE, LIST_NONE_LINE, NOTHING_LINE, RECARD_LINE, RECARD_LINE_SINGULAR, SHOWING_LINE, WITHOUT_MANY,
     WITHOUT_MANY_SINGULAR, WITHOUT_ONE, WITHOUT_ONE_SINGULAR,
 )
 from .email_search_time import TimeWindow
 
 MODE_LIST, MODE_RANKED, MODE_NOTHING = "list", "ranked", "nothing"
+SECTION_TOOL, SECTION_MAIL = "tool", "mail"
+
+
+@dataclass(frozen=True)
+class ResultSection:
+    """A run of result lines: `kind` is SECTION_TOOL (the tool's own words) or SECTION_MAIL (text drawn from mail)."""
+    kind: str
+    text: str
 
 
 @dataclass(frozen=True)
 class MailSearchResult:
     """The rendered block and what the harness reads: the `mode`, the ids on a line of their own (in order), the ids
     each fold line stands for, every candidate id ranked before the caps, and how many mails match (rank groups 0-3
-    for a ranked result, the mails of the period for a list)."""
+    for a ranked result, the mails of the period for a list). `sections` are the text split by who wrote it (module
+    docstring); `shown` are the cards on a line of their own, in order."""
     text: str
     mode: str
     shown_ids: Tuple[str, ...]
     folded_ids: Mapping[str, Tuple[str, ...]]
     ranked_ids: Tuple[str, ...]
     total: int
+    sections: Tuple[ResultSection, ...] = ()
+    shown: Tuple[EmailCard, ...] = ()
 
 
 def render_ranked(result: RankedResult, lines: Sequence[FoldedLine], meaning_lines: Sequence[FoldedLine], *,
@@ -62,20 +76,19 @@ def render_ranked(result: RankedResult, lines: Sequence[FoldedLine], meaning_lin
     meaning = tuple(meaning_lines[:SHOWN_MEANING])
     if not shown and not meaning:
         return _nothing(result, uncarded, ranked_ids)
-    out: List[str] = [HEAD_RANKED]
-    out.extend(_render_lines(shown))
+    parts: List[Tuple[str, List[str]]] = [(SECTION_TOOL, [HEAD_RANKED]), (SECTION_MAIL, _render_lines(shown))]
     if meaning:
-        out.append(HEAD_MEANING)
-        out.extend(_render_lines(meaning))
-    out.extend(ABSENT_LINE.format(word=w) for w in result.absent)
-    out.extend(_without(result))
+        parts += [(SECTION_TOOL, [HEAD_MEANING]), (SECTION_MAIL, _render_lines(meaning))]
+    tail: List[str] = [ABSENT_LINE.format(word=w) for w in result.absent]
+    tail.extend(_without(result))
     if has_topic and any(line.group == GROUP_ABOUT for line in shown):
-        out.append(FOOTER_EXACT)
+        tail.append(FOOTER_EXACT)
     shown_mails = sum(1 + len(line.folded) for line in shown)
     if shown_mails < total:
-        out.append(SHOWING_LINE.format(shown=shown_mails, total=total))
-    out.extend(_recard(uncarded))
-    return MailSearchResult("\n".join(out), MODE_RANKED, *_ids((*shown, *meaning)), ranked_ids, total)
+        tail.append(SHOWING_LINE.format(shown=shown_mails, total=total))
+    tail.extend(_recard(uncarded))
+    parts.append((SECTION_TOOL, tail))
+    return _result(parts, MODE_RANKED, (*shown, *meaning), ranked_ids, total)
 
 
 def render_list(window: TimeWindow, lines: Sequence[FoldedLine], *, count: int, uncarded: int) -> MailSearchResult:
@@ -83,15 +96,16 @@ def render_list(window: TimeWindow, lines: Sequence[FoldedLine], *, count: int, 
     shown = tuple(lines[:LIST_LINES_MAX])
     ids = tuple(line.card.mail.email_id for line in lines)
     if count <= 0 or not shown:
-        text = "\n".join([LIST_NONE_LINE.format(period=window.label), *_recard(uncarded)])
-        return MailSearchResult(text, MODE_LIST, (), {}, ids, 0)
+        return _result([(SECTION_TOOL, [LIST_NONE_LINE.format(period=window.label), *_recard(uncarded)])], MODE_LIST,
+                       (), ids, 0)
     shown_mails = sum(1 + len(line.folded) for line in shown)
     if shown_mails >= count:
         head = (LIST_ALL_LINE_SINGULAR if count == 1 else LIST_ALL_LINE).format(count=count, period=window.label)
     else:
         head = LIST_FIRST_LINE.format(count=count, period=window.label, shown=shown_mails)
-    text = "\n".join([head, *_render_lines(shown), *_recard(uncarded)])
-    return MailSearchResult(text, MODE_LIST, *_ids(shown), ids, count)
+    parts = [(SECTION_TOOL, [head, CARD_CAVEAT]), (SECTION_MAIL, _render_lines(shown)),
+             (SECTION_TOOL, _recard(uncarded))]
+    return _result(parts, MODE_LIST, shown, ids, count)
 
 
 # -- implementation -------------------------------------------------------------------------------------------------
@@ -143,7 +157,25 @@ def _recard(uncarded: int) -> List[str]:
 
 def _nothing(result: RankedResult, uncarded: int, ranked_ids: Tuple[str, ...]) -> MailSearchResult:
     out = [NOTHING_LINE, *(ABSENT_LINE.format(word=w) for w in result.absent), *_without(result), *_recard(uncarded)]
-    return MailSearchResult("\n".join(out), MODE_NOTHING, (), {}, ranked_ids, 0)
+    return _result([(SECTION_TOOL, out)], MODE_NOTHING, (), ranked_ids, 0)
+
+
+def _result(parts: Sequence[Tuple[str, List[str]]], mode: str, lines: Sequence[FoldedLine],
+            ranked_ids: Tuple[str, ...], total: int) -> MailSearchResult:
+    """The result of the sections' lines: an empty run is dropped and two runs of one kind are one section, so the
+    sections joined by new lines are the text."""
+    sections: List[ResultSection] = []
+    for kind, run in parts:
+        if not run:
+            continue
+        text = "\n".join(run)
+        if sections and sections[-1].kind == kind:
+            sections[-1] = ResultSection(kind, f"{sections[-1].text}\n{text}")
+        else:
+            sections.append(ResultSection(kind, text))
+    shown_ids, folded = _ids(lines)
+    return MailSearchResult("\n".join(s.text for s in sections), mode, shown_ids, folded, ranked_ids, total,
+                            tuple(sections), tuple(line.card for line in lines))
 
 
 def _ids(lines: Sequence[FoldedLine]) -> Tuple[Tuple[str, ...], Dict[str, Tuple[str, ...]]]:

@@ -123,7 +123,7 @@ le les une des du au aux à dans sur pour par avec et ou mais qui quoi où quand
 je il elle nous vous ils elles ce cet cette ces est sont ne pas
 этом этой этих этим этими этому цього цієї цих цим цими цьому цій
 """.split()) - {"son"}   # "son" (fr possessive) is an English noun; "como" (es) is left out: Lake Como (review m4)
-# Time expressions (en/es/uk/ru, with their case forms; P6 review M2): a time span belongs in the date fields (D25),
+# Time expressions (en/es/pt/uk/ru, with their case forms; P6 review M2): a time span belongs in the date fields (D25),
 # and left in the words it must not become a concept that D29 blocks ("в этом году" -> "No file holds 'году'").
 # Removed like generic words and named in the result's ignored list.
 TIME_WORDS: FrozenSet[str] = frozenset("""
@@ -132,11 +132,20 @@ ago since current
 год году года годы годов лет годах месяц месяца месяце месяцы месяцев неделя недели неделе неделю недель день дня
 дней сегодня вчера завтра недавно прошлый прошлом прошлого прошлой прошлую прошлые прошлых последний последняя
 последнее последние последних последней последнюю текущий текущем текущего этот эту
+годом годам годами месяцу месяцем месяцам месяцами месяцах неделей неделям неделями неделях дню днём днем дни
+дням днями днях прошлое прошлая прошлому прошлым прошлыми последнего последнем последнему последним последними
+текущая текущее текущие текущей текущую текущему текущим текущих текущими следующий следующая следующее следующие
+следующего следующей следующему следующем следующую следующим следующих следующими
 рік року роки років році місяць місяця місяці місяців місяці тиждень тижня тижні тижнів день дня днів сьогодні
 вчора завтра нещодавно минулий минулого минулому минулої минулі минулих останній останнього останні останніх
 останньої поточний поточного цей цю
+роком рокам роками роках місяцю місяцем місяцям місяцями місяцях тижню тижнем тижням тижнями тижнях дню днем дні
+дням днями днях минула минуле минулу минулим минулими минулій остання останнє останню останньому останнім
+останніми поточна поточне поточну поточної поточному поточним поточні поточних наступний наступна наступне
+наступні наступного наступної наступному наступній наступну наступним наступних наступними
 año años mes meses semana semanas día días hoy ayer mañana pasado pasada pasados pasadas último última últimos
 últimas próximo próxima reciente recientes recientemente actual
+ano anos mês dia dias hoje ontem amanhã passado passada passados passadas próximos próximas recente recentes atual
 """.split())
 GENERIC_WORDS: FrozenSet[str] = frozenset("""
 all everything anything something every file files document documents doc docs stuff thing things info information

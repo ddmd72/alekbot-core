@@ -26,6 +26,7 @@ from ..domain.email_open_texts import (
     LIVE_NOTE_NOT_CONNECTED,
     LIVE_NOTE_UNAVAILABLE,
 )
+from ..domain.email_search_render import SECTION_MAIL
 from ..domain.file_ref import FileRefKind
 from ..domain.messaging import SmartResponse
 from ..domain.untrusted_text import EXTERNAL_REMINDER, neutralize_system_tag, wrap_untrusted
@@ -173,7 +174,11 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
     they go inside ONE `<external_content>` wrapper after its reminder (EXTERNAL_FILES_RFC §4.6, P14); the count line
     and the follow-up hints are the tool's own and stay outside. One wrapper, not one per result: a search returns
     every hit past the distance filter, and a wrapper per hit would double the lines; the nonce, not the count of
-    wrappers, is what a forged closing tag cannot guess."""
+    wrappers, is what a forged closing tag cannot guess.
+
+    A v2 result (email index v2, slice 8) carries an `index` block instead of `emails`: its sections come in print
+    order, a tool section printed as it is and each mail section (card lines, fold lines) in a wrapper of its own; the
+    head that tells Smart to open a mail before quoting it is the tool's instruction, so it never sits inside one."""
     if not isinstance(result, str):
         return str(result)
     try:
@@ -183,10 +188,11 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
     if not isinstance(parsed, dict):
         return result
     emails = parsed.get("emails") or []
+    index = parsed.get("index") if isinstance(parsed.get("index"), dict) else None
     fresh = parsed.get("fresh")
     by_key = parsed.get("by_key") or []
     notes = parsed.get("notes") or []
-    if not emails and fresh is None and not by_key and not notes:
+    if not emails and index is None and fresh is None and not by_key and not notes:
         return result
 
     # Sections in print order. Each list's sender/subject/snippet lines sit in its OWN wrapper (a fresh nonce per
@@ -212,7 +218,12 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
                 out.append(f"  → {snippet[:150]}")
         return out
 
-    if emails:
+    if index is not None:
+        for kind, text in index.get("sections") or []:
+            body.append(wrapped(text.split("\n")) if kind == SECTION_MAIL else text)
+        ids_printed += len(index.get("shown_ids") or [])
+        index_has_attachments = bool(index.get("has_attachments"))
+    elif emails:
         index_lines: List[str] = []
         for e in emails:
             line = f"• [{e.get('email_id', '?')}] {e.get('from', '?')} | {e.get('date', '?')}"
@@ -281,7 +292,11 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
     hints: List[str] = []
     if ids_printed:
         hints.append("To read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}")
-    if index_has_attachments:
+    if index_has_attachments and index is not None:
+        hints.append("To read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\"} (an "
+                     "index line counts its files and does not name them: with one file it opens, with several the "
+                     "answer lists them to choose from)")
+    elif index_has_attachments:
         hints.append("To read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", "
                      "\"name\": \"<filename>\"}")
     if header_lines_printed:
