@@ -1,8 +1,11 @@
-"""_format_email_search_compact - fresh headers, key groups and notes (a wrapper per list, the tool's lines outside)."""
+"""_format_email_search_compact - fresh headers, key groups and notes (a wrapper per list, the tool's lines outside).
+The index part is the v2 `index` block (email index v2 §5.4)."""
 import json
 
 from src.domain.email_open_texts import LIVE_MAILBOX_UNAVAILABLE_NOTE
+from src.domain.email_search_texts import HEAD_RANKED
 from src.infrastructure.delegation_engine import _format_email_search_compact
+from tests.unit.domain.email_search_fixtures import index_block
 
 NONCE = "abcd1234"
 OPENING = f'<external_content nonce="{NONCE}"'
@@ -15,7 +18,7 @@ def _h(email_id: str, subject: str = "Invoice FA-0137", snippet: str = "first li
 
 
 def _fmt(**parts) -> str:
-    body = {"count": 0, "emails": [], "fresh": None, "by_key": [], "notes": [], **parts}
+    body = {"fresh": None, "by_key": [], "notes": [], **parts}
     return _format_email_search_compact(json.dumps(body), nonce=lambda: NONCE)
 
 
@@ -38,9 +41,7 @@ def test_a_fresh_only_result_is_rendered_not_returned_raw():
 
 
 def test_index_hits_and_fresh_headers_get_one_wrapper_each():
-    out = _fmt(count=1, emails=[{"email_id": "e1", "from": "clara@example.com", "date": "2026-02-10",
-                                 "text": "Example School parents' meeting", "attachments": []}],
-               fresh={"since": None, "tz": "UTC", "truncated": False, "emails": [_h("m1")]})
+    out = _fmt(index=index_block("e1"), fresh={"since": None, "tz": "UTC", "truncated": False, "emails": [_h("m1")]})
 
     assert out.count(OPENING) == 2 and out.count(CLOSING) == 2
     first_open = out.index(OPENING)
@@ -48,15 +49,15 @@ def test_index_hits_and_fresh_headers_get_one_wrapper_each():
     second_open = out.index(OPENING, first_close)
     fresh_intro = ("Recent mail from the live mailbox, newest first, headers only (sender, subject, first line); "
                    "promotions, spam and trash are not listed:")
-    assert out.index("Found 1 email(s) in the index:") < first_open
+    assert out.index(HEAD_RANKED) < first_open
     assert first_close < out.index(fresh_intro) < second_open
-    index_block, fresh_block = out[first_open:first_close], out[second_open:out.index(CLOSING, second_open)]
-    assert "• [e1] clara@example.com | 2026-02-10" in index_block and "• [m1]" not in index_block
+    index_part, fresh_block = out[first_open:first_close], out[second_open:out.index(CLOSING, second_open)]
+    assert "• [e1] 2026-02-10" in index_part and "• [m1]" not in index_part
     assert "• [m1]" in fresh_block and "• [e1]" not in fresh_block
 
 
 def test_an_empty_fresh_listing_says_so_outside_the_wrapper():
-    out = _fmt(count=1, emails=[{"email_id": "e1", "from": "clara@example.com", "date": "2026-02-10"}],
+    out = _fmt(index=index_block("e1"),
                fresh={"since": "2026-03-03 00:00", "tz": "UTC", "truncated": False, "emails": []})
     _, inside, after = _split(out)
     assert "No mail in the live mailbox since 2026-03-03 00:00." in after and "No mail" not in inside

@@ -109,7 +109,6 @@ def service(mock_job_repo, mock_oauth):
         job_repo=mock_job_repo,
         exclusions_repo=AsyncMock(spec=EmailExclusionsPort),
         classifier=AsyncMock(spec=EmailClassifierPort),
-        embedding=AsyncMock(spec=EmbeddingService),
         oauth=mock_oauth, connector=ConnectorRegistry().get("gmail"),
     )
 
@@ -123,7 +122,6 @@ def service_no_oauth(mock_job_repo):
         job_repo=mock_job_repo,
         exclusions_repo=AsyncMock(spec=EmailExclusionsPort),
         classifier=AsyncMock(spec=EmailClassifierPort),
-        embedding=AsyncMock(spec=EmbeddingService),
         oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 

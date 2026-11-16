@@ -2,13 +2,19 @@
 Email memory candidate — what memory reads of a carded mail (email index v2 §6.7, slice 9). Pure, mypy --strict.
 
 Stage 3 of consolidation turns mail into facts. A mail whose card is settled and readable enters as its card, filtered
-here by code; every other mail enters as the v1 one-line candidate (the agent builds that one). A card is a model's
-reading of mail other people sent: the filter sends what the mail prints (verified time points, printed names and
-values, the people the mail names), the card's own reading (type, life areas, title, summary, `about`) and the mail's
-code fields, and never the index's keys, the link to a confirmed entry, the word lists or the lifecycle fields.
+here by code. A card is a model's reading of mail other people sent: the filter sends what the mail prints (verified
+time points, printed names and values, the people the mail names), the card's own reading (type, life areas, title,
+summary, `about`) and the mail's code fields, and never the index's keys, the link to a confirmed entry, the word lists
+or the lifecycle fields.
+
+**Mail with no readable card** (slice 9b). An `empty` card is skipped: the card writer found nothing of substance in the
+mail, so it is marked consolidated and never sent. Every other mail with no readable card (`abandoned`, `source_gone`,
+unsettled past the wait, or a `carded` card that does not read back) enters as its headers only (`header_candidate`):
+date, sender line, subject and the attachment names, each attachment unread. No snippet: it is a glimpse of
+untrusted text, and the gate's fact sentence is gone.
 
 **The waiting rule.** A mail waits for a settled card (`SETTLED_FOR_MEMORY`); one still unsettled once `indexed_at` is
-older than `MEMORY_CARD_WAIT` enters in the line form, so a mail whose card never settles is not starved.
+older than `MEMORY_CARD_WAIT` enters in the header form, so a mail whose card never settles is not starved.
 
 **Withholding.** Title and summary are free text the card writer wrote. When either names a confirmed person (the
 owner left out) whom the card does not link and the mail's printed parts do not name, both are withheld: a name from
@@ -17,12 +23,14 @@ every card.
 
 Public interface:
     SETTLED_FOR_MEMORY      the card states a mail waits for
-    MEMORY_CARD_WAIT        how long an unsettled mail waits before it enters in the line form
+    MEMORY_CARD_WAIT        how long an unsettled mail waits before it enters in the header form
     EMAIL_CANDIDATES_HEADER the first line of the Stage 3 message (code text, never the system's voice)
     CARD_CANDIDATE_KEYS     the keys a card candidate may carry, in order
+    HEADER_CANDIDATE_KEYS   the keys a header candidate may carry, in order
     CardCandidate           the candidate's fields and whether title and summary were withheld
     memory_card(mail) -> Optional[EmailCard]       the readable card of a `carded` mail, else None
     card_candidate(card, zone, people, *, list_unreadable) -> CardCandidate
+    header_candidate(email, zone) -> dict          the header form of a mail with no readable card
 """
 from __future__ import annotations
 
@@ -33,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .confirmed_people import ConfirmedPeople, people_named_in_texts
 from .drive_enrichment import GradedField, is_unconfirmed
 from .email_card import CardState, EmailCard
+from .email import IndexedEmail
 from .email_card_document import card_from_document
 from .email_memory_mail import MemoryMail
 from .local_time import local_moment
@@ -49,6 +58,8 @@ CARD_CANDIDATE_KEYS: Tuple[str, ...] = (
     "email_id", "date", "from", "from_name", "subject", "doc_type", "life_areas", "title", "summary", "times",
     "printed_names", "printed_values", "attachments", "about", "people",
 )
+
+HEADER_CANDIDATE_KEYS: Tuple[str, ...] = ("email_id", "date", "from", "subject", "attachments")
 
 
 @dataclass(frozen=True)
@@ -103,6 +114,21 @@ def card_candidate(card: EmailCard, zone: str, people: Optional[ConfirmedPeople]
     }
     always = ("email_id", "date", "from", "subject", "doc_type", "about")
     return CardCandidate({k: v for k, v in fields.items() if k in always or v}, withheld)
+
+
+def header_candidate(email: IndexedEmail, zone: str) -> Dict[str, Any]:
+    """The header form of a mail with no readable card, in `HEADER_CANDIDATE_KEYS` order: `date` is the sent moment in
+    `zone` with its offset (a naive stored date is UTC), `from` the raw From line; `attachments` only when the record
+    names files, each `read: false` (its content is unknown)."""
+    fields: Dict[str, Any] = {
+        "email_id": email.email_id,
+        "date": local_moment(email.email_date, zone).isoformat(timespec="seconds"),
+        "from": email.from_address,
+        "subject": email.subject,
+    }
+    if email.attachments:
+        fields["attachments"] = [{"name": name, "read": False} for name in email.attachments]
+    return fields
 
 
 def _names_unprinted_person(card: EmailCard, people: Optional[ConfirmedPeople], printed_names: List[str]) -> bool:

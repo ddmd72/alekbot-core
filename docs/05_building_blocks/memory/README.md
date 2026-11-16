@@ -635,36 +635,40 @@ Runs only after Stage 1–2 succeeded (`consolidation_agent.py:638-712`). **Best
 the run's own budget (the message timeout, which the service derives from the lease, at most 15 minutes) minus a 30 s margin (`_stage3_budget_s`, `consolidation_agent.py:714-723`, `_STAGE3_MARGIN_S`); with under 30 s left it is
 skipped with an INFO line. A Stage 3 error or its timeout is logged as one ERROR line (`Stage 3 (email) failed` /
 `timed out`) and the batch still succeeds: Stage 1 does not re-run, and the emails stay unconsolidated for the next run.
-Cancellation is not caught. Up to 100 unconsolidated `IndexedEmail` facts (1 pass,
-`agent_config.py:186-187`) go to a fresh loop as a numbered candidate list under a "[system_alert] … scanned the
-user's email inbox" message; afterwards all of them are marked consolidated, whatever the model did (`consolidation_agent.py`,
-`_handle_consolidate_email`). Each candidate's `date` is the email's date as the owner-zone moment with its offset
-(`2026-10-23T01:30:00+02:00`; the stored date is naive UTC), and the message tells the model to copy it, as given, into
-`reported_date` and that information whose date or horizon has already passed is history or noise. The pass's span is the
-oldest and newest candidate date, so a copied date is kept and a missing or stray one is clamped (§2.7).
-Skipped when the repository is not wired or nothing is pending.
+Cancellation is not caught. Skipped (result "No email repo") when the repository is not wired or has no card reads
+(`EmailMemoryBatches`); nothing is read or marked then.
 
-**Email cards (email index v2 §6.7, slice 9).** With `EMAIL_CARD_MEMORY` on (deploy default; code default off;
-`composition/email_card_setup.py`) the agent gets the repository's `EmailMemoryBatches` port and Stage 3 reads cards
-instead (`_consolidate_email_cards`): the prompt is built for the `consolidation_email` profile (consolidation's six
-tokens plus `CONSOLIDATION_EMAIL_CANDIDATES`, which explains the cards; no fallback prompt, a build failure fails Stage 3
-before anything is read or marked), the owner's confirmed people list is read once, and each pass reads up to 50 mails
-(`email_card_batch_size`; the payload's `batch_size` overrides): every unconsolidated mail whose card is settled
-(`carded`, `empty`, `abandoned`, `source_gone`), plus every one indexed more than 6 h ago whatever its card
-(`MEMORY_CARD_WAIT`: no online retry of `pending` exists, so strict waiting would starve those mails), oldest
-`indexed_at` first. The message is one code header line (`EMAIL_CANDIDATES_HEADER`, never the system's voice), then one
-numbered JSON object per mail: a carded mail whose card reads back is sent as its code-filtered card
-(`domain/email_memory_candidate.card_candidate`: the mail's id, sent moment in the owner's zone as `date`, sender,
-subject; the card's type, life areas, title and summary; verified time points only; the names and values the mail
-prints; attachments with `read` true or false; `about`; the printed people), every other mail as the one-line form
-above. Never sent: the card's index keys, its links to the confirmed list, the word lists, the lifecycle fields, the v1
-fact sentence. Title and summary are withheld together when they name a listed person (not the owner) whom the card
-does not link and the mail's printed parts do not name, and on every card when the stored list does not parse. Every
-mail of the batch is marked consolidated after its pass; a card written later never clears the mark, so a mail
-consolidated in the line form never re-enters as a card. One INFO line per pass: `Email cards pass n: cards= lines=
-(empty= abandoned= gone= stale= unreadable=) withheld=`. The settled read needs the composite (user_id,
-consolidated_at, card_state, indexed_at). The dry run that compares both forms over the same mail is
-`scripts/email/test_consolidation_dryrun.py --s3-kit --compare-forms` (owner's machine only).
+**Email cards (email index v2 §6.7, slices 9 and 9b).** The agent gets the repository's `EmailMemoryBatches` port
+whenever the repository has it (`composition/user_agent_factory.py`; no switch) and Stage 3 reads mail with its card
+(`_consolidate_email_cards`): the prompt is built for the `consolidation_email` profile (consolidation's six tokens plus
+`CONSOLIDATION_EMAIL_CANDIDATES`, which explains the candidates; no fallback prompt, a build failure fails Stage 3 before
+anything is read or marked), the owner's confirmed people list is read once, and each pass (1 pass,
+`email_triage_passes`) reads up to 50 mails (`email_card_batch_size`; the payload's `batch_size` overrides): every
+unconsolidated mail whose card is settled (`carded`, `empty`, `abandoned`, `source_gone`), plus every one indexed more
+than 6 h ago whatever its card (`MEMORY_CARD_WAIT`: no online retry of `pending` exists, so strict waiting would starve
+those mails), oldest `indexed_at` first. The message is one code header line (`EMAIL_CANDIDATES_HEADER`, never the
+system's voice), then one numbered JSON object per mail sent:
+- a carded mail whose card reads back is sent as its code-filtered card (`domain/email_memory_candidate.card_candidate`:
+  the mail's id, sent moment in the owner's zone as `date`, sender, subject; the card's type, life areas, title and
+  summary; verified time points only; the names and values the mail prints; attachments with `read` true or false;
+  `about`; the printed people);
+- a mail whose card is `empty` is not sent (the card writer found nothing of substance; skipped);
+- every other mail (`abandoned`, `source_gone`, unsettled past the wait, a `carded` card that does not read back) is sent
+  as its headers (`header_candidate`: `email_id`, `date`, the raw From line as `from`, `subject`, and the attachment
+  names each `read: false` when there are any). No snippet, and no v1 fact sentence even on an old record that still
+  stores one.
+
+Each candidate's `date` is the sent moment in the owner's zone with its offset (`2026-10-23T01:30:00+02:00`; the stored
+date is naive UTC); the token tells the model to copy it into `reported_date`. The pass's span is the oldest and newest
+sent date of the mail sent, so a copied date is kept and a missing or stray one is clamped (§2.7). Never sent: the card's
+index keys, its links to the confirmed list, the word lists, the lifecycle fields. Title and summary are withheld together
+when they name a listed person (not the owner) whom the card does not link and the mail's printed parts do not name, and on
+every card when the stored list does not parse. Every mail of the batch, skipped ones included, is marked consolidated
+after its pass, whatever the model did; a pass whose mail is all skipped makes no model call. A card written later never
+clears the mark, so a mail consolidated as its headers never re-enters as a card. One INFO line per pass:
+`Email cards pass n: cards= headers= skipped= (abandoned= gone= stale= unreadable=) withheld=`. The settled read needs the
+composite (user_id, consolidated_at, card_state, indexed_at). The plain dry run of the pass is
+`scripts/email/test_consolidation_dryrun.py --s3-kit` (owner's machine only).
 
 ### Step 9 — the baseline is rebuilt; the batch is deleted
 
@@ -1778,7 +1782,7 @@ Log lines, in pipeline order:
    `SELECT turn, request_text, response_text, tool_calls FROM … prompt_content WHERE agent_type = "consolidation" AND
    timestamp BETWEEN … ORDER BY timestamp` (use `--format=json`). The pass restarts its turn count, so Stage 1, 2a,
    2b and email appear as consecutive runs of turns 1, 2, …; the user message of turn 1 names the pass
-   ("Begin deliberate consolidation.", "FACT CLUSTER REVIEW", "STANDING DIRECTIVES REVIEW", "[system_alert] …email").
+   ("Begin deliberate consolidation.", "FACT CLUSTER REVIEW", "STANDING DIRECTIVES REVIEW", "Email candidates from the owner's mailbox").
 3. `tool_calls` carry the arguments (fact texts, ids, attributes); the log lines of §9.1 carry the results.
 
 ### 9.5 Owner scripts

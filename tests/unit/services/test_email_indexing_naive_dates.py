@@ -57,7 +57,6 @@ def service(gmail, email_repo, job_repo):
         job_repo=job_repo,
         exclusions_repo=exclusions,
         classifier=AsyncMock(spec=EmailClassifierPort),
-        embedding=AsyncMock(spec=EmbeddingService),
         oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 

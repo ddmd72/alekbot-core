@@ -16,8 +16,7 @@ class IndexedEmailRepository(ABC):
     keeps the provider's message id) and the per-provider indexing cursors.
 
     Holds for every method:
-    - Tenancy: user_id scopes every read except get_pending_embeddings (cross-user, for the repair job); account_id is
-      stored but never filtered.
+    - Tenancy: user_id scopes every read; account_id is stored but never filtered.
     - Dates: datetimes come back naive, in UTC; date filters take naive (UTC) or aware datetimes.
     - Legacy: a stored fact that fails IndexedEmail validation is logged and left out of a result. Such a fact is never
       marked consolidated, so get_unconsolidated_batch reads it again each time; no writer produces one, behaviour
@@ -32,25 +31,6 @@ class IndexedEmailRepository(ABC):
         Idempotency: re-saving an email keeps its consolidated_at (P11-G2-1: today it is cleared, so a re-indexed
         email is consolidated again; the indexing pipeline avoids this by carrying the mark from
         get_consolidation_marks).
-        """
-
-    @abstractmethod
-    async def find_nearest(
-        self,
-        user_id: str,
-        vectors: Dict[str, List[float]],
-        limit: int = 10,
-        state: str = "current",
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-    ) -> List[IndexedEmail]:
-        """Multi-vector search: one similarity search per non-None vector key ("vector" | "tags_vector" |
-        "metadata_vector" | "attachments_vector"), each limited to user_id, `state` and the optional email_date range
-        (inclusive), fused by rank; at most `limit` facts, best fused rank first, nothing past the similarity floor.
-
-        No vectors (all None or none given): [] without a search.
-        Errors: a failing channel is logged and skipped; when every channel fails the error is raised
-        (P11-G2-2: today [] is returned, which the search service reports as "no emails found").
         """
 
     @abstractmethod
@@ -123,20 +103,4 @@ class IndexedEmailRepository(ABC):
         yet consolidated). An id that is not stored is absent from the result; no ids: {}.
 
         Used by the indexing pipeline to skip emails already in the index and to keep the mark of one it re-processes.
-        """
-
-    @abstractmethod
-    async def get_pending_embeddings(self, limit: int = 100) -> List[IndexedEmail]:
-        """Facts with embedding_pending true, any user, at most `limit`; a fact that stays pending is returned again.
-
-        Used by EmailEmbeddingRepairService.
-        """
-
-    @abstractmethod
-    async def update_vectors(
-        self, user_id: str, email_id: str, vectors: Dict[str, List[float]]
-    ) -> None:
-        """Write the given non-None vectors and set embedding_pending false (also when some vectors are None).
-
-        Errors: the backend's not-found error (NotFound today) on a missing fact.
         """

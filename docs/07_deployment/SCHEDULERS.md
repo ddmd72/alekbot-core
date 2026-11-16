@@ -3,7 +3,7 @@
 All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
 Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
-`start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
+`start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` (`cloudbuild-dev.yaml`).
 
 ## Two deadlines, do not confuse them
 
@@ -305,22 +305,6 @@ after it ran, so a name merges tasks created close together; it does not make an
 | `interactive_choice` | the Slack interactivity route (`POST /slack/interactivity`), after it has verified the Slack signature on the raw body; one task per button press | the choice: `{binding {kind, id}, option_id, platform, platform_user_id, message_ref, at}` | `interactive_choice-` + a hash of `action_ts:user:block` (a repeated press of the same action is one task) | `WorkerHandler._handle_interactive_choice()` → `InteractiveChoiceService.handle(choice)`: the user is resolved through IAM (an unknown one is `unknown_user`), the handler is picked by the binding's kind (only `fact_question`), then the message is re-rendered; a payload that is not a choice is 400 |
 
 Without the service wired, `/worker` answers `fact_review` or `interactive_choice` with 501.
-
----
-
-### Email Embedding Repair
-
-| Field | Value |
-|-------|-------|
-| **Job name** | `alek-bot-{dev,prod}-repair-email-embeddings` |
-| **Schedule** | `2 * * * *` (hourly at :02 — staggered; still within ≤1h of any `start_email_indexing` tick, so failures from an indexing tick are detected within ≤1h) |
-| **HTTP** | `POST /worker` |
-| **Payload** | `{"task_type": "repair_email_embeddings"}` |
-| **Purpose** | Re-embeds `IndexedEmail` docs where `embedding_pending=True` (set on transient embedding failures during initial indexing). Without this job those emails stay invisible to `find_nearest` search forever. |
-| **Handler** | `WorkerHandler._handle_repair_email_embeddings()` |
-| **Batch cap** | `EmailEmbeddingRepairService.batch_size = 100` per run (cross-user). When the batch saturates, the handler re-enqueues another tick immediately via `enqueue_worker_task` — queue drains on demand without waiting for the next scheduler interval (same pattern as consolidation and email indexing). |
-| **Env** | dev + prod |
-| **RFC** | `docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md` §2.5 |
 
 ---
 

@@ -1,7 +1,7 @@
 """_format_email_search_compact on a v2 result (email index v2 §5.4; slice 8, D4): the `index` block's sections in print
 order, the tool's own text outside every wrapper (the head that says to open a mail before quoting it is an
 instruction), each mail section in a wrapper of its own nonce, the reminder once, the hints, and the fresh and per-key
-lists after it; a v1 result renders as before. The sections come from the real renderer. Invented cast only."""
+lists after it. The sections come from the real renderer. Invented cast only."""
 import json
 import re
 
@@ -112,12 +112,3 @@ def test_a_nothing_result_is_tool_text_only():
     out = _fmt(index)
     assert out.startswith(NOTHING_LINE) and _blocks(out) == [] and EXTERNAL_REMINDER not in out
     assert BODY_HINT not in out
-
-
-def test_a_v1_result_renders_as_before():
-    v1 = {"count": 1, "emails": [{"email_id": "e1", "from": "info@school.example", "date": "2026-03-02",
-                                  "text": "Example School parents' meeting", "attachments": []}],
-          "fresh": None, "by_key": [], "notes": []}
-    counter = iter(range(10 ** 6))
-    out = _format_email_search_compact(json.dumps(v1), nonce=lambda: f"{next(counter):08d}")
-    assert "Found 1 email(s) in the index:" in out and len(_blocks(out)) == 1

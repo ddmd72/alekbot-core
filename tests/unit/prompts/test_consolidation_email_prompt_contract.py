@@ -68,8 +68,8 @@ def test_every_time_label_is_named(label):
     assert re.search(rf"\b{label}\b", BODY)
 
 
-def test_the_line_form_and_reported_date_are_explained():
-    assert "a fact key is the older one-sentence form" in BODY
+def test_the_header_form_and_reported_date_are_explained():
+    assert "is a header: a mail with no readable card" in BODY
     assert "into reported_date" in BODY and "read false" in BODY and "may be absent" in BODY
 
 

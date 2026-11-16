@@ -67,8 +67,8 @@ def test_email_vector_indexes_use_the_live_field_order():
     vectors = [d for d in declared if d[-1][1] == "vector"]
     card = [d for d in vectors if d[-1][0] == "card_vector"]
     v1 = [d for d in vectors if d[-1][0] != "card_vector"]
-    assert len(v1) == 8
-    assert all([n for n, _ in d[:2]] == ["state", "user_id"] for d in v1)
+    # email index v2 (slice 10): the eight v1 vector indexes are gone; the owner deletes the live ones.
+    assert v1 == []
     # email index v2 (slice 6): the card vector index takes v1's live shape on its own state field.
     assert card == [[("card_state", "ASCENDING"), ("user_id", "ASCENDING"), ("card_vector", "vector")]]
     card_entry = next(e for e in _entries() if e["collectionGroup"] == "development_domain_email_facts_v1"

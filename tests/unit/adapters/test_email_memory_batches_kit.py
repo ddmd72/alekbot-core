@@ -46,8 +46,7 @@ def world():
 
 def email(email_id: str, hour: int, user_id: str = "user-1", **over) -> IndexedEmail:
     fields = dict(email_id=email_id, user_id=user_id, account_id="acct-1", source="gmail",
-                  text="Hotel booking RM-55120 confirmed.", vector=[1.0, 0.0, 0.0], tags=["hotel"], category="travel",
-                  metadata={"subject": "Booking"}, subject="Booking", from_address="booking@albergo.example",
+                  subject="Booking", from_address="booking@albergo.example",
                   email_date=T0, indexed_at=T0 + timedelta(hours=hour))
     fields.update(over)
     return IndexedEmail(**fields)
@@ -103,14 +102,19 @@ async def test_old_unsettled_mail_enters_after_the_wait_with_its_state(world):
 
 
 async def test_a_carded_mail_carries_its_card_and_the_v1_record_without_vectors(world):
-    _, repo, store = world
+    db, repo, store = world
     await repo.save_batch([email("carded", 6)])
     await card(store, "carded", carded())
+    # a document written before slice 10 still holds the v1 vectors until the owner runs drop_v1_vectors
+    await db.collection(FACTS).document("user-1_carded").update(
+        {"vector": [1.0, 0.0, 0.0], "tags_vector": [0.0, 1.0, 0.0], "embedding_pending": False})
 
     (got,) = await batch(repo)
 
-    assert got.card_state == "carded" and got.email.text == "Hotel booking RM-55120 confirmed."
-    assert got.email.vector is None and got.email.indexed_at == T0 + timedelta(hours=6)
+    assert got.card_state == "carded" and got.email.email_id == "carded" and got.email.subject == "Booking"
+    assert got.email.from_address == "booking@albergo.example"
+    assert not {"vector", "tags_vector", "embedding_pending"} & set(got.email.model_dump())
+    assert got.email.indexed_at == T0 + timedelta(hours=6)
     assert memory_card(got).mail.email_id == "msg_rome01"
     assert set(got.card_doc) == {"card_state", "card_version", "template_key", "card"}
 

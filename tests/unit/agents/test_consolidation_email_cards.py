@@ -1,6 +1,6 @@
 """Stage 3 reading email cards (email index v2 §6.7, slice 9): with a batch port the email pass builds its prompt for
-`consolidation_email`, sends each carded mail as its filtered card and every other one as the v1 line, under the code
-header, and marks every mail of the batch; without one it is today's pass, byte for byte. The mail, its cards, the
+`consolidation_email`, sends each carded mail as its filtered card and every other one as its headers (slice 9b), under
+the code header, and marks every mail of the batch. The mail, its cards, the
 marks and the people list live on the evaluating fake behind the real repositories; the model is scripted and only the
 messages it was sent are read."""
 import json
@@ -25,7 +25,7 @@ from src.domain.email_card_answer import parse_mail_answer
 from src.domain.email_card_build import build_card
 from src.domain.email_card_input import build_card_input
 from src.domain.email_card_lifecycle import CardExpect, pending_fields, settled_fields
-from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
+from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER, header_candidate
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
@@ -146,7 +146,7 @@ async def seed_card_and_line(world) -> None:
                                  CardExpect.absent())
 
 
-async def test_the_pass_sends_the_header_and_a_card_or_a_line_per_mail_under_the_email_prompt(world):
+async def test_the_pass_sends_the_header_and_a_card_or_the_headers_per_mail_under_the_email_prompt(world):
     await seed_card_and_line(world)
     await world.people.replace(ACC, PEOPLE, "owner_script")
     prompts = RecordingPrompts()
@@ -160,13 +160,15 @@ async def test_the_pass_sends_the_header_and_a_card_or_a_line_per_mail_under_the
     (first,) = agent.firsts
     assert first.startswith(EMAIL_CANDIDATES_HEADER + "\n1. {")
     assert "[system_alert]" not in first and "Today:" in first
-    card, line = numbered(first)
+    card, header = numbered(first)
     assert card["email_id"] == "msg_rome01" and "fact" not in card and card["about"] == "owner"
     assert {"label": "booking_reference", "value": "RM-55120"} in card["printed_values"]
     assert card["date"] == "2025-06-02T10:30:00+01:00"                     # the sent moment in the owner's zone
     assert card["summary"] == "Hotel booking in Rome for 10–14 Aug 2025, 560 EUR."
-    assert line == ConsolidationAgent._email_line_candidate(email("e_pending"), LISBON)
-    assert line["fact"] == "Fact sentence of e_pending."
+    assert header == header_candidate(email("e_pending"), LISBON)            # unsettled past the wait: its headers
+    assert header == {"email_id": "e_pending", "date": "2025-06-02T10:30:00+01:00",
+                      "from": "sender@example.com", "subject": "Subject e_pending"}
+    assert "Fact sentence" not in first                                    # a stored v1 fact is never sent
 
 
 async def test_every_mail_of_the_batch_is_marked_the_line_form_ones_too(world):
@@ -190,33 +192,6 @@ async def test_the_default_card_batch_is_fifty(world):
     marked = await marks(world, *[f"e{i:02}" for i in range(51)])
     assert sum(m is not None for m in marked) == 50 and marked[50] is None
     assert len(numbered(agent.firsts[0])) == 50
-
-
-async def test_without_a_batch_port_the_pass_is_todays_message_byte_for_byte(world):
-    await world.emails.save_batch([email("e1", OLD, attachments=["RM-55120.pdf"]), email("e2", OLD + timedelta(hours=1))])
-    prompts = RecordingPrompts()
-    agent = make_agent(world, batches=False, prompts=prompts)
-
-    await run(agent, number_of_batches=1, batch_size=10)
-
-    def line(i, e, extra):
-        candidate = {"email_id": e, "fact": f"Fact sentence of {e}.", "category": "travel", "tags": ["mail"],
-                     "date": "2025-06-02T10:30:00+01:00", "from": "sender@example.com", "subject": f"Subject {e}",
-                     **extra, "metadata": {"subject": e}}
-        return f"{i}. {json.dumps(candidate, ensure_ascii=False)}"
-
-    expected = (
-        "[system_alert] The system has scanned the user's email inbox on their behalf "
-        "and selected candidates for inclusion in the fact database. "
-        "The selection contains noise. Evaluate the incoming data and process it "
-        "according to your algorithm. Copy the candidate's `date`, as given, into reported_date. "
-        "Information whose date or horizon has already passed is history or noise.\n\n"
-        f"Candidates:\n{line(1, 'e1', {'attachments': ['RM-55120.pdf']})}\n{line(2, 'e2', {})}"
-    )
-    (first,) = agent.firsts
-    assert first.split("\n\nToday: ", 1)[0] == expected
-    assert prompts.built == ["consolidation"]
-    assert all(m is not None for m in await marks(world, "e1", "e2"))
 
 
 async def test_a_prompt_failure_reads_and_marks_nothing(world):

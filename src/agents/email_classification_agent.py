@@ -1,54 +1,44 @@
 """
-Email Classification Agent
-==========================
+Email Classification Agent — the email gate
+===========================================
 
-Classifies a batch of email metadata using Gemini Flash with function calling.
-
-Agentic flow (mirrors the validated POC):
-  1. LLM receives all email metadata in one message.
-  2. LLM calls get_email_details([ids]) for emails with ambiguous snippets.
-  3. LLM produces final JSON array covering all emails.
-  MAX_TURNS = 4 (matching POC).
-
-Falls back to single-pass (no tool calling) when gmail/credentials are absent.
+Decides keep or drop, with one closed reason, for every mail of a listed page (email index v2 §4). One shot: one
+call in JSON mode, no tools; the gate sees the headers and the snippet only (§6.2). The closed reasons are code
+constants (`src/domain/email_gate.py`) rendered into the prompt as a static block; code applies the lean-to-keep rule
+over the answer (`gate_decisions`).
 
 Prompt assembled via PromptBuilder (blueprint="email_classifier_v1").
 
-Primary API: classify_batch() — called directly by EmailIndexingService.
+Primary API: classify_batch() — called by EmailIndexingService through EmailClassifierRunner.
 Not part of the conversational delegation chain.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.email import EmailClassificationResult, EmailMetadata
-from ..domain.oauth_credential import OAuthCredential
+from ..domain.email_gate import gate_decisions, render_gate_reasons_block
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES
-from ..ports.email_provider_port import EmailProviderPort
 from ..ports.llm_port import AgentExecutionContext, LLMRequest, LLMResponse, Message, MessagePart, PROMPT_CACHE_BOUNDARY
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..infrastructure.agent_config import EMAIL_CLASSIFICATION
 
-MAX_TURNS = EMAIL_CLASSIFICATION.max_turns
 MAX_PARSE_RETRIES = EMAIL_CLASSIFICATION.max_parse_retries
+
+_SNIPPET_CHARS = 300
 
 
 class EmailClassificationAgent(BaseAgent):
     """
-    Classifies a batch of email metadata via Gemini Flash with function calling.
+    The email gate over one listed page.
 
     Not an EmailClassifierPort itself: the port's implementation is EmailClassifierRunner (composition), which
     builds this agent per batch for the job's user and passes the job's account.
 
-    When gmail + credentials are provided, uses a multi-turn agentic loop
-    (MAX_TURNS=4) where the LLM can call get_email_details() for ambiguous emails.
-    Falls back to single-pass classification when credentials are absent.
-
-    Output schema per email:
-      {email_id, valuable, valuable_type, category, fact, tags}
+    Output schema per listed mail: {email_id, decision: keep|drop, reason}.
     """
 
     MAX_TOKENS = EMAIL_CLASSIFICATION.max_tokens
@@ -58,18 +48,16 @@ class EmailClassificationAgent(BaseAgent):
         config: AgentConfig,
         execution_context: AgentExecutionContext,
         prompt_builder: Optional[PromptBuilderPort] = None,
-        gmail: Optional[EmailProviderPort] = None,
         user_id: Optional[str] = None,
     ):
         super().__init__(config)
         self._llm = execution_context.provider
         self._model_name = execution_context.model_name
         self._prompt_builder = prompt_builder
-        self._gmail = gmail
         self._user_id = user_id
         logger.info(
             f"📧 EmailClassificationAgent initialized "
-            f"(tier={execution_context.tier.value}, model={self._model_name}, tool_calling={'yes' if gmail else 'no'})"
+            f"(tier={execution_context.tier.value}, model={self._model_name})"
         )
 
     # ------------------------------------------------------------------
@@ -95,17 +83,12 @@ class EmailClassificationAgent(BaseAgent):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredential] = None,
         *,
         account_id: str,
     ) -> List[EmailClassificationResult]:
         """
-        Classify up to 100 emails in an agentic tool-calling loop.
-        Returns one result per input email (including valuable=False).
-
-        The LLM calls get_email_details() for uncertain emails to inspect
-        body text and attachment filenames before deciding.
-        credentials: required for get_email_details tool calls.
+        One decision per input email, in input order. A failed call marks every email `failure` (never kept); a
+        provider outage propagates (Cloud Tasks retries the page).
         account_id: the account whose mail this is. The batch is one execution: every model call of it goes into one
         TokenLedger billed to this account (flushed at the end, also on failure) and is recorded under it.
         """
@@ -113,7 +96,7 @@ class EmailClassificationAgent(BaseAgent):
             return []
         with self._execution_billing_scope(account_id):
             try:
-                return await self._classify(emails, user_id, credentials, account_id)
+                return await self._classify(emails, user_id, account_id)
             finally:
                 await self._flush_billing()
 
@@ -121,163 +104,58 @@ class EmailClassificationAgent(BaseAgent):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredential],
         account_id: str,
     ) -> List[EmailClassificationResult]:
         prompt = await self._build_prompt(user_id, account_id)
         emails_json = self._format_emails(emails)
 
-        # Embed emails into system instruction before the cache boundary so they
-        # are part of the cached static prefix (same pattern as ConsolidationAgent).
+        # Emails go before the cache boundary, after the static template (same pattern as ConsolidationAgent).
         if PROMPT_CACHE_BOUNDARY in prompt:
             static, dynamic = prompt.split(PROMPT_CACHE_BOUNDARY, 1)
             system_instruction = static + "\nEmails to classify:\n" + emails_json + PROMPT_CACHE_BOUNDARY + dynamic
         else:
             system_instruction = prompt + "\nEmails to classify:\n" + emails_json
 
-        has_tools = bool(self._gmail and credentials)
-        tool_declarations = self._get_tool_declarations() if has_tools else None
-
         history: List[Message] = [
             Message(role="user", parts=[MessagePart(text=(
-                f"The following {len(emails)} emails are candidates for the user's long-term personal memory. "
-                "Most will not qualify — your job is to filter ruthlessly and surface only those "
-                "that represent a confirmed fact with lasting personal significance."
+                f"Decide keep or drop, with its reason, for every mail listed above ({len(emails)} in all)."
             ))])
         ]
 
-        logger.debug(
-            f"classify_batch: {len(emails)} emails | "
-            f"tool_calling={'yes' if has_tools else 'no'} | "
-            f"system_instruction ({len(system_instruction)} chars):\n{system_instruction}"
-        )
-
-
-        parse_retries = 0
-
         try:
-            for turn in range(1, MAX_TURNS + 1):
+            for attempt in range(1, MAX_PARSE_RETRIES + 2):
                 request = LLMRequest(
                     model_name=self._model_name,
                     system_instruction=system_instruction,
                     messages=history,
-                    tools=tool_declarations,
+                    tools=None,
                     max_tokens=self.MAX_TOKENS,
-                    response_mime_type="application/json" if not has_tools else None,
+                    response_mime_type="application/json",
                     disable_safety=True,
                     thinking="medium",
                 )
-
-                logger.debug(f"classify_batch: turn {turn}/{MAX_TURNS}")
-                response: LLMResponse = await self._call_llm(request, turn=turn)
+                response: LLMResponse = await self._call_llm(request, turn=attempt)
                 if response.usage_metadata:
                     u = response.usage_metadata
                     logger.info(
-                        f"💰 classify_batch: turn {turn} tokens — "
+                        f"💰 classify_batch: attempt {attempt} tokens — "
                         f"in={u.prompt_tokens} out={u.completion_tokens} total={u.total_tokens}"
                     )
-
-                if not response.tool_calls:
-                    # Final turn — LLM should produce the JSON classification array
-                    raw = response.text or ""
-                    logger.debug(
-                        f"classify_batch: final response turn {turn} ({len(raw)} chars):\n{raw}"
+                raw = response.text or ""
+                try:
+                    return self._parse_response(raw, emails)
+                except ValueError as parse_err:
+                    logger.warning(
+                        f"⚠️ classify_batch: invalid JSON (attempt {attempt}/{MAX_PARSE_RETRIES + 1}): {parse_err}"
                     )
-                    try:
-                        results = self._parse_response(raw, emails)
-                    except ValueError as parse_err:
-                        parse_retries += 1
-                        logger.warning(
-                            f"⚠️ classify_batch: invalid JSON on turn {turn} "
-                            f"(attempt {parse_retries}/{MAX_PARSE_RETRIES + 1}): {parse_err}\n"
-                            f"  Raw ({len(raw)} chars): {raw[:300]}"
-                        )
-                        if parse_retries > MAX_PARSE_RETRIES:
-                            logger.error(
-                                f"💥 classify_batch: parse_error after {parse_retries} attempts"
-                            )
-                            return self._all_failed(emails, "parse_error")
-                        # Retry: send bad response + correction back to the LLM
-                        history.append(
-                            Message(role="model", parts=[MessagePart(text=raw)])
-                        )
-                        history.append(
-                            Message(
-                                role="user",
-                                parts=[MessagePart(text=(
-                                    f"Your previous output was not valid JSON. Error: {parse_err}. "
-                                    "Output ONLY the valid JSON array as required by output_format. "
-                                    "No markdown, no explanation. Start with [ and end with ]."
-                                ))],
-                            )
-                        )
-                        continue
-
-                    valuable = [r for r in results if r.valuable]
-                    logger.info(
-                        f"📊 classify_batch: {len(emails)} emails → {len(valuable)} valuable "
-                        f"(turns={turn})"
-                    )
-                    for r in valuable:
-                        logger.debug(
-                            f"  ✅ {r.email_id} | {r.category} | {r.fact} | tags={r.tags}"
-                        )
-                    for r in results:
-                        if not r.valuable:
-                            logger.debug(f"  ❌ {r.email_id}")
-                    return results
-
-                # LLM called get_email_details — execute and continue
-                logger.info(
-                    f"classify_batch: turn {turn} — "
-                    f"{len(response.tool_calls)} tool call(s)"
-                )
-
-                # Append model's tool-call turn to history
-                if response.raw_content is not None:
-                    history.append(
-                        Message(role="model", parts=[], raw_content=response.raw_content)
-                    )
-                else:
-                    history.append(
-                        Message(
-                            role="model",
-                            parts=[MessagePart(tool_call=tc) for tc in response.tool_calls],
-                        )
-                    )
-
-                # Execute each tool call and collect tool responses
-                tool_response_parts: List[MessagePart] = []
-                for tc in response.tool_calls:
-                    if tc.name != "get_email_details":
-                        logger.warning(
-                            f"classify_batch: unexpected tool '{tc.name}' — skipping"
-                        )
-                        continue
-
-                    requested_ids: List[str] = tc.args.get("email_ids", [])
-                    logger.info(
-                        f"  → get_email_details for {len(requested_ids)} email(s): "
-                        f"{[eid[:8] for eid in requested_ids]}"
-                    )
-
-                    details = await self._fetch_email_details(requested_ids, credentials)
-                    tool_response_parts.append(
-                        MessagePart(
-                            tool_response={
-                                "name": "get_email_details",
-                                "response": {"result": details},
-                            }
-                        )
-                    )
-
-                history.append(Message(role="user", parts=tool_response_parts))
-
-            # MAX_TURNS reached without a final response
-            logger.warning(
-                f"⚠️ classify_batch: MAX_TURNS={MAX_TURNS} reached without final classification"
-            )
-            return self._all_failed(emails, "max_turns")
+                    history.append(Message(role="model", parts=[MessagePart(text=raw)]))
+                    history.append(Message(role="user", parts=[MessagePart(text=(
+                        f"Your previous output was not valid JSON. Error: {parse_err}. "
+                        "Output ONLY the valid JSON array as required by output_format. "
+                        "No markdown, no explanation. Start with [ and end with ]."
+                    ))]))
+            logger.error(f"💥 classify_batch: parse_error after {MAX_PARSE_RETRIES + 1} attempts")
+            return self._all_failed(emails, "parse_error")
 
         except PROVIDER_OUTAGE_TYPES as exc:
             # The provider could not serve now (incl. both providers down) — let Cloud Tasks
@@ -296,72 +174,21 @@ class EmailClassificationAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     async def _build_prompt(self, user_id: str, account_id: Optional[str] = None) -> str:
-        """Return assembled prompt from PromptBuilder (Firestore). Crashes if unavailable."""
+        """Return assembled prompt from PromptBuilder (Firestore) with the reasons block. Crashes if unavailable."""
         if not self._prompt_builder:
             raise RuntimeError(
                 "EmailClassificationAgent requires prompt_builder — "
                 "wire up PromptAssemblyService before calling classify_batch()"
             )
-        prompt = await self._prompt_builder.build_for_agent(
+        return await self._prompt_builder.build_for_agent(
             agent_type="email_classifier",
             user_id=user_id or self._user_id,
             account_id=account_id,
             include_biographical=False,
+            include_directives=False,
+            include_location=False,
+            extra_static_blocks=[render_gate_reasons_block()],
         )
-        logger.debug("classify_batch: prompt assembled from Firestore")
-        return prompt
-
-    async def _fetch_email_details(
-        self,
-        email_ids: List[str],
-        credentials: Optional[OAuthCredential],
-    ) -> List[Dict[str, Any]]:
-        """Fetch full body + attachment filenames for the given email IDs."""
-        if not self._gmail or not credentials or not email_ids:
-            return [{"email_id": eid, "body": "", "attachments": []} for eid in email_ids]
-
-        try:
-            content_map = await self._gmail.batch_get_full_content(
-                credentials=credentials,
-                email_ids=email_ids,
-            )
-        except Exception as exc:
-            logger.warning(f"⚠️ get_email_details fetch failed: {exc}")
-            return [{"email_id": eid, "body": "", "attachments": []} for eid in email_ids]
-
-        details = []
-        for eid in email_ids:
-            content = content_map.get(eid)
-            details.append({
-                "email_id": eid,
-                "body": (content.body_text or "")[:3000] if content else "",
-                "attachments": content.attachments if content else [],
-            })
-        return details
-
-    @staticmethod
-    def _get_tool_declarations() -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": "get_email_details",
-                "description": (
-                    "Fetch full body text and attachment filenames for emails that need "
-                    "deeper analysis. Use when snippet is empty or too short, or when "
-                    "attachments are the key signal."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "email_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "email_id values to fetch full details for",
-                        }
-                    },
-                    "required": ["email_ids"],
-                },
-            }
-        ]
 
     @staticmethod
     def _format_emails(emails: List[EmailMetadata]) -> str:
@@ -372,87 +199,31 @@ class EmailClassificationAgent(BaseAgent):
                 "subject": e.subject,
                 "from": e.from_address,
                 "date": e.date.strftime("%Y-%m-%d") if e.date else "",
-                "snippet": e.snippet[:300] if e.snippet else "",
+                "snippet": e.snippet[:_SNIPPET_CHARS] if e.snippet else "",
             })
         return json.dumps(items, ensure_ascii=False, indent=2)
 
     @staticmethod
-    def _parse_response(
-        raw: str, emails: List[EmailMetadata]
-    ) -> List[EmailClassificationResult]:
-        """Parse LLM JSON array output. Raises ValueError if output is not a valid JSON array."""
-        text = raw.strip()
-        # ⚠️ EXCEPTION TO "No regex fallbacks" RULE (CLAUDE.md) ⚠️
-        # This is the ONLY place in the codebase where code block extraction is allowed.
-        #
-        # Why: In tool-calling mode, response_mime_type=None (Gemini cannot combine
-        # JSON mode with function calling). Without JSON mode, Gemini sometimes wraps
-        # valid JSON output in markdown code blocks. The retry loop (lines 187-213)
-        # would fix this, but at the cost of an extra LLM call for a batch of up to
-        # 100 emails — unacceptable cost/latency trade-off.
-        #
-        # DO NOT copy this pattern to other agents. All other agents must follow the
-        # standard: json.loads() directly → ValueError → retry loop.
-        if "```" in text:
-            start = text.index("```")
-            end = text.rfind("```")
-            if end > start:
-                block = text[start:end].splitlines()
-                text = "\n".join(block[1:]).strip()  # drop the opening ```[json] line
+    def _parse_response(raw: str, emails: List[EmailMetadata]) -> List[EmailClassificationResult]:
+        """The gate's answer as one result per input email. Raises ValueError when the output is not a JSON array of
+        objects; everything inside a well-formed array goes through the code rule (`gate_decisions`)."""
         try:
-            items = json.loads(text)
+            items = json.loads(raw.strip())
         except json.JSONDecodeError as exc:
             raise ValueError(f"JSON decode error at char {exc.pos}: {exc.msg}") from exc
-
         if not isinstance(items, list):
             raise ValueError(f"Expected JSON array, got {type(items).__name__}")
+        if not all(isinstance(item, dict) for item in items):
+            raise ValueError("Expected every array item to be an object")
 
-        expected_ids = {e.email_id for e in emails}
-        results_by_id: dict = {}
-
-        for item in items:
-            email_id = item.get("email_id", "")
-            if email_id not in expected_ids:
-                continue
-            results_by_id[email_id] = EmailClassificationResult(
-                email_id=email_id,
-                valuable=bool(item.get("valuable", False)),
-                category=item.get("category") or None,
-                fact=item.get("fact") or None,
-                tags=[t.lower() for t in (item.get("tags") or [])],
-                valuable_type=item.get("valuable_type", "confirmed_event"),
-            )
-
+        decisions = gate_decisions(items, [e.email_id for e in emails])
         results = []
         for e in emails:
-            if e.email_id in results_by_id:
-                results.append(results_by_id[e.email_id])
-            else:
-                results.append(
-                    EmailClassificationResult(
-                        email_id=e.email_id,
-                        valuable=False,
-                        category=None,
-                        fact=None,
-                        tags=[],
-                    )
-                )
-
+            decision = decisions[e.email_id]
+            results.append(EmailClassificationResult(
+                email_id=e.email_id, keep=decision.keep, reason=decision.reason, forced=decision.forced))
         return results
 
     @staticmethod
-    def _all_failed(
-        emails: List[EmailMetadata],
-        failure: str,
-    ) -> List[EmailClassificationResult]:
-        return [
-            EmailClassificationResult(
-                email_id=e.email_id,
-                valuable=False,
-                category=None,
-                fact=None,
-                tags=[],
-                failure=failure,
-            )
-            for e in emails
-        ]
+    def _all_failed(emails: List[EmailMetadata], failure: str) -> List[EmailClassificationResult]:
+        return [EmailClassificationResult(email_id=e.email_id, keep=False, failure=failure) for e in emails]

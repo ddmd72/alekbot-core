@@ -122,10 +122,10 @@ class TestIndexedEmailRepository:
 
     def test_abstract_method_count(self):
         assert _abstract_methods(IndexedEmailRepository) == {
-            "save_batch", "find_nearest", "get_indexing_state",
+            "save_batch", "get_indexing_state",
             "update_indexing_state", "clear_indexing_state", "count_by_user",
             "delete_by_user", "get_unconsolidated_batch", "mark_consolidated",
-            "get_pending_embeddings", "update_vectors",
+            # email index v2 slice 10: find_nearest, get_pending_embeddings and update_vectors left with the v1 vectors
             # R1 (SECRETS_AT_REST_RFC §6.2 F1/F2): the flag/mark field update and the feature-store user listing
             "set_reconnect_flags", "list_indexing_user_ids",
             # indexing skips stored emails and reindex keeps their consolidated_at
@@ -136,12 +136,6 @@ class TestIndexedEmailRepository:
         params = _params(IndexedEmailRepository, "save_batch")
         assert "emails" in params
 
-    def test_find_nearest_signature(self):
-        params = _params(IndexedEmailRepository, "find_nearest")
-        assert "user_id" in params
-        assert "vectors" in params
-        assert "limit" in params
-
     def test_get_unconsolidated_batch_signature(self):
         params = _params(IndexedEmailRepository, "get_unconsolidated_batch")
         assert "user_id" in params
@@ -151,11 +145,6 @@ class TestIndexedEmailRepository:
         params = _params(IndexedEmailRepository, "mark_consolidated")
         assert "email_ids" in params
         assert "consolidated_at" in params
-
-    def test_update_vectors_signature(self):
-        params = _params(IndexedEmailRepository, "update_vectors")
-        assert "email_id" in params
-        assert "vectors" in params
 
 
 # =============================================================================
@@ -255,12 +244,7 @@ class TestEmailClassifierPortContract:
 
     def test_classify_batch_signature(self):
         params = _params(EmailClassifierPort, "classify_batch")
-        assert params == ["self", "emails", "user_id", "credentials", "account_id"]
-
-    def test_classify_batch_credentials_default_none(self):
-        import inspect
-        sig = inspect.signature(EmailClassifierPort.classify_batch)
-        assert sig.parameters["credentials"].default is None
+        assert params == ["self", "emails", "user_id", "account_id"]
 
 
 class TestEmailClassifierPortMockImplementation:

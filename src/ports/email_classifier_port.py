@@ -1,13 +1,12 @@
 """
-EmailClassifierPort — classify a batch of email metadata.
-See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §4.
+EmailClassifierPort — the email gate: keep or drop each mail of a listed page.
+See docs/10_rfcs/EMAIL_INDEX_V2_RFC.md §4.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 
 from src.domain.email import EmailClassificationResult, EmailMetadata
-from src.domain.oauth_credential import OAuthCredential
 
 
 class EmailClassifierPort(ABC):
@@ -17,14 +16,12 @@ class EmailClassifierPort(ABC):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredential] = None,
         *,
         account_id: str,
     ) -> List[EmailClassificationResult]:
         """
-        Classify a batch of email metadata.
-        Returns one result per input email (including valuable=False).
-        credentials: optional, used to fetch full email content for ambiguous cases.
+        Decide keep or drop for every email of the batch, from its headers and snippet only.
+        Returns one result per input email, in input order (dropped and failed ones included).
         account_id: the account whose mail is indexed (the indexing job's); the model calls are billed to it and
         recorded under it.
         """

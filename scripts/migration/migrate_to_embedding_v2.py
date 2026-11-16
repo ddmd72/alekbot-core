@@ -9,19 +9,15 @@ Strategy per collection:
   - tasks (task_search_index)       — inline re-embed: read doc, recompose
                                        content/context via TaskIndexingService
                                        static helpers, batch embed, write back.
-  - emails (domain_email_facts_v1)  — bulk-set embedding_pending=True on every
-                                       doc. EmailEmbeddingRepairService (hourly
-                                       Cloud Scheduler + drain-on-demand) drains.
+  (The emails target is gone: the v1 email vectors and their repair were removed, EMAIL_INDEX_V2_RFC slice 10.)
 
 Dry-run is the default. Pass --live to actually write to Firestore. Idempotent:
 re-running overwrites v2 vectors with v2 vectors (same task_type=RETRIEVAL_DOCUMENT
-text shape), which is a no-op semantically; embedding_pending flag toggling is also
-idempotent because the repair service clears it on success.
+text shape), which is a no-op semantically.
 
 Usage:
     python scripts/migration/migrate_to_embedding_v2.py --target facts --env dev
     python scripts/migration/migrate_to_embedding_v2.py --target tasks --env dev --live
-    python scripts/migration/migrate_to_embedding_v2.py --target emails --env dev --live
     python scripts/migration/migrate_to_embedding_v2.py --target all --env dev --live
 """
 import argparse
@@ -239,64 +235,6 @@ def task_context_text_from_dict(d: Dict[str, Any]) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Emails (domain_email_facts_v1) — flag-and-drain
-# ──────────────────────────────────────────────────────────────────────────────
-
-async def flag_emails_for_repair(
-    db: firestore.AsyncClient,
-    env: str,
-    *,
-    limit: Optional[int],
-    live: bool,
-) -> Stats:
-    """
-    Bulk-set embedding_pending=True on every email doc.
-    The existing EmailEmbeddingRepairService (hourly + drain-on-demand)
-    handles the actual re-embed.
-    """
-    collection_name = f"{collection_prefix(env)}domain_email_facts_v1"
-    print(f"\n✉️  emails → {collection_name} ({'LIVE' if live else 'DRY RUN'})")
-    stats = Stats()
-
-    query = db.collection(collection_name)
-    if limit is not None:
-        query = query.limit(limit)
-
-    # Firestore batch limit is 500 writes per batch.
-    BATCH_SIZE = 400
-    pending_writes = 0
-    batch = db.batch()
-
-    async for doc in query.stream():
-        stats.total += 1
-        if live:
-            batch.update(doc.reference, {"embedding_pending": True})
-            pending_writes += 1
-            if pending_writes >= BATCH_SIZE:
-                await batch.commit()
-                stats.updated += pending_writes
-                pending_writes = 0
-                batch = db.batch()
-                print(f"   progress: {stats.updated} flagged")
-        else:
-            stats.skipped += 1
-
-    if live and pending_writes:
-        await batch.commit()
-        stats.updated += pending_writes
-
-    print(
-        f"   ✅ emails: flagged={stats.updated}, "
-        f"skipped(dry-run)={stats.skipped}, errors={stats.errors}"
-    )
-    print(
-        f"   ℹ️  EmailEmbeddingRepairService will drain over the next Cloud "
-        f"Scheduler cycles (hourly + drain-on-demand re-enqueue)."
-    )
-    return stats
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -321,9 +259,6 @@ async def main(args: argparse.Namespace) -> None:
     if args.target in ("tasks", "all"):
         await migrate_tasks(db, embedding, args.env,
                             limit=args.limit, live=args.live)
-    if args.target in ("emails", "all"):
-        await flag_emails_for_repair(db, args.env,
-                                     limit=args.limit, live=args.live)
 
     print("\n" + "=" * 80)
     print(f"✅ Migration done (target={args.target})")
@@ -334,7 +269,7 @@ async def main(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Re-embed every vector with gemini-embedding-2")
-    parser.add_argument("--target", choices=["facts", "tasks", "emails", "all"], required=True)
+    parser.add_argument("--target", choices=["facts", "tasks", "all"], required=True)
     parser.add_argument("--env", choices=["dev", "prod"], default="dev")
     parser.add_argument("--limit", type=int, default=None,
                         help="Process at most N docs per collection (debug)")

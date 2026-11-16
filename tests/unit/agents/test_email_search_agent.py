@@ -2,7 +2,6 @@
 Unit tests for EmailSearchAgent.
 """
 
-import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -14,12 +13,12 @@ from src.domain.email_details import EmailDetails
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import (
     AgentExecutionContext,
-    LLMRequest,
     LLMResponse,
     LLMPort,
     ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.services.email_card_search_service import EmailCardSearchService
 from src.services.email_search_service import EmailSearchService
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
@@ -27,21 +26,6 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-SEARCH_RESULT = json.dumps({
-    "count": 2,
-    "emails": [
-        {"email_id": "e1", "from": "a@example.com", "date": "2026-01-15", "text": "flight booked", "attachments": []},
-        {"email_id": "e2", "from": "c@example.org", "date": "2026-01-16", "text": "hotel booked", "attachments": []},
-    ],
-})
-
-VALID_KEYS = {
-    "primary_query": "flight booking confirmation",
-    "alternative_query": "Ryanair reservation reference",
-    "tags": ["travel", "flight"],
-}
-
 
 def _make_execution_context(mock_llm) -> AgentExecutionContext:
     return AgentExecutionContext(
@@ -73,7 +57,7 @@ def _make_message(
 def mock_llm():
     m = AsyncMock(spec=LLMPort)
     m.generate_content.return_value = LLMResponse(
-        text=json.dumps(VALID_KEYS), tool_calls=[]
+        text="{}", tool_calls=[]
     )
     return m
 
@@ -88,7 +72,6 @@ def mock_prompt_builder():
 @pytest.fixture
 def mock_search_service():
     svc = AsyncMock(spec=EmailSearchService)
-    svc.vector_search.return_value = SEARCH_RESULT
     # reviewer (email fresh headers): search_emails now also reads the index watermark and lists live headers;
     # an indexed mailbox with nothing newer keeps these tests on the index path they check
     svc.index_watermark.return_value = datetime(2026, 1, 16, tzinfo=timezone.utc)
@@ -104,6 +87,7 @@ def agent(mock_llm, mock_prompt_builder, mock_search_service):
         execution_context=_make_execution_context(mock_llm),
         prompt_builder=mock_prompt_builder,
         email_search_service=mock_search_service,
+        card_search=AsyncMock(spec=EmailCardSearchService),
         user_id="user123",
     )
 
@@ -128,61 +112,6 @@ class TestCanHandle:
 
 
 # ---------------------------------------------------------------------------
-# execute — happy path
-# ---------------------------------------------------------------------------
-
-class TestExecuteSuccess:
-
-    async def test_returns_success_response(self, agent):
-        msg = _make_message()
-        response = await agent.execute(msg)
-        assert response.status == AgentStatus.SUCCESS
-
-    async def test_result_contains_search_json(self, agent):
-        msg = _make_message()
-        response = await agent.execute(msg)
-        # reviewer (email fresh headers): the index hits now sit in one object beside the live lists; they pass
-        # through unchanged and nothing else is added when the live lists are empty
-        result = json.loads(response.result)
-        assert result["count"] == 2
-        assert result["emails"] == json.loads(SEARCH_RESULT)["emails"]
-        assert result["by_key"] == [] and result["notes"] == []
-        assert result["fresh"]["emails"] == []
-
-    async def test_metadata_contains_queries(self, agent):
-        msg = _make_message()
-        response = await agent.execute(msg)
-        assert response.metadata["primary_query"] == VALID_KEYS["primary_query"]
-        assert response.metadata["alternative_query"] == VALID_KEYS["alternative_query"]
-        assert response.metadata["tags"] == VALID_KEYS["tags"]
-
-    async def test_vector_search_called_with_extracted_keys(self, agent, mock_search_service):
-        msg = _make_message(query="find my flight booking")
-        await agent.execute(msg)
-
-        mock_search_service.vector_search.assert_awaited_once_with(
-            primary_query=VALID_KEYS["primary_query"],
-            alternative_query=VALID_KEYS["alternative_query"],
-            tags=VALID_KEYS["tags"],
-            user_id="user123",
-            date_from=None,
-            date_to=None,
-        )
-
-    async def test_uses_raw_query_when_extract_returns_empty(
-        self, agent, mock_llm, mock_search_service
-    ):
-        mock_llm.generate_content.return_value = LLMResponse(text="not json", tool_calls=[])
-
-        msg = _make_message(query="my original query")
-        await agent.execute(msg)
-
-        call = mock_search_service.vector_search.call_args
-        assert call.kwargs["primary_query"] == "my original query"
-        assert call.kwargs["alternative_query"] == "my original query"
-
-
-# ---------------------------------------------------------------------------
 # execute — failure paths
 # ---------------------------------------------------------------------------
 
@@ -192,115 +121,6 @@ class TestExecuteFailure:
         msg = _make_message(query="")
         response = await agent.execute(msg)
         assert response.status == AgentStatus.FAILED
-
-    async def test_vector_search_exception_returns_failure(self, agent, mock_search_service):
-        mock_search_service.vector_search.side_effect = RuntimeError("Firestore error")
-
-        msg = _make_message()
-        response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.FAILED
-        assert "Email search failed" in response.error
-
-
-# ---------------------------------------------------------------------------
-# _extract_search_queries
-# ---------------------------------------------------------------------------
-
-class TestExtractSearchQueries:
-
-    async def test_valid_json_returns_dict(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = LLMResponse(
-            text=json.dumps(VALID_KEYS), tool_calls=[]
-        )
-
-        result = await agent._extract_search_queries("flight", [], "user123", "acc1")
-
-        assert result["primary_query"] == VALID_KEYS["primary_query"]
-        assert result["alternative_query"] == VALID_KEYS["alternative_query"]
-        assert result["tags"] == VALID_KEYS["tags"]
-
-    async def test_invalid_json_returns_empty(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = LLMResponse(text="not valid json", tool_calls=[])
-
-        result = await agent._extract_search_queries("flight", [], "user123", "acc1")
-
-        assert result == {}
-
-    async def test_llm_exception_returns_empty(self, agent, mock_llm):
-        mock_llm.generate_content.side_effect = RuntimeError("API down")
-
-        result = await agent._extract_search_queries("flight", [], "user123", "acc1")
-
-        assert result == {}
-
-    async def test_prompt_builder_failure_uses_empty_prompt(
-        self, agent, mock_prompt_builder, mock_llm
-    ):
-        mock_prompt_builder.build_for_agent.side_effect = RuntimeError("Firestore error")
-        mock_llm.generate_content.return_value = LLMResponse(
-            text=json.dumps(VALID_KEYS), tool_calls=[]
-        )
-
-        # Should not raise — falls back to empty system_instruction
-        result = await agent._extract_search_queries("flight", [], "user123", "acc1")
-
-        assert result == VALID_KEYS
-        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
-                          mock_llm.generate_content.call_args.args[0]
-        assert req.system_instruction == ""
-
-    async def test_history_injected_last_three_turns(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = LLMResponse(
-            text=json.dumps(VALID_KEYS), tool_calls=[]
-        )
-        history = [
-            {"role": "user", "text": "turn 1"},
-            {"role": "model", "text": "turn 2"},
-            {"role": "user", "text": "turn 3"},
-            {"role": "model", "text": "turn 4"},
-            {"role": "user", "text": "turn 5"},
-        ]
-
-        await agent._extract_search_queries("query", history, "user123", "acc1")
-
-        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
-                          mock_llm.generate_content.call_args.args[0]
-        # last 3 history turns + 1 user request = 4 messages
-        assert len(req.messages) == 4
-        assert req.messages[0].parts[0].text == "turn 3"
-        assert req.messages[1].parts[0].text == "turn 4"
-        assert req.messages[2].parts[0].text == "turn 5"
-        assert "EMAIL_SEARCH_REQUEST" in req.messages[3].parts[0].text
-
-    async def test_user_text_wraps_query(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = LLMResponse(
-            text=json.dumps(VALID_KEYS), tool_calls=[]
-        )
-
-        await agent._extract_search_queries("my query here", [], "user123", "acc1")
-
-        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
-                          mock_llm.generate_content.call_args.args[0]
-        user_msg = req.messages[-1].parts[0].text
-        assert 'EMAIL_SEARCH_REQUEST "my query here"' == user_msg
-
-    async def test_llm_request_params(self, agent, mock_llm):
-        mock_llm.generate_content.return_value = LLMResponse(
-            text=json.dumps(VALID_KEYS), tool_calls=[]
-        )
-
-        await agent._extract_search_queries("q", [], "user123", "acc1")
-
-        req: LLMRequest = mock_llm.generate_content.call_args.kwargs.get("request") or \
-                          mock_llm.generate_content.call_args.args[0]
-        assert req.model_name == "gemini-test"
-        assert not hasattr(req, "temperature")
-        assert req.max_tokens == 250
-        assert req.response_mime_type == "application/json"
-        assert req.disable_safety is True
-        assert req.tools == []
-
 
 # ---------------------------------------------------------------------------
 # can_handle — email_id path
@@ -375,53 +195,3 @@ class TestGetEmailDetails:
 
         assert response.status == AgentStatus.FAILED
         assert "get_email_details failed" in response.error
-
-    async def test_vector_search_not_called(self, agent, mock_search_service):
-        mock_search_service.get_details_with_parts.return_value = EmailDetails("body")
-
-        await agent.execute(self._msg())
-
-        mock_search_service.vector_search.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# _parse_date — date_to must include the whole day (regression: 2026-08-31
-# incident where "date_to": "2026-08-31" excluded every email actually
-# received on the 31st because email_date <= 2026-08-31T00:00:00 only keeps
-# the instant at midnight, not the day itself).
-# ---------------------------------------------------------------------------
-
-class TestParseDate:
-
-    def test_date_from_stays_at_midnight(self, agent):
-        assert agent._parse_date("2026-08-31") == datetime(2026, 8, 31, 0, 0, 0)
-
-    def test_date_to_end_of_day_covers_whole_day(self, agent):
-        result = agent._parse_date("2026-08-31", end_of_day=True)
-        assert result == datetime(2026, 8, 31, 23, 59, 59, 999999)
-        # An email received any time on the 31st must satisfy <= result.
-        assert datetime(2026, 8, 31, 23, 0, 0) <= result
-
-    def test_invalid_date_returns_none(self, agent):
-        assert agent._parse_date("not-a-date") is None
-        assert agent._parse_date("not-a-date", end_of_day=True) is None
-
-    def test_none_value_returns_none(self, agent):
-        assert agent._parse_date(None) is None
-        assert agent._parse_date(None, end_of_day=True) is None
-
-
-class TestSearchEmailsDateRange:
-
-    async def test_date_to_passed_to_vector_search_covers_whole_day(
-        self, agent, mock_llm, mock_search_service
-    ):
-        keys = dict(VALID_KEYS, date_from="2026-08-31", date_to="2026-08-31")
-        mock_llm.generate_content.return_value = LLMResponse(text=json.dumps(keys), tool_calls=[])
-
-        msg = _make_message(query="all emails received on August 31, 2026")
-        await agent.execute(msg)
-
-        call = mock_search_service.vector_search.call_args
-        assert call.kwargs["date_from"] == datetime(2026, 8, 31, 0, 0, 0)
-        assert call.kwargs["date_to"] == datetime(2026, 8, 31, 23, 59, 59, 999999)

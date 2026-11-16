@@ -13,8 +13,6 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from google.api_core.exceptions import NotFound
 from google.cloud.firestore import FieldFilter
-from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
-from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.email import IndexedEmail, IndexingState
@@ -24,27 +22,15 @@ from ..ports.email_memory_batches import EmailMemoryBatches
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
-# Semaphore: cap concurrent Firestore find_nearest calls for email collection.
-# Email search fires up to 4 parallel vector queries; keep below quota threshold.
-_EMAIL_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(10)
-
-_VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector", "attachments_vector")
-# What Stage 3 reads of a mail: the v1 record without its vectors, and the card fields `card_from_document` needs.
+# What Stage 3 reads of a mail: the v1 record, and the card fields `card_from_document` needs.
 _CARD_READ_FIELDS = ("card_state", "card_version", "template_key", "card")
-_MEMORY_READ_FIELDS = tuple(f for f in IndexedEmail.model_fields if f not in _VECTOR_FIELDS) + _CARD_READ_FIELDS
-
-# RRF constant — standard value used throughout the codebase
-_RRF_K = 60
-
-# Cosine distance threshold: results farther than this are discarded by Firestore
-# before RRF scoring. Cosine distance: 0.0 = identical, 1.0 = orthogonal.
-_MAX_COSINE_DISTANCE = 0.4
+_MEMORY_READ_FIELDS = tuple(IndexedEmail.model_fields) + _CARD_READ_FIELDS
 
 
 class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches):
     """Firestore mechanics (the port states the observable contract):
     - Facts: `EnvironmentConfig.domain_email_facts_collection` (`{prefix}domain_email_facts_v1`), body
-      `IndexedEmail.model_dump()` with the vector fields wrapped in `Vector`; cursors:
+      `IndexedEmail.model_dump()`; cursors:
       `EnvironmentConfig.email_indexing_state_collection`, document id `{user_id}_{provider}`; `update_indexing_state`
       updates only the cursor fields, `set_reconnect_flags` only `reconnect_notified` / `disconnected_by_user_at`
       (an `update`, so a missing state stays missing); `list_indexing_user_ids` is one equality query on `provider`.
@@ -52,14 +38,11 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
       `delete_by_user` deletes 500 per query until none is left.
     - `get_consolidation_marks`: `get_all` of the `{user_id}_{email_id}` refs (500 per call) with
       `field_paths=["consolidated_at"]`; a missing document is left out.
-    - `find_nearest`: one `find_nearest` per vector field (COSINE, `distance_threshold` 0.4, `limit * 2`),
-      pre-filtered by `user_id`, `state` and the `email_date` range, run concurrently; fused by RRF (k = 60). Needs the
-      vector indexes (state, user_id[, email_date], <field>).
     - `get_unconsolidated_batch` needs the composite index (user_id, consolidated_at, indexed_at); a document without a
       `consolidated_at` field never matches `consolidated_at == null`.
     - `memory_batch` (the `EmailMemoryBatches` port) runs two queries, each ordered by `indexed_at` and limited: the
       settled one (`card_state in`) needs (user_id, consolidated_at, card_state, indexed_at), the stale one
-      (`indexed_at <`) the v1 index above; merged by document id. Both select the v1 fields without vectors plus the card
+      (`indexed_at <`) the v1 index above; merged by document id. Both select the v1 fields plus the card
       fields `card_state`, `card_version`, `template_key`, `card`.
     - Datetimes read back are rebuilt as plain naive datetimes (a `DatetimeWithNanoseconds` must not be written back).
     """
@@ -83,23 +66,6 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _wrap_vectors(data: dict) -> dict:
-        """Wrap List[float] fields with Vector() for correct Firestore serialization."""
-        for field in _VECTOR_FIELDS:
-            if data.get(field) is not None:
-                data[field] = Vector(data[field])
-        return data
-
-    @staticmethod
-    def _unwrap_vectors(data: dict) -> dict:
-        """Convert Firestore Vector objects back to List[float] for domain model."""
-        for field in _VECTOR_FIELDS:
-            v = data.get(field)
-            if v is not None and not isinstance(v, list):
-                data[field] = list(v)
-        return data
-
-    @staticmethod
     def _strip_tz(dt):
         """Convert a Firestore datetime to a plain naive datetime.
 
@@ -113,7 +79,6 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
         return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond)
 
     def _to_domain(self, data: dict) -> IndexedEmail:
-        self._unwrap_vectors(data)
         for field in ("indexed_at", "email_date", "consolidated_at"):
             if field in data:
                 data[field] = self._strip_tz(data[field])
@@ -135,7 +100,6 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
             batch = self.db.batch()
             for email in chunk:
                 data = email.model_dump()
-                self._wrap_vectors(data)
                 doc_ref = self.collection.document(f"{email.user_id}_{email.email_id}")
                 batch.set(doc_ref, data)
                 written += 1
@@ -143,92 +107,6 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
 
         logger.info(f"💾 [IndexedEmail] save_batch: {written} docs written")
         return written
-
-    # ------------------------------------------------------------------
-    # find_nearest (multi-vector RRF)
-    # ------------------------------------------------------------------
-
-    async def find_nearest(
-        self,
-        user_id: str,
-        vectors: Dict[str, List[float]],
-        limit: int = 10,
-        state: str = "current",
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-    ) -> List[IndexedEmail]:
-        """
-        Multi-vector RRF search. For each key in `vectors`, fires a separate
-        Firestore find_nearest query then combines results via RRF.
-        date_from / date_to: optional pre-filter on email_date field.
-        """
-        active_vectors = {k: v for k, v in vectors.items() if v is not None}
-        if not active_vectors:
-            return []
-
-        async def _query_one(
-            field_name: str, query_vector: List[float]
-        ) -> List:
-            base = (
-                self.collection
-                .where(filter=FieldFilter("user_id", "==", user_id))
-                .where(filter=FieldFilter("state", "==", state))
-            )
-            if date_from is not None:
-                base = base.where(filter=FieldFilter("email_date", ">=", date_from))
-            if date_to is not None:
-                base = base.where(filter=FieldFilter("email_date", "<=", date_to))
-            vq = base.find_nearest(
-                    vector_field=field_name,
-                    query_vector=query_vector,
-                    distance_measure=DistanceMeasure.COSINE,
-                    limit=limit * 2,  # Extra headroom for RRF merging
-                    distance_threshold=_MAX_COSINE_DISTANCE,
-                )
-            t0 = asyncio.get_event_loop().time()
-            async with _EMAIL_FIND_NEAREST_SEMAPHORE:
-                docs = await vq.get()
-            elapsed = int(1000 * (asyncio.get_event_loop().time() - t0))
-            logger.info(
-                f"🔍 [email.find_nearest] field={field_name} "
-                f"results={len(docs)} elapsed={elapsed}ms"
-            )
-            return docs
-
-        # Fire all vector queries in parallel
-        tasks = [
-            asyncio.create_task(_query_one(field, vec))
-            for field, vec in active_vectors.items()
-        ]
-        results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Collect docs and compute RRF scores
-        docs_by_id: Dict[str, dict] = {}
-        scores: Dict[str, float] = {}
-
-        for query_results in results_lists:
-            if isinstance(query_results, BaseException):
-                logger.error(f"💥 [email.find_nearest] query failed: {query_results}")
-                continue
-            for rank, doc in enumerate(query_results):
-                doc_id = doc.id  # composite: {user_id}_{email_id}
-                if doc_id not in docs_by_id:
-                    data = doc.to_dict()  # email_id field already correct in document
-                    docs_by_id[doc_id] = data
-                scores[doc_id] = (
-                    scores.get(doc_id, 0.0) + 1.0 / (_RRF_K + rank + 1)
-                )
-
-        top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:limit]
-
-        emails = []
-        for eid in top_ids:
-            try:
-                emails.append(self._to_domain(docs_by_id[eid]))
-            except Exception as exc:
-                logger.error(f"💥 [email.find_nearest] failed to parse {eid}: {exc}")
-
-        return emails
 
     # ------------------------------------------------------------------
     # Indexing state (cursor tracking)
@@ -430,37 +308,3 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches
                 data = snap.to_dict() or {}
                 marks[snap.id[len(prefix):]] = self._strip_tz(data.get("consolidated_at"))
         return marks
-
-    # ------------------------------------------------------------------
-    # Embedding repair
-    # ------------------------------------------------------------------
-
-    async def get_pending_embeddings(self, limit: int = 100) -> List[IndexedEmail]:
-        """WHERE embedding_pending=True LIMIT N (cross-user, for repair service)."""
-        query = (
-            self.collection
-            .where(filter=FieldFilter("embedding_pending", "==", True))
-            .limit(limit)
-        )
-        docs = await query.get()
-        emails = []
-        for doc in docs:
-            data = doc.to_dict()  # email_id field already correct in document
-            try:
-                emails.append(self._to_domain(data))
-            except Exception as exc:
-                logger.error(
-                    f"💥 [get_pending_embeddings] failed to parse {doc.id}: {exc}"
-                )
-        return emails
-
-    async def update_vectors(
-        self, user_id: str, email_id: str, vectors: Dict[str, List[float]]
-    ) -> None:
-        """Partial update: write computed vectors and clear embedding_pending flag."""
-        data: dict = {"embedding_pending": False}
-        for field, vec in vectors.items():
-            if vec is not None:
-                data[field] = Vector(vec)
-        await self.collection.document(f"{user_id}_{email_id}").update(data)
-        logger.debug(f"📐 Vectors updated for email {email_id}")

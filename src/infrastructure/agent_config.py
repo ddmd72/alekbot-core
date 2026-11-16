@@ -199,9 +199,8 @@ class ConsolidationAgentConfig:
     # Email triage (Stage 3) defaults — used by _handle_consolidate_email when
     # number_of_batches / batch_size are absent from payload.
     email_triage_passes: int = 1
-    email_triage_batch_size: int = 100
-    # Stage 3 reading email cards (EMAIL_CARD_MEMORY on): a card is several times a line and the tool loop re-sends the
-    # batch every turn, so a smaller default batch; the payload's batch_size still overrides. Tune from the dry run.
+    # Stage 3 reads email cards: a card is several times a header line and the tool loop re-sends the batch every
+    # turn, so a small default batch; the payload's batch_size still overrides. Tune from the dry run.
     email_card_batch_size: int = 50
     # 15 min: covers consolidate_full (Stage 1 ~4 min + Stage 2 ~3 min + Stage 3 ~4 min).
     # Cloud Tasks consolidation tasks should have matching or higher deadline.
@@ -214,8 +213,7 @@ class ConsolidationAgentConfig:
 
 @dataclass
 class EmailSearchAgentConfig:
-    max_tokens: int = 250
-    # the v2 query-slots call (email index v2 slice 8): one JSON object of seven short fields
+    # the query-slots call (email index v2 slice 8): one JSON object of seven short fields
     slots_max_tokens: int = 1024
     # 300 s: PDF attachment parsing in the parser child can be slow (confirmed >30 s in production)
     timeout_ms: int = 300_000
@@ -227,7 +225,6 @@ class EmailSearchAgentConfig:
 
 @dataclass
 class EmailClassificationAgentConfig:
-    max_turns: int = 4           # matches POC; LLM may call get_email_details() mid-loop
     max_parse_retries: int = 1   # one LLM retry on invalid JSON before giving up
     max_tokens: int = 65_535     # near Gemini limit; reasoning mode needs headroom
 

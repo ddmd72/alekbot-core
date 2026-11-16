@@ -7,11 +7,9 @@ Covers:
   - collection_prefix env resolution.
   - migrate_facts orchestration (mock Firestore + mock embedding adapter).
   - migrate_tasks orchestration (mock Firestore + mock embedding adapter).
-  - flag_emails_for_repair orchestration (mock Firestore batch).
   - Dry-run vs live semantics: no writes when --live is absent.
 """
 import importlib.util
-import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -297,39 +295,3 @@ async def test_migrate_tasks_dry_run_does_not_write():
 
     assert stats.skipped == 1
     docs[0].reference.update.assert_not_called()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# flag_emails_for_repair orchestration
-# ──────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_flag_emails_for_repair_live_sets_embedding_pending_true():
-    docs = [_make_doc(f"e{i}", {"subject": f"hi {i}"}) for i in range(3)]
-    db = _make_db({"development_domain_email_facts_v1": docs})
-
-    stats = await mig.flag_emails_for_repair(db, "dev", limit=None, live=True)
-
-    assert stats.total == 3
-    assert stats.updated == 3
-    # Three batch.update calls, each with embedding_pending=True
-    batch = db._test_batch
-    assert batch.update.call_count == 3
-    for call in batch.update.call_args_list:
-        ref, payload = call.args
-        assert payload == {"embedding_pending": True}
-    batch.commit.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_flag_emails_for_repair_dry_run_no_commit():
-    docs = [_make_doc(f"e{i}", {}) for i in range(2)]
-    db = _make_db({"development_domain_email_facts_v1": docs})
-
-    stats = await mig.flag_emails_for_repair(db, "dev", limit=None, live=False)
-
-    assert stats.skipped == 2
-    assert stats.updated == 0
-    batch = db._test_batch
-    batch.update.assert_not_called()
-    batch.commit.assert_not_awaited()

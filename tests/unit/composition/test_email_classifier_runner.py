@@ -5,7 +5,7 @@ The world: the real `EmailIndexingService` with the runner as its classifier, th
 registry whose `gemini` is a scripted model, the real `FirestoreQuotaService` over `FirestoreAccountRepository` on the
 evaluating Firestore fake (the account ledgers), and the real `BigQueryPromptContentAdapter` record building with only
 its BigQuery write replaced (the recorded rows). Mail, the job repository and the other indexing stores are scripted
-boundaries; nothing is valuable, so no page reaches the embedder.
+boundaries; the model drops every listed mail, so no page reaches the store or the card step.
 """
 import asyncio
 import json
@@ -52,9 +52,16 @@ MODELS = {PerformanceTier.ECO: "gemini-3.5-flash-lite", PerformanceTier.BALANCED
 TOKENS = {"acc-1": (1200, 80), "acc-2": (3400, 150)}
 
 
+def drop_every_mail(request: LLMRequest) -> str:
+    """The gate's answer that drops every mail listed in the request's system prompt (a valid answer: an empty one would
+    keep every mail by the lean-to-keep rule and send it to the card step)."""
+    page = json.loads((request.system_instruction or "").split("Emails to classify:\n", 1)[1])
+    return json.dumps([{"email_id": m["email_id"], "decision": "drop", "reason": "automated"} for m in page])
+
+
 class _Model(LLMPort):
-    """The `gemini` provider: answers every request with an empty classification (nothing valuable) and the usage of
-    the request's account; records each request. With `rendezvous=n`, a request waits until n requests are in flight
+    """The `gemini` provider: answers every request by dropping every listed mail, with the usage of the request's
+    account; records each request. With `rendezvous=n`, a request waits until n requests are in flight
     (forces two concurrent batches to overlap) and `peak` shows that they did."""
 
     def __init__(self, rendezvous: int = 0) -> None:
@@ -77,7 +84,7 @@ class _Model(LLMPort):
                 await asyncio.wait_for(self._all_in.wait(), timeout=2)
             account = (request.system_instruction or "").split("prompt for ", 1)[1].split("\n", 1)[0]
             prompt_tokens, completion_tokens = TOKENS[account]
-            return LLMResponse(text=json.dumps([]), usage_metadata=UsageMetadata(
+            return LLMResponse(text=drop_every_mail(request), usage_metadata=UsageMetadata(
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens))
         finally:
@@ -133,7 +140,7 @@ class World:
         registry.register("gemini", model)
         self.runner = EmailClassifierRunner(
             context_builder=AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience()),
-            user_repo=_Users(*profiles), prompt_builder=_Prompts(), gmail=None,
+            user_repo=_Users(*profiles), prompt_builder=_Prompts(),
             quota_service=FirestoreQuotaService(self.accounts), prompt_content_store=self.store,
         )
 
@@ -153,7 +160,7 @@ class World:
         exclusions.get_exclusions.return_value = []
         return EmailIndexingService(
             gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
-            exclusions_repo=exclusions, classifier=self.runner, embedding=AsyncMock(spec=EmbeddingService),
+            exclusions_repo=exclusions, classifier=self.runner,
             oauth=None, connector=ConnectorRegistry().get("gmail"),
         )
 

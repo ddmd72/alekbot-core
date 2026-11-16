@@ -101,7 +101,6 @@ from src.services.companion_window_resolver import CompanionWindowResolver
 from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DocumentDeliveryService
-from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
 from src.services.fact_answer_service import FactAnswerService
 from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
@@ -777,11 +776,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         # services cannot import the infrastructure layer (REQ-ARCH-22).
         dispatch_deadline_s=dispatch_deadline_s(_NotificationKind.REMINDER),
     ) if (container.notes_adapter and _task_dispatch_service) else None
-    _email_embedding_repair_service = EmailEmbeddingRepairService(
-        email_repo=indexed_email_repo,
-        embedding=container.embedding_service,
-        quota=quota_service,
-    ) if (indexed_email_repo and container.embedding_service) else None
 
     # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.
     # Built once here (composition root) and injected into ConversationHandler —
@@ -993,7 +987,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         email_review=container.email_review_service,
         account_repo=account_repo,
         billing_webhook=_alert_webhook,
-        email_embedding_repair=_email_embedding_repair_service,
         link_service=file_link_service,
         short_link_service=short_link_service,
         companion_extraction=companion_extraction_service,

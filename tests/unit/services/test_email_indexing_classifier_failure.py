@@ -36,7 +36,7 @@ class FakeAlertSink(AlertSinkPort):
 
 def _result(email_id: str, failure=None) -> EmailClassificationResult:
     return EmailClassificationResult(
-        email_id=email_id, valuable=False, category=None, fact=None, tags=[], failure=failure
+        email_id=email_id, keep=False, failure=failure
     )
 
 
@@ -53,7 +53,7 @@ def _service(results, sink):
     return EmailIndexingService(
         gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
         exclusions_repo=exclusions, classifier=classifier,
-        embedding=AsyncMock(spec=EmbeddingService), oauth=None, alert_sink=sink, connector=ConnectorRegistry().get("gmail"),
+        oauth=None, alert_sink=sink, connector=ConnectorRegistry().get("gmail"),
     )
 
 

@@ -15,7 +15,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.base_agent import BaseAgent
 from src.agents.consolidation_agent import ConsolidationAgent, _session_time
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
-from src.domain.email import IndexedEmail
+from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
 from src.domain.entities import FactDomain
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMResponse, Message, MessagePart, ToolCall
@@ -27,6 +27,7 @@ from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx, horizon, on
+from tests.support.stored_mail import mail_store_with, stored_mail
 
 REPORT = LLMResponse(text='{"operations": []}')
 LISBON = "Europe/Lisbon"
@@ -75,7 +76,7 @@ def make_agent(store: FactStore, script: Callable[[str], LLMResponse], *, email_
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
-        prompt_builder=pb, indexed_email_repo=email_repo,
+        prompt_builder=pb, indexed_email_repo=email_repo, email_memory_batches=email_repo,
     )
     agent.INLINE_CLUSTER_REVIEW = False
     agent.firsts = []
@@ -130,28 +131,22 @@ def days_around_now(zone: str) -> set:
 # ----------------------------------------------------------------------------------------------- the Today line
 
 
-def email(email_id: str, when: datetime) -> IndexedEmail:
-    return IndexedEmail(
-        email_id=email_id, user_id=USER, account_id=ACC, source="gmail", text=f"mail {email_id}", tags=["mail"],
-        category="travel", metadata={"subject": email_id}, subject=email_id, from_address="a@example.com",
-        email_date=when, indexed_at=when,
-    )
+async def stored_emails(*sent: datetime):
+    """One mail with no card per sent moment (naive = UTC, as stored), indexed when sent, so long ago: the email pass
+    reads them oldest first and sends each in the header form."""
+    return await mail_store_with(*[stored_mail(f"e{i}", user_id=USER, account_id=ACC, sent=when)
+                                   for i, when in enumerate(sent or (datetime(2026, 10, 10, 9),), 1)])
 
 
-class OneBatchOfEmails:
-    def __init__(self, *dates: datetime) -> None:
-        self.batch = [email(f"e{i}", when) for i, when in enumerate(dates or (datetime(2026, 10, 10, 9),), 1)]
-
-    async def get_unconsolidated_batch(self, user_id: str, limit: int = 10) -> List[IndexedEmail]:
-        return self.batch
-
-    async def mark_consolidated(self, user_id: str, ids: List[str], when: datetime) -> None:
-        self.batch = []
+def email_candidates(text: str) -> List[Dict[str, Any]]:
+    """The numbered candidates of an email pass message, after its code header line."""
+    return [json.loads(line.split(". ", 1)[1]) for line in text.split(EMAIL_CANDIDATES_HEADER + "\n", 1)[1].splitlines()
+            if re.match(r"^\d+\. \{", line)]
 
 
 async def test_every_pass_message_ends_with_the_today_line_in_the_owner_zone(store):
     put_raw(store, "d-1", "never use emojis", entity={"domain": FactDomain.AGENT_DIRECTIVE})
-    agent = make_agent(store, once({STAGE1: calls(create("seed fact about Rome"))}), email_repo=OneBatchOfEmails())
+    agent = make_agent(store, once({STAGE1: calls(create("seed fact about Rome"))}), email_repo=await stored_emails())
     agent.INLINE_CLUSTER_REVIEW = True
     batch = [{"role": "user", "text": "hello", "created_at": utc(20, 8).timestamp()}]
     with RequestContext(user_id=USER, account_id=ACC):
@@ -160,7 +155,7 @@ async def test_every_pass_message_ends_with_the_today_line_in_the_owner_zone(sto
             message("consolidate_cluster", {"cluster": [{"fact_id": "x", "content": "c", "similarity": 0.5}]}), USER, ACC, [], 0.0)
         await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
 
-    markers = {"stage1": STAGE1, "stage2a": CLUSTER, "stage2b": RULEBOOK, "email": "[system_alert]"}
+    markers = {"stage1": STAGE1, "stage2a": CLUSTER, "stage2b": RULEBOOK, "email": EMAIL_CANDIDATES_HEADER}
     assert len(agent.firsts) == 5       # stage 1, 2a, 2b, the cluster pass, the email pass
     pattern = re.compile(r"\n\nToday: (\d{4}-\d{2}-\d{2} \w{3}) \(Europe/Lisbon, the owner's timezone\)\.$")
     for text in agent.firsts:
@@ -409,16 +404,6 @@ def test_stage2b_demotion_asks_for_expiry_and_derived_from():
     assert 'update_fact(<fact_id>, {state: "invalidated"})' in demote          # the state-only closure is unchanged
 
 
-async def test_the_email_alert_dates_by_the_candidate_and_calls_a_passed_date_history(store):
-    agent = make_agent(store, lambda first: REPORT, email_repo=OneBatchOfEmails())
-    with RequestContext(user_id=USER, account_id=ACC):
-        await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
-    text = pass_text(agent, "[system_alert]")
-    assert "Copy the candidate's `date`, as given, into reported_date." in text
-    assert "Information whose date or horizon has already passed is history or noise." in text
-    assert "Candidates:\n1. {" in text
-
-
 # ----------------------------------------------------------------------------------------------- the stamp as reported_date
 
 
@@ -450,29 +435,20 @@ async def test_an_email_candidates_date_is_the_owners_moment_and_copying_it_date
     sent = [datetime(2026, 10, 22, 10, 0), datetime(2026, 10, 22, 23, 30)]         # naive = UTC; the second is 23 Oct 00:30 in Europe/Lisbon
 
     def script(first: str) -> LLMResponse:
-        if "[system_alert]" not in first or "Copy the candidate" not in first or script.done:
+        if EMAIL_CANDIDATES_HEADER not in first or script.done:
             return REPORT
         script.done = True
-        candidates = [json.loads(line.split(". ", 1)[1]) for line in first.split("Candidates:\n", 1)[1].splitlines()
-                      if re.match(r"^\d+\. \{", line)]
-        return calls(*[create(f"fact from {c['email_id']}", reported_date=c["date"]) for c in candidates])
+        return calls(*[create(f"fact from {c['email_id']}", reported_date=c["date"]) for c in email_candidates(first)])
 
     script.done = False
-    agent = make_agent(store, script, email_repo=OneBatchOfEmails(*sent))
+    agent = make_agent(store, script, email_repo=await stored_emails(*sent))
     with RequestContext(user_id=USER, account_id=ACC):
         await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
 
-    shown = [json.loads(line.split(". ", 1)[1])["date"] for line in agent.firsts[0].split("Candidates:\n", 1)[1].splitlines()
-             if re.match(r"^\d+\. \{", line)]
+    shown = [c["date"] for c in email_candidates(agent.firsts[0])]
     assert shown == ["2026-10-22T11:00:00+01:00", "2026-10-23T00:30:00+01:00"]      # the owner's calendar day, not the UTC day
     assert as_utc(by_text(store, "fact from e1")["reported_date"]) == utc(22, 10)
     assert as_utc(by_text(store, "fact from e2")["reported_date"]) == utc(22, 23, 30)    # the exact moment, not midnight clamped
-
-
-def test_the_candidate_date_is_utc_without_an_owner_zone_and_a_naive_date_is_utc():
-    emails = [email("e1", datetime(2026, 10, 22, 23, 30))]
-    (line,) = ConsolidationAgent._format_email_candidates(emails, "UTC").splitlines()
-    assert json.loads(line.split(". ", 1)[1])["date"] == "2026-10-22T23:30:00+00:00"
 
 
 STAMP = "2026-10-20 Tue 12:00 WEST"                     # 11:00 UTC

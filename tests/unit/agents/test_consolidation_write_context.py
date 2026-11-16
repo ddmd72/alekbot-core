@@ -18,6 +18,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.email import IndexedEmail
+from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER, SETTLED_FOR_MEMORY
 from src.domain.entities import FactDomain
 from src.domain.fact_write_context import as_utc
 from src.domain.llm import LLMResponse, ToolCall
@@ -97,7 +98,7 @@ def make_agent(store: FactStore, script: Callable[[str, str], LLMResponse], *, e
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
-        prompt_builder=pb, indexed_email_repo=email_repo,
+        prompt_builder=pb, indexed_email_repo=email_repo, email_memory_batches=email_repo,
     )
     agent.INLINE_CLUSTER_REVIEW = False
     agent.requests = []
@@ -281,8 +282,7 @@ async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
 
 def email(email_id: str, when: datetime, indexed: datetime) -> IndexedEmail:
     return IndexedEmail(
-        email_id=email_id, user_id=USER, account_id=ACC, source="gmail", text=f"mail {email_id}", tags=["mail"],
-        category="travel", metadata={"subject": email_id}, subject=email_id, from_address="a@example.com",
+        email_id=email_id, user_id=USER, account_id=ACC, source="gmail", subject=email_id, from_address="a@example.com",
         email_date=when, indexed_at=indexed,
     )
 
@@ -293,9 +293,10 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     emails = FirestoreIndexedEmailRepository(store.db, env)
     first, last = datetime(2026, 10, 10, 9, 0), datetime(2026, 10, 12, 15, 0)             # naive, as the repository returns them
     await emails.save_batch([email("e1", first, datetime(2026, 10, 13, 1)), email("e2", last, datetime(2026, 10, 13, 2))])
-    assert all(e.email_date.tzinfo is None for e in await emails.get_unconsolidated_batch(USER))
+    read = await emails.memory_batch(USER, 10, SETTLED_FOR_MEMORY, datetime.now(timezone.utc))
+    assert len(read) == 2 and all(m.email.email_date.tzinfo is None for m in read)        # what the email pass reads
 
-    agent = make_agent(store, once({"system_alert": calls(
+    agent = make_agent(store, once({EMAIL_CANDIDATES_HEADER: calls(
         create("flight booked", reported_date="2026-10-11T00:00:00+00:00", expiry=on(SUMMER_TRIP)),
         create("no date sent"),
         create("date from the future", reported_date="2026-10-30T00:00:00+00:00"),
@@ -313,7 +314,7 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     assert at(by_text(store, "no date sent")["reported_date"]) == utc(12, 15)             # span end, read as UTC
     assert at(by_text(store, "date from the future")["reported_date"]) == utc(12, 15)     # clamped into the span
     assert at(by_text(store, "flight booked")["expires_at"]) == SUMMER_TRIP_ENDS
-    assert await emails.get_unconsolidated_batch(USER) == []                              # marked consolidated
+    assert await emails.memory_batch(USER, 10, SETTLED_FOR_MEMORY, datetime.now(timezone.utc)) == []  # marked consolidated
 
 
 # ----------------------------------------------------------------------------------------------- top-level expiry

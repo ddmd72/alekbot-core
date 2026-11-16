@@ -254,29 +254,6 @@ def _has_filter(filters, field_path: str, op_string: str) -> bool:
     )
 
 
-FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE = ContractRule(
-    name="FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE",
-    description=(
-        "Every find_nearest query issued by FirestoreIndexedEmailRepository must "
-        "carry a user_id== AND a state== where-filter. Missing user_id risks "
-        "cross-tenant data leakage; missing state returns archived emails to "
-        "search results. SECURITY-RELEVANT. "
-        "Input: captured call {where_filters: list[FieldFilter], kwargs: dict}."
-    ),
-    validators={
-        "firestore_indexed_email": lambda call: (
-            _true(
-                _has_filter(call["where_filters"], "user_id", "=="),
-                "Firestore indexed_email find_nearest missing user_id== filter (cross-tenant leak risk)",
-            ),
-            _true(
-                _has_filter(call["where_filters"], "state", "=="),
-                "Firestore indexed_email find_nearest missing state== filter (archived emails leak into results)",
-            ),
-        ),
-    },
-)
-
 FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID = ContractRule(
     name="FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID",
     description=(

@@ -3,6 +3,6 @@ class_order:
 - taxonomy
 - cognitive_process
 - output_format
-outer_class: EmailFactExtractor extends Agent
+outer_class: EmailGate extends Agent
 source_file: firestore_utils/uploads/email_classifier_v1.json
 uploaded_by: local_script

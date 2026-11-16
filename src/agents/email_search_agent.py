@@ -5,9 +5,8 @@ Email Search Agent
 Specialist agent for the user's indexed email archive.
 Three intents, all routed through one agent instance:
 
-  search_emails           — v1: semantic search via 7-stream multi-vector RRF (LLM key extraction).
-                            v2 (a card search is wired, EMAIL_SEARCH_V2): one slots call reads the request, then
-                            EmailCardSearchService searches the cards (email index v2 §5).
+  search_emails           — one slots call reads the request, then EmailCardSearchService searches the cards
+                            (email index v2 §5), next to the live headers newer than the index.
                             payload: {"query": "..."}
 
   get_email_details       — fetch full Gmail body for a known email_id.
@@ -73,7 +72,6 @@ FRESH_LIMIT = 100
 KEY_LIMIT = 20
 MAX_EXACT_KEYS = 3
 MIN_KEY_LENGTH = 3
-_NO_EMAILS_FOUND = "No emails found matching your query."
 
 _SLOTS_ATTEMPTS = 2
 _HISTORY_TURNS = 3
@@ -88,11 +86,9 @@ class EmailSearchAgent(BaseAgent):
     """
     Specialist agent for searching the user's email archive.
 
-    Uses LLM to extract semantic search parameters from the user request,
-    then delegates 7-stream multi-vector RRF search to EmailSearchService.
+    One slots call reads the user request, then the card search, the live headers newer than the index and the
+    per-key lists run together (email index v2 §5). EmailSearchService serves details, attachments and live headers.
     """
-
-    MAX_TOKENS = EMAIL_SEARCH.max_tokens
 
     def __init__(
         self,
@@ -100,11 +96,11 @@ class EmailSearchAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         prompt_builder: PromptBuilderPort,
         email_search_service: EmailSearchService,
+        card_search: EmailCardSearchService,
         user_id: Optional[str] = None,
         file_conversion: Optional[FileConversionService] = None,
         user_timezone: str = "UTC",
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        card_search: Optional[EmailCardSearchService] = None,
     ) -> None:
         super().__init__(config)
         self.execution_context = execution_context
@@ -294,99 +290,8 @@ class EmailSearchAgent(BaseAgent):
     async def _handle_search_emails(
         self, message: AgentMessage, user_id: Optional[str]
     ) -> AgentResponse:
-        """v2 when a card search is wired, else LLM key extraction + 7-stream multi-vector RRF search."""
-        if self._card_search is not None:
-            return await self._handle_search_emails_v2(message, user_id, self._card_search)
-        query = message.payload.get("query", "")
-        account_id = message.context.get("account_id")
-        history: List[dict] = message.payload.get("history", [])
-
-        if not query:
-            return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error="No query provided",
-            )
-
-        logger.info(
-            f"📬 EmailSearchAgent.search_emails: '{query[:60]}' "
-            f"user={user_id[:8] if user_id else '?'} history_turns={len(history)}"
-        )
-        start_time = time.time()
-
-        # Step 1: LLM extracts search parameters
-        keys = await self._extract_search_queries(
-            query=query,
-            history=history,
-            user_id=user_id,
-            account_id=account_id,
-        )
-        primary_query = keys.get("primary_query") or query
-        alternative_query = keys.get("alternative_query") or query
-        tags: List[str] = keys.get("tags") or []
-        date_from = self._parse_date(keys.get("date_from"))
-        date_to = self._parse_date(keys.get("date_to"), end_of_day=True)
-
-        logger.info(
-            f"📬 EmailSearchAgent: primary='{primary_query[:50]}' "
-            f"alt='{alternative_query[:50]}' tags={tags} "
-            f"date_from={date_from} date_to={date_to}"
-        )
-
-        # Step 2: the index (7-stream RRF), the live headers newer than the index, and the exact keys, together
-        uid = user_id or ""
-        watermark = await self._safe_watermark(uid)
-        fresh_after, run_fresh = self._fresh_window(watermark, date_from, date_to)
-        fresh_before = self._fresh_before(date_to)
-        exact_keys = self._exact_keys(keys.get("exact_keys"))
-
-        vector_task = self._search_service.vector_search(
-            primary_query=primary_query,
-            alternative_query=alternative_query,
-            tags=tags,
-            user_id=user_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        fresh_task = (
-            self._search_service.list_headers(uid, after=fresh_after, before=fresh_before, limit=FRESH_LIMIT)
-            if run_fresh else self._none()
-        )
-        key_tasks = [self._search_service.list_headers(uid, key=k, limit=KEY_LIMIT) for k in exact_keys]
-        vector_res, fresh_res, *key_res = await asyncio.gather(
-            vector_task, fresh_task, *key_tasks, return_exceptions=True
-        )
-
-        if isinstance(vector_res, BaseException):
-            logger.error(f"📬 EmailSearchAgent: vector_search failed: {vector_res}", exc_info=vector_res)
-            return AgentResponse.failure(
-                task_id=message.task_id,
-                agent_id=self.agent_id,
-                error=f"Email search failed: {vector_res}",
-            )
-
-        result = self._assemble_result(
-            vector_res, fresh_res if run_fresh else None, run_fresh, fresh_after, fresh_before, exact_keys, key_res
-        )
-
-        duration_ms = int((time.time() - start_time) * 1000)
-        logger.info(f"📬 EmailSearchAgent done in {duration_ms}ms")
-
-        history_context_value = self._build_email_history_context(result=result, query=query)
-
-        return AgentResponse.success(
-            task_id=message.task_id,
-            agent_id=self.agent_id,
-            result=result,
-            confidence=1.0,
-            metadata={
-                "duration_ms": duration_ms,
-                "primary_query": primary_query,
-                "alternative_query": alternative_query,
-                "tags": tags,
-            },
-            history_context={"email_search_context": history_context_value} if history_context_value else None,
-        )
+        """The card search (email index v2 §5): see `_handle_search_emails_v2`."""
+        return await self._handle_search_emails_v2(message, user_id, self._card_search)
 
     # ------------------------------------------------------------------
     # Intent: search_emails, v2 (email index v2 §5; slice 8)
@@ -397,7 +302,7 @@ class EmailSearchAgent(BaseAgent):
     ) -> AgentResponse:
         """The slots call, then the card search, the live headers newer than the index and the per-key lists
         together. The delegation timestamp is stripped first: left in, it would read as a one-day period and as words
-        no mail holds. A card-search error fails the search (the switch is the only fallback). The request text is
+        no mail holds. A card-search error fails the search. The request text is
         never logged."""
         request = strip_delegation_timestamp(message.payload.get("query", "") or "").strip()
         if not request:
@@ -525,7 +430,7 @@ class EmailSearchAgent(BaseAgent):
     @staticmethod
     def _v2_bounds(request: str, slots: Optional[MailQuerySlots], today: date) -> Tuple[Optional[datetime],
                                                                                        Optional[datetime]]:
-        """The live listing's bounds (naive local, as `_parse_date` gives them): the search window's first and last
+        """The live listing's bounds (naive local): the search window's first and last
         day, only when the window filters and looks back (`period`, `past`); else none."""
         window = choose_window(mail_concepts(request), slots, today)
         if (window is None or not window.filters or window.intent not in (INTENT_PERIOD, INTENT_PAST)
@@ -638,38 +543,6 @@ class EmailSearchAgent(BaseAgent):
         logger.warning(f"📬 EmailSearchAgent: live mailbox listing failed: {exc}", exc_info=exc)
         return LIVE_NOTE_UNAVAILABLE
 
-    def _assemble_result(
-        self,
-        vector_res: str,
-        fresh_res: Any,
-        run_fresh: bool,
-        fresh_after: Optional[datetime],
-        fresh_before: Optional[datetime],
-        exact_keys: List[str],
-        key_res: List[Any],
-    ) -> str:
-        """One JSON object: the index hits, the fresh headers, the per-key headers and the notes. A listing that
-        failed adds a note and no entry; ids already shown earlier are dropped from later lists."""
-        index_emails: List[dict] = []
-        try:
-            parsed = json.loads(vector_res)
-            if isinstance(parsed, dict):
-                index_emails = parsed.get("emails") or []
-        except (ValueError, TypeError):
-            index_emails = []
-        seen = {e.get("email_id") for e in index_emails}
-        fresh, by_key, notes = self._live_lists(fresh_res, run_fresh, fresh_after, fresh_before, exact_keys, key_res,
-                                                seen)
-
-        empty = not index_emails and not notes and not (fresh and fresh["emails"]) \
-            and not any(g["emails"] for g in by_key)
-        if empty:
-            return _NO_EMAILS_FOUND
-        return json.dumps(
-            {"count": len(index_emails), "emails": index_emails, "fresh": fresh, "by_key": by_key, "notes": notes},
-            ensure_ascii=False,
-        )
-
     def _live_lists(
         self,
         fresh_res: Any,
@@ -723,140 +596,3 @@ class EmailSearchAgent(BaseAgent):
             by_key.append({"key": key, "truncated": bool(more), "listed": len(metas), "emails": entries})
 
         return fresh, by_key, notes
-
-    @staticmethod
-    def _parse_date(value: object, *, end_of_day: bool = False) -> Optional[datetime]:
-        """
-        Parse a YYYY-MM-DD string from the LLM output into a datetime. Returns None on any error.
-
-        strptime lands on 00:00:00 — the *start* of that day. date_to is used as an
-        inclusive upper bound (email_date <= date_to), so passing it through unchanged
-        would exclude every email on the LLM's own end date. end_of_day=True shifts it
-        to 23:59:59.999999 so the whole day is included.
-        """
-        if not value or not isinstance(value, str):
-            return None
-        try:
-            parsed = datetime.strptime(value, "%Y-%m-%d")
-        except ValueError:
-            logger.warning(f"📬 EmailSearchAgent: could not parse date '{value}', ignoring")
-            return None
-        if end_of_day:
-            parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
-        return parsed
-
-    @staticmethod
-    def _build_email_history_context(result: Any, query: str) -> Optional[Dict[str, Any]]:
-        """Structured context for history persistence (you_searched / you_received).
-
-        Parses the JSON string returned by EmailSearchService.vector_search.
-        Returns None when result is not a parseable JSON email list.
-        """
-        if not isinstance(result, str):
-            return None
-        try:
-            parsed = json.loads(result)
-        except (ValueError, TypeError):
-            return None
-        if not isinstance(parsed, dict):
-            return None
-        emails = parsed.get("emails") or []
-        fresh = parsed.get("fresh") or {}
-        by_key = parsed.get("by_key") or []
-        headers = list(fresh.get("emails") or [])
-        for group in by_key:
-            headers.extend(group.get("emails") or [])
-        if not emails and not headers:
-            return None
-        received = []
-        for e in emails:
-            entry: Dict[str, Any] = {
-                "id": e.get("email_id", ""),
-                "from": e.get("from", ""),
-                "date": e.get("date", ""),
-                "summary": (e.get("text") or "")[:200],
-            }
-            atts = e.get("attachments") or []
-            if atts:
-                entry["attachments"] = atts
-            received.append(entry)
-        for h in headers:
-            received.append({
-                "id": h.get("email_id", ""),
-                "from": h.get("from", ""),
-                "date": h.get("date", ""),
-                "summary": (h.get("subject") or "")[:200],
-            })
-        return {"you_searched": query, "you_received": received}
-
-    # ------------------------------------------------------------------
-    # Query extraction (used by search_emails only)
-    # ------------------------------------------------------------------
-
-    async def _extract_search_queries(
-        self,
-        query: str,
-        history: List[dict],
-        user_id: Optional[str],
-        account_id: Optional[str],
-    ) -> dict:
-        """
-        Use LLM to extract primary_query, alternative_query, and tags for vector search.
-        Includes biographical context and optional conversation history.
-        Falls back to empty dict (caller uses raw query) on any error.
-        """
-        # Build system prompt (separate try so failures don't skip debug logging)
-        system_prompt = ""
-        try:
-            system_prompt = await self.prompt_builder.build_for_agent(
-                agent_type="email_search",
-                user_id=user_id,
-                account_id=account_id,
-                routing_metadata=None,
-                include_biographical=True,
-            )
-        except Exception as exc:
-            logger.warning(f"📬 EmailSearchAgent: build_for_agent failed ({exc}), proceeding with empty prompt")
-
-        messages: List[Message] = []
-
-        # Inject last 3 conversation turns as context (if caller provides them)
-        for turn in history[-3:]:
-            role = turn.get("role", "user")
-            text = turn.get("text", "")
-            if text:
-                messages.append(
-                    Message(role=role, parts=[MessagePart(text=text)])
-                )
-
-        user_text = f'EMAIL_SEARCH_REQUEST "{query}"'
-        messages.append(
-            Message(
-                role="user",
-                parts=[MessagePart(text=user_text)],
-            )
-        )
-
-        request = LLMRequest(
-            model_name=self.model_name,
-            system_instruction=system_prompt,
-            messages=messages,
-            tools=[],
-            max_tokens=self.MAX_TOKENS,
-            disable_safety=True,
-            response_mime_type="application/json",
-        )
-
-
-        try:
-            response = await self._call_llm(request)
-            raw = (response.text or "").strip()
-            logger.debug(f"📬 EmailSearchAgent LLM raw: {raw}")
-
-            return json.loads(raw)
-
-        except Exception as exc:
-            logger.warning(
-                f"📬 EmailSearchAgent: query extraction failed ({exc}), using raw query"
-            )
-            return {}

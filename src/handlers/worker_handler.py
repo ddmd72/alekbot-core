@@ -28,8 +28,6 @@ Supported task_types:
   - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
   - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
-  - repair_email_embeddings       → run one batch of EmailEmbeddingRepairService (re-embed indexed emails
-                                     where embedding_pending=True after transient API failures)
   - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
@@ -92,7 +90,6 @@ from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
-from ..services.email_embedding_repair_service import EmailEmbeddingRepairService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.reminders_service import (
     RemindersService,
@@ -137,7 +134,6 @@ class WorkerHandler:
         email_review: "Optional[EmailReviewService]" = None,
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
-        email_embedding_repair: Optional[EmailEmbeddingRepairService] = None,
         link_service: "Optional[FileLinkService]" = None,
         short_link_service: "Optional[ShortLinkService]" = None,
         companion_extraction: "Optional[CompanionExtractionService]" = None,
@@ -189,7 +185,6 @@ class WorkerHandler:
         self._email_review = email_review
         self._account_repo = account_repo
         self._billing_webhook = billing_webhook
-        self._email_embedding_repair = email_embedding_repair
         self._companion_extraction = companion_extraction
         self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
@@ -349,8 +344,6 @@ class WorkerHandler:
             return await self._handle_daily_email_review(payload)
         elif task_type == "billing_daily_summary":
             return await self._handle_billing_daily_summary()
-        elif task_type == "repair_email_embeddings":
-            return await self._handle_repair_email_embeddings()
         elif task_type == "start_drive_sync":
             return await self._handle_start_drive_sync()
         elif task_type == "reconnect_notice_sweep":
@@ -451,32 +444,6 @@ class WorkerHandler:
         stale_threshold = datetime.now(timezone.utc) - timedelta(hours=2)
         marked = await self._email_indexing.mark_stale_jobs_failed(stale_threshold)
         return {"status": "ok", "marked_failed": marked}, 200
-
-    # ------------------------------------------------------------------
-    # Email embedding repair
-    # ------------------------------------------------------------------
-
-    async def _handle_repair_email_embeddings(self) -> Tuple[dict, int]:
-        """Run one repair batch for indexed emails with `embedding_pending=True`.
-
-        Triggered hourly by Cloud Scheduler. Cross-user, batch-capped at
-        EmailEmbeddingRepairService.batch_size (default 100). When the batch
-        saturates, immediately re-enqueues another `repair_email_embeddings`
-        task so the queue drains without waiting for the next scheduler tick
-        — same pattern as `_handle_consolidation` and `_handle_email_indexing`.
-        """
-        if self._email_embedding_repair is None:
-            logger.warning("[Worker] repair_email_embeddings: service not configured")
-            return {"error": "repair service not configured"}, 501
-
-        repaired, has_more = await self._email_embedding_repair.run()
-        if has_more and self._task_dispatch:
-            await self._task_dispatch.enqueue_worker_task(
-                task_type="repair_email_embeddings",
-                payload={},
-            )
-            logger.info("📬 [Worker] Re-enqueued next email-embedding repair tick")
-        return {"status": "ok", "repaired": repaired, "has_more": has_more}, 200
 
     # ------------------------------------------------------------------
     # Consolidation

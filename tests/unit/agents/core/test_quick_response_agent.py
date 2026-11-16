@@ -26,6 +26,8 @@ from src.infrastructure.delegation_engine import (
     _format_email_search_compact,
 )
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from src.domain.email_search_texts import HEAD_RANKED
+from tests.unit.domain.email_search_fixtures import index_block
 
 
 # ============================================================================
@@ -828,30 +830,37 @@ class TestFormatEmailSearchCompact:
 
     def test_single_email_no_attachments_no_text(self):
         import json
-        data = json.dumps({"emails": [{"email_id": "abc", "from": "a@example.com", "date": "2026-03-01"}]})
+        data = json.dumps({"index": index_block("abc")})
         result = _format_email_search_compact(data)
+        assert not result.startswith("{") and "<external_content" in result
         assert "abc" in result
-        assert "a@example.com" in result
-        # reviewer (email fresh headers): the count line names the index, apart from the live header lists
-        assert "Found 1 email(s) in the index:" in result
+        assert "Example School (school.example)" in result
+        # reviewer (email fresh headers): the count line names the index, apart from the live header lists; on v2
+        # the index head says so (reviewer, slice 10)
+        assert HEAD_RANKED in result
 
     def test_email_with_text_snippet(self):
         import json
-        data = json.dumps({"emails": [{"email_id": "abc", "text": "Important update"}]})
-        assert "Important update" in _format_email_search_compact(data)
+        data = json.dumps({"index": index_block("abc", subject="Important update")})
+        result = _format_email_search_compact(data)
+        assert '"Important update"' in result and not result.startswith("{")
 
     def test_email_with_attachments(self):
         import json
-        data = json.dumps({"emails": [{"email_id": "abc", "attachments": ["report.pdf", "data.xlsx"]}]})
+        # a v2 index line counts its files and names none (slice 8): the result says how to open them by email id
+        data = json.dumps({"index": index_block("abc", has_attachments=True)})
         result = _format_email_search_compact(data)
-        assert "report.pdf" in result
-        assert "data.xlsx" in result
+        assert 'delegate open_email_attachment with context={"email_id": "<id>"}' in result
 
     def test_email_text_truncated_to_150_chars(self):
         import json
+        # the index lines come capped by their renderer; the formatter cuts the live header's snippet
         long_text = "x" * 300
-        data = json.dumps({"emails": [{"email_id": "abc", "text": long_text}]})
-        assert "x" * 151 not in _format_email_search_compact(data)
+        data = json.dumps({"fresh": {"since": None, "tz": "UTC", "truncated": False, "emails": [
+            {"email_id": "abc", "from": "a@example.com", "subject": "s", "date": "2026-03-01 09:00",
+             "snippet": long_text}]}})
+        result = _format_email_search_compact(data)
+        assert "x" * 150 in result and "x" * 151 not in result
 
     def test_non_dict_json_returns_original(self):
         import json
@@ -1107,7 +1116,7 @@ class TestDelegateQuickSearchEmails:
     async def test_search_emails_result_formatted_compact(self):
         """search_emails intent → _format_email_search_compact used."""
         import json
-        email_json = json.dumps({"emails": [{"email_id": "abc123", "from": "a@example.com", "date": "2026-03-01"}]})
+        email_json = json.dumps({"index": index_block("abc123"), "fresh": None, "by_key": [], "notes": []})
         success_response = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=success_response)
@@ -1120,9 +1129,11 @@ class TestDelegateQuickSearchEmails:
         result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
+        assert not result.result_str.startswith("{") and "<external_content" in result.result_str
         assert "abc123" in result.result_str
-        # reviewer (email fresh headers): the count line names the index, apart from the live header lists
-        assert "Found 1 email(s) in the index:" in result.result_str
+        # reviewer (email fresh headers): the count line names the index, apart from the live header lists; on v2
+        # the index head says so (reviewer, slice 10)
+        assert HEAD_RANKED in result.result_str
 
 
 # =============================================================================

@@ -37,7 +37,7 @@ GMAIL_INDEX_PROVIDER = "gmail"
 class EmailMetadata:
     """
     Returned by EmailProviderPort.list_emails().
-    Used during classification. NOT stored in Firestore.
+    The email gate decides from it. NOT stored in Firestore.
     """
     email_id: str
     provider: str
@@ -52,7 +52,7 @@ class EmailMetadata:
 class EmailFullContent:
     """
     Returned by EmailProviderPort.batch_get_full_content().
-    Used by EmailClassificationService (ambiguous snippet) and
+    Used by the indexing job for kept mail (attachment names, the card step) and
     EmailSearchAgent's get_email_details. Attachment bytes are never read here: `list_parts` / `get_part` do that.
     Body text is never stored in Firestore.
     """
@@ -93,20 +93,17 @@ class EmailPart:
 @dataclass
 class EmailClassificationResult:
     """
-    Output of EmailClassificationService per email.
-    valuable=False → email discarded, not written to Firestore.
-    valuable_type:
-      "confirmed_event"    — email directly confirms a real-world event (booking, receipt, etc.)
-      "biographical_signal" — email reveals biographical context about the user (school, family, etc.)
+    The email gate's decision for one listed mail (email index v2 §4; the rule in `email_gate.py`).
+    keep=False → the mail is not stored. `reason` is a value of `KEEP_REASONS` / `DROP_REASONS`, or None when the
+    answer gave none known; `forced` marks a keep the code rule made (the answer left the mail out, or its reason did
+    not fit its decision).
     """
     email_id: str
-    valuable: bool
-    category: Optional[str]   # travel|finance|healthcare|work|legal|personal|subscription
-    fact: Optional[str]        # Self-contained fact sentence; becomes IndexedEmail.text
-    tags: List[str]
-    valuable_type: str = "confirmed_event"  # "confirmed_event" | "biographical_signal"
-    # Set only by a classifier failure (parse_error | max_turns | exception): the email was
-    # never judged, so it must not be read as noise.
+    keep: bool
+    reason: Optional[str] = None
+    forced: bool = False
+    # Set only by a classifier failure (parse_error | exception class): the email was never judged, so it is neither
+    # kept nor read as noise.
     failure: Optional[str] = None
 
 
@@ -117,7 +114,9 @@ class EmailClassificationResult:
 class IndexedEmail(BaseModel):
     """
     Stored in Firestore ({env}_domain_email_facts_v1).
-    Mirrors FactEntity structure to enable identical RRF search pattern.
+    The mail's record beside its card (email index v2): headers, attachment names and the lifecycle marks. Search
+    and memory read the card. Stored documents that still carry removed v1 fields (the vectors; the gate's fact
+    sentence `text`, `tags`, `category`, `metadata`) parse: unknown fields are ignored.
     Doc ID = email_id (idempotent upsert on retry).
     """
     # Identifiers
@@ -125,18 +124,6 @@ class IndexedEmail(BaseModel):
     user_id: str
     account_id: str
     source: str             # "gmail" | "outlook"
-
-    # Content — mirrors FactEntity
-    text: str                                       # extracted fact sentence
-    vector: Optional[List[float]] = None            # embed(text)
-    tags_vector: Optional[List[float]] = None       # embed(tags joined)
-    metadata_vector: Optional[List[float]] = None   # embed(structured values: amounts, dates, refs)
-    attachments_vector: Optional[List[float]] = None  # embed(attachment filenames); None if no attachments
-
-    # Classification
-    tags: List[str]
-    category: str
-    metadata: Dict[str, Any]    # subject, from_address, snippet + structured entities
 
     # Email-specific fields (top-level for display + search)
     subject: str
@@ -147,7 +134,6 @@ class IndexedEmail(BaseModel):
     # Lifecycle
     state: str = "current"       # "current" | "archived"
     indexed_at: datetime
-    embedding_pending: bool = False   # True if vectors not yet computed (repair job picks these up)
     consolidated_at: Optional[datetime] = None  # set when batch sent to ConsolidationAgent
 
 
@@ -205,7 +191,6 @@ class IndexingJob(BaseModel):
     emails_fetched: int = 0
     emails_stored: int = 0
     emails_failed: int = 0
-    embedding_pending: int = 0
     errors: List[Dict[str, Any]] = []       # capped at 100: {email_id, stage, error}
     started_at: datetime
     updated_at: datetime

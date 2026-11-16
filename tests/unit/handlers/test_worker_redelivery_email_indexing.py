@@ -25,7 +25,6 @@ import pytest
 from google.api_core.exceptions import DeadlineExceeded
 
 from src.domain.email import EmailClassificationResult, EmailMetadata, IndexingJob
-from src.domain.oauth_credential import OAuthCredential
 from src.ports.email_classifier_port import EmailClassifierPort
 from src.services import email_indexing_service
 from tests.support import http_boundary_fake
@@ -50,11 +49,9 @@ EMAILS = {
 class ValuableClassifier(EmailClassifierPort):
     """Every email is valuable, with a fact (no LLM)."""
 
-    async def classify_batch(self, emails: List[EmailMetadata], user_id: str,
-                             credentials: Optional[OAuthCredential] = None, *,
+    async def classify_batch(self, emails: List[EmailMetadata], user_id: str, *,
                              account_id: str = "") -> List[EmailClassificationResult]:
-        return [EmailClassificationResult(email_id=e.email_id, valuable=True, category="personal",
-                                          fact=f"The user received '{e.subject}'.", tags=["mail"]) for e in emails]
+        return [EmailClassificationResult(email_id=e.email_id, keep=True) for e in emails]
 
 
 def _message(email_id: str) -> Dict[str, Any]:

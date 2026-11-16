@@ -167,7 +167,6 @@ class ServiceContainer:
             indexed_email_repo=self.indexed_email_repo,
             oauth_credentials=self.oauth_credentials,
             gmail_provider=self.gmail_provider,
-            embedding_service=self.embedding_service,
             connector=self.connectors.get(GMAIL),
         )
 
@@ -386,15 +385,14 @@ class ServiceContainer:
             context_builder=self.context_builder,
             user_repo=user_repo,
             prompt_builder=PromptBuilder(repo=None, assembly_service=self.assembly_service),
-            gmail=self.gmail_provider,
             quota_service=quota_service,
             prompt_content_store=self.prompt_content_store,
         )
         # The owner-confirmed people list (FACT_PROFILE_RFC §4.5): on the container so every builder of the profile
         # step reads the same list; a step built without it would fingerprint facts without the entries they name.
         self.confirmed_people = FirestoreConfirmedPeopleRepository(db_client, env_config)
-        # Email search v2 (email index v2, slice 8): the email agent searches the cards when EMAIL_SEARCH_V2 is on;
-        # None keeps v1. Built on the container's one embedding adapter and confirmed-people list.
+        # Email card search (email index v2): the email agent searches the cards. Built on the container's one
+        # embedding adapter and confirmed-people list.
         self.email_card_search = build_email_card_search(db_client, env_config, self.embedding_service,
                                                          self.confirmed_people)
         # The owner's answers to profile questions (FACT_PROFILE_RFC §4.7): on the container beside the list, read by the
@@ -415,11 +413,9 @@ class ServiceContainer:
             job_repo=self.email_job_repo,
             exclusions_repo=self.email_exclusions_repo,
             classifier=self.email_classifier,
-            embedding=self.embedding_service,
             oauth=self.oauth_credentials,
             alert_sink=alert_webhook,
             connector=self.connectors.get(GMAIL),
-            quota=quota_service,
         )
         self.email_review_service = EmailReviewService(
             email_provider=self.gmail_provider,
