@@ -18,6 +18,7 @@ Public interface:
     OPEN_MARGIN_S, INTERACTIVE_OPEN_S, PREFETCH_OPEN_S     the deadlines (§4.4 "Long scans: Deadline")
     CALLER_OPEN, CALLER_PREFETCH, CALLER_CONNECTOR, CALLER_INDEX   `ReadRequest.caller` values
     READER_SKIPPED, reader_skipped(outcome) -> bool         a connector read the reader would have taken (no paid call)
+    reader_admits(pages_total, reader_pages) -> bool        whether an `index` read may run the reader (all or nothing)
     IN_PROCESS_TEXT_KINDS          the kinds with no converter, read as UTF-8 in the caller (sandbox S-Δ2, A3)
     PARSE_KINDS                    the child readers' kinds that are not in IN_PROCESS_TEXT_KINDS
     TRANSCRIPT_CACHE_DAYS          how long a chat upload's transcript is kept (P21)
@@ -44,8 +45,9 @@ CALLER_PREFETCH = "prefetch"
 # the reader (a scan, a thin or garbled text layer, a parser error on a PDF; any image) answers NO_TEXT with a
 # `READER_SKIPPED` detail instead, and the parser's links. Chat and prefetch never pass it.
 CALLER_CONNECTOR = "connector"
-# The email index (email index v2): text layer only. Like the connector, never runs the paid reader: what the router
-# would hand it answers `NO_TEXT` with a `READER_SKIPPED` detail. Scans are read by a later slice.
+# The email index (email index v2): text layer by default. It runs the paid reader only for a scan whose page count the
+# parser reported and `ReadRequest.reader_pages` admits (`reader_admits`); otherwise what the router would hand the
+# reader answers `NO_TEXT` with a `READER_SKIPPED` detail, like the connector.
 CALLER_INDEX = "index"
 READER_SKIPPED = "reader_skipped"
 
@@ -93,6 +95,7 @@ class ReadRequest:
     account_id: str
     deadline_at: float                         # one absolute deadline (epoch seconds, `time.time()`), from the open's start
     request_id: str
+    reader_pages: int = 0                      # pages the reader may read for an `index` read; 0 = never; ignored by other callers
 
 
 @dataclass(frozen=True)
@@ -117,3 +120,9 @@ class ReadOutcome:
 def reader_skipped(outcome: ReadOutcome) -> bool:
     """A connector read the reader would have taken and did not (`CALLER_CONNECTOR`): NO_TEXT, `READER_SKIPPED` detail."""
     return outcome.status is ReadStatus.NO_TEXT and outcome.detail.split(":", 1)[0] == READER_SKIPPED
+
+
+def reader_admits(pages_total: int, reader_pages: int) -> bool:
+    """Whether an `index` read may run the reader: the parser reported a page count and the whole document fits in
+    `reader_pages`. All or nothing: a scan over the allowance, or one with an unknown count (0), is not read at all."""
+    return 0 < pages_total <= reader_pages

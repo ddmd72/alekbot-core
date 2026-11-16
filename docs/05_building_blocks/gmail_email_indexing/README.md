@@ -182,6 +182,19 @@ write is a field update through `FirestoreEmailCardStore.write_card` (one transa
   dollar and reader-page caps, resume). The v2 write never touches `consolidated_at`, so re-carded mail never re-enters
   memory consolidation.
 - Check: `python scripts/email/card_store_status.py [--since YYYY-MM-DD]` prints counts per `card_state` (counts only).
+- **Scanned PDFs (slice 5).** A PDF the router would hand to the reader (`no_text`, `low_density`, `garbage_text`,
+  `parser_error`) is read by the paid reader when it has 10 pages or fewer (all or nothing; an 11-page scan or one with
+  no page count is not read) and the page budget allows it; its outcome is `read_by_reader` and its text feeds the card
+  writer and grading like text-layer text. The attachment service reads in two passes (the parser-only read, whose
+  page count decides, then a second read with `reader_pages`), asks a `ReaderPageBudget` (online: per user and UTC day,
+  one document in `{p}email_reader_pages`, default 40 pages, refusing when the store errors), and starts a read only
+  with at least 60 s left before the mail's deadline. A refusal by budget, time or a reader outage (`MODEL_UNAVAILABLE`)
+  stays `scan_not_read` and is not cached; the reader's own cost is billed by the reader's ledger. Knob:
+  `EMAIL_READER_PAGES_PER_DAY` (optional, default 40, `0` turns the online scan reader off; read with `os.getenv` in
+  `composition/email_card_setup.py`). There is no `CARD_VERSION` bump: stored mail whose scans were skipped is selected by
+  `python scripts/email/card_store_status.py --scans [--ids-out scripts/memory/email_cards/scans.txt]` and re-carded with
+  `recard_subscription.py --max-reader-pages N --max-usd X` (`--dry-run` projects the pages and dollars first;
+  `card_probe.py --max-reader-pages N` is the paid probe).
 - **Memory reads the cards** (slice 9): the repository also implements `EmailMemoryBatches` (`memory_batch`), the batch
   consolidation's Stage 3 reads behind `EMAIL_CARD_MEMORY`: unconsolidated mail whose card is settled (`carded`, `empty`,
   `abandoned`, `source_gone`) plus any mail indexed more than 6 h ago, oldest first, projected to the v1 fields without

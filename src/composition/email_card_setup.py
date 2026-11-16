@@ -2,6 +2,8 @@
 
 New mail the indexer keeps also gets its v2 card, stored on the same document after the v1 save. Behind the optional
 knob `EMAIL_CARD_ONLINE` (read here with `os.getenv`, never in `load_settings()`): **default off**; `1` switches it on.
+Scanned PDFs are read by the paid reader under a per-user daily page cap: the optional knob
+`EMAIL_READER_PAGES_PER_DAY` (read here with `os.getenv`; default 40; `0` turns the scan reader off online).
 The step shares the graph's one document service, mailbox provider and embedding adapter; without a document service
 (no file conversion) there is no step.
 
@@ -10,9 +12,12 @@ Stage 3 of consolidation reads settled cards instead of the one-line candidates 
 batch port and Stage 3 is the v1 one-line form.
 """
 import os
-from typing import Any
+from typing import Any, Optional
 
 from ..adapters.firestore_email_card_store import FirestoreEmailCardStore
+from ..adapters.firestore_email_reader_budget import FirestoreEmailReaderBudget
+from ..domain.email_attachment_policy import EMAIL_READER_PAGES_PER_DAY_DEFAULT
+from ..ports.reader_page_budget import ReaderPageBudget
 from ..services.email_attachment_text_service import EmailAttachmentTextService
 from ..services.email_card_indexer import EmailCardIndexer
 from ..services.email_card_service import EmailCardService, MailSource
@@ -21,6 +26,7 @@ from ..utils.logger import logger
 from .email_card_runner import EmailCardRunner, card_writer_model
 
 SWITCH = "EMAIL_CARD_ONLINE"
+READER_PAGES_KNOB = "EMAIL_READER_PAGES_PER_DAY"
 MEMORY_SWITCH = "EMAIL_CARD_MEMORY"
 _ON = ("1", "true", "yes", "on")
 
@@ -31,6 +37,18 @@ def email_card_online_enabled() -> bool:
 
 def email_card_memory_enabled() -> bool:
     return os.getenv(MEMORY_SWITCH, "0").strip().lower() in _ON
+
+
+def reader_pages_per_day() -> int:
+    """The daily reader page cap: the knob, or the default (with one WARNING) when it is not an integer."""
+    raw = os.getenv(READER_PAGES_KNOB)
+    if raw is None or not raw.strip():
+        return EMAIL_READER_PAGES_PER_DAY_DEFAULT
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning(f"[EmailCard] {READER_PAGES_KNOB} is not an integer; using {EMAIL_READER_PAGES_PER_DAY_DEFAULT}")
+        return EMAIL_READER_PAGES_PER_DAY_DEFAULT
 
 
 def attach_email_card_step(email_indexing_service: Any, container: Any, documents: Any, db_client: Any,
@@ -49,8 +67,14 @@ def attach_email_card_step(email_indexing_service: Any, container: Any, document
     service = EmailCardService(container.gmail_provider,
                                EmailAttachmentTextService(container.gmail_provider, documents),
                                runner, container.embedding_service)
+    pages = reader_pages_per_day()
+    budget: Optional[ReaderPageBudget] = None
+    if pages > 0:
+        budget = FirestoreEmailReaderBudget(db_client, env_config, pages)
+    else:
+        logger.info(f"[EmailCard] scan reader off ({READER_PAGES_KNOB} is {pages})")
     email_indexing_service.attach_card_step(EmailCardIndexer(
         service, FirestoreEmailCardStore(db_client, env_config), container.confirmed_people, user_repo,
-        quota=quota_service, source_factory=MailSource))
+        quota=quota_service, source_factory=MailSource, reader_budget=budget))
     logger.info("[EmailCard] online carding on")
     return True

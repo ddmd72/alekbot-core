@@ -37,7 +37,7 @@ from ..domain.document_limits import (
 )
 from ..domain.document_read import (
     CALLER_CONNECTOR, CALLER_INDEX, CALLER_PREFETCH, IN_PROCESS_TEXT_KINDS, PARSE_KINDS, READER_SKIPPED, TRANSCRIPT_CACHE_DAYS,
-    ReadOutcome, ReadRequest, ReadStatus,
+    ReadOutcome, ReadRequest, ReadStatus, reader_admits,
 )
 from ..domain.drive_extraction import (
     DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable, PdfSplitFailed,
@@ -63,8 +63,7 @@ _RAW_TEXT_KINDS = IN_PROCESS_TEXT_KINDS | {"other", "data_dump", "mhtml"}
 # ERROR: systemic or a bug (Errors-dev pages on it); everything else that is not a success is a WARNING.
 _ERROR_STATUSES = frozenset({ReadStatus.ERROR, ReadStatus.MEMORY, ReadStatus.MODEL_UNAVAILABLE,
                              ReadStatus.PARSER_UNAVAILABLE})
-# Callers that never run the paid model reader: the drive connector and the email index.
-_NO_READER_CALLERS = frozenset({CALLER_CONNECTOR, CALLER_INDEX})
+# The drive connector never runs the paid model reader; the email index runs it only for an admitted scan (`reader_admits`).
 _QUIET_STATUSES = frozenset({ReadStatus.TEXT, ReadStatus.NATIVE, ReadStatus.NO_TEXT})
 
 
@@ -198,16 +197,24 @@ class DocumentService(DocumentReadPort):
                 return _from_extraction(parsed)
             if _busy(parsed):
                 return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
-        if request.caller in _NO_READER_CALLERS:
-            # The drive connector and the email index never run the paid reader: what the router would hand it answers NO_TEXT, with
-            # the parser's links and page count, and the route (or the reader-first kind) in the detail.
+        reader_pages = pages
+        if request.caller == CALLER_INDEX:
+            # The email index reads a scan only when the parser's page count fits `request.reader_pages` (all or nothing).
+            admitted = reader_admits(parsed.pages_total if parsed is not None else 0, request.reader_pages)
+            reader_pages = request.reader_pages
+        else:
+            admitted = request.caller != CALLER_CONNECTOR
+        if not admitted:
+            # The drive connector, and an index read the allowance does not admit, never run the paid reader: what the
+            # router would hand it answers NO_TEXT, with the parser's links and page count, and the route (or the
+            # reader-first kind) in the detail.
             return ReadOutcome(status=ReadStatus.NO_TEXT, links=_links(parsed) if parsed is not None else (),
                                pages_total=parsed.pages_total if parsed is not None else 0,
                                detail=f"{READER_SKIPPED}: {route or kind}")
         try:
             read = await self._reader.extract(ExtractionRequest(
                 path=path, name=request.name, kind=kind, mime_type=mime, user_id=request.user_id,
-                account_id=request.account_id, max_model_pages=pages, deadline_at=request.deadline_at,
+                account_id=request.account_id, max_model_pages=reader_pages, deadline_at=request.deadline_at,
                 text_budget=reader_text_budget(request.store)))
         except ParserBusy:
             return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
@@ -223,8 +230,9 @@ class DocumentService(DocumentReadPort):
                                    links=_links(parsed), detail="reader unavailable")
             return ReadOutcome(status=ReadStatus.MODEL_UNAVAILABLE, model_calls=exc.model_calls,
                                model_cost_usd=exc.model_cost, detail=failure_label(exc))
-        if _busy(read):
-            return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy")
+        if _busy(read):   # the reader's own spend before the busy answer is reported, already billed
+            return ReadOutcome(status=ReadStatus.PARSER_UNAVAILABLE, detail="busy", model_calls=read.model_calls,
+                               model_cost_usd=read.model_cost)
         outcome = _from_extraction(read)
         links = _links(parsed, read) if parsed is not None else _links(read)
         calls = read.model_calls + (parsed.model_calls if parsed else 0)

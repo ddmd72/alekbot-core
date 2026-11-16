@@ -108,6 +108,7 @@ How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 | :--- | :--- | :--- | :--- |
 | `{p}email_indexing_state` | indexing cursor per user and provider | `{user_id}_{provider}` | `IndexingState`, `src/domain/email.py` |
 | `{p}email_indexing_jobs_v1` | one record per indexing run (resume, Cabinet history) | `job_id` | `IndexingJob`, `src/domain/email.py` |
+| `{p}email_reader_pages` | pages the paid scan reader read for the email index on one UTC day (one document per user, overwritten each day; no TTL, no index) | `user_id` | `FirestoreEmailReaderBudget`, `src/adapters/firestore_email_reader_budget.py` |
 | `{p}email_exclusions` | sender, domain and subject patterns skipped before classification | `{user_id}_{pattern_type}_{pattern}` | `EmailExclusion`, `src/domain/email.py` |
 | `{p}task_search_index` | vectors and display fields for Microsoft To Do tasks (To Do is the source of truth) | `{user_id}_{task_id}` | `TaskSearchEntry`, `src/domain/task.py` |
 | `{p}task_config` | primary list and Graph webhook subscriptions per user | `user_id` | `TaskUserConfig`, `src/domain/task.py` |

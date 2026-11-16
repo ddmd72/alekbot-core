@@ -295,6 +295,16 @@ class EnvironmentConfig:
         return f"{prefix}email_indexing_jobs_v1"
 
     @property
+    def email_reader_pages_collection(self) -> str:
+        """
+        Get the email scan reader's daily page counter (one document per user, overwritten each UTC day).
+        Dev: development_email_reader_pages
+        Prod: email_reader_pages
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}email_reader_pages"
+
+    @property
     def task_search_index_collection(self) -> str:
         """
         Task search index (thin vector index; source of truth is MS To Do).
