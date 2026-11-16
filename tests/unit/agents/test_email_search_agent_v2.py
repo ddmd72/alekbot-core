@@ -73,7 +73,7 @@ class SnapshotPrompts:
         self.calls.append({"agent_type": agent_type, **kwargs})
         if self.fail:
             raise RuntimeError("token missing")
-        return SLOTS_PROMPT if agent_type == SLOTS_PROFILE else "v1 prompt"
+        return SLOTS_PROMPT
 
 
 class Embeddings(EmbeddingService):
@@ -104,11 +104,6 @@ class Mailbox:
         self.watermark = watermark
         self.listing: Dict[Optional[str], Any] = {}
         self.calls: List[dict] = []
-        self.vector_calls: List[dict] = []
-
-    async def vector_search(self, **kwargs: Any) -> str:
-        self.vector_calls.append(kwargs)
-        return "No emails found matching your query."
 
     async def index_watermark(self, user_id: str) -> Optional[datetime]:
         return self.watermark
@@ -134,12 +129,12 @@ def _index(cls=InMemoryEmailCardIndex) -> InMemoryEmailCardIndex:
 
 
 def _agent(llm: ScriptedSlotsLLM, *, mailbox: Optional[Mailbox] = None, prompts: Optional[SnapshotPrompts] = None,
-           index: Optional[InMemoryEmailCardIndex] = None, v2: bool = True, tz: str = "Europe/Lisbon",
+           index: Optional[InMemoryEmailCardIndex] = None, tz: str = "Europe/Lisbon",
            now: datetime = NOW) -> EmailSearchAgent:
     context = AgentExecutionContext(agent_type="email_search", provider=llm, model_name="gemini-eco",
                                     tier=PerformanceTier.ECO, capabilities=ProviderCapabilities(),
                                     resilience_port=InMemoryProviderResilience())
-    search = EmailCardSearchService(index if index is not None else _index(), Embeddings(), People()) if v2 else None
+    search = EmailCardSearchService(index if index is not None else _index(), Embeddings(), People())
     return EmailSearchAgent(
         config=AgentConfig(agent_id="email_search_agent_usr", agent_type="email_search"), execution_context=context,
         prompt_builder=prompts or SnapshotPrompts(),  # type: ignore[arg-type]
@@ -314,15 +309,6 @@ async def test_you_received_lists_the_shown_cards_in_the_v1_shape():
                     "summary": (card.profile.title or card.mail.subject)[:200],
                     "attachments": [a.name for a in card.attachments]}
     assert json.loads(response.result)["index"]["has_attachments"] is True
-
-
-async def test_without_a_card_search_the_v1_profile_and_search_run():
-    mailbox, prompts = Mailbox(), SnapshotPrompts()
-    llm = ScriptedSlotsLLM([json.dumps({"primary_query": "school", "alternative_query": "school", "tags": []})])
-    response = await _run(_agent(llm, mailbox=mailbox, prompts=prompts, v2=False), "Example School")
-    assert [c["agent_type"] for c in prompts.calls] == ["email_search"]
-    assert len(mailbox.vector_calls) == 1
-    assert response.status == AgentStatus.SUCCESS and "index" not in (response.result or "")
 
 
 @pytest.mark.parametrize("query", ["", STAMP])
