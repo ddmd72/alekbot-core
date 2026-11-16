@@ -72,6 +72,13 @@ def builder(live, built):
     async def build():
         agent = bench_agent(live.store, answered(), email_repo=live.emails)
         agent.prompt_builder.assembly_service.blueprint_repo = SimpleNamespace()    # the live one; never read here
+        agent.prompts_built = []
+
+        async def build_for_agent(*, agent_type, **_):          # records the profile each prompt is built for
+            agent.prompts_built.append(agent_type)
+            return "SYSTEM"
+
+        agent.prompt_builder.build_for_agent = build_for_agent
         built.append(agent)
         return handles_for(agent, live.store)
     return build
@@ -114,8 +121,7 @@ async def test_the_card_run_builds_its_prompt_for_the_email_profile(live, tmp_pa
 
     await bench5.compare_forms(builder(live, built), args())
 
-    agent_types = [[c.kwargs["agent_type"] for c in a.prompt_builder.build_for_agent.call_args_list] for a in built]
-    assert agent_types == [["consolidation"], ["consolidation_email"]]
+    assert [a.prompts_built for a in built] == [["consolidation"], ["consolidation_email"]]
 
 
 async def test_an_empty_set_says_so_and_spends_nothing(live, tmp_path, monkeypatch):
