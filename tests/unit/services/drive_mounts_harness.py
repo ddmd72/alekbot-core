@@ -45,7 +45,7 @@ class MountedWorld(V2World):
                                      created_at=CREATED + timedelta(days=1), history=acme_history or (),
                                      searched_by_default=acme_searched)
         self._acme_on = acme
-        self.connections = connection_service(self.conns)
+        self.connections = connection_service(self.conns, clock=lambda: self.now)   # the mount table's now: AS_OF
         counter = itertools.count(1)
         self.service = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=SPACE,
                                           clock=lambda: self.now, nonce=lambda: f"nonce{next(counter):04d}")
