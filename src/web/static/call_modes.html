@@ -177,22 +177,72 @@
         },
       };
 
-      const _currentLang = (() => {
+      // The page language is the owner's UI language from his settings (the one the server uses for the call file's
+      // drive folder), fetched from a gated route because this page is public static HTML. Until that answers: the
+      // last server language stored here, then the phone's, then English. The first render never waits for the fetch.
+      const LANG_STORAGE_KEY = "voice_ui_language";
+      const UI_LANG_URL = "/api/voice/ui-language";
+
+      function hasLanguage(code) {
+        return typeof code === "string" && Object.prototype.hasOwnProperty.call(LANG_DICT, code);
+      }
+
+      function storedLanguage() {
+        try {
+          const code = localStorage.getItem(LANG_STORAGE_KEY);
+          return hasLanguage(code) ? code : null;
+        } catch (e) {
+          return null; // storage unavailable: no stored language
+        }
+      }
+
+      function storeLanguage(code) {
+        try {
+          localStorage.setItem(LANG_STORAGE_KEY, code);
+        } catch (e) {
+          // storage unavailable: the next load starts from the phone language until the fetch answers
+        }
+      }
+
+      function phoneLanguage() {
         const code = (navigator.language || "en").slice(0, 2).toLowerCase();
-        return LANG_DICT[code] ? code : "en";
-      })();
+        return hasLanguage(code) ? code : null;
+      }
+
+      let _currentLang = storedLanguage() || phoneLanguage() || "en";
 
       function t(key) {
         return (LANG_DICT[_currentLang] || LANG_DICT.en)[key] || key;
       }
 
-      document.title = t("app.title");
-      document.getElementById("title").textContent = t("app.title");
-      document.getElementById("back-link").textContent = t("back.cabinet");
-      for (const mode of ["interpreter", "tutor"]) {
-        document.getElementById(`${mode}-title`).textContent = t(`mode.${mode}.title`);
-        document.getElementById(`${mode}-desc`).textContent = t(`mode.${mode}.desc`);
+      function render() {
+        document.title = t("app.title");
+        document.getElementById("title").textContent = t("app.title");
+        document.getElementById("back-link").textContent = t("back.cabinet");
+        for (const mode of ["interpreter", "tutor"]) {
+          document.getElementById(`${mode}-title`).textContent = t(`mode.${mode}.title`);
+          document.getElementById(`${mode}-desc`).textContent = t(`mode.${mode}.desc`);
+        }
       }
+
+      async function syncServerLanguage() {
+        try {
+          const resp = await fetch(UI_LANG_URL, { credentials: "same-origin" });
+          if (!resp.ok) return; // no answer: keep the fallback
+          const body = await resp.json();
+          const code = body && typeof body.language === "string" ? body.language.toLowerCase() : "";
+          if (!hasLanguage(code)) return; // a language this page does not have: keep the fallback
+          storeLanguage(code);
+          if (code === _currentLang) return;
+          _currentLang = code;
+          render();
+        } catch (e) {
+          // offline or a bad body: keep the fallback
+        }
+      }
+
+      render();
+      syncServerLanguage();
 
       // Same session rule as the call page: an expired Cabinet session goes to login and comes back here.
       (async () => {

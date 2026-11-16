@@ -240,6 +240,9 @@ relay or a store. The call record is deleted at hang-up (`voice_web_call_app.py:
 through `_owned`, `:81-82`), so the route is keyed by the Cabinet user (`g.user_id`), not by a call id. Consequences
 by construction: nothing new is persisted server-side, and what barge-in cut (§4.3) is not in the file.
 
+- **Page language:** the call pages show their texts in the owner's UI language from his settings (the language the
+  server uses for the folder and summary below), read from `GET /api/voice/ui-language` after the first render; until it
+  answers: the last server language stored in `localStorage`, the phone language, English.
 - **Route:** `POST /api/voice/call-text/file`, Cabinet JWT. Body: `target` (`drive` | `chat`), `mode`,
   `duration_s`, and `entries` in display order, each a translation pair `{source, translation, interrupted}` or a
   Lelik block `{question, answer}`. Capped (512 KB body, 2,000 entries; over → 413, malformed → 400). It trusts the
