@@ -6,106 +6,55 @@
 <title>Lelik sink probe</title>
 <!--
   Throwaway probe, not for main. Can a web page on iOS move WebRTC remote audio between the AirPods and the
-  iPhone speaker during a call (HTMLMediaElement.setSinkId / AudioContext.setSinkId / selectAudioOutput)?
-  The page loops WebRTC back into itself (no server): a local tone goes pc1 -> pc2 and plays from the remote
-  track exactly like call.html does (one-track MediaStream on an <audio>). The mic is opened only to put iOS
-  into the same play-and-record audio session as a real call; it is never sent or played.
+  iPhone speaker during a call (HTMLMediaElement.setSinkId / AudioContext.setSinkId)? The page loops WebRTC back
+  into itself (no server): a local beep goes pc1 -> pc2 and plays from the remote track the way call.html does.
+  The mic is opened only to put iOS into the play-and-record session of a real call; it is never sent or played.
+  A guided run: the page switches the output itself and asks one question per step.
 -->
 <style>
   :root {
     --bg: #f5f6f8; --card: #ffffff; --fg: #1c2230; --muted: #5d6678; --line: #d9dde5;
     --accent: #2b6de0; --ok: #1e8e4e; --bad: #c4362c;
-    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #11141a; --card: #1a1f28; --fg: #e8ebf1; --muted: #9aa3b5; --line: #2c3340;
             --accent: #6b9cff; --ok: #4cc27f; --bad: #ff6b5f; color-scheme: dark; }
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { margin: 0; background: var(--bg); color: var(--fg);
-         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+         font: 18px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
                   max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
-  main { max-width: 640px; margin: 0 auto; display: grid; gap: 14px; }
-  h1 { font-size: 20px; margin: 4px 0 0; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
-            display: grid; gap: 10px; }
-  h2 { font-size: 15px; margin: 0; }
-  p, ol { margin: 0; color: var(--muted); }
-  ol { padding-left: 20px; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; }
-  button, select { font: inherit; border-radius: 10px; border: 1px solid var(--line); background: var(--bg);
-                   color: var(--fg); padding: 10px 12px; min-height: 44px; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button.ok { border-color: var(--ok); color: var(--ok); }
-  button.bad { border-color: var(--bad); color: var(--bad); }
-  button:disabled { opacity: .45; }
-  select { width: 100%; }
-  label { font-size: 13px; color: var(--muted); }
-  #status { font-weight: 600; }
-  pre { margin: 0; font: 11.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word;
-        max-height: 45vh; overflow: auto; background: var(--bg); border-radius: 8px; padding: 10px; }
+  main { max-width: 520px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; gap: 20px;
+         justify-content: center; }
+  .step { font-size: 15px; color: var(--muted); text-align: center; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0; text-align: center; }
+  p { margin: 0; color: var(--muted); text-align: center; }
+  .buttons { display: grid; gap: 12px; }
+  button { font: inherit; font-size: 22px; font-weight: 600; border-radius: 16px; border: 2px solid var(--line);
+           background: var(--card); color: var(--fg); padding: 18px; min-height: 72px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.small { font-size: 16px; font-weight: 500; min-height: 48px; padding: 10px; }
+  button:disabled { opacity: .4; }
+  details { font-size: 13px; color: var(--muted); }
+  pre { font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
+        max-height: 40vh; overflow: auto; background: var(--card); border-radius: 8px; padding: 10px; }
   .media { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
 <main>
-  <h1>🎧 ⇄ 🔊 Проба переключения выхода</h1>
-
-  <section>
-    <h2>Как проверять</h2>
-    <ol>
-      <li>Подключи AirPods.</li>
-      <li>Нажми «Старт», разреши микрофон. В наушниках пойдут гудки «пик-пик».</li>
-      <li>Нажимай кнопки выходов ниже, после каждой отмечай, откуда реально звук.</li>
-      <li>Повтори для всех трёх способов воспроизведения.</li>
-      <li>В конце «Скопировать лог» и пришли мне.</li>
-    </ol>
-    <p>Звук никуда не уходит: всё крутится внутри телефона.</p>
-    <div class="row">
-      <button id="start" class="primary">▶ Старт</button>
-      <button id="stop" disabled>■ Стоп</button>
-    </div>
-    <div id="status">Не запущено</div>
-  </section>
-
-  <section id="stage" hidden>
-    <h2>1. Способ воспроизведения</h2>
-    <label for="path">Как играть голос</label>
-    <select id="path">
-      <option value="single">A: как в звонке сейчас (audio, одна дорожка)</option>
-      <option value="dual">B: video, аудио + пустая видеодорожка</option>
-      <option value="webaudio">C: через WebAudio (AudioContext)</option>
-    </select>
-    <button id="usePath">Играть этим способом</button>
-
-    <h2>2. Куда выводить</h2>
-    <div class="row" id="outs"></div>
-    <div class="row">
-      <button id="pick">Выбрать выход (системный диалог)</button>
-      <button id="refresh">Обновить список</button>
-    </div>
-
-    <h2>3. Откуда звук сейчас?</h2>
-    <div class="row">
-      <button class="ok" data-v="speaker">🔊 Динамик</button>
-      <button class="ok" data-v="headphones">🎧 Наушники</button>
-      <button class="bad" data-v="silence">🔇 Тишина</button>
-    </div>
-
-    <h2>4. Микрофон (как в звонке)</h2>
-    <label for="mic">Микрофон</label>
-    <select id="mic"></select>
-    <button id="useMic">Переключить микрофон</button>
-  </section>
-
-  <section>
-    <div class="row">
-      <h2 style="flex:1">Лог</h2>
-      <button id="copy">Скопировать лог</button>
-    </div>
+  <div class="step" id="step"></div>
+  <h1 id="title">Надень AirPods</h1>
+  <p id="hint">Потом нажми кнопку. Телефон начнёт пикать, а я буду спрашивать, где ты это слышишь.</p>
+  <div class="buttons" id="buttons">
+    <button class="primary" id="go">Начать</button>
+  </div>
+  <details>
+    <summary>Технический лог</summary>
     <pre id="log"></pre>
-  </section>
+  </details>
 </main>
 
 <audio id="a1" class="media" playsinline></audio>
@@ -119,34 +68,39 @@ const $ = (id) => document.getElementById(id);
 const lines = [];
 function log(msg) {
   lines.push(new Date().toISOString().slice(11, 23) + " " + msg);
-  const el = $("log");
-  el.textContent = lines.join("\n");
-  el.scrollTop = el.scrollHeight;
+  $("log").textContent = lines.join("\n");
 }
 const errStr = (e) => (e ? (e.name || "Error") + ": " + (e.message || String(e)) : "?");
 const short = (id) => (id ? id.slice(0, 8) : "(default)");
 const fmt = (v) => (v === undefined ? "undefined" : JSON.stringify(v));
 const Ctx = window.AudioContext || window.webkitAudioContext;
+const PATH_NAMES = { single: "A (как в звонке сейчас)", dual: "B (видео-обход)", webaudio: "C (WebAudio-обход)" };
 
-let ctx = null, osc = null, gain = null, toneTimer = null;
-let mic = null, pc1 = null, pc2 = null, remoteTrack = null;
-let path = null;
+let ctx = null, osc = null, gain = null, mic = null, pc1 = null, pc2 = null, remoteTrack = null, path = null;
+let tests = [], idx = 0;
+const results = [];
 
-function status(text) { $("status").textContent = text; }
-
-function logEnv() {
-  log("UA: " + navigator.userAgent);
-  log("HTMLMediaElement.setSinkId: " + ("setSinkId" in HTMLMediaElement.prototype));
-  log("AudioContext.setSinkId: " + !!(Ctx && "setSinkId" in Ctx.prototype));
-  log("selectAudioOutput: " + !!(navigator.mediaDevices && navigator.mediaDevices.selectAudioOutput));
-  log("audioSession: " + (navigator.audioSession ? navigator.audioSession.type : "none"));
+// ---------- screen ----------
+function screen(step, title, hint, buttons) {
+  $("step").textContent = step || "";
+  $("title").textContent = title;
+  $("hint").textContent = hint || "";
+  const box = $("buttons");
+  box.innerHTML = "";
+  buttons.forEach(([label, cls, fn]) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (cls) b.className = cls;
+    b.addEventListener("click", () => { box.querySelectorAll("button").forEach((x) => (x.disabled = true)); fn(); });
+    box.appendChild(b);
+  });
 }
 
-async function openMic(deviceId) {
-  if (mic) mic.getTracks().forEach((t) => t.stop());
-  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-  if (deviceId) audio.deviceId = { exact: deviceId };
-  mic = await navigator.mediaDevices.getUserMedia({ audio });
+// ---------- audio plumbing ----------
+async function openMic() {
+  mic = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
   log("mic open: \"" + mic.getAudioTracks()[0].label + "\"");
 }
 
@@ -156,17 +110,14 @@ async function buildLoopback() {
   gain.gain.value = 0;
   gain.connect(dest);
   osc = ctx.createOscillator();
-  osc.type = "sine";
   osc.connect(gain);
   osc.start();
-
   pc1 = new RTCPeerConnection();
   pc2 = new RTCPeerConnection();
   pc1.onicecandidate = (e) => e.candidate && pc2.addIceCandidate(e.candidate).catch(() => {});
   pc2.onicecandidate = (e) => e.candidate && pc1.addIceCandidate(e.candidate).catch(() => {});
   const got = new Promise((resolve) => { pc2.ontrack = (ev) => resolve(ev.track); });
-  const track = dest.stream.getAudioTracks()[0];
-  pc1.addTrack(track, dest.stream);
+  pc1.addTrack(dest.stream.getAudioTracks()[0], dest.stream);
   const offer = await pc1.createOffer();
   await pc1.setLocalDescription(offer);
   await pc2.setRemoteDescription(offer);
@@ -174,15 +125,11 @@ async function buildLoopback() {
   await pc2.setLocalDescription(answer);
   await pc1.setRemoteDescription(answer);
   remoteTrack = await Promise.race([
-    got,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("no remote track in 8 s")), 8000)),
+    got, new Promise((_, rej) => setTimeout(() => rej(new Error("no remote track in 8 s")), 8000)),
   ]);
-  log("remote WebRTC track: " + remoteTrack.kind + ", " + remoteTrack.readyState);
-}
-
-function startTone() {
+  log("remote WebRTC track: " + remoteTrack.readyState);
   let i = 0;
-  toneTimer = setInterval(() => {
+  setInterval(() => {
     const t = ctx.currentTime;
     osc.frequency.setValueAtTime(i++ % 2 ? 520 : 780, t);
     gain.gain.setValueAtTime(0, t);
@@ -203,19 +150,17 @@ async function usePath(kind) {
   if (kind === "single") {
     const el = $("a1");
     el.srcObject = new MediaStream([remoteTrack]);
-    await el.play().catch((e) => log("play: " + errStr(e)));
+    el.play().catch((e) => log("play: " + errStr(e)));
     path = { kind, sink: (id) => el.setSinkId(id), now: () => el.sinkId,
              stop: () => { el.pause(); el.srcObject = null; } };
   } else if (kind === "dual") {
     const cv = $("cv");
-    const g = cv.getContext("2d");
-    g.fillStyle = "#000";
-    g.fillRect(0, 0, cv.width, cv.height);
+    cv.getContext("2d").fillRect(0, 0, cv.width, cv.height);
     const vt = cv.captureStream(1).getVideoTracks()[0];
     const el = $("v1");
     el.muted = false;
     el.srcObject = new MediaStream([remoteTrack, vt]);
-    await el.play().catch((e) => log("play: " + errStr(e)));
+    el.play().catch((e) => log("play: " + errStr(e)));
     path = { kind, sink: (id) => el.setSinkId(id), now: () => el.sinkId,
              stop: () => { el.pause(); el.srcObject = null; vt.stop(); } };
   } else {
@@ -230,128 +175,110 @@ async function usePath(kind) {
              sink: (id) => (c2.setSinkId ? c2.setSinkId(id) : Promise.reject(new Error("AudioContext.setSinkId missing"))),
              now: () => c2.sinkId,
              stop: () => { src.disconnect(); c2.close(); keep.pause(); keep.srcObject = null; } };
-    log("webaudio ctx state: " + c2.state);
   }
-  log("path " + kind + " playing, sinkId=" + fmt(path.now()));
-  status("Играет способ " + kind.toUpperCase() + ". Отметь, откуда звук.");
+  log("path " + kind + " playing");
 }
 
-async function setSink(id, label) {
-  if (!path) { log("no path playing"); return; }
-  log("setSinkId(\"" + label + "\" " + short(id) + ") on " + path.kind + " ...");
+// ---------- the guided run ----------
+async function begin() {
+  if (navigator.audioSession) navigator.audioSession.type = "play-and-record";
+  ctx = new Ctx();
+  ctx.resume().catch(() => {});
+  log("UA: " + navigator.userAgent);
+  log("HTMLMediaElement.setSinkId: " + ("setSinkId" in HTMLMediaElement.prototype) +
+      ", AudioContext.setSinkId: " + !!(Ctx && "setSinkId" in Ctx.prototype) +
+      ", selectAudioOutput: " + !!navigator.mediaDevices.selectAudioOutput);
   try {
-    await path.sink(id);
-    log("  resolved, sinkId now=" + fmt(path.now()));
-  } catch (e) {
-    log("  rejected: " + errStr(e));
-  }
-}
-
-async function listDevices() {
-  const ds = await navigator.mediaDevices.enumerateDevices();
-  const ins = ds.filter((d) => d.kind === "audioinput");
-  const outs = ds.filter((d) => d.kind === "audiooutput");
-  log("devices: " + ins.length + " in, " + outs.length + " out");
-  ins.forEach((d) => log("  in:  \"" + d.label + "\" " + short(d.deviceId)));
-  outs.forEach((d) => log("  out: \"" + d.label + "\" " + short(d.deviceId)));
-
-  const micSel = $("mic");
-  const keep = micSel.value;
-  micSel.innerHTML = "";
-  ins.forEach((d) => {
-    const o = document.createElement("option");
-    o.value = d.deviceId;
-    o.textContent = d.label || short(d.deviceId);
-    micSel.appendChild(o);
-  });
-  if (keep && ins.some((d) => d.deviceId === keep)) micSel.value = keep;
-
-  const box = $("outs");
-  box.innerHTML = "";
-  const add = (id, label) => {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.addEventListener("click", () => setSink(id, label));
-    box.appendChild(b);
-  };
-  add("", "По умолчанию");
-  outs.forEach((d) => { if (d.deviceId && d.deviceId !== "default") add(d.deviceId, d.label || short(d.deviceId)); });
-}
-
-$("start").addEventListener("click", async () => {
-  $("start").disabled = true;
-  try {
-    if (navigator.audioSession) navigator.audioSession.type = "play-and-record";
-    ctx = new Ctx();
-    ctx.resume().catch(() => {});
-    logEnv();
-    await openMic(null);
-    log("tone ctx state: " + ctx.state);
+    screen("", "Секунду…", "Разреши доступ к микрофону, если телефон спросит.", []);
+    await openMic();
     await buildLoopback();
-    startTone();
-    await listDevices();
-    await usePath($("path").value);
-    $("stage").hidden = false;
-    $("stop").disabled = false;
   } catch (e) {
     log("start failed: " + errStr(e));
-    status("Не запустилось, смотри лог");
-    $("start").disabled = false;
+    return finish("Не запустилось", "Пришли мне технический лог.");
   }
-});
+  const ds = await navigator.mediaDevices.enumerateDevices();
+  const outs = ds.filter((d) => d.kind === "audiooutput" && d.deviceId && d.deviceId !== "default");
+  ds.forEach((d) => log("  " + d.kind + ": \"" + d.label + "\" " + short(d.deviceId)));
+  log("outputs offered: " + outs.length);
 
-$("stop").addEventListener("click", () => {
-  stopPath();
-  clearInterval(toneTimer);
-  [pc1, pc2].forEach((p) => p && p.close());
-  if (mic) mic.getTracks().forEach((t) => t.stop());
-  if (ctx) ctx.close();
-  ctx = osc = gain = mic = pc1 = pc2 = remoteTrack = null;
-  if (navigator.audioSession) navigator.audioSession.type = "auto";
-  $("stage").hidden = true;
-  $("stop").disabled = true;
-  $("start").disabled = false;
-  status("Остановлено");
-  log("stopped");
-});
-
-$("usePath").addEventListener("click", () => usePath($("path").value).catch((e) => log("path failed: " + errStr(e))));
-$("refresh").addEventListener("click", () => listDevices().catch((e) => log("enumerate: " + errStr(e))));
-$("pick").addEventListener("click", async () => {
-  if (!navigator.mediaDevices.selectAudioOutput) { log("selectAudioOutput not supported"); return; }
-  try {
-    const d = await navigator.mediaDevices.selectAudioOutput();
-    log("selectAudioOutput -> \"" + d.label + "\" " + short(d.deviceId));
-    await setSink(d.deviceId, d.label);
-    await listDevices();
-  } catch (e) {
-    log("selectAudioOutput: " + errStr(e));
+  tests = [{ path: "single", sinkId: null, label: "без переключения" }];
+  if ("setSinkId" in HTMLMediaElement.prototype) {
+    ["single", "dual", "webaudio"].forEach((p) =>
+      outs.forEach((d) => tests.push({ path: p, sinkId: d.deviceId, label: d.label || short(d.deviceId) })));
   }
-});
-$("useMic").addEventListener("click", () => openMic($("mic").value).catch((e) => log("mic: " + errStr(e))));
-document.querySelectorAll("[data-v]").forEach((b) => b.addEventListener("click", () => {
-  log("VERDICT path=" + (path ? path.kind : "none") + " sinkId=" + fmt(path ? path.now() : undefined) +
-      " -> " + b.dataset.v);
-}));
-if (navigator.mediaDevices) {
-  navigator.mediaDevices.addEventListener("devicechange", () => {
-    log("devicechange");
-    listDevices().catch(() => {});
-  });
+  idx = 0;
+  runTest();
 }
-$("copy").addEventListener("click", () => {
+
+async function runTest() {
+  const t = tests[idx];
+  screen("Шаг " + (idx + 1) + " из " + tests.length, "Переключаю…", "", []);
+  if (!path || path.kind !== t.path) await usePath(t.path);
+  if (t.sinkId !== null) {
+    try {
+      await path.sink(t.sinkId);
+      log("setSinkId(\"" + t.label + "\") on " + t.path + " resolved, sinkId=" + fmt(path.now()));
+    } catch (e) {
+      log("setSinkId(\"" + t.label + "\") on " + t.path + " rejected: " + errStr(e));
+    }
+  }
+  await new Promise((r) => setTimeout(r, 1200));
+  screen("Шаг " + (idx + 1) + " из " + tests.length, "Где сейчас пикает?", "", [
+    ["🎧  В наушниках", "", () => answer("headphones")],
+    ["📱  Из телефона", "", () => answer("speaker")],
+    ["🔇  Не слышу", "", () => answer("silence")],
+  ]);
+}
+
+function answer(where) {
+  const t = tests[idx];
+  results.push({ ...t, where });
+  log("VERDICT " + t.path + " / " + t.label + " -> " + where);
+  if (idx === 0 && where === "silence") {
+    return finish("Звука нет совсем", "Значит, тест не завёлся. Пришли мне технический лог.");
+  }
+  idx += 1;
+  if (idx < tests.length) runTest(); else verdict();
+}
+
+function verdict() {
+  const outs = tests.length - 1;
+  const win = results.find((r) => r.sinkId !== null && r.where === "speaker");
+  if (!("setSinkId" in HTMLMediaElement.prototype)) {
+    finish("❌ Не получится", "Этот Safari вообще не умеет выбирать выход звука.");
+  } else if (outs === 0) {
+    finish("❌ Не получится", "iPhone не показал странице ни одного выхода, переключать некуда.");
+  } else if (win) {
+    finish("✅ Получилось!", "Способ " + PATH_NAMES[win.path] + " переключает звук на телефон. Скопируй результат и пришли мне.");
+  } else {
+    finish("❌ Не переключилось", "Ни один способ не увёл звук из наушников. Скопируй результат и пришли мне.");
+  }
+}
+
+function finish(title, hint) {
+  stopPath();
+  if (mic) mic.getTracks().forEach((t) => t.stop());
+  if (navigator.audioSession) navigator.audioSession.type = "auto";
+  const summary = ["RESULT: " + title].concat(results.map((r) => r.path + " / " + r.label + " -> " + r.where));
+  log(summary.join("\n"));
+  screen("Готово", title, hint, [["Скопировать результат", "primary", copy]]);
+}
+
+function copy() {
   const text = lines.join("\n");
   navigator.clipboard.writeText(text).then(
-    () => status("Лог скопирован"),
+    () => screen("Готово", "Скопировано 👍", "Вставь мне в чат.", []),
     () => {
+      $("log").closest("details").open = true;
       const r = document.createRange();
       r.selectNodeContents($("log"));
-      const s = getSelection();
-      s.removeAllRanges();
-      s.addRange(r);
-      status("Выделил лог: скопируй вручную");
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      screen("Готово", "Не смог скопировать сам", "Лог открыт внизу и выделен: скопируй его вручную.", []);
     });
-});
+}
+
+$("go").addEventListener("click", () => { $("go").disabled = true; begin(); });
 </script>
 </body>
 </html>
