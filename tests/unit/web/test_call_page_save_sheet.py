@@ -166,7 +166,7 @@ sheetClick("save.done");
            flag="callFileToDrive"))
     assert out["sheet"] is False and out["row"] is False and out["panel"] is False and out["lines"] == 0
     assert out["live"] is False and out["flag"] is False
-    assert out["state"] == ["save.not_a_key"] or out["state"] == ["state.idle"]
+    assert out["state"] == ["state.idle"]
     assert out["button"] == ["idle"] and out["starts"] == 0
 
 

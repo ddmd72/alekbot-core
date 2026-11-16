@@ -51,7 +51,8 @@ def test_the_english_labels_are_pinned():
 
 
 def test_the_new_css_uses_tokens_only_and_never_reaches_the_overlay_from_a_listener():
-    css = block("      /* ── Show view (VOICE", "        cursor: pointer;\n      }\n    </style>")
+    # The Show view's CSS section: from its header to the next section's header (Save as file follows it).
+    css = block("      /* ── Show view (VOICE", "      /* ── Save as file (VOICE")
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", css)
     assert "-apple-system-body" in css and "rotate(180deg)" in css
     assert "transition" not in css and "animation" not in css
