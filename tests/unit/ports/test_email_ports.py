@@ -136,12 +136,6 @@ class TestIndexedEmailRepository:
         params = _params(IndexedEmailRepository, "save_batch")
         assert "emails" in params
 
-    def test_find_nearest_signature(self):
-        params = _params(IndexedEmailRepository, "find_nearest")
-        assert "user_id" in params
-        assert "vectors" in params
-        assert "limit" in params
-
     def test_get_unconsolidated_batch_signature(self):
         params = _params(IndexedEmailRepository, "get_unconsolidated_batch")
         assert "user_id" in params
@@ -151,11 +145,6 @@ class TestIndexedEmailRepository:
         params = _params(IndexedEmailRepository, "mark_consolidated")
         assert "email_ids" in params
         assert "consolidated_at" in params
-
-    def test_update_vectors_signature(self):
-        params = _params(IndexedEmailRepository, "update_vectors")
-        assert "email_id" in params
-        assert "vectors" in params
 
 
 # =============================================================================

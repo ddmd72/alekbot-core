@@ -20,6 +20,7 @@ from src.ports.llm_port import (
     ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
+from src.services.email_card_search_service import EmailCardSearchService
 from src.services.email_search_service import EmailSearchService
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 
@@ -88,7 +89,6 @@ def mock_prompt_builder():
 @pytest.fixture
 def mock_search_service():
     svc = AsyncMock(spec=EmailSearchService)
-    svc.vector_search.return_value = SEARCH_RESULT
     # reviewer (email fresh headers): search_emails now also reads the index watermark and lists live headers;
     # an indexed mailbox with nothing newer keeps these tests on the index path they check
     svc.index_watermark.return_value = datetime(2026, 1, 16, tzinfo=timezone.utc)
@@ -104,6 +104,7 @@ def agent(mock_llm, mock_prompt_builder, mock_search_service):
         execution_context=_make_execution_context(mock_llm),
         prompt_builder=mock_prompt_builder,
         email_search_service=mock_search_service,
+        card_search=AsyncMock(spec=EmailCardSearchService),
         user_id="user123",
     )
 

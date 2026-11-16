@@ -13,7 +13,6 @@ Per type (`tests/support/worker_triggers.py::scheduler_task_types`), where "run 
 | `start_daily_email_review` | `tests/unit/handlers/test_worker_handler_daily_review_fanout.py::test_three_ticks_inside_window_enqueue_once`, `::test_scheduler_recall_in_same_hour_does_not_enqueue_twice` | the mark store: `tests/unit/adapters/test_firestore_dedup_store_reclaim.py::test_concurrent_reclaims_of_one_expired_mark_yield_one_winner`; the named task: `tests/unit/handlers/test_worker_handler_daily_review_fanout.py::test_enqueue_passes_dedup_key_and_deadline` |
 | `start_email_indexing` | `test_the_auto_index_ticked_twice_starts_one_job` (here, the control) | `test_the_auto_index_ticked_twice_concurrently_starts_one_job` (here, strict xfail P15-D6) |
 | `email_indexing_watchdog` | `test_the_watchdog_run_twice_fails_a_stale_job_once` (here) | harmless: both runs read the stale job by query and write the same status (`src/services/email_indexing_service.py:256-272`) |
-| `repair_email_embeddings` | `test_the_embedding_repair_run_twice_repairs_once` (here) | equal writes, cost only: both runs may embed the same email and write the same vectors (`src/services/email_embedding_repair_service.py:56-62`) |
 | `sweep_consolidation` | revival bounded and counted: `tests/unit/adapters/test_consolidation_queue_failed_bounded.py::test_sweep_revives_failed_and_counts_the_revival`, `::test_revivals_survive_a_new_failure_and_stop_at_the_cap` | the consolidation lease: `tests/unit/services/test_consolidation_service_lease.py::test_second_concurrent_run_of_the_account_defers_with_a_named_bucket_task`, `::test_concurrent_losers_in_one_bucket_enqueue_one_task` |
 | `sweep_companion_consolidation` | one unnamed task per stuck session per run, by design (`src/handlers/worker_handler.py:532-548`) | the race those tasks make: `tests/unit/handlers/test_worker_redelivery_chains.py` (P15-D5) |
 | `fact_lifecycle_sweep` | one `fact_review` task over two runs in a local day: `tests/unit/services/test_fact_lifecycle_sweep_review.py::test_two_runs_on_one_local_day_make_one_task_and_both_report_the_review_requested`; one ops post: `tests/unit/services/test_fact_lifecycle_sweep.py::test_a_second_run_of_the_day_replaces_the_snapshot_keeps_the_tool_errors_and_posts_nothing_more`; a retry under the same task name: `tests/unit/handlers/test_worker_handler_fact_lifecycle_sweep.py::test_a_failed_delivery_releases_its_claim_so_the_retry_runs_and_a_good_run_keeps_it` | the run guard: `tests/unit/adapters/test_fact_lifecycle_run_guard_store.py::test_two_runs_racing_for_the_guard_get_one_winner`, `::test_runs_that_all_read_the_free_guard_before_any_commits_still_get_one_winner` |
@@ -26,12 +25,11 @@ from typing import Any, List
 
 import pytest
 
-from src.domain.email import IndexedEmail, IndexingJob
+from src.domain.email import IndexingJob
 from src.domain.user import UserBotConfig, UserProfile
 from tests.support.cloud_tasks_fake import FakeCloudTasksClient
 from tests.support.clock_instants import pin_datetime
 from tests.support.oauth_credentials_store import creds
-from tests.support.prod_env import EMBEDDING
 from tests.support.prod_graph import prod_graph  # noqa: F401  (the fixture)
 from tests.support.redelivery_world import T0, Rendezvous, deliver_twice, require
 
@@ -196,30 +194,3 @@ async def test_the_watchdog_run_twice_fails_a_stale_job_once(prod_graph, monkeyp
     assert {k: d["status"] for k, d in repo.collection.docs.items()} == {
         "j1": "failed", "j2": "running", "j3": "completed"}
     assert repo.collection.docs["j1"]["updated_at"] == T0
-
-
-# ----------------------------------------------------------------------------- repair_email_embeddings
-
-async def test_the_embedding_repair_run_twice_repairs_once(prod_graph):
-    """One indexed email whose vectors are pending: the first run embeds it and clears the flag, the second finds
-    nothing pending (`src/adapters/firestore_indexed_email_repo.py:336-360`). Neither run saturates the batch, so no
-    follow-up `repair_email_embeddings` task is created. Gathered: both runs may embed the same email and write equal
-    vectors; cost only, not tested."""
-    repo = prod_graph.app.worker_handler._email_embedding_repair._email_repo
-    await repo.save_batch([IndexedEmail(
-        email_id="m1", user_id="u1", account_id="a1", source="gmail",
-        text="The AirPods order ships on Friday.", tags=["order"], category="shopping",
-        metadata={"subject": "Your order"}, subject="Your order", from_address="shop@example.com",
-        email_date=T0 - timedelta(days=1), indexed_at=T0 - timedelta(hours=1), embedding_pending=True)])
-
-    twice = await deliver_twice(prod_graph.app.worker_handler, _payload("repair_email_embeddings"),
-                                gathered=False, names=None)
-
-    assert not twice.raised
-    assert twice.answers == [({"status": "ok", "repaired": 1, "has_more": False}, 200),
-                             ({"status": "ok", "repaired": 0, "has_more": False}, 200)]
-    stored = repo.collection.docs["u1_m1"]
-    assert stored["embedding_pending"] is False
-    assert {f: list(stored[f]) for f in ("vector", "tags_vector", "metadata_vector")} == {
-        "vector": EMBEDDING, "tags_vector": EMBEDDING, "metadata_vector": EMBEDDING}
-    assert _bodies("repair_email_embeddings") == []
