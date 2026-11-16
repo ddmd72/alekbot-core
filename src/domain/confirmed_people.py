@@ -15,7 +15,7 @@ on purpose.
 """
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_enrichment import Grade
 from .drive_grade import TextEvidence
@@ -146,7 +146,7 @@ class EntryIdPlan:
     retired: Tuple[Tuple[str, int], ...]           # stored ids no new entry took; never reused
 
 
-def _spellings(person: ConfirmedPerson) -> frozenset:
+def _spellings(person: ConfirmedPerson) -> FrozenSet[str]:
     return frozenset(s.casefold() for s in (person.name, *person.forms))
 
 
