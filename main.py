@@ -492,6 +492,7 @@ async def main():
                         cipher=app.cipher,
                         digest_key=app.digest_key,
                         call_text_files=app.call_text_files,
+                        language_service=app.language_service,
                     ))
                     logger.info(
                         "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"

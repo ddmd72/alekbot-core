@@ -31,6 +31,7 @@ GET /api/user/platforms
 GET /api/user/reminders
 GET /api/user/timezone
 GET /api/user/voice-languages
+GET /api/voice/ui-language
 GET /api/voice/web-call/<call_id>/status
 GET /auth/callback
 GET /auth/connect/<kind>

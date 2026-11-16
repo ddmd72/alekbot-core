@@ -75,7 +75,8 @@ def _control_channel_on() -> bool:
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
                                     relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
                                     digest_key: bytes, replace_wait_s: float = _REPLACE_WAIT_S,
-                                    replace_poll_s: float = _REPLACE_POLL_S, call_text_files=None) -> Blueprint:
+                                    replace_poll_s: float = _REPLACE_POLL_S, call_text_files=None,
+                                    language_service=None) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(session_service)
     web_calls = WebCallMedia(media_room, ephemeral_store, call_setup, cipher, digest_key)
@@ -261,6 +262,21 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         # succeeded here. Extending it this early would hold the marker for up to an hour even
         # if the relay never shows up.
         return jsonify({"call_id": call_id, "sdp": leg.answer_sdp, "file_to_drive": file_to_drive}), 201
+
+    @bp.route("/api/voice/ui-language")
+    @auth_required
+    async def ui_language():
+        """The owner's UI language (USER -> ACCOUNT -> SYSTEM chain), the one the server uses for the call file's drive
+        folder and summary. The call pages are public static HTML, so they ask here, with the session cookie, to show
+        their buttons and labels in it. No service wired: 404, the page keeps its phone-language fallback."""
+        if language_service is None:
+            return jsonify({"error": "not found"}), 404
+        try:
+            language = await language_service.resolve_ui_language(g.user_id)
+        except Exception:
+            logger.error(f"web call: UI language not resolved for {str(g.user_id)[:8]}", exc_info=True)
+            return jsonify({"error": "unavailable"}), 500
+        return jsonify({"language": getattr(language, "value", language)})
 
     @bp.route("/api/voice/call-text/file", methods=["POST"])
     @auth_required

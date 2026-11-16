@@ -997,13 +997,61 @@
         },
       };
 
-      const _currentLang = (() => {
+      /* ── UI language ─────────────────────────────────── */
+      // The page language is the owner's UI language from his settings (the language the server uses for the call
+      // file's drive folder and summary), fetched from a gated route because this page is public static HTML. Until
+      // that answers: the last server language stored here, then the phone's, then English. The first render never
+      // waits for the fetch; a different answer re-renders the visible texts through applyLanguage.
+      const LANG_STORAGE_KEY = "voice_ui_language";
+      const UI_LANG_URL = "/api/voice/ui-language";
+
+      function hasLanguage(code) {
+        return typeof code === "string" && Object.prototype.hasOwnProperty.call(LANG_DICT, code);
+      }
+
+      function storedLanguage() {
+        try {
+          const code = localStorage.getItem(LANG_STORAGE_KEY);
+          return hasLanguage(code) ? code : null;
+        } catch (e) {
+          return null; // storage unavailable: no stored language
+        }
+      }
+
+      function storeLanguage(code) {
+        try {
+          localStorage.setItem(LANG_STORAGE_KEY, code);
+        } catch (e) {
+          // storage unavailable: the next load starts from the phone language until the fetch answers
+        }
+      }
+
+      function phoneLanguage() {
         const code = (navigator.language || "en").slice(0, 2).toLowerCase();
-        return LANG_DICT[code] ? code : "en";
-      })();
+        return hasLanguage(code) ? code : null;
+      }
+
+      let _currentLang = storedLanguage() || phoneLanguage() || "en";
 
       function t(key) {
         return (LANG_DICT[_currentLang] || LANG_DICT.en)[key] || key;
+      }
+
+      async function syncServerLanguage() {
+        try {
+          const resp = await fetch(UI_LANG_URL, { credentials: "same-origin" });
+          if (!resp.ok) return; // no answer: keep the fallback
+          const body = await resp.json();
+          const code = body && typeof body.language === "string" ? body.language.toLowerCase() : "";
+          if (!hasLanguage(code)) return; // a language this page does not have: keep the fallback
+          storeLanguage(code);
+          if (code === _currentLang) return;
+          const previous = _currentLang;
+          _currentLang = code;
+          applyLanguage(previous);
+        } catch (e) {
+          // offline or a bad body: keep the fallback
+        }
       }
 
       // Set by the server only on a mode page (interpreter / tutor); absent on /cabinet/call.
@@ -2036,6 +2084,16 @@
         liveText.follow = true;
       }
 
+      // The language changed: the panel's own labels, then every line (its "You" / "Lelik" labels) is rebuilt.
+      function liveTextRelabel() {
+        const els = liveText.els;
+        if (!els) return;
+        els.panel.setAttribute("aria-label", t("text.panel"));
+        els.hint.textContent = t("text.heard_hint");
+        els.pill.textContent = t("text.latest");
+        liveTextRebuild();
+      }
+
       function liveTextTearDown() {
         const screen = document.querySelector(".screen");
         if (screen) screen.classList.remove("text-live");
@@ -2360,6 +2418,19 @@
       }
       showViewInit();
 
+      // The language changed: the Show control, and the Show view when it has been built (open or not).
+      function showRelabel() {
+        if (show.ctl) {
+          show.ctl.querySelector(".show-btn").setAttribute("aria-label", t("show.button"));
+          show.ctl.querySelector(".show-label").textContent = t("show.button");
+        }
+        if (show.view) {
+          show.view.setAttribute("aria-label", t("show.button"));
+          show.back.textContent = t("show.back");
+          show.view.querySelector(".show-flip").textContent = t("show.flip");
+        }
+      }
+
       /* ── Save as file ────────────────────────────────── */
       // Mode pages only (VOICE_CALL_LIVE_TEXT_RFC §4.11): once the call has ended with at least one line, a row under
       // the text panel offers "Copy text", "File to chat" and, when the start response said the drive is reachable,
@@ -2370,6 +2441,7 @@
       const saveFile = {
         row: null, buttons: [], result: null, busy: false, gen: 0, duration: 0,
         pressed: null, saved: { chat: false, drive: false }, sheet: null,
+        say: null /* [key, extra] of the result line */, sheetSpec: null /* [ok, key, extra] of the open sheet */,
       };
 
       // Display-order lines -> request entries: an ask caller line + the Lelik line after it is one {question, answer};
@@ -2437,7 +2509,16 @@
       }
 
       function saveSay(key, extra) {
+        saveFile.say = [key, extra];
         if (saveFile.result) saveFile.result.textContent = t(key) + (extra ? ` ${extra}` : "");
+      }
+
+      // The language changed: the row's buttons and result line, and the open result sheet (rebuilt in place).
+      function saveRelabel() {
+        saveFile.buttons.forEach((b) => b.setAttribute("data-label", t(b.getAttribute("data-key"))));
+        saveRefreshButtons();
+        if (saveFile.say && saveFile.result) saveSay(...saveFile.say);
+        if (saveFile.sheet && saveFile.sheetSpec) openSaveSheet(...saveFile.sheetSpec);
       }
 
       async function saveCopy() {
@@ -2509,6 +2590,7 @@
       // The result sheet: modal, closes ONLY through its buttons (no listener on the backdrop or a key).
       function openSaveSheet(ok, key, extra) {
         closeSaveSheet();
+        saveFile.sheetSpec = [ok, key, extra];
         const sheet = document.createElement("div");
         sheet.className = "save-sheet";
         sheet.setAttribute("role", "dialog");
@@ -2539,6 +2621,7 @@
       function closeSaveSheet() {
         if (saveFile.sheet) saveFile.sheet.remove();
         saveFile.sheet = null;
+        saveFile.sheetSpec = null;
       }
 
       // Done: the page goes back to what a fresh load shows, without starting a call. resetLiveText drops the text
@@ -2557,7 +2640,7 @@
         if (saveFile.row) saveFile.row.remove();
         Object.assign(saveFile, {
           row: null, buttons: [], result: null, busy: false, duration: 0, pressed: null,
-          saved: { chat: false, drive: false },
+          saved: { chat: false, drive: false }, say: null,
         });
         callFileToDrive = false;
         callLiveAt = 0;
@@ -2583,6 +2666,7 @@
           b.className = "save-btn";
           b.textContent = t(key);
           b.setAttribute("data-label", t(key));
+          b.setAttribute("data-key", key);
           b.addEventListener("click", handler);
           row.append(b);
           return b;
@@ -2896,11 +2980,34 @@
         resetLiveText();
       });
 
+      /* ── Language change ─────────────────────────────── */
+      // Re-renders every text the page set through t(). The state line holds a translated string, so it is mapped back
+      // to its key through the previous language's dictionary. Texts set once per event (the timer, the Show
+      // translation, the live-text bodies) are the call's own words or numbers and carry no UI language.
+      function relabelState(previous) {
+        const old = LANG_DICT[previous] || LANG_DICT.en;
+        const key = Object.keys(old).find((k) => k.startsWith("state.") && old[k] === stateEl.textContent);
+        if (key) setState(t(key));
+      }
+
+      function applyLanguage(previous) {
+        applyTranslations();
+        relabelState(previous);
+        callLabel.textContent = btn.classList.contains("danger") ? t("button.hangup") : t("button.call");
+        refreshMicList();
+        if (ask.btn) renderAsk();
+        renderSpeaker();
+        liveTextRelabel();
+        showRelabel();
+        saveRelabel();
+      }
+
       applyTranslations();
       setState(t("state.idle"));
       renderButton("idle");
       refreshMicList();
       ensureSession();
+      syncServerLanguage();
     </script>
   </body>
 </html>
