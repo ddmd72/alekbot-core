@@ -11,10 +11,14 @@ import pytest
 from src.domain.call_text_file import CallTextEntry, CallTextRequest
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.language import LanguageCode
 from src.domain.notification import NotificationChannel
+from src.domain.ui_messages import StatusType, UIMessage
 from src.domain.user import UserBotConfig, UserProfile
 from src.domain.voice_mode import VoiceMode
 from src.ports.companion_extractor_port import CompanionExtractorPort
+from src.ports.language_service_port import LanguageServicePort
+from src.ports.localization_port import LocalizationPort
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
 from src.ports.prompt_content_store import PromptContentStore
@@ -46,6 +50,43 @@ class ScriptedExtractor(CompanionExtractorPort):
         if self.error:
             raise self.error
         return self.result
+
+
+FOLDER_NAMES = {LanguageCode.EN: "Voice calls", LanguageCode.UK: "Голосові дзвінки"}
+
+
+class FakeLocalization(LocalizationPort):
+    """Only the call-files folder name is real; the rest of the port is unused by the service."""
+
+    def get_status_phrases(self, lang: LanguageCode, status: StatusType) -> List[str]:
+        return []
+
+    def get_entertainment_intros(self, lang: LanguageCode) -> List[str]:
+        return []
+
+    def get_file_prompt(self, lang: LanguageCode, mime_type: str) -> str:
+        return ""
+
+    def get_ui_string(self, lang: LanguageCode, message: UIMessage) -> str:
+        assert message is UIMessage.CALL_FILES_DRIVE_FOLDER
+        return FOLDER_NAMES[lang]
+
+    def get_ui_string_variants(self, message: UIMessage) -> List[str]:
+        return list(FOLDER_NAMES.values())
+
+
+class FakeLanguage(LanguageServicePort):
+    def __init__(self, lang: LanguageCode = LanguageCode.EN, error: Exception | None = None):
+        self.lang, self.error, self.calls = lang, error, []
+
+    async def resolve_ui_language(self, user_id: str) -> LanguageCode:
+        self.calls.append(user_id)
+        if self.error:
+            raise self.error
+        return self.lang
+
+    async def get_preference(self, user_id: str):
+        return None, False
 
 
 class World:
@@ -81,7 +122,9 @@ class World:
                                                        config=UserBotConfig(timezone=tz))
         self.extractor = extractor or ScriptedExtractor()
         self.prompt_content = AsyncMock(spec=PromptContentStore)
+        self.language = FakeLanguage()
         self.service = CallTextFileService(self.extractor, self.drive, self.notifications, self.users,
+                                           localization=FakeLocalization(), language=self.language,
                                            prompt_content=self.prompt_content, now=lambda: NOW, **kw)
 
     def request(self, target="drive", entries=ENTRIES):
@@ -138,7 +181,8 @@ async def test_no_primary_is_not_connected():
 
 async def test_no_drive_on_the_deployment_is_not_connected():
     w = World()
-    service = CallTextFileService(w.extractor, None, w.notifications, w.users, now=lambda: NOW)
+    service = CallTextFileService(w.extractor, None, w.notifications, w.users, localization=FakeLocalization(),
+                               language=w.language, now=lambda: NOW)
     out = await service.save("usr-1", "acc-1", w.request())
     assert (out.saved, out.reason) == (False, "not_connected")
 
@@ -213,7 +257,8 @@ async def test_drive_available_is_true_for_a_writable_primary():
 async def test_drive_available_is_false_without_a_primary_or_a_drive():
     w = World(primary=False)
     assert await w.service.drive_available("usr-1") is False
-    nodrive = CallTextFileService(w.extractor, None, w.notifications, w.users)
+    nodrive = CallTextFileService(w.extractor, None, w.notifications, w.users, localization=FakeLocalization(),
+                               language=w.language)
     assert await nodrive.drive_available("usr-1") is False
 
 
