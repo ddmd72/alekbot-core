@@ -266,3 +266,45 @@ async def test_drive_available_is_false_on_an_error():
     w = World()
     w.drive.can_save_to_primary = AsyncMock(side_effect=RuntimeError("boom"))
     assert await w.service.drive_available("usr-1") is False
+
+
+async def test_the_first_drive_save_creates_the_voice_calls_folder_and_files_into_it():
+    w = World()
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Voice calls/{NAME}"
+    assert list(w.files()) == [f"R&D/Inbox/Voice calls/{NAME}"]
+
+
+async def test_a_second_drive_save_reuses_the_folder():
+    w = World()
+    await w.service.save("usr-1", "acc-1", w.request())
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert out.saved
+    tree = w.fake.tree(w.conn.handle)
+    folders = sorted(tree.path(n) for n in tree.nodes.values() if n.is_folder)
+    assert [f for f in folders if "Voice calls" in f] == ["R&D/Inbox/Voice calls"]
+    assert len(w.files()) == 2
+    assert all(path.startswith("R&D/Inbox/Voice calls/") for path in w.files())
+
+
+async def test_the_folder_name_follows_the_owners_ui_language():
+    w = World()
+    await w.service.save("usr-1", "acc-1", w.request())
+    w.language.lang = LanguageCode.UK
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert out.saved and out.path == f"Acme/R&D/Inbox/Голосові дзвінки/{NAME}"
+    assert sorted(p.rsplit("/", 1)[0] for p in w.files()) == ["R&D/Inbox/Voice calls", "R&D/Inbox/Голосові дзвінки"]
+
+
+async def test_an_unresolvable_ui_language_fails_and_writes_nothing():
+    w = World()
+    w.language.error = RuntimeError("down")
+    out = await w.service.save("usr-1", "acc-1", w.request())
+    assert (out.saved, out.reason) == (False, "failed")
+    assert w.files() == {}
+
+
+async def test_the_chat_target_writes_nothing_to_the_drive():
+    w = World()
+    out = await w.service.save("usr-1", "acc-1", w.request("chat"))
+    assert out.saved and w.files() == {}
