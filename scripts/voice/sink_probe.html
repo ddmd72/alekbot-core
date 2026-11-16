@@ -40,6 +40,7 @@
   details { font-size: 13px; color: var(--muted); }
   pre { font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word;
         max-height: 40vh; overflow: auto; background: var(--card); border-radius: 8px; padding: 10px; }
+  .vis { position: fixed; right: 12px; bottom: 12px; width: 48px; height: 48px; background: #000; border-radius: 8px; }
   .media { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>
 </head>
@@ -59,7 +60,8 @@
 
 <audio id="a1" class="media" playsinline></audio>
 <audio id="a2" class="media" playsinline muted></audio>
-<video id="v1" class="media" playsinline></video>
+<audio id="a3" class="media" playsinline></audio>
+<video id="v1" class="vis" playsinline hidden></video>
 <canvas id="cv" class="media" width="16" height="16"></canvas>
 
 <script>
@@ -74,7 +76,8 @@ const errStr = (e) => (e ? (e.name || "Error") + ": " + (e.message || String(e))
 const short = (id) => (id ? id.slice(0, 8) : "(default)");
 const fmt = (v) => (v === undefined ? "undefined" : JSON.stringify(v));
 const Ctx = window.AudioContext || window.webkitAudioContext;
-const PATH_NAMES = { single: "A (как в звонке сейчас)", dual: "B (видео-обход)", webaudio: "C (WebAudio-обход)" };
+const PATH_NAMES = { single: "A (как в звонке сейчас)", reattach: "D (переподключение)",
+                     dual: "E (видимое видео)", bridge: "F (мост через WebAudio)" };
 
 let ctx = null, osc = null, gain = null, mic = null, pc1 = null, pc2 = null, remoteTrack = null, path = null;
 let tests = [], idx = 0;
@@ -145,38 +148,59 @@ function stopPath() {
   path = null;
 }
 
+function watch(el, kind) {
+  el.onplaying = () => log("  " + kind + ": element playing");
+}
+
 async function usePath(kind) {
   stopPath();
-  if (kind === "single") {
+  if (kind === "single" || kind === "reattach") {
     const el = $("a1");
+    watch(el, kind);
     el.srcObject = new MediaStream([remoteTrack]);
     el.play().catch((e) => log("play: " + errStr(e)));
-    path = { kind, sink: (id) => el.setSinkId(id), now: () => el.sinkId,
+    const direct = (id) => el.setSinkId(id);
+    // reattach: the sink is changed while no stream is attached, then the stream is attached again
+    const reattach = async (id) => {
+      el.pause();
+      el.srcObject = null;
+      await el.setSinkId(id);
+      el.srcObject = new MediaStream([remoteTrack]);
+      await el.play();
+    };
+    path = { kind, sink: kind === "single" ? direct : reattach, now: () => el.sinkId,
              stop: () => { el.pause(); el.srcObject = null; } };
   } else if (kind === "dual") {
     const cv = $("cv");
     cv.getContext("2d").fillRect(0, 0, cv.width, cv.height);
     const vt = cv.captureStream(1).getVideoTracks()[0];
     const el = $("v1");
+    el.hidden = false;
     el.muted = false;
+    watch(el, kind);
     el.srcObject = new MediaStream([remoteTrack, vt]);
     el.play().catch((e) => log("play: " + errStr(e)));
     path = { kind, sink: (id) => el.setSinkId(id), now: () => el.sinkId,
-             stop: () => { el.pause(); el.srcObject = null; vt.stop(); } };
+             stop: () => { el.pause(); el.srcObject = null; el.hidden = true; vt.stop(); } };
   } else {
+    // bridge: remote track -> WebAudio -> a plain (non-WebRTC) stream -> <audio>, whose sink is switched
     const c2 = new Ctx();
     c2.resume().catch(() => {});
     const keep = $("a2");
     keep.srcObject = new MediaStream([remoteTrack]);
     keep.play().catch(() => {});
     const src = c2.createMediaStreamSource(new MediaStream([remoteTrack]));
-    src.connect(c2.destination);
-    path = { kind,
-             sink: (id) => (c2.setSinkId ? c2.setSinkId(id) : Promise.reject(new Error("AudioContext.setSinkId missing"))),
-             now: () => c2.sinkId,
-             stop: () => { src.disconnect(); c2.close(); keep.pause(); keep.srcObject = null; } };
+    const dest = c2.createMediaStreamDestination();
+    src.connect(dest);
+    const el = $("a3");
+    watch(el, kind);
+    el.srcObject = dest.stream;
+    el.play().catch((e) => log("play: " + errStr(e)));
+    path = { kind, sink: (id) => el.setSinkId(id), now: () => el.sinkId,
+             stop: () => { el.pause(); el.srcObject = null; src.disconnect(); c2.close(); keep.pause(); keep.srcObject = null; } };
+    log("bridge ctx state: " + c2.state);
   }
-  log("path " + kind + " playing");
+  log("path " + kind + " started");
 }
 
 // ---------- the guided run ----------
@@ -201,10 +225,14 @@ async function begin() {
   ds.forEach((d) => log("  " + d.kind + ": \"" + d.label + "\" " + short(d.deviceId)));
   log("outputs offered: " + outs.length);
 
+  const speaker = outs.find((d) => /speaker|динам/i.test(d.label));
+  const phones = outs.find((d) => d !== speaker && !/receiver/i.test(d.label));
   tests = [{ path: "single", sinkId: null, label: "без переключения" }];
-  if ("setSinkId" in HTMLMediaElement.prototype) {
-    ["single", "dual", "webaudio"].forEach((p) =>
-      outs.forEach((d) => tests.push({ path: p, sinkId: d.deviceId, label: d.label || short(d.deviceId) })));
+  if ("setSinkId" in HTMLMediaElement.prototype && speaker) {
+    ["reattach", "dual", "bridge"].forEach((p) => {
+      tests.push({ path: p, sinkId: speaker.deviceId, label: speaker.label, want: "speaker" });
+      if (phones) tests.push({ path: p, sinkId: phones.deviceId, label: phones.label, want: "headphones" });
+    });
   }
   idx = 0;
   runTest();
@@ -243,13 +271,16 @@ function answer(where) {
 
 function verdict() {
   const outs = tests.length - 1;
-  const win = results.find((r) => r.sinkId !== null && r.where === "speaker");
+  const win = results.find((r) => r.want === "speaker" && r.where === "speaker");
   if (!("setSinkId" in HTMLMediaElement.prototype)) {
     finish("❌ Не получится", "Этот Safari вообще не умеет выбирать выход звука.");
   } else if (outs === 0) {
-    finish("❌ Не получится", "iPhone не показал странице ни одного выхода, переключать некуда.");
+    finish("❌ Не получится", "iPhone не показал странице динамик, переключать некуда.");
   } else if (win) {
-    finish("✅ Получилось!", "Способ " + PATH_NAMES[win.path] + " переключает звук на телефон. Скопируй результат и пришли мне.");
+    const back = results.find((r) => r.path === win.path && r.want === "headphones");
+    const backText = back ? (back.where === "headphones" ? " и обратно в наушники" : ", но обратно в наушники не вернулся") : "";
+    finish("✅ Получилось!", "Способ " + PATH_NAMES[win.path] + " переключает звук на динамик" + backText +
+           ". Скопируй результат и пришли мне.");
   } else {
     finish("❌ Не переключилось", "Ни один способ не увёл звук из наушников. Скопируй результат и пришли мне.");
   }
