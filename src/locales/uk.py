@@ -261,4 +261,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Назавжди стерто нотаток разом з історією: {count}.",
     UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Назавжди стерто нотаток: {erased}. Зараз не вдалося стерти: {left}; попроси мене стерти її ще раз.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL.value: "🗑️ Назавжди стерто нотаток: {erased}. Зараз не вдалося стерти: {left}; надішли `$drive-notes erase-all` ще раз, щоб стерти їх.",
+    UIMessage.CALL_FILES_DRIVE_FOLDER.value: "Голосові дзвінки",
 }

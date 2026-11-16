@@ -233,4 +233,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notas borradas para siempre, con su historial: {count}.",
     UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notas borradas para siempre: {erased}. No borradas por ahora: {left}; pídeme que la borre de nuevo.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL.value: "🗑️ Notas borradas para siempre: {erased}. No borradas por ahora: {left}; envía `$drive-notes erase-all` otra vez para borrarlas.",
+    UIMessage.CALL_FILES_DRIVE_FOLDER.value: "Llamadas de voz",
 }

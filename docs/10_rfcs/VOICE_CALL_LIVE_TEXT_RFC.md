@@ -270,9 +270,13 @@ by construction: nothing new is persisted server-side, and what barge-in cut (§
   to chat" rule (`voice_control_plane_app.py:188`) is about the call reporting on its own; this is the owner's act.
 - **Drive:** the save steps inside `DeepResearchDriveCopyService._save` (primary connection → write folder → save →
   canonical path, `deep_research_drive_copy_service.py:99-120`) move into one `UserDriveService` method used by both
-  deep research and this path; the deep research opt-in toggle stays in its own service. The call file goes to the
-  Inbox of the primary's write folder, the save's default destination (`user_drive_service.py:404`, `:419-426`;
-  MULTI_DRIVE_RFC D7). The page answers with the saved path or a short failure line.
+  deep research and this path; the deep research opt-in toggle stays in its own service. The call file goes to
+  `Inbox/<voice calls folder>` under the primary's write folder (owner decision 2026-11-16), passed to the save as its
+  `folder` (`save_to_primary(..., folder=)`; the Inbox itself is the save's default destination, MULTI_DRIVE_RFC D7).
+  `<voice calls folder>` is the `CALL_FILES_DRIVE_FOLDER` UI string in the owner's UI language ("Voice calls",
+  "Голосові дзвінки", "Appels vocaux", "Llamadas de voz"). The save creates the folder when it is missing and reuses it
+  when present. Changing the UI language later starts a new folder in the new language; the old one stays. If the UI
+  language cannot be resolved the save fails (`failed`), never falling back to another language's folder. The page answers with the saved path or a short failure line.
 - **The drive button is shown only when it can work:** a primary drive that is writable and has a write folder. The
   check is the one the save itself refuses on (`capabilities.writable` and `write_folder_id`,
   `user_drive_service.py:382-388`), exposed as one predicate on the same `UserDriveService`. The page learns it from
@@ -302,7 +306,7 @@ shapes (`start_time`, `rid`); `VoiceSessionService` with a fake session and trac
 transcript arrives late, cut ordering on both turn ownerships, nothing released past the cut, `kind: "ask"` on both
 lines of an ask exchange. Save as file: the renderer and the generalised file name (pure); the summarizer's
 `{title, summary}` parse and retry; the service with fakes (drive, notifications, extractor) — chat writes no
-history, drive goes to the Inbox, failures give their line; the route — auth, caps, target; the drive predicate and
+history, drive goes to `Inbox/<voice calls folder>` (created, then reused; named by the UI language), failures give their line; the route — auth, caps, target; the drive predicate and
 the start response's flag. Deep research's existing drive-copy tests stay green unchanged. The page: manual UAT.
 
 Live probes (each a few cents of xAI audio): **P1** barge-in on xAI — a long reply interrupted at ~3 s: is there a

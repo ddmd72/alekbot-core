@@ -1,11 +1,12 @@
 """
 CallTextFileService — keeps an interpreter or tutor web call's text as one `.md` file, in the chat or in the drive
-Inbox (VOICE_CALL_LIVE_TEXT_RFC §4.11).
+Inbox's voice-calls folder (VOICE_CALL_LIVE_TEXT_RFC §4.11).
 
 The page sends the call's lines; this service asks the existing summarizer for `{title, summary}` (bounded: a slow
 or failed summary still saves the file, with the fallback title and no summary), renders the Markdown, and delivers it:
 `chat` through the notification service (one file upload, no session history written), `drive` through
-`UserDriveService.save_to_primary` into the Inbox of the primary's write folder (never overwrites). Neither `save`
+`UserDriveService.save_to_primary` into `Inbox/<voice calls folder>` of the primary's write folder (never overwrites; the folder's name is the owner's
+UI-language string, created when missing and reused when present). Neither `save`
 nor `drive_available` raises: the route answers from the outcome. Logs carry counts, bytes and `user_id[:8]` only,
 never the call's text or the title.
 """
@@ -23,8 +24,11 @@ from ..domain.call_text_markdown import (
 )
 from ..domain.local_time import local_moment
 from ..domain.voice_mode import CALL_FILE_SUMMARIZER_TYPES
-from ..domain.user_drive import DriveAccessRefused, DriveNotConnectedError
+from ..domain.ui_messages import UIMessage
+from ..domain.user_drive import DEFAULT_INBOX_FOLDER, DriveAccessRefused, DriveNotConnectedError, join_drive_path
 from ..ports.companion_extractor_port import CompanionExtractorPort
+from ..ports.language_service_port import LanguageServicePort
+from ..ports.localization_port import LocalizationPort
 from ..ports.prompt_content_store import PromptContentStore
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
@@ -47,6 +51,9 @@ class CallTextFileService:
         drive: Optional["UserDriveService"],
         notifications: "UserNotificationService",
         users: UserRepository,
+        *,
+        localization: LocalizationPort,
+        language: LanguageServicePort,
         prompt_content: Optional[PromptContentStore] = None,
         now: Callable[[], datetime] = _utcnow,
         summary_timeout_s: float = 30.0,
@@ -55,6 +62,8 @@ class CallTextFileService:
         self._drive = drive
         self._notifications = notifications
         self._users = users
+        self._localization = localization
+        self._language = language
         self._prompt_content = prompt_content
         self._now = now
         self._summary_timeout_s = summary_timeout_s
@@ -127,7 +136,15 @@ class CallTextFileService:
         if self._drive is None:
             return CallTextFileOutcome(saved=False, reason="not_connected")
         try:
-            _, path = await self._drive.save_to_primary(user_id, data, name, CALL_FILE_CONTENT_TYPE)
+            # The folder follows the owner's UI language; no other language's folder is ever a fallback.
+            lang = await self._language.resolve_ui_language(user_id)
+            folder = join_drive_path(DEFAULT_INBOX_FOLDER,
+                                     self._localization.get_ui_string(lang, UIMessage.CALL_FILES_DRIVE_FOLDER))
+        except Exception:
+            logger.error("[CallTextFile] folder name unresolved for user=%s", user_id[:8], exc_info=True)
+            return CallTextFileOutcome(saved=False, reason="failed")
+        try:
+            _, path = await self._drive.save_to_primary(user_id, data, name, CALL_FILE_CONTENT_TYPE, folder=folder)
         except DriveNotConnectedError:
             logger.info("[CallTextFile] drive not connected for user=%s", user_id[:8])
             return CallTextFileOutcome(saved=False, reason="not_connected")

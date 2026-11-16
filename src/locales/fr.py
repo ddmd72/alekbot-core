@@ -233,4 +233,5 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.DRIVE_NOTE_ERASED.value: "🗑️ Notes effacées définitivement, avec leur historique : {count}.",
     UIMessage.DRIVE_NOTE_ERASE_PARTIAL.value: "🗑️ Notes effacées définitivement : {erased}. Non effacées pour l'instant : {left} ; demande-moi de l'effacer à nouveau.",
     UIMessage.DRIVE_NOTE_ERASE_ALL_PARTIAL.value: "🗑️ Notes effacées définitivement : {erased}. Non effacées pour l'instant : {left} ; renvoie `$drive-notes erase-all` pour les effacer.",
+    UIMessage.CALL_FILES_DRIVE_FOLDER.value: "Appels vocaux",
 }
