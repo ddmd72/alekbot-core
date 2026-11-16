@@ -9,7 +9,7 @@ import re
 from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
 from ..services.credential_revocation_service import CredentialRevocationService
-from ..services.email_indexing_service import EmailIndexingService
+from ..services.email_indexing_service import REINDEX_DISABLED, EmailIndexingService
 from ..services.drive_connection_service import DriveConnectionService
 from ..services.drive_disconnect_service import DriveDisconnectService
 from ..services.drive_note_service import DriveNoteService
@@ -1144,7 +1144,7 @@ def create_user_cabinet_blueprint(
         Trigger Gmail indexing for the current user.
 
         Request body (optional JSON):
-          mode:           "incremental" | "reindex" | "backfill"  (default: "incremental")
+          mode:           "incremental" | "backfill"  (default: "incremental"); "reindex" is refused (400)
           backfill_until: str  — "YYYY-MM-DD" stop date for backfill mode.
           max_pages:      int  — sync-only; ignored in async (Cloud Tasks) mode.
 
@@ -1157,8 +1157,16 @@ def create_user_cabinet_blueprint(
         body = await request.get_json(silent=True) or {}
 
         mode = body.get("mode", "incremental")
-        if mode not in ("incremental", "reindex", "backfill"):
-            return jsonify({"error": f"Invalid mode '{mode}'. Must be incremental, reindex, or backfill"}), 400
+        if mode == "reindex":
+            return jsonify({
+                "error": REINDEX_DISABLED,
+                "detail": (
+                    "The re-index mode is off: it would erase the email cards. New mail is indexed "
+                    "incrementally; stored mail is re-carded by a separate job."
+                ),
+            }), 400
+        if mode not in ("incremental", "backfill"):
+            return jsonify({"error": f"Invalid mode '{mode}'. Must be incremental or backfill"}), 400
 
         backfill_until = None
         if raw_until := body.get("backfill_until"):
@@ -1195,7 +1203,7 @@ def create_user_cabinet_blueprint(
 
             # Sync fallback: local dev (no task_queue configured)
             server_cap = int(os.getenv("GMAIL_INDEX_MAX_PAGES", "50"))
-            if mode in ("reindex", "backfill") and "max_pages" not in body:
+            if mode == "backfill" and "max_pages" not in body:
                 max_pages = None
             else:
                 max_pages = min(int(body.get("max_pages", 1)), server_cap)
