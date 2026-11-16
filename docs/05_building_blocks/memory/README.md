@@ -644,6 +644,28 @@ user's email inbox" message; afterwards all of them are marked consolidated, wha
 oldest and newest candidate date, so a copied date is kept and a missing or stray one is clamped (§2.7).
 Skipped when the repository is not wired or nothing is pending.
 
+**Email cards (email index v2 §6.7, slice 9).** With `EMAIL_CARD_MEMORY` on (deploy default; code default off;
+`composition/email_card_setup.py`) the agent gets the repository's `EmailMemoryBatches` port and Stage 3 reads cards
+instead (`_consolidate_email_cards`): the prompt is built for the `consolidation_email` profile (consolidation's six
+tokens plus `CONSOLIDATION_EMAIL_CANDIDATES`, which explains the cards; no fallback prompt, a build failure fails Stage 3
+before anything is read or marked), the owner's confirmed people list is read once, and each pass reads up to 50 mails
+(`email_card_batch_size`; the payload's `batch_size` overrides): every unconsolidated mail whose card is settled
+(`carded`, `empty`, `abandoned`, `source_gone`), plus every one indexed more than 6 h ago whatever its card
+(`MEMORY_CARD_WAIT`: no online retry of `pending` exists, so strict waiting would starve those mails), oldest
+`indexed_at` first. The message is one code header line (`EMAIL_CANDIDATES_HEADER`, never the system's voice), then one
+numbered JSON object per mail: a carded mail whose card reads back is sent as its code-filtered card
+(`domain/email_memory_candidate.card_candidate`: the mail's id, sent moment in the owner's zone as `date`, sender,
+subject; the card's type, life areas, title and summary; verified time points only; the names and values the mail
+prints; attachments with `read` true or false; `about`; the printed people), every other mail as the one-line form
+above. Never sent: the card's index keys, its links to the confirmed list, the word lists, the lifecycle fields, the v1
+fact sentence. Title and summary are withheld together when they name a listed person (not the owner) whom the card
+does not link and the mail's printed parts do not name, and on every card when the stored list does not parse. Every
+mail of the batch is marked consolidated after its pass; a card written later never clears the mark, so a mail
+consolidated in the line form never re-enters as a card. One INFO line per pass: `Email cards pass n: cards= lines=
+(empty= abandoned= gone= stale= unreadable=) withheld=`. The settled read needs the composite (user_id,
+consolidated_at, card_state, indexed_at). The dry run that compares both forms over the same mail is
+`scripts/email/test_consolidation_dryrun.py --s3-kit --compare-forms` (owner's machine only).
+
 ### Step 9 — the baseline is rebuilt; the batch is deleted
 
 After Stage 1–2b, `refresh_biographical_context_cache` rebuilds the `{prefix}user_context` document
@@ -675,7 +697,8 @@ deadline. A step that raises is logged (`[FactProfile] step failed`) and changes
   then one compare-and-set write per fact, stopping when the lease has no time left. `SYSTEM` facts are out.
 - **Confirmed people:** the step reads the account's owner-confirmed people list once per run
   (`ConfirmedPeopleRepository.get`, collection `{prefix}confirmed_people`, `FACT_PROFILE_RFC.md` §4.5) before it
-  classifies. Every call carries the whole list as a block before the fact; a fact's fingerprint holds only the entries it
+  classifies (each person on it has a stable `entry_id` the store assigns on `replace`; it is never rendered or
+  fingerprinted). Every call carries the whole list as a block before the fact; a fact's fingerprint holds only the entries it
   names (by a name form or a relation word), so a list edit re-profiles only the facts naming the edited person. An
   unreadable list ends the step with `error=True` (nothing classified, called or written). A date a fact prints without a
   year takes the recording year (the earlier of `reported_date` and `created_at`), which is part of the derivation string.

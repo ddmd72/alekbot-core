@@ -1524,5 +1524,6 @@
   {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "card", "indexes": []},
   {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "card_vector", "indexes": []},
   {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "about_keys", "indexes": []},
-  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "name_keys", "indexes": []}
+  {"collectionGroup": "development_domain_email_facts_v1", "fieldPath": "name_keys", "indexes": []},
+  {"collectionGroup": "development_domain_email_facts_v1", "queryScope": "COLLECTION", "fields": [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "consolidated_at", "order": "ASCENDING"}, {"fieldPath": "card_state", "order": "ASCENDING"}, {"fieldPath": "indexed_at", "order": "ASCENDING"}]}
 ]

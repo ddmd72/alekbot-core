@@ -19,5 +19,7 @@ class ConfirmedPeopleRepository(ABC):
 
     @abstractmethod
     async def replace(self, account_id: str, people: ConfirmedPeople, source: str) -> None:
-        """Make `people` the account's whole list (one set of the one document) with `source` and the time of the
-        write. `source` is "owner_script" or "review_answer"; anything else raises ValueError before any I/O."""
+        """Make `people` the account's whole list (one transaction over the one document) with `source` and the time
+        of the write. The store assigns each person's `entry_id` and the counter `next_entry_id` from the stored list
+        (`assign_entry_ids`) and ignores any ids on `people`; a stored list that does not parse raises ValueError before
+        any write. `source` is "owner_script" or "review_answer"; anything else raises ValueError before any I/O."""

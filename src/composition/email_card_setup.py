@@ -1,4 +1,4 @@
-"""Wiring of the online email card step (email index v2 §6.5; slice 6).
+"""Wiring of the online email card step (email index v2 §6.5; slice 6) and of the card memory feed (§6.7; slice 9).
 
 New mail the indexer keeps also gets its v2 card, stored on the same document after the v1 save. Behind the optional
 knob `EMAIL_CARD_ONLINE` (read here with `os.getenv`, never in `load_settings()`): **default off**; `1` switches it on.
@@ -6,6 +6,10 @@ Scanned PDFs are read by the paid reader under a per-user daily page cap: the op
 `EMAIL_READER_PAGES_PER_DAY` (read here with `os.getenv`; default 40; `0` turns the scan reader off online).
 The step shares the graph's one document service, mailbox provider and embedding adapter; without a document service
 (no file conversion) there is no step.
+
+Stage 3 of consolidation reads settled cards instead of the one-line candidates behind `EMAIL_CARD_MEMORY` (same rules:
+`os.getenv`, **default off** in code, `1` on; the deploy sets it, `docs/07_deployment/README.md`). Off, the agent gets no
+batch port and Stage 3 is the v1 one-line form.
 """
 import os
 from typing import Any, Optional
@@ -23,10 +27,16 @@ from .email_card_runner import EmailCardRunner, card_writer_model
 
 SWITCH = "EMAIL_CARD_ONLINE"
 READER_PAGES_KNOB = "EMAIL_READER_PAGES_PER_DAY"
+MEMORY_SWITCH = "EMAIL_CARD_MEMORY"
+_ON = ("1", "true", "yes", "on")
 
 
 def email_card_online_enabled() -> bool:
-    return os.getenv(SWITCH, "0").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv(SWITCH, "0").strip().lower() in _ON
+
+
+def email_card_memory_enabled() -> bool:
+    return os.getenv(MEMORY_SWITCH, "0").strip().lower() in _ON
 
 
 def reader_pages_per_day() -> int:

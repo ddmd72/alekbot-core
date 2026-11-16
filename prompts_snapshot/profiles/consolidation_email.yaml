@@ -1,0 +1,26 @@
+agent_id: consolidation_email
+blueprint_id: consolidation_email_v1
+source_file: prompts_snapshot/profiles/consolidation_email.yaml
+tokens:
+  CONSOLIDATION_COGNITIVE_PROCESS:
+    non_overridable: true
+    order: 20
+  CONSOLIDATION_EMAIL_CANDIDATES:
+    non_overridable: true
+    order: 70
+  CONSOLIDATION_EXAMPLES:
+    non_overridable: true
+    order: 40
+  CONSOLIDATION_OUTPUT_SPEC:
+    non_overridable: true
+    order: 60
+  CONSOLIDATION_POLICIES:
+    non_overridable: true
+    order: 50
+  CONSOLIDATION_TAXONOMY:
+    non_overridable: true
+    order: 10
+  CONSOLIDATION_TOOLS:
+    non_overridable: true
+    order: 30
+uploaded_by: local_script

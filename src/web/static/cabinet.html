@@ -4499,9 +4499,6 @@
               <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
                 <input type="radio" name="index-mode" value="backfill" onchange="updateIndexModal()" style="width:20px;height:20px;"> Backfill (To specific date)
               </label>
-              <label style="display:flex;align-items:center;gap:12px;font-weight:500;cursor:pointer; font-size:16px; margin:0;">
-                <input type="radio" name="index-mode" value="reindex" onchange="updateIndexModal()" style="width:20px;height:20px;"> Re-index Everything
-              </label>
             </div>
           </div>
           <div id="backfill-date-row" style="display:none; margin-bottom: 24px;">
@@ -4523,11 +4520,9 @@
         ).value;
         document.getElementById("backfill-date-row").style.display =
           mode === "backfill" ? "block" : "none";
-        document.getElementById("index-pages-row").style.display =
-          mode === "reindex" ? "none" : "block";
         if (mode === "incremental")
           document.getElementById("index-pages-input").value = "1";
-        if (mode === "backfill" || mode === "reindex")
+        if (mode === "backfill")
           document.getElementById("index-pages-input").value = "";
       }
 
