@@ -523,7 +523,7 @@ def _span(point: ProfileTimePoint) -> Optional[Tuple[date, date]]:
             if point.precision == "day" and len(parts) == 3:
                 return date(*parts), date(*parts)
         except ValueError:
-            pass
+            return None  # a value that is no calendar date has no span
         return None
     first = bounds(point.start)
     last = bounds(point.end) if point.end else first
