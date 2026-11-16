@@ -271,7 +271,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── file_upload_service.py # 🆕 File management implementation
 │   ├── prompt_builder.py    # Compositional Prompt Builder + UserPromptBuilder (merged)
 │   ├── provider_registry.py # 🆕 LLM Provider Service Locator
-│   ├── email_embedding_repair_service.py # 🆕 Async repair job for emails stored without vectors
 │   ├── email_indexing_service.py # 🆕 Paginated inbox-to-Firestore pipeline (fetch → classify → store)
 │   ├── email_search_service.py # 🆕 Semantic search in indexed email archive
 │   ├── gmail_oauth_service.py # 🆕 Gmail OAuth flow (authorization URL, token exchange)
@@ -462,7 +461,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`embedding_service.py`**: Generates embeddings using `text-embedding-004` (Latency <0.5s, multilingual support).
 -   **`gcs_service.py`**: (Legacy) Google Cloud Storage interactions for YAML-based memory (deprecated in favor of Firestore).
 -   **`prompt_builder.py`**: Compositional prompt builder with component-level caching. Now supports unified dynamic `biographical_context` component with explicit on-demand invalidation.
--   **`email_embedding_repair_service.py`**: 🆕 Async repair job that fetches emails with `embedding_pending=True` and computes their vectors.
 -   **`email_indexing_service.py`**: 🆕 Paginated inbox-to-Firestore pipeline. One call = one page of emails (fetch → classify → store). Writes `IndexedEmail` to Firestore; sets `embedding_pending=True` for async vector computation. Returns updated `IndexingJob` with `next_page_token` for resume.
 -   **`email_search_service.py`**: 🆕 Semantic search in indexed email archive (4-vector RRF). Also delegates to `GmailProviderAdapter` for live email body / attachment fetch when `Mode B` (deep search) is needed.
 -   **`gmail_oauth_service.py`**: 🆕 Web-only service for Gmail OAuth flow (authorization URL generation, authorization code exchange). Not part of the indexing pipeline.

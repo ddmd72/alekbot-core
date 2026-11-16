@@ -419,7 +419,7 @@ whole documents (`email_indexing_service.py:320-323`, `:499`, `:511` → `save_b
 
 New mail: gate → input builder → online extraction → grading and keys → one save with v1 fields, card fields and
 `consolidated_at = None`; an extraction that cannot run now leaves `card_state = pending`. v1 fields stay until cleanup;
-v2 search sits behind an `os.getenv` switch (`EMAIL_SEARCH_V2`, §6.8); there is no silent v1 fallback. *Rejected:* a new collection (doubles the consolidation
+v2 search is the only search (the `EMAIL_SEARCH_V2` switch was removed by slice 10, §6.8); there is no v1 fallback. *Rejected:* a new collection (doubles the consolidation
 marks, skip logic, repair job and counts); today's `reindex` mode (re-lists and re-classifies the mailbox).
 
 ### 6.6 Order
@@ -462,14 +462,9 @@ names and metadata (`consolidation_agent.py:1517-1540`).
 
 ### 6.8 The search switch (slice 8)
 
-`EMAIL_SEARCH_V2` is an optional knob read with `os.getenv` in `src/composition/email_search_setup.py` (code default off;
-the deploy sets it on). `make deploy` passes it through its own key `EMAIL_SEARCH_V2_DEV` (default `1`; `0` rolls back to
-v1) into the main service only, never through the local key (the deploy-substitution trap). The service builds one
-`EmailCardSearchService` over `FirestoreEmailCardIndex` and hands it to `EmailSearchAgent`. With the switch off, v1 is
-byte-identical. With it on, a v2 error fails the search; it never answers from v1 silently, so the owner's live use judges
-v2 alone. As-built deltas of slice 8:
+The v2 search was built behind the optional knob `EMAIL_SEARCH_V2` so the owner's live use could judge it alone; slice 10 removed the knob, the deploy key `EMAIL_SEARCH_V2_DEV` and the v1 path (no rollback). The container now builds one `EmailCardSearchService` over `FirestoreEmailCardIndex` unconditionally and hands it to `EmailSearchAgent`, which requires it; a v2 error fails the search. As-built deltas of slice 8:
 - the slots call stays inside `EmailSearchAgent` on its ECO Gemini context, with its own profile `email_query_slots`, no new
-  agent class (the `email_search` profile stays for the rollback path until slice 10);
+  agent class (the `email_search` profile of the v1 search was deleted by slice 10);
 - the coordinator's delegation timestamp is stripped from the query before slots and concepts, or every request would turn
   into a one-day list for today;
 - the slots prompt gets no biographical facts, directives or location: people are resolved in code against the confirmed
@@ -526,10 +521,10 @@ machine; mail never leaves it.
 | 5 | Scanned PDFs through the paid reader under per-mail and daily page caps | built |
 | 6 | Store and online path: field updates with compare-and-set, `card_state`, indexes | built, live |
 | 7 | Re-card job: skip-before-fetch scan, online execution, enforced caps | built, live |
-| 8 | Search switch: `EmailCardSearchService` on `FirestoreEmailCardIndex`, slots call, formatter sections (§6.8) | built, on by default with a deploy kill switch (`EMAIL_SEARCH_V2_DEV=0`) |
+| 8 | Search switch: `EmailCardSearchService` on `FirestoreEmailCardIndex`, slots call, formatter sections (§6.8) | built, live; the switch was removed by slice 10 |
 | 9 | Memory feed: the filtered card to Stage 3, the waiting rule and its index, the new token (§6.7) | built, on by default with a switch back to the one-line form (`EMAIL_CARD_MEMORY_DEV=0`) |
 | 9b | The classifier stops writing its fact sentence | planned, after slices 8 and 10 |
-| 10 | Cleanup: the four v1 vectors, their indexes, the v1 search, the embedding repair and the search switch removed; every v1 field something still reads stays (`text`, `tags`, `category`, `metadata`, ...) until 9b | next, no rollback (owner decision 2026-11-16) |
+| 10 | Cleanup: the four v1 vectors, their indexes, the v1 search, the embedding repair and the search switch removed; every v1 field something still reads stays (`text`, `tags`, `category`, `metadata`, ...) until 9b | done (owner decision 2026-11-16: no rollback). Owner steps: delete the repair scheduler job, the eight live v1 vector indexes and the `email_search` prompt documents; optionally run `scripts/email/drop_v1_vectors.py` |
 
 **Decided** (owner, 2026-11-16 unless noted)
 1. Scanned documents: their text is not kept, so each change of the card writer re-buys their reading; accepted.

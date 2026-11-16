@@ -2,7 +2,6 @@
 responses, and the `email_file_context` history entries (EXTERNAL_FILES_RFC 4.7, plan U4 sections 2 A4 and 6)."""
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from src.agents.email_search_agent import EmailSearchAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
@@ -15,6 +14,7 @@ from src.domain.native_format import NATIVE_FORMATS_KEY
 from src.domain.user import PerformanceTier
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
+from src.services.email_card_search_service import EmailCardSearchService
 from src.services.email_search_service import EmailSearchService
 
 MSG = "msg_example001"
@@ -29,7 +29,7 @@ def _agent(file_conversion):
     return EmailSearchAgent(
         config=AgentConfig(agent_id="email_search_agent_u1", agent_type="email_search", timeout_ms=300_000),
         execution_context=ctx, prompt_builder=MagicMock(), email_search_service=AsyncMock(spec=EmailSearchService),
-        user_id="u1", file_conversion=file_conversion)
+        card_search=AsyncMock(spec=EmailCardSearchService), user_id="u1", file_conversion=file_conversion)
 
 
 def _msg(**payload):

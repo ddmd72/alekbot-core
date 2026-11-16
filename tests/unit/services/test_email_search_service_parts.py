@@ -57,7 +57,7 @@ async def _service(mailbox, *, expiry=LATE, connected=True, disconnect_on_refres
         await store.repo.save(creds(USER, "gmail", token_expiry=expiry))
     if disconnect_on_refresh:
         store.repo.update = _refuse_update  # the disconnect lands between the read and the refresh's update
-    return EmailSearchService(SimpleNamespace(), store.repo, mailbox, SimpleNamespace(),
+    return EmailSearchService(SimpleNamespace(), store.repo, mailbox,
                               connector=ConnectorRegistry().get("gmail"), nonce=lambda: NONCE)
 
 

@@ -69,9 +69,11 @@ def test_an_exact_key_stays_only_when_the_request_text_holds_it():
 
 
 def test_at_most_three_exact_keys_and_a_subject_cut_to_200_characters():
-    text = "a1 b2 c3 d4"
-    slots = parse_query_slots({"exact_keys": ["a1", "b2", "c3", "d4"], "subject": "x" * 500}, text)
-    assert slots.exact_keys == ("a1", "b2", "c3") and len(slots.subject) == 200
+    # keys of at least EXACT_KEY_MIN_CHARS (reviewer, slice 10: a shorter key is dropped before the cap)
+    text = "FA-0137 HW-55812 RM-55120 MP-2026-118204"
+    slots = parse_query_slots({"exact_keys": ["FA-0137", "HW-55812", "RM-55120", "MP-2026-118204"],
+                               "subject": "x" * 500}, text)
+    assert slots.exact_keys == ("FA-0137", "HW-55812", "RM-55120") and len(slots.subject) == 200
 
 
 # -- mail_concepts --------------------------------------------------------------------------------------------------
@@ -158,3 +160,10 @@ def test_exact_keys_are_the_value_keys_of_the_ids_and_amounts():
     keys = exact_query_keys(slots)
     assert "v:fa0137" in keys and all(k.startswith("v:") for k in keys)
     assert exact_query_keys(None) == ()
+
+
+def test_a_key_under_three_characters_never_takes_a_slot_from_a_valid_one():
+    text = "ab FA-0137 HW-55812 clara@example.com 789-012-3456789"
+    raw = ["ab", "FA-0137", "HW-55812", "clara@example.com", "789-012-3456789"]
+    assert parse_query_slots({"exact_keys": raw}, text).exact_keys == ("FA-0137", "HW-55812", "clara@example.com")
+    assert parse_query_slots({"exact_keys": ["ab", "x1", "FA-0137"]}, text).exact_keys == ("FA-0137",)

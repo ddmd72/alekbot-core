@@ -153,7 +153,7 @@ class World:
         exclusions.get_exclusions.return_value = []
         return EmailIndexingService(
             gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
-            exclusions_repo=exclusions, classifier=self.runner, embedding=AsyncMock(spec=EmbeddingService),
+            exclusions_repo=exclusions, classifier=self.runner,
             oauth=None, connector=ConnectorRegistry().get("gmail"),
         )
 

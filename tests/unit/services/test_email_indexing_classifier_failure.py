@@ -53,7 +53,7 @@ def _service(results, sink):
     return EmailIndexingService(
         gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
         exclusions_repo=exclusions, classifier=classifier,
-        embedding=AsyncMock(spec=EmbeddingService), oauth=None, alert_sink=sink, connector=ConnectorRegistry().get("gmail"),
+        oauth=None, alert_sink=sink, connector=ConnectorRegistry().get("gmail"),
     )
 
 

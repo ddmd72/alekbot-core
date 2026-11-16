@@ -13,7 +13,6 @@ import pytest
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.domain.email import IndexedEmail
 from tests.contracts.adapter_contracts import (
-    FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE,
     FIRESTORE_EMAIL_SAVE_BATCH_COMPOSITE_DOC_ID,
 )
 from tests.integration.adapters.conftest import FirestoreCapturingStub
@@ -34,7 +33,6 @@ def _email(user_id="user1", email_id="em1") -> IndexedEmail:
         account_id="acc1",
         source="gmail",
         text="some fact",
-        vector=[0.1, 0.2, 0.3],
         tags=["finance"],
         category="receipt",
         metadata={"subject": "x"},
@@ -43,29 +41,6 @@ def _email(user_id="user1", email_id="em1") -> IndexedEmail:
         email_date=datetime(2026, 1, 15, tzinfo=timezone.utc),
         indexed_at=datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc),
     )
-
-
-@pytest.mark.asyncio
-async def test_find_nearest_always_filters_user_id_and_state():
-    """SECURITY contract: every find_nearest query must filter by user_id AND state.
-
-    Missing user_id → cross-tenant leak. Missing state → archived emails shown.
-    """
-    stub = FirestoreCapturingStub()
-    repo = FirestoreIndexedEmailRepository(stub.build_db(), _env_config_stub())
-
-    await repo.find_nearest(
-        user_id="user42",
-        vectors={"vector": [0.1] * 8, "tags_vector": [0.2] * 8},
-        limit=5,
-    )
-
-    # Two vectors → two find_nearest calls. Both must carry both filters.
-    assert len(stub.find_nearest_calls) == 2
-    for call in stub.find_nearest_calls:
-        FIRESTORE_EMAIL_FIND_NEAREST_FILTERS_USER_AND_STATE.validate(
-            "firestore_indexed_email", call
-        )
 
 
 @pytest.mark.asyncio

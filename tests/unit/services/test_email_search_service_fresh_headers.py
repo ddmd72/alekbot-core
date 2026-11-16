@@ -36,7 +36,7 @@ def gmail():
 def service(repo, oauth, gmail):
     return EmailSearchService(
         indexed_email_repo=repo, oauth_credentials=oauth, gmail_provider=gmail,
-        embedding_service=AsyncMock(spec=EmbeddingService), connector=ConnectorRegistry().get("gmail"),
+        connector=ConnectorRegistry().get("gmail"),
     )
 
 

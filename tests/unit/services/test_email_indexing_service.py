@@ -87,7 +87,6 @@ def service(
         job_repo=mock_job_repo,
         exclusions_repo=mock_exclusions_repo,
         classifier=mock_classifier,
-        embedding=mock_embedding,
         oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 

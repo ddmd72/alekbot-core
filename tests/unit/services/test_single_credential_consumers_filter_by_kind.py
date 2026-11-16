@@ -64,6 +64,6 @@ async def test_a_gmail_read_never_takes_another_kinds_grant():
     await s.repo.save(creds(ALEX, "google_tasks", access_token="at-tasks"))
     gmail = AsyncMock()
     svc = EmailSearchService(indexed_email_repo=AsyncMock(), oauth_credentials=s.repo, gmail_provider=gmail,
-                             embedding_service=AsyncMock(), connector=REGISTRY.get("gmail"))
+                             connector=REGISTRY.get("gmail"))
     assert "not connected" in await svc.get_details("e-1", ALEX)
     gmail.batch_get_full_content.assert_not_awaited()

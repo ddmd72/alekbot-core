@@ -5,7 +5,7 @@
 #          skips vector indexes, so this one is created here; it is also declared in config/firestore.indexes.json
 #          (card_state, user_id, card_vector: v1's live field order on the card's own state field). Without it the
 #          meaning list of every search is skipped (one WARNING per search) and only the key lists answer.
-#          Owner-run, before the deploy that switches EMAIL_SEARCH_V2 on.
+#          Owner-run, before the deploy that serves the card search.
 # Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_email_card_vector_index.sh
 # ==============================================================================
 

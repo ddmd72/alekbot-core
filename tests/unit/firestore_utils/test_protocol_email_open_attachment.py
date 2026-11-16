@@ -8,6 +8,7 @@ from pathlib import Path
 from src.infrastructure.delegation_engine import _format_email_search_compact
 from src.services.email_review_service import EmailReviewService
 from src.utils.capabilities import CAPABILITIES_TEXT
+from tests.unit.domain.email_search_fixtures import index_block
 
 ROOT = Path(__file__).resolve().parents[3]
 MIRROR = ROOT / "prompts_snapshot" / "tokens" / "system" / "PROTOCOL_AGENT_SELECTION.groovy"
@@ -44,11 +45,11 @@ def test_the_email_block_has_no_cyrillic():
         assert not re.search(r"[Ѐ-ӿ]", text), name
 
 
-def test_the_search_result_hint_points_at_email_id_and_name():
-    payload = json.dumps({"emails": [{"email_id": "msg_example001", "from": "a@example.com",
-                                      "date": "2026-10-01", "attachments": ["invoice_FA-0137.pdf"]}]})
+def test_the_search_result_hint_points_at_the_email_id():
+    # a v2 index line counts its files and names none (email index v2, slice 8 G3; the v1 result is gone, slice 10)
+    payload = json.dumps({"index": index_block("msg_example001", has_attachments=True)})
     out = _format_email_search_compact(payload)
-    assert 'delegate open_email_attachment with context={"email_id": "<id>", "name": "<filename>"}' in out
+    assert 'delegate open_email_attachment with context={"email_id": "<id>"} (an index line counts its files' in out
     assert "get_email_attachment" not in out
     assert '"filename"' not in out
 

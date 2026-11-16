@@ -30,7 +30,7 @@ class EmailIndexingJobRepository(ABC):
         """
         Partial update called after each successful chunk:
           - next_page_token: current cursor (primary resume point on Cloud Tasks timeout)
-          - emails_fetched, emails_stored, emails_failed, embedding_pending: running totals
+          - emails_fetched, emails_stored, emails_failed: running totals
           - errors: append to list (capped at 100 items)
           - status: updated on terminal transitions (completed/failed)
           - updated_at: always refreshed

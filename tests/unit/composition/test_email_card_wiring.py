@@ -33,7 +33,10 @@ async def test_on_the_graph_attaches_one_step_on_the_graphs_own_objects(monkeypa
         assert service._provider is app.worker_handler._email_indexing._gmail
         assert service._attachments._provider is app.worker_handler._email_indexing._gmail
         assert service._attachments._documents is app.agent_factory.file_conversion_service._documents
-        assert service._embeddings is app.worker_handler._email_indexing._embedding
+        # the graph's one embedding adapter, the one the card search embeds the query with (the indexing service no
+        # longer holds one: email index v2 slice 10)
+        assert service._embeddings is app.container.embedding_service
+        assert service._embeddings is app.agent_factory.email_card_search._embeddings
     finally:
         await graph.app.shutdown()
 

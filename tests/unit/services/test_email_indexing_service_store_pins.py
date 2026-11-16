@@ -51,7 +51,7 @@ class World:
 
 
 def _service(jobs) -> EmailIndexingService:
-    return EmailIndexingService(None, None, jobs, None, None, None, None, connector=ConnectorRegistry().get("gmail"))
+    return EmailIndexingService(None, None, jobs, None, None, None, connector=ConnectorRegistry().get("gmail"))
 
 
 async def _silent_running_job(world: World, job_id: str = "j1") -> None:

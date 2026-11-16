@@ -5,32 +5,23 @@ Email Search Service
 Application service encapsulating email-retrieval operations
 used by EmailSearchAgent:
 
-  - vector_search(primary_query, alternative_query, tags, user_id)
-      7-stream multi-vector RRF across all indexed email vector fields.
+  - list_headers(user_id, ...) / index_watermark(user_id) — the live headers newer than the index
   - get_details(email_id, user_id)       — Gmail full body + attachment labels with refs (no bytes)
   - list_attachment_parts(user_id, message_id)   — the message's attachments, one listing (EXTERNAL_FILES_RFC §4.7)
   - get_attachment_part(user_id, message_id, part, max_bytes) — one listed part's bytes, for the open path
-
-Multi-vector search strategy (2 parallel find_nearest calls → RRF merge):
-  Call A: vector:embed(primary)     + tags_vector:embed(tags)      + metadata_vector:embed(primary)
-  Call B: vector:embed(alternative) + tags_vector:embed(primary)   + metadata_vector:embed(tags)
-          + attachments_vector:embed(tags)
-Total: 7 search streams, 3 embedding calls (parallel).
 """
 
 import asyncio
 from dataclasses import replace
-import json
 import secrets
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.email_provider_port import EmailProviderPort
-from ..ports.embedding_service import EmbeddingService
 from ..domain.connector_spec import ConnectorSpec
-from ..domain.email import GMAIL_INDEX_PROVIDER, EmailMetadata, EmailPart, IndexedEmail
+from ..domain.email import GMAIL_INDEX_PROVIDER, EmailMetadata, EmailPart
 from ..domain.email_details import EmailDetails
 from ..domain.email_open_texts import EMAIL_NOT_CONNECTED_NOTE, MAILBOX_UNAVAILABLE_NOTE
 from ..domain.email_ref import email_file_label, format_email_ref
@@ -39,10 +30,6 @@ from ..domain.file_ref import FileRefKind
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
 from ..utils.logger import logger
-
-# RRF constant — same as used in fact repository
-_RRF_K = 60
-
 
 def _nonce() -> str:
     """A fresh nonce per wrapped body, as the drive draws one per result (EXTERNAL_FILES_RFC §4.6)."""
@@ -60,7 +47,6 @@ class EmailSearchService:
         indexed_email_repo: IndexedEmailRepository,
         oauth_credentials: OAuthCredentialsPort,
         gmail_provider: EmailProviderPort,
-        embedding_service: EmbeddingService,
         *,
         connector: ConnectorSpec,
         nonce: Callable[[], str] = _nonce,
@@ -72,96 +58,6 @@ class EmailSearchService:
         self._oauth = oauth_credentials
         self._kind = connector.kind
         self._gmail = gmail_provider
-        self._embedding = embedding_service
-
-    # ------------------------------------------------------------------
-    # Vector search — 7-stream multi-vector RRF
-    # ------------------------------------------------------------------
-
-    async def vector_search(
-        self,
-        primary_query: str,
-        alternative_query: str,
-        tags: List[str],
-        user_id: str,
-        limit: int = 10,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-    ) -> str:
-        """
-        Embed primary, alternative, and tags → 2 parallel find_nearest calls →
-        7 search streams → second-level RRF merge → formatted text.
-        date_from / date_to: optional pre-filter on email_date passed through to find_nearest.
-        Results are filtered server-side by cosine distance 0.4; all passing results returned.
-        `limit` controls per-adapter-call fetch size (Firestore headroom).
-        """
-        logger.info(
-            f"📧 EmailSearchService.vector_search: "
-            f"primary='{primary_query[:50]}' alt='{alternative_query[:50]}' "
-            f"tags={tags} user={user_id[:8]} "
-            f"date_from={date_from} date_to={date_to}"
-        )
-
-        tags_text = " ".join(tags) if tags else primary_query
-
-        # Step 1: 3 embedding calls in parallel
-        e_primary, e_alternative, e_tags = await asyncio.gather(
-            self._embedding.get_embedding(primary_query, task_type="RETRIEVAL_QUERY"),
-            self._embedding.get_embedding(alternative_query, task_type="RETRIEVAL_QUERY"),
-            self._embedding.get_embedding(tags_text, task_type="RETRIEVAL_QUERY"),
-        )
-
-        date_kwargs = {"date_from": date_from, "date_to": date_to}
-
-        # Step 2: 2 find_nearest calls in parallel
-        # Call A: 3 streams (primary content + tags category + primary metadata)
-        # Call B: 4 streams (alternative content + primary on tags + tags metadata + tags attachments)
-        results_a, results_b = await asyncio.gather(
-            self._email_repo.find_nearest(
-                user_id=user_id,
-                vectors={
-                    "vector": e_primary,
-                    "tags_vector": e_tags,
-                    "metadata_vector": e_primary,
-                },
-                limit=limit * 2,
-                **date_kwargs,
-            ),
-            self._email_repo.find_nearest(
-                user_id=user_id,
-                vectors={
-                    "vector": e_alternative,
-                    "tags_vector": e_primary,
-                    "metadata_vector": e_tags,
-                    "attachments_vector": e_tags,
-                },
-                limit=limit * 2,
-                **date_kwargs,
-            ),
-        )
-
-        # Step 3: second-level RRF merge — no output cap, return all similarity-passing results
-        merged = self._rrf_merge([results_a, results_b])
-
-        logger.info(
-            f"📧 EmailSearchService.vector_search done: "
-            f"A={len(results_a)} B={len(results_b)} → merged={len(merged)}"
-        )
-
-        if not merged:
-            return "No emails found matching your query."
-
-        emails = []
-        for email in merged:
-            emails.append({
-                "email_id": email.email_id,
-                "from": email.from_address,
-                "date": email.email_date.strftime("%Y-%m-%d") if email.email_date else None,
-                "text": email.text,
-                "attachments": email.attachments or [],
-            })
-
-        return json.dumps({"count": len(emails), "emails": emails}, ensure_ascii=False)
 
     # ------------------------------------------------------------------
     # Live headers (mail newer than the index, exact keys)
@@ -288,30 +184,6 @@ class EmailSearchService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _rrf_merge(
-        lists: List[List[IndexedEmail]],
-        k: int = _RRF_K,
-    ) -> List[IndexedEmail]:
-        """
-        Second-level RRF across multiple find_nearest result lists.
-        Each list is already RRF-ranked internally by the adapter.
-        Returns all results — no output cap; server-side distance filter applies.
-        """
-        seen: Dict[str, IndexedEmail] = {}
-        scores: Dict[str, float] = {}
-
-        for result_list in lists:
-            for rank, email in enumerate(result_list):
-                if email.email_id not in seen:
-                    seen[email.email_id] = email
-                scores[email.email_id] = (
-                    scores.get(email.email_id, 0.0) + 1.0 / (k + rank + 1)
-                )
-
-        top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)
-        return [seen[eid] for eid in top_ids]
 
     async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
         """The user's credential of the mail kind (the oldest when several), or None."""

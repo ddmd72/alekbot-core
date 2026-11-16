@@ -163,31 +163,6 @@ gcloud scheduler jobs describe alek-bot-dev-fact-lifecycle-sweep \
   --attempt-deadline=180s \
   --project=$PROJECT_ID
 
-gcloud scheduler jobs describe alek-bot-dev-repair-email-embeddings \
-  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
-&& gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \
-  --schedule="2 * * * *" \
-  --uri="$SERVICE_URL/worker" \
-  --oidc-service-account-email="$SA" \
-  --oidc-token-audience="$SERVICE_URL/worker" \
-  --http-method=POST \
-  --message-body='{"task_type":"repair_email_embeddings"}' \
-  --update-headers="Content-Type=application/json" \
-  --location=us-central1 \
-  --attempt-deadline=300s \
-  --project=$PROJECT_ID \
-|| gcloud scheduler jobs create http alek-bot-dev-repair-email-embeddings \
-  --schedule="2 * * * *" \
-  --uri="$SERVICE_URL/worker" \
-  --oidc-service-account-email="$SA" \
-  --oidc-token-audience="$SERVICE_URL/worker" \
-  --http-method=POST \
-  --message-body='{"task_type":"repair_email_embeddings"}' \
-  --headers="Content-Type=application/json" \
-  --location=us-central1 \
-  --attempt-deadline=300s \
-  --project=$PROJECT_ID
-
 gcloud scheduler jobs describe alek-bot-dev-sweep-consolidation \
   --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
 && gcloud scheduler jobs update http alek-bot-dev-sweep-consolidation \

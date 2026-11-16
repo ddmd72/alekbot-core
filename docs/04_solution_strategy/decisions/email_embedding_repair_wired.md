@@ -1,5 +1,7 @@
 # Decision: EmailEmbeddingRepairService wired into Cloud Scheduler
 
+> **Superseded by EMAIL_INDEX_V2_RFC slice 10.** The v1 email vectors, `embedding_pending`, the repair service, its `repair_email_embeddings` task type and its scheduler job were removed. Kept below as the record of the earlier decision.
+
 **Status:** Adopted — R13.1 closed (option a: wire it up)
 **Date:** 2026-05-29
 **Context:** Inspection finding R13.1 — `docs/reviews/ARCHITECTURE_INSPECTION_FOLLOWUP.md`

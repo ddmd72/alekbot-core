@@ -12,9 +12,9 @@ from src.ports.email_classifier_port import EmailClassifierPort
 from src.ports.email_exclusions_port import EmailExclusionsPort
 from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
 from src.ports.email_provider_port import EmailProviderPort
-from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.services import email_indexing_service as module
+from src.services.email_card_indexer import EmailCardIndexer
 from src.services.email_indexing_service import REINDEX_DISABLED, EmailIndexingService
 from tests.unit.services.test_email_indexing_service import _make_credentials, _make_job, _make_meta
 
@@ -39,11 +39,9 @@ def _build(marks):
     exclusions.get_exclusions.return_value = []
     classifier = AsyncMock(spec=EmailClassifierPort)
     classifier.classify_batch.side_effect = lambda emails, *a, **k: [_valuable(e.email_id) for e in emails]
-    embedding = AsyncMock(spec=EmbeddingService)
-    embedding.get_embeddings_batch.return_value = [[0.1] * 4, [0.2] * 4, [0.3] * 4]
     service = EmailIndexingService(
         gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
-        exclusions_repo=exclusions, classifier=classifier, embedding=embedding, oauth=None,
+        exclusions_repo=exclusions, classifier=classifier, oauth=None,
         alert_sink=None, connector=ConnectorRegistry().get("gmail"),
     )
     return service, repo, classifier
@@ -97,6 +95,8 @@ async def test_reindex_is_refused_and_the_stored_marks_stay():
     # card fields; only stored ids are re-carded, by a separate job. A reindex job over a mailbox whose emails carry
     # consolidation marks must leave the index wholly untouched: no read, no write, so every mark stays as stored.
     service, repo, classifier = _build({"m1": MARK, "m2": None})
+    card_step = AsyncMock(spec=EmailCardIndexer)   # the paid card step (card LLM, card vector), as on the graph
+    service.attach_card_step(card_step)
 
     got = await service.run_indexing_job(_make_job(), _make_credentials(), "acct-1", mode="reindex")
 
@@ -105,6 +105,6 @@ async def test_reindex_is_refused_and_the_stored_marks_stay():
     assert repo.mock_calls == []                      # no save_batch, no mark read: consolidated_at is never rewritten
     assert classifier.mock_calls == []
     assert service._gmail.mock_calls == []            # refused before any provider call
-    assert service._embedding.mock_calls == []
+    assert card_step.mock_calls == []                 # no card and no card vector paid for (the v1 embedding is gone)
     assert service._exclusions_repo.mock_calls == []
     assert got.emails_fetched == 0 and got.emails_stored == 0

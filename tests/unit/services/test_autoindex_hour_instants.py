@@ -72,7 +72,7 @@ async def _service(*profiles: UserProfile):
         await store.repo.save(creds(p.user_id, "gmail"))
     journal = _Journal()
     service = EmailIndexingService(gmail=None, email_repo=None, job_repo=journal, exclusions_repo=None,  # type: ignore[arg-type]
-                                   classifier=None, embedding=None, oauth=store.repo, connector=ConnectorRegistry().get("gmail"))  # type: ignore[arg-type]
+                                   classifier=None, oauth=store.repo, connector=ConnectorRegistry().get("gmail"))  # type: ignore[arg-type]
     return service, journal, _Users(*profiles)
 
 
