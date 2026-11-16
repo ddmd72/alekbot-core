@@ -4,8 +4,9 @@ and the usual reply hint. A digit or a button picks an option; the options' ids 
 reads (`pick1`…`pick3`, `keep`, `not_listed`, `dont_know`).
 
 Place: the atlas rows of that name (up to three), "keep as written" (a real place the atlas lacks) and "don't remember".
-Person: the fitting list entries (up to three), "not on my list" and "don't remember". Date: "don't remember" only; the
-date itself is a reply in words, read by code."""
+Person: the fitting list entries (up to three), "not on my list" and "don't remember". Date: the candidate dates (up to
+three, in ISO form) and "don't remember"; a date typed in the ISO form is read by code. The date question has its own reply
+hint, which states that form."""
 from types import MappingProxyType
 from typing import Final, Mapping, Optional, Tuple
 
@@ -38,6 +39,7 @@ FIXED_OPTIONS: Final[Mapping[str, Tuple[str, ...]]] = MappingProxyType({
     "date": (DONT_KNOW_OPTION,),
 })
 _HINT: Final[str] = UIMessage.MEMORY_REPLY_HINT.value
+_DATE_HINT: Final[str] = UIMessage.MEMORY_PROFILE_DATE_REPLY_HINT.value
 
 
 def profile_question_message(
@@ -61,6 +63,6 @@ def profile_question_message(
         quote=shown_quote(question.quoted_text, translation, language),
         options=options,
         binding=InteractiveBinding(kind=FACT_QUESTION_KIND, id=question.question_id),
-        reply_hint=labels[_HINT],
+        reply_hint=labels[_DATE_HINT if question.question == "date" else _HINT],
         min_options=1,
     )

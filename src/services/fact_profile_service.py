@@ -35,7 +35,7 @@ from pydantic import ValidationError
 
 from ..domain.confirmed_people import ConfirmedPeople, ConfirmedPerson
 from ..domain.entities import FactDomain, FactEntity
-from ..domain.fact_profile import FactProfile, ProfileReviewItem, UnresolvedPlace
+from ..domain.fact_profile import FactProfile, ProfileReviewItem, ProfileTimePoint, UnresolvedPlace
 from ..domain.fact_profile_answer import ProfileAnswer
 from ..domain.fact_profile_derive import DeriveOutcome, derive_profile, directive_profile, recording_year
 from ..domain.fact_profile_fingerprint import (
@@ -78,6 +78,13 @@ def _utcnow() -> datetime:
 def _is_directive(fact: FactEntity) -> bool:
     """A standing directive. Until the consolidator marks them itself, the standing-directive channel is the domain."""
     return fact.domain == FactDomain.AGENT_DIRECTIVE
+
+
+def _stored_time_points(stored: Any) -> Tuple[ProfileTimePoint, ...]:
+    """The time points of a stored profile (`{from, to, precision, source}`); an entry that is not that shape is skipped."""
+    return tuple(
+        ProfileTimePoint(t["from"], t["to"], t["precision"], t["source"]) for t in stored or []
+        if isinstance(t, dict) and all(isinstance(t.get(k), str) for k in ("from", "to", "precision", "source")))
 
 
 def _stored_answer(fact: FactEntity) -> Optional[ProfileAnswer]:
@@ -170,7 +177,7 @@ class _Tally:
     error: bool = False
     plan: Optional[_Plan] = None
     # The open-point fields of the profiles this run wrote, by fact id: the view the points are read from.
-    written_open: Dict[str, Tuple[Any, Any]] = field(default_factory=dict)
+    written_open: Dict[str, Tuple[Any, Any, Any]] = field(default_factory=dict)
 
     def freeze(self) -> FactProfileRun:
         return FactProfileRun(
@@ -263,19 +270,21 @@ class FactProfileService:
         return plan
 
     @staticmethod
-    def _collect_points(plan: _Plan, written: Dict[str, Tuple[Any, Any]]) -> Tuple[OpenPoint, ...]:
+    def _collect_points(plan: _Plan, written: Dict[str, Tuple[Any, Any, Any]]) -> Tuple[OpenPoint, ...]:
         """The open points over the facts as the run left them: a fact written this run by the open-point fields it was
         written with, any other as it was read."""
         view = []
         for item in plan.items:
             fact = item.fact
-            places, review = written.get(fact.id, (fact.places_unresolved, fact.profile_review_items))
+            places, review, times = written.get(
+                fact.id, (fact.places_unresolved, fact.profile_review_items, fact.time_points))
             view.append(PointFact(
                 fact.id, fact.lineage_id, fact.text, fact.created_at,
                 tuple(UnresolvedPlace(p["city"], p["country"]) for p in places or []
                       if isinstance(p, dict) and isinstance(p.get("city"), str) and isinstance(p.get("country"), str)),
                 tuple(ProfileReviewItem(i["field"], i["mention"]) for i in review or []
-                      if isinstance(i, dict) and isinstance(i.get("field"), str) and isinstance(i.get("mention"), str))))
+                      if isinstance(i, dict) and isinstance(i.get("field"), str) and isinstance(i.get("mention"), str)),
+                _stored_time_points(times)))
         return tuple(open_points(view, plan.answers, plan.confirmed, plan.names))
 
     async def _read_confirmed(self, account_id: str) -> Optional[ConfirmedPeople]:
@@ -490,7 +499,8 @@ class FactProfileService:
                 continue
             tally.written += 1
             if "places_unresolved" in p.fields:
-                tally.written_open[p.fact.id] = (p.fields["places_unresolved"], p.fields["profile_review_items"])
+                tally.written_open[p.fact.id] = (p.fields["places_unresolved"], p.fields["profile_review_items"],
+                                                  p.fields.get("time_points"))
             if p.fields.get("profile_review_needed") is True:
                 tally.flagged += 1
             if p.kind == _DIRECTIVE:

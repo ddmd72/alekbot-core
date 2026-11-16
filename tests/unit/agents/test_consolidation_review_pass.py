@@ -52,7 +52,7 @@ RU_LABELS = {
     "memory_digest_archived": "это уже не так",
     "memory_digest_invalidated": "этого никогда не было",
     **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
-    **RU_PROFILE_LABELS,  # fact profile §4.7 (5d): the 7 profile keys, 35 in all
+    **RU_PROFILE_LABELS,  # fact profile §4.7: the 8 profile keys (5d + the date reply hint), 36 in all
 }
 
 

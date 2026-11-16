@@ -73,9 +73,12 @@ def test_an_open_point_needs_what_its_field_needs():
         ProfileOpenPoint(key="k", field="places", printed="x")
     with pytest.raises(ValueError, match="lineage_id and mention"):
         ProfileOpenPoint(key="k", field="people", printed="x", mention="Doe")
-    with pytest.raises(ValueError, match="no options"):
-        ProfileOpenPoint(key="k", field="time_points", printed="x", lineage_id=LINEAGE, mention="x",
-                         options=(OpenPointOption(id="pick1", label="a", value="b"),))
+    with pytest.raises(ValueError, match="lineage_id and mention"):
+        ProfileOpenPoint(key="k", field="time_points", printed="x", mention="x")
+    # §4.7 amended (OD-13 (c)): a date point offers its candidate dates, in ISO form, as options
+    dated = ProfileOpenPoint(key="k", field="time_points", printed="x", lineage_id=LINEAGE, mention="x",
+                             options=(OpenPointOption(id="pick1", label="2019", value="2019"),))
+    assert [option.value for option in dated.options] == ["2019"]
 
 
 def test_the_candidate_options_are_three_at_most_and_numbered_in_order():
