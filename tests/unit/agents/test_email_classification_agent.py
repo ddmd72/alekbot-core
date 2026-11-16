@@ -72,38 +72,39 @@ def agent(mock_llm, mock_prompt_builder):
 class TestEmailClassificationAgent:
 
     async def test_classify_batch_returns_all_emails(self, agent, mock_llm):
-        """All input emails appear in output, even if not all returned by LLM."""
+        """Every input email appears in the output with the gate's decision and reason."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "travel",
-             "fact": "User booked flight", "tags": ["flight"]},
-            {"email_id": "id2", "valuable": False, "category": None,
-             "fact": None, "tags": []},
+            {"email_id": "id1", "decision": "keep", "reason": "record"},
+            {"email_id": "id2", "decision": "drop", "reason": "promotion"},
         ])
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         assert results[0].email_id == "id1"
-        assert results[0].valuable is True
-        assert results[0].category == "travel"
-        assert results[0].fact == "User booked flight"
+        assert results[0].keep is True
+        assert results[0].reason == "record"
+        assert results[0].forced is False
         assert results[1].email_id == "id2"
-        assert results[1].valuable is False
+        assert results[1].keep is False
+        assert results[1].reason == "promotion"
 
     async def test_classify_batch_fills_missing_emails(self, agent, mock_llm):
-        """If LLM omits an email_id, it is added as not-valuable."""
+        """If the LLM omits an email_id, it is added as a forced keep (lean to keep, email index v2 §4)."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "finance",
-             "fact": "Invoice paid", "tags": ["invoice"]},
+            {"email_id": "id1", "decision": "drop", "reason": "newsletter"},
         ])
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
         missing = next(r for r in results if r.email_id == "id2")
-        assert missing.valuable is False
+        assert missing.keep is True
+        assert missing.forced is True
+        assert missing.reason is None
+        assert missing.failure is None
 
     async def test_classify_batch_handles_invalid_json(self, agent, mock_llm):
         """Invalid JSON on all retries → parse_error after MAX_PARSE_RETRIES+1 attempts."""
@@ -115,19 +116,21 @@ class TestEmailClassificationAgent:
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
-        assert results[0].valuable is False
+        assert results[0].keep is False
+        assert results[0].failure == "parse_error"
         # One initial attempt + one retry (MAX_PARSE_RETRIES=1)
         assert mock_llm.generate_content.call_count == 2
 
     async def test_classify_batch_handles_llm_error(self, agent, mock_llm):
-        """LLM exception → all emails returned as not-valuable."""
+        """LLM exception → all emails returned failed and not kept."""
         emails = [_make_meta("id1"), _make_meta("id2")]
         mock_llm.generate_content.side_effect = RuntimeError("API error")
 
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 2
-        assert all(not r.valuable for r in results)
+        assert all(not r.keep for r in results)
+        assert all(r.failure == "RuntimeError" for r in results)
 
     async def test_classify_batch_empty_input(self, agent, mock_llm):
         """Empty input → no LLM call, empty list returned."""
@@ -158,24 +161,11 @@ class TestEmailClassificationAgent:
         assert len(req.messages) == 1
         assert req.messages[0].role == "user"
 
-    async def test_classify_batch_tags_lowercased(self, agent, mock_llm):
-        """Tags returned by LLM are normalized to lowercase."""
-        emails = [_make_meta("id1")]
-        mock_llm.generate_content.return_value = _llm_response([
-            {"email_id": "id1", "valuable": True, "category": "travel",
-             "fact": "Flight booked", "tags": ["Flight", "RYANAIR"]},
-        ])
-
-        results = await agent.classify_batch(emails, "user123", account_id="acc-1")
-
-        assert results[0].tags == ["flight", "ryanair"]
-
     async def test_classify_batch_retries_on_invalid_json(self, agent, mock_llm):
         """Invalid JSON on first attempt → LLM retry → valid JSON on second attempt → success."""
         emails = [_make_meta("id1")]
         valid_response = _llm_response([
-            {"email_id": "id1", "valuable": False, "category": None,
-             "fact": None, "tags": []},
+            {"email_id": "id1", "decision": "drop", "reason": "promotion"},
         ])
         mock_llm.generate_content.side_effect = [
             LLMResponse(text="not json at all", tool_calls=[]),
@@ -185,7 +175,9 @@ class TestEmailClassificationAgent:
         results = await agent.classify_batch(emails, "user123", account_id="acc-1")
 
         assert len(results) == 1
-        assert results[0].valuable is False
+        assert results[0].keep is False
+        assert results[0].reason == "promotion"
+        assert results[0].failure is None
         assert mock_llm.generate_content.call_count == 2
 
     async def test_classify_batch_requires_prompt_builder(self, mock_llm):

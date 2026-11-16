@@ -61,5 +61,6 @@ def test_a_stored_document_that_still_carries_the_old_vectors_parses_and_drops_t
                   embedding_pending=True)
     mail = IndexedEmail(**stored)
     dumped = mail.model_dump()
-    assert mail.text == "Invoice FA-0137." and mail.tags == ["invoice"] and mail.consolidated_at is None
-    assert not {*_V1_VECTOR_FIELDS, "embedding_pending"} & set(dumped)
+    assert mail.subject == "Factura FA-0137" and mail.consolidated_at is None
+    # slice 9b (D3): the gate's text, tags, category and metadata are old fields too, dropped the same way
+    assert not {*_V1_VECTOR_FIELDS, "embedding_pending", "text", "tags", "category", "metadata"} & set(dumped)

@@ -31,7 +31,8 @@ _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
 
 
-def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexed_email_repo=None):
+def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexed_email_repo=None,
+                email_memory_batches=None):
     config = AgentConfig(agent_id="consolidation_agent", agent_type="consolidation")
     mock_provider = MagicMock(spec=LLMPort)
     if mock_llm:
@@ -72,6 +73,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         fact_updates=typed_port_for(fact_management),  # reviewer edit (S4 T6b): the typed port is required
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
+        email_memory_batches=email_memory_batches,
     )
     agent._llm = mock_provider
     return agent, repo, fact_write, pb

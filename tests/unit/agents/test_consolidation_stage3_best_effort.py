@@ -6,8 +6,7 @@ already wrote); the unconsolidated emails simply stay for the next run. Stage 1/
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,28 +14,24 @@ import pytest
 import src.agents.consolidation_agent as consolidation_agent
 from src.domain.agent import AgentStatus
 from src.domain.request_context import RequestContext
+from tests.support.stored_mail import mail_store_with, marked, stored_mail
 from tests.unit.agents.test_consolidation_agent import _ACCOUNT_ID, _USER_ID, _make_agent, _make_message
 
 
-class _FakeEmailRepo:
-    """Holds unconsolidated emails; mark_consolidated really removes them from the pending set."""
+async def _emails(n=2):
+    """`n` stored mails with no card, indexed long ago: each reaches the email pass in the header form."""
+    return await mail_store_with(*[stored_mail(f"e{i}", user_id=_USER_ID, account_id=_ACCOUNT_ID,
+                                               sent=datetime(2026, 10, 1)) for i in range(n)])
 
-    def __init__(self, n=2):
-        self.pending = [
-            SimpleNamespace(
-                email_id=f"e{i}", text="invoice due", category="finance", tags=[],
-                email_date=datetime(2026, 10, 1, tzinfo=timezone.utc), from_address="a@b.c",
-                subject="s", attachments=[], metadata={},
-            )
-            for i in range(n)
-        ]
-        self.consolidated: list[str] = []
 
-    async def get_unconsolidated_batch(self, user_id, limit):
-        return [e for e in self.pending if e.email_id not in self.consolidated][:limit]
+def _agent(emails):
+    """The agent with the store as both its v1 mail repository (marks) and its Stage 3 batch reads."""
+    agent, *_ = _make_agent(indexed_email_repo=emails, email_memory_batches=emails)
+    return agent
 
-    async def mark_consolidated(self, user_id, email_ids, when):
-        self.consolidated.extend(email_ids)
+
+async def _marked(emails, n=2):
+    return await marked(emails, _USER_ID, [f"e{i}" for i in range(n)])
 
 
 def _stage1_ok(agent):
@@ -52,8 +47,8 @@ async def _run(agent, timeout_ms=None):
 
 
 async def test_stage3_error_keeps_the_batch_successful_and_stage1_runs_once(caplog):
-    emails = _FakeEmailRepo()
-    agent, *_ = _make_agent(indexed_email_repo=emails)
+    emails = await _emails()
+    agent = _agent(emails)
     _stage1_ok(agent)
     agent._run_consolidation_loop = AsyncMock(side_effect=RuntimeError("email llm down"))
 
@@ -63,14 +58,14 @@ async def test_stage3_error_keeps_the_batch_successful_and_stage1_runs_once(capl
     assert response.status == AgentStatus.SUCCESS
     assert response.result["stage1_operations"] == 3 and response.result["email_batches"] == 0
     agent._handle_consolidate.assert_awaited_once()
-    assert emails.consolidated == []     # not marked: the next run picks them up
+    assert await _marked(emails) == []     # not marked: the next run picks them up
     errors = [r for r in caplog.records if r.levelno == logging.ERROR and "Stage 3" in r.getMessage()]
     assert len(errors) == 1 and "email llm down" in errors[0].getMessage()
 
 
 async def test_execute_level_stage3_error_does_not_fail_the_batch_result():
-    emails = _FakeEmailRepo()
-    agent, *_ = _make_agent(indexed_email_repo=emails)
+    emails = await _emails()
+    agent = _agent(emails)
     _stage1_ok(agent)
     agent._handle_consolidate_email = AsyncMock(side_effect=ValueError("bad email payload"))
     msg = _make_message("consolidate_full", payload_extra={"messages": [{"role": "user", "text": "hi"}]})
@@ -84,8 +79,8 @@ async def test_execute_level_stage3_error_does_not_fail_the_batch_result():
 async def test_slow_stage3_is_cut_at_the_remaining_budget_and_the_batch_succeeds(monkeypatch, caplog):
     monkeypatch.setattr(consolidation_agent, "_STAGE3_MARGIN_S", 0.0)
     monkeypatch.setattr(consolidation_agent, "_STAGE3_MIN_S", 0.01)
-    emails = _FakeEmailRepo()
-    agent, *_ = _make_agent(indexed_email_repo=emails)
+    emails = await _emails()
+    agent = _agent(emails)
     _stage1_ok(agent)
     cancelled = []
 
@@ -103,13 +98,13 @@ async def test_slow_stage3_is_cut_at_the_remaining_budget_and_the_batch_succeeds
 
     assert response.status == AgentStatus.SUCCESS
     assert cancelled == [True]                            # the email work was really cut, not abandoned
-    assert emails.consolidated == []
+    assert await _marked(emails) == []
     cut = [r.getMessage() for r in caplog.records if "Stage 3" in r.getMessage() and r.levelno == logging.ERROR]
     assert len(cut) == 1 and "timed out" in cut[0]
 
 
 async def test_stage3_skipped_with_an_info_line_when_too_little_budget_is_left(caplog):
-    agent, *_ = _make_agent(indexed_email_repo=_FakeEmailRepo())
+    agent = _agent(await _emails())
     _stage1_ok(agent)
     agent._handle_consolidate_email = AsyncMock()
 
@@ -123,7 +118,7 @@ async def test_stage3_skipped_with_an_info_line_when_too_little_budget_is_left(c
 
 
 async def test_stage3_uses_the_agent_config_budget_when_the_message_has_none():
-    agent, *_ = _make_agent(indexed_email_repo=_FakeEmailRepo())
+    agent = _agent(await _emails())
     agent.config.timeout_ms = 40_000
     _stage1_ok(agent)
     agent._handle_consolidate_email = AsyncMock()
@@ -134,8 +129,8 @@ async def test_stage3_uses_the_agent_config_budget_when_the_message_has_none():
 
 
 async def test_stage3_within_budget_runs_and_counts_its_batches():
-    emails = _FakeEmailRepo(n=2)
-    agent, *_ = _make_agent(indexed_email_repo=emails)
+    emails = await _emails(n=2)
+    agent = _agent(emails)
     _stage1_ok(agent)
     agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "CREATE"}])
 
@@ -143,12 +138,12 @@ async def test_stage3_within_budget_runs_and_counts_its_batches():
 
     assert response.status == AgentStatus.SUCCESS
     assert response.result["email_batches"] == 1 and response.result["email_facts_affected"] == 1
-    assert emails.consolidated == ["e0", "e1"]
+    assert await _marked(emails) == ["e0", "e1"]
 
 
 async def test_no_deadline_agent_runs_stage3_unbounded():
-    emails = _FakeEmailRepo(n=1)
-    agent, *_ = _make_agent(indexed_email_repo=emails)
+    emails = await _emails(n=1)
+    agent = _agent(emails)
     _stage1_ok(agent)
     agent._run_consolidation_loop = AsyncMock(return_value=[])
 
@@ -158,7 +153,7 @@ async def test_no_deadline_agent_runs_stage3_unbounded():
 
 
 async def test_cancellation_during_stage3_is_not_swallowed():
-    agent, *_ = _make_agent(indexed_email_repo=_FakeEmailRepo())
+    agent = _agent(await _emails())
     _stage1_ok(agent)
     agent._handle_consolidate_email = AsyncMock(side_effect=asyncio.CancelledError())
 
@@ -167,7 +162,7 @@ async def test_cancellation_during_stage3_is_not_swallowed():
 
 
 async def test_stage1_failure_still_aborts_and_stage3_is_not_attempted():
-    agent, *_ = _make_agent(indexed_email_repo=_FakeEmailRepo())
+    agent = _agent(await _emails())
     agent._handle_consolidate = AsyncMock(return_value=MagicMock(status=AgentStatus.FAILED, error="stage1 failed"))
     agent._handle_consolidate_email = AsyncMock()
 

@@ -12,6 +12,9 @@ from src.domain.llm import LLMRequest, LLMResponse, UsageMetadata
 from src.utils.telemetry import get_request_context
 from tests.unit.composition.test_email_classifier_runner import World, _meta, _Model, _profile
 
+# A valid gate answer for the two mails the world's job lists: both dropped, so the page reaches no card step.
+DROP_BOTH = json.dumps([{"email_id": m, "decision": "drop", "reason": "automated"} for m in ("m1", "m2")])
+
 Turn = Union[LLMResponse, BaseException]
 
 
@@ -44,7 +47,7 @@ async def _world(model: _Model) -> World:
 
 
 async def test_a_re_asked_batch_bills_each_call_once_into_the_jobs_account():
-    model = _Scripted(_answer("not json", 1000, 40), _answer(json.dumps([]), 1300, 60))
+    model = _Scripted(_answer("not json", 1000, 40), _answer(DROP_BOTH, 1300, 60))
     world = await _world(model)
 
     job = await world.index("usr-1", "acc-1")
@@ -91,7 +94,8 @@ async def test_a_job_without_an_account_is_classified_and_bills_no_account():
 
     results = await world.runner.classify_batch([_meta("m1")], "usr-1", account_id="")
 
-    assert [(r.email_id, r.keep, r.failure) for r in results] == [("m1", False, None)]
+    # The empty answer leaves m1 out: the lean-to-keep rule keeps it, forced (email index v2 §4), not failed.
+    assert [(r.email_id, r.keep, r.forced, r.failure) for r in results] == [("m1", True, True, None)]
     assert len(model.requests) == 1
     assert world.usage("acc-1").get("daily_tokens", 0) == 0
     assert world.usage("acc-2").get("daily_tokens", 0) == 0
