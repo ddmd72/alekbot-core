@@ -21,7 +21,8 @@ INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.index
 FACTS, STATE = "eval_email_facts", "eval_email_state"
 D0 = datetime(2026, 10, 5, 10, 0)
 NOW = datetime(2026, 11, 13, 8, 0, tzinfo=timezone.utc)
-V1_FIELDS = ("text", "vector", "tags_vector", "state", "indexed_at", "consolidated_at", "subject", "email_date")
+# The v1 fields slice 10 keeps (card D1: Stage 3 and the classifier still use them); the v1 vectors are gone.
+V1_FIELDS = ("text", "tags", "category", "metadata", "state", "indexed_at", "consolidated_at", "subject", "email_date")
 
 
 @pytest.fixture
@@ -35,8 +36,8 @@ def world():
 
 def email(email_id, user_id="user-1", **over) -> IndexedEmail:
     fields = dict(email_id=email_id, user_id=user_id, account_id="acct-1", source="gmail",
-                  text="Hotel booking RM-55120 confirmed.", vector=[1.0, 0.0, 0.0], tags_vector=[0.0, 1.0, 0.0],
-                  tags=["hotel"], category="travel", metadata={"subject": "Booking"}, subject="Booking",
+                  text="Hotel booking RM-55120 confirmed.", tags=["hotel"], category="travel",
+                  metadata={"subject": "Booking"}, subject="Booking",
                   from_address="booking@albergo.example", email_date=D0, indexed_at=D0)
     fields.update(over)
     return IndexedEmail(**fields)

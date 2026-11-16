@@ -15,14 +15,13 @@ from google.api_core.exceptions import NotFound
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.domain.email import IndexedEmail, IndexingState
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 FACTS, STATE = "eval_email_facts", "eval_email_state"
 D0 = datetime(2026, 10, 5, 10, 0)                # naive UTC, as the repository returns dates
-X, Y, Z = [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]
-NEAR_X = [1.0, 0.1, 0.0]                          # cosine distance to X ~ 0.005
+V1_VECTOR_FIELDS = {"vector", "tags_vector", "metadata_vector", "attachments_vector", "embedding_pending"}
 
 
 @pytest.fixture
@@ -39,7 +38,7 @@ def docs(repo):
 
 def email(email_id, user_id="u1", **over) -> IndexedEmail:
     fields = dict(email_id=email_id, user_id=user_id, account_id="a1", source="gmail",
-                  text="Invoice for the bathroom repair at 12 Oak Street.", vector=X, tags=["invoice"],
+                  text="Invoice for the bathroom repair at 12 Oak Street.", tags=["invoice"],
                   category="finance", metadata={"subject": "Bathroom repair invoice"}, subject="Bathroom repair invoice",
                   from_address="invoices@example.com", email_date=D0, indexed_at=D0)
     fields.update(over)
@@ -52,14 +51,13 @@ def ids(emails):
 
 # --------------------------------------------------------------------------------------------------- save
 
-async def test_save_round_trip_unwraps_vectors_and_returns_naive_utc_dates(repo):
-    sent = email("e1", tags_vector=Y, attachments=["invoice_bathroom_es.pdf"],
+async def test_save_round_trip_stores_no_v1_vector_and_returns_naive_utc_dates(repo):
+    sent = email("e1", attachments=["invoice_bathroom_es.pdf"],
                  email_date=datetime(2026, 10, 5, 12, 0, tzinfo=timezone(timedelta(hours=2))))
     assert await repo.save_batch([sent]) == 1
     stored = docs(repo)["u1_e1"]
-    assert stored_vector(stored["vector"]) == X and stored["metadata_vector"] is None
-    got = (await repo.find_nearest("u1", {"vector": X}))[0]
-    assert got.vector == X and got.tags_vector == Y and isinstance(got.vector, list)
+    assert not V1_VECTOR_FIELDS & set(stored)   # email index v2 slice 10: no v1 vector, no pending flag is written
+    got = (await repo.get_unconsolidated_batch("u1"))[0]
     assert got.email_date == datetime(2026, 10, 5, 10, 0) and got.email_date.tzinfo is None
     assert got == sent.model_copy(update={"email_date": datetime(2026, 10, 5, 10, 0)})
 
