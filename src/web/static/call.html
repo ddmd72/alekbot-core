@@ -663,9 +663,6 @@
         touch-action: manipulation;
         cursor: pointer;
       }
-    </style>
-    <style>
-      /* ── Save result sheet + saving spinner (kept apart from the Show view CSS block above) ── */
       .save-btn.saved {
         color: var(--text-muted);
       }
@@ -687,7 +684,7 @@
       }
       @media (prefers-reduced-motion: reduce) {
         .save-spin {
-          animation-duration: 3s;
+          animation: none;
         }
       }
       /* The result sheet: modal like the Show view (no outside-tap dismissal), a card centred over a dimmed page. */
