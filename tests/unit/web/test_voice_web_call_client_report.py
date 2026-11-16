@@ -108,7 +108,12 @@ def test_the_remote_audio_is_started_explicitly_when_the_track_arrives():
     attach = handler.index("remoteAudio.srcObject = new MediaStream([ev.track]);")
     play = handler.index("remoteAudio.play().catch(")
     assert attach < play
-    assert len(re.findall(_PLAY, HTML)) == 1
+    assert len(re.findall(_PLAY, handler)) == 1
+    # The page's one other play() is the interpreter speaker bridge's own hidden <audio>, on the tap
+    # (lelik_voice_modes.md § "Speaker switch (interpreter)"); remoteAudio is started nowhere else.
+    bridge = re.search(r"async function speakerToLoud\(\) \{.*?\n      }\n", HTML, re.S).group(0)
+    assert re.findall(_PLAY, bridge) == [".play("] and "await speaker.el.play();" in bridge
+    assert len(re.findall(_PLAY, HTML)) == 2
 
 
 def test_the_page_keys_equal_the_server_allowlist():
