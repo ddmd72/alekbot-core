@@ -113,7 +113,7 @@ A job is created with `triggered_by` = `"user"` (manual via Cabinet UI), `"sched
 Chunk size: **150 emails per page** (`run_indexing_job(page_size=150)`; `GMAIL_DEFAULT_QUERY` filters Primary + Updates tabs, excludes spam/trash).
 
 1. **List:** `GmailProviderAdapter.list_emails(query, page_token)` → `[EmailMetadata]`
-1a. **Skip the stored:** `IndexedEmailRepository.get_consolidation_marks(user_id, ids)` is called once for the page, before classification. In `incremental` and `backfill` mode an email already in the index is dropped (never re-classified, re-fetched, re-embedded or re-saved; one INFO line counts them): the incremental run starts from the day of `indexed_through`, so it re-lists that day. The `reindex` mode is refused (email index v2, card slice 1): `run_indexing_job` ends such a job `failed` with the error `reindex_disabled` before any Gmail call, since its whole-document re-save would wipe the v2 card fields. The Cabinet still offers the option (`POST /api/gmail/index` accepts the mode); the job it creates fails at once.
+1a. **Skip the stored:** `IndexedEmailRepository.get_consolidation_marks(user_id, ids)` is called once for the page, before classification. In `incremental` and `backfill` mode an email already in the index is dropped (never re-classified, re-fetched, re-embedded or re-saved; one INFO line counts them): the incremental run starts from the day of `indexed_through`, so it re-lists that day. The `reindex` mode is refused (email index v2, card slice 1): `run_indexing_job` ends such a job `failed` with the error `reindex_disabled` before any Gmail call, since its whole-document re-save would wipe the v2 card fields. The Cabinet does not offer it, and `POST /api/gmail/index` refuses it with 400 `reindex_disabled`; the worker refusal stays for any other caller.
 2. **Exclusion pre-filter:** Skip senders/domains in `email_exclusions` collection.
 3. **Classify:** `classify_batch(emails, user_id, account_id=job.account_id)` on the classifier port → each email gets `category` + `tags` + `should_index` boolean.
    A model-provider outage (`PROVIDER_OUTAGE_TYPES`, incl. both providers down) is not a classification failure: it propagates, the job stays `running`, `/worker` answers 503 and Cloud Tasks retries the page; when the attempts run out the job stays `running` until the watchdog (§4.4) marks it `failed`.
@@ -186,6 +186,13 @@ write is a field update through `FirestoreEmailCardStore.write_card` (one transa
   dollar and reader-page caps, resume). The v2 write never touches `consolidated_at`, so re-carded mail never re-enters
   memory consolidation.
 - Check: `python scripts/email/card_store_status.py [--since YYYY-MM-DD]` prints counts per `card_state` (counts only).
+- **Memory reads the cards** (slice 9): the repository also implements `EmailMemoryBatches` (`memory_batch`), the batch
+  consolidation's Stage 3 reads behind `EMAIL_CARD_MEMORY`: unconsolidated mail whose card is settled (`carded`, `empty`,
+  `abandoned`, `source_gone`) plus any mail indexed more than 6 h ago, oldest first, projected to the v1 fields without
+  vectors plus `card_state`, `card_version`, `template_key`, `card`. Its settled read needs one more composite
+  (`user_id`, `consolidated_at`, `card_state`, `indexed_at`); the stale read uses the v1 consolidation index. Because the
+  card write never touches `consolidated_at`, a mail consolidated once (as a line or as a card) never re-enters. What
+  memory is sent of a card: `docs/05_building_blocks/memory/README.md` Step 8.
 
 ## 5. EmailClassificationAgent
 

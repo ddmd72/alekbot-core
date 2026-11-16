@@ -9,7 +9,7 @@ Collections:
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from google.api_core.exceptions import NotFound
 from google.cloud.firestore import FieldFilter
@@ -18,7 +18,9 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.email import IndexedEmail, IndexingState
+from ..domain.email_memory_mail import MemoryMail
 from ..domain.reconnect_policy import Cleared
+from ..ports.email_memory_batches import EmailMemoryBatches
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
@@ -27,6 +29,9 @@ from ..utils.logger import logger
 _EMAIL_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(10)
 
 _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector", "attachments_vector")
+# What Stage 3 reads of a mail: the v1 record without its vectors, and the card fields `card_from_document` needs.
+_CARD_READ_FIELDS = ("card_state", "card_version", "template_key", "card")
+_MEMORY_READ_FIELDS = tuple(f for f in IndexedEmail.model_fields if f not in _VECTOR_FIELDS) + _CARD_READ_FIELDS
 
 # RRF constant — standard value used throughout the codebase
 _RRF_K = 60
@@ -36,7 +41,7 @@ _RRF_K = 60
 _MAX_COSINE_DISTANCE = 0.4
 
 
-class FirestoreIndexedEmailRepository(IndexedEmailRepository):
+class FirestoreIndexedEmailRepository(IndexedEmailRepository, EmailMemoryBatches):
     """Firestore mechanics (the port states the observable contract):
     - Facts: `EnvironmentConfig.domain_email_facts_collection` (`{prefix}domain_email_facts_v1`), body
       `IndexedEmail.model_dump()` with the vector fields wrapped in `Vector`; cursors:
@@ -52,6 +57,10 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
       vector indexes (state, user_id[, email_date], <field>).
     - `get_unconsolidated_batch` needs the composite index (user_id, consolidated_at, indexed_at); a document without a
       `consolidated_at` field never matches `consolidated_at == null`.
+    - `memory_batch` (the `EmailMemoryBatches` port) runs two queries, each ordered by `indexed_at` and limited: the
+      settled one (`card_state in`) needs (user_id, consolidated_at, card_state, indexed_at), the stale one
+      (`indexed_at <`) the v1 index above; merged by document id. Both select the v1 fields without vectors plus the card
+      fields `card_state`, `card_version`, `template_key`, `card`.
     - Datetimes read back are rebuilt as plain naive datetimes (a `DatetimeWithNanoseconds` must not be written back).
     """
 
@@ -357,6 +366,37 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
                     f"💥 [get_unconsolidated_batch] failed to parse {doc.id}: {exc}"
                 )
         return emails
+
+    async def memory_batch(
+        self, user_id: str, limit: int, settled: Sequence[str], stale_before: datetime
+    ) -> List[MemoryMail]:
+        unconsolidated = (
+            self.collection
+            .where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("consolidated_at", "==", None))
+        )
+        queries = [
+            unconsolidated.where(filter=FieldFilter("indexed_at", "<", stale_before)),
+        ]
+        if settled:
+            queries.append(unconsolidated.where(filter=FieldFilter("card_state", "in", list(settled))))
+        results = await asyncio.gather(*[
+            q.order_by("indexed_at").select(list(_MEMORY_READ_FIELDS)).limit(limit).get() for q in queries
+        ])
+        mails: Dict[str, MemoryMail] = {}
+        for docs in results:
+            for doc in docs:
+                if doc.id in mails:
+                    continue
+                data = doc.to_dict() or {}
+                card = {k: data.pop(k) for k in _CARD_READ_FIELDS if k in data}
+                try:
+                    email = self._to_domain(data)
+                except Exception as exc:
+                    logger.error(f"💥 [memory_batch] failed to parse {doc.id}: {exc}")
+                    continue
+                mails[doc.id] = MemoryMail(email, card.get("card_state") or "", card or None)
+        return sorted(mails.values(), key=lambda m: m.email.indexed_at)[:limit]
 
     async def mark_consolidated(
         self, user_id: str, email_ids: List[str], consolidated_at: datetime

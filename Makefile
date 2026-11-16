@@ -114,6 +114,12 @@ _EMAIL_CARD_ONLINE = $(or $(EMAIL_CARD_ONLINE_DEV),1)
 # local EMAIL_SEARCH_V2 (CLAUDE.md, "Deploy-substitution trap").
 _EMAIL_SEARCH_V2 = $(or $(EMAIL_SEARCH_V2_DEV),1)
 
+# The email card memory feed (email index v2, slice 9): Stage 3 of consolidation reads settled cards instead of the
+# one-line candidates. EMAIL_CARD_MEMORY_DEV=0 in .env switches back across deploys (same reason as above). Default 1
+# (on). Upload the CONSOLIDATION_EMAIL_CANDIDATES token, its profile and blueprint BEFORE the deploy. A deploy-only
+# key, never the local EMAIL_CARD_MEMORY (CLAUDE.md, "Deploy-substitution trap").
+_EMAIL_CARD_MEMORY = $(or $(EMAIL_CARD_MEMORY_DEV),1)
+
 # Transcription of audio and video (USER_DRIVE_INDEXING_RFC §27.13). DRIVE_TRANSCRIBE_ENABLED_DEV is REQUIRED in .env and must be exactly on or off
 # (`make deploy` refuses otherwise, T-R34); the switch is on only for `on`; DRIVE_TRANSCRIBE_USD_CAP_DEV (a number, empty = the $20 monthly maximum) can only LOWER the cap. Both ride as
 # substitutions to the indexer (the cap to the main service too: the Cabinet shows it). Deploy-only keys, never the
@@ -378,9 +384,10 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 	@echo "📝 Drive notes switch (both services): _DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED)"
 	@echo "✉️  Email card online step: _EMAIL_CARD_ONLINE=$(_EMAIL_CARD_ONLINE)"
 	@echo "🔎 Email search v2: _EMAIL_SEARCH_V2=$(_EMAIL_SEARCH_V2)"
+	@echo "🧠 Email card memory feed: _EMAIL_CARD_MEMORY=$(_EMAIL_CARD_MEMORY)"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."
 	gcloud builds submit --config=cloudbuild-dev.yaml \
-		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_EMAIL_CARD_ONLINE=$(_EMAIL_CARD_ONLINE),_EMAIL_SEARCH_V2=$(_EMAIL_SEARCH_V2),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
+		--substitutions=_SERVICE_URL=$(SERVICE_URL_DEV),_OAUTH_REDIRECT_URI=$(SERVICE_URL_DEV)/auth/callback,_VOICE_RELAY_URL=$(_VOICE_RELAY_URL),_INDEXER_URL=$(_INDEXER_URL),_DRIVE_UPGRADE_PASS=$(_DRIVE_UPGRADE_PASS),_DRIVE_NOTES_ENABLED=$(_DRIVE_NOTES_ENABLED),_EMAIL_CARD_ONLINE=$(_EMAIL_CARD_ONLINE),_EMAIL_CARD_MEMORY=$(_EMAIL_CARD_MEMORY),_EMAIL_SEARCH_V2=$(_EMAIL_SEARCH_V2),_DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED),_DRIVE_TRANSCRIBE_USD_CAP=$(_DRIVE_TRANSCRIBE_USD_CAP),_SANDBOX_RENDER_URL=$(_SANDBOX_RENDER_URL),_SANDBOX_RENDER_SA=$(_SANDBOX_RENDER_SA),_SANDBOX_RENDER_CALLERS=$(_SANDBOX_RENDER_CALLERS),_SANDBOX_LIGHT_SA=$(_SANDBOX_LIGHT_SA),_SANDBOX_LIGHT_URL=$(_SANDBOX_LIGHT_URL),_SANDBOX_LIGHT_CALLERS_MAIN=$(_SANDBOX_LIGHT_CALLERS_MAIN),_SANDBOX_LIGHT_CALLERS_INDEXER=$(_SANDBOX_LIGHT_CALLERS_INDEXER),_SANDBOX_VPC_NETWORK=$(_SANDBOX_VPC_NETWORK),_SANDBOX_VPC_SUBNET=$(_SANDBOX_VPC_SUBNET) .
 	@echo "✅ Deployment complete!"
 	$(PYTHON) scripts/infrastructure/check_env_drift.py --project=$(PROJECT_ID) --region=$(REGION)
 

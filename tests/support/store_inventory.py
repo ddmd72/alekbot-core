@@ -95,7 +95,8 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter": (
         _A + "test_email_exclusions_store_kit.py",),
     _STORE + "firestore_email_job_repo.FirestoreEmailJobRepository": (_A + "test_email_job_store_kit.py",),
-    _STORE + "firestore_indexed_email_repo.FirestoreIndexedEmailRepository": (_A + "test_indexed_email_store_kit.py",),
+    _STORE + "firestore_indexed_email_repo.FirestoreIndexedEmailRepository": (
+        _A + "test_indexed_email_store_kit.py", _A + "test_email_memory_batches_kit.py"),
     _STORE + "firestore_ephemeral_store.FirestoreEphemeralStore": (_A + "test_ephemeral_store_kit.py",),
     _STORE + "firestore_long_turn_registry.FirestoreLongTurnRegistry": (_A + "test_long_turn_store_kit.py",),
     _STORE + "firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository": (

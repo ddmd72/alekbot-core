@@ -114,6 +114,9 @@ from ..ports.recurrence_port import RecurrencePort
 from ..services.email_search_service import EmailSearchService
 from ..services.task_indexing_service import TaskIndexingService
 from ..ports.indexed_email_repository import IndexedEmailRepository
+from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
+from ..ports.email_memory_batches import EmailMemoryBatches
+from .email_card_setup import email_card_memory_enabled
 from ..ports.agent_factory_port import AgentFactoryPort
 from ..ports.long_turn_registry import LongTurnRegistry
 from ..utils.logger import logger
@@ -193,6 +196,7 @@ class UserAgentFactory(AgentFactoryPort):
         email_search_service: EmailSearchService,
         email_card_search: Optional["EmailCardSearchService"] = None,
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
+        confirmed_people: Optional[ConfirmedPeopleRepository] = None,
         tasks_provider: Optional[TasksProviderPort] = None,
         task_indexing: Optional[TaskIndexingService] = None,
         notes_provider: Optional[AgentNotePort] = None,
@@ -248,6 +252,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.email_search_service = email_search_service
         self.email_card_search = email_card_search
         self.indexed_email_repo = indexed_email_repo
+        self.confirmed_people = confirmed_people
         self.tasks_provider = tasks_provider
         self.task_indexing = task_indexing
         self.notes_provider = notes_provider
@@ -624,6 +629,12 @@ class UserAgentFactory(AgentFactoryPort):
             facts_limit=facts_limit,
             principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,
+            # Stage 3 reads email cards behind EMAIL_CARD_MEMORY (os.getenv, default off in code; the deploy sets it on)
+            email_memory_batches=(
+                self.indexed_email_repo
+                if email_card_memory_enabled() and isinstance(self.indexed_email_repo, EmailMemoryBatches) else None
+            ),
+            confirmed_people=self.confirmed_people,
             alert_sink=self.alert_sink,
             lifecycle_counters=self.lifecycle_counters,
             # TEMPORARY knob (Sonnet 5.5 stall monitoring, 2026-10-20): optional, so os.getenv,

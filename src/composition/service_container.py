@@ -535,6 +535,7 @@ class ServiceContainer:
             "email_search_service": self.email_search_service,
             "email_card_search": self.email_card_search,
             "indexed_email_repo": self.indexed_email_repo,
+            "confirmed_people": self.confirmed_people,
             "tasks_provider": self.ms_todo_adapter,
             "task_indexing": self.task_indexing,
             "notes_provider": self.notes_adapter,
