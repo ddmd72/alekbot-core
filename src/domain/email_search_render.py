@@ -11,8 +11,8 @@ only the mail text (formatter rule P14); joined by new lines the sections are th
 lines, groups 1-3 together up to eight; `scope=all` raises groups 0-3 to fifty together), the meaning-only section
 (up to five lines) under its own head, each request word no card holds, one line counting the cards that match the
 rest, the exact-footer when an exact hit stands first, how many matches are not shown, and the recard line. **List**
-result (a request that names only a period): the count line, then every card of the period, newest first, folded, at
-most LIST_LINES_MAX lines. **Nothing**: the final answer, the absent words, the recard line.
+result (a request that names only a period): the count line, the card caveat (what a card line can be trusted for, as
+the ranked head says it), then every card of the period, newest first, folded, at most LIST_LINES_MAX lines. **Nothing**: the final answer, the absent words, the recard line.
 
 This module holds the result value and its two renderers: one shape, one waiver (as `drive_search`).
 
@@ -35,7 +35,7 @@ from .email_search_fold import FoldedLine
 from .email_search_merge import GROUP_ABOUT, GROUP_MEANING, RankedResult
 from .email_search_params import LIST_LINES_MAX, SCOPE_ALL_LINES, SHOWN_FIRST, SHOWN_MEANING, SHOWN_REST
 from .email_search_texts import (
-    ABSENT_LINE, FOLD_LINE, FOOTER_EXACT, HEAD_MEANING, HEAD_RANKED, LIST_ALL_LINE, LIST_ALL_LINE_SINGULAR,
+    ABSENT_LINE, CARD_CAVEAT, FOLD_LINE, FOOTER_EXACT, HEAD_MEANING, HEAD_RANKED, LIST_ALL_LINE, LIST_ALL_LINE_SINGULAR,
     LIST_FIRST_LINE, LIST_NONE_LINE, NOTHING_LINE, RECARD_LINE, RECARD_LINE_SINGULAR, SHOWING_LINE, WITHOUT_MANY,
     WITHOUT_MANY_SINGULAR, WITHOUT_ONE, WITHOUT_ONE_SINGULAR,
 )
@@ -103,7 +103,8 @@ def render_list(window: TimeWindow, lines: Sequence[FoldedLine], *, count: int, 
         head = (LIST_ALL_LINE_SINGULAR if count == 1 else LIST_ALL_LINE).format(count=count, period=window.label)
     else:
         head = LIST_FIRST_LINE.format(count=count, period=window.label, shown=shown_mails)
-    parts = [(SECTION_TOOL, [head]), (SECTION_MAIL, _render_lines(shown)), (SECTION_TOOL, _recard(uncarded))]
+    parts = [(SECTION_TOOL, [head, CARD_CAVEAT]), (SECTION_MAIL, _render_lines(shown)),
+             (SECTION_TOOL, _recard(uncarded))]
     return _result(parts, MODE_LIST, shown, ids, count)
 
 
