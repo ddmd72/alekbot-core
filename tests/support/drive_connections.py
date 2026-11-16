@@ -12,7 +12,7 @@ builds the production service. Its credential port is only read by `flag_reconne
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
@@ -44,6 +44,10 @@ async def seed(repo: FakeDriveConnectionRepository, user_id: str = "usr-1", conn
 
 
 def connection_service(repo: Optional[FakeDriveConnectionRepository] = None,
-                       credentials: Any = None) -> DriveConnectionService:
-    """The production `DriveConnectionService` over `repo` (a new empty one by default)."""
-    return DriveConnectionService(repo if repo is not None else FakeDriveConnectionRepository(), credentials)
+                       credentials: Any = None, *,
+                       clock: Optional[Callable[[], datetime]] = None) -> DriveConnectionService:
+    """The production `DriveConnectionService` over `repo` (a new empty one by default); `clock` is the service's own
+    seam (default: UTC now), passed by a fixture whose dates are fixed so that the hold of a renamed drive's former
+    name is measured at the fixture's now, not the wall clock's."""
+    return DriveConnectionService(repo if repo is not None else FakeDriveConnectionRepository(), credentials,
+                                  clock=clock)
