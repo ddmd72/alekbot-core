@@ -212,6 +212,8 @@ class ConsolidationAgentConfig:
 @dataclass
 class EmailSearchAgentConfig:
     max_tokens: int = 250
+    # the v2 query-slots call (email index v2 slice 8): one JSON object of seven short fields
+    slots_max_tokens: int = 1024
     # 300 s: PDF attachment parsing in the parser child can be slow (confirmed >30 s in production)
     timeout_ms: int = 300_000
 

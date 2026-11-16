@@ -39,6 +39,7 @@ from ..services.caching_llm_proxy import CachingLLMProxy
 from ..services.prompt_cache_strategy import PromptCacheStrategy
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.email_search_service import EmailSearchService
+from .email_search_setup import build_email_card_search
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.email_review_service import EmailReviewService
 from ..services.prompt_builder import PromptBuilder
@@ -392,6 +393,10 @@ class ServiceContainer:
         # The owner-confirmed people list (FACT_PROFILE_RFC §4.5): on the container so every builder of the profile
         # step reads the same list; a step built without it would fingerprint facts without the entries they name.
         self.confirmed_people = FirestoreConfirmedPeopleRepository(db_client, env_config)
+        # Email search v2 (email index v2, slice 8): the email agent searches the cards when EMAIL_SEARCH_V2 is on;
+        # None keeps v1. Built on the container's one embedding adapter and confirmed-people list.
+        self.email_card_search = build_email_card_search(db_client, env_config, self.embedding_service,
+                                                         self.confirmed_people)
         # The owner's answers to profile questions (FACT_PROFILE_RFC §4.7): on the container beside the list, read by the
         # profile step; a step built without it would derive facts as if no point had been answered.
         self.profile_answers = FirestoreProfileAnswerRepository(db_client, env_config)
@@ -528,6 +533,7 @@ class ServiceContainer:
             "fact_write_service": self.fact_write_service,
             "fact_management_adapter_factory": self.create_fact_management_adapter,
             "email_search_service": self.email_search_service,
+            "email_card_search": self.email_card_search,
             "indexed_email_repo": self.indexed_email_repo,
             "tasks_provider": self.ms_todo_adapter,
             "task_indexing": self.task_indexing,

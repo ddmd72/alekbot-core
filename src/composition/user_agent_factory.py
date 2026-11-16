@@ -120,6 +120,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
+    from ..services.email_card_search_service import EmailCardSearchService
     from ..domain.user import UserBotConfig
     from ..services.skill_service import SkillService
     from ..services.memory_fact_service import MemoryFactService
@@ -190,6 +191,7 @@ class UserAgentFactory(AgentFactoryPort):
         fact_write_service: FactWritePort,
         fact_management_adapter_factory: Callable,
         email_search_service: EmailSearchService,
+        email_card_search: Optional["EmailCardSearchService"] = None,
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
         tasks_provider: Optional[TasksProviderPort] = None,
         task_indexing: Optional[TaskIndexingService] = None,
@@ -244,6 +246,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.fact_write_service = fact_write_service
         self.fact_management_adapter_factory = fact_management_adapter_factory
         self.email_search_service = email_search_service
+        self.email_card_search = email_card_search
         self.indexed_email_repo = indexed_email_repo
         self.tasks_provider = tasks_provider
         self.task_indexing = task_indexing
@@ -549,6 +552,7 @@ class UserAgentFactory(AgentFactoryPort):
             user_id=user_id,
             file_conversion=self.file_conversion_service,
             user_timezone=user_profile.config.timezone,
+            card_search=self.email_card_search,
         )
 
         maps_search_context = self.context_builder.build("maps_search", user_profile.config)
