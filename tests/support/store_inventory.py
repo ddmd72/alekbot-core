@@ -135,6 +135,7 @@ KITS: Dict[str, Tuple[str, ...]] = {
     # Email index v2 slice 6: the card fields on the v1 facts document
     _STORE + "firestore_email_card_store.FirestoreEmailCardStore": (
         _A + "test_email_card_store_kit.py", _A + "test_firestore_email_card_store.py"),
+    _STORE + "firestore_email_reader_budget.FirestoreEmailReaderBudget": (_A + "test_email_reader_budget_store_kit.py",),
     # Fact profile RFC §7: the people cards
     _STORE + "firestore_person_card_repo.FirestorePersonCardRepository": (_A + "test_person_card_store_kit.py",),
     # Fact profile RFC §4.5: the owner-confirmed people list
