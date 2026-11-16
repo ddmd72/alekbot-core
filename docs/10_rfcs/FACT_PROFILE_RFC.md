@@ -265,8 +265,12 @@ fact often names a relative by a first name alone or by a relation alone, and a 
 by every relation question; the model cannot know who a first name is, the owner can.
 
 - **Store.** Collection `{prefix}confirmed_people`, one document per account, doc id `{account_id}`:
-  `account_id`, `user {name, forms[]}`, `people [{name, forms[], relation}]` (owner's order kept), `source`
-  (`owner_script`; later `review_answer`), `confirmed_at`. One document: the list is read whole on every profile step
+  `account_id`, `user {name, forms[]}`, `people [{name, forms[], relation, entry_id}]` (owner's order kept),
+  `next_entry_id`, `source` (`owner_script`; later `review_answer`), `confirmed_at`. Each person (never the user) has a
+  stable positive-integer `entry_id`, assigned by the store inside `replace` (one transaction; ids a caller passes are
+  ignored), kept through a reorder, a re-spelling or a rename through a shared form, and never reused: `next_entry_id`
+  is the counter. The id is never rendered, so the people block, the fingerprint and the card `people_digest` keep their
+  bytes. One document: the list is read whole on every profile step
   and replaced whole on every confirmation. Not on the account document (that document is overwritten whole from
   `BillingAccount` by the account repository) and not among the people cards (`replace_cards` deletes every card it did
   not build, and a card is never in a prompt).

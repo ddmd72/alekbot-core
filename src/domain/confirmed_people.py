@@ -6,11 +6,16 @@ written only from the owner's confirmation, sent whole to the profiler before th
 folded into a fact's fingerprint only through the entries the fact names (`people_named_in_texts`), so a list edit
 re-profiles only the facts that mention the edited person by a name form or by their relation word.
 
-`ConfirmedPerson` and `ConfirmedPeople` are one value shape and share this module on purpose.
+Each person (never the user) carries a stable `entry_id` assigned by `assign_entry_ids`, never rendered and never part
+of a fingerprint or digest: it survives a reorder, a re-spelling and a rename through a shared form, and is never reused
+(EMAIL_INDEX_V2 RFC §2.3).
+
+`ConfirmedPerson`, `ConfirmedPeople` and `EntryIdPlan` are one value shape and its id assignment and share this module
+on purpose.
 """
 import re
-from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_enrichment import Grade
 from .drive_grade import TextEvidence
@@ -33,12 +38,14 @@ class ConfirmedPerson:
     forms: Tuple[str, ...]       # other forms, owner's order, deduplicated, never the name itself
     relation: str                # plain lowercase English; "" only for the user entry
     is_user: bool = False
+    entry_id: Optional[int] = field(default=None, compare=False)   # positive; people only; assigned, not typed
 
 
 @dataclass(frozen=True)
 class ConfirmedPeople:
     user: ConfirmedPerson
     people: Tuple[ConfirmedPerson, ...]
+    next_entry_id: Optional[int] = field(default=None, compare=False)   # the counter: above every id ever assigned
 
     def entries(self) -> Tuple[ConfirmedPerson, ...]:
         """The user first, then the people in the owner's order."""
@@ -82,7 +89,15 @@ def _entry(raw: Any, what: str, is_user: bool) -> ConfirmedPerson:
         raise ValueError(f"{what} has no relation")
     if relation != relation.lower() or not _RELATION.fullmatch(relation):
         raise ValueError(f"{what} relation must be lowercase letters and spaces")
-    return ConfirmedPerson(name, forms, relation)
+    return ConfirmedPerson(name, forms, relation, entry_id=_id(raw.get("entry_id"), f"{what} entry_id"))
+
+
+def _id(value: Any, what: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{what} must be a positive integer")
+    return value
 
 
 def parse_confirmed_people(data: Mapping[str, Any]) -> ConfirmedPeople:
@@ -100,15 +115,87 @@ def parse_confirmed_people(data: Mapping[str, Any]) -> ConfirmedPeople:
     names = [entry.name.casefold() for entry in (user, *people)]
     if len(set(names)) != len(names):
         raise ValueError("two entries have the same name")
-    return ConfirmedPeople(user, people)
+    counter = _id(data.get("next_entry_id"), "next_entry_id")
+    ids = [p.entry_id for p in people if p.entry_id is not None]
+    if len(set(ids)) != len(ids):
+        raise ValueError("two people have the same entry_id")
+    if counter is not None and any(i >= counter for i in ids):
+        raise ValueError("an entry_id is not below next_entry_id")
+    return ConfirmedPeople(user, people, counter)
 
 
 def confirmed_people_document(people: ConfirmedPeople) -> Dict[str, Any]:
-    """`{user, people}` in the shape `parse_confirmed_people` reads; the adapter adds account, source and time."""
-    return {
+    """`{user, people}` in the shape `parse_confirmed_people` reads; the adapter adds account, source and time. A
+    person's `entry_id` and the top-level `next_entry_id` are written only when set."""
+    document: Dict[str, Any] = {
         "user": {"name": people.user.name, "forms": list(people.user.forms)},
-        "people": [{"name": p.name, "forms": list(p.forms), "relation": p.relation} for p in people.people],
+        "people": [{"name": p.name, "forms": list(p.forms), "relation": p.relation,
+                    **({"entry_id": p.entry_id} if p.entry_id is not None else {})} for p in people.people],
     }
+    if people.next_entry_id is not None:
+        document["next_entry_id"] = people.next_entry_id
+    return document
+
+
+@dataclass(frozen=True)
+class EntryIdPlan:
+    """What `assign_entry_ids` did: names with their ids, for the owner's dry run."""
+    kept: Tuple[Tuple[str, int], ...]              # (name, id): the same casefolded name
+    renamed: Tuple[Tuple[str, str, int], ...]      # (stored name, new name, id): kept through a shared form
+    new: Tuple[Tuple[str, int], ...]
+    retired: Tuple[Tuple[str, int], ...]           # stored ids no new entry took; never reused
+
+
+def _spellings(person: ConfirmedPerson) -> FrozenSet[str]:
+    return frozenset(s.casefold() for s in (person.name, *person.forms))
+
+
+def assign_entry_ids(new: ConfirmedPeople, stored: Optional[ConfirmedPeople]) -> Tuple[ConfirmedPeople, EntryIdPlan]:
+    """`new` with an `entry_id` on every person (the user never has one) and the advanced counter. Ids on `new` are
+    ignored. A person takes the id of the stored person with the same casefolded name; failing that, of the one stored
+    person that still has an id and shares a form or name with them, provided no other unmatched new person shares one
+    with that stored person (a rename). Anyone else takes the next id from the counter, in the owner's order. The
+    counter only grows: `max(stored counter, highest stored id + 1)`, so a retired id is never reused. Idempotent:
+    `assign_entry_ids(x, x)` keeps every id; a stored list without ids gets 1..n."""
+    old = [p for p in (stored.people if stored else ()) if p.entry_id is not None]
+    by_name = {p.name.casefold(): p for p in old}
+    taken: Dict[int, Tuple[str, int]] = {}      # position in new.people -> (stored name, id)
+    for i, person in enumerate(new.people):
+        match = by_name.get(person.name.casefold())
+        if match is not None:
+            taken[i] = (match.name, match.entry_id or 0)
+    claimed = {entry_id for _, entry_id in taken.values()}
+    free_old = [p for p in old if p.entry_id not in claimed]
+    free_new = [i for i in range(len(new.people)) if i not in taken]
+    renamed: Dict[int, Tuple[str, int]] = {}
+    for i in free_new:
+        mine = _spellings(new.people[i])
+        fits = [p for p in free_old if mine & _spellings(p)]
+        if len(fits) != 1:
+            continue
+        rivals = [j for j in free_new if _spellings(new.people[j]) & _spellings(fits[0])]
+        if rivals == [i]:
+            renamed[i] = (fits[0].name, fits[0].entry_id or 0)
+    counter = max((stored.next_entry_id if stored else None) or 1, max((p.entry_id or 0 for p in old), default=0) + 1)
+    people: List[ConfirmedPerson] = []
+    kept: List[Tuple[str, int]] = []
+    renamed_out: List[Tuple[str, str, int]] = []
+    fresh: List[Tuple[str, int]] = []
+    for i, person in enumerate(new.people):
+        if i in taken:
+            entry_id = taken[i][1]
+            kept.append((person.name, entry_id))
+        elif i in renamed:
+            entry_id = renamed[i][1]
+            renamed_out.append((renamed[i][0], person.name, entry_id))
+        else:
+            entry_id, counter = counter, counter + 1
+            fresh.append((person.name, entry_id))
+        people.append(replace(person, entry_id=entry_id))
+    used = {p.entry_id for p in people}
+    retired = tuple((p.name, p.entry_id or 0) for p in old if p.entry_id not in used)
+    result = ConfirmedPeople(replace(new.user, entry_id=None), tuple(people), counter)
+    return result, EntryIdPlan(tuple(kept), tuple(renamed_out), tuple(fresh), retired)
 
 
 def _words(*spellings: str) -> List[str]:
