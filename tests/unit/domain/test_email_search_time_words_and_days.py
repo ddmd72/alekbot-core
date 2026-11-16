@@ -142,3 +142,29 @@ def test_a_portuguese_relative_period_filters_by_the_slot():
 def test_the_portuguese_mail_words_are_mail_words():
     assert {"mensagem", "mensagens", "fatura", "faturas", "correio"} <= MAIL_GENERIC_WORDS
     assert {"mês", "ano", "semana", "ontem", "hoje", "amanhã", "próximo", "próxima", "passado"} <= TIME_WORDS
+
+
+# -- an open upcoming slot reaches the same month next year: the coming one is meant ---------------------------------
+
+OPEN_UPCOMING = {"intent": "upcoming", "from": "", "to": ""}
+
+
+@pytest.mark.parametrize("text,month", [
+    ("my Clínica Ribeira appointment in November", (date(2026, 11, 1), date(2026, 11, 30))),
+    ("my Clínica Ribeira appointment in October", (date(2027, 10, 1), date(2027, 10, 31))),
+    ("my Clínica Ribeira appointment in December", (date(2026, 12, 1), date(2026, 12, 31))),
+])
+def test_an_open_upcoming_slot_gives_a_month_its_next_occurrence(text, month):
+    window = _window(text, OPEN_UPCOMING)
+    assert (window.start, window.end) == month and window.filters
+
+
+def test_an_open_upcoming_slot_gives_a_past_day_of_this_month_next_year():
+    window = _window("my Clínica Ribeira appointment on 10 November", OPEN_UPCOMING)
+    assert _span(window) == (date(2027, 11, 10), date(2027, 11, 10), True)
+
+
+def test_a_look_back_slot_still_takes_the_latest_year():
+    window = _window("Clínica Ribeira invoices from November",
+                     {"intent": "past", "from": "2024-11-01", "to": "2026-11-16"})
+    assert (window.start, window.end) == (date(2026, 11, 1), date(2026, 11, 30))

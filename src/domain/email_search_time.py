@@ -148,11 +148,14 @@ def _slot_window(concepts: MailConcepts, slots: Optional[MailQuerySlots], today:
     return TimeWindow(slot.intent, start, end, filters, _label(start, end))
 
 
-def _anchored_year(month: int, day: Optional[int], anchor: Optional[TimeWindow]) -> Optional[int]:
-    """The latest year whose month (or day) lies in the anchor's span, or None."""
+def _anchored_year(month: int, day: Optional[int], anchor: Optional[TimeWindow], today: date) -> Optional[int]:
+    """The year whose month (or day) lies in the anchor's span, or None: the latest such year for a look back, the
+    earliest that has not ended by Today for an `upcoming` anchor (its open span reaches the same month next year)."""
     if anchor is None or anchor.start is None or anchor.end is None:
         return None
-    for year in range(anchor.end.year, anchor.start.year - 1, -1):
+    ahead = anchor.intent == INTENT_UPCOMING
+    years = range(anchor.start.year, anchor.end.year + 1) if ahead else range(anchor.end.year, anchor.start.year - 1, -1)
+    for year in years:
         if day is None:
             first, last = _month_span(year, month)
         else:
@@ -160,14 +163,14 @@ def _anchored_year(month: int, day: Optional[int], anchor: Optional[TimeWindow])
                 first = last = date(year, month, day)
             except ValueError:
                 continue
-        if first <= anchor.end and last >= anchor.start:
+        if first <= anchor.end and last >= anchor.start and (not ahead or last >= today):
             return year
     return None
 
 
 def _day_span(named: NamedDay, today: date, anchor: Optional[TimeWindow]) -> Optional[Tuple[date, date]]:
     """A day named without a year: the anchor's year when it touches the day, else the latest such day by Today."""
-    year = _anchored_year(named.month, named.day, anchor)
+    year = _anchored_year(named.month, named.day, anchor, today)
     candidates = [year] if year is not None else list(range(today.year, today.year - 8, -1))
     for y in candidates:
         try:
@@ -204,7 +207,7 @@ def _concept_span(concept: Concept, today: date,
     month = _GRADE_MONTH_OF.get(unicodedata.normalize("NFC", concept.word).casefold())
     if month is None:
         return None
-    anchored = _anchored_year(month, None, anchor)
+    anchored = _anchored_year(month, None, anchor, today)
     if anchored is not None:
         return _month_span(anchored, month)
     return _month_span(today.year if date(today.year, month, 1) <= today else today.year - 1, month)
