@@ -23,6 +23,7 @@ LIST_LINES_MAX = 50               # list mode lines (a folded group is one line)
 LIST_PAGE = 500                   # cards per month-key fetch in list mode
 UPCOMING_DAYS = 365               # an `upcoming` window with no end
 EXACT_KEYS_MAX = 3
+EXACT_KEY_MIN_CHARS = 3           # a shorter key matches too much to be an identifier
 PEOPLE_SLOTS_MAX = 6
 SUBJECT_CHARS = 200
 MONTHS_PER_FETCH = 30             # month keys per `list_in_months` fetch (the port's array-contains-any limit)

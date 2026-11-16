@@ -41,7 +41,7 @@ from .drive_labels import LIFE_DOMAINS
 from .drive_match import Concept, KeyFamily
 from .email_card_labels import CARD_DOC_TYPES
 from .email_card_people import _names_entry, _relation_entries
-from .email_search_params import EXACT_KEYS_MAX, MAIL_GENERIC_WORDS, PEOPLE_SLOTS_MAX, SUBJECT_CHARS
+from .email_search_params import EXACT_KEY_MIN_CHARS, EXACT_KEYS_MAX, MAIL_GENERIC_WORDS, PEOPLE_SLOTS_MAX, SUBJECT_CHARS
 
 TIME_INTENTS = ("period", "past", "upcoming", "latest")
 SCOPES = ("top", "all")
@@ -264,7 +264,10 @@ def _flat(text: str) -> str:
 
 
 def _exact_keys(raw: Any, request_text: str) -> Tuple[str, ...]:
-    """Keys the request text holds (whitespace collapsed, casefolded, both sides), at most EXACT_KEYS_MAX."""
+    """Keys the request text holds (whitespace collapsed, casefolded, both sides) and of at least EXACT_KEY_MIN_CHARS
+    characters, at most EXACT_KEYS_MAX: the length and the text filters come first, so a short or foreign key never
+    takes a slot from a valid one."""
     haystack = _flat(request_text)
-    kept: List[str] = [k for k in _strings(raw, EXACT_KEYS_MAX * 4) if _flat(k) in haystack]
+    every = _strings(raw, len(raw) if isinstance(raw, (list, tuple)) else 0)
+    kept = [k for k in every if len(k) >= EXACT_KEY_MIN_CHARS and _flat(k) in haystack]
     return tuple(kept[:EXACT_KEYS_MAX])

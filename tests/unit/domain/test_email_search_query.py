@@ -158,3 +158,10 @@ def test_exact_keys_are_the_value_keys_of_the_ids_and_amounts():
     keys = exact_query_keys(slots)
     assert "v:fa0137" in keys and all(k.startswith("v:") for k in keys)
     assert exact_query_keys(None) == ()
+
+
+def test_a_key_under_three_characters_never_takes_a_slot_from_a_valid_one():
+    text = "ab FA-0137 HW-55812 clara@example.com 789-012-3456789"
+    raw = ["ab", "FA-0137", "HW-55812", "clara@example.com", "789-012-3456789"]
+    assert parse_query_slots({"exact_keys": raw}, text).exact_keys == ("FA-0137", "HW-55812", "clara@example.com")
+    assert parse_query_slots({"exact_keys": ["ab", "x1", "FA-0137"]}, text).exact_keys == ("FA-0137",)

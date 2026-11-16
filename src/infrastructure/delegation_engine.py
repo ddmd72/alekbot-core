@@ -270,13 +270,10 @@ def _format_email_search_compact(result: Any, nonce: Callable[[], str] = _email_
     hints: List[str] = []
     if ids_printed:
         hints.append("To read email body: delegate get_email_details with context={\"email_id\": \"<id from above>\"}")
-    if index_has_attachments and index is not None:
+    if index_has_attachments:
         hints.append("To read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\"} (an "
                      "index line counts its files and does not name them: with one file it opens, with several the "
                      "answer lists them to choose from)")
-    elif index_has_attachments:
-        hints.append("To read attachment: delegate open_email_attachment with context={\"email_id\": \"<id>\", "
-                     "\"name\": \"<filename>\"}")
     if header_lines_printed:
         hints.append("A header line has no body and no attachment names: read the email with get_email_details "
                      "before relying on it or opening its attachments.")
