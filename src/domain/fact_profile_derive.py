@@ -23,6 +23,7 @@ A directive is decided by the consolidator, not asked of the model: it gets `age
 else (`directive_profile`). An `intimate` answer with no surviving label word is a profiling error that needs a redo:
 the outcome carries `redo_reason` and nothing of it may be stored but the failure.
 """
+import calendar
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -509,6 +510,45 @@ def _source_about(source: str, mention: str) -> bool:
     return a == b or _has_word(a, b) or _has_word(b, a)
 
 
+def _span(point: ProfileTimePoint) -> Optional[Tuple[date, date]]:
+    """The first and last day a point covers, each end widened by the point's precision (`year` Jan 1 … Dec 31, `month`
+    1st … last day, `day` itself); an empty end is the start. None when an end does not read as a date."""
+    def bounds(value: str) -> Optional[Tuple[date, date]]:
+        try:
+            parts = [int(part) for part in value.split("-")]
+            if point.precision == "year" and len(parts) == 1:
+                return date(parts[0], 1, 1), date(parts[0], 12, 31)
+            if point.precision == "month" and len(parts) == 2:
+                return date(parts[0], parts[1], 1), date(parts[0], parts[1], calendar.monthrange(parts[0], parts[1])[1])
+            if point.precision == "day" and len(parts) == 3:
+                return date(*parts), date(*parts)
+        except ValueError:
+            pass
+        return None
+    first = bounds(point.start)
+    last = bounds(point.end) if point.end else first
+    if first is None or last is None:
+        return None
+    return first[0], last[1]
+
+
+def date_candidates(points: Sequence[ProfileTimePoint], mention: str) -> Tuple[ProfileTimePoint, ...]:
+    """The candidate points of a date mention (the rule the question offers and the answer replaces): the points read
+    from those words (`_source_about`), plus every other point whose span intersects the span of one of them (ends
+    inclusive). The profile's order is kept; without a point about the mention there is no candidate."""
+    about = [p for p in points if _source_about(p.source, mention)]
+    spans = [span for span in (_span(p) for p in about) if span is not None]
+    found: List[ProfileTimePoint] = []
+    for point in points:
+        if point in about:
+            found.append(point)
+            continue
+        span = _span(point)
+        if span is not None and any(span[0] <= last and first <= span[1] for first, last in spans):
+            found.append(point)
+    return tuple(found)
+
+
 def _person_matches(person: ProfilePerson, mention: str) -> bool:
     """The person a mention points to: the folded name equals it or holds every word of it; without a name, the folded
     role equals it."""
@@ -544,13 +584,14 @@ def _apply_person(entry: ConfirmedPerson, mention: str, people: List[ProfilePers
 
 def _apply_date(entry: DateAnswer, points: List[ProfileTimePoint],
                 drops: Dict[str, int]) -> Optional[List[ProfileTimePoint]]:
-    """The points after the owner dated the flagged mention: the points read from those words are replaced by the
-    owner's point; None (nothing applied) when the answer does not read or no room is left under TIME_CAP."""
+    """The points after the owner dated the flagged mention: the candidate points (`date_candidates`: those read from
+    those words and those overlapping them) are replaced by the owner's point; None (nothing applied) when the answer does not read or no room is left under TIME_CAP."""
     point = owner_time_point(entry)
     if point is None:
         _bump(drops, "date_answer_unreadable")
         return None
-    kept = [p for p in points if not _source_about(p.source, entry.mention)]
+    candidates = date_candidates(points, entry.mention)
+    kept = [p for p in points if p not in candidates]
     if len(kept) >= TIME_CAP:
         _bump(drops, "date_answer_over_cap")
         return None
@@ -565,7 +606,7 @@ def apply_answers(answers: ProfileAnswers, lineage_id: str, points: Sequence[Pro
     """(points, people, review needed, review items) after the owner's answers this fact names. A `places` item whose
     city an answer placed is dropped; a `people` item with an `entry` or `not_listed` answer for this lineage and
     mention is dropped and the entry applied (an entry no longer on the list keeps the item); a `time_points` item with
-    a `date` answer for this lineage and mention is dropped and its points replaced. Every dropped item counts
+    a `date` answer for this lineage and mention is dropped and its candidate points replaced. Every dropped item counts
     `review_item_answered`; the flag clears when an item was answered and none is left. `unknown` changes nothing."""
     out_points, out_people = list(points), list(people)
     kept: List[ProfileReviewItem] = []

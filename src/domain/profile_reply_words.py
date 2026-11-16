@@ -10,9 +10,9 @@ the owner is told the form.
   country); several rows is not read. Without a comma: a country that names exactly one of the shown options picks that
   row; else a city the atlas places in one row (inside the question's country when it has one) is that row.
 - *Person* — a name, or a form of a name, of exactly one shown entry.
-- *Date* — a year, a year and month, or a full date as ISO values, or a range of two of them (`-`, `–`, `—` or `to`
-  between); both ends of a range have one precision. Read with the derivation's own date reader
-  (`fact_profile_derive.owner_time_point`), so the derivation accepts exactly what is recorded.
+- *Date* — a year, a year and month, or a full date as ISO values, or a range of two of them (a hyphen, `–`, `—` or `to`
+  between, spaces optional around a dash); both ends of a range have one precision. Read with the derivation's own
+  date reader (`fact_profile_derive.owner_time_point`), so the derivation accepts exactly what is recorded.
 
 `PlaceReading`, `PersonReading` and the three readers are one small vocabulary, so they share this module on purpose."""
 import re
@@ -27,8 +27,10 @@ from .profile_answers import DateAnswer
 from .profile_open_point import ProfileOpenPoint
 
 MAX_WORDS = 6
-_ISO = re.compile(r"\d{4}(?:-\d{2}){0,2}")
-_RANGE = re.compile(r"\s+(?:-|–|—|to)\s+|\s*[–—]\s*")
+_ISO = r"\d{4}(?:-\d{2}){0,2}"
+# One value, or two joined by a dash (hyphen, en or em dash, spaces optional) or by `to` with spaces. The second value
+# starts with four digits, so a bare hyphen between two values splits unambiguously.
+_DATE_TEXT = re.compile(rf"({_ISO})(?:(?:\s*[-–—]\s*|\s+to\s+)({_ISO}))?")
 _PRECISION = {4: "year", 7: "month", 10: "day"}
 
 
@@ -98,9 +100,10 @@ def read_date_reply(text: str, point: ProfileOpenPoint, question_id: str, at: da
     """The date answer `text` gives, or None when it is no year, month, full date or range of two the derivation reads."""
     if point.field != "time_points" or not _shape_ok(text, False):
         return None
-    parts = [part.strip() for part in _RANGE.split(text.strip())]
-    if len(parts) > 2 or not all(_ISO.fullmatch(part) for part in parts):
+    found = _DATE_TEXT.fullmatch(text.strip())
+    if found is None:
         return None
+    parts = [part for part in found.groups() if part]
     precisions = {_PRECISION.get(len(part)) for part in parts}
     if len(precisions) != 1 or None in precisions:
         return None

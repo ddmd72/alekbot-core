@@ -5,7 +5,7 @@ An open point is something the profile could not decide and the owner is asked: 
 (`time_points`). The record holds what the message needs and what the answer needs, read once when the question is
 built: the key the answer is stored under, the words as the fact prints them, the atlas reason and the candidate options
 shown. The candidates are options only: an answer by code is built from the option the owner picked (`pick1`…), which
-carries the geonameid of a place or the name of a list entry.
+carries the geonameid of a place, the name of a list entry or the ISO text of a date.
 
 `OpenPointOption` and `ProfileOpenPoint` are one stored shape, so they share this module on purpose."""
 from typing import Final, Literal, Self, Tuple
@@ -20,7 +20,7 @@ MAX_PICKS: Final[int] = 3
 
 class OpenPointOption(BaseModel):
     """One candidate the owner may pick: `id` is `pick1`…`pick3` in order, `label` what the owner reads, `value` the geonameid of
-    the atlas row (a place) or the name of the list entry (a person)."""
+    the atlas row (a place), the name of the list entry (a person) or the ISO date or period (a date)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -32,7 +32,8 @@ class OpenPointOption(BaseModel):
 class ProfileOpenPoint(BaseModel):
     """`key` is the answer's key (`place_point_key`, `person_point_key` or `date_point_key`); `printed` the words as the
     fact prints them. A place has its `city` and `country` as the profile names them and the atlas `reason` it is open;
-    a person or a date has the `lineage_id` of the fact and the flagged `mention`. A date has no options."""
+    a person or a date has the `lineage_id` of the fact and the flagged `mention`. A date's options are the candidate
+    dates of the fact, in ISO form."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -53,8 +54,6 @@ class ProfileOpenPoint(BaseModel):
                 raise ValueError("a place point has its city")
         elif not self.lineage_id or not self.mention.strip():
             raise ValueError("a person or date point has its lineage_id and mention")
-        if self.field == "time_points" and self.options:
-            raise ValueError("a date point has no options")
         if len(self.options) > MAX_PICKS:
             raise ValueError(f"at most {MAX_PICKS} candidate options")
         if [option.id for option in self.options] != [f"pick{n}" for n in range(1, len(self.options) + 1)]:
