@@ -3,7 +3,8 @@ languages without UI strings the review tests write sets for. Each test's own 15
 set is exactly `LABEL_KEYS` again (28 keys) and `check_labels` accepts it (the options of each question kind differ).
 
 Fact profile RFC §4.7 (PR 5d) adds 7 keys (35 in all): the profile question lines, their two own options and the two
-not-read notes; `RU_PROFILE_LABELS` and `PT_PROFILE_LABELS` are spread in beside the P2 ones."""
+not-read notes; the date question's own reply hint (§4.7, OD-13 (c) amended) makes 8 (36 in all). `RU_PROFILE_LABELS`
+and `PT_PROFILE_LABELS` are spread in beside the P2 ones."""
 from typing import Dict
 
 from src.domain.ui_messages import UIMessage
@@ -48,6 +49,7 @@ RU_PROFILE_LABELS: Dict[str, str] = {
     UIMessage.MEMORY_OPTION_NOT_LISTED.value: "Нет в моём списке",
     UIMessage.MEMORY_PROFILE_NOT_READ.value: "Не удалось понять ответ. Ответьте цифрой или напишите город и страну либо имя.",
     UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: "Не удалось понять ответ. Ответьте цифрой или напишите год, месяц или полную дату.",
+    UIMessage.MEMORY_PROFILE_DATE_REPLY_HINT.value: "Ответьте цифрой или напишите дату как ГГГГ-ММ-ДД (или ГГГГ-ММ, ГГГГ); период — две даты через тире.",
 }
 
 PT_PROFILE_LABELS: Dict[str, str] = {
@@ -58,4 +60,5 @@ PT_PROFILE_LABELS: Dict[str, str] = {
     UIMessage.MEMORY_OPTION_NOT_LISTED.value: "Não está na lista",
     UIMessage.MEMORY_PROFILE_NOT_READ.value: "Não percebi a resposta. Responda com um algarismo ou escreva a cidade e o país, ou o nome.",
     UIMessage.MEMORY_PROFILE_DATE_NOT_READ.value: "Não percebi a resposta. Responda com um algarismo ou escreva o ano, o mês ou a data completa.",
+    UIMessage.MEMORY_PROFILE_DATE_REPLY_HINT.value: "Responda com um algarismo ou escreva a data como AAAA-MM-DD (ou AAAA-MM, AAAA); um período são duas datas com hífen.",
 }
