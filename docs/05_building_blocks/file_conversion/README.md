@@ -102,9 +102,12 @@ request id, kind and a failure label, never text or a file name (`document_servi
 6. **Reader** (`DriveReaderRunner`, no tools): at most `MODEL_EXTRACT_MAX_PAGES` = 200 pages per file (the same for
    every store; `DocumentService.allowance`), a 60 000-character text budget (`reader_text_budget`, the store's
    presentation cap, so nothing is read past what can be shown), under the open's deadline. When the reader is
-   unavailable for a low-density file the parser's text is returned flagged incomplete. The `index` caller (the email
-   index) never runs the reader, like the connector: what the router would hand it answers `NO_TEXT` with a
-   `READER_SKIPPED` detail.
+   unavailable for a low-density file the parser's text is returned flagged incomplete. The connector never runs the
+   reader: what the router would hand it answers `NO_TEXT` with a `READER_SKIPPED` detail. The `index` caller (the email
+   index) does the same unless the request carries `reader_pages`: then the reader runs when the parser's page count is
+   known and at most `reader_pages` (`reader_admits`, all or nothing), with `max_model_pages = reader_pages`; the
+   request stays plain values, so the email index reads a scan in two passes (the parser-only read, then the second read
+   with `reader_pages`).
 7. **Outcome** (`ReadOutcome`): status, raw text, pages total / read / skipped / `cut_within_pages`, links
    (`parser@N`, `reader@N`), model calls and cost (already billed; reported, not booked again).
 

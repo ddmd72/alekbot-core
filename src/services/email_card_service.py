@@ -37,6 +37,7 @@ from ..domain.oauth_credential import OAuthCredential
 from ..ports.email_card_writer_port import EmailCardWriterPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
+from ..ports.reader_page_budget import ReaderPageBudget
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -87,15 +88,18 @@ class EmailCardService:
 
     async def prepare(self, credentials: OAuthCredential, account_id: str, source: MailSource, *, zone: str,
                       owner_addresses: Sequence[str], deadline_at: float,
-                      cache: MutableMapping[str, EmailAttachment]) -> PreparedMail:
+                      cache: MutableMapping[str, EmailAttachment],
+                      reader_budget: Optional[ReaderPageBudget] = None) -> PreparedMail:
         """The mail's fields, its attachments read and the model input. Raises what the provider and the attachment
         service raise (`EmailMessageGone`, `EmailPartUnavailable`, `AttachmentParserUnavailable`, OAuth errors)."""
         mail = mail_fields_of(source.email_id, source.from_header, source.subject, source.sent_at, zone)
         read: Sequence[EmailAttachment] = ()
         if source.attachment_names:
             parts = await self._provider.list_parts(credentials, source.email_id)
+            extra = {"reader_budget": reader_budget} if reader_budget is not None else {}
             read = await self._attachments.read_attachments(
-                credentials, source.email_id, parts, account_id=account_id, deadline_at=deadline_at, cache=cache)
+                credentials, source.email_id, parts, account_id=account_id, deadline_at=deadline_at, cache=cache,
+                **extra)
         card_attachments, texts = card_attachments_of(read)
         card_input = build_card_input(
             mail, source.body, card_attachments, texts,
@@ -116,12 +120,13 @@ class EmailCardService:
 
     async def card(self, credentials: OAuthCredential, account_id: str, source: MailSource, *, zone: str,
                    owner_addresses: Sequence[str], static_block: str, people: Optional[ConfirmedPeople],
-                   deadline_at: float, cache: MutableMapping[str, EmailAttachment]) -> CardResult:
+                   deadline_at: float, cache: MutableMapping[str, EmailAttachment],
+                   reader_budget: Optional[ReaderPageBudget] = None) -> CardResult:
         """One mail: prepare, write, build, embed (a `carded` card only: an `empty` one is hidden from search)."""
         email_id = source.email_id
         try:
             prepared = await self.prepare(credentials, account_id, source, zone=zone, owner_addresses=owner_addresses,
-                                          deadline_at=deadline_at, cache=cache)
+                                          deadline_at=deadline_at, cache=cache, reader_budget=reader_budget)
         except EmailMessageGone:
             return CardResult(email_id, CardState.SOURCE_GONE, None, None, None, False, "gone")
         except (AttachmentParserUnavailable, EmailPartUnavailable) as exc:

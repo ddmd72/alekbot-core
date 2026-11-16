@@ -657,6 +657,11 @@ service from the substitution `_EMAIL_CARD_ONLINE` (default `1`), fed by the dep
 has no fallback prompt. The v2 Firestore indexes (`make deploy-indexes`) must be
 `READY` before switching it on together with a deploy that queries them (slice 8); the write path needs none.
 
+**Email scan reader.** `EMAIL_READER_PAGES_PER_DAY` (optional; unset = 40, `0` = the online scan reader off, a non-number
+= 40 plus one WARNING) caps the pages per user and UTC day that the email card step may hand to the paid reader for
+scanned PDFs of 10 pages or fewer (email index v2 slice 5). Read with `os.getenv` in `composition/email_card_setup.py`,
+never in `load_settings()`; it needs no deploy key (the code default applies) and no index.
+
 **Email search v2.** `EMAIL_SEARCH_V2` (optional; empty or unset = off, `1` = on) makes the email agent's `search_emails`
 answer from the cards (email index v2 slice 8): one slots call reads the request, then the card search runs; the live
 headers, the per-key Gmail lists, `get_email_details` and `open_email_attachment` are unchanged. Off, the v1 search runs

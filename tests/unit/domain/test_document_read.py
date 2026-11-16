@@ -47,7 +47,8 @@ def test_a_request_is_plain_values_and_frozen():
                           user_id="ann", account_id="ann", deadline_at=1_000.0, request_id="r1")
     assert [f.name for f in dataclasses.fields(ReadRequest)] == [
         "content", "name", "declared_mime", "store", "caller", "native_formats", "user_id", "account_id",
-        "deadline_at", "request_id"]
+        "deadline_at", "request_id", "reader_pages"]
+    assert request.reader_pages == 0            # a caller that does not ask never lets the reader run
     with pytest.raises(dataclasses.FrozenInstanceError):
         request.name = "invoice_painting_es.pdf"  # type: ignore[misc]
 

@@ -19,7 +19,7 @@ from typing import FrozenSet, Optional
 
 class AttachmentRead(str, Enum):
     TEXT = "text"                      # read; text below
-    READ_BY_READER = "read_by_reader"  # reserved for a later slice (scans); never produced yet
+    READ_BY_READER = "read_by_reader"  # a scan read by the paid reader; text below
     SCAN_NOT_READ = "scan_not_read"    # a PDF with no usable text layer (the router would hand it to the reader)
     LOCKED = "locked"                  # ENCRYPTED: password-protected; no retry, no failure count
     SKIPPED = "skipped"                # see `EmailAttachment.reason`
@@ -42,16 +42,18 @@ SKIP_REASONS: FrozenSet[str] = frozenset({
 
 @dataclass(frozen=True)
 class EmailAttachment:
-    """One LISTED file of a mail (noise parts are never listed). `text`, `head`, `tail` live in memory only:
+    """One LISTED file of a mail (noise parts are never listed). `text`, `head`, `tail`, `reader_pages`, `reader_usd` live in memory only:
     bodies and document text are never stored."""
     name: str                    # as the sender wrote it (EmailPart.filename)
     kind: str                    # sniffed from the bytes when downloaded; else the declared kind
     size: int                    # EmailPart.size (bytes)
     read: AttachmentRead
     reason: str = ""             # SKIPPED only, one of SKIP_REASONS; "" otherwise
-    text: Optional[str] = None   # TEXT only: the document service's full raw text = grading evidence
-    head: str = ""               # TEXT only: model input head
-    tail: str = ""               # TEXT only: model input tail ("" when the text fits or for sheets)
+    text: Optional[str] = None   # TEXT or READ_BY_READER: the document service's full raw text = grading evidence
+    head: str = ""               # TEXT or READ_BY_READER: model input head
+    tail: str = ""               # TEXT or READ_BY_READER: model input tail ("" when the text fits or for sheets)
+    reader_pages: int = 0        # in memory only, never stored: pages the paid reader read for this file this run
+    reader_usd: float = 0.0      # in memory only, never stored: what the reader reported (already billed)
 
     def __post_init__(self) -> None:
         if self.read is AttachmentRead.SKIPPED:
@@ -59,8 +61,10 @@ class EmailAttachment:
                 raise ValueError(f"a skipped attachment needs one of {sorted(SKIP_REASONS)}, got {self.reason!r}")
         elif self.reason:
             raise ValueError("reason is only for a skipped attachment")
-        if self.text is not None and self.read is not AttachmentRead.TEXT:
+        if self.text is not None and self.read not in (AttachmentRead.TEXT, AttachmentRead.READ_BY_READER):
             raise ValueError("text is only for a read attachment")
+        if self.reader_pages < 0 or self.reader_usd < 0:
+            raise ValueError("reader_pages and reader_usd cannot be negative")
 
     @property
     def outcome(self) -> str:

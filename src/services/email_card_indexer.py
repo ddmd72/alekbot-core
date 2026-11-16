@@ -2,7 +2,8 @@
 EmailCardIndexer — one page of freshly indexed mail to stored v2 cards (email index v2 §6.5; slice 6).
 
 Public interface:
-    EmailCardIndexer(cards, store, people, users, quota=None, source_factory=MailSource, clock=time.time)
+    EmailCardIndexer(cards, store, people, users, quota=None, source_factory=MailSource, reader_budget=None,
+                     clock=time.time)
         async card_page(credentials=, user_id=, account_id=, mails=) -> CardPageReport
 
 `MailForCard` and `CardPageReport` are the domain's (`email_card_page`).
@@ -34,6 +35,7 @@ from ..domain.oauth_credential import OAuthCredential
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.email_card_store import EmailCardStore
 from ..ports.quota_service import QuotaService
+from ..ports.reader_page_budget import ReaderPageBudget
 from ..ports.user_repository import UserRepository
 from ..utils.billed_scope import billed_scope
 from ..utils.logger import logger
@@ -49,7 +51,7 @@ class EmailCardIndexer:
 
     def __init__(self, cards: "EmailCardService", store: EmailCardStore, people: ConfirmedPeopleRepository,
                  users: UserRepository, quota: Optional[QuotaService] = None, *,
-                 source_factory: Callable[..., "MailSource"],
+                 source_factory: Callable[..., "MailSource"], reader_budget: Optional[ReaderPageBudget] = None,
                  clock: Callable[[], float] = time.time) -> None:
         self._cards = cards
         self._store = store
@@ -57,6 +59,7 @@ class EmailCardIndexer:
         self._users = users
         self._quota = quota
         self._source = source_factory   # `MailSource`, injected: services never import each other
+        self._reader_budget = reader_budget   # None: scans stay `scan_not_read`
         self._clock = clock
 
     async def card_page(self, *, credentials: OAuthCredential, user_id: str, account_id: str,
@@ -70,11 +73,12 @@ class EmailCardIndexer:
         logger.info(f"[EmailCard] static block {block_digest(static_block)[:12]}")
         deadline = started + CARD_PAGE_BUDGET_S
         gate = asyncio.Semaphore(CARD_CONCURRENCY)
+        page_cache: Dict[str, Any] = {}   # attachment outcomes by digest: one per page, so a repeated file is read once
 
         async def one(mail: MailForCard) -> Tuple[str, CardWriteResult, str, float]:
             async with gate:
                 fields, vector, state, usd = await self._fields_for(
-                    mail, credentials, account_id, zone, mailbox, static_block, people, deadline)
+                    mail, credentials, account_id, zone, mailbox, static_block, people, deadline, page_cache)
                 email_id = mail.meta.email_id
                 result = await self._store.write_card(user_id, email_id, fields, vector, CardExpect.absent())
                 if result is not CardWriteResult.WRITTEN:
@@ -120,7 +124,7 @@ class EmailCardIndexer:
 
     async def _fields_for(self, mail: MailForCard, credentials: OAuthCredential, account_id: str, zone: str,
                           mailbox: str, static_block: str, people: Optional[ConfirmedPeople],
-                          deadline: float) -> _Stored:
+                          deadline: float, cache: Dict[str, Any]) -> _Stored:
         meta, content = mail.meta, mail.content
         if content is None:
             return pending_fields(reason="source", failures=0, model=""), None, "pending", 0.0
@@ -132,7 +136,8 @@ class EmailCardIndexer:
         try:
             result = await self._cards.card(
                 credentials, account_id, source, zone=zone, owner_addresses=(mailbox,), static_block=static_block,
-                people=people, deadline_at=min(self._clock() + CARD_MAIL_BUDGET_S, deadline), cache={})
+                people=people, deadline_at=min(self._clock() + CARD_MAIL_BUDGET_S, deadline), cache=cache,
+                reader_budget=self._reader_budget)
         except OAuthGrantRevokedError:
             raise
         except Exception as exc:
