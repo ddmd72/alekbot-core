@@ -42,6 +42,7 @@ async def _run_with_a_hung_second_turn():
         return _text("Final summary.")
 
     agent._call_llm = fake_call
+    agent._monotonic = lambda: 0.0  # frozen clock: the top-of-loop budget check never trips on a slow worker
     # Tool budget = timeout - 8 s answer reserve = 0.2 s of real time for the hung turn.
     response = await agent.execute(_message(timeout_ms=8200))
     return response, seen
