@@ -832,6 +832,7 @@ class TestFormatEmailSearchCompact:
         import json
         data = json.dumps({"index": index_block("abc")})
         result = _format_email_search_compact(data)
+        assert not result.startswith("{") and "<external_content" in result
         assert "abc" in result
         assert "Example School (school.example)" in result
         # reviewer (email fresh headers): the count line names the index, apart from the live header lists; on v2
@@ -1128,6 +1129,7 @@ class TestDelegateQuickSearchEmails:
         result = await engine.dispatch(
             tc, {"user_id": "u1"}, {}, {}, "test", 0, 0,
         )
+        assert not result.result_str.startswith("{") and "<external_content" in result.result_str
         assert "abc123" in result.result_str
         # reviewer (email fresh headers): the count line names the index, apart from the live header lists; on v2
         # the index head says so (reviewer, slice 10)

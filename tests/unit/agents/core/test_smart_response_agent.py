@@ -644,7 +644,7 @@ class TestDelegateToAgentWithRetry:
 
     async def test_search_emails_uses_compact_formatter(self, engine, ctx):
         import json as _json
-        email_json = _json.dumps({"emails": [{"email_id": "e1", "from": "x@example.net", "date": "2026"}]})
+        email_json = _json.dumps({"index": index_block("e1"), "fresh": None, "by_key": [], "notes": []})
         success_resp = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
         engine._coordinator.handle_delegation = AsyncMock(return_value=success_resp)
         tc = ToolCall(
@@ -652,8 +652,9 @@ class TestDelegateToAgentWithRetry:
             args={"intent": "search_emails", "query": "invoice"},
         )
         result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
+        assert not result.result_str.startswith("{") and "<external_content" in result.result_str
         assert "e1" in result.result_str
-        assert "x@example.net" in result.result_str
+        assert "Example School (school.example)" in result.result_str
 
 
 # =========================================================================
