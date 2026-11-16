@@ -8,16 +8,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.email_classification_agent import EmailClassificationAgent, MAX_TURNS
+from src.agents.email_classification_agent import EmailClassificationAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.email import EmailClassificationResult, EmailFullContent, EmailMetadata
-from src.domain.integration import Integration
-from src.domain.oauth_credential import OAuthCredential
-from src.domain.provider_account import ProviderAccount
+from src.domain.email import EmailClassificationResult, EmailMetadata
 from src.domain.user import PerformanceTier
-from src.ports.email_provider_port import EmailProviderPort
 from src.ports.llm_port import (
-    AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, ProviderCapabilities, ToolCall,
+    AgentExecutionContext, LLMRequest, LLMResponse, LLMPort, ProviderCapabilities,
 )
 from src.ports.prompt_builder_port import PromptBuilderPort
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -228,87 +224,3 @@ class TestEmailClassificationAgent:
         )
         response = await agent.execute(msg)
         assert response.status == AgentStatus.FAILED
-
-    async def test_classify_batch_tool_calling_path(self, mock_llm, mock_prompt_builder):
-        """LLM calls get_email_details → gmail fetched → final classification returned."""
-        gmail_mock = AsyncMock(spec=EmailProviderPort)
-        gmail_mock.batch_get_full_content.return_value = {
-            "id1": EmailFullContent(
-                email_id="id1",
-                body_text="Booking confirmed. Reference: XY123.",
-                body_html=None,
-                attachments=[],
-            )
-        }
-        credentials = OAuthCredential(
-            user_id="user123",
-            account_id="acct-1",
-            kind="gmail",
-            integration=Integration.MAIL,
-            account=ProviderAccount(realm="google", subject="", label="user@example.test"),
-            access_token="tok",
-            refresh_token="ref",
-            token_expiry=datetime(2099, 1, 1),
-            scopes=["gmail.readonly"],
-        )
-        config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
-        agent_with_tools = EmailClassificationAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=mock_prompt_builder,
-            gmail=gmail_mock,
-        )
-
-        mock_llm.generate_content.side_effect = [
-            # Turn 1: LLM requests full content for id1
-            LLMResponse(tool_calls=[ToolCall(name="get_email_details", args={"email_ids": ["id1"]})]),
-            # Turn 2: final classification
-            _llm_response([
-                {"email_id": "id1", "valuable": True, "category": "travel",
-                 "fact": "Booking confirmed ref XY123", "tags": ["booking"]},
-            ]),
-        ]
-
-        results = await agent_with_tools.classify_batch(
-            [_make_meta("id1", subject="Booking confirmed")], "user123", credentials=credentials, account_id="acc-1"
-        )
-
-        assert len(results) == 1
-        assert results[0].valuable is True
-        assert results[0].category == "travel"
-        gmail_mock.batch_get_full_content.assert_awaited_once()
-        assert mock_llm.generate_content.call_count == 2
-
-    async def test_classify_batch_max_turns_reached(self, mock_llm, mock_prompt_builder):
-        """If LLM never produces a final answer — always returns tool_calls — max_turns_reached."""
-        gmail_mock = AsyncMock(spec=EmailProviderPort)
-        gmail_mock.batch_get_full_content.return_value = {}
-        credentials = OAuthCredential(
-            user_id="user123",
-            account_id="acct-1",
-            kind="gmail",
-            integration=Integration.MAIL,
-            account=ProviderAccount(realm="google", subject="", label=""),
-            access_token="tok",
-            refresh_token="ref",
-            token_expiry=datetime(2099, 1, 1),
-            scopes=[],
-        )
-        config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
-        agent_with_tools = EmailClassificationAgent(
-            config=config,
-            execution_context=_make_execution_context(mock_llm),
-            prompt_builder=mock_prompt_builder,
-            gmail=gmail_mock,
-        )
-        mock_llm.generate_content.return_value = LLMResponse(
-            tool_calls=[ToolCall(name="get_email_details", args={"email_ids": ["id1"]})]
-        )
-
-        results = await agent_with_tools.classify_batch(
-            [_make_meta("id1")], "user123", credentials=credentials, account_id="acc-1"
-        )
-
-        assert len(results) == 1
-        assert results[0].valuable is False
-        assert mock_llm.generate_content.call_count == MAX_TURNS

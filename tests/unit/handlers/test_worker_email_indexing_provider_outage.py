@@ -4,7 +4,7 @@ classifies the same page; a content/parse failure of the classifier keeps markin
 
 Same production graph and Gmail fake as `test_worker_redelivery_email_indexing.py`; its helpers are reused.
 """
-from typing import List, Optional
+from typing import List
 
 import pytest
 
@@ -13,7 +13,6 @@ from src.domain.exceptions import (
     PROVIDER_OUTAGE_TYPES, BothProvidersUnavailableError, LLMAccountError, LLMClientError, LLMRateLimitError,
     LLMUnavailableError, TranscriptLockedError,
 )
-from src.domain.oauth_credential import OAuthCredential
 from src.ports.email_classifier_port import EmailClassifierPort
 from tests.support import http_boundary_fake
 from tests.support.prod_graph import USER_ID, prod_graph  # noqa: F401  (fixture)
@@ -32,23 +31,21 @@ class _DownThenUp(EmailClassifierPort):
         self.error = error
         self.calls = 0
 
-    async def classify_batch(self, emails: List[EmailMetadata], user_id: str,
-                             credentials: Optional[OAuthCredential] = None, *,
+    async def classify_batch(self, emails: List[EmailMetadata], user_id: str, *,
                              account_id: str = "") -> List[EmailClassificationResult]:
         self.calls += 1
         if self.calls == 1:
             raise self.error
-        return await ValuableClassifier().classify_batch(emails, user_id, credentials, account_id=account_id)
+        return await ValuableClassifier().classify_batch(emails, user_id, account_id=account_id)
 
 
 class _AllFailed(EmailClassifierPort):
     """The agent's answer to a content/parse error: every email carries a failure."""
 
-    async def classify_batch(self, emails: List[EmailMetadata], user_id: str,
-                             credentials: Optional[OAuthCredential] = None, *,
+    async def classify_batch(self, emails: List[EmailMetadata], user_id: str, *,
                              account_id: str = "") -> List[EmailClassificationResult]:
-        return [EmailClassificationResult(email_id=e.email_id, valuable=False, category="", fact="",
-                                          tags=[], failure="JSONDecodeError") for e in emails]
+        return [EmailClassificationResult(email_id=e.email_id, keep=False,
+                                          failure="JSONDecodeError") for e in emails]
 
 
 OUTAGES = [

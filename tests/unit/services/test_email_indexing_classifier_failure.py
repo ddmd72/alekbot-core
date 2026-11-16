@@ -36,7 +36,7 @@ class FakeAlertSink(AlertSinkPort):
 
 def _result(email_id: str, failure=None) -> EmailClassificationResult:
     return EmailClassificationResult(
-        email_id=email_id, valuable=False, category=None, fact=None, tags=[], failure=failure
+        email_id=email_id, keep=False, failure=failure
     )
 
 

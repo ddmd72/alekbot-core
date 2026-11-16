@@ -192,33 +192,6 @@ async def test_the_default_card_batch_is_fifty(world):
     assert len(numbered(agent.firsts[0])) == 50
 
 
-async def test_without_a_batch_port_the_pass_is_todays_message_byte_for_byte(world):
-    await world.emails.save_batch([email("e1", OLD, attachments=["RM-55120.pdf"]), email("e2", OLD + timedelta(hours=1))])
-    prompts = RecordingPrompts()
-    agent = make_agent(world, batches=False, prompts=prompts)
-
-    await run(agent, number_of_batches=1, batch_size=10)
-
-    def line(i, e, extra):
-        candidate = {"email_id": e, "fact": f"Fact sentence of {e}.", "category": "travel", "tags": ["mail"],
-                     "date": "2025-06-02T10:30:00+01:00", "from": "sender@example.com", "subject": f"Subject {e}",
-                     **extra, "metadata": {"subject": e}}
-        return f"{i}. {json.dumps(candidate, ensure_ascii=False)}"
-
-    expected = (
-        "[system_alert] The system has scanned the user's email inbox on their behalf "
-        "and selected candidates for inclusion in the fact database. "
-        "The selection contains noise. Evaluate the incoming data and process it "
-        "according to your algorithm. Copy the candidate's `date`, as given, into reported_date. "
-        "Information whose date or horizon has already passed is history or noise.\n\n"
-        f"Candidates:\n{line(1, 'e1', {'attachments': ['RM-55120.pdf']})}\n{line(2, 'e2', {})}"
-    )
-    (first,) = agent.firsts
-    assert first.split("\n\nToday: ", 1)[0] == expected
-    assert prompts.built == ["consolidation"]
-    assert all(m is not None for m in await marks(world, "e1", "e2"))
-
-
 async def test_a_prompt_failure_reads_and_marks_nothing(world):
     await seed_card_and_line(world)
     agent = make_agent(world, prompts=RecordingPrompts(fail=True))

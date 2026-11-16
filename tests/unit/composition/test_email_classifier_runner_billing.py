@@ -91,7 +91,7 @@ async def test_a_job_without_an_account_is_classified_and_bills_no_account():
 
     results = await world.runner.classify_batch([_meta("m1")], "usr-1", account_id="")
 
-    assert [(r.email_id, r.valuable, r.failure) for r in results] == [("m1", False, None)]
+    assert [(r.email_id, r.keep, r.failure) for r in results] == [("m1", False, None)]
     assert len(model.requests) == 1
     assert world.usage("acc-1").get("daily_tokens", 0) == 0
     assert world.usage("acc-2").get("daily_tokens", 0) == 0

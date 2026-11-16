@@ -5,10 +5,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.agents.email_classification_agent import MAX_TURNS, EmailClassificationAgent
+from src.agents.email_classification_agent import EmailClassificationAgent
 from src.domain.agent import AgentConfig
-from src.ports.email_provider_port import EmailProviderPort
-from src.ports.llm_port import LLMPort, LLMResponse, ToolCall
+from src.ports.llm_port import LLMPort, LLMResponse
 from src.ports.prompt_builder_port import PromptBuilderPort
 from tests.unit.agents.test_email_classification_agent import (
     _make_execution_context,
@@ -29,7 +28,6 @@ def agent(mock_llm):
         config=AgentConfig(agent_id="t", agent_type="email_classifier"),
         execution_context=_make_execution_context(mock_llm),
         prompt_builder=pb,
-        gmail=AsyncMock(spec=EmailProviderPort),
     )
 
 
@@ -54,18 +52,7 @@ async def test_parse_error_is_marked(agent, mock_llm):
     results = await agent.classify_batch([_make_meta("e1"), _make_meta("e2")], "user123", account_id="acc-1")
 
     assert [r.failure for r in results] == ["parse_error", "parse_error"]
-    assert not any(r.valuable for r in results)
-
-
-async def test_max_turns_is_marked(agent, mock_llm):
-    mock_llm.generate_content.return_value = LLMResponse(
-        tool_calls=[ToolCall(name="unknown_tool", args={})]
-    )
-
-    results = await agent.classify_batch([_make_meta("e1")], "user123", account_id="acc-1")
-
-    assert [r.failure for r in results] == ["max_turns"]
-    assert mock_llm.generate_content.call_count == MAX_TURNS
+    assert not any(r.keep for r in results)
 
 
 async def test_unexpected_exception_is_marked_with_its_class(agent, mock_llm):

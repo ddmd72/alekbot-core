@@ -131,13 +131,10 @@ def _make_meta(email_id: str) -> EmailMetadata:
     )
 
 
-def _make_classification(email_id: str, valuable: bool = True) -> EmailClassificationResult:
+def _make_classification(email_id: str, keep: bool = True) -> EmailClassificationResult:
     return EmailClassificationResult(
         email_id=email_id,
-        valuable=valuable,
-        category="travel" if valuable else None,
-        fact="User booked flight AAA-BBB" if valuable else None,
-        tags=["flight", "airline"] if valuable else [],
+        keep=keep,
     )
 
 
@@ -252,8 +249,8 @@ class TestEmailIndexingServiceRunJob:
             )
         }
         mock_classifier.classify_batch.return_value = [
-            _make_classification("e1", valuable=True),
-            _make_classification("e2", valuable=False),
+            _make_classification("e1", keep=True),
+            _make_classification("e2", keep=False),
         ]
         mock_email_repo.save_batch.return_value = 1
 
@@ -289,7 +286,7 @@ class TestEmailIndexingServiceRunJob:
             (emails, None),
         ]
         mock_classifier.classify_batch.return_value = [
-            _make_classification("e1", valuable=False)
+            _make_classification("e1", keep=False)
         ]
 
         job = _make_job()

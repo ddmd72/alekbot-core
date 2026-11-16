@@ -469,12 +469,6 @@ async def test_an_email_candidates_date_is_the_owners_moment_and_copying_it_date
     assert as_utc(by_text(store, "fact from e2")["reported_date"]) == utc(22, 23, 30)    # the exact moment, not midnight clamped
 
 
-def test_the_candidate_date_is_utc_without_an_owner_zone_and_a_naive_date_is_utc():
-    emails = [email("e1", datetime(2026, 10, 22, 23, 30))]
-    (line,) = ConsolidationAgent._format_email_candidates(emails, "UTC").splitlines()
-    assert json.loads(line.split(". ", 1)[1])["date"] == "2026-10-22T23:30:00+00:00"
-
-
 STAMP = "2026-10-20 Tue 12:00 WEST"                     # 11:00 UTC
 STAGE1_BATCH = [{"role": "user", "text": "x", "created_at": utc(20, 8).timestamp()},
                 {"role": "user", "text": "y", "created_at": utc(20, 11, 30).timestamp()}]

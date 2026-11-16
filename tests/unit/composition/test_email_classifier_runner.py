@@ -133,7 +133,7 @@ class World:
         registry.register("gemini", model)
         self.runner = EmailClassifierRunner(
             context_builder=AgentContextBuilder(registry, resilience_port=InMemoryProviderResilience()),
-            user_repo=_Users(*profiles), prompt_builder=_Prompts(), gmail=None,
+            user_repo=_Users(*profiles), prompt_builder=_Prompts(),
             quota_service=FirestoreQuotaService(self.accounts), prompt_content_store=self.store,
         )
 
