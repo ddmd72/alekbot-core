@@ -1,8 +1,8 @@
 """How the email agent is told to open an attachment (G3 review, slice 8): a v2 index line counts its files and names
-none, so the formatter's attachment hint asks for the email id alone and says what happens with one file or several;
-the v1 hint is unchanged; the manifest no longer says search results name attachments and lets open_email_attachment
-take an email id alone, which the document service answers by opening the only attachment or listing several (checked
-here on `_match_email_part`). Invented cast only."""
+none, so the formatter's attachment hint asks for the email id alone and says what happens with one file or several,
+never the v1 hint that asked for a name (the v1 result is gone, slice 10); the manifest no longer says search results
+name attachments and lets open_email_attachment take an email id alone, which the document service answers by opening
+the only attachment or listing several (checked here on `_match_email_part`). Invented cast only."""
 import json
 import re
 
@@ -35,14 +35,6 @@ def test_a_v2_index_with_files_asks_for_the_email_id_alone():
 def test_a_v2_index_without_files_has_no_attachment_hint():
     out = _fmt({"index": _index(False), "fresh": None, "by_key": [], "notes": []})
     assert "To read attachment" not in out
-
-
-def test_the_v1_hint_is_unchanged():
-    v1 = {"count": 1, "emails": [{"email_id": "e1", "from": "info@albergo.example", "date": "2025-06-02",
-                                  "text": "Booking RM-55120", "attachments": ["booking.pdf"]}],
-          "fresh": None, "by_key": [], "notes": []}
-    out = _fmt(v1)
-    assert V1_HINT in out and "does not name them" not in out
 
 
 def test_the_search_capability_no_longer_says_results_name_attachments():

@@ -1,4 +1,4 @@
-"""EmailSearchAgent / result formatter paths: a failing watermark read, header lines without text."""
+"""EmailSearchAgent / result formatter paths: a failing watermark read, a header line without text."""
 import json
 
 
@@ -34,12 +34,6 @@ def test_a_header_without_a_snippet_prints_no_arrow_line():
          "snippet": ""}]}])
     assert "• [m1] shop@example.com | 2026-03-04 09:00 | Invoice FA-0137" in out
     assert "→" not in out
-
-
-def test_an_index_hit_without_text_prints_no_arrow_line():
-    out = _fmt(count=1, emails=[{"email_id": "e1", "from": "clara@example.com", "date": "2026-02-10",
-                                 "text": "", "attachments": []}])
-    assert "• [e1] clara@example.com | 2026-02-10" in out and "→" not in out
 
 
 def test_a_non_string_result_is_stringified():
