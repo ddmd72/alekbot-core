@@ -5,6 +5,7 @@ import pytest
 
 from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.domain.notification_kind import NotificationKind
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.billing_daily_summary_task import BillingDailySummaryTask
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.deep_research_failed_task import DeepResearchFailedTask
@@ -52,7 +53,7 @@ def test_with_a_note_store_the_reminder_runner_holds_exactly_the_given_dependenc
     assert runner._user_repo is deps["user_repo"]
     assert runner._ensure_agents == deps["ensure_agents"]
     assert runner._notification is deps["notification_service"]
-    assert runner._alert_sink is deps["alert_sink"]
+    assert runner._empty_answer_reporter._alert_sink is deps["alert_sink"]
 
 
 async def test_without_a_note_store_the_task_answers_the_refusal_it_gave_inside_the_handler(caplog):
@@ -111,7 +112,7 @@ def test_the_failure_notice_runner_is_always_built_and_shares_its_sender_with_th
     assert type(failed._notice_sender) is DeepResearchNoticeSender
     assert failed._notice_sender is webhook._notice_sender
     assert failed._notice_sender._notification is deps["notification_service"]
-    assert failed._notice_sender._alert_sink is deps["alert_sink"]
+    assert failed._notice_sender._empty_answer_reporter._alert_sink is deps["alert_sink"]
 
 
 def test_with_retrieval_configured_the_webhook_runner_holds_exactly_the_given_dependencies():
@@ -158,8 +159,21 @@ def test_with_the_review_dependencies_the_fan_out_and_the_review_runners_hold_ex
     assert review._ensure_agents == deps["ensure_agents"]
     assert review._notification is deps["notification_service"]
     assert review._gmail_reconnect_flag is deps["gmail_reconnect_flag"]
-    assert review._alert_sink is deps["alert_sink"]
+    assert review._empty_answer_reporter._alert_sink is deps["alert_sink"]
 
+
+
+def test_the_reminder_review_and_notice_runners_share_one_empty_answer_reporter_over_the_given_sink():
+    deps = _deps(object(), deep_research_fetch=object())
+
+    tasks = build_worker_tasks(**deps)
+
+    reporter = tasks["execute_reminder"]._empty_answer_reporter
+    assert type(reporter) is BackgroundEmptyAnswerReporter
+    assert reporter._alert_sink is deps["alert_sink"]
+    assert tasks["daily_email_review"]._empty_answer_reporter is reporter
+    assert tasks["deep_research_failed"]._notice_sender._empty_answer_reporter is reporter
+    assert tasks["deep_research_webhook_event"]._notice_sender._empty_answer_reporter is reporter
 
 async def test_without_the_review_service_both_review_tasks_answer_the_refusals_they_gave_inside_the_handler(caplog):
     tasks = build_worker_tasks(**{**_deps(object()), "email_review": None})
