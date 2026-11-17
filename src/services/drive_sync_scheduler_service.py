@@ -90,7 +90,7 @@ if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
 # The notice Smart (through the notification formatter) turns into a message in the user's own
-# language. Wording follows the Gmail precedent (WorkerHandler._flag_gmail_reconnect); the provider is
+# language. Wording follows the Gmail precedent (GmailReconnectFlag.flag); the provider is
 # never named to the model (Step 1 §4.3).
 RECONNECT_NOTICE = (
     "The connection to the user's drive expired: the drive provider rejected Alek's saved access "
@@ -343,7 +343,7 @@ class DriveSyncSchedulerService:
         # Before the flag: a failed load leaves it down, `fan_out` logs it and the next fan-out retries.
         if self._ensure_agents is not None:
             await self._ensure_agents(user_id)
-        # The flag goes up BEFORE the send (Gmail precedent, WorkerHandler._flag_gmail_reconnect): a request
+        # The flag goes up BEFORE the send (Gmail precedent, GmailReconnectFlag.flag): a request
         # cancelled after the message left (scheduler attempt deadline, deploy SIGTERM) must not repeat it.
         # It comes down again only when nothing can have been sent. CancelledError is not an Exception.
         await self._repo.update_sync_flags(scope, reconnect_notified=True)
