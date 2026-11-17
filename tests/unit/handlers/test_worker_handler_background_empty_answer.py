@@ -8,6 +8,7 @@ import pytest
 
 from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from tests.unit.handlers.test_worker_deep_research_webhook_event import _payload
 from tests.unit.handlers.test_worker_deep_research_webhook_event import _worker as _dr_worker
 from tests.unit.handlers.test_worker_handler import (
@@ -117,7 +118,8 @@ class TestDeepResearchNotice:
     async def _run(self, result):
         worker, _, _ = _dr_worker(notify=result)
         alert_sink = AsyncMock()
-        worker._tasks["deep_research_webhook_event"]._notice_sender._alert_sink = alert_sink
+        worker._tasks["deep_research_webhook_event"]._notice_sender._empty_answer_reporter = (
+            BackgroundEmptyAnswerReporter(alert_sink=alert_sink))
         out = await worker._dispatch(_payload(event_type="response.cancelled"), {})
         return out, alert_sink
 
@@ -137,10 +139,11 @@ class TestDeepResearchNotice:
 class TestNoAlertSinkConfigured:
     async def test_final_path_still_logs_and_returns_200(self, caplog):
         worker, ns = _reminder_worker(EMPTY)
-        ns.execute_reminder._alert_sink = None
+        ns.execute_reminder._empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=None)
         with caplog.at_level(logging.ERROR):
             _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200 and len(_empty_records(caplog)) == 1
+        ns.billing_webhook.post.assert_not_awaited()  # the runner really ran without a sink
 
 
 @pytest.mark.parametrize("delivered,sent,error,expected", [
