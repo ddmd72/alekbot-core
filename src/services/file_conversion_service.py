@@ -25,7 +25,7 @@ Bytes for an action (U4b, §4.2 "Resolver callers"): `resolve_file(ref, user_id,
 bytes, name and mime under `action_cap()`, an `email:` ref through one part listing and one `get_part`. `resolve_bytes`
 keeps refusing `email:` (its callers edit or copy bytes, not save or send). `active_kind_of` is D13's check for an
 email attachment: header bytes compared here, the ZIP macro facts read by the sandbox (`ContainerFactsPort`, owner
-decision O2), attached with the document service; it fails closed.
+decision O2), given at construction with the document service; it fails closed.
 """
 import mimetypes
 import os
@@ -241,6 +241,8 @@ class FileConversionService:
         *,
         access: "UserDriveService",
         email: Optional["EmailSearchService"] = None,
+        documents: Optional["DocumentReadPort"] = None,
+        containers: Optional["ContainerFactsPort"] = None,
     ) -> None:
         self._storage = storage
         # MediaStoragePort serves system-delivered documents (docs/, email_review/,
@@ -262,19 +264,11 @@ class FileConversionService:
         # `email:` refs (EXTERNAL_FILES_RFC §4.7): the user's mailbox, listed and fetched part by part. None → email
         # attachment opening is not configured.
         self._email = email
-        # The document service `open` and `prefetch` read through (EXTERNAL_FILES_RFC §4.4); attached by the graph
-        # right after it is built (`attach_documents`), None until then.
-        self._documents: Optional["DocumentReadPort"] = None
-        # The ZIP macro facts of D13 (`parse.container_facts`), attached with the document service. None → every email
-        # attachment that needs the check reads as unchecked and is not sent (fail closed).
-        self._containers: Optional["ContainerFactsPort"] = None
-
-    def attach_documents(self, documents: "DocumentReadPort", *,
-                         containers: Optional["ContainerFactsPort"] = None) -> None:
-        """Attach the document service (`composition/document_service_setup.py`) and the sandbox's container-facts
-        reader (the same light-service adapter). Built after this service, because it needs the graph's quota service
-        and context builder."""
+        # The document service `open` and `prefetch` read through (EXTERNAL_FILES_RFC §4.4,
+        # `composition/document_service_setup.py`). None → every open is a parser-unavailable note.
         self._documents = documents
+        # The ZIP macro facts of D13 (`parse.container_facts`), read by the sandbox's light service. None → every email
+        # attachment that needs the check reads as unchecked and is not sent (fail closed).
         self._containers = containers
 
     async def open(self, ref: str, user_id: str, account_id: str, *, consumer: Tuple[NativeFormat, ...] = (),

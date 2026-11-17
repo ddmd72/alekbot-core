@@ -3,6 +3,11 @@
 - **A new subsystem gets one `*_setup.py` returning one frozen bundle; a service is built where its bundle is built;
   nothing is attached after construction** (the named exceptions are listed in
   `tests/unit/architecture/late_wiring_calls_allowlist.txt` as `permanent`).
+- **Five helpers stay private in `application_graph.py`** (`_build_coordinator`, `_build_generation_registries`,
+  `_build_slack`, `_build_worker_handler`, `_build_telegram`): tests patch those names there and the allowlists key on the
+  path, so moving one breaks them. `coordinator.set_agent_factory` stays in `build_application_graph` (the one real cycle).
+- **Agents get their runtime through `BaseAgent.bind_runtime(AgentRuntime)`,** never by writing `_quota_service` /
+  `_prompt_content_store` on an instance; the factory takes `AgentServices`, not a dict.
 - **A new `/worker` task is a runner in `services/` (a `WorkerTask`), registered in `build_worker_tasks` (`worker_setup.py`);**
   `DisabledTask` stands in only where an absent feature's honest answer is a refusal.
 

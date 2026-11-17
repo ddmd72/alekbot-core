@@ -33,15 +33,15 @@ src.adapters.firestore_email_card_store.FirestoreEmailCardStore 1  # by-design t
 src.adapters.firestore_email_reader_budget.FirestoreEmailReaderBudget 1  # by-design the one scan-reader page budget, built once by attach_email_card_step and held by the one EmailCardIndexer (email_card_setup.py)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
-src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
+src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (memory_setup.py FactLifecycleSweepService)
 src.adapters.firestore_fact_review_store.FirestoreFactReviewStore 1  # by-design single instance, held by the ServiceContainer as fact_review_store and shared by FactReviewService, FactAnswerService and FactQuestionTexts (Facts S4 T10a)
 src.adapters.firestore_indexed_email_repo.FirestoreIndexedEmailRepository 1  # by-design single instance
 src.adapters.firestore_invite_code_repo.FirestoreInviteCodeRepository 1  # by-design single instance
 src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-design single instance
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
-src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as _memory_write_lease in application_graph.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
+src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as lease in memory_setup.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
-src.adapters.firestore_person_card_repo.FirestorePersonCardRepository 1  # by-design the one people-card store, built once as _person_cards in application_graph.py and held by the one FactProfileService (which rebuilds the cards) the one FactReviewService (which lists them in the weekly digest) and the one FactSearchService (which reads them with each snapshot load for the people score) (application_graph.py:726,729,926,1140, FACT_PROFILE_RFC 5.2, 7)
+src.adapters.firestore_person_card_repo.FirestorePersonCardRepository 1  # by-design the one people-card store, built once as person_cards in memory_search_setup.py and held by the one FactProfileService (which rebuilds the cards) the one FactReviewService (which lists them in the weekly digest) and the one FactSearchService (which reads them with each snapshot load for the people score) (memory_search_setup.py:23,28, memory_setup.py:67,178, FACT_PROFILE_RFC 5.2, 7)
 src.adapters.firestore_profile_answer_repo.FirestoreProfileAnswerRepository 1  # by-design the one profile answers store, built once on the ServiceContainer as profile_answers and held by the one FactProfileService (service_container.py, fact_profile_setup.py, FACT_PROFILE_RFC 4.7)
 src.adapters.firestore_quota_service.FirestoreQuotaService 1  # by-design single instance
 src.adapters.firestore_repo.FirestoreFactRepository 1  # by-design single instance
@@ -51,13 +51,13 @@ src.adapters.firestore_skill_repository.FirestoreSkillRepository 1  # by-design 
 src.adapters.firestore_task_claim_store.FirestoreTaskClaimStore 1  # by-design single instance
 src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  # by-design single instance
 src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
-src.adapters.firestore_transcript_cache.FirestoreTranscriptCache 1  # by-design the document service's one transcript cache on {prefix}audio_transcripts (application_graph.py, EXTERNAL_FILES_RFC P21)
+src.adapters.firestore_transcript_cache.FirestoreTranscriptCache 1  # by-design the document service's one transcript cache on {prefix}audio_transcripts (service_container.py, EXTERNAL_FILES_RFC P21)
 src.adapters.firestore_user_repo.FirestoreUserRepository 1  # by-design the graph's user_repo; the drive search and note services no longer hold one: the drive switches live on the connection, read through DriveConnectionService (MULTI_DRIVE_RFC 3 Removed, 6)
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
 src.adapters.gcp_kms_cipher_adapter.GcpKmsCipherAdapter 1  # by-design single instance
-src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
+src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (operations_setup.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
 src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter 1  # by-design single instance
-src.adapters.gcs_media_adapter.GcsMediaAdapter 2  # by-design graph media_storage (application_graph.py:416, also the Slack RichContentService's storage_port, application_graph.py:899) and the container's (service_container.py:381), stateless clients on one bucket
+src.adapters.gcs_media_adapter.GcsMediaAdapter 2  # by-design graph media_storage (file_delivery_setup.py:31, also the Slack RichContentService's storage_port, notification_setup.py:65) and the container's (service_container.py:437), stateless clients on one bucket
 src.adapters.gcs_workspace_adapter.GcsWorkspaceAdapter 1  # by-design single instance
 src.adapters.gemini_adapter.GeminiAdapter 1  # by-design single instance
 src.adapters.gemini_embedding_adapter.GeminiEmbeddingAdapter 1  # by-design single instance
@@ -77,40 +77,40 @@ src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-des
 src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
 src.adapters.openai_deep_research_adapter.OpenAIDeepResearchAdapter 1  # by-design single instance
 src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
-src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (application_graph.py, Facts S4 T10a)
+src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (memory_setup.py, Facts S4 T10a)
 src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_token_repository.FirestoreTokenRepository 1  # by-design single instance
 src.adapters.sandbox_client.metadata_id_token_provider.MetadataIdTokenProvider 4  # by-design one per signed client: the light service's two, as on the indexer, the parse adapter's (sandbox_parse_setup.py) and the video duration media adapter's (sandbox_media_setup.py, S5b), same audience, each caches its own token (UNTRUSTED_CONTENT_SANDBOX_RFC 4.10); and the render service's two, one each for the DOCX and the PDF runner (sandbox_client_setup.py _sandbox_client_or_none, called once per feature by docx_runner_factory and pdf_runner_factory in UserAgentFactory.__init__; RFC 4.12, O15: one URL, two runners)
-src.adapters.sandbox_client.sandbox_content_extractor.SandboxContentExtractor 1  # by-design the main service's one parse adapter, parser and splitter of the document service (application_graph.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10, O14)
-src.adapters.sandbox_client.sandbox_docx_runner.SandboxDocxRunner 1  # by-design the one DOCX runner, built once by docx_runner_factory and shared by every user (sandbox_client_setup.py, user_agent_factory.py:214; RFC 4.12: DOCX renders only in the sandbox)
+src.adapters.sandbox_client.sandbox_content_extractor.SandboxContentExtractor 1  # by-design the main service's one parse adapter, parser and splitter of the document service (boot_setup.py, UNTRUSTED_CONTENT_SANDBOX_RFC 4.10, O14)
+src.adapters.sandbox_client.sandbox_docx_runner.SandboxDocxRunner 1  # by-design the one DOCX runner, built once by docx_runner_factory and shared by every user (sandbox_client_setup.py, user_agent_factory.py:179; RFC 4.12: DOCX renders only in the sandbox)
 src.adapters.sandbox_client.sandbox_http_client.SandboxHttpClient 3  # by-design one per sandbox feature: the parse adapter's (sandbox_parse_setup.py), the DOCX runner's and the PDF runner's (sandbox_client_setup.py _sandbox_client_or_none, once per feature at UserAgentFactory.__init__; RFC 4.12, O15)
-src.adapters.sandbox_client.sandbox_media_adapter.SandboxMediaAdapter 1  # by-design the main service's one video duration probe, built after the parse adapter (application_graph.py, UNTRUSTED_CONTENT_SANDBOX_RFC S5b)
-src.adapters.sandbox_client.sandbox_puppeteer_runner.SandboxPuppeteerRunner 1  # by-design the one PDF runner, built once by pdf_runner_factory and shared by every user (sandbox_client_setup.py, user_agent_factory.py:215; RFC 4.12: PDF renders only in the sandbox)
+src.adapters.sandbox_client.sandbox_media_adapter.SandboxMediaAdapter 1  # by-design the main service's one video duration probe, built after the parse adapter (boot_setup.py, UNTRUSTED_CONTENT_SANDBOX_RFC S5b)
+src.adapters.sandbox_client.sandbox_puppeteer_runner.SandboxPuppeteerRunner 1  # by-design the one PDF runner, built once by pdf_runner_factory and shared by every user (sandbox_client_setup.py, user_agent_factory.py:180; RFC 4.12: PDF renders only in the sandbox)
 src.adapters.sandbox_client.sandbox_tunnel_client.SandboxTunnelClient 1  # by-design the media adapter's signed tunnel client (sandbox_media_setup.py)
 src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, and one shared by the skill and note services (service_container.py shared_security_port, prompt_assembly_setup.py:29)
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
-src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (application_graph.py, Facts S4 T10a)
+src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (memory_setup.py, Facts S4 T10a)
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
-src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (application_graph.py:895), shared by the Slack RichContentService and the notification service's platform media
+src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (notification_setup.py:61), shared by the Slack RichContentService and the notification service's platform media
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
-src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:970), shared by the Telegram RichContentService and the notification service's platform media
+src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:433), shared by the Telegram RichContentService and the notification service's platform media
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
 src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
-src.composition.deploy_topology.DeployTopology 1  # by-design the graph's one topology, built by build_deploy_topology in build_application_graph (application_graph.py:242) and passed to the ServiceContainer, UserAgentFactory and SlackAdapterFactory
+src.composition.deploy_topology.DeployTopology 1  # by-design the graph's one topology, built by build_deploy_topology in build_boot_checks (boot_setup.py:45) and passed to the ServiceContainer, UserAgentFactory and SlackAdapterFactory
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
-src.composition.email_card_runner.EmailCardRunner 1  # by-design the card step's one writer; it builds its agent once, lazily, on the pinned model (email_card_setup.py:35, email_card_runner.py:51-55)
+src.composition.email_card_runner.EmailCardRunner 1  # by-design the card step's one writer; it builds its agent once, lazily, on the pinned model (email_card_setup.py:35, email_card_runner.py:52-56)
 src.composition.email_classifier_runner.EmailClassifierRunner 1  # by-design the email indexing service's one classifier; it builds the agent per batch for the job's user (service_container.py)
 src.composition.fact_profile_setup.LazyAtlas 1  # by-design the one place atlas, held by the one FactProfileService and loaded on its first run (fact_profile_setup.py:61, FACT_PROFILE_RFC 4.4)
-src.composition.fact_profiler_runner.FactProfilerRunner 1  # by-design the one fact profiler, held by the ServiceContainer as fact_profiler; it builds its internal agent once, lazily, on the pinned model (service_container.py:392, FACT_PROFILE_RFC 4.1)
+src.composition.fact_profiler_runner.FactProfilerRunner 1  # by-design the one fact profiler, held by the ServiceContainer as fact_profiler; it builds its internal agent once, lazily, on the pinned model (service_container.py:393, FACT_PROFILE_RFC 4.1)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -127,7 +127,7 @@ src.services.authentication_service.AuthenticationService 1  # by-design single 
 src.services.background_empty_answer_reporter.BackgroundEmptyAnswerReporter 1  # by-design the one empty-answer reporter, built by build_worker_tasks (worker_setup.py) and shared by the reminder, daily-review and deep-research notice runners
 src.services.billing_daily_summary_task.BillingDailySummaryTask 1  # by-design the one billing_daily_summary runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
-src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
+src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, memory_setup.py)
 src.services.call_text_file_service.CallTextFileService 1  # by-design single instance
 src.services.channel_binding_service.ChannelBindingService 1  # by-design single instance
 src.services.companion_context_assembler_service.CompanionContextAssemblerService 1  # by-design single instance
@@ -135,14 +135,14 @@ src.services.companion_extraction_service.CompanionExtractionService 1  # by-des
 src.services.companion_window_resolver.CompanionWindowResolver 1  # by-design single instance
 src.services.configuration_service.ConfigurationService 1  # by-design single instance
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
-src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
+src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (integrations_setup.py, MULTI_DRIVE_RFC 4.3)
 src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender both deep-research runners share, built by build_worker_tasks (worker_setup.py)
 src.services.deep_research_webhook_event_task.DeepResearchWebhookEventTask 1  # by-design the one deep_research_webhook_event runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
-src.services.document_service.DocumentService 1  # by-design one document service, attached to the file conversion service (application_graph.py, EXTERNAL_FILES_RFC 4.4)
+src.services.document_service.DocumentService 1  # by-design one document service, built by the ServiceContainer and held by the file conversion service (service_container.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
 src.services.drive_disconnect_service.DriveDisconnectService 1  # by-design the Cabinet's one drive disconnect flow (MULTI_DRIVE_RFC 4.3, REQ-ARCH-34)
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
@@ -157,12 +157,12 @@ src.services.email_indexing_service.EmailIndexingService 1  # by-design single i
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
 src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
-src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (application_graph.py, Facts S4 T8e, T10a, T8g)
-src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
-src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as _fact_profile_step in application_graph.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (application_graph.py:724,739,921, FACT_PROFILE_RFC 4.4)
-src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
-src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
-src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service and the one people-card store (application_graph.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); no caller yet
+src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (memory_setup.py, Facts S4 T8e, T10a, T8g)
+src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: memory_setup.py build_memory builds it once and the graph hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
+src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as profile_step in memory_setup.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (memory_setup.py:65,78,177, FACT_PROFILE_RFC 4.4)
+src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (memory_setup.py, Facts S4 T7b, T10a)
+src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (memory_setup.py, Facts S4 T8a, T10a)
+src.services.fact_search_service.FactSearchService 1  # by-design the one fact search with its per-instance account snapshot and vector caches, built once by build_fact_search_service over the container's repository and embedding service and the one people-card store (memory_search_setup.py, fact_search_setup.py, FACT_PROFILE_RFC 5.2); no caller yet
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
@@ -170,19 +170,19 @@ src.services.file_link_service.FileLinkService 1  # by-design single instance
 src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
-src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
+src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (memory_setup.py, Facts S4 T8g)
 src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance
 src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
-src.services.language_resolver.LanguageResolver 1  # by-design the one language read side, shared by the notification service, the agent factory and the writer (application_graph.py, localization_system README §5)
+src.services.language_resolver.LanguageResolver 1  # by-design the one language read side, shared by the notification service, the agent factory and the writer (language_setup.py, localization_system README §5)
 src.services.localization_service.LocalizationService 1  # by-design single instance
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
-src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (application_graph.py, MULTI_DRIVE_RFC 5.2)
+src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (integrations_setup.py, MULTI_DRIVE_RFC 5.2)
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
-src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
-src.services.profile_question_answers.ProfileQuestionAnswers 1  # by-design single instance, built once in application_graph.py and held by the one FactAnswerService (FACT_PROFILE_RFC 4.7, PR 5d)
-src.services.prompt_builder.PromptBuilder 5  # by-design five plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:385), FactProfilerRunner's (service_container.py:394, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (application_graph.py:625), the document service reader's (document_service_setup.py:33) and EmailCardRunner's (email_card_setup.py:37; its invalidate_agent_prompt drops only the card writer's own key, prompt_builder.py:285-292); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
+src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as owner_zones in memory_setup.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
+src.services.profile_question_answers.ProfileQuestionAnswers 1  # by-design single instance, built once in memory_setup.py and held by the one FactAnswerService (FACT_PROFILE_RFC 4.7, PR 5d)
+src.services.prompt_builder.PromptBuilder 5  # by-design five plain repo=None builders over the one assembly service, each held by one runner: EmailClassifierRunner's (service_container.py:377), FactProfilerRunner's (service_container.py:395, FACT_PROFILE_RFC 4.1), CompanionExtractorRunner's (companion_setup.py:63), the document service reader's (document_service_setup.py:62) and EmailCardRunner's (email_card_setup.py:37; its invalidate_agent_prompt drops only the card writer's own key, prompt_builder.py:285-292); with repo=None nothing fills the per-instance _component_cache (only preload_components does), so they carry no state; not the indexer's _DrivePromptBuilder whose invalidation clears the shared assembly cache
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
 src.services.prompt_v3.biographical_formatter.BiographicalFactsFormatter 1  # by-design single instance
@@ -192,7 +192,7 @@ src.services.provider_breaker_alerter.ProviderBreakerAlerter 1  # by-design sing
 src.services.provider_registry.ProviderRegistry 4  # by-design LLM, deep-research jobs, image and video registries
 src.services.reminders_service.RemindersService 1  # by-design single instance
 src.services.rich_content_service.RichContentService 2  # by-design one per platform, Slack and Telegram
-src.services.search_enrichment_service.SearchEnrichmentService 3  # by-design the companion context assembler's, the one inside FactAnswerService's FactManagementAdapter (application_graph.py, Facts S4 T10a) and the per-user one in the agent factory cache (user_agent_factory.py:391)
+src.services.search_enrichment_service.SearchEnrichmentService 3  # by-design the companion context assembler's, the one inside FactAnswerService's FactManagementAdapter (memory_setup.py, Facts S4 T10a) and the per-user one in the agent factory cache (user_agent_factory.py:368)
 src.services.session_service.SessionService 1  # by-design single instance
 src.services.short_link_service.ShortLinkService 1  # by-design single instance
 src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance

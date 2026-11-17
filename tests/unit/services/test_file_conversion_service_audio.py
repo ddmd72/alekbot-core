@@ -69,9 +69,10 @@ def storage():
 
 
 def _service(storage, transcriber: Optional[AudioTranscriptionPort]) -> FileConversionService:
-    service = FileConversionService(storage=storage, access=allow_access())
-    service.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter(),
-                                             transcriber=transcriber, quota=FakeQuota()))
+    service = FileConversionService(storage=storage, access=allow_access(),
+                                    documents=DocumentService(FakeExtractor("parser"), FakeExtractor("reader"),
+                                                              FakeSplitter(), transcriber=transcriber,
+                                                              quota=FakeQuota()))
     return service
 
 

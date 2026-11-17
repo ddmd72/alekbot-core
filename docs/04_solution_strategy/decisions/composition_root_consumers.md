@@ -17,14 +17,25 @@ call failed only at run time.
 1. **Option B: a bundle per subsystem, nothing attached after construction.** A subsystem gets one `*_setup.py` returning
    one frozen bundle, and a service is built where its bundle is built. The exceptions are named in
    `tests/unit/architecture/late_wiring_calls_allowlist.txt` with a `permanent` reason (Registry pattern, the agent-factory
-   cycle, the Telegram binding below). This record's change makes the consumers take their dependencies at
-   construction; splitting `build_application_graph` itself into those bundles, typing the agent services and moving the
-   biographical-cache refresh out of the fact repository are the next step of the same refactor. The bio-cache cycle is
-   untangled: the refresh is `BiographicalContextService.refresh_cache` (port `BiographicalCacheRefresher`), built over
-   the repository and taken at construction by every fact-write path (the consolidation agent through `AgentServices`,
-   the janitor, the owner's answer, the Cabinet, the memory review, the profile step); the repository only saves the
-   cache document and holds no service. To take it without growing, the profile step groups its run settings in
-   `FactProfileRunLimits` and the review the four ports it reaches the owner through in `FactReviewOwnerChannel`.
+   cycle, the Telegram binding below). The consumers take their dependencies at
+   construction, and `build_application_graph` is a sequence of thirteen bundle builds (`boot_setup`, `identity_setup`,
+   `operations_setup`, `session_routing_setup`, `file_delivery_setup`, `language_setup`, `notification_setup`,
+   `companion_setup`, `memory_search_setup`, `agents_setup`, `integrations_setup`, `memory_setup`,
+   `background_jobs_setup`) beside `DocumentBackends`; a bundle a builder takes is a bundle built before it, and each
+   module's docstring states its ordering constraint. Five private helpers stay in `application_graph.py` on purpose
+   (`_build_coordinator`, `_build_generation_registries`, `_build_slack`, `_build_worker_handler`, `_build_telegram`):
+   registry fills and the permanent late bindings are allowlisted by path, and tests patch those names there.
+   `coordinator.set_agent_factory` stays in the top-level builder, the one real cycle. `ServiceContainer` builds the
+   document service from `DocumentBackends` itself.
+   Agent services are typed: `AgentServices` (`composition/agent_services.py`) is a frozen bundle passed to
+   `UserAgentFactory` as `services=`, and `BaseAgent.bind_runtime(AgentRuntime)` binds the coordinator, the prompt-content
+   store and the quota service before registration; nothing in composition writes an agent's privates.
+   The bio-cache cycle is untangled: the refresh is `BiographicalContextService.refresh_cache` (port
+   `BiographicalCacheRefresher`), built over the repository and taken at construction by every fact-write path (the
+   consolidation agent through `AgentServices`, the janitor, the owner's answer, the Cabinet, the memory review, the
+   profile step); the repository only saves the cache document and holds no service. To take it without growing, the
+   profile step groups its run settings in `FactProfileRunLimits` and the review the four ports it reaches the owner
+   through in `FactReviewOwnerChannel`.
 2. **`/worker` is a registry of runners.** `WorkerHandler` dispatches through a task registry (`WorkerTask`, a Protocol in
    `domain/worker_task.py`, so handlers still import no `ports/`). The six logic-heavy tasks are runner services in
    `src/services/*_task.py`, built by `composition/worker_setup.py::build_worker_tasks`, each holding only its own
@@ -80,7 +91,7 @@ deep-research runners, so that code is not copied between runners.
 
 A constructor lists what an object needs and a missing argument fails at import or build, not on a request. A new
 `/worker` task is a runner plus one registry line, with a row in `docs/07_deployment/SCHEDULERS.md`. The cost: more small
-classes and one bundle per subsystem to read; `build_application_graph` keeps its declared size deviation.
+classes and one bundle per subsystem to read; the builder fits the composition function-size ceiling.
 
 ## Triggers to revisit
 

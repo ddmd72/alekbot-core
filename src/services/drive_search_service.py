@@ -20,7 +20,7 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, connections, *, embedding_space, clock, nonce, monotonic,
-                       transcribe_cap_usd, mirror, transcribe_switch_on)
+                       transcribe_cap_usd, mirror, transcribe_switch_on, deleted_sources)
     await search(user_id, request, *, drives="", caps=SearchCaps.DEFAULT) -> DriveSearchResult   # one query per searched drive, merged (2b); canonical paths
     await search_state(user_id) -> SearchLine                  # the specialist's preflight line (§5.3)
     await search_states(user_id) -> Dict[str, SearchLine]      # one per live connection, by connection id
@@ -32,9 +32,7 @@ Public interface:
     await has_mirror_root(user_id) -> bool
     await access_note(connection, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
     await search_deleted(user_id, drive_query) -> DeletedSearchResult   # archived transcripts (§27.9.11) and the sources
-                                                               # added with add_deleted_source (notes); has_passage
-    add_deleted_source(source)                                 # the owner-notes source (notes RFC §6.4)
-    await mount_name_of_tag(user_id, tag) -> Optional[str]     # a ref tag's connection's mount name (any state)
+                                                               # given as deleted_sources (notes); has_passage
     await text_extent(connection, item_id) -> TextExtent      # the open bound (§29.4 L5)
     await transcript_text(connection, item_id, *, path, label) -> Optional[str]
     await archived_text(connection, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
@@ -164,8 +162,8 @@ _PASSAGE_TIERS = frozenset({MatchTier.MENTIONED, MatchTier.TRANSLATED, MatchTier
 _VALIDITY = KeyFamily.VALIDITY_WORD.value
 
 # A source of the deleted-files section (§27.9.11): (user, the query's concepts, the primary connection or None) -> (hits, its own
-# coverage lines, e.g. "3 more archived transcripts matched."). The transcript source is built in; the owner-notes source (notes RFC §6.4) is added with
-# `add_deleted_source`, without touching this one.
+# coverage lines, e.g. "3 more archived transcripts matched."). The transcript source is built in; the owner-notes source (notes RFC §6.4) is passed as
+# `deleted_sources`, without touching this one.
 DeletedSource = Callable[[str, Sequence[Concept], Optional[DriveConnection]], Awaitable[Tuple[List[DeletedHit], List[str]]]]
 _MIRROR_CHAIN_MAX = 12   # ledger parents walked to build a mirror path
 
@@ -438,13 +436,15 @@ class DriveSearchService:
                  clock: Callable[[], datetime] = _utcnow,
                  nonce: Callable[[], str] = _nonce, monotonic: Callable[[], float] = time.monotonic,
                  transcribe_cap_usd: float = TRANSCRIBE_USD_PER_MONTH,
-                 mirror: Optional[DriveMirrorRepository] = None, transcribe_switch_on: bool = False) -> None:
+                 mirror: Optional[DriveMirrorRepository] = None, transcribe_switch_on: bool = False,
+                 deleted_sources: Sequence[DeletedSource] = ()) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE). The
         kNN streams run only while the index's cards are in it (§12.3). `transcribe_cap_usd` is the transcription cap
         the indexer applies (`effective_monthly_cap(DRIVE_TRANSCRIBE_USD_CAP)`, T-R3), shown by the Cabinet. `mirror` is
         the transcript mirror's repository (§27.9): the deleted-files search and the open of an archived transcript
         read it; without it neither has anything to say. `connections` resolves the connection a call reads and every
-        ref it is given (MULTI_DRIVE_RFC §6, §9); the indexing switch is the connection's, read fresh with it."""
+        ref it is given (MULTI_DRIVE_RFC §6, §9); the indexing switch is the connection's, read fresh with it.
+        `deleted_sources` join the deleted-files section after the transcripts, in order (the owner-notes source, §6.4)."""
         self._repo = repo
         self._embeddings = embeddings
         self._connections = connections
@@ -456,7 +456,7 @@ class DriveSearchService:
         self._transcribe_cap = transcribe_cap_usd
         self._mirror = mirror
         self._transcribe_switch_on = transcribe_switch_on   # the indexer's kill switch: with the connection's flag, recordings count (§27.11)
-        self._deleted_sources: List[DeletedSource] = [self._deleted_transcripts]
+        self._deleted_sources: List[DeletedSource] = [self._deleted_transcripts, *deleted_sources]
 
     # ------------------------------------------------------------------------------------------
     # Which connection (MULTI_DRIVE_RFC §6, §9)
@@ -2361,10 +2361,6 @@ class DriveSearchService:
     # The transcript mirror's read side (§27.9.11)
     # ------------------------------------------------------------------------------------------
 
-    def add_deleted_source(self, source: DeletedSource) -> None:
-        """Add a source to the deleted-files section (the owner-notes RFC's, §6.4): one flag, one section."""
-        self._deleted_sources.append(source)
-
     async def search_deleted(self, user_id: str, drive_query: str) -> DeletedSearchResult:
         """The deleted-files search: the heading `Deleted files (N):` and one wrapped entry per hit,
         for the orchestrator, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
@@ -2447,17 +2443,6 @@ class DriveSearchService:
         for mount in table.mounts:
             owners.setdefault(mount.connection.drive_identity, mount.connection)
         return owners
-
-    async def mount_name_of_tag(self, user_id: str, tag: str) -> Optional[str]:
-        """The current mount name of the connection a ref tag names, DISCONNECTED included (its last name); None for a
-        tag the user never had or a failed lookup. For sources that print a path the connection's drive owns (the
-        owner-notes source of the deleted-files search)."""
-        try:
-            conn = await self._connections.connection_of_tag(user_id, tag) if tag else None
-        except Exception as exc:
-            logger.warning(f"[DriveSearch] mount name lookup failed: {exc_brief(exc)}")
-            return None
-        return conn.mount_name if conn is not None else None
 
     async def _archived_candidates(self, user_id: str, concepts: Sequence[Concept]) -> List[MirrorDoc]:
         """Archived transcript files matching every concept (strict AND over `archive_keys` and `name_keys`), newest

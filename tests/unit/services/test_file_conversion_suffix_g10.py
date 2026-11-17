@@ -35,12 +35,12 @@ async def world(tmp_path):
     repo = FakeDriveConnectionRepository()
     w.conn = await seed(repo, connection_id="conn-2", tag="b2", kind="fake_b")
     w.drive = FakeDriveAdapter("fake_b", feed_scope=FeedScope.ACCOUNT)
-    w.service = FileConversionService(
-        storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-        connections=DriveConnectionService(repo, None), access=allow_access())
     w.parser = FakeExtractor("parser", ExtractionOutcome(status=ExtractionStatus.TEXT, text=SHEET_TEXT,
                                                          extracted_by="parser@3"))
-    w.service.attach_documents(DocumentService(w.parser, FakeExtractor("reader"), FakeSplitter()))
+    w.service = FileConversionService(
+        storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
+        connections=DriveConnectionService(repo, None), access=allow_access(),
+        documents=DocumentService(w.parser, FakeExtractor("reader"), FakeSplitter()))
     w.xlsx = make_xlsx(tmp_path / "q3.xlsx", [("Q3", [["Hamburg travel", 2500], ["Acme licences", 1000]])]).read_bytes()
     return w
 

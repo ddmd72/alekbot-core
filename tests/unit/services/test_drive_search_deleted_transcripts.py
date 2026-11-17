@@ -240,7 +240,7 @@ async def test_without_a_mirror_repository_nothing_is_found(drive, index, connec
     assert out.startswith("Deleted files (0):")
 
 
-async def test_another_source_joins_with_its_own_coverage_line(svc, mirror):
+async def test_another_source_joins_with_its_own_coverage_line(mirror, drive, index, connections):
     from src.domain.drive_deleted_search import DeletedHit
     await mirror.save_doc(_doc(1))
 
@@ -248,7 +248,9 @@ async def test_another_source_joins_with_its_own_coverage_line(svc, mirror):
         return [DeletedHit(name="note.txt", path="Docs/note.txt", day="2026-09-01", note_line="noted by the owner: x",
                            nonce="nonce9999", ref="drive_note:n1")], ["2 more notes matched."]
 
-    svc.add_deleted_source(notes)
+    counter = itertools.count(1)
+    svc = DriveSearchService(index, AsyncMock(), drive, connections, embedding_space="s/8",
+                             nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror, deleted_sources=[notes])
     found = await svc.search_deleted("u1", "budget")
     out, items = found.text, found.items
     assert out.startswith("Deleted files (2):") and "note.txt" in out and "call1.m4a" in out

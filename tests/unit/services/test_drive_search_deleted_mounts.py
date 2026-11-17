@@ -40,7 +40,7 @@ def _doc(n: int, drive: str) -> MirrorDoc:
         archive_keys=tuple(sorted(word_keys("budget meeting"))), name_keys=tuple(sorted(word_keys(f"call{n}"))))
 
 
-async def _service(*, with_notes: bool = False):
+async def _service(*, with_notes: bool = False, note_mount_lookup: bool = True):
     mirror = InMemoryDriveMirrorRepository()
     for drive in ("fake:d1", "fake:d2", "fake:d9"):
         await mirror.save_root(MirrorRoot(user_id="u1", drive_identity=drive, root_item_id=f"root-{drive}",
@@ -62,12 +62,14 @@ async def _service(*, with_notes: bool = False):
     index = AsyncMock(spec=DriveIndexRepository)
     index.get_transcript.return_value = None
     counter = itertools.count(1)
-    service = DriveSearchService(index, AsyncMock(), drive, connection_service(repo), embedding_space="s/8",
-                                 nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror)
+    connections = connection_service(repo)
     notes = InMemoryDriveNoteRepository()
+    sources = []
     if with_notes:
-        service.add_deleted_source(DriveNoteDeletedSearch(notes, AsyncMock(), embedding_space="s/8",
-                                                          mount_name_of=service.mount_name_of_tag))
+        lookup = connections.mount_name_of_tag if note_mount_lookup else None
+        sources.append(DriveNoteDeletedSearch(notes, AsyncMock(), embedding_space="s/8", mount_name_of=lookup))
+    service = DriveSearchService(index, AsyncMock(), drive, connections, embedding_space="s/8",
+                                 nonce=lambda: f"nonce{next(counter):04d}", mirror=mirror, deleted_sources=sources)
     return service, mirror, notes
 
 
@@ -122,18 +124,10 @@ async def test_a_note_of_a_tag_the_user_never_had_keeps_its_stored_path():
 
 
 async def test_a_note_source_without_a_mount_lookup_prints_the_stored_path():
-    service, _, notes = await _service()
-    service.add_deleted_source(DriveNoteDeletedSearch(notes, AsyncMock(), embedding_space="s/8"))
+    service, _, notes = await _service(with_notes=True, note_mount_lookup=False)
     binding = NoteBinding(identity="fake:d1:i9", item_id="i9", ref_tag="a1")
     notes.notes[("u1", "n9")] = DriveNote(
         note_id="n9", user_id="u1", account_id="a", state=NoteState.ARCHIVED, current_version=1, text="invoice",
         binding=binding, snapshot=NoteSnapshot(name="scan9.pdf", path="Docs/scan9.pdf"),
         match_keys=[item_binding_key(binding.identity), tagged_ref_key("a1", "i9")], archived_at=T0, updated_at=T0)
     assert "scan9.pdf | Docs/scan9.pdf |" in (await service.search_deleted("u1", "")).text
-
-
-async def test_a_tag_resolves_to_its_mount_name_and_an_unknown_or_empty_tag_to_none():
-    service, _, _ = await _service()
-    assert await service.mount_name_of_tag("u1", "b2") == "Acme"
-    assert await service.mount_name_of_tag("u1", "zz9") is None
-    assert await service.mount_name_of_tag("u1", "") is None

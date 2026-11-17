@@ -97,6 +97,7 @@ async def test_the_graph_wires_one_instance_into_both_services(prod_graph: ProdG
 
 
 def test_the_graph_reads_the_knob_with_os_getenv_at_its_call_site():
-    graph = (Path(__file__).resolve().parents[3] / "src" / "composition" / "application_graph.py").read_text()
+    # The graph's memory bundle builds the profile step (builder split S6).
+    graph = (Path(__file__).resolve().parents[3] / "src" / "composition" / "memory_setup.py").read_text()
     assert 'profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN"))' in graph
     assert "FACT_PROFILER_MAX_PER_RUN" not in (Path(__file__).resolve().parents[3] / "src" / "config" / "settings.py").read_text()

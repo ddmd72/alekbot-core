@@ -10,7 +10,7 @@ overflow-callback's deferred factory reference.
 """
 
 import os
-from typing import Callable, Dict, Optional, Any
+from typing import Any, Callable, Dict, List, Optional
 
 from ..config.environment import EnvironmentConfig
 from . import cipher_setup
@@ -65,7 +65,7 @@ from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
-from ..services.drive_search_service import DriveSearchService
+from ..services.drive_search_service import DeletedSource, DriveSearchService
 from .drive_connection_setup import build_drive_connection_repository
 from .drive_provider_router import DriveProviderRouter
 from ..ports.drive_connection_repository import DriveConnectionRepository
@@ -74,7 +74,7 @@ from .agent_services import AgentServices
 from .deploy_topology import DeployTopology
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
-    DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
+    DRIVE_NOTES_ENABLED_ENV, build_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
     drive_notes_switch_on,
 )
 from ..services.drive_note_service import DriveNoteService
@@ -83,6 +83,7 @@ from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+from ..adapters.firestore_transcript_cache import FirestoreTranscriptCache
 from ..adapters.firestore_skill_repository import FirestoreSkillRepository
 from ..adapters.filesystem_skill_loader import load_system_skill_bundle, SYSTEM_SKILLS_ROOT
 from ..adapters.security.composite_adapter import CompositeAdapter
@@ -96,7 +97,10 @@ from ..adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
 from ..services.skill_file_resolver import SkillFileResolver
+from ..services.document_service import DocumentService
 from ..services.file_conversion_service import FileConversionService
+from .document_service_setup import DocumentBackends, build_document_service
+from .email_card_setup import attach_email_card_step
 from .email_classifier_runner import EmailClassifierRunner
 from .fact_profiler_runner import FactProfilerRunner, profiler_model
 from ..ports.quota_service import QuotaService
@@ -125,6 +129,7 @@ class ServiceContainer:
         cipher: Optional[CipherPort] = None,
         user_repo: Optional[UserRepository] = None,
         quota_service: Optional[QuotaService] = None,
+        document_backends: Optional[DocumentBackends] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -255,6 +260,16 @@ class ServiceContainer:
         # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The indexing switch is
         # the connection's (MULTI_DRIVE_RFC §4.4), read fresh through the connection service on every search.
         self.drive_search_service: Optional[DriveSearchService] = None
+        # Owner notes (DRIVE_FILE_NOTES_RFC §4.4): one store, shared by the note service and the deleted-files source (§6.4)
+        # the search takes at construction; a read, so built whatever DRIVE_NOTES_ENABLED says (§3.6).
+        self.drive_note_repo: Optional[DriveNoteRepository] = None
+        note_deleted_sources: List[DeletedSource] = []
+        if self.user_drive is not None and self.drive_index_repo is not None \
+                and self.drive_connection_service is not None:
+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
+            note_deleted_sources.append(build_drive_note_deleted_source(
+                self.drive_note_repo, self.embedding_service, embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+                connections=self.drive_connection_service))
         # One stateless security port, shared by the note service and the skill service below: built once, injected.
         shared_security_port = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
         # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
@@ -271,30 +286,20 @@ class ServiceContainer:
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
                 transcribe_switch_on=self.drive_transcribe_switch_on,
+                deleted_sources=note_deleted_sources,
             )
 
-        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with the connection service (refs,
-        # and each connection's indexing switch for the receipt's status). Built whatever the kill switch says: off stops
-        # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal). One note
-        # store for the process: the service and the deleted-files source share `drive_note_repo`.
-        self.drive_note_repo: Optional[DriveNoteRepository] = None
+        # The note service: built whatever the kill switch says (off stops writes, reads answer, §3.6); not for memory (§1.4).
         self.drive_note_service: Optional[DriveNoteService] = None
         self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
         if self.user_drive is not None and self.drive_index_repo is not None \
                 and self.drive_connection_service is not None:
-            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
             self.drive_note_service = build_drive_note_service(
                 db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
                 embeddings=self.embedding_service, connections=self.drive_connection_service,
                 security_port=shared_security_port,
                 nudge_queue=self.drive_task_queue, access=self.user_drive_service, quota=quota_service,
             )
-            # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
-            # DRIVE_NOTES_ENABLED says (§3.6). The search service is built under the same condition above.
-            if self.drive_search_service is not None:
-                add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
-                                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
-                                              connections=self.drive_connection_service)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
@@ -354,24 +359,7 @@ class ServiceContainer:
         # ------------------------------------------------------------------
         self.assembly_service, self.profile_repo = self._init_assembly_service(config, db_client, env_config)
 
-        # ------------------------------------------------------------------
-        # LLM prompt/response content store (BigQuery, 30-day TTL).
-        # DEBUG_PROMPTS is the GLOBAL capture switch (write / don't write) — it
-        # gates whether the store is wired at all, so None propagates through the
-        # factory and BaseAgent skips the write. The wired adapter is BigQuery;
-        # the flag decides on/off, not which adapter. BIGQUERY_PROMPT_DATASET is
-        # required config for the adapter (no dataset → nothing to write to).
-        # ------------------------------------------------------------------
-        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
-        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
-        self.prompt_content_store = (
-            BigQueryPromptContentAdapter(
-                dataset=bq_dataset,
-                table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
-                project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
-            )
-            if capture_enabled and bq_dataset else None
-        )
+        self.prompt_content_store = self._init_prompt_content_store(config)
 
         # ------------------------------------------------------------------
         # Email classification + indexing pipeline
@@ -462,6 +450,16 @@ class ServiceContainer:
         skill_file_resolver = SkillFileResolver(
             skill_repository, system_skills, system_skill_contents
         )
+        # The document service (EXTERNAL_FILES_RFC §4.4): the graph's parse adapter and transcriber, the reader over this
+        # context builder and the graph's one quota service. Only with file storage, like the conversion service over it;
+        # the email card step reads attachments through it too.
+        documents: Optional[DocumentService] = (
+            build_document_service(
+                context_builder=self.context_builder, users=user_repo, assembly_service=self.assembly_service,
+                quota=quota_service, transcriber=document_backends.transcriber,
+                transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
+                parser=document_backends.parser)
+            if self.file_storage and document_backends is not None else None)
         self.file_conversion_service = (
             FileConversionService(
                 storage=self.file_storage,
@@ -472,9 +470,14 @@ class ServiceContainer:
                 connections=self.drive_connection_service,
                 access=self.user_drive_service,
                 email=self.email_search_service,
+                documents=documents,
+                # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
+                containers=document_backends.parser if documents is not None else None,
             )
             if self.file_storage else None
         )
+        attach_email_card_step(self.email_indexing_service, self, documents, db_client, env_config, user_repo,
+                               quota_service)
         # The shared stateless port (built with the drive wiring above), not the assembly service's: that one is a
         # local inside build_prompt_assembly_service and _init_assembly_service may return None — widening its
         # return for skills would couple two unrelated features.
@@ -585,6 +588,21 @@ class ServiceContainer:
             logger.error(f"❌ Failed to initialize OpenAI adapter: {e}")
             logger.warning("🤖 Bot will continue without OpenAI support")
             return None
+
+    @staticmethod
+    def _init_prompt_content_store(config: dict) -> Optional[BigQueryPromptContentAdapter]:
+        """The LLM prompt/response content store (BigQuery, 30-day TTL). DEBUG_PROMPTS is the GLOBAL capture switch: it
+        gates whether the store is wired at all, so None propagates through the factory and BaseAgent skips the write.
+        BIGQUERY_PROMPT_DATASET is required for the adapter (no dataset, nothing to write to)."""
+        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
+        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
+        if not (capture_enabled and bq_dataset):
+            return None
+        return BigQueryPromptContentAdapter(
+            dataset=bq_dataset,
+            table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
+            project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
+        )
 
     @staticmethod
     def _init_assembly_service(

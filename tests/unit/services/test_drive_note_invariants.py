@@ -30,7 +30,7 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
-from src.composition.drive_note_setup import add_drive_note_deleted_source
+from src.composition.drive_note_setup import build_drive_note_deleted_source
 from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
@@ -154,10 +154,10 @@ class World:
         self.note_svc = DriveNoteService(
             self.notes, self.drive, self.repo, self.emb, _security(), self.connections, access=AsyncMock(), embedding_space=SPACE,
             nudge_queue=self.queue, erase_requests=MemoryStore(), clock=self.clock, new_code=lambda: next(codes))
+        note_source = build_drive_note_deleted_source(self.notes, self.emb, embedding_space=SPACE,
+                                                      connections=self.connections)
         self.search_svc = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=SPACE,
-                                             clock=self.clock, mirror=mirror)
-        add_drive_note_deleted_source(self.search_svc, self.notes, self.emb, embedding_space=SPACE,
-                                      connections=self.connections)
+                                             clock=self.clock, mirror=mirror, deleted_sources=[note_source])
 
     # -- the connections ---------------------------------------------------------------------------------------
 
