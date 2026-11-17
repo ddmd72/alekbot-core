@@ -410,7 +410,7 @@ async def test_a_second_call_after_an_acceptance_in_the_same_press_is_refused():
     await call.utterance("item-u2")
     await call.end()
 
-    assert call.provider.tool_results() == [("call-1", UK_FR.tool_ok()), ("call-2", PAIR_TOOL_REFUSED)]
+    assert call.provider.tool_results() == [("call-1", UK_FR.tool_ok()), ("call-2", PAIR_TOOL_ALREADY)]
     assert call.provider.instruction_updates() == [f"{BASE}\n\n{UK_FR.block()}"]
     assert call.provider.system_notes()[-1] == UK_FR.note()
     assert call.provider.create_while_active == 0

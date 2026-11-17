@@ -99,7 +99,8 @@ class TestTexts:
 
     def test_refusals_are_tool_errors(self):
         assert PAIR_TOOL_REFUSED.startswith("Tool error: ") and PAIR_TOOL_REFUSED.endswith("Nothing changed.")
-        assert PAIR_TOOL_BAD == "Tool error: unknown language code. Nothing changed."
+        assert PAIR_TOOL_BAD == (
+            "Tool error: the two languages must be two different codes from the list. Nothing changed.")
 
 
 class TestRefusalTexts:
