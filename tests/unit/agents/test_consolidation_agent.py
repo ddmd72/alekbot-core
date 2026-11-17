@@ -234,18 +234,6 @@ class TestExecuteEarlyExits:
         response = await agent.execute(msg)
         assert response.status == AgentStatus.FAILED
 
-    async def test_bio_context_exception_swallowed_continues(self):
-        agent, repo, fact_write, _ = _make_agent()
-        repo.get_biographical_context_cached = AsyncMock(side_effect=Exception("cache error"))
-
-        # No messages or observations — should still reach the "No data" early return
-        msg = _make_message("consolidate", payload_extra={"messages": [], "observations": []})
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result["message"] == "No data"
-
 
 # ==============================================================================
 # TestExecuteDispatch
@@ -315,7 +303,6 @@ class TestHandleConsolidate:
     async def test_v3_path_calls_deliberate_process(self):
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, _, _ = _make_agent(fact_management=fm)
-        agent.prompt_version = "v3"
 
         ops = [{"action": "CREATE", "fact_id": "x"}]
         with patch.object(
@@ -334,7 +321,6 @@ class TestHandleConsolidate:
     async def test_v3_results_triggers_cache_refresh(self):
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, _, pb = _make_agent(fact_management=fm)
-        agent.prompt_version = "v3"
 
         ops = [{"action": "UPDATE", "fact_id": "x"}, {"action": "DISCARD"}]
         with patch.object(
@@ -660,7 +646,6 @@ class TestHandleConsolidateException:
     async def test_runtime_error_returns_failure(self):
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
-        agent.prompt_version = "v3"
 
         agent._execute_deliberate_process_v3 = AsyncMock(
             side_effect=RuntimeError("deliberate process exploded")

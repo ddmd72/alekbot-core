@@ -479,20 +479,14 @@ class TestFactWritePortContract:
         with pytest.raises(TypeError):
             FactWritePort()
 
-
     def test_all_abstract_methods_count(self):
         # Reviewer edit (facts S2 T3): build_facts added (embed and build, store nothing) for the atomic merge.
+        # Reviewer edit (drop v2): add_facts_batch left the port with the v2 consolidation, its last caller.
         abstract_methods = {
             name for name, method in inspect.getmembers(FactWritePort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert abstract_methods == {"add_facts_batch", "build_facts"}, f"Expected 2 abstract methods, got {abstract_methods}"
-
-
-class TestFactWritePortMockImplementation:
-    @pytest.fixture
-    def mock_port(self):
-        return AsyncMock(spec=FactWritePort)
+        assert abstract_methods == {"build_facts"}, f"Expected 1 abstract method, got {abstract_methods}"
 
 
 # =============================================================================
