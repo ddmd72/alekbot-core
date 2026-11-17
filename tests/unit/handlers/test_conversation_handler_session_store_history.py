@@ -52,7 +52,7 @@ def _make_handler(stored_history):
     ))
 
     handler = ConversationHandler(
-        coordinator=coordinator, agent_factory=agent_factory, file_service=MagicMock(),
+        coordinator=coordinator, agent_factory=agent_factory,
         channel_binding_service=channel_binding, channel_history_source=channel_history,
     )
     return handler, coordinator, session_store

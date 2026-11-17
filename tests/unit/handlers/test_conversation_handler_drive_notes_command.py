@@ -86,7 +86,7 @@ class Env:
             erase_requests=self.store, clock=clock, new_code=lambda: next(codes))
         self.coordinator = MagicMock()
         self.handler = ConversationHandler(
-            coordinator=self.coordinator, agent_factory=MagicMock(), file_service=MagicMock(),
+            coordinator=self.coordinator, agent_factory=MagicMock(),
             global_config=ConsolidationSettings(threshold=50, batch_size=30), drive_note_service=self.service)
 
     def put(self, n, user=U, versions=2):
@@ -239,7 +239,7 @@ class TestPartialAndFailures:
         assert await _run(env, "drive-notes erase-all") == [_ui(UIMessage.DRIVE_NOTES_UNAVAILABLE)]
 
     async def test_without_the_service_notes_are_unavailable(self):
-        handler = ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(), file_service=MagicMock(),
+        handler = ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(),
                                       global_config=ConsolidationSettings(threshold=50, batch_size=30))
         ch = _channel()
         await handler.handle_command("drive-notes erase-all", _context("$drive-notes erase-all"), ch)

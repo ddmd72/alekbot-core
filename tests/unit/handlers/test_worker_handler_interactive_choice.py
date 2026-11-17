@@ -36,9 +36,7 @@ def _worker(choices=None) -> WorkerHandler:
         email_indexing_service=MagicMock(),
         notification_service=AsyncMock(),
         consolidation_service=None,
-        coordinator=MagicMock(),
         agent_factory=MagicMock(),
-        indexed_email_repo=None,
         user_repo=MagicMock(),
         interactive_choice=choices,
     )

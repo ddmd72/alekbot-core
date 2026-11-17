@@ -56,13 +56,11 @@ async def test_output_validation_blocks_indirect_injection():
     # Create ConversationHandler with injection-detecting security port
     coordinator = AsyncMock()
     agent_factory = AsyncMock()
-    file_service = AsyncMock()
     security_port = InjectionDetectingSecurityPort()
 
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=file_service,
         security_port=security_port
     )
 
@@ -84,13 +82,11 @@ async def test_output_validation_passes_safe_content():
     """
     coordinator = AsyncMock()
     agent_factory = AsyncMock()
-    file_service = AsyncMock()
     security_port = InjectionDetectingSecurityPort()
 
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=file_service,
         security_port=security_port
     )
 
@@ -111,13 +107,11 @@ async def test_output_validation_optional():
     """
     coordinator = AsyncMock()
     agent_factory = AsyncMock()
-    file_service = AsyncMock()
 
     # ConversationHandler WITHOUT security_port (Phase 4 MVP)
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=file_service,
         security_port=None  # No validation
     )
 

@@ -23,9 +23,7 @@ def _handler(db, holder="proc-1"):
         email_indexing_service=MagicMock(),
         notification_service=AsyncMock(),
         consolidation_service=None,
-        coordinator=MagicMock(),
         agent_factory=AsyncMock(),
-        indexed_email_repo=None,
         user_repo=MagicMock(),
         task_claims=store,
     )

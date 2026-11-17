@@ -92,7 +92,7 @@ def _world(monkeypatch, env: Env):
 
 
 def _handler() -> ConversationHandler:
-    return ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(), file_service=MagicMock(),
+    return ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(),
                                global_config=ConsolidationSettings(threshold=50, batch_size=30),
                                localization=LocalizationService(FileLocalizationAdapter()))
 

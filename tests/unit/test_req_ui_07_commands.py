@@ -14,8 +14,7 @@ async def test_explicit_command_protocol():
     mock_brain_service = AsyncMock()
     handler = ConversationHandler(
         coordinator=AsyncMock(),
-        agent_factory=AsyncMock(),
-        file_service=AsyncMock()
+        agent_factory=AsyncMock()
     )
     mock_response_channel = AsyncMock()
     
@@ -47,8 +46,7 @@ async def test_consolidate_command_trigger():
     mock_brain_service = AsyncMock()
     handler = ConversationHandler(
         coordinator=AsyncMock(),
-        agent_factory=AsyncMock(),
-        file_service=AsyncMock()
+        agent_factory=AsyncMock()
     )
     mock_response_channel = AsyncMock()
     

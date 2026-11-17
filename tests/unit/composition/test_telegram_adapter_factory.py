@@ -30,7 +30,6 @@ def test_factory_forwards_skill_service_to_conversation_handler():
             coordinator=AsyncMock(),
             agent_factory=AsyncMock(),
             iam_service=AsyncMock(),
-            file_service=AsyncMock(),
             skill_service=sentinel_skill_service,
         )
         assert mock_handler.call_args.kwargs["skill_service"] is sentinel_skill_service
@@ -51,6 +50,5 @@ def test_factory_defaults_skill_service_to_none():
             coordinator=AsyncMock(),
             agent_factory=AsyncMock(),
             iam_service=AsyncMock(),
-            file_service=AsyncMock(),
         )
         assert mock_handler.call_args.kwargs["skill_service"] is None

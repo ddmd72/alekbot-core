@@ -92,7 +92,6 @@ def _make_handler(coordinator) -> ConversationHandler:
     return ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
     )
 

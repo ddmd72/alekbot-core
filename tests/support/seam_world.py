@@ -513,7 +513,6 @@ class SeamWorld:
     def chat_handler(self, **kw: Any) -> ConversationHandler:
         """The real `ConversationHandler` on this world (`conversation_handler.py:137-160`)."""
         return ConversationHandler(coordinator=self.coordinator, agent_factory=self.factory,  # type: ignore[arg-type]
-                                   file_service=None,  # type: ignore[arg-type]
                                    notification_service=self.notifier, doc_delivery_service=self.doc_delivery,
                                    global_config=SEAM_CONSOLIDATION, **kw)
 

@@ -115,7 +115,6 @@ def _make_handler(coordinator, rich_content_service=None) -> ConversationHandler
     return ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         rich_content_service=rich_content_service,
     )
 

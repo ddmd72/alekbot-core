@@ -24,8 +24,8 @@ def _worker(delivered=True):
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        coordinator=MagicMock(), agent_factory=AsyncMock(),
-        indexed_email_repo=None, user_repo=MagicMock(),
+        agent_factory=AsyncMock(),
+        user_repo=MagicMock(),
     )
     return worker, notification
 
@@ -170,8 +170,8 @@ class TestDeliveryFailureNotifier:
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
             notification_service=service, consolidation_service=None,
-            coordinator=MagicMock(), agent_factory=AsyncMock(),
-            indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
+            agent_factory=AsyncMock(),
+            user_repo=MagicMock(), task_dispatch=AsyncMock(),
             media_storage=MagicMock(), deep_research_fetch=AsyncMock(return_value={"output_text": "t"}),
         )
         payload = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
@@ -202,8 +202,8 @@ def _ordered_worker(**kw):
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        coordinator=MagicMock(), agent_factory=factory,
-        indexed_email_repo=None, user_repo=MagicMock(), **kw,
+        agent_factory=factory,
+        user_repo=MagicMock(), **kw,
     )
     return worker, log
 
