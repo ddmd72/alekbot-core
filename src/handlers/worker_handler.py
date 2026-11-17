@@ -27,8 +27,6 @@ Supported task_types:
   - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
   - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
   - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
-  - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
-  - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
   - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
                                      has passed, unless the account's breaker is tripped; log-only until
                                      `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
@@ -58,15 +56,10 @@ if TYPE_CHECKING:
     from ..services.email_review_service import EmailReviewService
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
-    from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..ports.dedup_store import DedupStore
     from ..ports.task_claim_store import TaskClaimStore
-    from ..ports.prompt_content_store import PromptContentStore
     from ..ports.oauth_credentials_port import OAuthCredentialsPort
-    from ..ports.video_generation_port import VideoPollResult
-    from ..services.file_link_service import FileLinkService
-    from ..services.short_link_service import ShortLinkService
     from ..services.companion_extraction_service import CompanionExtractionService
     from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
     from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
@@ -76,7 +69,6 @@ if TYPE_CHECKING:
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.connector_spec import ConnectorSpec
-from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
@@ -85,17 +77,13 @@ from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.worker_task import WorkerTask
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
+from ..services.deep_research_delivery import NotificationPort
 from ..services.consolidation_service import ConsolidationService
-from ..services.provider_registry import ProviderRegistry
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.reminders_service import RemindersService
 from ..services.task_dispatch_service import TaskDispatchService
-from ..services.video_generation_delivery import deliver_video
 from ..utils.logger import logger
 
-
-DEFAULT_VIDEO_DURATION_S_FALLBACK = 5  # only used if a poll payload is somehow missing duration_s
 
 # The registry key of the queued Slack event, which carries no task_type; never matched by a sent task_type.
 _QUEUED_SLACK_EVENT = "<queued slack event>"
@@ -133,24 +121,17 @@ class WorkerHandler:
         agent_factory: Any,  # UserAgentFactory
         user_repo: Any,  # UserRepository
         task_dispatch: Optional[TaskDispatchService] = None,
-        video_registry: Optional[ProviderRegistry] = None,
-        quota_service: Optional[object] = None,
-        media_storage: Optional[MediaStoragePort] = None,
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         reminders_service: Optional[RemindersService] = None,
         email_review: "Optional[EmailReviewService]" = None,
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
-        link_service: "Optional[FileLinkService]" = None,
-        short_link_service: "Optional[ShortLinkService]" = None,
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
         task_claims: "Optional[TaskClaimStore]" = None,
         daily_review_marks: "Optional[DedupStore]" = None,
-        deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
-        prompt_content_store: "Optional[PromptContentStore]" = None,
         fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
         fact_review: "Optional[FactReviewService]" = None,
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
@@ -170,8 +151,6 @@ class WorkerHandler:
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
         self._running_claims: set[str] = set()
-        self._deep_research_fetch = deep_research_fetch
-        self._prompt_content_store = prompt_content_store
         self._daily_review_marks = daily_review_marks
         self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
@@ -182,11 +161,6 @@ class WorkerHandler:
         self._agent_factory = agent_factory
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
-        self._video_registry: Optional[ProviderRegistry] = video_registry
-        self._quota_service = quota_service
-        self._media_storage = media_storage
-        self._link_service = link_service
-        self._short_link_service = short_link_service
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
@@ -205,9 +179,6 @@ class WorkerHandler:
             "sweep_consolidation": _no_input_task(self._handle_sweep_consolidation),
             "companion_consolidation": _payload_task(self._handle_companion_consolidation),
             "sweep_companion_consolidation": _no_input_task(self._handle_sweep_companion_consolidation),
-            "deep_research_failed": _payload_task(self._handle_deep_research_failed),
-            "deep_research_webhook_event": _payload_task(self._handle_deep_research_webhook_event),
-            "video_generation_polling": _payload_task(self._handle_video_generation_polling),
             "setup_microsoft_todo": _payload_task(self._handle_setup_microsoft_todo),
             "reindex_task_list": _payload_task(self._handle_reindex_task_list),
             "renew_task_subscriptions": _payload_task(self._handle_renew_task_subscriptions),
@@ -537,31 +508,6 @@ class WorkerHandler:
         logger.info(f"[Worker] sweep_companion_consolidation complete: swept={len(session_ids)}")
         return {"swept": len(session_ids)}, 200
 
-    # ------------------------------------------------------------------
-    # Deep research job failure notice
-    # ------------------------------------------------------------------
-
-    async def _handle_deep_research_failed(self, payload: dict) -> Tuple[dict, int]:
-        """The research job (Cloud Run Job) cannot notify; it enqueues this task to tell the user."""
-        user_id = payload.get("user_id")
-        account_id = payload.get("account_id")
-        if not user_id or not account_id:
-            return {"error": "missing user_id or account_id"}, 400
-        session_id = payload.get("session_id") or ""
-        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-        query = payload.get("query") or ""
-        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
-        await self._agent_factory.ensure_agents_for_user(user_id)
-        alert = (
-            dr_notices.report_not_prepared_notice(query)
-            if payload.get("reason") == "delivery_failed"
-            else dr_notices.research_failed_notice(query)
-        )
-        return await self._send_deep_research_notice(
-            user_id, account_id, alert, origin_channel_id, payload.get("origin_platform") or None,
-            context=f"reason={payload.get('reason')}",
-        )
-
     async def _empty_answer_final(
         self, path: str, user_id: str, note_id: Optional[str] = None,
     ) -> None:
@@ -580,244 +526,6 @@ class WorkerHandler:
             await self._billing_webhook.post(empty_answer_alert(path, user_id, note_id))
         except Exception as exc:
             logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
-
-    async def _send_deep_research_notice(
-        self, user_id: str, account_id: str, alert: str,
-        origin_channel_id: Optional[str], origin_platform: Optional[str], context: str,
-    ) -> Tuple[dict, int]:
-        """One deep-research notice; 5xx (Cloud Tasks retries, claim released) only when nothing was sent."""
-        result = await self._notification.notify(
-            kind=NotificationKind.DEEP_RESEARCH,
-            user_id=user_id,
-            account_id=account_id,
-            system_alert=alert,
-            channel_id_override=origin_channel_id,
-            platform_override=origin_platform,
-            # This handler's 5xx makes Cloud Tasks retry; the agent must not retry inside as well.
-            suppress_transient_retry=True,
-        )
-        if is_empty_answer(result):
-            await self._empty_answer_final("deep_research_notice", user_id)
-            return {"status": "empty_answer_final"}, 200
-        if not result.delivered and not result.sent:
-            logger.warning(
-                "[DeepResearch] notice not sent: user=%s %s error=%s", user_id[:8], context, result.error,
-            )
-            return {"error": result.error or "delivery_failed"}, 500
-        if not result.delivered:
-            # A resend would double a message that may already be on the channel.
-            logger.warning(
-                "[DeepResearch] notice sent but not confirmed: user=%s %s error=%s; not retried",
-                user_id[:8], context, result.error,
-            )
-        return {"status": "ok"}, 200
-
-    # ------------------------------------------------------------------
-    # OpenAI deep research webhook event (the webhook only enqueues this)
-    # ------------------------------------------------------------------
-
-    async def _handle_deep_research_webhook_event(self, payload: dict) -> Tuple[dict, int]:
-        """Deliver one OpenAI deep-research outcome: report for a completed job, a notice otherwise.
-        The report text is re-read by job id here, so it never travels through Cloud Tasks."""
-        event_type = payload.get("event_type") or ""
-        job_id = payload.get("job_id") or ""
-        user_id = payload.get("user_id") or ""
-        account_id = payload.get("account_id") or ""
-        if not (event_type and job_id and user_id and account_id):
-            return {"error": "missing event_type, job_id, user_id or account_id"}, 400
-        if self._deep_research_fetch is None:
-            # 4xx: Cloud Tasks would retry a 5xx forever against a service that can never retrieve.
-            logger.error("[DeepResearch] webhook event delivered but OpenAI retrieval is not configured")
-            return {"error": "retrieval not configured"}, 422
-        session_id = payload.get("session_id") or ""
-        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-        origin_platform = payload.get("origin_platform") or None
-        query = payload.get("query") or ""
-
-        try:
-            response = await self._deep_research_fetch(job_id)
-        except Exception as exc:
-            logger.error("[DeepResearch] response retrieval failed: job=%s error=%s", job_id[:16], exc, exc_info=True)
-            return {"error": "retrieval_failed"}, 500
-        await self._agent_factory.ensure_agents_for_user(user_id)
-
-        if event_type == "response.completed":
-            output_text = response.get("output_text") or ""
-            # Durable capture BEFORE delivery: research is expensive and the result must survive a failed delivery.
-            if self._prompt_content_store is not None:
-                await self._prompt_content_store.record_dr_result(
-                    output_text=output_text, query=query, user_id=user_id, account_id=account_id,
-                    model=response.get("model", ""), provider="openai", source="openai_webhook", job_id=job_id,
-                )
-            handed_off = await deliver_deep_research(
-                result_text=output_text,
-                user_id=user_id,
-                account_id=account_id,
-                query=query,
-                task_queue=self._task_dispatch,
-                session_id=session_id,
-                media_storage=self._media_storage,
-                link_service=self._link_service,
-                channel_id_override=origin_channel_id,
-                platform_override=origin_platform,
-                failure_notification=self._notification,
-                report_dedup_id=job_id,
-            )
-            if not handed_off:
-                # deliver_deep_research has notified the user (or logged that the notice failed); a retry would upload and notify again.
-                logger.error("[DeepResearch] report task not enqueued: job=%s user=%s", job_id[:16], user_id[:8])
-                return {"status": "report_not_enqueued"}, 200
-            logger.info("[DeepResearch] report delivered: user=%s job=%s", user_id[:8], job_id[:16])
-            return {"status": "ok"}, 200
-
-        if event_type == "response.failed":
-            error = (response.get("error") or {}).get("message", "unknown error")
-            logger.error("[DeepResearch] job failed: job=%s error=%s", job_id[:16], error)
-            alert = dr_notices.provider_error_notice(query)
-        elif event_type == "response.incomplete":
-            reason = (response.get("incomplete_details") or {}).get("reason", "unknown")
-            logger.warning("[DeepResearch] job incomplete: job=%s reason=%s", job_id[:16], reason)
-            alert = dr_notices.incomplete_notice(query)
-        elif event_type == "response.cancelled":
-            logger.info("[DeepResearch] job cancelled: job=%s", job_id[:16])
-            alert = dr_notices.cancelled_notice(query)
-        else:
-            logger.error("[DeepResearch] unknown webhook event type %r: job=%s", event_type, job_id[:16])
-            return {"error": "unknown event_type"}, 400
-        return await self._send_deep_research_notice(
-            user_id, account_id, alert, origin_channel_id, origin_platform, context=f"event={event_type}",
-        )
-
-    # ------------------------------------------------------------------
-    # Video generation polling (Grok)
-    # ------------------------------------------------------------------
-
-    _MAX_VIDEO_POLL_ATTEMPTS = 24  # ~24 x 30s = 12 min budget, RFC §10 open question #3 starting point
-
-    async def _handle_video_generation_polling(self, payload: dict) -> Tuple[dict, int]:
-        """
-        Poll video generation status. Re-enqueue if pending. On done: deliver via
-        deliver_video(). On failed/expired: notify the user directly, no silent
-        drop. Kicked off by GrokVideoAdapter. See VIDEO_GENERATION_RFC.md §3.4 step 4.
-
-        duration_s is resolved ONCE here (not re-read in the pending/done branches)
-        so it survives multiple poll cycles: the re-enqueue call below threads it
-        forward on every "pending" tick, otherwise TaskDispatchService's own
-        duration_s=5 default would silently reset it on each re-poll and the
-        deliver_video() billing call would under-bill a longer video.
-
-        origin_platform is resolved the same way, for the same reason, but for a
-        different bug: UserNotificationService.resolve_channel() only honors
-        channel_id_override when platform_override is ALSO set (`if
-        channel_id_override and platform_override:`) — omitting platform_override
-        silently falls through to the user's primary/last-active channel instead
-        of the channel the request actually came from. Live-verified 2026-08-24.
-        """
-        request_id      = payload.get("request_id", "")
-        user_id         = payload.get("user_id", "")
-        account_id      = payload.get("account_id", "")
-        session_id      = payload.get("session_id", "")
-        attempt         = payload.get("attempt", 0)
-        provider        = payload.get("provider", "grok")
-        duration_s      = payload.get("duration_s", DEFAULT_VIDEO_DURATION_S_FALLBACK)
-        origin_platform = payload.get("origin_platform")
-
-        origin_channel_id = session_id.split(":", 1)[1] if ":" in session_id else None
-
-        video_port = None
-        if self._video_registry:
-            try:
-                video_port = self._video_registry.get(provider)
-            except ValueError:
-                logger.debug("No video generation port registered for provider %r", provider)
-        if not video_port or not self._task_dispatch:
-            logger.error(
-                f"[VideoGeneration] Missing dependencies in WorkerHandler "
-                f"(provider={provider!r}, available="
-                f"{self._video_registry.list_available() if self._video_registry else []})"
-            )
-            return {"error": "video_generation not configured"}, 500
-
-        # notify() routes through the eager Quick agent, absent on a cold instance until this runs.
-        if user_id:
-            await self._agent_factory.ensure_agents_for_user(user_id)
-
-        if attempt >= self._MAX_VIDEO_POLL_ATTEMPTS:
-            logger.warning(f"[VideoGeneration] Polling timeout: request={request_id[:16]}")
-            await self._notification.notify(
-                user_id=user_id, account_id=account_id,
-                system_alert="Video generation timed out without producing a result.",
-                kind=NotificationKind.DEEP_RESEARCH,
-                channel_id_override=origin_channel_id,
-                platform_override=origin_platform,
-            )
-            return {"status": "timeout"}, 200
-
-        try:
-            result: VideoPollResult = await video_port.get_status(request_id)
-        except Exception as exc:
-            logger.warning(
-                f"[VideoGeneration] get_status failed, attempt={attempt}: {exc}"
-            )
-            await self._task_dispatch.enqueue_video_generation_polling(
-                request_id=request_id, user_id=user_id, account_id=account_id,
-                session_id=session_id, attempt=attempt + 1, delay_seconds=30,
-                duration_s=duration_s, origin_platform=origin_platform,
-            )
-            return {"status": "retry", "attempt": attempt + 1}, 200
-
-        if result.status == "pending":
-            await self._task_dispatch.enqueue_video_generation_polling(
-                request_id=request_id, user_id=user_id, account_id=account_id,
-                session_id=session_id, attempt=attempt + 1, delay_seconds=30,
-                duration_s=duration_s, origin_platform=origin_platform,
-            )
-            logger.info(f"[VideoGeneration] Pending, attempt={attempt + 1}")
-            return {"status": "polling", "attempt": attempt + 1}, 200
-
-        if result.status == "done":
-            # Prefer the duration xAI actually reports on the finished render
-            # (result.duration_s) over the poll payload's submission-time estimate —
-            # the payload's value is a guess for create_video and simply wrong for
-            # edit_video (which has no duration param at submission time at all).
-            # Fall back to the payload only when the poll response didn't include one.
-            effective_duration_s = (
-                result.duration_s if result.duration_s is not None else duration_s
-            )
-            await deliver_video(
-                video_data=result.data,
-                user_id=user_id, account_id=account_id,
-                duration_s=effective_duration_s,
-                media_storage=self._media_storage,
-                notification=self._notification,
-                quota_service=self._quota_service,
-                link_service=self._link_service,
-                short_link_service=self._short_link_service,
-                channel_id_override=origin_channel_id,
-                platform_override=origin_platform,
-            )
-            logger.info(f"[VideoGeneration] Delivered to user={user_id[:8]}")
-            return {"status": "delivered"}, 200
-
-        # "failed" or "expired"
-        logger.error(
-            f"[VideoGeneration] {result.status}: request={request_id[:16]}, error={result.error}"
-        )
-        # result.error carries xAI's actual rejection reason (e.g. "Video is too
-        # long. Maximum duration is 8.7 seconds.") — surface it verbatim instead of
-        # a generic apology, so the user (and the formatter agent relaying this)
-        # knows exactly what to fix, not just that something failed.
-        alert = "Video generation did not complete — the AI provider returned an error."
-        if result.error:
-            alert += f" Reason: {result.error}"
-        await self._notification.notify(
-            user_id=user_id, account_id=account_id,
-            system_alert=alert,
-            kind=NotificationKind.DEEP_RESEARCH,
-            channel_id_override=origin_channel_id,
-            platform_override=origin_platform,
-        )
-        return {"status": result.status}, 200
 
     # ------------------------------------------------------------------
     # MS To Do task handlers
