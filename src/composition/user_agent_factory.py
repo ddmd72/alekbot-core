@@ -244,11 +244,6 @@ class UserAgentFactory(AgentFactoryPort):
         self._sweep_task: Optional[asyncio.Task] = None
         self._warmups: Set["asyncio.Task[None]"] = set()  # strong refs: a bare task can be collected mid-run
 
-    def _agent_runtime(self) -> AgentRuntime:
-        """What every agent this factory builds is bound to before registration."""
-        return AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
-                            quota_service=self.quota_service)
-
     # ------------------------------------------------------------------
     # ARCHITECTURE FIX: Law of Demeter facade
     # Previously ConversationHandler accessed self.agent_factory.assembly_service.invalidate_cache()
@@ -621,7 +616,8 @@ class UserAgentFactory(AgentFactoryPort):
         # overwriting with the same value is harmless.
         # The query-slots agents are helpers of the router and the memory agent, never routable, so
         # they are wired here but not registered: their LLM calls are billed and recorded like any other.
-        runtime = self._agent_runtime()
+        runtime = AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
+                               quota_service=self.quota_service)
         for agent in [*agents_to_register, router_slots_agent, slots_agent]:
             if agent is not None:
                 agent.bind_runtime(runtime)
@@ -753,7 +749,8 @@ class UserAgentFactory(AgentFactoryPort):
             if agent is None:
                 return False
 
-            agent.bind_runtime(self._agent_runtime())
+            agent.bind_runtime(AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
+                                            quota_service=self.quota_service))
             try:
                 self.coordinator.register_agent(agent)
             except ValueError:
