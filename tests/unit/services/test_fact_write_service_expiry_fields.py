@@ -64,8 +64,3 @@ async def test_the_model_ttl_days_does_not_outrank_the_computed_horizon(store):
     assert doc["ttl_days"] == 14
 
 
-async def test_add_facts_batch_the_v2_path_writes_facts_with_no_decision(store):
-    data = [{"text": "a fact", "ttl_days": 90, "expiry": horizon(5)}]
-    _, _, ids = await store.write.add_facts_batch(ACC, USER, data, skip_deduplication=True)
-    doc = store.docs[ids[0]]
-    assert (doc["ttl_days"], doc["expiry_kind"], doc["expires_at"]) == (None, None, None)

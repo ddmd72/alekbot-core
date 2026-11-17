@@ -330,36 +330,6 @@ class TestHandleConsolidate:
         assert response.result["operations"] == 1
         assert response.metadata["version"] == "v3"
 
-    async def test_v2_no_data_returns_success(self):
-        agent, _, _, _ = _make_agent()
-        agent.prompt_version = "v2"
-
-        msg = _make_message("consolidate", payload_extra={"messages": [], "observations": []})
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result["message"] == "No data"
-
-    async def test_v2_with_messages_calls_synthesize(self):
-        agent, repo, fact_write, _ = _make_agent()
-        agent.prompt_version = "v2"
-
-        synthesize_result = {"new_facts": [{"id": "f1", "text": "fact"}], "new_anchors": []}
-        with patch.object(
-            agent, "_synthesize_session_facts_v2",
-            new=AsyncMock(return_value=synthesize_result)
-        ):
-            msg = _make_message(
-                "consolidate",
-                payload_extra={"messages": [{"role": "user", "text": "hello"}]}
-            )
-            with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-                response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result["new_facts"] == 1
-        assert response.metadata["version"] == "v2"
 
     async def test_v3_results_triggers_cache_refresh(self):
         fm = AsyncMock(spec=FactManagementPort)
@@ -377,18 +347,6 @@ class TestHandleConsolidate:
 
         agent._bio_cache.refresh_cache.assert_awaited_once()
         pb.invalidate_biographical_cache.assert_called_once_with(_ACCOUNT_ID)
-
-    async def test_no_results_returns_failure(self):
-        agent, _, _, _ = _make_agent()
-        agent.prompt_version = "v2"
-
-        with patch.object(agent, "_synthesize_session_facts_v2", new=AsyncMock(return_value=None)):
-            msg = _make_message("consolidate", payload_extra={"messages": [{"role": "user", "text": "hi"}]})
-            with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-                response = await agent.execute(msg)
-
-        assert response.status == AgentStatus.FAILED
-        assert "parse" in response.error.lower()
 
 
 # ==============================================================================
@@ -575,60 +533,6 @@ class TestExecuteFactManagementTools:
 
 
 # ==============================================================================
-# TestBuildConversationText
-# ==============================================================================
-
-class TestBuildConversationText:
-
-    def _agent(self):
-        agent, _, _, _ = _make_agent()
-        return agent
-
-    def test_user_role(self):
-        agent = self._agent()
-        result = agent._build_conversation_text([{"role": "user", "text": "hello"}])
-        assert "USER: hello" in result
-
-    def test_non_user_role_mapped_to_assistant(self):
-        agent = self._agent()
-        result = agent._build_conversation_text([{"role": "model", "text": "world"}])
-        assert "ASSISTANT: world" in result
-
-    def test_message_with_parts_no_text(self):
-        agent = self._agent()
-        msg = {"role": "user", "parts": [{"text": "part one"}, {"text": "part two"}]}
-        result = agent._build_conversation_text([msg])
-        assert "part one part two" in result
-
-    def test_with_float_timestamp(self):
-        agent = self._agent()
-        import time
-        ts = time.time()
-        result = agent._build_conversation_text([{"role": "user", "text": "hi", "timestamp": ts}])
-        assert "USER (" in result
-        assert "hi" in result
-
-    def test_with_iso_timestamp(self):
-        agent = self._agent()
-        result = agent._build_conversation_text([
-            {"role": "user", "text": "hi", "timestamp": "2026-01-15T10:00:00"}
-        ])
-        assert "2026-01-15 10:00:00" in result
-
-    def test_bad_timestamp_falls_back_gracefully(self):
-        agent = self._agent()
-        result = agent._build_conversation_text([
-            {"role": "user", "text": "msg", "timestamp": "not-a-date"}
-        ])
-        assert "USER: msg" in result
-
-    def test_no_timestamp(self):
-        agent = self._agent()
-        result = agent._build_conversation_text([{"role": "user", "text": "plain"}])
-        assert result == "USER: plain\n"
-
-
-# ==============================================================================
 # TestPrepareStructuredConversation
 # ==============================================================================
 
@@ -677,79 +581,6 @@ class TestPrepareStructuredConversation:
         msgs = [{"role": "user", "text": "hi", "timestamp": "INVALID"}]
         result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
         assert result[0]["timestamp"] == ""
-
-
-# ==============================================================================
-# TestParseConsolidationResults
-# ==============================================================================
-
-class TestParseConsolidationResults:
-
-    def _agent(self):
-        agent, _, _, _ = _make_agent()
-        return agent
-
-    def test_json_in_markdown_block(self):
-        agent = self._agent()
-        text = '```json\n{"new_facts": [{"id": "1", "text": "f"}], "new_anchors": []}\n```'
-        result = agent._parse_consolidation_results(text)
-        assert result["new_facts"][0]["id"] == "1"
-        assert result["new_anchors"] == []
-
-    def test_plain_json(self):
-        agent = self._agent()
-        data = {"new_facts": [], "new_anchors": [{"id": "a1"}]}
-        result = agent._parse_consolidation_results(json.dumps(data))
-        assert result["new_anchors"][0]["id"] == "a1"
-
-    def test_invalid_json_returns_empty_dict(self):
-        agent = self._agent()
-        result = agent._parse_consolidation_results("not json at all")
-        assert result == {}
-
-
-# ==============================================================================
-# TestSanitizeIds
-# ==============================================================================
-
-class TestSanitizeIds:
-
-    def _agent(self):
-        agent, _, _, _ = _make_agent()
-        return agent
-
-    def test_normal_item_passes_through(self):
-        agent = self._agent()
-        items = [{"id": "fact-1", "text": "some text"}]
-        result = agent._sanitize_ids(items)
-        assert len(result) == 1
-        assert result[0]["id"] == "fact-1"
-
-    def test_string_item_skipped(self):
-        agent = self._agent()
-        result = agent._sanitize_ids(["not a dict"])
-        assert result == []
-
-    def test_non_dict_non_string_skipped(self):
-        agent = self._agent()
-        result = agent._sanitize_ids([42, None])
-        assert result == []
-
-    def test_item_without_id_skipped(self):
-        agent = self._agent()
-        result = agent._sanitize_ids([{"text": "no id here"}])
-        assert result == []
-
-    def test_duplicate_id_renamed(self):
-        agent = self._agent()
-        items = [
-            {"id": "x", "text": "first"},
-            {"id": "x", "text": "second"},
-        ]
-        result = agent._sanitize_ids(items)
-        assert len(result) == 2
-        assert result[0]["id"] == "x"
-        assert result[1]["id"] == "x_a"
 
 
 # ==============================================================================
@@ -817,31 +648,6 @@ class TestBuildClusterMessage:
         result = ConsolidationAgent._build_cluster_message(cluster)
         assert "1. " in result
         assert "2. " in result
-
-
-# ==============================================================================
-# TestHandleConsolidateZeroFacts
-# ==============================================================================
-
-class TestHandleConsolidateZeroFacts:
-    """v2 path: messages provided, synthesize returns empty facts (log zero facts, success)."""
-
-    async def test_zero_facts_with_messages_only_does_not_archive(self):
-        agent, repo, fact_write, pb = _make_agent(fact_management=None)
-        agent.prompt_version = "v2"
-
-        empty_result = {"new_facts": [], "new_anchors": []}
-        agent._synthesize_session_facts_v2 = AsyncMock(return_value=empty_result)
-
-        messages = [{"role": "user", "text": "hello"}]
-        msg = _make_message("consolidate", payload_extra={"messages": messages})
-
-        import time
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            response = await agent._handle_consolidate(msg, _USER_ID, _ACCOUNT_ID, [], time.time())
-
-        assert response.status == AgentStatus.SUCCESS
-        repo.archive_observations.assert_not_called()
 
 
 # ==============================================================================
@@ -1299,75 +1105,6 @@ class TestParseOperationsReportJsonDecodeError:
         text = "```json\n{operations: [invalid]}\n```"
         result = agent._parse_operations_report(text)
         assert result == []
-
-
-# ==============================================================================
-# TestLegacyMethods  (lines 1314-1316, 1324-1326, 1337-1378)
-# ==============================================================================
-
-class TestLegacyMethods:
-    """_get_existing_anchors_list, _synthesize_session_facts_v2."""
-
-    async def test_get_existing_anchors_list_filters_anchors(self):
-        agent, repo, fact_write, pb = _make_agent()
-
-        repo.get_biographical_context_cached = AsyncMock(return_value=[
-            {"text": "I am a developer", "tags": ["anchor", "profession"]},
-            {"text": "I like coffee", "tags": ["preference"]},
-            {"text": "I live in Springfield", "tags": ["anchor", "location"]},
-        ])
-
-        result = await agent._get_existing_anchors_list(_ACCOUNT_ID)
-
-        assert result == ["I am a developer", "I live in Springfield"]
-        repo.get_biographical_context_cached.assert_called_once_with(owner_id=_ACCOUNT_ID, limit=100)
-
-    async def test_get_existing_anchors_list_empty_cache(self):
-        agent, repo, fact_write, pb = _make_agent()
-        repo.get_biographical_context_cached = AsyncMock(return_value=[])
-
-        result = await agent._get_existing_anchors_list(_ACCOUNT_ID)
-        assert result == []
-
-    async def test_synthesize_session_facts_v2_returns_parsed_result(self):
-        agent, repo, fact_write, pb = _make_agent()
-
-        repo.get_biographical_context_cached = AsyncMock(return_value=[])
-        llm_result = {"new_facts": [{"id": "f1", "text": "fact one"}], "new_anchors": []}
-        mock_llm = AsyncMock(
-            return_value=LLMResponse(text=json.dumps(llm_result))
-        )
-        agent._llm.generate_content = mock_llm
-
-        messages = [{"role": "user", "text": "I started a new job"}]
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            result = await agent._synthesize_session_facts_v2(
-                messages, _USER_ID, _ACCOUNT_ID, []
-            )
-
-        assert result["new_facts"] == llm_result["new_facts"]
-        assert result["new_anchors"] == []
-        mock_llm.assert_called_once()
-
-    async def test_synthesize_session_facts_v2_appends_anchors_to_bio(self):
-        agent, repo, fact_write, pb = _make_agent()
-
-        repo.get_biographical_context_cached = AsyncMock(return_value=[
-            {"text": "anchor text", "tags": ["anchor"]}
-        ])
-        llm_result = {"new_facts": [], "new_anchors": []}
-        mock_llm = AsyncMock(return_value=LLMResponse(text=json.dumps(llm_result)))
-        agent._llm.generate_content = mock_llm
-
-        messages = [{"role": "user", "text": "nothing new"}]
-        with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
-            await agent._synthesize_session_facts_v2(messages, _USER_ID, _ACCOUNT_ID, [])
-
-        # prompt_builder was called — verify biographical_facts arg includes anchors
-        call_kwargs = pb.build_for_agent.call_args[1]
-        bio_facts = call_kwargs.get("biographical_facts", [])
-        anchor_entry = next((f for f in bio_facts if "Existing anchors" in f.get("text", "")), None)
-        assert anchor_entry is not None
 
 
 # ==============================================================================

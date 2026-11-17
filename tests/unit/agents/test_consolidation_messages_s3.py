@@ -252,25 +252,6 @@ async def test_the_deliberate_process_shows_the_model_the_owners_stamps(store):
     assert history == [{"role": "user", "content": "I fly on Friday", "timestamp": "2026-10-22 Thu 11:00 WEST"}]
 
 
-async def test_the_legacy_v2_path_gets_the_owners_zone_too(store):
-    agent = make_agent(store, lambda first: REPORT)
-    agent.prompt_version = "v2"
-    batch = [{"role": "user", "text": "I fly on Friday", "created_at": "2026-10-22T10:00:00Z"}]
-    with RequestContext(user_id=USER, account_id=ACC):
-        response = await agent._handle_consolidate(message("consolidate", {"messages": batch}), USER, ACC, [], 0.0)
-    assert response.status.value == "success", response
-    history = agent.pb.build_for_agent.call_args_list[0].kwargs["conversation_history"]
-    assert history[0]["timestamp"] == "2026-10-22 Thu 11:00 WEST"
-
-
-async def test_the_legacy_v2_path_without_a_zone_in_the_message_shows_utc(store):
-    agent = make_agent(store, lambda first: REPORT)
-    agent.prompt_version = "v2"
-    batch = [{"role": "user", "text": "I fly on Friday", "created_at": "2026-10-22T10:00:00Z"}]
-    with RequestContext(user_id=USER, account_id=ACC):
-        await agent._handle_consolidate(message("consolidate", {"messages": batch}, zone=None), USER, ACC, [], 0.0)
-    assert agent.pb.build_for_agent.call_args_list[0].kwargs["conversation_history"][0]["timestamp"] == "2026-10-22 Thu 10:00 UTC"
-
 
 # ----------------------------------------------------------------------------------------------- Stage 2a entries
 

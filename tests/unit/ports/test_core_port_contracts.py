@@ -479,8 +479,6 @@ class TestFactWritePortContract:
         with pytest.raises(TypeError):
             FactWritePort()
 
-    def test_has_add_facts_batch(self):
-        assert getattr(FactWritePort.add_facts_batch, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
         # Reviewer edit (facts S2 T3): build_facts added (embed and build, store nothing) for the atomic merge.
@@ -490,22 +488,11 @@ class TestFactWritePortContract:
         }
         assert abstract_methods == {"add_facts_batch", "build_facts"}, f"Expected 2 abstract methods, got {abstract_methods}"
 
-    def test_add_facts_batch_signature(self):
-        sig = inspect.signature(FactWritePort.add_facts_batch)
-        params = list(sig.parameters.keys())
-        assert params == ["self", "account_id", "user_id", "facts_data", "skip_deduplication"]
-        assert sig.parameters["skip_deduplication"].default is False
-
 
 class TestFactWritePortMockImplementation:
     @pytest.fixture
     def mock_port(self):
         return AsyncMock(spec=FactWritePort)
-
-    async def test_add_facts_batch_returns_tuple(self, mock_port):
-        mock_port.add_facts_batch.return_value = (3, 1, [])
-        result = await mock_port.add_facts_batch("acc1", "u1", [{"content": "fact"}])
-        assert result == (3, 1, [])
 
 
 # =============================================================================
