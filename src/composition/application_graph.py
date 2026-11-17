@@ -33,7 +33,6 @@ from src.adapters.firestore_person_card_repo import FirestorePersonCardRepositor
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
-from src.adapters.firestore_transcript_cache import FirestoreTranscriptCache
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
 from src.adapters.gcp_log_sink import GcpLogSink
@@ -43,7 +42,6 @@ from src.adapters.grok_image_adapter import GrokImageAdapter
 from src.adapters.grok_video_adapter import GrokVideoAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
-from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
 from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
@@ -62,8 +60,7 @@ from src.composition import cipher_setup, voice_mcp_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
-from src.composition.document_service_setup import build_document_service
-from src.composition.email_card_setup import attach_email_card_step
+from src.composition.document_service_setup import build_document_backends
 from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
@@ -312,16 +309,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
         logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
 
-    # Audio transcription (optional — voice messages stay an honest alert without it). Built before the quota
-    # service: the document service, attached right after the container, takes both (EXTERNAL_FILES_RFC P21).
-    audio_service = None
-    if config.get("OPENAI_API_KEY"):
-        audio_service = OpenAITranscriptionAdapter(
-            api_key=config["OPENAI_API_KEY"],
-            model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
-        )
-    else:
-        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
+    # Audio transcription (optional — voice messages stay an honest alert without it), with the parse adapter: the
+    # container's document service takes both (EXTERNAL_FILES_RFC P21).
+    document_backends = build_document_backends(config, parser=parse_adapter)
+    audio_service = document_backends.transcriber
 
     logger.info("💳 Initializing Billing Agent...")
     quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
@@ -404,21 +395,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         cipher=cipher,
         user_repo=user_repo,          # the email classifier reads the user's configuration per batch
         quota_service=quota_service,  # and bills the indexing job's account
+        document_backends=document_backends,
     )
-    # The document service (EXTERNAL_FILES_RFC §4.4): the sandbox parse adapter, the reader over the main context builder and
-    # the graph's one quota service, attached to the file conversion service as soon as the container has built it.
-    documents = None
-    if container.file_conversion_service:
-        documents = build_document_service(
-            context_builder=container.context_builder,
-            users=user_repo,
-            assembly_service=container.assembly_service,
-            quota=quota_service,
-            transcriber=audio_service,
-            transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
-            parser=parse_adapter,
-        )
-        container.file_conversion_service.attach_documents(documents, containers=parse_adapter)   # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
     # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
@@ -763,8 +741,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     oauth_credentials_port = container.oauth_credentials
     indexed_email_repo = container.indexed_email_repo
     email_indexing_service = container.email_indexing_service
-    attach_email_card_step(email_indexing_service, container, documents, db_client, env_config, user_repo,
-                           quota_service)
 
     # MS To Do services — reuse adapters from ServiceContainer
     task_setup_service = None
