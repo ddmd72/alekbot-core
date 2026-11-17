@@ -297,7 +297,6 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.services.background_empty_answer_reporter", "tests/unit/services/background_empty_answer_reporter_equivalent_mutants.txt"),
     MutationTarget("src.services.video_generation_polling_task", "tests/unit/services/video_generation_polling_task_equivalent_mutants.txt"),
     MutationTarget("src.services.deep_research_failed_task", "tests/unit/services/deep_research_failed_task_equivalent_mutants.txt"),
-    MutationTarget("src.services.deep_research_webhook_event_task", "tests/unit/services/deep_research_webhook_event_task_equivalent_mutants.txt"),
     MutationTarget("src.services.deep_research_notice_sender", "tests/unit/services/deep_research_notice_sender_equivalent_mutants.txt"),
     MutationTarget("src.services.start_daily_email_review_task", "tests/unit/services/start_daily_email_review_task_equivalent_mutants.txt"),
     MutationTarget("src.services.daily_email_review_task", "tests/unit/services/daily_email_review_task_equivalent_mutants.txt"),

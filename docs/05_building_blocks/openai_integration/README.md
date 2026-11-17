@@ -226,28 +226,9 @@ from `file_data.path` (temp file from FileManagementAgent).
 
 ## Deep Research
 
-OpenAI provides a dedicated Deep Research API via the Responses endpoint.
-`OpenAIDeepResearchAdapter` implements `DeepResearchPort` — the same port as
-`ClaudeDeepResearchAdapter`. Both are pure API clients.
-
-### Model
-
-```python
-DEFAULT_DEEP_RESEARCH_MODEL = "o4-mini-deep-research-2025-06-26"  # default (fast/cheap)
-# o3-deep-research-2025-06-26 — higher quality, override via OPENAI_DEEP_RESEARCH_MODEL env var
-```
-
-### Architecture
-
-`AsyncJobPort` (`src/ports/async_job_port.py`) is the port for the kick-off + polling pattern:
-
-```python
-class AsyncJobPort(ABC):
-    async def submit(self, query: str) -> str: ...         # returns job_id
-    async def get_status(self, job_id: str) -> tuple[str, str]: ...
-```
-
-Adapters are pure API clients — no Cloud Task or queue logic.
+Removed (2026-11). `OpenAIDeepResearchAdapter` (o3/o4-mini deep-research models, webhook delivery) and its webhook
+route are gone; Claude is the only deep-research provider (`docs/10_rfcs/DEEP_RESEARCH_RFC.md`). The changelog
+entries below are history.
 
 ---
 

@@ -2,15 +2,13 @@
 the work item is marked done, 200, no retry. Any other failure keeps the retry (5xx)."""
 import dataclasses
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
 from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
-from tests.unit.handlers.test_worker_deep_research_webhook_event import _payload
-from tests.unit.handlers.test_worker_deep_research_webhook_event import _worker as _dr_worker
 from tests.unit.handlers.test_worker_handler import (
     _ACC_A,
     _EXECUTE_NOTE_ID,
@@ -112,28 +110,6 @@ class TestDailyEmailReview:
         (body, status), ns = await self._run(OK)
         assert (status, body["status"]) == (200, "ok")
         ns.billing_webhook.post.assert_not_awaited()
-
-
-class TestDeepResearchNotice:
-    async def _run(self, result):
-        worker, _, _ = _dr_worker(notify=result)
-        alert_sink = AsyncMock()
-        worker._tasks["deep_research_webhook_event"]._notice_sender._empty_answer_reporter = (
-            BackgroundEmptyAnswerReporter(alert_sink=alert_sink))
-        out = await worker._dispatch(_payload(event_type="response.cancelled"), {})
-        return out, alert_sink
-
-    async def test_empty_answer_is_final(self, caplog):
-        with caplog.at_level(logging.ERROR):
-            (body, status), alert = await self._run(EMPTY)
-        assert (status, body["status"]) == (200, "empty_answer_final")
-        assert len(_empty_records(caplog)) == 1
-        alert.post.assert_awaited_once()
-
-    async def test_other_failure_still_retries(self):
-        (_, status), alert = await self._run(OTHER)
-        assert status == 500
-        alert.post.assert_not_awaited()
 
 
 class TestNoAlertSinkConfigured:

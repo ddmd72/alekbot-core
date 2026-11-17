@@ -35,7 +35,6 @@ from src.services.drive_link_service import DriveLinkService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.short_link_service import ShortLinkService
 from src.web import user_cabinet_app
-from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 from src.web.drive_link_app import create_drive_link_blueprint
 from src.web.file_access_app import create_file_access_blueprint
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, worker_oidc_gate
@@ -112,12 +111,6 @@ def _oauth(p: Probe):
                                     access_token_ttl=86400, refresh_token_ttl=86400),
         invite_service=w("invite_service"), connect_service=w("connect_service"), connectors=ConnectorRegistry(),
     ), {}
-
-
-def _deep_research(p: Probe):
-    return create_deep_research_webhooks_blueprint(
-        webhook_secret="whsec_cDctcHJvYmUtc2VjcmV0LWtleS0zMmJ5dGVzLWxvbmc=", task_queue=p.wire("task_queue"),
-        fetch_response=p.wire("openai").retrieve, dedup_store=p.wire("dedup_store")), {}
 
 
 def _ms_tasks(p: Probe):
@@ -224,7 +217,6 @@ def _sandbox_unconfigured(p: Probe):
 FACTORIES: Dict[str, Callable[[Probe], tuple]] = {
     "create_user_cabinet_blueprint": _cabinet,
     "create_oauth_blueprint": _oauth,
-    "create_deep_research_webhooks_blueprint": _deep_research,
     "create_microsoft_tasks_webhook_blueprint": _ms_tasks,
     "create_file_access_blueprint": _file_access,
     "create_short_link_blueprint": _short_link,
@@ -279,7 +271,6 @@ PUBLIC: Dict[Tuple[str, str, str], str] = {
 
 _GRAPH_NOTIFICATION = {"value": [{"subscriptionId": "sub-1", "changeType": "updated",
                                   "resource": "me/todo/lists/L1/tasks/T1"}]}
-_SVIX_EVENT = {"type": "response.completed", "data": {"id": "resp_1", "metadata": {"user_id": "u1"}}}
 _SLACK_EVENT = {"type": "event_callback", "event_id": "Ev1",
                 "event": {"type": "message", "channel": "C1", "user": "U1", "text": "hi", "ts": "1.1"}}
 # A well-formed button press (Facts S4 T5d), so an unsigned one is refused by the signature, not by a missing field.
@@ -293,7 +284,6 @@ _TELEGRAM_UPDATE = {"update_id": 1, "message": {"message_id": 1, "date": 0, "tex
 # for the wrong reason (missing input) instead of by the gate. Keyed by (method, rule).
 INPUT: Dict[Tuple[str, str], dict] = {
     ("POST", "/webhook/microsoft-tasks/<user_id>"): {"json": _GRAPH_NOTIFICATION},
-    ("POST", "/webhooks/openai/deep-research"): {"json": _SVIX_EVENT},
     ("POST", "/slack/events"): {"json": _SLACK_EVENT},
     ("POST", "/slack/interactivity"): {"form": {"payload": json.dumps(_SLACK_PRESS)}},
     ("POST", "/telegram/webhook"): {"json": _TELEGRAM_UPDATE},

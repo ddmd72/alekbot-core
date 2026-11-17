@@ -1,10 +1,8 @@
 """Work that runs outside a chat turn: the agent worker handler (an agent's queued result delivered to the user), the
-task dispatch over the agent-task queue, the reminders on it, and the deep-research webhook's claims."""
+task dispatch over the agent-task queue and the reminders on it."""
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..adapters.firestore_dedup_store import FirestoreDedupStore
-from ..config.environment import EnvironmentConfig
 from ..domain.notification_kind import NotificationKind
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
@@ -16,9 +14,6 @@ from ..services.user_notification_service import UserNotificationService
 from .file_delivery_setup import FileDelivery
 from .language_setup import Languages
 
-# OpenAI's webhook retry window; liveness follows each claim's own expires_at.
-_DEEP_RESEARCH_CLAIM_TTL_S = 72 * 3600
-
 
 @dataclass(frozen=True)
 class BackgroundJobs:
@@ -27,13 +22,11 @@ class BackgroundJobs:
     agent_worker_handler: AgentWorkerHandler
     task_dispatch: Optional[TaskDispatchService]
     reminders: Optional[RemindersService]
-    deep_research_dedup_store: FirestoreDedupStore
 
 
-def build_background_jobs(db_client: Any, env_config: EnvironmentConfig, *, container: Any,
-                          coordinator: AgentCoordinator, notification_service: UserNotificationService,
-                          task_queue: Any, delivery: FileDelivery, user_repo: Any,
-                          languages: Languages) -> BackgroundJobs:
+def build_background_jobs(*, container: Any, coordinator: AgentCoordinator,
+                          notification_service: UserNotificationService, task_queue: Any, delivery: FileDelivery,
+                          user_repo: Any, languages: Languages) -> BackgroundJobs:
     agent_worker_handler = AgentWorkerHandler(
         coordinator=coordinator,
         notification_service=notification_service,
@@ -60,7 +53,4 @@ def build_background_jobs(db_client: Any, env_config: EnvironmentConfig, *, cont
         # Derived from NOTIFICATION_SLA here: services cannot import the infrastructure layer (REQ-ARCH-22).
         dispatch_deadline_s=dispatch_deadline_s(NotificationKind.REMINDER),
     ) if (container.notes_adapter and task_dispatch) else None
-    claims = FirestoreDedupStore(db_client=db_client, collection_name=env_config.worker_task_dedup_collection,
-                                 ttl_seconds=_DEEP_RESEARCH_CLAIM_TTL_S)
-    return BackgroundJobs(agent_worker_handler=agent_worker_handler, task_dispatch=task_dispatch, reminders=reminders,
-                          deep_research_dedup_store=claims)
+    return BackgroundJobs(agent_worker_handler=agent_worker_handler, task_dispatch=task_dispatch, reminders=reminders)

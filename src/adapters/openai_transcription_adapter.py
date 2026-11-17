@@ -6,7 +6,7 @@ AudioTranscriptionPort over OpenAI's `/v1/audio/transcriptions`.
 
 Default model is `gpt-transcribe`: it is the only family that accepts `languages`, and a
 multilingual speaker is the normal case here, not an edge one. Env-overridable
-(`OPENAI_TRANSCRIPTION_MODEL`) the same way the deep-research adapters pin theirs.
+(`OPENAI_TRANSCRIPTION_MODEL`) the same way the deep-research adapter pins its own.
 """
 
 import asyncio

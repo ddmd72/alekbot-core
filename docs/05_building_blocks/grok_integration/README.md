@@ -10,7 +10,7 @@
 
 `GrokAdapter` implements `LLMPort` against xAI's **Responses API** (`/v1/responses`) using the
 OpenAI SDK with a custom `base_url`. No `xai-sdk` dependency — the same pinned `openai` package
-serves `OpenAIAdapter`, `OpenAIDeepResearchAdapter`, and this adapter.
+serves `OpenAIAdapter`, `OpenAITranscriptionAdapter`, and this adapter.
 
 **Read [`decisions/grok_revival_2026_08.md`](../../04_solution_strategy/decisions/grok_revival_2026_08.md)
 before changing anything here.** It records why this integration sat dead for months (a trailing

@@ -67,8 +67,7 @@ THRESHOLDS: Dict[str, float] = {
 
     # Floor reflecting current state (post-RFC actual ≈ 91%). Pre-existing
     # uncovered branches: dispatch lines unexercised by direct method-call
-    # tests, deep_research_webhook_event retry path, daily_email_review failure
-    # path. Lifting this floor requires its own RFC.
+    # tests, daily_email_review failure path. Lifting this floor requires its own RFC.
     "src/handlers/worker_handler.py": 90.0,
 
     # P7 (C1, owner-approved 2026-10-22): the files that decide who may call or whose data is touched. Every
@@ -83,7 +82,6 @@ THRESHOLDS: Dict[str, float] = {
     "src/services/authentication_service.py":       100.0,
     "src/services/mcp_authorization_service.py":    100.0,
     "src/composition/mcp_sdk_oauth_provider.py":    100.0,
-    "src/web/deep_research_webhooks.py":            100.0,
     "src/web/microsoft_tasks_webhook.py":           100.0,
     "src/web/voice_webhook_app.py":                 100.0,
     "src/web/voice_control_plane_app.py":           100.0,

@@ -279,7 +279,7 @@ are never deleted (nothing breaks).
 | `<prefix>long_turns` | long-turn registry records |
 | `<prefix>skill_drafts` and `draft_files` | unsaved skill drafts (30 days) and their staged file contents |
 | `<prefix>memory_fact_drafts` | unconfirmed memory-fact drafts (7 days) |
-| `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h), deep-research webhook claims (72 h) |
+| `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h) |
 | `<prefix>drive_model_usage` | monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`) |
 | `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
 

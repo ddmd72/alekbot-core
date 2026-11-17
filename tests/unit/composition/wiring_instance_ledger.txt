@@ -22,7 +22,7 @@ src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepos
 src.adapters.firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository 1  # by-design the one owner-confirmed people list store, built once on the ServiceContainer as confirmed_people and held by the one FactProfileService (service_container.py, fact_profile_setup.py, FACT_PROFILE_RFC 4.5)
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
-src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_dedup_store.FirestoreDedupStore 2  # by-design two stores on two TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), Telegram update dedup
 src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
@@ -75,7 +75,6 @@ src.adapters.microsoft.onedrive_adapter.OneDriveAdapter 1  # by-design single in
 src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single instance
 src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
 src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
-src.adapters.openai_deep_research_adapter.OpenAIDeepResearchAdapter 1  # by-design single instance
 src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
 src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (memory_setup.py, Facts S4 T10a)
 src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
@@ -139,8 +138,7 @@ src.services.credential_revocation_service.CredentialRevocationService 1  # by-d
 src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
-src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender both deep-research runners share, built by build_worker_tasks (worker_setup.py)
-src.services.deep_research_webhook_event_task.DeepResearchWebhookEventTask 1  # by-design the one deep_research_webhook_event runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender of the deep_research_failed runner, built by build_worker_tasks (worker_setup.py)
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, built by the ServiceContainer and held by the file conversion service (service_container.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)

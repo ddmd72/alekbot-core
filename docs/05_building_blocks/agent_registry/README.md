@@ -48,8 +48,7 @@ AgentCoordinator.handle_delegation()
 
   Note: deep_research_agent uses SYNC mode — returns ACK immediately after create_interaction().
   Delivery mechanism is adapter-internal (not the agent's concern):
-    ClaudeDeepResearchAdapter (default): enqueues agent_execution Cloud Task → Cloud Run Job.
-    OpenAIDeepResearchAdapter: registers webhook_url; OpenAI calls back on completion.
+    ClaudeDeepResearchAdapter (the only provider): starts the Cloud Run Job that delivers the report.
 ```
 
 ---

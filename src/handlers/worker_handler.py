@@ -20,8 +20,8 @@ Supported task_types:
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
   - execute_reminder         → ExecuteReminderTask (services/execute_reminder_task.py), passed in by
                                 composition (`tasks`): run one claimed reminder fire
-  - video_generation_polling, deep_research_failed, deep_research_webhook_event → runners passed in by composition
-                                     (`tasks`): VideoGenerationPollingTask, DeepResearchFailedTask, DeepResearchWebhookEventTask
+  - video_generation_polling, deep_research_failed → runners passed in by composition
+                                     (`tasks`): VideoGenerationPollingTask, DeepResearchFailedTask
   - start_daily_email_review      → StartDailyEmailReviewTask (services/start_daily_email_review_task.py), passed in by
                                      composition (`tasks`): fan-out, enqueue daily_email_review per Gmail user
   - daily_email_review            → DailyEmailReviewTask (services/daily_email_review_task.py), passed in by composition
