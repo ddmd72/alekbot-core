@@ -25,7 +25,6 @@ from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.firestore_person_card_repo import FirestorePersonCardRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
-from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
@@ -53,6 +52,7 @@ from src.composition.boot_setup import build_boot_checks
 from src.composition.identity_setup import build_identity
 from src.composition.operations_setup import build_operations
 from src.composition.session_routing_setup import build_session_routing
+from src.composition.file_delivery_setup import build_file_delivery
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -93,14 +93,12 @@ from src.services.companion_context_assembler_service import CompanionContextAss
 from src.services.companion_extraction_service import CompanionExtractionService
 from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
-from src.services.document_delivery_service import DocumentDeliveryService
 from src.services.fact_answer_service import FactAnswerService
 from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
-from src.services.file_link_service import FileLinkService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
@@ -342,37 +340,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     else:
         logger.info("ℹ️ Video generation not configured (XAI_API_KEY not set)")
 
-    # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
-    # Keyless V4 signed-URL minting via IAM signBlob as the runtime's own identity
-    # (for the /f/<token> capability route); no signer email is passed in.
-    gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
-    gcs_media_adapter = (
-        GcsMediaAdapter(bucket_name=gcs_bucket)
-        if gcs_bucket else None
-    )
-
-    # File access: capability tokens + link builder for private file storage.
-    # Reuses the same HS256 secret as the Cabinet session service. Constructed
-    # here (before delivery services) so DocumentDeliveryService can mint links.
-    file_token_service = FileAccessTokenService(secret_key=auth_config.oauth_session_secret)
-    file_link_service = (
-        FileLinkService(
-            token_service=file_token_service,
-            base_url=topology.service_url,
-        )
-        if gcs_media_adapter else None
-    )
-
-    # Short links: /s/<code> alias wrapping the /f/<token> capability link,
-    # so what lands in chat is short. Firestore-backed (repo layer only —
-    # ShortLinkService owns the code-generation/collision logic).
-    short_link_service = (
-        ShortLinkService(
-            repository=FirestoreShortLinkRepository(db_client=db_client, env_config=env_config),
-            base_url=topology.service_url,
-        )
-        if gcs_media_adapter else None
-    )
+    delivery = build_file_delivery(config, db_client, env_config, token_secret=auth_config.oauth_session_secret,
+                                   service_url=topology.service_url)
+    gcs_media_adapter, file_token_service, file_link_service = (
+        delivery.media_storage, delivery.file_token_service, delivery.link_service)
+    short_link_service, doc_delivery_service = delivery.short_link_service, delivery.doc_delivery_service
 
     # Notification service — Slack's kit at construction; Telegram's is bound late (register_late_platform).
     notification_state_repo = FirestoreNotificationStateAdapter(
@@ -437,17 +409,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         localization=_localization,
         language=_language_service,
     )
-
-    # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
-    # and sync (ConversationHandler) document delivery paths.
-    doc_delivery_service = None
-    if gcs_media_adapter:
-        doc_delivery_service = DocumentDeliveryService(
-            storage=gcs_media_adapter, link_service=file_link_service
-        )
-        logger.info("✅ DocumentDeliveryService initialized")
-    else:
-        logger.info("ℹ️ DocumentDeliveryService disabled (GCS_MEDIA_BUCKET not set)")
 
     # Agent worker handler: notification + media + task_queue + doc_delivery are wired at construction.
     logger.info("🔧 Initializing Agent Worker Handler...")
