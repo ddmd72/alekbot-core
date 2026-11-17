@@ -166,8 +166,8 @@ What the build settled beyond the requirements above.
   note id, user id first 8 chars, no content), one ops alert through the existing alert sink, then the success
   path (fire marked delivered, a one-time note deleted, the daily-review per-date mark stays, the reconnect flag
   stays up) and 200 `empty_answer_final`. Any other `delivered=False` keeps its 5xx retry. Chat is unchanged.
-  (Since 2026-11-17 `execute_reminder` and `daily_email_review` retry only a turn that never started:
-  `background_turn_started_is_final.md`.)
+  (Since 2026-11-17 `execute_reminder` and `daily_email_review` retry only a turn that never started, and a
+  reminder's empty answer also posts the owner a "reminder did not run" notice: `background_turn_started_is_final.md`.)
 - **Refinement: dispatched work is not empty.** A turn that dispatched work the user will receive later
   (`DelegationResult.async_dispatches`: ASYNC intents, and SYNC intents that acknowledge and deliver in the
   background, such as deep research and video generation) is not an `empty_answer`: the user receives the

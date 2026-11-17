@@ -62,12 +62,14 @@ class ExecuteReminderTask:
                                 no channel adapter) → 500 (Cloud Tasks queue retries
                                 with backoff; nothing ran, so nothing repeats)
             empty_answer_final  the turn ended with no answer → stamped like ok, 200
-            turn_cap_final      the turn reached the agent's turn cap → stamped like
-                                ok, one notice to the owner, 200
+            turn_cap_final      the turn reached the agent's turn cap → stamped like ok, 200
             failed_final        any other non-delivery once the turn started (a failed
                                 turn, a post that raised) → stamped like ok, 200: a re-run
                                 would repeat what the turn already did or posted (P15-D1)
             ok                  delivered + ``mark_fire_delivered`` stamped → 200
+
+        Every final outcome with nothing sent (the three ``*_final`` above, unless a post
+        was attempted) also tells the owner once that the reminder did not run.
         """
         note_id = payload.get("note_id")
         user_id = payload.get("user_id")
@@ -180,13 +182,13 @@ class ExecuteReminderTask:
             # One-time reminder: claimed (not deleted) at fire-time so its
             # content survived for this delivery; remove it now that it fired.
             await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
-        if status == "turn_cap_final":
+        if not result.delivered and not result.sent:
             # After the stamp: a Cloud Tasks re-run of this task answers already_delivered, so the owner hears it once.
-            sent = await self._notification.notify_ui_notice(
-                user_id, user_profile.account_id, UIMessage.REMINDER_NOT_RUN_TURN_CAP, name=note.text)
+            notice_sent = await self._notification.notify_ui_notice(
+                user_id, user_profile.account_id, UIMessage.REMINDER_NOT_RUN, name=note.text)
             logger.error(
-                "[Worker] execute_reminder: turn_cap_final note=%s user=%s notice_sent=%s; not retried",
-                note_id, user_id[:8], sent,
+                "[Worker] execute_reminder: %s note=%s user=%s notice_sent=%s; not retried",
+                status, note_id, user_id[:8], notice_sent,
             )
         logger.info(
             "[Worker] execute_reminder: %s note=%s user=%s due=%s",

@@ -1,4 +1,4 @@
-# A background turn that started is final; a reminder at the turn cap tells the owner
+# A background turn that started is final; a reminder that did not run tells the owner
 
 **Date:** 2026-11-17
 **Status:** Built, pending deploy
@@ -17,7 +17,7 @@ Both tasks answered 500 on any `delivered=False` from `notify()`, so Cloud Tasks
 
 A reminder whose turn ended at the turn cap (`SmartResponseAgent` answers `max_turns_exhausted` when its tool loop
 ends without an answer) re-ran the same stall up to four more times, and the owner never heard that the reminder
-did not run. The empty answer was already made final for the same reason (`claude_deliver_response_string_tool.md`).
+did not run. Making the failures final without telling the owner would turn a retried fire into a silent loss. The empty answer was already made final for the same reason (`claude_deliver_response_string_tool.md`).
 
 ## Decision
 
@@ -32,12 +32,15 @@ did not run. The empty answer was already made final for the same reason (`claud
    non-delivery after the turn started: a failed or timed-out turn, a post that raised), next to the existing
    `empty_answer_final` and `ok`. Each final outcome writes one ERROR line (`[Worker] execute_reminder: …` /
    `[Worker] daily_email_review: failed_final …`).
-4. **The turn-cap notice.** On `turn_cap_final` the reminder task posts one notice to the owner after the stamp,
-   so a redelivery of the same fire answers `already_delivered` and never notifies twice. It goes through
-   `UserNotificationService.notify_ui_notice`: the fixed UI string `REMINDER_NOT_RUN_TURN_CAP` (all four locales,
-   `{name}` = the note's text) in the owner's UI language, sent literally (the name is stored text) to the channel
+4. **The "did not run" notice.** Every final reminder outcome with nothing sent (`turn_cap_final`,
+   `empty_answer_final`, `failed_final` of a failed or timed-out turn; `delivered` and `sent` both False) posts one
+   notice to the owner after the stamp, so a redelivery of the same fire answers `already_delivered` and never
+   notifies twice. A turn that sent something (a post that raised, a rich part that failed after the text) gets no
+   notice: the owner may have the answer. The notice goes through `UserNotificationService.notify_ui_notice`: the
+   fixed, cause-neutral UI string `REMINDER_NOT_RUN` (all four locales, `{name}` = the note's text; one string, no
+   per-cause variants) in the owner's UI language, sent literally (the name is stored text) to the channel
    `notify()` would have used (primary, else last active). It is not written to history and does not claim the
-   system's voice. A notice that fails to post is logged; the outcome stays final.
+   system's voice. A notice that fails to post is logged; the outcome stays final. The daily review gets no notice.
 5. **`suppress_transient_retry` stays on** for both tasks: a whole-execution retry would re-run every tool call of
    the turn. The per-call retry in `_call_llm` and Smart's provider rotation still cover a provider blip.
 
@@ -54,9 +57,9 @@ did not run. The empty answer was already made final for the same reason (`claud
 
 ## Consequences
 
-- A provider outage that outlasts the per-call retry and the provider rotation now loses that fire (one ERROR
-  line) instead of being retried by the queue. Only the turn-cap outcome tells the owner; other final failures are
-  ops-visible only.
+- A provider outage that outlasts the per-call retry and the provider rotation now loses that fire instead of being
+  retried by the queue; the owner is told it did not run. A daily review lost the same way is ops-visible only.
+- A conditional reminder ("tell me only if X") that ends with an empty answer posts the notice on every such fire.
 - The deep-research notice (`DeepResearchNoticeSender`) keeps its own rule: 5xx only when nothing was sent.
 - Tests: `tests/unit/handlers/test_worker_retry_after_effect.py` (the four P15-D1 pins, now passing),
   `tests/unit/handlers/test_worker_started_turn_is_final.py`, `tests/unit/services/test_notify_turn_started.py`.

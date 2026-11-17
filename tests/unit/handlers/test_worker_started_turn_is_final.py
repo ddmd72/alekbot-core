@@ -1,5 +1,5 @@
 """A background turn that started is final (P15-D1): a reminder fire or a daily review is not retried once its turn
-started, and a reminder run that reached the turn cap tells the owner once.
+started, and a reminder fire that ends final with nothing sent tells the owner once that it did not run.
 
 On the redelivery world (`tests/support/redelivery_world.py`): the real `WorkerHandler`, claim store, note store and
 `UserNotificationService` (with the real localization, `languages=`), a scripted agent turn and recording channels.
@@ -12,7 +12,8 @@ from typing import Any
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.language import LanguageCode
-from src.domain.notify_result import TURN_CAP_ERROR
+from src.domain.messaging import RichContent
+from src.domain.notify_result import EMPTY_ANSWER_ERROR, TURN_CAP_ERROR
 from src.domain.ui_messages import UIMessage
 from tests.support.fact_review_world import FakeLanguageService
 from tests.support.redelivery_world import (
@@ -20,12 +21,14 @@ from tests.support.redelivery_world import (
 )
 
 TEXT = "Time to call dad"
+TABLE = RichContent(content_type="table", data={"headers": ["Activity", "Time"], "rows": [{"cells": ["Yoga", "Morning"]}]},
+                    fallback_text="Yoga: Morning")
 EMAILS = [{"id": "m1", "from": "school@example.com", "subject": "Parents' meeting moved to Saturday", "body": "See you."}]
 NAME = "call dad"   # the text `RedeliveryWorld.seed_note` stores
 
 
 def _notice(lang: LanguageCode) -> str:
-    return FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN_TURN_CAP).format(name=NAME)
+    return FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN).format(name=NAME)
 
 
 async def _world(lang: LanguageCode = LanguageCode.EN) -> RedeliveryWorld:
@@ -93,7 +96,7 @@ class TestTurnCap:
 
 
 class TestStartedTurnIsFinal:
-    async def test_a_failed_turn_is_acked_without_a_retry_and_without_a_notice(self, monkeypatch):
+    async def test_a_failed_turn_is_acked_without_a_retry_and_the_owner_gets_one_notice(self, monkeypatch):
         world = await _world()
         world.router.always(failed("provider down"))
         note_id, payload = await _fire(world, monkeypatch, recurrence="FREQ=DAILY")
@@ -101,21 +104,47 @@ class TestStartedTurnIsFinal:
         outcomes = await deliver_with_retry(world.handler, payload, "t-1")
 
         assert outcomes == [({"status": "failed_final"}, 200)]
-        assert len(world.router.messages) == 1 and world.posts == []
+        assert len(world.router.messages) == 1
+        assert [(p.channel_id, p.kind, p.value) for p in world.posts] == [(CHANNEL, "literal", _notice(LanguageCode.EN))]
         assert world.note_docs[note_id]["last_delivered_due"] == T0
 
-    async def test_a_timed_out_turn_is_final(self, monkeypatch):
-        world = await _world()
+    async def test_a_timed_out_turn_is_final_and_the_owner_gets_one_notice(self, monkeypatch):
+        world = await _world(LanguageCode.FR)
         world.router.always(timed_out())
-        _, payload = await _fire(world, monkeypatch)
+        note_id, payload = await _fire(world, monkeypatch)
 
         outcomes = await deliver_with_retry(world.handler, payload, "t-1")
 
         assert outcomes == [({"status": "failed_final"}, 200)]
         assert len(world.router.messages) == 1
+        assert world.texts == [_notice(LanguageCode.FR)]
+        assert note_id not in world.note_docs
 
-    async def test_a_text_whose_post_raised_is_not_posted_again(self, monkeypatch):
-        """The post may have left before it raised (`NotifyResult.sent`): a re-run could double it."""
+    async def test_an_empty_answer_is_final_and_the_owner_gets_one_notice(self, monkeypatch):
+        world = await _world()
+        world.router.always(failed(EMPTY_ANSWER_ERROR))
+        _, payload = await _fire(world, monkeypatch)
+
+        outcomes = await deliver_with_retry(world.handler, payload, "t-1")
+
+        assert outcomes == [({"status": "empty_answer_final"}, 200)]
+        assert world.texts == [_notice(LanguageCode.EN)]
+
+    async def test_a_second_delivery_of_a_failed_fire_neither_runs_nor_notifies_again(self, monkeypatch):
+        """Two task names for one fire (a lost ack): the stamp written before the notice answers the second."""
+        world = await _world()
+        world.router.always(failed("provider down"))
+        _, payload = await _fire(world, monkeypatch, recurrence="FREQ=DAILY")
+
+        await deliver_with_retry(world.handler, payload, "t-1")
+        second = await deliver_with_retry(world.handler, payload, "t-2")
+
+        assert second == [({"status": "already_delivered"}, 200)]
+        assert len(world.router.messages) == 1 and world.texts == [_notice(LanguageCode.EN)]
+
+    async def test_a_text_whose_post_raised_is_not_posted_again_and_gets_no_notice(self, monkeypatch):
+        """The post may have left before it raised (`NotifyResult.sent`): a re-run could double it, and the owner may
+        have the answer, so no "did not run" notice."""
         world = await _world()
         world.router.always(ok(TEXT))
         world.channels.fail_post(1)
@@ -124,10 +153,21 @@ class TestStartedTurnIsFinal:
         outcomes = await deliver_with_retry(world.handler, payload, "t-1")
 
         assert outcomes == [({"status": "failed_final"}, 200)]
-        assert len(world.router.messages) == 1
+        assert len(world.router.messages) == 1 and world.posts == []
+
+    async def test_a_text_posted_before_its_rich_part_failed_gets_no_notice(self, monkeypatch):
+        world = await _world()
+        world.router.always(ok(TEXT, rich=TABLE))
+        world.channels.fail_post(2)                         # the text is post 1, the rich part post 2
+        _, payload = await _fire(world, monkeypatch)
+
+        outcomes = await deliver_with_retry(world.handler, payload, "t-1")
+
+        assert outcomes == [({"status": "failed_final"}, 200)]
+        assert world.texts == [TEXT]
 
     async def test_a_delivered_reminder_is_ok_and_posts_no_notice(self, monkeypatch):
-        """Control: the notice belongs to the turn cap only."""
+        """Control: a delivered reminder needs no notice."""
         world = await _world()
         world.router.always(ok(TEXT))
         _, payload = await _fire(world, monkeypatch)

@@ -106,9 +106,9 @@ class TestUiNotice:
         world = _world(lang)
         await world.set_primary_channel()
 
-        sent = await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN_TURN_CAP, name=NAME)
+        sent = await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN, name=NAME)
 
-        text = FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN_TURN_CAP).format(name=NAME)
+        text = FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN).format(name=NAME)
         assert sent is True
         assert [(p.channel_id, p.kind, p.value) for p in world.posts] == [(CHANNEL, "literal", text)]
         assert NAME in text and "{" not in text
@@ -118,18 +118,18 @@ class TestUiNotice:
         world = _world()
         await world.set_primary_channel()
 
-        assert await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN_TURN_CAP,
+        assert await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN,
                                                      name=NAME) is False
         assert world.posts == []
 
     async def test_without_a_channel_nothing_is_posted(self):
         world = _world(LanguageCode.EN)
 
-        assert await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN_TURN_CAP,
+        assert await world.notifier.notify_ui_notice(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN,
                                                      name=NAME) is False
         assert world.posts == []
 
     @pytest.mark.parametrize("lang", [LanguageCode.EN, LanguageCode.UK, LanguageCode.FR, LanguageCode.ES])
     def test_the_notice_never_claims_the_system_voice(self, lang):
-        text = FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN_TURN_CAP)
+        text = FileLocalizationAdapter().get_ui_string(lang, UIMessage.REMINDER_NOT_RUN)
         assert "[System" not in text and "SYSTEM:" not in text
