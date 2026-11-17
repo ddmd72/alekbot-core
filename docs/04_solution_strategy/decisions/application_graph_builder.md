@@ -11,6 +11,8 @@ telemetry, settings, the Firestore client and the web layer.
 
 ## Declared deviation
 
+**Superseded:** the builder is split per subsystem into one bundle build each; see `composition_root_consumers.md`.
+
 The builder is one function of about 750 lines, not section helpers: splitting it meant passing about 40 shared locals through
 parameters, a non-mechanical rewrite of code the move had to keep verbatim. **Split when** the next change needs one part of the
 graph alone, or "tidy main.py" runs.
