@@ -22,7 +22,7 @@ class TestContainer:
     def test_absent_without_the_bucket(self, monkeypatch):
         c = _container(monkeypatch)
         assert c.workspace_store is None and c.workspace_service is None
-        assert c.agent_services()["workspace_service"] is None
+        assert c.agent_services().workspace_service is None
 
     def test_present_with_the_bucket(self, monkeypatch):
         c = _container(monkeypatch, GCS_WORKSPACE_BUCKET="ws-bucket", GCS_MEDIA_BUCKET="media-bucket")
@@ -31,7 +31,7 @@ class TestContainer:
         assert c.workspace_service._store is c.workspace_store
         assert c.workspace_service._file_conversion is c.file_conversion_service
         assert c.file_conversion_service._workspace is c.workspace_store
-        assert c.agent_services()["workspace_service"] is c.workspace_service
+        assert c.agent_services().workspace_service is c.workspace_service
 
     def test_without_the_media_bucket_copies_from_chat_are_off(self, monkeypatch):
         c = _container(monkeypatch, GCS_WORKSPACE_BUCKET="ws-bucket")

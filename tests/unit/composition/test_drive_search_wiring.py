@@ -37,7 +37,7 @@ class TestContainer:
     def test_absent_without_a_drive(self, monkeypatch):
         c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.drive_search_service is None
-        assert c.agent_services()["drive_search_service"] is None
+        assert c.agent_services().drive_search_service is None
 
     def test_follows_the_drive_and_the_index_repository(self, monkeypatch):
         # The wiring is under test, not the adapter: any UserDrivePort will do.
@@ -48,7 +48,7 @@ class TestContainer:
         assert c.drive_search_service._repo is c.drive_index_repo
         assert c.drive_search_service._drive is c.user_drive
         assert c.drive_search_service._embeddings is c.embedding_service
-        assert c.agent_services()["drive_search_service"] is c.drive_search_service
+        assert c.agent_services().drive_search_service is c.drive_search_service
 
 
 def test_factory_hands_search_to_the_agent():
