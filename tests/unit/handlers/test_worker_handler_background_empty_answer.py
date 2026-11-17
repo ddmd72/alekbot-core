@@ -116,9 +116,10 @@ class TestDailyEmailReview:
 class TestDeepResearchNotice:
     async def _run(self, result):
         worker, _, _ = _dr_worker(notify=result)
-        worker._billing_webhook = AsyncMock()
+        alert_sink = AsyncMock()
+        worker._tasks["deep_research_webhook_event"]._notice_sender._alert_sink = alert_sink
         out = await worker._dispatch(_payload(event_type="response.cancelled"), {})
-        return out, worker._billing_webhook
+        return out, alert_sink
 
     async def test_empty_answer_is_final(self, caplog):
         with caplog.at_level(logging.ERROR):
