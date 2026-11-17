@@ -45,7 +45,7 @@ def test_the_deploy_environment_has_the_deploys_literals_secrets_and_cloud_run_n
     assert env["K_SERVICE"] == "alek-bot-dev" and env["K_REVISION"].startswith("alek-bot-dev-")
     assert env["MCP_RESOURCE_URI"] == f"{env['CLOUD_RUN_SERVICE_URL']}/mcp"
     assert set(prod_env.secret_names()) <= set(env)
-    assert "OPENAI_DEEP_RESEARCH_MODEL" not in env
+    assert "CLAUDE_DEEP_RESEARCH_MODEL" not in env
 
 
 def test_the_shaped_secrets_pass_the_validators_that_run_at_startup(monkeypatch):

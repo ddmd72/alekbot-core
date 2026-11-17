@@ -106,7 +106,6 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/telegram/webhook` | Telegram secret token | Telegram updates; enqueues `telegram_update` |
 | `POST` | `/worker` | OIDC | Cloud Tasks / Scheduler entry; `WorkerHandler` dispatches on `task_type` (`docs/07_deployment/SCHEDULERS.md`) |
 | `POST` | `/webhook/microsoft-tasks/<user_id>` | `clientState` | Graph change notifications (`?validationToken=` is echoed); re-indexes the task, renews the subscription |
-| `POST` | `/webhooks/openai/deep-research` | webhook signature | OpenAI deep research events; enqueues `deep_research_webhook_event` |
 | `GET` | `/health` | none | Liveness probe |
 
 ## Remote MCP server (claude.ai connector)

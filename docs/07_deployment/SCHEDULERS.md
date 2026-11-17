@@ -236,17 +236,11 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 
 ---
 
-## Deep Research Webhook Event (task, no schedule)
+## Deep Research Report Task
 
-| Field | Value |
-|-------|-------|
-| **Payload** | `{"task_type": "deep_research_webhook_event", "event_type", "job_id", "user_id", "account_id", "session_id", "origin_platform", "query"}` (no report text) |
-| **Enqueued by** | `POST /webhooks/openai/deep-research` after the signature check, the 72 h job claim `openai_deep_research:<job_id>` and the empty-user filter, with `dedup_key` `<job_id>`; an enqueue failure releases the claim and answers 500 |
-| **Handler** | `DeepResearchWebhookEventTask` (`services/deep_research_webhook_event_task.py`): re-reads the response by job id, then delivers the report (`response.completed`) or sends one notice with the query (`failed` / `incomplete` / `cancelled`). 400 on a missing field or unknown event, 422 without OpenAI retrieval (no retry), 500 on a retrieval failure or a notice that was not sent at all (Cloud Tasks retries); a report task that could not be enqueued is 200 (the user was already told) |
-| **Residuals** | Local dev without `OPENAI_API_KEY` cannot deliver webhook events (422). An event that exhausts its Cloud Tasks retries (retrieval keeps failing) loses the report silently: OpenAI was already acked |
-| **Report task** | The HTML report agent task has the dedup key `deep_research_report:<job_id>` (also from `job_main.py`); its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then tells the user |
+The HTML report agent task `deliver_deep_research` enqueues for a finished job (`job_main.py`) has the dedup key `deep_research_report:<job_id>`; its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then reports the failure (the job then enqueues `deep_research_failed` with `reason=delivery_failed`). The OpenAI deep-research webhook and its `deep_research_webhook_event` task were removed (2026-11): Claude is the only provider.
 
-**Delivery to the asking channel.** The origin channel and platform travel on every live delivery path (Claude Cloud Run Job, OpenAI webhook, in-service runner), so the report and any failure notice reach the channel that asked. `deliver_deep_research` returns whether the report was handed off and notifies the user when it was not. There is no polling task type: the `deep_research_polling` path is gone.
+**Delivery to the asking channel.** The origin channel and platform travel on every live delivery path (the Claude Cloud Run Job, the in-service runner), so the report and any failure notice reach the channel that asked. `deliver_deep_research` returns whether the report was handed off and notifies the user when it was not. There is no polling task type: the `deep_research_polling` path is gone.
 
 ---
 

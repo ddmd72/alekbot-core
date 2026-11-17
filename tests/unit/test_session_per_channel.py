@@ -593,7 +593,7 @@ class TestWorkerHandlerSessionExtraction:
                 notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
                 notification_service=notification, alert_sink=None, task_dispatch=AsyncMock(),
                 video_registry=MagicMock(), quota_service=None, media_storage=None, link_service=None,
-                short_link_service=None, deep_research_fetch=None, prompt_content_store=None),
+                short_link_service=None),
         )
         return worker, notification
 

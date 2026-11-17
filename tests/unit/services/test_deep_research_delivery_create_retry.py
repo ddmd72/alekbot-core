@@ -10,7 +10,7 @@ async def _run(queue, dedup="j1"):
     notifier.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
     with patch("src.services.deep_research_delivery.asyncio.sleep", new=AsyncMock()) as sleep:
         ok = await deliver_deep_research(result_text="t", user_id="u1", account_id="a1", query="q",
-                                         task_queue=queue, failure_notification=notifier,
+                                         task_queue=queue, notification=notifier,
                                          report_dedup_id=dedup)
     return ok, notifier, sleep
 

@@ -1,4 +1,4 @@
-"""One deep-research notice to the owner: the send both deep-research `/worker` tasks end in."""
+"""One deep-research notice to the owner: the send the `deep_research_failed` `/worker` task ends in."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple

@@ -237,6 +237,16 @@ class FactBornDueError(FactExpiryError):
     (DISCARD) or rewrite the fact as history, so a refusal of this kind that is never resent is not a loss."""
 
 
+class UnsupportedProviderError(Exception):
+    """A user's per-agent provider override (`UserBotConfig.agent_providers`) names a provider the agent does not
+    serve. The request fails instead of falling back to another provider, so a stale setting is seen and fixed."""
+
+    def __init__(self, agent_type: str, provider: str) -> None:
+        super().__init__(f"provider '{provider}' is not supported for {agent_type}")
+        self.agent_type = agent_type
+        self.provider = provider
+
+
 class SkillValidationError(ValueError):
     """A skill's text does not satisfy the format rules."""
 

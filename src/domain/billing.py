@@ -255,8 +255,6 @@ _PRICING_PER_MILLION_TOKENS: Dict[str, Dict[str, float]] = {
     "gpt-5-nano":                        {"input": 0.05,  "output": 0.40,  "cache_read": 0.10},
     "gpt-5-mini":                        {"input": 0.25,  "output": 2.00,  "cache_read": 0.10},
     "gpt-5":                             {"input": 1.25,  "output": 10.00, "cache_read": 0.10},
-    "o4-mini-deep-research-2025-06-26":  {"input": 2.00,  "output": 8.00,  "cache_read": 0.10},
-    "o3-deep-research-2025-06-26":       {"input": 10.00, "output": 40.00, "cache_read": 0.10},
     # --- Grok (xAI) ---
     # Rates verified against the live rate card 2026-08-14. xAI caches automatically;
     # cache_read is the cached-input price as a multiplier of input, per this table's

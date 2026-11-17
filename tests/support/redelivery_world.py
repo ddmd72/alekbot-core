@@ -499,8 +499,7 @@ def _consumers() -> Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]]:
 # ----------------------------------------------------------------------------- the world
 
 # `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
-_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
-                "deep_research_fetch", "prompt_content_store")
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service")
 
 
 class RedeliveryWorld:

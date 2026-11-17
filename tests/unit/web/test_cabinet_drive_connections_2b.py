@@ -156,7 +156,7 @@ async def test_the_list_describes_each_connection():
     assert (one["account_label"], one["state"], one["primary"]) == ("Alex Work", "active", True)
     assert one["write_folder"] == {"id": folder, "path": "R&D"}
     assert one["scope"] == {"whole_drive": False, "empty_means": "area", "folders": [{"id": folder, "path": "R&D"}]}
-    assert (one["searched_by_default"], one["indexing_enabled"], one["transcribe_enabled"]) == (True, False, False)
+    assert (one["searched_by_default"], one["indexing_enabled"], one["transcribe_enabled"]) == (True, False, True)
     assert one["reconnect"] is None and one["note"] == ""
     assert (two["mount_name"], two["primary"], two["write_folder"]) == ("Acme", False, None)
     assert two["note"] == "Acme work files: R&D, Tom's plan"

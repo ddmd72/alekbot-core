@@ -4,9 +4,7 @@ import pytest
 
 from src.services.billing_daily_summary_task import BillingDailySummaryTask
 from src.services.daily_email_review_task import DailyEmailReviewTask
-from src.services.deep_research_delivery import deliver_deep_research
 from src.services.deep_research_failed_task import DeepResearchFailedTask
-from src.services.deep_research_webhook_event_task import DeepResearchWebhookEventTask
 from src.services.execute_reminder_task import ExecuteReminderTask
 from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
@@ -61,24 +59,15 @@ async def test_the_video_runner_is_built_from_the_graphs_registry_dispatcher_sto
     assert runner._deliver_video is deliver_video
 
 
-async def test_the_deep_research_runners_are_built_from_the_graphs_fetch_store_dispatcher_and_one_shared_sender(
+async def test_the_deep_research_failure_runner_is_built_from_the_graphs_agents_notifier_and_ops_sink(
         prod_graph: ProdGraph):
     app = prod_graph.app
     failed = app.worker_handler._tasks["deep_research_failed"]
-    webhook = app.worker_handler._tasks["deep_research_webhook_event"]
 
-    assert type(failed) is DeepResearchFailedTask and type(webhook) is DeepResearchWebhookEventTask
-    assert failed._ensure_agents == webhook._ensure_agents == app.agent_factory.ensure_agents_for_user
-    assert failed._notice_sender is webhook._notice_sender
+    assert type(failed) is DeepResearchFailedTask
+    assert failed._ensure_agents == app.agent_factory.ensure_agents_for_user
     assert failed._notice_sender._notification is app.notification_service
     assert failed._notice_sender._empty_answer_reporter._alert_sink is app.alert_sink and app.alert_sink is not None
-    assert webhook._fetch == app.deep_research_fetch and webhook._fetch is not None
-    assert webhook._prompt_content_store is app.container.prompt_content_store
-    assert webhook._task_dispatch is app.task_dispatch
-    assert webhook._media_storage is app.media_storage
-    assert webhook._link_service is app.agent_worker_handler._link_service
-    assert webhook._notification is app.notification_service
-    assert webhook._deliver_report is deliver_deep_research
 
 
 async def test_the_review_runners_are_built_from_the_graphs_review_service_queue_marks_users_agents_notifier_and_flag(

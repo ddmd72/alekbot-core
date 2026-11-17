@@ -9,13 +9,11 @@ from typing import Optional
 
 
 class DedupStore(ABC):
-    """A mark that an event was taken, for the writer's TTL: daily-review starts (48 h), OpenAI deep-research webhook
-    jobs (72 h) and Telegram inline updates (1 h). Liveness follows each mark's own expiry, so writers with different
-    TTLs can share one store.
+    """A mark that an event was taken, for the writer's TTL: daily-review starts (48 h) and Telegram inline updates
+    (1 h). Liveness follows each mark's own expiry, so writers with different TTLs can share one store.
 
     Holds for every method:
-    - Tenancy: none; keys are global and namespaced by callers (`daily_review:{user}:{date}`, `openai_deep_research:{job}`,
-      `telegram::{update_id}`).
+    - Tenancy: none; keys are global and namespaced by callers (`daily_review:{user}:{date}`, `telegram::{update_id}`).
     - Legacy: a mark without an expiry is live for the reader's TTL from its creation time; a mark with neither is
       expired.
     - Errors: backend errors propagate.

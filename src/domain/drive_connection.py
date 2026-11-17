@@ -14,7 +14,9 @@ Fields:
 - `mount_name`: the user's name for the drive (D17); `DEFAULT_MOUNT_NAME` for the first one (E11).
 - `name_history`: every name the connection took, oldest first, each with the instant it was taken (§11.8); the last
   entry is `mount_name` (compared by `mount_name_key`). Empty on a connection stored before the field (no former names).
-- `indexing_enabled`, `transcribe_enabled`: the per-connection switches that were per user before.
+- `indexing_enabled`, `transcribe_enabled`: the per-connection switches that were per user before. A new connection
+  starts with transcription on (the global kill switch and the USD cap still gate the spend); a stored document without
+  the field reads as off (the repository's `from_dict`), so no existing connection changed.
 - `provider_account`: the provider account (realm, subject; label empty) of the grant the connection was activated with,
   the key of its initial build, so a tick reads it here and never decrypts the credential; None on a connection stored
   before the field (the fan-out backfills it).
@@ -64,7 +66,7 @@ class DriveConnection:
     ref_tag: str
     mount_name: str = DEFAULT_MOUNT_NAME
     indexing_enabled: bool = False
-    transcribe_enabled: bool = False
+    transcribe_enabled: bool = True
     state: ConnectionState = ConnectionState.ACTIVE
     created_at: datetime
     disconnected_at: Optional[datetime] = None
