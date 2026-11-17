@@ -10,7 +10,7 @@ location prior and scene labels; decisions D33–D40): **all six slices are buil
 the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cannot open is §4.18, S2 capture §4.19, S3/S4 card accuracy and the small fixes
 §4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
 marked "(branch)" below is now deployed code (2026-10-19).
-RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
+RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 ($10 monthly cap; a connection created from 2026-11-17 on starts with transcription on, earlier connections keep their stored value);
 the mirror folder (T2) is live since 2026-10-21 (the owner); the summary (T3) is not built.** How it works end to end, in plain English, is §4.23; the rollout and
 the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch and cap" and "Standing levers", and the rollout notes (ops).
 The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3; deployed): what a note is, the drive specialist's note tools, the receipt, the merge into cards and search, deleted files and
@@ -106,11 +106,11 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   call. It returns files in **tiers** that say how each matched (About, Mentioned in, By translation, Labelled,
   Related by meaning only), with strict AND over the query's words and a coverage line that says what it could not
   see. It replaces v1's ranked fusion (§6.6). The rollout purges and rebuilds every user's index (D30).
-- **Transcripts of recordings, T1 live since 2026-10-21, owner only** (RFC §27): an opt-in **on top of** indexing.
+- **Transcripts of recordings, T1 live since 2026-10-21** (RFC §27): runs **on top of** indexing, so it starts for a connection once indexing is on and its flag is on (a new connection's flag is on by default).
   A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the connection's own flag
-  (`DriveConnection.transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
+  (`DriveConnection.transcribe_enabled`, **on for a newly created connection**; connections created earlier keep their stored value, a document without the field reads as off; the owner's script sets it). The T2 mirror folder (live since 2026-10-21, owner) writes the
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3). Decoding of recordings (S5, live, accepted 2026-11-05) runs in the sandbox light service over a reverse tunnel, never in the indexer (`UNTRUSTED_CONTENT_SANDBOX_RFC.md` §7 S5).
 - **T2 read side (live since 2026-10-21 with T2; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
@@ -1560,20 +1560,21 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
   fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py` (an ID-card-like scan, a phone photo of a
   document, a screenshot, a landmark photo, a closed item in the fake drive).
 
-### 4.23 Transcripts of recordings (RFC §27, T1 and T2 live since 2026-10-21, owner only)
+### 4.23 Transcripts of recordings (RFC §27, T1 and T2 live since 2026-10-21)
 
 **In plain English.** The owner has voice memos, meetings and videos on the drive. Today the index knows only their name, date and
 length. With transcription on, the bot listens to them in the background and writes down what was said, with who said it and when
 (`[12:40] Speaker 2: …`). That text is indexed like any document, so a search for a sentence from a meeting finds the recording, and Smart can
 open the transcript and answer from it. Nothing is read aloud or sent to a chat on its own.
 
-**Where it runs.** The job states (`transcript_state`: `none ready working waiting current held parked failed`) are advanced across ticks by `DriveTranscriptStage` (`src/services/drive_transcript_stage.py`) on the indexer; the mirror folder is reconciled by `DriveTranscriptMirror` (`src/services/drive_transcript_mirror.py`, ports only). **Live deploy values:** the kill switch's deploy key `DRIVE_TRANSCRIBE_ENABLED_DEV` is `on` (the substitution `_DRIVE_TRANSCRIBE_ENABLED`; the Makefile default is off) and `DRIVE_TRANSCRIBE_USD_CAP_DEV` lowers the cap to $10 under the code's $20; the user flag is on for the owner only, until the zero-credential parser service exists.
+**Where it runs.** The job states (`transcript_state`: `none ready working waiting current held parked failed`) are advanced across ticks by `DriveTranscriptStage` (`src/services/drive_transcript_stage.py`) on the indexer; the mirror folder is reconciled by `DriveTranscriptMirror` (`src/services/drive_transcript_mirror.py`, ports only). **Live deploy values:** the kill switch's deploy key `DRIVE_TRANSCRIBE_ENABLED_DEV` is `on` (the substitution `_DRIVE_TRANSCRIBE_ENABLED`; the Makefile default is off) and `DRIVE_TRANSCRIBE_USD_CAP_DEV` lowers the cap to $10 under the code's $20; the connection flag is on for every connection created from 2026-11-17 on and keeps its stored value for earlier ones. The zero-credential precondition is met: media decoding runs in the sandbox light service, which gets no URL, credential or whole file ([sandbox_media_tunnel.md](../../04_solution_strategy/decisions/sandbox_media_tunnel.md), accepted 2026-11-05).
 
-**Who gets it.** Two switches, both off by default. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer: off means the
+**Who gets it.** Two switches. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer, off by default: off means the
 transcription stage is not even built. (2) The connection's own flag `DriveConnection.transcribe_enabled`, separate from "index my drive": indexing alone
-never sends a recording anywhere. It is set by the owner's script; there is no Cabinet toggle yet, and only the owner has it on (the
-decoder surface of ffmpeg on other people's files waits for the zero-credential parser service). The Cabinet shows a sentence about it
-only while the flag is on.
+never sends a recording anywhere. A **newly created connection starts with the flag on** (`DriveConnection` default, the only creation path is
+`DriveConnectionService._create`); connections created before that keep what they stored, and a stored document without the field reads as off
+(`firestore_drive_connection_repo`), so nothing was migrated. The spend stays bounded by the kill switch and the monthly USD cap. The owner's
+script can change the flag; there is no Cabinet toggle yet. The Cabinet shows a sentence about it only while the flag is on.
 
 **What happens to one recording** (the stage, `drive_transcript_stage.py`):
 1. A recording the policy admits becomes `ready` on the record (`transcript_state`). The queue is newest first. A recording still being
@@ -2736,7 +2737,7 @@ already read, then run the revision script. Rollback: restore the six-token back
 the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
 follows is slice S1 alone; it is part of the same rollout.
 
-**Transcripts (RFC §27; T1 live since 2026-10-21, owner only)** have their own runbook in the rollout notes (ops). In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
+**Transcripts (RFC §27; T1 live since 2026-10-21)** have their own runbook in the rollout notes (ops). In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
 `drive_transcriber` prompt documents (owner); pause; deploy main and the indexer with the switch **off**; verify both serve the new image; resume;
 then, to try it, set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and a low `DRIVE_TRANSCRIBE_USD_CAP_DEV` in `.env`, redeploy, and set the owner's flag with
 `scripts/infrastructure/drive_transcribe_flag.py` (dry run, then `--apply`). **Levers, fastest first:** the user's flag off (stops new work for him, keeps

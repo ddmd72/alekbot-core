@@ -51,7 +51,7 @@ async def test_list_by_state_across_users_with_the_indexing_filter():
 
 async def test_update_is_partial_and_never_moves_the_state():
     repo = FakeDriveConnectionRepository()
-    await repo.create(_conn("usr-1", "conn-1", state=NEEDS))
+    await repo.create(_conn("usr-1", "conn-1", state=NEEDS, transcribe_enabled=False))
     got = await repo.update("usr-1", "conn-1", indexing_enabled=True, credential_id="cred-9")
     assert (got.indexing_enabled, got.credential_id, got.transcribe_enabled, got.state) == (True, "cred-9", False, NEEDS)
     assert await repo.get("usr-1", "conn-1") == got

@@ -20,6 +20,10 @@ deltas of the build are Δ136–Δ175 in §27.16 and the as-built summary is §2
 4. **Two switches, both off by default:** the indexer kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution, from the deploy-only
    `DRIVE_TRANSCRIBE_ENABLED_DEV`) and the user's own flag `drive_transcribe_enabled` (set by the owner's script; no Cabinet toggle yet). Consent is
    per user and explicit; indexing alone sends no recording anywhere.
+   **Amendment 2026-11-17 (owner decision):** the flag is per connection (`DriveConnection.transcribe_enabled`) and a newly created connection
+   starts with it on, so turning indexing on is what starts transcription for it. Connections that existed before keep their stored value
+   (a document without the field reads as off); the owner's script still sets it per connection. The kill switch (off by default) and the USD cap
+   still gate every transcription. The text above is the original decision and is kept for history.
 5. **A hard monthly cap with reservations:** `TRANSCRIBE_USD_PER_MONTH` $20; a file's estimate is reserved before its first window, settled at
    collection in the reservation's month; a file that does not fit is parked whole until next month. An optional `DRIVE_TRANSCRIBE_USD_CAP`
    can only lower the cap.
