@@ -84,7 +84,6 @@ def _make_handler(
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         consolidation_queue=consolidation_queue,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         overflow_callback=overflow_callback,

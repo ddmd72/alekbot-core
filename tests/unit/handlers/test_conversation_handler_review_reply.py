@@ -83,7 +83,7 @@ class Rig:
             bindings = MagicMock()
             bindings.get = AsyncMock(return_value=binding)
         self.handler = ConversationHandler(
-            coordinator=self.coordinator, agent_factory=agent_factory, file_service=MagicMock(),
+            coordinator=self.coordinator, agent_factory=agent_factory,
             global_config=ConsolidationSettings(threshold=50, batch_size=30), channel_binding_service=bindings,
             fact_answers=self.answers if with_answers else None,
         )

@@ -585,9 +585,7 @@ class TestWorkerHandlerSessionExtraction:
             email_indexing_service=MagicMock(),
             notification_service=notification,
             consolidation_service=None,
-            coordinator=MagicMock(),
             agent_factory=AsyncMock(),
-            indexed_email_repo=None,
             user_repo=MagicMock(),
         )
         return worker, notification

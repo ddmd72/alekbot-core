@@ -54,7 +54,7 @@ def _handler(response):
     factory.user_repo.get_user = AsyncMock(return_value=None)
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock(return_value=response)
-    return ConversationHandler(coordinator=coordinator, agent_factory=factory, file_service=MagicMock(),
+    return ConversationHandler(coordinator=coordinator, agent_factory=factory,
                                global_config=ConsolidationSettings(threshold=50, batch_size=30)), session_store
 
 

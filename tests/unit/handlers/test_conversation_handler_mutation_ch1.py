@@ -41,7 +41,6 @@ def _handler(doc_service) -> ConversationHandler:
     return ConversationHandler(
         coordinator=MagicMock(),
         agent_factory=MagicMock(),
-        file_service=MagicMock(),
         doc_delivery_service=doc_service,
     )
 

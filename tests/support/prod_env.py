@@ -271,6 +271,4 @@ def install_offline_services(monkeypatch) -> OfflineServices:
 
     monkeypatch.setattr("src.web.worker_oidc_verifier.google_id_token.verify_oauth2_token", verify_oauth2_token)
 
-    from src.adapters.platform.factory import PlatformAdapterFactory
-    monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {})
     return OfflineServices(db, env, fallbacks)

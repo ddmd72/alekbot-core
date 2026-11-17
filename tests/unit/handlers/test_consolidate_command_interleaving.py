@@ -90,7 +90,7 @@ async def _world():
         return ConsolidationRun(processed=1)
 
     handler = ConversationHandler(
-        coordinator=None, agent_factory=_Factory(store), file_service=None, consolidation_queue=queue,
+        coordinator=None, agent_factory=_Factory(store), consolidation_queue=queue,
         global_config=ConsolidationSettings(batch_size=BATCH), overflow_callback=consolidate_now,
     )
     context = MessageContext(text="$consolidate", session_id=SESSION, user_id=USER, account_id="a1",

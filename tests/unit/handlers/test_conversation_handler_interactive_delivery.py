@@ -22,7 +22,7 @@ def _handler(response):
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock(return_value=response)
     handler = ConversationHandler(
-        coordinator=coordinator, agent_factory=factory, file_service=MagicMock(),
+        coordinator=coordinator, agent_factory=factory,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
     )
     return handler, coordinator

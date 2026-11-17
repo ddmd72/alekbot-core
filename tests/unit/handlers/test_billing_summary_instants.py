@@ -47,7 +47,7 @@ def _world() -> tuple[WorkerHandler, FirestoreAccountRepository, _RecordingWebho
     webhook = _RecordingWebhook()
     worker = WorkerHandler(
         agent_worker_handler=_Unused(), email_indexing_service=_Unused(), notification_service=_Unused(),
-        consolidation_service=None, coordinator=_Unused(), agent_factory=_Unused(), indexed_email_repo=None,
+        consolidation_service=None, agent_factory=_Unused(),
         user_repo=_Users(), account_repo=repo, billing_webhook=webhook,
     )
     return worker, repo, webhook

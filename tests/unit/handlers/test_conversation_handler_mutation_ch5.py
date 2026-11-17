@@ -23,7 +23,7 @@ def _context() -> MessageContext:
 @pytest.fixture
 def env():
     handler = ConversationHandler(
-        coordinator=MagicMock(), agent_factory=MagicMock(), file_service=MagicMock(),
+        coordinator=MagicMock(), agent_factory=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         fallback_service=MagicMock(), long_turn_service=MagicMock(),
     )

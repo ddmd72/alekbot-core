@@ -22,7 +22,6 @@ def _make_handler() -> ConversationHandler:
     return ConversationHandler(
         coordinator=MagicMock(),
         agent_factory=MagicMock(),
-        file_service=MagicMock(),
     )
 
 

@@ -40,7 +40,7 @@ def _handler(file_conversion_service=None):
     factory.user_repo = MagicMock()
     factory.user_repo.get_user = AsyncMock(return_value=None)
     return ConversationHandler(
-        coordinator=coord, agent_factory=factory, file_service=MagicMock(),
+        coordinator=coord, agent_factory=factory,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         file_conversion_service=file_conversion_service,
     ), coord
