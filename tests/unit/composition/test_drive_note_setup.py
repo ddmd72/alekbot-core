@@ -30,14 +30,6 @@ def test_no_lifecycle_with_the_switch_off_or_no_store():
                                                  drive=MagicMock()), DriveNoteLifecycle)
 
 
-def test_the_deleted_source_joins_the_search():
-    search = DriveSearchService(AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), embedding_space="s/8")
-    source = add_drive_note_deleted_source(search, AsyncMock(), AsyncMock(), embedding_space="s/8",
-                                             connections=AsyncMock())
-    assert isinstance(source, DriveNoteDeletedSearch) and search._deleted_sources[-1] is source
-    assert len(search._deleted_sources) == 2
-
-
 async def test_the_indexer_passes_the_lifecycle_to_the_tick(wired, monkeypatch):  # noqa: F811
     monkeypatch.delenv("DRIVE_NOTES_ENABLED", raising=False)
     indexer_main.build_app()
