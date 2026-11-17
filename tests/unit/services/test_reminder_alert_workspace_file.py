@@ -4,7 +4,7 @@ import inspect
 from datetime import datetime, timezone
 
 from src.domain.agent_note import AgentNote
-from src.services.reminders_service import build_reminder_alert
+from src.domain.reminder_alert import build_reminder_alert
 
 FILE = "projects/morning-briefing.md"
 LINE = f"Workspace file: workspace:{FILE}"

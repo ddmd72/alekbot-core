@@ -52,13 +52,13 @@ async def _seed_one_time_note(graph: Any, monkeypatch: Any) -> str:
     from src.adapters import firestore_agent_note_adapter
     from src.domain.agent_note import NoteCreate
     pin_datetime(monkeypatch, firestore_agent_note_adapter, T0 - timedelta(days=1))
-    note = await graph.app.worker_handler._notes_port.create_note(NoteCreate(
+    note = await graph.app.worker_handler._reminders_service._notes_port.create_note(NoteCreate(
         user_id="u1", text="call dad", instruction="Remind the user to call dad.", due=T0))
     return note.note_id
 
 
 def _notes(graph: Any) -> Any:
-    return graph.app.worker_handler._notes_port._col
+    return graph.app.worker_handler._reminders_service._notes_port._col
 
 
 async def test_a_one_time_fire_ticked_twice_enqueues_once(prod_graph, monkeypatch):

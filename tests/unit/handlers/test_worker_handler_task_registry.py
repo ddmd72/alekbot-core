@@ -28,7 +28,6 @@ TASKS = {
     "renew_task_subscriptions": ("_handle_renew_task_subscriptions", True),
     "renew_all_task_subscriptions": ("_handle_renew_all_task_subscriptions", False),
     "fire_due_reminders": ("_handle_fire_due_reminders", False),
-    "execute_reminder": ("_handle_execute_reminder", True),
     "start_email_indexing": ("_handle_start_email_indexing", False),
     "start_daily_email_review": ("_handle_start_daily_email_review", False),
     "daily_email_review": ("_handle_daily_email_review", True),

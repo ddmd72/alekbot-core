@@ -74,7 +74,7 @@ the next free id and says what is wrong, where (file and function, not line numb
 
 - `FirestoreAgentNoteAdapter.update_note` is a plain field update; `AgentNote` has no version history, so a rewritten
   `instruction` is lost. The instruction is one string, so any small correction replaces all of it.
-- It matters because the firing alert (`build_reminder_alert` in `src/services/reminders_service.py`) invites the
+- It matters because the firing alert (`build_reminder_alert` in `src/domain/reminder_alert.py`) invites the
   firing agent to update or delete the reminder on every fire. A long-crafted recurring reminder can rewrite itself
   with no way back; the per-change `notify_raw` receipt detects it but cannot restore it.
 - Fix, phase 1: snapshot the prior content to an append-only `revisions` subcollection before a content edit (fire-time

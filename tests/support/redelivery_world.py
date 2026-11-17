@@ -56,6 +56,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import SERVICE_URL, DedupCloudTasksClient
 from tests.support.worker_payload_fields import consumers
 from src.composition.connector_registry import ConnectorRegistry
+from src.composition.worker_setup import build_worker_tasks
 
 # 09:00 in Berlin (CET, after the October transition). No boundary is under test at this instant.
 T0 = datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
@@ -522,8 +523,11 @@ class RedeliveryWorld:
                                                     task_queue=self.dispatch),
             email_indexing_service=None, notification_service=self.notifier, consolidation_service=None,
             agent_factory=self.factory, user_repo=self.users,
-            task_dispatch=self.dispatch, reminders_service=self.reminders, notes_port=self.notes,
+            task_dispatch=self.dispatch, reminders_service=self.reminders,
             task_claims=self.claims, daily_review_marks=self.marks,
+            tasks=build_worker_tasks(notes_port=self.notes, user_repo=self.users,
+                                     ensure_agents=self.factory.ensure_agents_for_user,
+                                     notification_service=self.notifier, alert_sink=None),
         )
         keywords.update(handler_overrides)
         self.handler = WorkerHandler(**keywords)

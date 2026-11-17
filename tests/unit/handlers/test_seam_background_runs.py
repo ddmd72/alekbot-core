@@ -20,7 +20,7 @@ from src.handlers import worker_handler
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.services import reminders_service
 from src.services.email_review_service import EmailReviewService
-from src.services.reminders_service import build_reminder_alert
+from src.domain.reminder_alert import build_reminder_alert
 from tests.support.clock_instants import pin_datetime
 from tests.support.oauth_credentials_store import CredentialsStore, creds
 from tests.support.redelivery_world import RedeliveryWorld, ScriptedReview, deliver
