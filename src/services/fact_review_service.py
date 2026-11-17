@@ -100,26 +100,24 @@ from ..domain.request_context import RequestContext
 from ..domain.stored_fact import StoredFact
 from ..ports.account_repository import AccountRepository
 from ..ports.alert_sink import AlertSinkPort
-from ..ports.channel_binding_port import ChannelBindingPort
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
 from ..ports.fact_update_port import FactUpdatePort
-from ..ports.interactive_message_port import InteractiveMessagePort
 from ..ports.memory_write_lease import MemoryWriteLeasePort
-from ..ports.notification_state_port import NotificationStatePort
 from ..ports.person_card_repository import PersonCardRepository
 from ..ports.repository import FactRepository
 from ..ports.session_store import SessionStore
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
+from .fact_review_owner_channel import FactReviewOwnerChannel
 
 if TYPE_CHECKING:
     from .fact_answer_service import FactAnswerService
     from .fact_profile_service import FactProfileService
     from .fact_question_texts import FactQuestionTexts
     from .owner_timezone_resolver import OwnerTimezoneResolver
-    from .user_notification_service import UserNotificationService
 
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 _SENDER = "fact_review_service"
@@ -201,11 +199,13 @@ class FactReviewService:
     - `review_store`, `session_store`: housekeeping (step 5) and every question and state write; `session_store` also
       gives the owner's recent messages (step 10, mirror mode);
     - `repo`: the timed-out questions' facts and their neighbours, the stale facts, the prefetch and the service's fact
-      writes (steps 6-8, 10, 11), the biographical cache (step 13), the revive alert's read (step 15);
+      writes (steps 6-8, 10, 11), the revive alert's read (step 15);
+    - `bio_cache`: the biographical cache (step 13);
     - `answer_service`: every question close (steps 6, 11);
     - `coordinator`: the review pass (step 10);
-    - `notification_state`, `channel_bindings`, `interactive`: the send's channel and post (step 12);
-    - `notifications`: the owner's channel for his recent messages (step 10), the digest (T8d2);
+    - `owner_channel` (`FactReviewOwnerChannel`): its `notification_state`, `channel_bindings` and `interactive` give the
+      send's channel and post (step 12); its `notifications` the owner's channel for his recent messages (step 10) and
+      the digest (T8d2);
     - `alert_sink`: the revive alert (step 15);
     - `counters`: the day's counters (step 15);
     - `fact_updates`: the typed fact write of a history fallback (step 6, the timeout path), of the folds an ask supersedes
@@ -226,18 +226,16 @@ class FactReviewService:
         account_repo: AccountRepository,
         texts: "FactQuestionTexts",
         owner_zones: "OwnerTimezoneResolver",
-        notification_state: NotificationStatePort,
-        channel_bindings: ChannelBindingPort,
-        notifications: "UserNotificationService",
+        owner_channel: FactReviewOwnerChannel,
         session_store: SessionStore,
         task_queue: TaskQueue,
         answer_service: "FactAnswerService",
-        interactive: InteractiveMessagePort,
         alert_sink: AlertSinkPort,
         run_timeout_s: float,
         clock: Callable[[], datetime] = _utcnow,
         *,
         fact_updates: FactUpdatePort,
+        bio_cache: BiographicalCacheRefresher,
         cabinet_url: str,
         profile_step: Optional["FactProfileService"] = None,
         person_cards: Optional[PersonCardRepository] = None,
@@ -254,17 +252,18 @@ class FactReviewService:
         self._account_repo = account_repo
         self._texts = texts
         self._owner_zones = owner_zones
-        self._notification_state = notification_state
-        self._channel_bindings = channel_bindings
-        self._notifications = notifications
+        self._notification_state = owner_channel.notification_state
+        self._channel_bindings = owner_channel.channel_bindings
+        self._notifications = owner_channel.notifications
         self._session_store = session_store
         self._task_queue = task_queue
         self._answer_service = answer_service
-        self._interactive = interactive
+        self._interactive = owner_channel.interactive
         self._alert_sink = alert_sink
         self._run_timeout_s = run_timeout_s
         self._clock = clock
         self._fact_updates = fact_updates
+        self._bio_cache = bio_cache
         self._cabinet_url = cabinet_url
         self._profile_step = profile_step
         self._person_cards = person_cards
@@ -518,7 +517,7 @@ class FactReviewService:
         """Step 13: once, when this service wrote a fact. A refresh that raises here is not tried again."""
         if writes.any and not writes.refreshed:
             writes.refreshed = True
-            await self._repo.refresh_biographical_context_cache(owner_id=account_id)
+            await self._bio_cache.refresh_cache(owner_id=account_id)
 
     async def _refresh_after_error(self, account_id: str, writes: _FactWrites) -> None:
         """The `finally` of a run: a run cut short by an error after a fact write still refreshes, once; a refresh

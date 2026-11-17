@@ -40,6 +40,7 @@ from src.ports.repository import FactRepository
 from src.ports.session_store import SessionStore
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.user_notification_service import UserNotificationService
@@ -400,15 +401,16 @@ def build_review_service(
         account_repo=account_repo,
         texts=bundle.texts,
         owner_zones=bundle.owner_zones,
-        notification_state=bundle.notification_state,
-        channel_bindings=bundle.channel_bindings,
-        notifications=bundle.notifier,
+        owner_channel=FactReviewOwnerChannel(
+            notification_state=bundle.notification_state, channel_bindings=bundle.channel_bindings,
+            notifications=bundle.notifier, interactive=bundle.interactive,
+        ),
         session_store=bundle.sessions,
         task_queue=bundle.task_queue,
         answer_service=bundle.answer_service,
-        interactive=bundle.interactive,
         alert_sink=kit.sink,
         fact_updates=kit.recorder,   # the kit's typed path: a history fallback or a fold's supersede lands in the overlay
+        bio_cache=kit.repo,          # the kit's overlay store records the refresh; the live cache is untouched
         cabinet_url=KIT_CABINET_URL,
         run_timeout_s=run_timeout_s if run_timeout_s is not None else CONSOLIDATION.timeout_ms / 1000,
         clock=bundle.clock,

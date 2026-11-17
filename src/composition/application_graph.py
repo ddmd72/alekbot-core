@@ -110,6 +110,7 @@ from src.services.fact_answer_service import FactAnswerService
 from src.services.profile_question_answers import ProfileQuestionAnswers
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
@@ -987,16 +988,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         account_repo=account_repo,
         texts=_fact_question_texts,
         owner_zones=_owner_zones,
-        notification_state=notification_state_repo,
-        channel_bindings=channel_binding_adapter,
-        notifications=notification_service,
+        owner_channel=FactReviewOwnerChannel(
+            notification_state=notification_state_repo, channel_bindings=channel_binding_adapter,
+            notifications=notification_service, interactive=_interactive,
+        ),
         session_store=session_store,
         task_queue=agent_task_queue,
         answer_service=_fact_answer_service,
-        interactive=_interactive,
         alert_sink=_alert_webhook,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         fact_updates=_review_fact_updates,
+        bio_cache=container.biographical_context_service,
         cabinet_url=topology.cabinet_memory_url,
         profile_step=_fact_profile_step,
         person_cards=_person_cards,
