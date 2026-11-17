@@ -201,6 +201,11 @@ UI_STRINGS: Dict[str, str] = {
         "копії бот зможе прочитати. Список у вкладенні."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Файли, які бот не може відкрити",
+    UIMessage.REMINDER_NOT_RUN_TURN_CAP.value: (
+        "⚠️ Нагадування «{name}» не виконано: "
+        "його запуск досяг ліміту кроків, не завершившись. "
+        "Повторної спроби не буде."
+    ),
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ Не вдалося обробити твоє останнє повідомлення, бо я надто довго був зайнятий. Надішли його, будь ласка, ще раз.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "Це досі правда?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Так",

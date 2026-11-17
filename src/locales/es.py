@@ -173,6 +173,11 @@ UI_STRINGS: Dict[str, str] = {
         "las copias se podrán leer. La lista va adjunta."
     ),
     UIMessage.DRIVE_INACCESSIBLE_LIST_TITLE.value: "Archivos que el bot no puede abrir",
+    UIMessage.REMINDER_NOT_RUN_TURN_CAP.value: (
+        "⚠️ El recordatorio «{name}» no se ejecutó: "
+        "su ejecución alcanzó el límite de pasos antes de terminar. "
+        "No se volverá a intentar."
+    ),
     UIMessage.MESSAGE_NOT_PROCESSED_BUSY.value: "⚠️ No pude procesar tu último mensaje porque estuve ocupado demasiado tiempo. Envíalo de nuevo, por favor.",
     UIMessage.MEMORY_REVIEW_QUESTION.value: "¿Sigue siendo cierto?",
     UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Sí",
