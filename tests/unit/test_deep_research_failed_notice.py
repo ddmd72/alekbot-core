@@ -318,7 +318,7 @@ class TestGmailReconnectEnsureFailure:
         oauth.update.assert_not_awaited()
         oauth.save.assert_not_awaited()
         assert creds.needs_reconnect is False
-        worker._notification.notify.assert_not_awaited()
+        worker._gmail_reconnect_flag._notification.notify.assert_not_awaited()
 
         async def _ok(_uid):
             log.append("ensure")

@@ -313,7 +313,7 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
         boot.rows[task_type] = Row(status, answer, list(caplog.records[start:]), boot.connects[connects:])
     worker = boot.worker_closure["worker_handler"]
     boot.task_bodies = [b for c in FakeCloudTasksClient.instances for b in c.created_bodies()]
-    session = await worker._notification._session_store.load_session("u1:C1")
+    session = await worker._gmail_reconnect_flag._notification._session_store.load_session("u1:C1")
     boot.history = [(m.role, p.text, p.full_text) for m in session.messages for p in m.parts]
     boot.todo_config = await worker._task_setup._task_config.get_config("u1")
     boot.indexing_job = await worker._email_indexing._job_repo.get_job(INDEXING_JOB_ID)
