@@ -147,7 +147,7 @@ def _remove_temp_files(paths: List[str]) -> None:
         try:
             os.unlink(path)
         except FileNotFoundError:
-            pass
+            logger.debug("[DelegationEngine] temp file already gone: %s", path)
         except OSError as exc:
             logger.warning("[DelegationEngine] temp file not removed: %s (%s)", path, exc)
 
