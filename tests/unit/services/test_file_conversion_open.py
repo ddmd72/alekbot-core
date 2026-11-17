@@ -92,8 +92,7 @@ async def world():
     w.documents = RecordingDocuments()
     w.service = FileConversionService(
         storage=w.storage, media_storage=w.media, drive=w.drive, workspace=w.workspace,
-        connections=DriveConnectionService(repo, None), access=allow_access())
-    w.service.attach_documents(w.documents)
+        connections=DriveConnectionService(repo, None), access=allow_access(), documents=w.documents)
     return w
 
 
@@ -181,8 +180,8 @@ async def test_a_native_sheet_without_an_extension_is_read_under_a_name_with_the
 async def test_a_skill_ref_is_never_read_or_marked(world):
     skills = AsyncMock()
     skills.read.return_value = "Step 1: greet"
-    service = FileConversionService(storage=world.storage, skill_files=skills, access=allow_access())
-    service.attach_documents(world.documents)
+    service = FileConversionService(storage=world.storage, skill_files=skills, access=allow_access(),
+                                    documents=world.documents)
     opened = await service.open("skill:greeter/SKILL.md", "ann", "ann", deadline_at=DEADLINE)
     assert opened.body == "[File: skill:greeter/SKILL.md]\nStep 1: greet\n[/File: skill:greeter/SKILL.md]"
     assert opened.outcome is None and world.documents.requests == []

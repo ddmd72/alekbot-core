@@ -152,6 +152,20 @@ TARGETS: tuple[MutationTarget, ...] = (
             "src.composition.chat_services",
             "src.composition.platform_kit",
             "src.composition.worker_setup",
+            # The builder's per-subsystem bundles (composition-root refactor, slice S6).
+            "src.composition.boot_setup",
+            "src.composition.identity_setup",
+            "src.composition.operations_setup",
+            "src.composition.session_routing_setup",
+            "src.composition.file_delivery_setup",
+            "src.composition.language_setup",
+            "src.composition.notification_setup",
+            "src.composition.background_jobs_setup",
+            "src.composition.companion_setup",
+            "src.composition.memory_search_setup",
+            "src.composition.agents_setup",
+            "src.composition.integrations_setup",
+            "src.composition.memory_setup",
         )
     ),
     MutationTarget("src.adapters.firestore_repo", "tests/unit/adapters/fact_store_kit_equivalent_mutants.txt"),
@@ -292,6 +306,8 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.services.disabled_task", "tests/unit/services/disabled_task_equivalent_mutants.txt"),
     MutationTarget("src.services.language_resolver", "tests/unit/services/language_resolver_equivalent_mutants.txt"),
     MutationTarget("src.composition.deploy_topology", "tests/unit/composition/deploy_topology_equivalent_mutants.txt"),
+    MutationTarget("src.composition.agent_services", "tests/unit/composition/agent_services_equivalent_mutants.txt"),
+    MutationTarget("src.agents.agent_runtime", "tests/unit/agents/agent_runtime_equivalent_mutants.txt"),
     MutationTarget("src.domain.reminder_alert", "tests/unit/domain/reminder_alert_equivalent_mutants.txt"),
 )
 

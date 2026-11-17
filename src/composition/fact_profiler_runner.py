@@ -15,6 +15,7 @@ import asyncio
 from typing import Any, Mapping, Optional, Sequence
 
 from ..agents.fact_profiler_agent import AGENT_TYPE, FactProfilerAgent
+from ..agents.agent_runtime import AgentRuntime
 from ..domain.agent import AgentConfig
 from ..domain.confirmed_people import ConfirmedPerson
 from ..domain.fact_profiler_reply import FactProfilerReply
@@ -76,8 +77,6 @@ class FactProfilerRunner(FactProfilerPort):
             execution_context=context,
             prompt_builder=self._prompt_builder,
         )
-        # Mirror UserAgentFactory's post-construction wiring: without it _flush_billing and the content capture in
-        # _call_llm are silent no-ops.
-        agent._quota_service = self._quota_service
-        agent._prompt_content_store = self._prompt_content_store
+        # Without them _flush_billing and the content capture in _call_llm are silent no-ops.
+        agent.bind_runtime(AgentRuntime(prompt_content_store=self._prompt_content_store, quota_service=self._quota_service))
         return agent

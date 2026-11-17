@@ -6,7 +6,7 @@ identity with the objects the graph built.
 """
 import pytest
 
-from src.composition import application_graph
+from src.composition import integrations_setup, notification_setup
 from src.composition.application_graph import build_application_graph
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
@@ -36,9 +36,10 @@ def _build(monkeypatch):
     services = prod_env.install_offline_services(monkeypatch)
     monkeypatch.setenv("ENABLE_HTML_RENDERER", "true")
     renderer = _Renderer()
-    monkeypatch.setattr(application_graph, "PlaywrightHtmlRenderer", lambda *a, **k: renderer)
+    # The graph's notification bundle builds the renderer and its integrations bundle the activation (builder split S6).
+    monkeypatch.setattr(notification_setup, "PlaywrightHtmlRenderer", lambda *a, **k: renderer)
     activation, slack, telegram = [], [], []
-    _record(monkeypatch, application_graph, "build_drive_activation", activation)
+    _record(monkeypatch, integrations_setup, "build_drive_activation", activation)
     _record(monkeypatch, SlackAdapterFactory, "create_adapter", slack)
     _record(monkeypatch, TelegramAdapterFactory, "create_adapter", telegram)
     from src.config.settings import load_settings

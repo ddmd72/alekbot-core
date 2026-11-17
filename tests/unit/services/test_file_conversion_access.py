@@ -37,9 +37,9 @@ class World:
         connections = DriveConnectionService(self.repo, None)
         self.drive_service = UserDriveService(self.fake, connections)
         self.conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=self.fake,
-                                                connections=connections, access=self.drive_service)
-        self.conversion.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"),
-                                                         FakeSplitter()))
+                                                connections=connections, access=self.drive_service,
+                                                documents=DocumentService(FakeExtractor("parser"),
+                                                                          FakeExtractor("reader"), FakeSplitter()))
         root = self.fake.tree(self.handle).root.item_id
         self.rd = self.fake.plant(self.handle, root, "R&D", folder=True)
         self.plan = self.fake.plant(self.handle, self.rd, "Tom's plan.txt", b"plan")

@@ -6,13 +6,13 @@
 # A loop that start() creates (_flush_task, _sweep_task) is never listed: the test requires it to be running.
 
 # ---- off in production
-LoggerAgent.log_sink  # off-in-prod APP_ENV=development in cloudbuild-dev.yaml:23, application_graph.py builds GcpLogSink only when not is_development
+LoggerAgent.log_sink  # off-in-prod APP_ENV=development in cloudbuild-dev.yaml:23, operations_setup.py builds GcpLogSink only when not is_development
 
 # ---- optional settings production leaves unset
 AuthConfig.firebase_service_account  # optional-knob GOOGLE_APPLICATION_CREDENTIALS is not in the deploy (config/auth.py:62, Cloud Run uses ADC)
 OpenAIDeepResearchAdapter._model_override  # optional-knob OPENAI_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
 ClaudeDeepResearchAdapter._model_override  # optional-knob CLAUDE_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
-SmartResponseAgent._default_thinking_effort  # optional-knob UserBotConfig.agent_thinking is unset for the seeded user (user_agent_factory.py:427)
+SmartResponseAgent._default_thinking_effort  # optional-knob UserBotConfig.agent_thinking is unset for the seeded user (user_agent_factory.py:407)
 
 # ---- lazy clients and caches, built on first use
 PlaywrightHtmlRenderer._browser  # lazy Chromium starts on the first widget request (playwright_html_renderer.py:35)
@@ -22,8 +22,8 @@ GcsWorkspaceAdapter._client  # lazy storage client built on first use (gcs_works
 BigQueryPromptContentAdapter._client  # lazy BigQuery client (bigquery_prompt_content_adapter.py:75)
 GcpKmsCipherAdapter._client  # lazy KMS async client built on the first encrypt or decrypt, inside the running event loop, plan D-P6 (gcp_kms_cipher_adapter.py:35-38)
 MCPClient._tool_declarations  # lazy filled by the first get_tool_declarations() (adapters/mcp/mcp_client.py:48-57)
-FactProfilerRunner._agent  # lazy the internal profiler agent is built on the first profile() call, under the runner's lock (fact_profiler_runner.py:50,59-67, FACT_PROFILE_RFC 4.1)
-EmailCardRunner._agent  # lazy the card writer agent is built on the first write() call, under the runner's lock (email_card_runner.py:42,51-55)
+FactProfilerRunner._agent  # lazy the internal profiler agent is built on the first profile() call, under the runner's lock (fact_profiler_runner.py:52,62-70, FACT_PROFILE_RFC 4.1)
+EmailCardRunner._agent  # lazy the card writer agent is built on the first write() call, under the runner's lock (email_card_runner.py:43,52-56)
 FactSearchService._places  # lazy the search's own reference to the place names is taken on the first search that names a place or carries the owner's home, from the one LazyAtlas that start() already loaded: no second read of the table (fact_search_service.py _names, fact_search_setup.py atlas.names)
 
 # ---- state a served request fills
@@ -31,22 +31,22 @@ RouterAgent._cached_triage_prompt  # runtime built on the first triage (router_a
 CircuitBreaker.last_failure_time  # runtime set by the first recorded failure (utils/circuit_breaker.py:49)
 
 # ---- by design in the code
-BaseAgent._retry_policy_override  # by-design no composition caller passes retry_policy=, so the class-level RETRY_POLICY applies (base_agent.py:209)
-ServiceContainer.google_tasks_provider  # by-design Google Tasks is frozen, MicrosoftToDo is the provider (service_container.py:149)
+BaseAgent._retry_policy_override  # by-design no composition caller passes retry_policy=, so the class-level RETRY_POLICY applies (base_agent.py:237)
+ServiceContainer.google_tasks_provider  # by-design Google Tasks is frozen, MicrosoftToDo is the provider (service_container.py:185)
 GcsMediaAdapter._sa_email  # by-design keyless V4 signing, the signer falls back to the credentials' own service_account_email (gcs_media_adapter.py:108)
 ConsolidationAgent.user_id  # by-design unused: user_id arrives per call in the payload and BaseAgent never reads self.user_id (consolidation_agent.py:173)
-app.agent_factory.file_conversion_service._containers._client._token_provider._token  # by-design the ID token is fetched lazily on the first call and cached until near expiry (metadata_id_token_provider.py, sandbox_parse_setup.py); the same parse adapter as _documents._parser, reached by a shorter path since U4b (application_graph.py containers=parse_adapter)
+app.agent_factory.file_conversion_service._containers._client._token_provider._token  # by-design the ID token is fetched lazily on the first call and cached until near expiry (metadata_id_token_provider.py, sandbox_parse_setup.py); the same parse adapter as _documents._parser, reached by a shorter path since U4b (service_container.py:480 containers=document_backends.parser)
 app.agent_factory.video_duration._client._token_provider._token  # by-design the ID token is fetched lazily on the first call and cached until near expiry (metadata_id_token_provider.py, sandbox_media_setup.py)
 app.agent_factory._docx_runner_factory.<closure shared>._client._token_provider._token  # by-design the render sandbox's ID token is fetched lazily on the first DOCX render and cached until near expiry (metadata_id_token_provider.py, sandbox_client_setup.py)
 app.agent_factory._pdf_runner_factory.<closure shared>._client._token_provider._token  # by-design the render sandbox's ID token is fetched lazily on the first PDF render and cached until near expiry (metadata_id_token_provider.py, sandbox_client_setup.py)
 app.agent_factory.video_duration._client._ssl_context  # by-design no composition caller passes ssl_context=, so every TLS connection uses ssl.create_default_context() (sandbox_tunnel_client.py:203, sandbox_media_setup.py)
-app.agent_factory.file_conversion_service._documents._reader._prompt_builder.repo  # by-design never reads facts, the reader builds its prompt with include_biographical=False (drive_model_call.py:230-231, document_service_setup.py:41)
-app.agent_factory.file_conversion_service._documents._reader._temp_root  # by-design no temp_root: the reader's work directory is the default TMPDIR, as on the indexer (drive_reader_runner.py:202)
-app.companion_extractor_runner._prompt_builder.repo  # by-design never reads facts, include_biographical=False (application_graph.py companion_prompt_builder comment)
-app.container.email_classifier._prompt_builder.repo  # by-design never reads facts, repo=None (service_container.py:300)
+app.agent_factory.file_conversion_service._documents._reader._prompt_builder.repo  # by-design never reads facts, the reader builds its prompt with include_biographical=False (drive_model_call.py:230-231, document_service_setup.py:62)
+app.agent_factory.file_conversion_service._documents._reader._temp_root  # by-design no temp_root: the reader's work directory is the default TMPDIR, as on the indexer (drive_reader_runner.py:263)
+app.companion_extractor_runner._prompt_builder.repo  # by-design never reads facts, include_biographical=False (companion_setup.py:59 comment)
+app.container.email_classifier._prompt_builder.repo  # by-design never reads facts, repo=None (service_container.py:377)
 app.container.email_indexing_service._card_step._cards._writer._prompt_builder.repo  # by-design never reads facts, repo=None: the card writer assembles its system prompt with include_biographical=False and no user or account (email_card_setup.py:37, email_card_agent.py:156-157)
-app.container.fact_profiler._prompt_builder.repo  # by-design never reads facts, repo=None: the profiler assembles its system prompt with include_biographical=False and no user or account (service_container.py:394, fact_profiler_agent.py _system_prompt)
-app.notification_service._platform_rich_content['telegram']._storage_port  # by-design Telegram has no media storage: the graph builds Telegram's one RichContentService without storage_port (application_graph.py:971), the same instance the Telegram chat handler holds, documented (rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:122-125)
+app.container.fact_profiler._prompt_builder.repo  # by-design never reads facts, repo=None: the profiler assembles its system prompt with include_biographical=False and no user or account (service_container.py:395, fact_profiler_agent.py _system_prompt)
+app.notification_service._platform_rich_content['telegram']._storage_port  # by-design Telegram has no media storage: the graph builds Telegram's one RichContentService without storage_port (application_graph.py:434), the same instance the Telegram chat handler holds, documented (rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:122-125)
 app.telegram_adapter.conversation_handler._channel_history  # by-design the Telegram Bot API cannot read chat history; only history_source="platform" bindings use it, guarded at conversation_handler.py:718 (slack_adapter_factory.py:110)
 app.coordinator.agents['router_agent_u1'].slots._thinking  # by-design the router's slots call keeps the router's cheap-model context and no thinking; only the memory-search slots agent passes thinking low (user_agent_factory.py router_slots_agent, fact_query_slots_setup.py)
 AgentDescriptor.allowed_intents*  # by-design None means every non-internal intent (agent_registry.py:58-62)
@@ -55,9 +55,9 @@ AgentDescriptor.dispatch_deadline_s*  # by-design only ASYNC agents declare a Cl
 
 # ---- agents that make no LLM call: no execution context, usage sink, content store or coordinator to inject
 BillingAgent._agent_execution_context  # by-design no _call_llm, usage goes straight to the quota service (billing_agent.py)
-BillingAgent._prompt_content_store  # by-design no _call_llm, nothing to capture (injection loop in user_agent_factory.py:629-636 skips it)
+BillingAgent._prompt_content_store  # by-design no _call_llm, nothing to capture (the bind_runtime loop in user_agent_factory.py:619-623 skips it)
 BillingAgent._quota_service  # by-design no _call_llm, it is the usage writer itself (billing_agent.py)
-BillingAgent.coordinator  # by-design no _call_llm, nothing to bill (user_agent_factory.py:629-636 injects per-user agents only)
+BillingAgent.coordinator  # by-design no _call_llm, nothing to bill (user_agent_factory.py:619-623 binds per-user agents only)
 LoggerAgent._agent_execution_context  # by-design no _call_llm (logger_agent.py)
 LoggerAgent._prompt_content_store  # by-design no _call_llm, nothing to capture (logger_agent.py)
 LoggerAgent._quota_service  # by-design no _call_llm, nothing to bill (logger_agent.py)
@@ -80,7 +80,7 @@ WebSearchLightAgent._agent_execution_context  # by-design STRATEGIES["web_search
 
 # ---- known defects, owner questions open (P9 design §6)
 app.telegram_adapter.conversation_handler._channel_binding  # by-design owner ruling 2026-10-23: channel binding is Slack-only; only slack_adapter_factory.py passes the service (slack_adapter_factory.py:66,129), so $agent on Telegram answers "not configured" (conversation_handler.py:1634)
-ConversationHandler.security_port  # defect:D6 no caller passes security_port= to ConversationHandler, so its output check is dead code (conversation_handler.py:568; other security_port= uses in service_container.py:384,392 feed other services)
+ConversationHandler.security_port  # defect:D6 no caller passes security_port= to ConversationHandler, so its output check is dead code (conversation_handler.py:568; other security_port= uses in service_container.py:300,491,499 feed other services)
 
 # ---- D8: a declared provider fallback that cannot run
 # web_search, tasks, domain_researcher, tutor and lelik_summarizer were fixed in P9 (they call _set_execution_context now, see

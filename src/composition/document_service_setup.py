@@ -10,18 +10,47 @@ main service:
   assembly service. Not the indexer's `_DrivePromptBuilder`: its whole-cache invalidation also clears the assembly
   cache, which here serves every agent.
 - the transcriber, the transcript cache and the graph's one quota service, passed through.
+
+`DocumentBackends` is what the graph builds before the `ServiceContainer` for it (the parse adapter, built first so a missing
+sandbox URL refuses the start, and the optional transcriber); the container builds the document service with its own
+context builder and hands it to the file conversion service at construction.
 """
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from typing import Any, Optional
 
+from ..adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
 from ..ports.audio_transcription_port import AudioTranscriptionPort
 from ..ports.quota_service import QuotaService
 from ..ports.transcript_cache_port import TranscriptCachePort
 from ..ports.user_repository import UserRepository
 from ..services.document_service import DocumentService
 from ..services.prompt_builder import PromptBuilder
+from ..utils.logger import logger
 from .drive_reader_runner import DriveReaderRunner
+
+
+@dataclass(frozen=True)
+class DocumentBackends:
+    """The document service's outside parts: `parser` is the sandbox's parse adapter (parser, PDF splitter and the
+    container-facts reader of D13 in one); `transcriber` is None without an OpenAI key (voice stays an honest alert)."""
+
+    parser: Any
+    transcriber: Optional[AudioTranscriptionPort]
+
+
+def build_document_backends(config: dict, *, parser: Any) -> DocumentBackends:
+    """The backends over `parser` and, when `OPENAI_API_KEY` is set, the transcription adapter (its model an optional knob
+    read with os.getenv)."""
+    transcriber = None
+    if config.get("OPENAI_API_KEY"):
+        transcriber = OpenAITranscriptionAdapter(api_key=config["OPENAI_API_KEY"],
+                                                 model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"))
+    else:
+        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
+    return DocumentBackends(parser=parser, transcriber=transcriber)
 
 
 def build_document_service(*, context_builder: Any, users: UserRepository, assembly_service: Any,

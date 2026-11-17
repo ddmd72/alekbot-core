@@ -40,10 +40,11 @@ async def world():
     assert w.drive.plant(w.one.handle, "root", "on-one.txt", b"one") == "item-1"
     assert w.drive.plant(w.two.handle, "root", "on-two.txt", b"two") == "item-1"     # the same item id on purpose (T-4)
     w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
+    # the document service the container passes: without it every open is a parser-unavailable note
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                       connections=connections, access=allow_access())
-    # the document service the application graph attaches: without it every open is a parser-unavailable note
-    conversion.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
+                                       connections=connections, access=allow_access(),
+                                       documents=DocumentService(FakeExtractor("parser"), FakeExtractor("reader"),
+                                                                 FakeSplitter()))
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
 

@@ -20,4 +20,4 @@ async def test_the_consolidation_agent_holds_the_containers_counters_by_identity
 def test_agent_services_carries_the_counters_for_every_script_that_unpacks_it(prod_graph: ProdGraph):
     container = prod_graph.app.container
 
-    assert container.agent_services()["lifecycle_counters"] is container.fact_lifecycle_counters
+    assert container.agent_services().lifecycle_counters is container.fact_lifecycle_counters

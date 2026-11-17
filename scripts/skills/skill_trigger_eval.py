@@ -82,7 +82,7 @@ async def main(cases_path: Path, complexity: str | None) -> None:
     for d in ALL_DESCRIPTORS:
         registry.register(d)
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
-                               user_repo=user_repo, account_repo=account_repo, **container.agent_services())
+                               user_repo=user_repo, account_repo=account_repo, services=container.agent_services())
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
 
     # Resolve provider/model/thinking exactly as production does for this complexity.

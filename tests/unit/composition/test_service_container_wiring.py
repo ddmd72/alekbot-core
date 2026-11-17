@@ -147,7 +147,7 @@ class TestServiceContainerWiring:
         assert isinstance(container.skill_service, SkillService)
         assert isinstance(container.skill_service._repo, FirestoreSkillRepository)
         assert container.skill_service._security is not None
-        assert container.agent_services()["skill_service"] is container.skill_service
+        assert container.agent_services().skill_service is container.skill_service
 
     def test_skill_service_has_system_skills_loaded(self, container):
         """System skills are read from the repo's src/skills/smart/ tree at startup

@@ -19,6 +19,7 @@ agent.
 from typing import Any, List, Optional
 
 from ..agents.email_classification_agent import EmailClassificationAgent
+from ..agents.agent_runtime import AgentRuntime
 from ..domain.agent import AgentConfig
 from ..domain.email import EmailClassificationResult, EmailMetadata
 from ..ports.email_classifier_port import EmailClassifierPort
@@ -84,8 +85,6 @@ class EmailClassifierRunner(EmailClassifierPort):
             prompt_builder=self._prompt_builder,
             user_id=user_id,
         )
-        # Mirror UserAgentFactory's post-construction wiring: without it _flush_billing and the content capture in
-        # _call_llm are silent no-ops.
-        agent._quota_service = self._quota_service
-        agent._prompt_content_store = self._prompt_content_store
+        # Without them _flush_billing and the content capture in _call_llm are silent no-ops.
+        agent.bind_runtime(AgentRuntime(prompt_content_store=self._prompt_content_store, quota_service=self._quota_service))
         return agent

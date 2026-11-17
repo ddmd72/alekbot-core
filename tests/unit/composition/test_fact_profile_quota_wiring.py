@@ -19,8 +19,12 @@ def test_the_builder_hands_its_quota_to_the_step():
 
 
 def test_the_graph_passes_its_quota_service_to_the_builder():
-    tree = ast.parse((ROOT / "src/composition/application_graph.py").read_text())
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "build_fact_profile_service"]
-    assert len(calls) == 1
-    quota = {k.arg: k.value for k in calls[0].keywords}.get("quota")
-    assert isinstance(quota, ast.Name) and quota.id == "quota_service"
+    """The graph's memory bundle builds the step (builder split S6) with the operations bundle's quota service, the one
+    the graph exposes as `quota_service`; the composition has no other call of the builder."""
+    calls = {path.name: [n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.Call)
+                         and getattr(n.func, "id", "") == "build_fact_profile_service"]
+             for path in sorted((ROOT / "src/composition").glob("*.py"))}
+    calls = {name: found for name, found in calls.items() if found}
+    assert list(calls) == ["memory_setup.py"] and len(calls["memory_setup.py"]) == 1
+    keywords = {k.arg: ast.unparse(k.value) for k in calls["memory_setup.py"][0].keywords}
+    assert keywords.get("quota") == "ops.quota_service"

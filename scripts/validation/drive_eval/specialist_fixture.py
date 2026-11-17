@@ -181,8 +181,8 @@ def build_drive_fixture(user_id: str, drive: Any, search: Any, *, user_config: A
     as_user = EvalUserSearch(search)
     connections = EvalDriveConnections(eval_connection(user_id))   # the case user's one connection (tag `ev`)
     service = UserDriveService(drive, connections)
-    conversion = FileConversionService(storage=storage, drive=drive, connections=connections, access=service)
-    conversion.attach_documents(_document_service(user_config, prompt_builder, context_builder))
+    conversion = FileConversionService(storage=storage, drive=drive, connections=connections, access=service,
+                                       documents=_document_service(user_config, prompt_builder, context_builder))
     operations = DriveOperations(conversion_service=conversion, drive_service=service, drive_search=as_user)
     files = FileManagementAgent(
         config=AgentConfig(agent_id=f"{FILE_MANAGEMENT.agent_id}_{user_id}", agent_type="file_management",

@@ -24,7 +24,7 @@ def test_the_switch_is_on_unless_explicitly_off(raw, on):
 def test_no_service_without_any_drive_client(monkeypatch):
     c = _container(monkeypatch, **NO_DRIVE_CLIENT)
     assert c.drive_note_service is None
-    assert c.agent_services()["drive_note_service"] is None and c.agent_services()["drive_notes_enabled"] is True
+    assert c.agent_services().drive_note_service is None and c.agent_services().drive_notes_enabled is True
 
 
 def test_the_service_on_the_drive_pair(monkeypatch):
@@ -43,12 +43,12 @@ def test_the_service_on_the_drive_pair(monkeypatch):
     assert service._connections is c.drive_connection_service and service._connections is not None
     assert isinstance(service._erase_requests, FirestoreEphemeralStore)
     assert service._erase_requests._collection == EnvironmentConfig().drive_note_erase_requests_collection
-    assert c.agent_services()["drive_note_service"] is service
+    assert c.agent_services().drive_note_service is service
 
 
 def test_switched_off_the_service_is_still_built_for_reads(monkeypatch):
     monkeypatch.setenv("DRIVE_NOTES_ENABLED", "off")
     c = _container(monkeypatch, **_DRIVE)
     assert c.drive_note_service is not None and c.drive_notes_enabled is False
-    assert c.agent_services()["drive_notes_enabled"] is False
+    assert c.agent_services().drive_notes_enabled is False
 

@@ -100,7 +100,7 @@ from ..domain.provider_account import ProviderAccount
 from ..domain.user_drive import DriveNotConnectedError
 from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
-from ..utils.logger import logger
+from ..utils.logger import exc_brief, logger
 
 _MAX_CREATE_ATTEMPTS = 32
 _LIVE = (ConnectionState.ACTIVE, ConnectionState.NEEDS_RECONNECT)
@@ -348,6 +348,17 @@ class DriveConnectionService:
         """The user's connection whose ref tag is `tag`, in any state (DISCONNECTED included); None when the user never
         had it. Under the connector audience None for a hidden drive."""
         return next((c for c in await self._visible_of(user_id) if c.ref_tag == tag), None)
+
+    async def mount_name_of_tag(self, user_id: str, tag: str) -> Optional[str]:
+        """The current mount name of the connection a ref tag names, DISCONNECTED included (its last name); None for a
+        tag the user never had or a failed lookup. For sources that print a path the connection's drive owns (the
+        owner-notes source of the deleted-files search)."""
+        try:
+            conn = await self.connection_of_tag(user_id, tag) if tag else None
+        except Exception as exc:
+            logger.warning(f"[DriveConnection] mount name lookup failed: {exc_brief(exc)}")
+            return None
+        return conn.mount_name if conn is not None else None
 
     # ------------------------------------------------------------------ settings (Cabinet actions, D18)
 

@@ -73,8 +73,7 @@ def documents():
 @pytest.fixture
 def svc(drive, connection, documents):
     service = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1],
-                                    access=allow_access())
-    service.attach_documents(documents)
+                                    access=allow_access(), documents=documents)
     return service
 
 

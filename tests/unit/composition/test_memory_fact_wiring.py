@@ -11,6 +11,7 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
 from src.services.memory_fact_service import MemoryFactService
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 from tests.unit.composition.test_service_container_wiring import (  # noqa: F401 — fixtures
     container,
     fake_config,
@@ -28,7 +29,7 @@ def test_container_exposes_memory_fact_service(container):  # noqa: F811
 
 
 def test_agent_services_includes_memory_fact_service(container):  # noqa: F811
-    assert container.agent_services()["memory_fact_service"] is container.memory_fact_service
+    assert container.agent_services().memory_fact_service is container.memory_fact_service
 
 
 @pytest.mark.asyncio
@@ -57,7 +58,7 @@ async def test_smart_agent_built_with_injected_memory_fact_service(mock_dependen
     cs.get_history_recent_full_turns = Mock(return_value=2)
     mock_dependencies["config_service"] = cs
 
-    factory = UserAgentFactory(**mock_dependencies, memory_fact_service=sentinel)
+    factory = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies, memory_fact_service=sentinel))
     cached = await factory._create_and_cache_agents("user123")
 
     assert cached["smart_agent"].memory_fact_service is sentinel

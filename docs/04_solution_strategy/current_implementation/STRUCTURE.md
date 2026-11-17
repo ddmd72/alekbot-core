@@ -89,6 +89,21 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── composition/        # Composition Root (Dependency Injection)
 │   ├── __init__.py
 │   ├── application_graph.py # `build_application_graph` — every non-web object of the main service, shared by `main()` and the tests (P9)
+│   ├── boot_setup.py # BootChecks — start-time refusals and derived values (cipher, digest key, auth, topology, parse adapter)
+│   ├── identity_setup.py # Identity — account, user, whitelist repositories, IAM, invite codes, Cabinet sign-in, phone OTP client
+│   ├── operations_setup.py # Operations — agent-task queue, alert sink, quota service, billing and logging agents
+│   ├── session_routing_setup.py # SessionRouting — overflow callback and window threshold by channel binding
+│   ├── file_delivery_setup.py # FileDelivery — media bucket, `/f/` and `/s/` links, document delivery
+│   ├── language_setup.py # Languages — UI strings and the LanguageResolver
+│   ├── notification_setup.py # Notifications — Slack app and kit, the user notification service
+│   ├── companion_setup.py # Companions — companion context assembler, extractor, "keep as a file"
+│   ├── memory_search_setup.py # MemorySearch — the one fact search, people cards, place atlas
+│   ├── agents_setup.py # Agents — UserAgentFactory, long-running turns, language preference writer
+│   ├── integrations_setup.py # Integrations — To Do, drive fan-out, reconnect notices, connect flow, credential removal
+│   ├── memory_setup.py # Memory — consolidation, janitor, memory review, Cabinet fact writes
+│   ├── background_jobs_setup.py # BackgroundJobs — agent worker handler, task dispatch, reminders, deep-research claims
+│   ├── document_service_setup.py # DocumentBackends — the document service's backends, consumed by ServiceContainer
+│   ├── agent_services.py # AgentServices — typed bundle `UserAgentFactory` takes as `services=`
 │   ├── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
 │   ├── deploy_topology.py # DeployTopology — the one source of the service URL, queue suffix and regions
 │   ├── chat_services.py # ChatServices bundle + build_conversation_handler, shared by both platform factories
@@ -347,8 +362,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 ### `composition/` - Composition Root (Dependency Injection)
 
--   **`application_graph.py`**: `ApplicationGraph` + `build_application_graph(config, db_client)` — builds every non-web object the main service runs (`ServiceContainer`, repositories, services, coordinator and registry, handlers, `UserAgentFactory`, Slack and Telegram adapters) and returns them as typed fields; `start()` / `shutdown()` run the background loops. `main()` and the P9 tests call the same function (`decisions/application_graph_builder.md`). One long function, a declared deviation from section helpers.
--   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Also owns all email infrastructure: `FirestoreIndexedEmailRepository`, `FirestoreOAuthCredentialsAdapter`, `GmailProviderAdapter`, `EmailSearchService`, `EmailIndexingService`, `EmailClassificationAgent` (shared singleton). Provides `agent_services()` dict for injection into `UserAgentFactory`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
+-   **`application_graph.py`**: `ApplicationGraph` + `build_application_graph(config, db_client)` — builds every non-web object the main service runs (`ServiceContainer`, repositories, services, coordinator and registry, handlers, `UserAgentFactory`, Slack and Telegram adapters) and returns them as typed fields; `start()` / `shutdown()` run the background loops. `main()` and the P9 tests call the same function (`decisions/application_graph_builder.md`). `build_application_graph` is a sequence of thirteen `*_setup.py` bundle builds plus `DocumentBackends`; five private helpers (`_build_coordinator`, `_build_generation_registries`, `_build_slack`, `_build_worker_handler`, `_build_telegram`) stay in the module (`decisions/composition_root_consumers.md`).
+-   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Also owns all email infrastructure: `FirestoreIndexedEmailRepository`, `FirestoreOAuthCredentialsAdapter`, `GmailProviderAdapter`, `EmailSearchService`, `EmailIndexingService`, `EmailClassificationAgent` (shared singleton). Builds the document service from `DocumentBackends`. `agent_services()` returns the typed `AgentServices` bundle that `UserAgentFactory` takes as `services=`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
 -   **`user_agent_factory.py`**: 🆕 `UserAgentFactory(AgentFactoryPort)` — per-user agent instance factory. Moved from `services/` to `composition/` (legal to import all layers). Caches agent sets per user (1h TTL). Resolves 3-level config (USER > ACCOUNT > SYSTEM) during instantiation. Two-tier lifecycle: **eager agents** (Router, Quick, Smart, Memory, WebSearch, etc.) created on first request; **lazy agents** (DocGenerator, PdfGenerator, DeepResearch, FileManagement, etc.) created on first delegation via `AgentFactoryPort.create_agent_on_demand()`. Lazy agents tracked in `_lazy_agent_ids` for eviction.
 -   **`deploy_topology.py`**: `DeployTopology` + `build_deploy_topology` — the one reader of `CLOUD_RUN_SERVICE_URL` and the development flag; the service URL, Cloud Tasks queue suffix and regions are read here only (a ratchet test keeps the literals out of other modules).
 -   **`chat_services.py`**: `ChatServices` (the `ConversationHandler` dependencies both platforms share) and `build_conversation_handler`, used by both platform factories; what differs per platform is explicit.

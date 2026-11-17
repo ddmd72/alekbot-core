@@ -10,6 +10,7 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
 from src.services.workspace_service import WorkspaceService
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 from tests.unit.composition.test_drive_wiring import _container
 from tests.unit.services.test_user_agent_factory import (  # noqa: F401 — fixture + helper
     _make_context,
@@ -21,7 +22,7 @@ class TestContainer:
     def test_absent_without_the_bucket(self, monkeypatch):
         c = _container(monkeypatch)
         assert c.workspace_store is None and c.workspace_service is None
-        assert c.agent_services()["workspace_service"] is None
+        assert c.agent_services().workspace_service is None
 
     def test_present_with_the_bucket(self, monkeypatch):
         c = _container(monkeypatch, GCS_WORKSPACE_BUCKET="ws-bucket", GCS_MEDIA_BUCKET="media-bucket")
@@ -30,7 +31,7 @@ class TestContainer:
         assert c.workspace_service._store is c.workspace_store
         assert c.workspace_service._file_conversion is c.file_conversion_service
         assert c.file_conversion_service._workspace is c.workspace_store
-        assert c.agent_services()["workspace_service"] is c.workspace_service
+        assert c.agent_services().workspace_service is c.workspace_service
 
     def test_without_the_media_bucket_copies_from_chat_are_off(self, monkeypatch):
         c = _container(monkeypatch, GCS_WORKSPACE_BUCKET="ws-bucket")
@@ -55,7 +56,7 @@ def _factory(deps, **extra):
     cs.get_principles_cache_limit = Mock(return_value=10)
     cs.get_history_recent_full_turns = Mock(return_value=2)
     deps["config_service"] = cs
-    return UserAgentFactory(**deps, notes_provider=AsyncMock(), recurrence=Mock(), **extra)
+    return UserAgentFactory(**user_agent_factory_kwargs(**deps, notes_provider=AsyncMock(), recurrence=Mock(), **extra))
 
 
 @pytest.mark.asyncio

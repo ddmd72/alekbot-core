@@ -51,8 +51,8 @@ async def world():
     w.email = FakeEmailSearch(w.mailbox)
     w.containers = FakeContainers()
     conversion = FileConversionService(storage=CountingStorage({"invoice_bathroom_es.docm": zc.macro_docm()}), drive=w.drive,
-                                       connections=connections, access=allow_access(), email=w.email)
-    conversion.attach_documents(RecordingDocuments(), containers=w.containers)
+                                       connections=connections, access=allow_access(), email=w.email,
+                                       documents=RecordingDocuments(), containers=w.containers)
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
 

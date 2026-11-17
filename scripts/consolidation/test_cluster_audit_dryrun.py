@@ -444,7 +444,7 @@ async def main(limit: int, batch_size: int, min_words: int, user_id: str, accoun
     # ── Factory + agents ──────────────────────────────────────────────
     factory = UserAgentFactory(
         config=config, env_config=env_config, coordinator=coordinator,
-        user_repo=user_repo, account_repo=account_repo, **container.agent_services(),
+        user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     print("\nCreating agents...")
     agents = await factory.ensure_agents_for_user(user_id)

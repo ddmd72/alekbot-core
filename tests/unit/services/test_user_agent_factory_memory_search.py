@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 
 from tests.unit.services.test_user_agent_factory import _make_context, mock_dependencies  # noqa: F401
 
@@ -28,7 +29,7 @@ async def test_get_memory_search_returns_the_users_facts_memory_agent(mock_depen
         setattr(cfg, name, Mock(return_value=10))
     mock_dependencies["config_service"] = cfg
 
-    factory = UserAgentFactory(**mock_dependencies)
+    factory = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))
     agent = await factory.get_memory_search("user123")
 
     assert isinstance(agent, FactsMemoryAgent)
@@ -53,6 +54,6 @@ async def test_router_gets_the_resolved_semantic_limit(mock_dependencies):  # no
     cfg.get_semantic_search_limit = Mock(return_value=77)
     mock_dependencies["config_service"] = cfg
 
-    cached = await UserAgentFactory(**mock_dependencies)._create_and_cache_agents("user123")
+    cached = await UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))._create_and_cache_agents("user123")
 
     assert cached["router_agent"].prefetch_limit == 77
