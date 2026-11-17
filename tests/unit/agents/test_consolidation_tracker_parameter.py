@@ -65,7 +65,6 @@ def make_agent(port=None, *, repo=None):
     if repo is None:
         repo = MagicMock()
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
-        repo.refresh_biographical_context_cache = AsyncMock()
         repo.get_active_facts_ordered = AsyncMock(return_value=[])
     pb = MagicMock()
     pb.build_for_agent = AsyncMock(side_effect=lambda **kw: "SYS|" + "|".join(
@@ -294,11 +293,11 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
     agent._bio_cache.refresh_cache.assert_awaited_once()
     pb.invalidate_biographical_cache.assert_called_once_with(ACC)
 
-    clean, repo2, pb2 = make_agent(ScriptedPort())
+    clean, _, pb2 = make_agent(ScriptedPort())
     clean._run_consolidation_loop = writes_then(RuntimeError("provider down"), write=False)
     with pytest.raises(RuntimeError):
         await run_v3(clean, ACC)
-    repo2.refresh_biographical_context_cache.assert_not_awaited()
+    clean._bio_cache.refresh_cache.assert_not_awaited()
     pb2.invalidate_biographical_cache.assert_not_called()
 
 
@@ -328,11 +327,11 @@ async def test_a_failed_write_does_not_count_as_a_write():
         async def create_fact(self, content, metadata, *, context):
             return {"fact_id": None, "status": "failed", "message": "invalid domain"}
 
-    agent, repo, _ = make_agent(Refusing())
+    agent, _, _ = make_agent(Refusing())
     agent._run_consolidation_loop = writes_then(RuntimeError("boom"))
     with pytest.raises(RuntimeError):
         await run_v3(agent, ACC)
-    repo.refresh_biographical_context_cache.assert_not_awaited()
+    agent._bio_cache.refresh_cache.assert_not_awaited()
 
 
 async def test_a_run_that_finished_does_not_refresh_inside_the_process():
@@ -344,7 +343,7 @@ async def test_a_run_that_finished_does_not_refresh_inside_the_process():
 
     agent._run_consolidation_loop = loop
     await run_v3(agent, ACC)
-    repo.refresh_biographical_context_cache.assert_not_awaited()      # the success path refreshes once, in the handler
+    agent._bio_cache.refresh_cache.assert_not_awaited()      # the success path refreshes once, in the handler
 
 
 async def test_execute_refreshes_once_on_success_and_once_on_a_failure_after_a_write():
@@ -420,7 +419,7 @@ async def test_email_pass_clean_failure_does_not_refresh_and_success_refreshes_o
     agent._run_consolidation_loop = AsyncMock(side_effect=RuntimeError("provider down"))
     with pytest.raises(RuntimeError):
         await run_email(agent)
-    repo.refresh_biographical_context_cache.assert_not_awaited()
+    agent._bio_cache.refresh_cache.assert_not_awaited()
 
     ok, repo_ok, _ = await email_agent(2)
 

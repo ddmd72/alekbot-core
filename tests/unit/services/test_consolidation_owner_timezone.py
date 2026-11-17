@@ -302,7 +302,6 @@ def _real_agent(store: FactStore, email_repo=None):
         bio_cache=NoCacheRefresh(),
     )
     agent.INLINE_CLUSTER_REVIEW = False
-    store.repo.refresh_biographical_context_cache = AsyncMock()
     spent: set = set()
 
     async def call(request, turn=1):

@@ -120,11 +120,6 @@ def make_agent(store: FactStore, *, email_repo: Any = None) -> ConsolidationAgen
     agent.seen = seen
     wrote: set = set()
 
-    async def refresh(**_: Any) -> None:
-        return None
-
-    store.repo.refresh_biographical_context_cache = refresh
-
     async def call(request, turn=1):
         first = request.messages[0].parts[0].text
         if len(request.messages) == 1:

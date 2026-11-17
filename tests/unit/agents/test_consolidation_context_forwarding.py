@@ -49,7 +49,6 @@ def make_agent(port=None):
     )
     repo = MagicMock()
     repo.get_biographical_context_cached = AsyncMock(return_value=[])
-    repo.refresh_biographical_context_cache = AsyncMock()
     return ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"),
         execution_context=execution_context, repository=repo, embedding_service=MagicMock(),

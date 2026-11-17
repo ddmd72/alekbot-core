@@ -34,7 +34,6 @@ class TestConsolidationAgent:
         repo.add_fact = AsyncMock()
         repo.add_fact_if_unique = AsyncMock(return_value=(True, "new_id"))
         repo.archive_observations = AsyncMock()
-        repo.refresh_biographical_context_cache = AsyncMock()
         # Returns List[Dict] — empty list is fine for tests
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
         return repo
@@ -267,7 +266,6 @@ class TestConsolidationAgentV3:
         repo.get_active_facts = AsyncMock(return_value=[])
         repo.get_active_facts_ordered = AsyncMock(return_value=[])  # Stage 2b directive review → empty rulebook
         repo.archive_observations = AsyncMock()
-        repo.refresh_biographical_context_cache = AsyncMock()
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
         return repo
 

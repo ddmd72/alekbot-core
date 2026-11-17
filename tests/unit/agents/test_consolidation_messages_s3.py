@@ -82,7 +82,6 @@ def make_agent(store: FactStore, script: Callable[[str], LLMResponse], *, email_
     agent.INLINE_CLUSTER_REVIEW = False
     agent.firsts = []
     agent.pb = pb
-    store.repo.refresh_biographical_context_cache = AsyncMock()
 
     async def call(request, turn=1):
         first = request.messages[0].parts[0].text

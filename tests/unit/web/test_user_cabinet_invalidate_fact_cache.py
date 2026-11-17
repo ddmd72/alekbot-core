@@ -68,7 +68,7 @@ async def test_invalidated_fact_leaves_the_cached_baseline_immediately():
 
 
 async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog):
-    # The port promises that the refresh never raises (FactRepository.refresh_biographical_context_cache, "Errors").
+    # The port promises that the refresh never raises (BiographicalCacheRefresher.refresh_cache, "Errors").
     # So the failure is driven inside the real repository (its facts read fails during the rebuild), not by replacing
     # the method with one that breaks the contract: the invalidation stands, the error is logged, the old cache stays.
     store = FactStore()
