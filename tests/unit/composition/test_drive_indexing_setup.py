@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.composition import drive_indexing_setup as setup
 from src.composition.service_container import ServiceContainer
@@ -49,17 +50,18 @@ def test_embedding_space_is_the_adapter_model_and_dimension():
 class TestDriveTaskQueue:
     def test_none_without_indexer_url(self, monkeypatch, env_config, recording_queue):
         monkeypatch.delenv("DRIVE_INDEXER_URL", raising=False)
-        assert setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p"}, env_config) is None
+        assert setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p"}, build_deploy_topology({}, env_config)) is None
         assert recording_queue.instances == []
 
     def test_none_without_project(self, monkeypatch, env_config, recording_queue):
         monkeypatch.setenv("DRIVE_INDEXER_URL", "https://indexer.example.invalid")
-        assert setup.build_drive_task_queue({}, env_config) is None
+        assert setup.build_drive_task_queue({}, build_deploy_topology({}, env_config)) is None
 
     def test_bound_to_drive_queue_and_indexer(self, monkeypatch, env_config, recording_queue):
         monkeypatch.setenv("DRIVE_INDEXER_URL", " https://indexer.example.invalid/ ")
         queue = setup.build_drive_task_queue(
-            {"GOOGLE_CLOUD_PROJECT": "p", "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid"}, env_config)
+            {"GOOGLE_CLOUD_PROJECT": "p", "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid"},
+            build_deploy_topology({}, env_config))
         assert queue.kwargs == {"project_id": "p", "location": "us-central1", "queue_name": "drive-sync-dev",
                                 "service_url": "https://indexer.example.invalid",
                                 "service_account_email": "sa@example.invalid"}
@@ -67,7 +69,7 @@ class TestDriveTaskQueue:
     def test_never_creates_the_queue(self, monkeypatch, env_config, recording_queue):
         """create_queue_if_not_exists would create it with concurrency 5 (§4)."""
         monkeypatch.setenv("DRIVE_INDEXER_URL", "https://indexer.example.invalid")
-        queue = setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p"}, env_config)
+        queue = setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p"}, build_deploy_topology({}, env_config))
         assert queue.created is False
 
 

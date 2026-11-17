@@ -19,6 +19,7 @@ def mock_dependencies():
     return {
         "config": {"GEMINI_API_KEY": "fake_key", "ANTHROPIC_API_KEY": "fake_anthropic_key"},
         "env_config": Mock(),
+        "deploy_topology": Mock(),
         "coordinator": Mock(),
         "user_repo": AsyncMock(),
         "account_repo": Mock(),

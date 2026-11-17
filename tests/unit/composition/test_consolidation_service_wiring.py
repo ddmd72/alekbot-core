@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition import slack_adapter_factory, telegram_adapter_factory
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
@@ -44,7 +45,7 @@ def _handler_kwargs_from_slack(monkeypatch, service):
     with pytest.raises(_Captured) as caught:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
-            app=MagicMock(), config={}, env_config=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(),
+            app=MagicMock(), config={}, deploy_topology=build_deploy_topology({}, MagicMock()), coordinator=MagicMock(), agent_factory=MagicMock(),
             iam_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
             consolidation_service=service,
         )

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 
@@ -21,7 +22,8 @@ def _slack(**extra):
             patch(_SLACK + "HTTPModeAdapter"), patch(_SLACK + "ConversationHandler") as handler:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
-            app=MagicMock(), config=config, env_config=env_config, coordinator=AsyncMock(),
+            app=MagicMock(), config=config, deploy_topology=build_deploy_topology(config, env_config),
+            coordinator=AsyncMock(),
             agent_factory=AsyncMock(), iam_service=AsyncMock(),
             session_store=MagicMock(), db_client=MagicMock(), **extra)
     return handler.call_args.kwargs
