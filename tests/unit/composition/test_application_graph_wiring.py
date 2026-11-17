@@ -14,6 +14,7 @@ inline graphs; the checks that read the real graph each have one test that break
 """
 import asyncio
 import copy
+import dataclasses
 import functools
 import types
 from collections import Counter
@@ -204,26 +205,25 @@ async def test_a_second_coordinator_a_second_handler_and_a_second_factory_are_re
         assert any(name in p and f"ledger says {was}, the graph has {now}" in p for p in problems), (name, problems)
 
 
-def drop_from_factory(monkeypatch, factory_class, **dropped) -> None:
-    """Make `factory_class.create_adapter` receive `None` for the named keyword arguments, as a lost line in the graph would."""
-    original = factory_class.create_adapter
+def drop_from_chat_services(monkeypatch, **dropped) -> None:
+    """Make the graph's one `ChatServices` hold `None` for the named fields, as a lost line in the graph would."""
+    from src.composition import application_graph
 
-    def create_adapter(*args, **kwargs):
-        kwargs.update({name: None for name in dropped})
-        return original(*args, **kwargs)
+    original = application_graph.ChatServices
 
-    monkeypatch.setattr(factory_class, "create_adapter", staticmethod(create_adapter))
+    def chat_services(*args, **kwargs):
+        return dataclasses.replace(original(*args, **kwargs), **{name: None for name in dropped})
+
+    monkeypatch.setattr(application_graph, "ChatServices", chat_services)
 
 
 @pytest.mark.slow
 async def test_a_dependency_dropped_while_building_an_adapter_is_reported_twice_over(monkeypatch):
-    """The D1 shape: the graph stops passing `doc_delivery_service` to the Slack handler and `memory_fact_service` to Telegram's."""
-    from src.composition.slack_adapter_factory import SlackAdapterFactory
-    from src.composition.telegram_adapter_factory import TelegramAdapterFactory
+    """The D1 shape: the graph stops passing `doc_delivery_service` and `memory_fact_service` to the chat handlers. Both
+    handlers are built from one `ChatServices`, so a dependency lost there is lost, and reported, on both platforms."""
     from tests.support import prod_graph as builder
 
-    drop_from_factory(monkeypatch, SlackAdapterFactory, doc_delivery_service=None)
-    drop_from_factory(monkeypatch, TelegramAdapterFactory, memory_fact_service=None)
+    drop_from_chat_services(monkeypatch, doc_delivery_service=None, memory_fact_service=None)
     graph = await builder.build(monkeypatch)
     try:
         nones = none_problems(graph.app)
@@ -231,9 +231,11 @@ async def test_a_dependency_dropped_while_building_an_adapter_is_reported_twice_
     finally:
         await graph.app.shutdown()
 
-    assert any("unledgered None: app.slack_adapter.conversation_handler._doc_delivery_service" in p for p in nones), nones
-    assert any("unledgered None: app.telegram_adapter.conversation_handler._memory_facts" in p for p in nones), nones
+    for name in ("slack_adapter", "telegram_adapter"):
+        assert any(f"unledgered None: app.{name}.conversation_handler._doc_delivery_service" in p for p in nones), nones
+        assert any(f"unledgered None: app.{name}.conversation_handler._memory_facts" in p for p in nones), nones
     assert any("slack ConversationHandler has no doc_delivery_service" in p for p in platform), platform
+    assert any("telegram ConversationHandler has no doc_delivery_service" in p for p in platform), platform
 
 
 # ----------------------------------------------------------------------------- the walk, on small inline graphs
