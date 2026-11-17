@@ -11,7 +11,7 @@ import pytest
 
 import indexer_main
 from src.composition.drive_note_setup import (
-    add_drive_note_deleted_source, build_drive_note_lifecycle, command_drive_note_service,
+    build_drive_note_deleted_source, build_drive_note_lifecycle, command_drive_note_service,
 )
 from src.services.drive_note_deleted_search import DriveNoteDeletedSearch
 from src.services.drive_note_lifecycle import DriveNoteLifecycle
@@ -28,6 +28,31 @@ def test_no_lifecycle_with_the_switch_off_or_no_store():
     assert build_drive_note_lifecycle(enabled=True, notes=None, index=MagicMock(), drive=MagicMock()) is None
     assert isinstance(build_drive_note_lifecycle(enabled=True, notes=MagicMock(), index=MagicMock(),
                                                  drive=MagicMock()), DriveNoteLifecycle)
+
+
+async def test_the_deleted_source_is_returned_and_names_mounts_through_the_connection_service():
+    connections = AsyncMock()
+    connections.mount_name_of_tag.return_value = "Acme"
+    connections.list_for_user.return_value = []
+    source = build_drive_note_deleted_source(AsyncMock(), AsyncMock(), embedding_space="s/8", connections=connections)
+    assert isinstance(source, DriveNoteDeletedSearch)
+    assert await source._mount_name_of("u1", "b2") == "Acme"
+    connections.mount_name_of_tag.assert_awaited_once_with("u1", "b2")
+
+
+async def test_the_search_service_answers_from_a_source_passed_at_construction():
+    calls = []
+
+    def source(label):
+        async def run(user_id, concepts, connection):
+            calls.append(label)
+            return [], []
+        return run
+
+    search = DriveSearchService(AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), embedding_space="s/8",
+                                deleted_sources=[source("first"), source("second")])
+    assert (await search.search_deleted("u1", "")).text.startswith("Deleted files (0):")
+    assert calls == ["first", "second"]
 
 
 async def test_the_indexer_passes_the_lifecycle_to_the_tick(wired, monkeypatch):  # noqa: F811
