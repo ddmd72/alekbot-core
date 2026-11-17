@@ -7,10 +7,10 @@ Verifies that each ABC port interface:
 3. Has no unexpected additions (method count assertion).
 4. Exposes correct signatures for key methods.
 
-Ports covered (19):
+Ports covered (18):
   AccountRepository, AudioTranscriptionPort, AuthPort,
   ConversationHandlerPort, EmbeddingService, FactManagementPort,
-  FactWritePort, FactRepository, FileService, IAMPort,
+  FactWritePort, FactRepository, IAMPort,
   InviteCodeRepository, LLMPort, LogSink (Protocol),
   PlatformAuthPort, QuotaService, SearchEnrichmentPort,
   TaskQueue (Protocol), UserRepository, WhitelistRepository.
@@ -31,7 +31,6 @@ from src.domain.fact_update import ParsedFactUpdate
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from src.ports.fact_write_port import FactWritePort
-from src.ports.file_service import FileService
 from src.ports.iam_port import IAMPort, ResourceType, Action, Role
 from src.ports.invite_code_repository import InviteCodeRepository
 from src.ports.llm_port import LLMPort, LLMResponse, LLMRequest, Message, MessagePart
@@ -674,46 +673,6 @@ class TestFactRepositoryMockImplementation:
         facts, cursor = result
         assert isinstance(facts, list)
         assert cursor is None
-
-
-# =============================================================================
-# FileService
-# =============================================================================
-
-class TestFileServiceContract:
-    def test_is_abstract_class(self):
-        assert issubclass(FileService, ABC)
-
-    def test_cannot_instantiate_directly(self):
-        with pytest.raises(TypeError):
-            FileService()
-
-    def test_has_upload_file(self):
-        assert getattr(FileService.upload_file, "__isabstractmethod__", False)
-
-    def test_all_abstract_methods_count(self):
-        abstract_methods = {
-            name for name, method in inspect.getmembers(FileService)
-            if getattr(method, "__isabstractmethod__", False)
-        }
-        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
-
-    def test_upload_file_signature(self):
-        sig = inspect.signature(FileService.upload_file)
-        params = list(sig.parameters.keys())
-        assert params == ["self", "path", "mime_type"]
-
-
-class TestFileServiceMockImplementation:
-    @pytest.fixture
-    def mock_service(self):
-        return AsyncMock(spec=FileService)
-
-    async def test_upload_file(self, mock_service):
-        part = MagicMock()
-        mock_service.upload_file.return_value = part
-        result = await mock_service.upload_file("/tmp/file.pdf", "application/pdf")
-        assert result is part
 
 
 # =============================================================================

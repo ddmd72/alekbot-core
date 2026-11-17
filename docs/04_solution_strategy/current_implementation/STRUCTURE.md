@@ -238,7 +238,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── deep_research_port.py # 🆕 DeepResearchPort — create_interaction(query, user_id, account_id,
 │   │                         #    original_query) → interaction_id. Delivery is adapter-specific:
 │   │                         #    Gemini adapter enqueues Cloud Task; OpenAI adapter uses webhook metadata.
-│   ├── file_service.py # File upload port
 │   ├── file_storage_port.py # 🆕 FileStoragePort ABC — user file attachments (upload/download/delete/exists/get_url)
 │   ├── audio_transcription_port.py # Audio transcription port (inactive)
 │   ├── html_renderer_port.py # 🆕 HtmlRendererPort ABC + HtmlRenderError
@@ -268,7 +267,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── cloud_tasks_service.py # Background task scheduling (removed → gcp_task_queue)
 │   ├── cost_calculator.py   # Token cost calculation utilities
 │   ├── embedding_service.py # Google Text Embeddings
-│   ├── file_upload_service.py # 🆕 File management implementation
 │   ├── prompt_builder.py    # Compositional Prompt Builder + UserPromptBuilder (merged)
 │   ├── provider_registry.py # 🆕 LLM Provider Service Locator
 │   ├── email_indexing_service.py # 🆕 Paginated inbox-to-Firestore pipeline (fetch → classify → store)
@@ -320,8 +318,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`firestore_quota_service.py`**: Firestore implementation of `QuotaService`. Takes `AccountRepository` via DI; calls `increment_account_usage(account_id, tokens, cost)` directly — no user→account lookup.
 -   **`firestore_repo.py`**: Firestore implementation of `FactRepository`. Supports SCD Type 2 and native vector search. Receives `SmartDeduplicationService` via DI (no lazy imports).
 -   **`firestore_session_store.py`**: Session persistence with **90-day TTL** and sliding window overflow logic.
--   **`platform/`**: Platform adapter factory:
-    -   `factory.py`: `PlatformAdapterFactory` — registry of `PlatformPort` implementations; `create(platform, **kwargs)`. The `PlatformPort` ABC lives in `ports/platform_port.py`.
 -   **`openai_transcription_adapter.py`**: `OpenAITranscriptionAdapter(AudioTranscriptionPort)` — speech-to-text via `/v1/audio/transcriptions`. Model `gpt-transcribe` (the only family accepting `languages`), env-overridable. Derives the filename extension from the mime type — the temp path's extension is a platform artifact (Telegram serves voice as `.oga`, which the API rejects by name).
 -   **`openai_realtime_adapter.py`**: 🆕 `OpenAIRealtimeAdapter(RealtimeSessionPort)` — one live speech-to-speech call over OpenAI's Realtime WebSocket (`gpt-realtime-2.1`), μ-law 8 kHz both directions. Normalizes provider events into `RealtimeSessionEvent` (`audio_delta`, `tool_call`, `speech_started`/`speech_stopped`, `response_created`/`response_done`, `user_transcript`/`model_transcript`, `error`) so the service layer never sees provider JSON. `cancel_response()` is barge-in's provider half. Module-level `_flatten_usage` flattens OpenAI's *nested* `response.done` usage into the flat billing legs `calculate_realtime_cost` prices — non-obvious: `cached_tokens` and `reasoning_tokens` are both **subsets**, so cached is subtracted from the input legs and reasoning is never added to the output leg; a payload with no `*_token_details` at all passes through unchanged and logs a warning (it prices at $0.00).
 -   **`twilio_telephony_adapter.py`**: 🆕 `TwilioTelephonyAdapter(TelephonyPort)` — outbound call origination via the Twilio REST API, with answering-machine detection mandatory. `Client.calls.create` is synchronous (`requests`), so it is offloaded through `asyncio.to_thread` rather than blocking the 1-vCPU main service's event loop.
@@ -346,7 +342,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Also owns all email infrastructure: `FirestoreIndexedEmailRepository`, `FirestoreOAuthCredentialsAdapter`, `GmailProviderAdapter`, `EmailSearchService`, `EmailIndexingService`, `EmailClassificationAgent` (shared singleton). Provides `agent_services()` dict for injection into `UserAgentFactory`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
 -   **`user_agent_factory.py`**: 🆕 `UserAgentFactory(AgentFactoryPort)` — per-user agent instance factory. Moved from `services/` to `composition/` (legal to import all layers). Caches agent sets per user (1h TTL). Resolves 3-level config (USER > ACCOUNT > SYSTEM) during instantiation. Two-tier lifecycle: **eager agents** (Router, Quick, Smart, Memory, WebSearch, etc.) created on first request; **lazy agents** (DocGenerator, PdfGenerator, DeepResearch, FileManagement, etc.) created on first delegation via `AgentFactoryPort.create_agent_on_demand()`. Lazy agents tracked in `_lazy_agent_ids` for eviction.
 -   **`slack_adapter_factory.py`**: `SlackAdapterFactory` — creates the appropriate Slack adapter (Socket or HTTP) based on `EnvironmentConfig`. Lives in `composition/` because it imports from `handlers/` (to create `ConversationHandler`) and `infrastructure/` — layers that `adapters/` cannot legally access. Creates `SlackMediaAdapter` → `RichContentService` → `ConversationHandler`, passes as `ConversationHandlerPort` to the platform adapter.
--   **`telegram_adapter_factory.py`**: 🆕 `TelegramAdapterFactory` — mirrors `SlackAdapterFactory`. Creates `TelegramMediaAdapter` → `RichContentService(html_renderer=html_renderer)` → `ConversationHandler` → `TelegramWebhookAdapter`. Receives shared `html_renderer` singleton from `build_application_graph`.
+-   **`telegram_adapter_factory.py`**: 🆕 `TelegramAdapterFactory` — mirrors `SlackAdapterFactory`. Creates `ConversationHandler` → `TelegramWebhookAdapter` around the `RichContentService` that `build_application_graph` builds (with the shared `html_renderer` singleton) and passes in.
 
 ### `config/` - Configuration Layer
 -   **`environment.py`**: Centralized environment detection and configuration. Manages `APP_ENV` (development/production/test). Provides Firestore collection prefixes for environment isolation.
@@ -422,7 +418,6 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 **Infrastructure Ports:**
 -   **`log_sink.py`**: Port for structured logging sinks. Adapter: `GcpLogSink`.
 -   **`task_queue.py`**: Port for background task queues (also defines `enqueue_email_indexing_task`). Adapter: `GcpTaskQueue`.
--   **`file_service.py`**: Port for file upload to LLM providers.
 -   **`audio_transcription_port.py`**: `AudioTranscriptionPort` ABC. Audio-to-text transcription (not yet active).
 -   **`platform_media_port.py`**: 🆕 `PlatformMediaPort` ABC — `upload_image(bytes, alt_text, channel_id)` and `upload_file(bytes, filename, title, channel_id)`. Implemented by `SlackMediaAdapter` and `TelegramMediaAdapter`.
 -   **`container_facts_port.py`**: `ContainerFactsPort` ABC. `container_facts(data, deadline_at) → ContainerFacts`; implemented by `SandboxContentExtractor` over `parse.container_facts`.

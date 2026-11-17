@@ -1,0 +1,22 @@
+# attach_* / set_* methods of classes in src/services/ and src/handlers/ (test_arch_no_late_wiring.py, part b).
+# Line: <path>::<Class>.<method>  # <reason>
+# A dependency setter is debt the composition-root refactor removes; a domain operation that happens to be named set_* is
+# not a setter and stays. A new dependency setter is never added: take the dependency in the constructor.
+# A line whose offence is gone fails: delete it.
+src/handlers/worker_handler.py::WorkerHandler.attach_slack_worker  # composition-root refactor (assessment D3)
+src/handlers/worker_handler.py::WorkerHandler.attach_telegram_worker  # composition-root refactor (assessment D3)
+src/services/biographical_context_service.py::BiographicalContextService.set_repository  # composition-root refactor (assessment D3)
+src/services/call_control_hub.py::CallControlLink.set_snapshot  # domain operation, not a dependency setter
+src/services/call_control_hub.py::CallControlLink.set_state  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_connector_access  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_indexing  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_primary  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_scope  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_searched_by_default  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_transcribe  # domain operation, not a dependency setter
+src/services/drive_connection_service.py::DriveConnectionService.set_write_folder  # domain operation, not a dependency setter
+src/services/email_indexing_service.py::EmailIndexingService.attach_card_step  # composition-root refactor (assessment D3)
+src/services/file_conversion_service.py::FileConversionService.attach_documents  # composition-root refactor (assessment D3)
+src/services/language_preference_service.py::LanguagePreferenceService.attach_agent_refresher  # composition-root refactor (assessment D3)
+src/services/language_preference_service.py::LanguagePreferenceService.set_preference  # domain operation, not a dependency setter
+src/services/user_notification_service.py::UserNotificationService.attach_localization  # composition-root refactor (assessment D3)

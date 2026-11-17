@@ -62,7 +62,7 @@ def _shown_not_obeyed(post: dict) -> None:
 
 
 def _handler() -> ConversationHandler:
-    return ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(), file_service=MagicMock(),
+    return ConversationHandler(coordinator=MagicMock(), agent_factory=MagicMock(),
                                global_config=ConsolidationSettings(threshold=50, batch_size=30),
                                localization=LocalizationService(FileLocalizationAdapter()))
 

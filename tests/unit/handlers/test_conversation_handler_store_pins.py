@@ -32,7 +32,7 @@ def world(monkeypatch):
     monkeypatch.setattr(retry_module, "asyncio", SimpleNamespace(sleep=no_wait))
     db = EvalDb(indexes=INDEXES_FILE, groups={SESS: "development_sessions"})
     store = FirestoreSessionStore(db, SESS, max_history_length=70, batch_size=50)
-    handler = ConversationHandler(coordinator=None, agent_factory=None, file_service=None)
+    handler = ConversationHandler(coordinator=None, agent_factory=None)
     return SimpleNamespace(db=db, store=store, handler=handler)
 
 

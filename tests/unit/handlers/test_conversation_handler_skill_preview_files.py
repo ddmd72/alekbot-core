@@ -92,7 +92,6 @@ def _make_handler(coordinator=None, *, localized: bool = False) -> ConversationH
     return ConversationHandler(
         coordinator=coordinator or MagicMock(),
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         localization=localization,
     )
@@ -107,7 +106,6 @@ def _make_skill_list_handler(skill_service) -> ConversationHandler:
     return ConversationHandler(
         coordinator=MagicMock(),
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         skill_service=skill_service,
     )

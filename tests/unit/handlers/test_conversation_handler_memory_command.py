@@ -44,7 +44,7 @@ def _channel() -> MagicMock:
 
 def _handler(memory_fact_service=None):
     handler = ConversationHandler(
-        coordinator=MagicMock(), agent_factory=MagicMock(), file_service=MagicMock(),
+        coordinator=MagicMock(), agent_factory=MagicMock(),
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         memory_fact_service=memory_fact_service,
     )

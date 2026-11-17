@@ -21,12 +21,10 @@ async def test_cognitive_transparency_and_streaming():
     mock_brain_service.append_model_message = AsyncMock()
 
     mock_agent_factory = AsyncMock()
-    mock_file_service = AsyncMock()
     
     handler = ConversationHandler(
         coordinator=AsyncMock(),
-        agent_factory=mock_agent_factory,
-        file_service=mock_file_service
+        agent_factory=mock_agent_factory
     )
     mock_response_channel = AsyncMock()
     mock_response_channel.send_status_with_phrase.return_value = ("msg_id", "Thinking...")

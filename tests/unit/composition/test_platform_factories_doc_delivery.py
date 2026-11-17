@@ -25,7 +25,7 @@ def _slack_handler(**extra) -> ConversationHandler:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             app=MagicMock(), config=config, env_config=env_config, coordinator=AsyncMock(),
-            agent_factory=AsyncMock(), iam_service=AsyncMock(), file_service=AsyncMock(),
+            agent_factory=AsyncMock(), iam_service=AsyncMock(),
             session_store=MagicMock(), db_client=MagicMock(), **extra)
     return adapter.call_args.kwargs["conversation_handler"]
 
@@ -36,7 +36,7 @@ def _telegram_handler(**extra) -> ConversationHandler:
             rich_content_service=MagicMock(),
             token="123:abc", webhook_secret="secret", dedup_store=MagicMock(), session_store=MagicMock(),
             coordinator=AsyncMock(), agent_factory=AsyncMock(), iam_service=AsyncMock(),
-            file_service=AsyncMock(), **extra)
+            **extra)
     return adapter.call_args.kwargs["conversation_handler"]
 
 

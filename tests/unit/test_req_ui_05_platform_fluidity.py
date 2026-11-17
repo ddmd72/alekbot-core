@@ -20,8 +20,7 @@ async def test_platform_agnostic_handling():
     
     handler = ConversationHandler(
         coordinator=AsyncMock(),
-        agent_factory=AsyncMock(),
-        file_service=AsyncMock()
+        agent_factory=AsyncMock()
     )
     mock_response_channel = AsyncMock()
     # Configure mock to return a tuple (message_id, phrase)

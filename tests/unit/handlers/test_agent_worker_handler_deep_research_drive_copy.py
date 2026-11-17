@@ -212,8 +212,8 @@ class TestEveryDeliveryPathCopies:
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
             notification_service=AsyncMock(), consolidation_service=None,
-            coordinator=MagicMock(), agent_factory=AsyncMock(),
-            indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=queue, media_storage=None,
+            agent_factory=AsyncMock(),
+            user_repo=MagicMock(), task_dispatch=queue, media_storage=None,
             deep_research_fetch=AsyncMock(return_value={"output_text": "findings", "model": "m"}),
         )
         _, status = await worker._dispatch({"task_type": task["task_type"], **task["payload"]}, {})

@@ -1,0 +1,17 @@
+# Writes to another object's private attribute anywhere in src/ (test_arch_no_foreign_private_writes.py).
+# Line: <path>::<enclosing function>::<target as written>  # <exact write count>  # <reason>
+# A new write is never added: pass the value to the constructor or add a public method. A line whose offence is gone
+# fails: delete it.
+src/adapters/drive_parser/readers.py::_watch_far_cells::sheet._get_row  # 1  # by design: a hook on openpyxl's private row builder, openpyxl pinned, test_drive_parser_xlsx_far_cell_hook.py guards it
+src/composition/companion_extractor_runner.py::CompanionExtractorRunner.extract::agent._prompt_content_store  # 1  # composition-root refactor (assessment D4)
+src/composition/companion_extractor_runner.py::CompanionExtractorRunner.extract::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/drive_reader_runner.py::DriveReaderRunner._agent::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/email_card_runner.py::EmailCardRunner._build::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/email_classifier_runner.py::EmailClassifierRunner._agent::agent._prompt_content_store  # 1  # composition-root refactor (assessment D4)
+src/composition/email_classifier_runner.py::EmailClassifierRunner._agent::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/fact_profiler_runner.py::FactProfilerRunner._build::agent._prompt_content_store  # 1  # composition-root refactor (assessment D4)
+src/composition/fact_profiler_runner.py::FactProfilerRunner._build::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/user_agent_factory.py::UserAgentFactory._create_and_cache_agents::agent._prompt_content_store  # 1  # composition-root refactor (assessment D4)
+src/composition/user_agent_factory.py::UserAgentFactory._create_and_cache_agents::agent._quota_service  # 1  # composition-root refactor (assessment D4)
+src/composition/user_agent_factory.py::UserAgentFactory.create_agent_on_demand::agent._prompt_content_store  # 1  # composition-root refactor (assessment D4)
+src/composition/user_agent_factory.py::UserAgentFactory.create_agent_on_demand::agent._quota_service  # 1  # composition-root refactor (assessment D4)

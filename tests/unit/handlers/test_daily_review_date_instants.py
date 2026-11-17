@@ -93,7 +93,7 @@ async def _world(zone: str, hour: int):
 
     worker = WorkerHandler(
         agent_worker_handler=_Unused(), email_indexing_service=_Unused(), notification_service=_Notification(),
-        consolidation_service=None, coordinator=_Unused(), agent_factory=_Factory(), indexed_email_repo=None,
+        consolidation_service=None, agent_factory=_Factory(),
         user_repo=_Users(profile), task_dispatch=TaskDispatchService(queue), email_review=review,
         daily_review_marks=_Marks(),
     )

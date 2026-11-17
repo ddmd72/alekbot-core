@@ -22,8 +22,6 @@ from ..services.consolidation_service import ConsolidationService
 from ..services.iam_service import IAMService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
-from ..ports.file_service import FileService
-from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.language_service_port import LanguageServicePort
 from ..services.localization_service import LocalizationService
 from ..services.channel_binding_service import ChannelBindingService
@@ -48,14 +46,12 @@ class SlackAdapterFactory:
         coordinator: AgentCoordinator,
         agent_factory: UserAgentFactory,
         iam_service: IAMService,
-        file_service: FileService,
         session_store: FirestoreSessionStore,
         db_client=None,
         consolidation_queue=None,
         consolidation_config=None,
         consolidation_service: Optional[ConsolidationService] = None,
         audio_service=None,
-        html_renderer: Optional[HtmlRendererPort] = None,
         notification_service: Optional[UserNotificationService] = None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
@@ -83,7 +79,6 @@ class SlackAdapterFactory:
             coordinator: AgentCoordinator instance
             agent_factory: Factory for creating per-user agents
             iam_service: IAMService for centralized authorization
-            file_service: FileService instance
             session_store: Session store (required for HTTP mode)
             db_client: Firestore AsyncClient (required for HTTP mode)
             consolidation_queue: Optional consolidation queue
@@ -108,7 +103,6 @@ class SlackAdapterFactory:
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
-            file_service=file_service,
             consolidation_queue=consolidation_queue,
             global_config=consolidation_config,
             audio_service=audio_service,
