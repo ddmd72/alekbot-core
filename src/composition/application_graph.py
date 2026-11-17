@@ -56,14 +56,12 @@ from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
-from src.composition import cipher_setup, voice_mcp_setup
+from src.composition.boot_setup import build_boot_checks
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_backends
 from src.composition.sandbox_client_setup import build_html_renderer
-from src.composition.sandbox_media_setup import build_sandbox_media
-from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
 from src.composition.chat_services import ChatServices
@@ -127,7 +125,7 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
-from src.composition.deploy_topology import DeployTopology, build_deploy_topology
+from src.composition.deploy_topology import DeployTopology
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
 from src.composition.fact_search_setup import build_fact_search_service
@@ -230,24 +228,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     """Build every non-web object of the main service from the settings dict and the Firestore client; starts nothing."""
     env_config = config["ENVIRONMENT_CONFIG"]
 
-    # Fail closed before anything else is built (SECRETS_AT_REST_RFC I6, plan D-P1): here, never inside the MCP
-    # build, whose errors main() swallows.
-    cipher = cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY"))
-    secret_digest_key = cipher_setup.digest_key(config.get("SECRET_DIGEST_KEY"))
-    # The voice MCP token kind's own key (LELIK_VOICE_MCP_RFC §5.2, O8): the VOICE_MCP_TOOLS knob on without it, or a
-    # bad key, refuses the start here, for the same reason.
-    voice_mcp_key = voice_mcp_setup.signing_key(
-        config.get(voice_mcp_setup.KEY_NAME), oauth_secret=voice_mcp_setup.effective_oauth_secret(config),
-        tools_enabled=voice_mcp_setup.voice_mcp_tools_enabled())
-    # The Cabinet session secret and the OAuth callback are checked here too, for the same reason: a placeholder secret or a
-    # localhost callback on Cloud Run refuses the start before anything is built.
-    auth_config = AuthConfig(config)
-    auth_config.validate()
-    topology = build_deploy_topology(config, env_config)
-    # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
-    parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
-    # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
-    video_duration = build_sandbox_media(config.get("SANDBOX_PARSE_URL") or "")
+    # Fail closed before anything else is built.
+    boot = build_boot_checks(config, env_config)
+    cipher, secret_digest_key, voice_mcp_key = boot.cipher, boot.digest_key, boot.voice_mcp_signing_key
+    auth_config, topology, parse_adapter, video_duration = (
+        boot.auth_config, boot.deploy_topology, boot.parse_adapter, boot.video_duration)
 
     logger.info("� Initializing Account Repository...")
     account_repo = FirestoreAccountRepository(
