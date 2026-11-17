@@ -67,8 +67,6 @@ def load_settings():
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY"),
         "XAI_API_KEY": os.getenv("XAI_API_KEY"),  # xAI Grok (Session 2026-02-12)
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),  # OpenAI (Session 2026-03-03)
-        "OPENAI_DEEP_RESEARCH_WEBHOOK_URL": os.getenv("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
-        "OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET": os.getenv("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
         "GOOGLE_SEARCH_API_KEY": os.getenv("GOOGLE_SEARCH_API_KEY"),
         "GOOGLE_SEARCH_CX": os.getenv("GOOGLE_SEARCH_CX"),
         # OAuth secrets (Session 2026-02-05)

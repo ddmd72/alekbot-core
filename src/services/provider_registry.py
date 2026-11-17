@@ -9,7 +9,7 @@ class ProviderRegistry(Generic[T]):
 
     Used for three provider families:
       ProviderRegistry[LLMPort]   — LLM providers (gemini, claude, grok, openai)
-      ProviderRegistry[DeepResearchPort] — async job providers (gemini, openai deep research)
+      ProviderRegistry[DeepResearchPort] — async job providers (claude deep research)
       ProviderRegistry[ImageGenerationPort] — image-rendering providers (grok), registered
         in build_application_graph; resolved via AgentContextBuilder.resolve_image_generation_context()
 

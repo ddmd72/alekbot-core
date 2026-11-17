@@ -7,7 +7,7 @@ import asyncio
 import os
 from functools import partial
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from telegram import Bot
 
@@ -23,7 +23,6 @@ from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.adapters.grok_image_adapter import GrokImageAdapter
 from src.adapters.grok_video_adapter import GrokVideoAdapter
-from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
@@ -125,8 +124,6 @@ class ApplicationGraph:
     reconnect_service: IntegrationReconnectService
     twilio_verify_client: Any
     task_dispatch: Optional[TaskDispatchService]
-    deep_research_fetch: Optional[Callable[..., Any]]
-    deep_research_dedup_store: FirestoreDedupStore
     file_token_service: FileAccessTokenService
     media_storage: Optional[GcsMediaAdapter]
     short_link_service: Optional[ShortLinkService]
@@ -195,7 +192,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         quota_service=ops.quota_service,   # and bills the indexing job's account
         document_backends=documents)
     coordinator = _build_coordinator(container, ops)
-    job_registry, image_registry, video_registry, deep_research_fetch = _build_generation_registries(
+    job_registry, image_registry, video_registry = _build_generation_registries(
         config, boot.deploy_topology, ops.task_queue)
     delivery = build_file_delivery(config, db_client, env_config, token_secret=boot.auth_config.oauth_session_secret,
                                    service_url=boot.deploy_topology.service_url)
@@ -203,7 +200,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     notifications = build_notifications(config, db_client, env_config, coordinator=coordinator,
                                         session_store=container.session_store, media_storage=delivery.media_storage,
                                         languages=languages)
-    jobs = build_background_jobs(db_client, env_config, container=container, coordinator=coordinator,
+    jobs = build_background_jobs(container=container, coordinator=coordinator,
                                  notification_service=notifications.service, task_queue=ops.task_queue,
                                  delivery=delivery, user_repo=identity.user_repo, languages=languages)
     companions = build_companions(db_client, env_config, container=container, user_repo=identity.user_repo,
@@ -229,8 +226,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     worker_handler = _build_worker_handler(
         db_client, env_config, container=container, identity=identity, ops=ops, delivery=delivery,
         notifications=notifications, jobs=jobs, companions=companions, agents=agents, integrations=integrations,
-        memory=memory, video_registry=video_registry, deep_research_fetch=deep_research_fetch,
-        slack_adapter=slack_adapter)
+        memory=memory, video_registry=video_registry, slack_adapter=slack_adapter)
     telegram_adapter = _build_telegram(db_client, env_config, chat=chat, container=container, identity=identity,
                                        ops=ops, languages=languages, notifications=notifications,
                                        worker_handler=worker_handler)
@@ -246,8 +242,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         connect_service=integrations.connect, credential_revocation=integrations.credential_revocation,
         drive_disconnect_service=integrations.drive_disconnect, task_setup_service=integrations.task_setup,
         reconnect_service=integrations.reconnect, twilio_verify_client=identity.twilio_verify_client,
-        task_dispatch=jobs.task_dispatch, deep_research_fetch=deep_research_fetch,
-        deep_research_dedup_store=jobs.deep_research_dedup_store, file_token_service=delivery.file_token_service,
+        task_dispatch=jobs.task_dispatch, file_token_service=delivery.file_token_service,
         media_storage=delivery.media_storage, short_link_service=delivery.short_link_service,
         companion_extractor_runner=companions.extractor_runner, call_text_files=companions.call_text_files,
         language_service=languages.resolver, language_preferences=agents.language_preferences,
@@ -283,24 +278,14 @@ def _build_coordinator(container: ServiceContainer, ops: Operations) -> AgentCoo
 
 
 def _build_generation_registries(config: dict, topology: DeployTopology, task_queue: Optional[GcpTaskQueue]) -> Tuple[
-        ProviderRegistry, ProviderRegistry, ProviderRegistry, Optional[Callable[..., Any]]]:
-    """The deep research, image and video provider registries and OpenAI's deep-research fetch (None without its key).
+        ProviderRegistry, ProviderRegistry, ProviderRegistry]:
+    """The deep research, image and video provider registries.
 
-    Deep research is per-user (`UserBotConfig.agent_providers["deep_research"]`: "claude" default, "openai"); each
-    adapter maps tier to model itself, and an optional env var pins a model. Image and video reuse the XAI_API_KEY of the
+    Deep research has one provider, "claude" (a Cloud Run Job); its adapter maps tier to model itself, and
+    CLAUDE_DEEP_RESEARCH_MODEL pins a model. Image and video reuse the XAI_API_KEY of the
     Grok LLM adapter behind their own ports (IMAGE_GENERATION_RFC §3.6-3.7, VIDEO_GENERATION_RFC §3.5-3.6); the video
     adapter takes the raw task queue (adapters depend on ports only) to enqueue its first poll tick."""
     job_registry = ProviderRegistry()
-    deep_research_fetch = None
-    if config.get("OPENAI_API_KEY"):
-        openai_adapter = OpenAIDeepResearchAdapter(
-            api_key=config["OPENAI_API_KEY"],
-            webhook_url=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
-            model_override=os.getenv("OPENAI_DEEP_RESEARCH_MODEL"),
-        )
-        deep_research_fetch = openai_adapter.fetch_response
-        job_registry.register("openai", openai_adapter)
-        logger.info("🔬 Deep research adapter registered: provider=openai")
     if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
         cloud_jobs_adapter = CloudRunJobsAdapter(project=config["GOOGLE_CLOUD_PROJECT"], region=topology.region)
         job_registry.register("claude", ClaudeDeepResearchAdapter(
@@ -318,7 +303,7 @@ def _build_generation_registries(config: dict, topology: DeployTopology, task_qu
         logger.info("🎨 Image and video generation adapters registered: provider=grok")
     else:
         logger.info("ℹ️ Image and video generation not configured (XAI_API_KEY not set)")
-    return job_registry, image_registry, video_registry, deep_research_fetch
+    return job_registry, image_registry, video_registry
 
 
 def _build_slack(config: dict, db_client: Any, *, container: ServiceContainer, coordinator: AgentCoordinator,
@@ -370,7 +355,6 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
                           identity: Identity, ops: Operations, delivery: FileDelivery, notifications: Notifications,
                           jobs: BackgroundJobs, companions: Companions, agents: Agents, integrations: Integrations,
                           memory: Memory, video_registry: ProviderRegistry,
-                          deep_research_fetch: Optional[Callable[..., Any]],
                           slack_adapter: HTTPModeAdapter) -> WorkerHandler:
     """`/worker`: Cloud Tasks is at-least-once, so claims keyed by task name stop a redelivered task from running twice
     (a claim whose attempt died is taken over by the retry; the 1 h TTL is garbage collection and the done-window, not
@@ -404,8 +388,7 @@ def _build_worker_handler(db_client: Any, env_config: EnvironmentConfig, *, cont
             notification_service=notifications.service, alert_sink=ops.alert_sink,
             task_dispatch=jobs.task_dispatch, video_registry=video_registry, quota_service=ops.quota_service,
             media_storage=delivery.media_storage, link_service=delivery.link_service,
-            short_link_service=delivery.short_link_service, deep_research_fetch=deep_research_fetch,
-            prompt_content_store=container.prompt_content_store, email_review=container.email_review_service,
+            short_link_service=delivery.short_link_service, email_review=container.email_review_service,
             # One review per user per local date; 48 h outlives the 3 h window and the date edge.
             daily_review_marks=FirestoreDedupStore(
                 db_client=db_client,

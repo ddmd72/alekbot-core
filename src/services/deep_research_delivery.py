@@ -2,7 +2,7 @@
 Deep Research Delivery Helpers
 ==============================
 
-Shared by WorkerHandler, AgentWorkerHandler, and deep_research_webhooks.
+Shared by AgentWorkerHandler and the deep-research Cloud Run Job (job_main.py).
 
 - upload_html_report()    — wrap markdown in HTML, upload to GCS via MediaStoragePort
                             (kept for debugging; not called from deliver_deep_research)
