@@ -292,7 +292,7 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             await self._read_until_session_updated()
 
     async def update_session(self, instructions: Optional[str] = None,
-                             tools: Optional[Sequence[dict]] = None) -> None:
+                             tools: Optional[Sequence[Dict[str, Any]]] = None) -> None:
         """One mid-call session.update with only what changes. New function tools keep the session's built-ins and
         MCP entries from open() beside them (a `tools` list replaces the whole list on the wire); an empty list sends
         `"tools": []` with no tool_choice. `session.updated` stays dropped; an `error` surfaces as any other."""

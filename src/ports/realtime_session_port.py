@@ -102,7 +102,7 @@ class RealtimeSessionPort(ABC):
         without late_tool_result_after_caller_turn."""
 
     async def update_session(self, instructions: Optional[str] = None,
-                             tools: Optional[Sequence[dict]] = None) -> None:
+                             tools: Optional[Sequence[Dict[str, Any]]] = None) -> None:
         """Replace the session's instructions and/or its FUNCTION tools mid-call, in one update; what is None stays
         as it is. `instructions` must already have PROMPT_CACHE_BOUNDARY stripped by the caller (an adapter strips it
         again). `tools` are function tools in the neutral shape open() takes; `tools=[]` removes all function tools,
