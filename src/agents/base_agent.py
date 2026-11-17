@@ -44,6 +44,7 @@ from ..utils.telemetry import get_tracer, request_user_scope
 if TYPE_CHECKING:
     from ..domain.llm import LLMRequest, LLMResponse
     from ..ports.llm_port import LLMPort, AgentExecutionContext
+    from .agent_runtime import AgentRuntime
 
 from ..domain.llm import (
     RECITATION_RETRY_DIRECTIVE,
@@ -197,13 +198,11 @@ class BaseAgent(ABC):
         # Read via ``self.retry_policy`` property to keep the lookup clear.
         self._retry_policy_override: Optional[RetryPolicy] = retry_policy
         self._agent_execution_context = None  # set via _set_execution_context()
-        self.coordinator = None  # injected post-construction by UserAgentFactory for all agents
-        # Queryable LLM content store (BigQuery). Injected post-construction by
-        # UserAgentFactory, like coordinator. None → capture skipped. The adapter
-        # owns record building + the background-task set (best-effort, non-blocking).
+        self.coordinator = None  # set by bind_runtime for all agents the composition root builds
+        # Queryable LLM content store (BigQuery). Set by bind_runtime, like coordinator. None → capture skipped. The
+        # adapter owns record building + the background-task set (best-effort, non-blocking).
         self._prompt_content_store = None
-        # Durable usage sink (QuotaService). Injected post-construction by
-        # UserAgentFactory, like coordinator. None → billing skipped.
+        # Durable usage sink (QuotaService). Set by bind_runtime, like coordinator. None → billing skipped.
         self._quota_service = None
         self._user_timezone: str = "UTC"  # overridden by subclasses that receive user_timezone
         # NOTE: token accumulators are deliberately NOT instance state — see
@@ -214,6 +213,14 @@ class BaseAgent(ABC):
             f"(type={config.agent_type}, model={config.llm_model or 'none'})"
         )
     
+    def bind_runtime(self, runtime: "AgentRuntime") -> None:
+        """Bind the coordinator, the prompt-content store and the quota service. The composition root calls it before
+        registering the agent: once routable, its calls must be billed and captured. Each one left None turns its
+        feature off, as for an agent never bound."""
+        self.coordinator = runtime.coordinator
+        self._prompt_content_store = runtime.prompt_content_store
+        self._quota_service = runtime.quota_service
+
     @property
     def agent_id(self) -> str:
         """Get agent identifier."""

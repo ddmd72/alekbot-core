@@ -15,6 +15,7 @@ import asyncio
 from typing import Any, Optional
 
 from ..agents.email_card_agent import AGENT_TYPE, EmailCardAgent
+from ..agents.agent_runtime import AgentRuntime
 from ..domain.agent import AgentConfig
 from ..domain.email_card_reply import CardWriterReply
 from ..domain.user import UserBotConfig
@@ -66,6 +67,6 @@ class EmailCardRunner(EmailCardWriterPort):
             execution_context=context,
             prompt_builder=self._prompt_builder,
         )
-        # Mirror UserAgentFactory's post-construction wiring: without it _flush_billing is a silent no-op.
-        agent._quota_service = self._quota_service
+        # Without the quota service _flush_billing is a silent no-op.
+        agent.bind_runtime(AgentRuntime(quota_service=self._quota_service))
         return agent

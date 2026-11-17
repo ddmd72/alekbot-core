@@ -6,13 +6,15 @@ Public interface:
     async build_drive_agent(agent_cls, agent_type, user_id, *, context_builder, user_repo, prompt_builder,
                             quota_service) -> agent          raises DriveModelUnavailable (no user, no provider)
 
-The user's UserBotConfig picks provider, tier and thinking through AgentContextBuilder (D7); the quota service is set
-after construction as UserAgentFactory does, without which `_flush_billing` is a silent no-op.
+The user's UserBotConfig picks provider, tier and thinking through AgentContextBuilder (D7); the quota service is bound
+through `bind_runtime` as UserAgentFactory does, without which `_flush_billing` is a silent no-op.
 """
 from __future__ import annotations
 
 from typing import Any, Optional, Type, TypeVar
 
+from ..agents.agent_runtime import AgentRuntime
+from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import DriveModelUnavailable
 from ..ports.prompt_builder_port import PromptBuilderPort
@@ -20,7 +22,7 @@ from ..ports.quota_service import QuotaService
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
-A = TypeVar("A")
+A = TypeVar("A", bound=BaseAgent)
 
 
 async def build_drive_agent(agent_cls: Type[A], agent_type: str, user_id: str, *, context_builder: Any,
@@ -38,5 +40,5 @@ async def build_drive_agent(agent_cls: Type[A], agent_type: str, user_id: str, *
     agent = agent_cls(  # type: ignore[call-arg]
         AgentConfig(agent_id=f"{agent_type}_{user_id}", agent_type=agent_type, capabilities=[agent_type]),
         context, prompt_builder, thinking=user.config.get_thinking_for_agent(agent_type))
-    setattr(agent, "_quota_service", quota_service)
+    agent.bind_runtime(AgentRuntime(quota_service=quota_service))
     return agent

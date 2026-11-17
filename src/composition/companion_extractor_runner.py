@@ -22,6 +22,7 @@ it) travels with it, because the turns are in other languages than the owner's.
 """
 from typing import Any, Dict, List, Optional
 
+from ..agents.agent_runtime import AgentRuntime
 from ..agents.lelik_summarizer_agent import LelikSummarizerAgent
 from ..agents.tutor_extractor_agent import TutorExtractorAgent
 from ..domain.agent import AgentIntent, AgentConfig, AgentMessage, AgentStatus
@@ -66,7 +67,7 @@ class CompanionExtractorRunner(CompanionExtractorPort):
         self._language = language_service
         self._user_repo = user_repo
         self._prompt_builder = prompt_builder
-        # Mirror the two post-construction attributes UserAgentFactory sets on every
+        # Bound onto the agent through bind_runtime, as UserAgentFactory does for every
         # agent it builds (see user_agent_factory.py::_create_and_cache_agents). This
         # runner bypasses the factory by design (constructs the agent fresh per batch,
         # not per-user-cached) so nothing else performs that wiring — without it,
@@ -102,11 +103,8 @@ class CompanionExtractorRunner(CompanionExtractorPort):
             execution_context=execution_context,
             prompt_builder=self._prompt_builder,
         )
-        # See __init__ comment — mirror UserAgentFactory's post-construction wiring
-        # (BaseAgent defaults both to None) so this agent's LLM usage is billed and
-        # captured to BigQuery like every other agent's.
-        agent._quota_service = self._quota_service
-        agent._prompt_content_store = self._prompt_content_store
+        # See __init__ comment: bound like every agent UserAgentFactory builds, so its LLM usage is billed and captured.
+        agent.bind_runtime(AgentRuntime(prompt_content_store=self._prompt_content_store, quota_service=self._quota_service))
 
         payload: Dict[str, Any] = {"task": EXTRACTION_TASK, "messages": messages}
         profile = _CALL_FILE_PROFILES.get(companion_type)

@@ -53,6 +53,7 @@ from ..agents.drive_document_reader_agent import AGENT_TYPE, DriveDocumentReader
 from ..infrastructure.drive_model_call import (
     DriveInputRefused, DriveInputTooLarge, DriveModelCallFailed, DriveModelTimedOut,
 )
+from ..agents.agent_runtime import AgentRuntime
 from ..domain.agent import AgentConfig
 from ..domain.drive_extraction import (
     DriveModelUnavailable, ExtractionOutcome, ExtractionRequest, ParserBusy, ParserUnavailable,
@@ -183,8 +184,8 @@ class DriveReaderRunner(ContentExtractorPort):
         agent = DriveDocumentReaderAgent(
             AgentConfig(agent_id=f"{AGENT_TYPE}_{user_id}", agent_type=AGENT_TYPE, capabilities=[AGENT_TYPE]),
             context, self._prompt_builder, thinking=user.config.get_thinking_for_agent(AGENT_TYPE))
-        # Mirror UserAgentFactory's post-construction wiring: without it _flush_billing is a silent no-op.
-        agent._quota_service = self._quota_service
+        # Without the quota service _flush_billing is a silent no-op.
+        agent.bind_runtime(AgentRuntime(quota_service=self._quota_service))
         return agent
 
     # -- image --------------------------------------------------------------------------------------------------
