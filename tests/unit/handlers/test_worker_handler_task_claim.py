@@ -98,20 +98,22 @@ async def test_agent_execution_second_delivery_is_duplicate():
     assert runs == 1
 
 
-async def test_daily_email_review_second_delivery_is_duplicate():
+async def test_daily_email_review_second_delivery_is_duplicate(monkeypatch):
+    runner = AsyncMock(return_value=({"status": "ok"}, 200))
+    monkeypatch.setattr(WorkerHandler, "_handle_daily_email_review", runner)   # before construction: the registry binds it
     h = _handler(_MemoryClaims())
-    h._handle_daily_email_review = AsyncMock(return_value=({"status": "ok"}, 200))
     payload = {"task_type": "daily_email_review", "user_id": "u1"}
-    _, second, runs = await _call_counts(h, payload, h._handle_daily_email_review)
+    _, second, runs = await _call_counts(h, payload, runner)
     assert second == ({"status": "duplicate"}, 200)
     assert runs == 1
 
 
-async def test_execute_reminder_second_delivery_is_duplicate():
+async def test_execute_reminder_second_delivery_is_duplicate(monkeypatch):
+    runner = AsyncMock(return_value=({"status": "ok"}, 200))
+    monkeypatch.setattr(WorkerHandler, "_handle_execute_reminder", runner)   # before construction: the registry binds it
     h = _handler(_MemoryClaims())
-    h._handle_execute_reminder = AsyncMock(return_value=({"status": "ok"}, 200))
     payload = {"task_type": "execute_reminder", "note_id": "n1"}
-    _, second, runs = await _call_counts(h, payload, h._handle_execute_reminder)
+    _, second, runs = await _call_counts(h, payload, runner)
     assert second == ({"status": "duplicate"}, 200)
     assert runs == 1
 
