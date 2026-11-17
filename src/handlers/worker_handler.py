@@ -105,7 +105,8 @@ class WorkerHandler:
 
     Owns no business logic — delegates to existing handlers/services. The only dispatcher of
     /worker: it claims every Cloud Tasks delivery by task name (decisions/worker_task_dedup.md)
-    and routes telegram updates and queued Slack events to the adapters attached by build_application_graph.
+    and routes queued Slack events to the Slack worker passed in at construction and telegram updates to the
+    Telegram worker bound by register_late_platform.
     """
 
     def __init__(
@@ -127,9 +128,11 @@ class WorkerHandler:
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
         reconnect: "Optional[IntegrationReconnectService]" = None,
         gmail_reconnect_flag: "Optional[GmailReconnectFlag]" = None,
+        slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None,
         tasks: Mapping[str, WorkerTask] = MappingProxyType({}),
     ) -> None:
-        """`tasks`: the runners composition builds outside this handler (`composition/worker_setup.py`), merged over
+        """`slack_worker`: the Slack adapter's queued-event entry (a queued Slack event is a 503 without it).
+        `tasks`: the runners composition builds outside this handler (`composition/worker_setup.py`), merged over
         the handler's own entries; a task type served by both raises ValueError."""
         self._reconnect = reconnect
         self._gmail_reconnect_flag = gmail_reconnect_flag
@@ -140,7 +143,7 @@ class WorkerHandler:
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
         self._running_claims: set[str] = set()
-        self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
+        self._slack_worker = slack_worker
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
@@ -184,16 +187,9 @@ class WorkerHandler:
         """The task_type values this handler dispatches (the queued Slack event carries none)."""
         return frozenset(self._tasks) - {_QUEUED_SLACK_EVENT}
 
-    def attach_slack_worker(
-        self, fn: Callable[[dict, dict], Awaitable[Tuple[dict, int]]],
-    ) -> None:
-        """Late wiring: the Slack adapter is built after this handler."""
-        self._slack_worker = fn
-
-    def attach_telegram_worker(
-        self, fn: Callable[[dict], Awaitable[Tuple[dict, int]]],
-    ) -> None:
-        """Late wiring: the Telegram adapter is built after this handler (and may be absent)."""
+    def register_telegram_worker(self, fn: Callable[[dict], Awaitable[Tuple[dict, int]]]) -> None:
+        """Bind the Telegram adapter's queued-update entry; a `telegram_update` is a 503 until then. Only
+        `register_late_platform` (composition) calls it: Telegram is all or nothing (owner ruling 2026-11-17)."""
         self._telegram_worker = fn
 
     async def handle(
@@ -317,7 +313,7 @@ class WorkerHandler:
 
     async def _handle_queued_slack_event(self, payload: dict, headers: dict) -> Tuple[dict, int]:
         if self._slack_worker is None:
-            logger.error("[WorkerHandler] Slack event delivered but no Slack worker is attached")
+            logger.error("[WorkerHandler] Slack event delivered but no Slack worker was passed in")
             return {"error": "slack not configured"}, 503
         return await self._slack_worker(payload, headers)
 
