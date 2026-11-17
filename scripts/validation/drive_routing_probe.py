@@ -178,7 +178,7 @@ async def main(runs: int, max_usd: float) -> int:
     for d in ALL_DESCRIPTORS:
         registry.register(d)
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
-                               user_repo=user_repo, account_repo=account_repo, **container.agent_services())
+                               user_repo=user_repo, account_repo=account_repo, services=container.agent_services())
     smart = (await factory.ensure_agents_for_user(user_id))["smart_agent"]
     meter = Meter(max_usd=max_usd)
     stopped, failures, passes = await run_scenarios(smart, meter, user_id, account_id, runs, max_usd)

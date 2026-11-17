@@ -691,7 +691,7 @@ async def _run(args: argparse.Namespace) -> int:
             registry.register(descriptor)
         factory = UserAgentFactory(config=settings, env_config=env_config,
                                    coordinator=AgentCoordinator(registry=registry), user_repo=user_repo,
-                                   account_repo=account_repo, **container.agent_services())
+                                   account_repo=account_repo, services=container.agent_services())
         setup = run_setup(PROMPTS_SNAPSHOT if args.prompts_from_snapshot else PROMPTS_FIRESTORE,
                           args.specialist_provider, args.specialist_tier)
         if args.prompts_from_snapshot:

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 
 from tests.unit.services.test_user_agent_factory import _make_context, mock_dependencies  # noqa: F401
 
@@ -25,7 +26,7 @@ async def _build(mock_dependencies):  # noqa: F811
                  "get_principles_cache_limit", "get_history_recent_full_turns"):
         setattr(cfg, name, Mock(return_value=10))
     mock_dependencies["config_service"] = cfg
-    return await UserAgentFactory(**mock_dependencies)._create_and_cache_agents("user-1")
+    return await UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))._create_and_cache_agents("user-1")
 
 
 async def test_router_slots_agent_gets_its_id_and_the_user_timezone(mock_dependencies):  # noqa: F811

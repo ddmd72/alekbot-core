@@ -301,7 +301,7 @@ async def main(rule: str, n_messages: int, user_id: str, account_id: str) -> Non
     container = ServiceContainer(config=cfg, db_client=db, env_config=env, account_repo=account_repo)
     factory = UserAgentFactory(
         config=cfg, env_config=env, coordinator=AgentCoordinator(),
-        user_repo=user_repo, account_repo=account_repo, **container.agent_services(),
+        user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     agents = await factory.ensure_agents_for_user(user_id)
     agent = agents.get("consolidation_agent")

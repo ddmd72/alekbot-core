@@ -82,7 +82,7 @@ async def _build_agent(user_id: str):
     user_repo = FirestoreUserRepository(db, env, account_repo)
     container = ServiceContainer(config=cfg, db_client=db, env_config=env, account_repo=account_repo)
     factory = UserAgentFactory(config=cfg, env_config=env, coordinator=AgentCoordinator(),
-                               user_repo=user_repo, account_repo=account_repo, **container.agent_services())
+                               user_repo=user_repo, account_repo=account_repo, services=container.agent_services())
     agent = (await factory.ensure_agents_for_user(user_id)).get("consolidation_agent")
     if agent is None or agent._fact_management is None:
         raise SystemExit("consolidation_agent unavailable")

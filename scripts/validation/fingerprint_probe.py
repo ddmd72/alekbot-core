@@ -536,7 +536,7 @@ async def build_runtime(args: argparse.Namespace, out_dir: Path) -> Tuple[Runtim
         registry.register(descriptor)
     coordinator = AgentCoordinator(registry=registry)
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=coordinator, user_repo=user_repo,
-                               account_repo=account_repo, **container.agent_services())
+                               account_repo=account_repo, services=container.agent_services())
     coordinator.set_agent_factory(factory)   # lazy specialists (the drive agent) are built on first delegation, as in production
     rule_line = "rule: off (prompts as Firestore serves them)"
     if args.rule_token:

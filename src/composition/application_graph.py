@@ -669,7 +669,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
-        **container.agent_services(),
+        services=container.agent_services(),
         job_registry=job_registry,
         image_registry=image_registry,
         video_registry=video_registry,

@@ -276,7 +276,7 @@ async def main(args) -> None:
         registry.register(descriptor)
     factory = UserAgentFactory(config=settings, env_config=env_config,
                                coordinator=AgentCoordinator(registry=registry),
-                               user_repo=user_repo, account_repo=account_repo, **container.agent_services())
+                               user_repo=user_repo, account_repo=account_repo, services=container.agent_services())
     agent = (await factory.ensure_agents_for_user(user_id))[_LEG_AGENT[args.leg]]
     if args.leg == "smart":
         _install_dry_run_dispatch()

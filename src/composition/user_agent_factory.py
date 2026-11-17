@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
+from .agent_services import AgentServices
 from .sandbox_client_setup import docx_runner_factory, pdf_runner_factory
 from .deploy_topology import DeployTopology
 from .voice_mcp_setup import voice_mcp_servers
@@ -32,25 +33,19 @@ from ..domain.voice_provider_profile import (
     resolve_voice_profile,
 )
 from ..ports.alert_sink import AlertSinkPort
-from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
+from ..ports.quota_service import QuotaService
 from ..domain.consolidation import consolidation_agent_id
 from ..domain.consolidation_pass_stats import stats_alerts_enabled
 from ..ports.user_repository import UserRepository
 from ..ports.video_duration_port import VideoDurationPort
 from ..ports.account_repository import AccountRepository
-from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_search_port import FactSearchPort
-from ..ports.llm_port import LLMPort
 from ..ports.session_store import SessionStore
 from ..services.prompt_builder import UserPromptBuilder
 from ..services.search_enrichment_service import SearchEnrichmentService
-from ..services.biographical_context_service import BiographicalContextService
 from ..services.lelik_persona_service import LelikPersonaService
-from ..ports.fact_write_port import FactWritePort
 from ..services.provider_registry import ProviderRegistry
-from ..services.agent_context_builder import AgentContextBuilder
 from ..ports.llm_port import AgentExecutionContext
-from ..services.configuration_service import ConfigurationService
 from ..infrastructure.agent_config import (
     MEMORY_SEARCH as MEMORY_SEARCH_CFG,
     WEB_SEARCH as WEB_SEARCH_CFG,
@@ -72,6 +67,7 @@ from ..infrastructure.agent_config import (
     VIDEO_GENERATION as VIDEO_GENERATION_CFG,
     TUTOR as TUTOR_CFG,
 )
+from ..agents.agent_runtime import AgentRuntime
 from ..agents.core.quick_response_agent import create_quick_response_agent
 from ..agents.core.smart_response_agent import create_smart_response_agent
 from ..infrastructure.task_execution_resolver import TaskExecutionResolver
@@ -108,13 +104,6 @@ from ..agents.alek_gateway_agent import ASK_ALEK_TIMEOUT_MS, AlekGatewayAgent
 from ..adapters.unsplash_adapter import UnsplashAdapter
 from ..adapters.twilio_telephony_adapter import TwilioTelephonyAdapter
 from ..ports.task_queue import TaskQueue
-from ..ports.tasks_provider_port import TasksProviderPort
-from ..ports.agent_note_port import AgentNotePort
-from ..ports.recurrence_port import RecurrencePort
-from ..services.email_search_service import EmailSearchService
-from ..services.task_indexing_service import TaskIndexingService
-from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.email_memory_batches import EmailMemoryBatches
 from ..ports.agent_factory_port import AgentFactoryPort
 from ..ports.long_turn_registry import LongTurnRegistry
@@ -122,14 +111,7 @@ from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..infrastructure.agent_coordinator import AgentCoordinator
-    from ..services.email_card_search_service import EmailCardSearchService
     from ..domain.user import UserBotConfig
-    from ..services.skill_service import SkillService
-    from ..services.memory_fact_service import MemoryFactService
-    from ..services.workspace_service import WorkspaceService
-    from ..services.drive_note_service import DriveNoteService
-    from ..services.user_drive_service import UserDriveService
-    from ..services.drive_search_service import DriveSearchService
     from ..services.localization_service import LocalizationService
     from ..ports.language_service_port import LanguageServicePort
 
@@ -177,29 +159,8 @@ class UserAgentFactory(AgentFactoryPort):
         coordinator: AgentCoordinator,
         user_repo: UserRepository,
         account_repo: AccountRepository,
-        session_store: SessionStore,
-        llm_port: LLMPort,
-        claude_service: LLMPort,
-        grok_service: Optional[LLMPort],
-        openai_service: Optional[LLMPort] = None,
-        embedding_service: EmbeddingService,
+        services: AgentServices,
         fact_search: FactSearchPort,
-        repository,
-        config_service: ConfigurationService,
-        biographical_context_service: BiographicalContextService,
-        registry: ProviderRegistry,
-        context_builder: AgentContextBuilder,
-        assembly_service,
-        fact_write_service: FactWritePort,
-        fact_management_adapter_factory: Callable,
-        email_search_service: EmailSearchService,
-        email_card_search: Optional["EmailCardSearchService"] = None,
-        indexed_email_repo: Optional[IndexedEmailRepository] = None,
-        confirmed_people: Optional[ConfirmedPeopleRepository] = None,
-        tasks_provider: Optional[TasksProviderPort] = None,
-        task_indexing: Optional[TaskIndexingService] = None,
-        notes_provider: Optional[AgentNotePort] = None,
-        recurrence: Optional[RecurrencePort] = None,
         notification_service: Optional[object] = None,
         job_registry: Optional[ProviderRegistry] = None,
         image_registry: Optional[ProviderRegistry] = None,
@@ -207,22 +168,11 @@ class UserAgentFactory(AgentFactoryPort):
         companion_context_assembler: Optional[Any] = None,
         task_queue: Optional[TaskQueue] = None,
         anthropic_client: Optional[object] = None,
-        file_conversion_service: Optional[object] = None,
-        file_storage: Optional[object] = None,
-        prompt_content_store: Optional[object] = None,
-        quota_service: Optional[object] = None,
-        skill_service: Optional["SkillService"] = None,
-        memory_fact_service: Optional["MemoryFactService"] = None,
-        workspace_service: Optional["WorkspaceService"] = None,
-        drive_note_service: Optional["DriveNoteService"] = None,
-        drive_notes_enabled: bool = True,
+        quota_service: Optional[QuotaService] = None,
         long_turn_registry: Optional[LongTurnRegistry] = None,
-        user_drive_service: Optional["UserDriveService"] = None,
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
-        drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
-        lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
         video_duration: Optional[VideoDurationPort] = None,
     ) -> None:
         # Resolved once: the sandbox runner (or the degraded one when SANDBOX_RENDER_URL is empty) is built once and shared by all users.
@@ -233,29 +183,23 @@ class UserAgentFactory(AgentFactoryPort):
         self.coordinator = coordinator
         self.user_repo = user_repo
         self.account_repo = account_repo
-        self.session_store = session_store
-        self.llm_port = llm_port
-        self.claude_service = claude_service
-        self.grok_service = grok_service
-        self.openai_service = openai_service
-        self.embedding_service = embedding_service
+        self.session_store = services.session_store
+        self.embedding_service = services.embedding_service
         self.fact_search = fact_search
-        self.repository = repository
-        self.config_service = config_service
-        self.biographical_context_service = biographical_context_service
-        self.registry = registry
-        self.context_builder = context_builder
-        self.assembly_service = assembly_service
-        self.fact_write_service = fact_write_service
-        self.fact_management_adapter_factory = fact_management_adapter_factory
-        self.email_search_service = email_search_service
-        self.email_card_search = email_card_search
-        self.indexed_email_repo = indexed_email_repo
-        self.confirmed_people = confirmed_people
-        self.tasks_provider = tasks_provider
-        self.task_indexing = task_indexing
-        self.notes_provider = notes_provider
-        self.recurrence = recurrence
+        self.repository = services.repository
+        self.config_service = services.config_service
+        self.context_builder = services.context_builder
+        self.assembly_service = services.assembly_service
+        self.fact_write_service = services.fact_write_service
+        self.fact_management_adapter_factory = services.fact_management_adapter_factory
+        self.email_search_service = services.email_search_service
+        self.email_card_search = services.email_card_search
+        self.indexed_email_repo = services.indexed_email_repo
+        self.confirmed_people = services.confirmed_people
+        self.tasks_provider = services.tasks_provider
+        self.task_indexing = services.task_indexing
+        self.notes_provider = services.notes_provider
+        self.recurrence = services.recurrence
         self.notification_service = notification_service
         self.job_registry: Optional[ProviderRegistry] = job_registry
         self.image_registry: Optional[ProviderRegistry] = image_registry
@@ -263,20 +207,20 @@ class UserAgentFactory(AgentFactoryPort):
         self.companion_context_assembler = companion_context_assembler
         self.task_queue = task_queue
         self.anthropic_client = anthropic_client
-        self.file_conversion_service = file_conversion_service
-        self.file_storage = file_storage
-        self.prompt_content_store = prompt_content_store
+        self.file_conversion_service = services.file_conversion_service
+        self.file_storage = services.file_storage
+        self.prompt_content_store = services.prompt_content_store
         self.quota_service = quota_service
-        self.skill_service = skill_service
-        self.memory_fact_service = memory_fact_service
-        self.workspace_service = workspace_service
-        self.drive_note_service = drive_note_service
-        self.drive_notes_enabled = drive_notes_enabled
+        self.skill_service = services.skill_service
+        self.memory_fact_service = services.memory_fact_service
+        self.workspace_service = services.workspace_service
+        self.drive_note_service = services.drive_note_service
+        self.drive_notes_enabled = services.drive_notes_enabled
         self.long_turn_registry = long_turn_registry
-        self.user_drive_service = user_drive_service
-        self.drive_search_service = drive_search_service
+        self.user_drive_service = services.user_drive_service
+        self.drive_search_service = services.drive_search_service
         self.alert_sink = alert_sink
-        self.lifecycle_counters = lifecycle_counters
+        self.lifecycle_counters = services.lifecycle_counters
         self.video_duration = video_duration
         self.localization = localization
         self.language_service = language_service
@@ -672,11 +616,11 @@ class UserAgentFactory(AgentFactoryPort):
         # overwriting with the same value is harmless.
         # The query-slots agents are helpers of the router and the memory agent, never routable, so
         # they are wired here but not registered: their LLM calls are billed and recorded like any other.
+        runtime = AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
+                               quota_service=self.quota_service)
         for agent in [*agents_to_register, router_slots_agent, slots_agent]:
             if agent is not None:
-                agent.coordinator = self.coordinator
-                agent._prompt_content_store = self.prompt_content_store
-                agent._quota_service = self.quota_service
+                agent.bind_runtime(runtime)
         self._register_agents(agents_to_register)
 
         # Preload prompt assembly cache (warm-up optimization, non-critical)
@@ -805,9 +749,8 @@ class UserAgentFactory(AgentFactoryPort):
             if agent is None:
                 return False
 
-            agent.coordinator = self.coordinator
-            agent._prompt_content_store = self.prompt_content_store
-            agent._quota_service = self.quota_service
+            agent.bind_runtime(AgentRuntime(coordinator=self.coordinator, prompt_content_store=self.prompt_content_store,
+                                            quota_service=self.quota_service))
             try:
                 self.coordinator.register_agent(agent)
             except ValueError:
