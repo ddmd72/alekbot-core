@@ -157,3 +157,7 @@ so the same agent stays single-attempt under a Cloud Task while still retrying o
 interactive path. The flag is a plain bool (serialization-safe) and propagating it
 through delegation context is harmless and semantically correct (the whole sub-tree
 runs under the same outer-retried task).
+
+Since 2026-11-17 those two handlers answer 5xx only when the turn never started
+(``background_turn_started_is_final.md``); the flag stays on, because a whole-execution
+retry would re-run every tool call of the turn.

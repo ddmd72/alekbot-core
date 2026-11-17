@@ -7,8 +7,7 @@ immediately — the actual 5–60 minute research runs in the background.
 
 Delivery-agnostic: the agent calls port.create_interaction() and returns ACK.
 The adapter owns delivery:
-  OpenAIDeepResearchAdapter → creates response with webhook_url (push delivery)
-  ClaudeDeepResearchAdapter → enqueues agent_execution Cloud Task → Cloud Run Job
+  ClaudeDeepResearchAdapter → starts the deep-research Cloud Run Job (job_main.py)
 
 Orchestration responsibilities:
   1. Receive {query, language} from Smart Agent after preparation protocol.
@@ -17,8 +16,8 @@ Orchestration responsibilities:
   4. Call DeepResearchPort.create_interaction() — adapter handles delivery setup.
   5. Return ACK to Smart Agent.
 
-Result delivery: adapter-owned (polling or webhook). WorkerHandler / webhook handler
-generates HTML report, uploads to GCS, delivers URL via UserNotificationService.
+Result delivery: adapter-owned. The Cloud Run Job uploads the report rounds to GCS and
+delivers their links via UserNotificationService (services/deep_research_delivery.py).
 """
 
 from typing import Optional

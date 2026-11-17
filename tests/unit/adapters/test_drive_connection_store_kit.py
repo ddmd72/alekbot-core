@@ -82,7 +82,7 @@ class TestPortRules:
         assert await repo.list_by_state([]) == []
 
     async def test_update_sets_only_the_fields_given_and_returns_the_stored_connection(self, repo):
-        await repo.create(conn("usr-1", "conn-1", state=NEEDS))
+        await repo.create(conn("usr-1", "conn-1", state=NEEDS, transcribe_enabled=False))
         updated = await repo.update("usr-1", "conn-1", indexing_enabled=True, credential_id="cred-9")
         assert updated == await repo.get("usr-1", "conn-1")
         assert (updated.indexing_enabled, updated.credential_id, updated.transcribe_enabled) == (True, "cred-9", False)
@@ -139,7 +139,7 @@ class TestFirestoreDocuments:
                                     "transcribe_enabled", "state", "created_at", "disconnected_at")} == {
             "connection_id": "conn-1", "user_id": "usr-1", "account_id": "acc-1", "credential_id": "cred-conn-1",
             "kind": "fake_a", "drive_identity": "fake_a:conn-1", "ref_tag": "a1", "mount_name": "Drive",
-            "indexing_enabled": False, "transcribe_enabled": False, "state": "active", "created_at": T0,
+            "indexing_enabled": False, "transcribe_enabled": True, "state": "active", "created_at": T0,
             "disconnected_at": None}
         assert doc["updated_at"] is not None
 

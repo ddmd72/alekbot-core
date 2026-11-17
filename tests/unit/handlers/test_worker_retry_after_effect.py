@@ -8,8 +8,9 @@ raise, or an answer `>= 500` / `429`, releases the claim (`needs_retry`, `delive
 allows 5 attempts; two are enough to show a repeat.
 
 Every strict xfail checks its precondition with `require` (a failed one reports FAILED, never the expected failure);
-only its outcome is a bare `assert`. Defects pinned as strict xfails (arbiter-confirmed): P15-D1 (a reminder or daily review whose turn already posted or
-enqueued is answered 500, so the retry repeats it), P15-D3 (a lost `execute_reminder` enqueue is never enqueued again:
+only its outcome is a bare `assert`. P15-D1 (a reminder or daily review whose turn already posted or enqueued was answered
+500, so the retry repeated it) is fixed: items 1-5 pin it as passing tests. Defects pinned as strict xfails
+(arbiter-confirmed): P15-D3 (a lost `execute_reminder` enqueue is never enqueued again:
 the fire stays claimed), P15-D11 (a review question whose post succeeded but whose ref write failed is posted again the
 next day, with a false "not delivered" note). P15-D2 and P15-D4 are overstated: not xfailed here (item 7 pins the
 right behaviour next to D4).
@@ -57,7 +58,6 @@ EMAILS = [
     {"id": "m1", "from": "school@example.com", "subject": "Parents' meeting moved to Saturday", "body": "See you there."},
     {"id": "m2", "from": "shop@example.com", "subject": "Your AirPods order shipped", "body": "Tracking inside."},
 ]
-D1 = "P15-D1: a background turn that already posted or enqueued is answered 500, so the retry repeats it; owner decision"
 D3 = "P15-D3: a lost execute_reminder enqueue leaves the fire claimed and is never enqueued again; owner decision"
 D11 = ("P15-D11: a question posted whose ref write failed is treated as never posted the next day and sent again; "
        "owner decision")
@@ -82,15 +82,12 @@ def _review_payload(world: RedeliveryWorld) -> dict:
 # ------------------------------------------------------------------------------------------------ 1-5: P15-D1
 
 class TestReminderRetryAfterAnEffect:
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D1)
     async def test_a_reminder_whose_rich_part_failed_after_its_text_is_not_posted_again(self, monkeypatch):
-        """The text posts, the rich part raises: `notify` answers `delivered=False, sent=True`, the handler 500
-        (`worker_handler.py:1024-1037`), the retry runs the turn and posts the text again.
+        """The text posts, the rich part raises: `notify` answers `delivered=False, sent=True`. The turn started, so
+        `ExecuteReminderTask` stamps the fire and answers 200 (`failed_final`); no retry posts the text again (P15-D1).
 
-        Precondition (today and after the fix): after the first attempt the text is on the channel and the rich part is
-        not. Flipping fix: `_handle_execute_reminder` answers 5xx only when the agent never ran (`result.error` is
-        `no_channel` or `channel_factory_returned_none:*`), else stamps the fire and answers 200 with one ops line, as
-        `_send_deep_research_notice` does (`worker_handler.py:612-622`)."""
+        Precondition: after the first attempt the text is on the channel and the rich part is not. Fix: 5xx only when
+        the turn never started (`NotifyResult.turn_started`, `is_retryable_failure`)."""
         world = RedeliveryWorld()
         await world.set_primary_channel()
         world.router.always(ok(TEXT, rich=TABLE))
@@ -105,13 +102,12 @@ class TestReminderRetryAfterAnEffect:
 
         assert len(world.texts) == 1
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D1)
     async def test_a_reminder_turn_that_enqueued_a_report_then_failed_does_not_enqueue_it_again(self, monkeypatch):
-        """The turn enqueues its ASYNC `create_html_page`, then fails: the handler answers 500 and the retry re-runs the
-        turn, which enqueues the report a second time (a real Smart turn repeats its dispatch the same way).
+        """The turn enqueues its ASYNC `create_html_page`, then fails: a retry would re-run the turn, which enqueues the
+        report a second time (a real Smart turn repeats its dispatch the same way); the turn started, so it is final.
 
-        Precondition: after the first attempt the turn ran once and exactly one `agent_execution` body exists. Flipping
-        fix: the same as the test above (5xx only when the agent never ran)."""
+        Precondition: after the first attempt the turn ran once and exactly one `agent_execution` body exists. Fix: the
+        same as the test above (P15-D1)."""
         world = RedeliveryWorld()
         await world.set_primary_channel()
         world.router.always(failed("provider down", enqueue=("create_html_page",)))
@@ -145,13 +141,12 @@ class TestReminderRetryAfterAnEffect:
 
 
 class TestDailyReviewRetryAfterAnEffect:
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D1)
     async def test_a_daily_review_whose_rich_part_failed_after_its_text_is_not_posted_again(self):
-        """As the reminder: the review's text posts, its rich part raises, the handler answers 500
-        (`worker_handler.py:1219-1231`) and the retry posts the text again.
+        """As the reminder: the review's text posts, its rich part raises; the turn started, so `DailyEmailReviewTask`
+        answers 200 (`failed_final`) and no retry posts the text again (P15-D1).
 
-        Precondition: after the first attempt the text is on the channel and the rich part is not. Flipping fix: the
-        same rule in `_handle_daily_email_review` (5xx only when the agent never ran)."""
+        Precondition: after the first attempt the text is on the channel and the rich part is not. Fix: the same rule
+        (5xx only when the turn never started)."""
         world = RedeliveryWorld(email_review=ScriptedReview(EMAILS))
         await world.set_primary_channel()
         world.router.always(ok(REVIEW_TEXT, rich=TABLE))
@@ -166,12 +161,12 @@ class TestDailyReviewRetryAfterAnEffect:
 
         assert len(world.texts) == 1
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason=D1)
     async def test_a_daily_review_turn_that_enqueued_its_report_then_failed_does_not_enqueue_it_again(self):
-        """The review turn enqueues its HTML report, then fails: 500, and the retry enqueues the report again.
+        """The review turn enqueues its HTML report, then fails: a retry would enqueue the report again; the turn
+        started, so it is final (P15-D1).
 
-        Precondition: after the first attempt the turn ran once and exactly one `agent_execution` body exists. Flipping
-        fix: the same rule in `_handle_daily_email_review`."""
+        Precondition: after the first attempt the turn ran once and exactly one `agent_execution` body exists. Fix: the
+        same rule (5xx only when the turn never started)."""
         world = RedeliveryWorld(email_review=ScriptedReview(EMAILS))
         await world.set_primary_channel()
         world.router.always(failed("provider down", enqueue=("create_html_page",)))

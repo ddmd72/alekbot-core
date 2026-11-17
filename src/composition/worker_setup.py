@@ -14,14 +14,11 @@ from ..ports.agent_note_port import AgentNotePort
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.dedup_store import DedupStore
 from ..ports.user_repository import UserRepository
-from ..ports.prompt_content_store import PromptContentStore
 from ..services.billing_daily_summary_task import BillingDailySummaryTask
 from ..services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from ..services.daily_email_review_task import DailyEmailReviewTask
-from ..services.deep_research_delivery import deliver_deep_research
 from ..services.deep_research_failed_task import DeepResearchFailedTask
 from ..services.deep_research_notice_sender import DeepResearchNoticeSender
-from ..services.deep_research_webhook_event_task import DeepResearchWebhookEventTask
 from ..services.disabled_task import DisabledTask
 from ..services.email_review_service import EmailReviewService
 from ..services.execute_reminder_task import ExecuteReminderTask
@@ -40,8 +37,6 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        alert_sink: Optional[AlertSinkPort], task_dispatch: Optional[TaskDispatchService],
                        video_registry: Optional[ProviderRegistry], quota_service: Optional[Any],
                        media_storage: Optional[Any], link_service: Optional[Any], short_link_service: Optional[Any],
-                       deep_research_fetch: Optional[Callable[[str], Awaitable[dict]]],
-                       prompt_content_store: Optional[PromptContentStore],
                        email_review: Optional[EmailReviewService], daily_review_marks: Optional[DedupStore],
                        gmail_reconnect_flag: GmailReconnectFlag,
                        account_repo: Optional[AccountRepository]) -> Mapping[str, WorkerTask]:
@@ -67,15 +62,6 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
     notice_sender = DeepResearchNoticeSender(
         notification_service=notification_service, empty_answer_reporter=empty_answer_reporter)
     tasks["deep_research_failed"] = DeepResearchFailedTask(ensure_agents=ensure_agents, notice_sender=notice_sender)
-    if deep_research_fetch is None:
-        tasks["deep_research_webhook_event"] = DisabledTask(
-            "deep_research_webhook_event: OpenAI retrieval not configured", 422, {"error": "retrieval not configured"})
-    else:
-        tasks["deep_research_webhook_event"] = DeepResearchWebhookEventTask(
-            fetch=deep_research_fetch, ensure_agents=ensure_agents, prompt_content_store=prompt_content_store,
-            task_dispatch=task_dispatch, media_storage=media_storage, link_service=link_service,
-            notification_service=notification_service, notice_sender=notice_sender,
-            deliver_report=deliver_deep_research)
     if email_review is None or task_dispatch is None:
         tasks["start_daily_email_review"] = DisabledTask(
             "start_daily_email_review: required services not configured", 501, {"error": "services not configured"})

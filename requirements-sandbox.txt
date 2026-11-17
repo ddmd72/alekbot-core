@@ -3,8 +3,8 @@
 # images cannot drift. requests and pydantic are only transitive there; they are pinned exactly here.
 # What src.utils.logger imports at module load is here (plan G13); logfire, Firestore, Secret Manager, Storage, BigQuery
 # and every model SDK are deliberately absent.
-quart>=0.18.0
-hypercorn>=0.14.0
+quart>=0.22.0,<0.23
+hypercorn>=0.18,<0.19
 h2==4.4.1  # serves hypercorn's HTTP/2 (h2c prior knowledge from Cloud Run); no httpx in this image
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 requests==2.33.0  # google.auth.transport.requests (the verifier's public-key fetch, G21)

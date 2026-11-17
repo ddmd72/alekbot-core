@@ -25,6 +25,7 @@ from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
 from ..domain.agent import AgentConfig
+from ..domain.exceptions import UnsupportedProviderError
 from ..domain.user import UserProfile
 from ..domain.voice_provider_profile import (
     DEFAULT_VOICE_PROVIDER,
@@ -832,6 +833,13 @@ class UserAgentFactory(AgentFactoryPort):
             job_port, tier, _ = self.context_builder.resolve_async_context(
                 "deep_research", self.job_registry, ctx.user_profile.config
             )
+        except UnsupportedProviderError as exc:
+            logger.error(
+                "[UserAgentFactory] Deep research refused for user %s: agent_providers['deep_research']=%r "
+                "is not a supported provider; the request fails until the user's config is fixed",
+                user_id[:8], exc.provider,
+            )
+            return None
         except ValueError:
             logger.warning(
                 "[UserAgentFactory] Deep research provider not registered, skipping"

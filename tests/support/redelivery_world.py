@@ -35,6 +35,7 @@ from src.adapters.firestore_agent_note_adapter import FirestoreAgentNoteAdapter
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
+from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentMessage, AgentResponse
@@ -46,9 +47,11 @@ from src.domain.user import UserBotConfig, UserProfile
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
+from src.ports.language_service_port import LanguageServicePort
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.services.email_review_service import EmailReviewService
 from src.services.gmail_reconnect_flag import GmailReconnectFlag
+from src.services.localization_service import LocalizationService
 from src.services.reminders_service import RemindersService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.user_notification_service import UserNotificationService
@@ -496,14 +499,15 @@ def _consumers() -> Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]]:
 # ----------------------------------------------------------------------------- the world
 
 # `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
-_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
-                "deep_research_fetch", "prompt_content_store")
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service")
 
 
 class RedeliveryWorld:
     """Everything a redelivered `/worker` task touches, on one `EvalDb` (module docstring). `handler_overrides` are
     keywords of `WorkerHandler` that replace or add to the defaults (`email_review=`, `daily_review_marks=` and the
-    `_RUNNER_DEPS` go to the runners instead; `companion_extraction=`, `interactive_choice=`, ...)."""
+    `_RUNNER_DEPS` go to the runners instead; `companion_extraction=`, `interactive_choice=`, ...). `languages=` (a
+    `LanguageServicePort`) gives `UserNotificationService` the real localization and that resolver, as production
+    wires it (`notification_setup.py`), so its UI-string notices post; without it they are not posted (logged)."""
 
     def __init__(self, **handler_overrides: Any) -> None:
         self.db = EvalDb()
@@ -519,7 +523,11 @@ class RedeliveryWorld:
         self.state = FirestoreNotificationStateAdapter(self.db, self.env)
         self.channels = PostingChannels()
         self.router = ScriptedRouter(self.queue)
-        self.notifier = UserNotificationService(self.state, self.channels, self.router, NOTIFICATION_SLA)
+        languages: Optional[LanguageServicePort] = handler_overrides.pop("languages", None)
+        self.notifier = UserNotificationService(
+            self.state, self.channels, self.router, NOTIFICATION_SLA,
+            localization=LocalizationService(FileLocalizationAdapter()) if languages is not None else None,
+            language=languages)
         self.users = UserDirectory()
         self.factory = AgentFactoryFake()
         self.reminders = RemindersService(self.notes, self.users, self.dispatch, DateutilRecurrenceAdapter(),

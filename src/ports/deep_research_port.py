@@ -1,12 +1,11 @@
 """
 DeepResearchPort — port for background deep research job execution.
 
-Each adapter owns its delivery mechanism entirely:
-  OpenAIDeepResearchAdapter  — submits job with webhook_url; OpenAI pushes result
-  ClaudeDeepResearchAdapter  — enqueues agent_execution Cloud Task for ClaudeDeepResearchRunnerAgent
+The adapter owns its delivery mechanism entirely:
+  ClaudeDeepResearchAdapter  — starts the deep-research Cloud Run Job, which delivers the report itself
 
 DeepResearchAgent is delivery-agnostic: it calls create_interaction() and returns ACK.
-The adapter decides whether polling, webhook, or agent task is used — no queue logic in the agent.
+The adapter decides how the result is delivered — no queue logic in the agent.
 """
 
 from abc import ABC, abstractmethod
@@ -39,10 +38,8 @@ class DeepResearchPort(ABC):
         Submit a deep research job and arrange for result delivery.
 
         Delivery mechanism is adapter-specific:
-          OpenAIDeepResearchAdapter → embeds user_id/account_id in OpenAI metadata;
-                                      the webhook handler reads them from the retrieved response.
-          ClaudeDeepResearchAdapter → enqueues agent_execution Cloud Task for the
-                                      ClaudeDeepResearchRunnerAgent (runs as Cloud Run Job).
+          ClaudeDeepResearchAdapter → starts the Cloud Run Job that runs the
+                                      ClaudeDeepResearchRunnerAgent and delivers the report.
 
         Args:
             query:          Full research brief (with language instruction appended).
@@ -65,9 +62,9 @@ class DeepResearchPort(ABC):
         """
         Poll the status of a running job.
 
-        Used only by adapters that need explicit polling. Current adapters
-        (OpenAI, Claude) deliver results out-of-band (webhook / Cloud Run Job
-        completion), so this method is effectively unused in the active path.
+        Used only by adapters that need explicit polling. The Claude adapter
+        delivers results out-of-band (Cloud Run Job completion), so this method
+        is effectively unused in the active path.
         Kept on the port for adapters that may need it (e.g. a future
         polling-based provider).
 

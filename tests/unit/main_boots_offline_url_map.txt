@@ -103,7 +103,6 @@ POST /voice/session-config
 POST /voice/status
 POST /voice/submit-transcript
 POST /webhook/microsoft-tasks/<user_id>
-POST /webhooks/openai/deep-research
 POST /worker
 PUT /api/drive/connections/<connection_id>/connector-access
 PUT /api/drive/connections/<connection_id>/indexing

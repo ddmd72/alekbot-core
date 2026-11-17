@@ -23,6 +23,9 @@ from .agent import AgentStatus
 # Error string an orchestrator/formatter agent returns when its turn ended with no answer at all.
 EMPTY_ANSWER_ERROR = "empty_answer"
 
+# Error string an orchestrator returns when its tool loop reached the turn cap (or its wrap-up gave no answer).
+TURN_CAP_ERROR = "max_turns_exhausted"
+
 
 def is_empty_turn(
     text: Optional[str], structured: object, delivery_items: Sequence[object], async_dispatches: Sequence[object],
@@ -67,11 +70,15 @@ class NotifyResult:
             because the message may have left. A caller that marks
             "user told" before notifying rolls that back only when
             neither ``delivered`` nor ``sent`` is true.
+        turn_started: True once ``notify()`` handed the message to the agent, set just before that call: from then
+            on the turn may have acted (a tool write, an ASYNC dispatch, a post), so re-running it may repeat that.
+            False only when ``notify()`` stopped before the agent (no channel, no channel adapter).
     """
     delivered: bool
     agent_status: AgentStatus
     error: Optional[str] = None
     sent: bool = False
+    turn_started: bool = False
 
 
 def is_empty_answer(result: NotifyResult) -> bool:
@@ -81,3 +88,15 @@ def is_empty_answer(result: NotifyResult) -> bool:
     (a task, a reminder, a drive save, a workspace write) that a retry would repeat, and a
     conditional job may legitimately end empty every time."""
     return not result.delivered and not result.sent and result.error == EMPTY_ANSWER_ERROR
+
+
+def is_turn_cap(result: NotifyResult) -> bool:
+    """The agent's tool loop reached its turn cap and nothing was sent (``max_turns_exhausted``). Final in a background
+    path: a re-run repeats every tool call the turn made and, on the same input, tends to stall the same way."""
+    return not result.delivered and not result.sent and result.error == TURN_CAP_ERROR
+
+
+def is_retryable_failure(result: NotifyResult) -> bool:
+    """Not delivered and the turn never started, so a re-run repeats nothing (P15-D1). A Cloud-Task-backed background
+    path answers 5xx (Cloud Tasks retries) only for this; once the turn started, the outcome is final."""
+    return not result.delivered and not result.turn_started

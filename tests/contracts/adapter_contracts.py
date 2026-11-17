@@ -565,6 +565,55 @@ XAI_REALTIME_MCP_TOOLS = ContractRule(
 )
 
 
+_XAI_MID_CALL_KEYS = {"instructions", "tools", "tool_choice"}
+_XAI_BUILTIN_TYPES = ("web_search", "x_search")
+
+
+def _check_xai_realtime_mid_call_session_update(kw: dict) -> None:
+    from src.domain.llm import PROMPT_CACHE_BOUNDARY  # contracts stay import-light; domain is pure
+    _eq(kw.get("type"), "session.update", "xai_realtime: a mid-call update is one session.update message")
+    session = kw["session"]
+    _true(session and set(session) <= _XAI_MID_CALL_KEYS,
+          f"xai_realtime: a mid-call update carries only what changes; got {sorted(session or {})}")
+    if "instructions" in session:
+        _true(PROMPT_CACHE_BOUNDARY not in session["instructions"],
+              "xai_realtime: the cache boundary must be stripped from the instructions")
+    if "tools" not in session:
+        _not_in("tool_choice", session, "xai_realtime: no tool_choice without a tools list")
+        return
+    tools = session["tools"]
+    builtins = [t for t in tools if t.get("type") in _XAI_BUILTIN_TYPES]
+    functions = [t for t in tools if t.get("type") == "function"]
+    mcp = [t for t in tools if t.get("type") == "mcp"]
+    _eq(len(builtins) + len(functions) + len(mcp), len(tools),
+        "xai_realtime: session.tools holds only built-ins, function tools and mcp entries")
+    _eq(tools, [*builtins, *functions, *mcp],
+        "xai_realtime: session.tools is built-ins, then function tools, then mcp entries, as open() sends")
+    _true(all(set(t) == {"type"} for t in builtins), "xai_realtime: built-ins stay bare ({'type': ...} only)")
+    _eq([t.get("name") for t in functions], list(kw.get("expected_function_names") or []),
+        "xai_realtime: the function tools are the new ones, in order")
+    _eq(mcp, list(kw.get("expected_mcp_entries") or []),
+        "xai_realtime: the mcp entries from open() are kept verbatim")
+    if tools:
+        _eq(session.get("tool_choice"), "auto", "xai_realtime: tool_choice must be 'auto' when tools are offered")
+    else:
+        _not_in("tool_choice", session, "xai_realtime: an empty tools list carries no tool_choice")
+
+
+XAI_REALTIME_MID_CALL_SESSION_UPDATE = ContractRule(
+    name="XAI_REALTIME_MID_CALL_SESSION_UPDATE",
+    description=(
+        "XaiRealtimeAdapter.update_session() sends ONE session.update carrying only what changes: `instructions` "
+        "(cache boundary stripped) and/or `tools`. A tools update keeps the session's bare built-ins and the mcp "
+        "entries from open() beside the new function tools, in open()'s order (built-ins, functions, mcp), with "
+        "tool_choice='auto'; an empty list is sent as `tools: []` with no tool_choice (decisions/lelik_voice_modes.md). "
+        "Input: captured session.update message {type: str, session: dict} plus `expected_function_names` and "
+        "`expected_mcp_entries` (both default to empty)."
+    ),
+    validators={"xai_realtime": _check_xai_realtime_mid_call_session_update},
+)
+
+
 def _text_follows_function_output(items) -> bool:
     """OpenAI/Grok Responses API: items are a flat list, not nested message blocks.
     True iff a user-role item with non-empty text content appears after the first

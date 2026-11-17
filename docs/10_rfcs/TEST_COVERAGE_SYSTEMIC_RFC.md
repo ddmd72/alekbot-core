@@ -820,11 +820,11 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Retry after an effect.** `tests/unit/handlers/test_worker_retry_after_effect.py`: the first attempt makes its effect, then answers 5xx or
   raises; the claim is released and the same task name is delivered again. Passing pins: a turn that reached no channel is retried and posts once; a
   lost video next-poll enqueue is retried and the chain continues once; a Telegram update or a Slack event whose turn failed after its reply is not run
-  again; a question posted and recorded is not posted again.
+  again; a question posted and recorded is not posted again. P15-D1 (a reminder or a daily review whose turn already posted or enqueued was answered
+  500, so the retry repeated it: a failed rich part after the text, a report enqueued before the failure) is fixed and its four tests pass without
+  xfail: the two tasks answer 5xx only when the turn never started (`decisions/background_turn_started_is_final.md`).
 - **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker). Each has a precondition that holds before and after the
   fix and a passing control in the same file:
-  - P15-D1 (four tests, `test_worker_retry_after_effect.py`): a background turn that already posted or enqueued is answered 500, so the retry repeats it (a reminder or a daily review,
-    a failed rich part after the text, a report enqueued before the failure).
   - P15-D3 (`test_worker_retry_after_effect.py`): a lost `execute_reminder` enqueue leaves the fire claimed and it is never enqueued again.
   - P15-D5 (two tests, `test_worker_redelivery_chains.py`): a companion batch is extracted by two concurrent deliveries; a batch that always fails is revived and extracted without bound.
   - P15-D6 (`test_worker_redelivery_scheduler.py`): two concurrent auto-index ticks both pass the running-job guard and start two jobs.
@@ -889,7 +889,7 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Files.** `tests/support/seam_world.py` (self-test `tests/unit/support/test_seam_world.py`, 7 tests); `tests/support/prompt_seed.py` (`test_prompt_seed.py`, 4); the entry-path files in
   `tests/unit/handlers/`: `test_seam_worker_notices.py` (worker notices and the video chain, 5 tests), `test_seam_agent_worker_delivery.py` (`AgentWorkerHandler` deliveries, 12),
   `test_seam_chat_turn.py` (the chat turn, 3 + 1 xfail) and `test_seam_background_runs.py` (background runs, 6 + 1 xfail); and card F, `tests/unit/agents/core/test_smart_prompt_enrichment_seam.py`
-  (the real Smart, Router, `PromptBuilder` and `SearchEnrichmentService`, 4 + 1 xfail).
+  (the real Smart, Router, `PromptBuilder` and `SearchEnrichmentService`, 5; its xfail was P13-D3, now fixed).
 - **Declared deltas.** On the `/worker`, agent-worker and chat paths the agents are scripted stand-ins registered in the real `AgentCoordinator`; `PromptBuilder` and `SearchEnrichmentService` run only
   through card F's real Smart and Router (a prompt store seeded by `prompt_seed.py`). The seam world's wiring deltas from `build_application_graph` are in its module docstring: no `file_ref_resolver`,
   `alert_sink` or `agent_factory` on the coordinator; no `short_link_service` and no `deep_research_drive_copy` on `AgentWorkerHandler`; `WorkerHandler` gets only the keywords the world passes; the
@@ -900,9 +900,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     async results (page, PDF, DOCX, image) go to the primary channel when one is set.
   - **P13-D2** (`test_seam_background_runs.py`): a background run's document follows the last-active channel at delivery, not the channel the run spoke in (`notify` puts neither `origin_channel_id` nor
     `origin_platform` into the agent's context, `user_notification_service.py:383-402`), when no primary is set.
-  - **P13-D3** (card F): the daily review's context `thinking_effort` `"medium"` loses to the complexity override's `"high"` (`smart_response_agent.py:389`), against the accepted
-    `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md`. The arbiter ruled it a defect and the test a strict xfail; the owner can overrule it: if the override is by design,
-    the test becomes a pin of `"high"` and `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md:117` is corrected.
+  - **P13-D3** (card F): the daily review's context `thinking_effort` `"medium"` lost to the complexity override's `"high"` (`smart_response_agent.py`), against the accepted
+    `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md:117`. **Fixed:** the owner confirmed it a defect; `_resolve_effective` reads the context's `thinking_effort` first, then the
+    override's, then the agent default; the marker is removed, and `test_smart_per_call_execution.py` pins the same order on an explicit `execution_override`.
 - **Found, not carded.**
   - F-1: no live deep-research path posts the raw report links. `DEEP_RESEARCH_RFC.md:85-90` says each raw round file gets a link; `deliver_deep_research` posts one only when it gets `notification=`, and the OpenAI
     webhook (`worker_handler.py:662-675`) and the Cloud Run Job (`job_main.py:271-286`) pass none, though both upload the raw files. Owner ruling (2026-10-27): the links were lost in

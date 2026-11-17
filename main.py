@@ -21,7 +21,6 @@ from src.utils.memory_scope import memory_scope
 from src.domain.cloud_task_delivery import CloudTaskDelivery
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
-from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
@@ -210,13 +209,6 @@ async def main():
             drive_disconnect=app.drive_disconnect_service,
         )
 
-        deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
-            webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
-            task_queue=app.task_dispatch,
-            fetch_response=app.deep_research_fetch,
-            dedup_store=app.deep_research_dedup_store,
-        )
-
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
             task_indexing=app.container.task_indexing,
             task_setup=app.task_setup_service,
@@ -256,7 +248,6 @@ async def main():
                 # Register OAuth + Cabinet blueprints
                 main_app.register_blueprint(oauth_bp)
                 main_app.register_blueprint(cabinet_bp)
-                main_app.register_blueprint(deep_research_webhooks_bp)
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple
 
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import is_empty_answer
+from ..domain.notify_result import is_empty_answer, is_retryable_failure
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
@@ -73,8 +73,7 @@ class DailyEmailReviewTask:
             # Any HTML page the agent generates in this run is the email review →
             # file it under email_review/ (gated, 5-day TTL).
             storage_class="email_review",
-            # 5xx on failure → Cloud Tasks retries the task; suppress in-process
-            # agent retry so the two retry layers don't multiply.
+            # A whole-execution retry re-runs every tool call of the turn; `_call_llm`'s per-call retry covers a blip.
             suppress_transient_retry=True,
             origin_detail="daily_email_review",
         )
@@ -84,9 +83,8 @@ class DailyEmailReviewTask:
             await self._empty_answer_reporter.report("daily_email_review", user_id)
             return {"status": "empty_answer_final", "emails": len(emails)}, 200
 
-        if not result.delivered:
-            # Returning 5xx allows Cloud Tasks queue-level retry to handle
-            # transient failures (channel unavailable, agent timeout, etc.).
+        if is_retryable_failure(result):
+            # The turn never started (no channel, no channel adapter): Cloud Tasks retries, and nothing repeats.
             logger.warning(
                 f"[Worker] daily_email_review: delivery FAILED for {user_id[:8]} "
                 f"(emails={len(emails)}, agent_status={result.agent_status}, "
@@ -97,6 +95,15 @@ class DailyEmailReviewTask:
                 "agent_status": result.agent_status.value,
                 "emails": len(emails),
             }, 500
+
+        if not result.delivered:
+            # The turn started: a re-run would post or enqueue the review again (P15-D1). Final.
+            logger.error(
+                f"[Worker] daily_email_review: failed_final for {user_id[:8]} "
+                f"(emails={len(emails)}, agent_status={result.agent_status}, "
+                f"error={result.error}, sent={result.sent}); the turn started, not retried"
+            )
+            return {"status": "failed_final", "emails": len(emails)}, 200
 
         logger.info(
             f"[Worker] daily_email_review: delivered {len(emails)} emails to Smart for {user_id[:8]}"

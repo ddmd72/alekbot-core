@@ -27,7 +27,7 @@ from ...domain.agent import (
     RoutingMetadata,
 )
 from ...domain.messaging import SmartResponse
-from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
+from ...domain.notify_result import EMPTY_ANSWER_ERROR, TURN_CAP_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK, RUNNING_JOBS_HEADER
 from ...domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
@@ -375,11 +375,10 @@ class SmartResponseAgent(BaseAgent):
           3. Agent defaults (``self.execution_context`` and
              ``self._default_thinking_effort``).
 
-        ``thinking_effort`` resolution:
-          - When an override is present and its ``thinking_effort`` is set,
-            that value wins.
-          - Otherwise: ``message.context["thinking_effort"]`` →
-            ``self._default_thinking_effort``.
+        ``thinking_effort`` resolution (the caller's context wins, per
+        TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC):
+          ``message.context["thinking_effort"]`` → the override's
+          ``thinking_effort`` (when set) → ``self._default_thinking_effort``.
         """
         explicit = message.context.get("execution_override")
         override: Optional[ExecutionOverride] = (
@@ -396,7 +395,9 @@ class SmartResponseAgent(BaseAgent):
                 thinking_effort=ctx_thinking,
             )
 
-        thinking = override.thinking_effort if override.thinking_effort is not None else ctx_thinking
+        thinking = message.context.get("thinking_effort") or (
+            override.thinking_effort if override.thinking_effort is not None else ctx_thinking
+        )
         logger.info(
             f"⚡ [SmartResponseAgent] Complexity override applied: "
             f"model={override.execution_context.model_name}"
@@ -612,7 +613,7 @@ class SmartResponseAgent(BaseAgent):
                 return AgentResponse.failure(
                     task_id=message.task_id,
                     agent_id=self.agent_id,
-                    error="max_turns_exhausted",
+                    error=TURN_CAP_ERROR,
                 )
 
             smart_response, history_summary = self._build_smart_response(delegation_result)

@@ -83,6 +83,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **Payload** | `{"task_type": "fire_due_reminders"}` |
 | **Purpose** | Fires proactive self-reminders whose `due <= now`. Idempotency guard: skips notes fired within the last 4 min. |
 | **Handler** | `WorkerHandler._handle_fire_due_reminders()` |
+| **Each fire** | One `execute_reminder` Cloud Task per claimed fire → `ExecuteReminderTask`. 500 (Cloud Tasks retries) only when the turn never started (no channel, no channel adapter); once the turn started every outcome is final and 200: `ok`, `empty_answer_final`, `turn_cap_final` and `failed_final` (a failed or timed-out turn, a post that raised). A final outcome with nothing sent stamps the fire, then posts one localized "reminder did not run" notice to the owner (no notice once something was posted). Stamped fires answer `already_delivered` on a redelivery, so the notice is never repeated (`decisions/background_turn_started_is_final.md`). |
 | **Cadence is a contract** | The 5-min cadence is the floor for sub-hourly rules: `FREQ=MINUTELY;INTERVAL≥5`, and no two occurrences closer than 5 min (BYMINUTE/BYSECOND lists included; `_MIN_MINUTELY_INTERVAL` in `dateutil_recurrence_adapter.py`). Change both together. Missed occurrences are skipped, not replayed. |
 | **Env** | dev + prod |
 
@@ -127,6 +128,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, finds the review slot open at this tick: the first 3 hours from `config.gmail_daily_review_hour` in the user's timezone (wraps midnight; an invalid timezone counts as UTC). It claims the mark `daily_review:{user}:{slot_date}` (48 h) so the review runs once per local date, then enqueues a `daily_email_review` Cloud Task named after the mark. Worker fetches the last 25 h of emails by exact instants (epoch-second `after:`), so consecutive daily reviews never leave a gap; an overlap of about an hour is accepted (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
 | **Handler** | `StartDailyEmailReviewTask` → `DailyEmailReviewTask` (`src/services/`, built by `build_worker_tasks`) |
+| **Retry** | `daily_email_review` answers 500 (Cloud Tasks retries) only when the turn never started (no channel, no channel adapter); a turn that started and failed is `failed_final`, 200, not re-run (it may already have posted or enqueued the report; `decisions/background_turn_started_is_final.md`). |
 | **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
 | **Env** | dev + prod |
 
@@ -234,17 +236,11 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 
 ---
 
-## Deep Research Webhook Event (task, no schedule)
+## Deep Research Report Task
 
-| Field | Value |
-|-------|-------|
-| **Payload** | `{"task_type": "deep_research_webhook_event", "event_type", "job_id", "user_id", "account_id", "session_id", "origin_platform", "query"}` (no report text) |
-| **Enqueued by** | `POST /webhooks/openai/deep-research` after the signature check, the 72 h job claim `openai_deep_research:<job_id>` and the empty-user filter, with `dedup_key` `<job_id>`; an enqueue failure releases the claim and answers 500 |
-| **Handler** | `DeepResearchWebhookEventTask` (`services/deep_research_webhook_event_task.py`): re-reads the response by job id, then delivers the report (`response.completed`) or sends one notice with the query (`failed` / `incomplete` / `cancelled`). 400 on a missing field or unknown event, 422 without OpenAI retrieval (no retry), 500 on a retrieval failure or a notice that was not sent at all (Cloud Tasks retries); a report task that could not be enqueued is 200 (the user was already told) |
-| **Residuals** | Local dev without `OPENAI_API_KEY` cannot deliver webhook events (422). An event that exhausts its Cloud Tasks retries (retrieval keeps failing) loses the report silently: OpenAI was already acked |
-| **Report task** | The HTML report agent task has the dedup key `deep_research_report:<job_id>` (also from `job_main.py`); its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then tells the user |
+The HTML report agent task `deliver_deep_research` enqueues for a finished job (`job_main.py`) has the dedup key `deep_research_report:<job_id>`; its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then reports the failure (the job then enqueues `deep_research_failed` with `reason=delivery_failed`). The OpenAI deep-research webhook and its `deep_research_webhook_event` task were removed (2026-11): Claude is the only provider.
 
-**Delivery to the asking channel.** The origin channel and platform travel on every live delivery path (Claude Cloud Run Job, OpenAI webhook, in-service runner), so the report and any failure notice reach the channel that asked. `deliver_deep_research` returns whether the report was handed off and notifies the user when it was not. There is no polling task type: the `deep_research_polling` path is gone.
+**Delivery to the asking channel.** The origin channel and platform travel on every live delivery path (the Claude Cloud Run Job, the in-service runner), so the report and any failure notice reach the channel that asked. `deliver_deep_research` returns whether the report was handed off and notifies the user when it was not. There is no polling task type: the `deep_research_polling` path is gone.
 
 ---
 

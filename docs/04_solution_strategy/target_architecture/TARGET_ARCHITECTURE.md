@@ -21,7 +21,7 @@ Core:
 - `LLMPort` → `GeminiAdapter`, `ClaudeAdapter`, `GrokAdapter`, `OpenAIAdapter`
 - `FactRepository` → `FirestoreFactRepository`
 - `SessionStore` → `FirestoreSessionStore`
-- `DeepResearchPort` → `ClaudeDeepResearchAdapter`, `OpenAIDeepResearchAdapter`
+- `DeepResearchPort` → `ClaudeDeepResearchAdapter`
 
 Email & Notification (added 2026-02-28):
 - `EmailProviderPort` → `GmailProviderAdapter`
@@ -161,7 +161,7 @@ The system is composed of 11 core building blocks, each documented in detail:
 - **Overflow safety** — `FirestoreSessionStore` overflow tracked via `_pending_tasks`, `while` loop handles multi-batch overflow
 - **Hexagonal Architecture Cleanup** (2026-02-21) — 5 new ports created (`ConversationHandlerPort`, `PlatformAuthPort`, `PromptBuilderPort`, `FactWritePort`, `SearchEnrichmentPort`), `SlackAdapterFactory` moved to `composition/`, import violations reduced from 29 to 3, all port contracts verified complete (28 ports, 34 contract tests)
 - **Gmail Email Indexing** (2026-02-28) — 5 email ABCs, 4 Firestore/Gmail adapters, `EmailIndexingService`, `EmailSearchService`, `EmailClassificationAgent`, `UserNotificationService`, web blueprints (Cabinet UI + Gmail OAuth)
-- **Deep Research** (2026-03-01; Gemini backend removed 2026-05-29) — `DeepResearchPort` with two backends: `ClaudeDeepResearchAdapter` (agent_execution Cloud Task → `ClaudeDeepResearchRunnerAgent`, default), `OpenAIDeepResearchAdapter` (webhook delivery). `DeepResearchAgent` (SYNC ACK), `WorkerHandler` (central `/worker` dispatcher), `deep_research_webhooks.py` (OpenAI Svix-format webhook receiver). All paths deliver via `UserNotificationService` — parallel SmartAgent summary + direct report link. Removal of Gemini backend: see [decisions/gemini_deep_research_adapter_removal.md](../decisions/gemini_deep_research_adapter_removal.md)
+- **Deep Research** (2026-03-01; Gemini backend removed 2026-05-29, OpenAI backend removed 2026-11) — `DeepResearchPort` with one backend, `ClaudeDeepResearchAdapter` (a Cloud Run Job runs `ClaudeDeepResearchRunnerAgent`). `DeepResearchAgent` (SYNC ACK), `WorkerHandler` (central `/worker` dispatcher). All paths deliver via `UserNotificationService` — parallel SmartAgent summary + direct report link. Removal of Gemini backend: see [decisions/gemini_deep_research_adapter_removal.md](../decisions/gemini_deep_research_adapter_removal.md)
 - **Maps Search** (2026-03-02) — `MapsSearchAgent` with Gemini Maps grounding, `<gmp-place-contextual>` widget HTML delivery via `DeliveryItem(type="html_gcs_link")`
 - **OpenAI Provider** (2026-03-03) — `OpenAIAdapter(LLMPort)` for GPT-5 family (nano/mini/full), function calling, JSON mode, streaming, vision
 - **Hexagonal Architecture Cleanup v2** (2026-03-05) — `SearchConfig` moved to `domain/settings.py`; `normalize_fact_taxonomy()` domain helper; `MessageRouter` Protocol decouples services/ from infrastructure/; feature flags centralized in `agent_config.py`; `overflow_callback` injection in `ConversationHandler`; agents no longer call `os.getenv()` directly
@@ -195,7 +195,6 @@ main.py
   ├─> PlaywrightHtmlRenderer (lazy init; shared singleton for all platforms)
   ├─> SlackAdapterFactory (composition/ — creates SlackMediaAdapter + RichContentService + ConversationHandler)
   ├─> TelegramAdapterFactory (composition/ — creates TelegramMediaAdapter + RichContentService + ConversationHandler)
-  ├─> deep_research_webhooks Blueprint (OpenAI webhook receiver)
   └─> adapter.start()
 ```
 
