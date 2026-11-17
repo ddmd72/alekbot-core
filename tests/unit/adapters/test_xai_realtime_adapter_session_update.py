@@ -1,7 +1,7 @@
 """A mid-call session update on xAI, at the websocket boundary (the interpreter's language pair,
 decisions/lelik_voice_modes.md): one `session.update` with only what changes; a tools update keeps the session's
-built-ins and MCP entries from open() beside the new function tools. The shape is asserted here by `_validate`; it is a
-candidate contract rule for `tests/contracts/adapter_contracts.py` once the owner confirms it."""
+built-ins and MCP entries from open() beside the new function tools. The shape is the contract rule
+XAI_REALTIME_MID_CALL_SESSION_UPDATE."""
 import json
 from unittest.mock import AsyncMock
 
@@ -9,6 +9,7 @@ import pytest
 
 from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.domain.remote_tool_server import RemoteToolServer
+from tests.contracts.adapter_contracts import XAI_REALTIME_MID_CALL_SESSION_UPDATE
 
 _TOKEN = "token-placeholder-0001"
 _SERVER = RemoteToolServer("server_one", "https://mcp.example.test/mcp", "A placeholder server.", ("tool_a",),
@@ -50,34 +51,9 @@ def _entry(server: RemoteToolServer) -> dict:
             "authorization": server.token}
 
 
-_MID_CALL_KEYS = {"instructions", "tools", "tool_choice"}
-
-
 def _validate(update: dict, functions=(), entries=()) -> None:
-    """The shape of a mid-call session.update: one session.update carrying only what changes; a tools list is
-    built-ins (bare), then the new function tools, then the mcp entries from open(), verbatim; tool_choice 'auto' when
-    the list is non-empty and absent when it is empty."""
-    assert update.get("type") == "session.update", "a mid-call update is one session.update"
-    session = update["session"]
-    assert session and set(session) <= _MID_CALL_KEYS, f"only what changes; got {sorted(session or {})}"
-    if "instructions" in session:
-        assert "<!-- CACHE_BOUNDARY -->" not in session["instructions"], "the cache boundary must be stripped"
-    if "tools" not in session:
-        assert "tool_choice" not in session, "no tool_choice without a tools list"
-        return
-    tools = session["tools"]
-    builtins = [t for t in tools if t.get("type") in ("web_search", "x_search")]
-    functions_sent = [t for t in tools if t.get("type") == "function"]
-    mcp = [t for t in tools if t.get("type") == "mcp"]
-    assert len(builtins) + len(functions_sent) + len(mcp) == len(tools), "only built-ins, functions and mcp entries"
-    assert tools == [*builtins, *functions_sent, *mcp], "built-ins, then functions, then mcp entries, as open() sends"
-    assert all(set(t) == {"type"} for t in builtins), "built-ins stay bare"
-    assert [t.get("name") for t in functions_sent] == list(functions), "the function tools are the new ones, in order"
-    assert mcp == list(entries), "the mcp entries from open() are kept verbatim"
-    if tools:
-        assert session.get("tool_choice") == "auto", "tool_choice 'auto' when tools are offered"
-    else:
-        assert "tool_choice" not in session, "an empty tools list carries no tool_choice"
+    XAI_REALTIME_MID_CALL_SESSION_UPDATE.validate(
+        "xai_realtime", {**update, "expected_function_names": list(functions), "expected_mcp_entries": list(entries)})
 
 
 async def test_an_instructions_update_sends_only_the_instructions():
@@ -197,3 +173,65 @@ class TestTheShapeCheckCatches:
     def test_an_empty_tools_list_with_a_tool_choice(self):
         with pytest.raises(AssertionError):
             _validate({"type": "session.update", "session": {"tools": [], "tool_choice": "auto"}})
+
+    def test_a_message_that_is_not_a_session_update(self):
+        with pytest.raises(AssertionError):
+            _validate({"type": "response.create", "session": {"instructions": "x"}})
+
+    def test_an_empty_session(self):
+        with pytest.raises(AssertionError):
+            _validate({"type": "session.update", "session": {}})
+
+    def test_instructions_that_still_carry_the_cache_boundary(self):
+        with pytest.raises(AssertionError):
+            _validate({"type": "session.update", "session": {"instructions": "a\n<!-- CACHE_BOUNDARY -->\nb"}})
+
+    def test_a_tool_choice_without_tools(self):
+        with pytest.raises(AssertionError):
+            _validate({"type": "session.update", "session": {"instructions": "x", "tool_choice": "auto"}})
+
+    def test_a_tool_of_an_unknown_type(self):
+        update = {"type": "session.update", "session": {"tools": [{"type": "code_interpreter"}], "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update)
+
+    def test_builtins_after_the_function_tools(self):
+        update = {"type": "session.update", "session": {
+            "tools": [{"type": "function", **_PAIR_TOOL}, {"type": "web_search"}], "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update, functions=["set_language_pair"])
+
+    def test_mcp_entries_before_the_function_tools(self):
+        update = {"type": "session.update", "session": {
+            "tools": [_entry(_SERVER), {"type": "function", **_PAIR_TOOL}], "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update, functions=["set_language_pair"], entries=[_entry(_SERVER)])
+
+    def test_a_builtin_that_is_not_bare(self):
+        update = {"type": "session.update", "session": {"tools": [{"type": "web_search", "extra": 1}],
+                                                        "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update)
+
+    def test_function_tools_that_are_not_the_expected_ones(self):
+        update = {"type": "session.update",
+                  "session": {"tools": [{"type": "function", **_OTHER_TOOL}], "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update, functions=["set_language_pair"])
+
+    def test_an_mcp_entry_that_was_altered(self):
+        update = {"type": "session.update",
+                  "session": {"tools": [{**_entry(_SERVER), "authorization": "other"}], "tool_choice": "auto"}}
+        with pytest.raises(AssertionError):
+            _validate(update, entries=[_entry(_SERVER)])
+
+    def test_tools_without_a_tool_choice(self):
+        update = {"type": "session.update", "session": {"tools": [{"type": "function", **_PAIR_TOOL}]}}
+        with pytest.raises(AssertionError):
+            _validate(update, functions=["set_language_pair"])
+
+    def test_a_tool_choice_other_than_auto(self):
+        update = {"type": "session.update",
+                  "session": {"tools": [{"type": "function", **_PAIR_TOOL}], "tool_choice": "required"}}
+        with pytest.raises(AssertionError):
+            _validate(update, functions=["set_language_pair"])

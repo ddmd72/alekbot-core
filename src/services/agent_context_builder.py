@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Any, Callable, TYPE_CHECKING
 
+from ..domain.exceptions import UnsupportedProviderError
 from ..domain.user import UserBotConfig, PerformanceTier
 from ..ports.llm_port import LLMPort, AgentExecutionContext
 from ..ports.deep_research_port import DeepResearchPort
@@ -202,7 +203,7 @@ class AgentProviderStrategy:
         # provider declaration. UserAgentFactory reads default_provider from here.
         "deep_research": {
             "default_provider": "claude",
-            "allowed_providers": ["openai", "claude"],
+            "allowed_providers": ["claude"],
             "required_capabilities": [],
             "fallback": None
         },
@@ -512,9 +513,16 @@ class AgentContextBuilder:
         concern. The adapter maps PerformanceTier → model name via its own MODEL_TIERS
         dict (or a construction-time override from environment config).
 
+        A per-agent override naming a provider outside the strategy's `allowed_providers` raises
+        UnsupportedProviderError instead of resolving to the default: for deep research a stale
+        "openai" (its adapter is removed) must fail the request, never run silently on Claude.
+
         Returns:
             (job_port, tier, provider_name)
         """
+        override = (config.get_provider_for_agent(agent_type) or "").strip().lower()
+        if override and override not in AgentProviderStrategy.get_strategy(agent_type)["allowed_providers"]:
+            raise UnsupportedProviderError(agent_type, override)
         provider_name = self.resolve_provider_name(agent_type, config)
         job_port: DeepResearchPort = job_registry.get(provider_name)
         tier = config.get_tier_for_agent(agent_type)

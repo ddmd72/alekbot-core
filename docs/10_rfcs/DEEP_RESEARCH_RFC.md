@@ -8,7 +8,7 @@
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
 **Delta 2026-10-22:** OpenAI webhook events carry only data.id; the handler retrieves the response.
 
-**Current state:** the `deep_research_polling` task type and the polling enqueue described below belong to the removed Gemini backend and no longer exist. Delivery is by the Claude Cloud Run Job, the OpenAI webhook (`deep_research_webhook_event`) and the in-service runner; see `docs/07_deployment/SCHEDULERS.md`.
+**Current state:** the `deep_research_polling` task type and the polling enqueue described below belong to the removed Gemini backend and no longer exist. The OpenAI backend (§11: `OpenAIDeepResearchAdapter`, the webhook route and its `deep_research_webhook_event` task) was removed in 2026-11 and §11 is history: Claude is the only provider, and a stale `agent_providers["deep_research"] = "openai"` fails the request loudly. Delivery is by the Claude Cloud Run Job and the in-service runner; see `docs/07_deployment/SCHEDULERS.md`.
 
 ---
 
@@ -22,9 +22,9 @@ This document covers the full lifecycle: initial Gemini implementation, the hexa
 architecture fix applied after initial release, the OpenAI migration, the Claude runner
 addition, and the 2026-05-29 removal of the Gemini backend.
 
-**Current state (post-2026-05-29):** Two backends — `ClaudeDeepResearchAdapter` (default,
-runs in a Cloud Run Job) and `OpenAIDeepResearchAdapter` (webhook delivery). The Gemini
-backend below is retained in this document as historical context — code has been removed.
+**Current state (post-2026-11):** One backend — `ClaudeDeepResearchAdapter` (runs in a Cloud
+Run Job). The Gemini backend and the OpenAI backend (§11) below are retained in this document as
+historical context — their code has been removed.
 
 **Phase 1 — Gemini backend (implemented):**
 

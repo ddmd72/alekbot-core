@@ -45,7 +45,7 @@ from anthropic.types import Message as AnthropicMessage
 from anthropic.types import ToolUseBlock, Usage
 
 from src.config.environment import EnvironmentConfig
-from src.domain.deep_research_notices import cancelled_notice, research_failed_notice
+from src.domain.deep_research_notices import research_failed_notice
 from src.domain.email import IndexingJob
 from tests.support import http_boundary_fake
 from tests.support.oauth_credentials_store import creds
@@ -66,9 +66,7 @@ REFUSAL_STATUSES = frozenset({501, 503})
 # The five seeded rows (`_seed_rows`) and the outcomes `_check_seeded_rows` reads. Texts: invented universe, deep research topic.
 DR_QUERY = "Heat pumps in Springfield"
 DR_FAILED_REPLY = "The research on heat pumps in Springfield did not finish. Ask me again and I will start it over."
-DR_CANCELLED_REPLY = "The research on heat pumps in Springfield was cancelled. Ask me again whenever you like."
 DR_FAILED_SUMMARY = "Told Alex the heat pump research did not finish."
-DR_CANCELLED_SUMMARY = "Told Alex the heat pump research was cancelled."
 INDEXING_JOB_ID = "eijob001"   # 8 characters: the worker logs job_id[:8]
 _GRAPH_URL = "https://graph.microsoft.com/v1.0"
 _GMAIL_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -102,7 +100,6 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "telegram_update": {"update": {}},
     "email_indexing": {"job_id": INDEXING_JOB_ID},
     "deep_research_failed": {"user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "reason": "x", "origin_platform": "slack"},
-    "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "origin_platform": "slack"},
     "setup_microsoft_todo": {"user_id": "u1"},
     "reindex_task_list": {"user_id": "u1", "list_id": "l1"},
     "fact_review": {"user_id": "u1", "account_id": "a1", "mode": "daily"},
@@ -156,8 +153,6 @@ MATRIX: Dict[str, Expect] = {
                              log=f"Indexing job {INDEXING_JOB_ID} complete: stored=0, failed=0"),
     # The notice goes through Quick (the `quick` profile is seeded, Claude is scripted) to the origin channel.
     "deep_research_failed": Expect(200, {"status": "ok"}, log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
-    "deep_research_webhook_event": Expect(200, {"status": "ok"},
-                                          log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
     # To Do credentials are seeded; Graph is the HTTP fake's empty account.
     "setup_microsoft_todo": Expect(200, {"status": "ok"}, log="MS To Do setup complete for user u1"),
     "reindex_task_list": Expect(200, {"status": "ok"}, log="Reindexed 0 tasks for list l1, user u1"),
@@ -363,9 +358,7 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
         """Claude scripted at the SDK: the deliver_response answer to the deep research notice the request carries."""
         boot.claude_calls.append(kwargs)
         asked = _last_message_text(kwargs)
-        if cancelled_notice(DR_QUERY) in asked:
-            reply, summary = DR_CANCELLED_REPLY, DR_CANCELLED_SUMMARY
-        elif research_failed_notice(DR_QUERY) in asked:
+        if research_failed_notice(DR_QUERY) in asked:
             reply, summary = DR_FAILED_REPLY, DR_FAILED_SUMMARY
         else:
             reply, summary = "UNSCRIPTED REQUEST", "unscripted"
@@ -614,20 +607,19 @@ def _check_seeded_rows(boot: Boot) -> List[str]:
     status = getattr(boot.indexing_job, "status", None)
     if status != "completed":
         problems.append(f"the seeded indexing job is {status!r}, not completed")
-    if boot.slack_posts != [("C1", DR_FAILED_REPLY), ("C1", DR_CANCELLED_REPLY)]:
+    if boot.slack_posts != [("C1", DR_FAILED_REPLY)]:
         problems.append(f"Slack received {boot.slack_posts}")
-    if len(boot.claude_calls) != 2:
-        problems.append(f"Claude was called {len(boot.claude_calls)} times, wanted 2")
+    if len(boot.claude_calls) != 1:
+        problems.append(f"Claude was called {len(boot.claude_calls)} times, wanted 1")
     else:
-        for call, notice in zip(boot.claude_calls, (research_failed_notice(DR_QUERY), cancelled_notice(DR_QUERY))):
+        for call, notice in zip(boot.claude_calls, (research_failed_notice(DR_QUERY),)):
             if notice not in _last_message_text(call):
                 problems.append(f"a Claude request does not carry {notice!r}")
             if "deliver_response" not in [tool.get("name") for tool in call.get("tools") or []]:
                 problems.append("a Claude request does not declare the deliver_response tool")
     expected_history = [
         ("user", research_failed_notice(DR_QUERY), None), ("model", DR_FAILED_SUMMARY, DR_FAILED_REPLY),
-        ("user", cancelled_notice(DR_QUERY), None), ("model", DR_CANCELLED_SUMMARY, DR_CANCELLED_REPLY),
-    ]
+        ]
     if boot.history != expected_history:
         problems.append(f"history of u1:C1 is {boot.history}")
     return problems
@@ -832,7 +824,6 @@ _REINDEX = {"task_type": "reindex_task_list", "user_id": "u1", "list_id": "l1"}
 _RENEW = {"task_type": "renew_task_subscriptions", "user_id": "u1"}
 _HISTORY = [
     ("user", research_failed_notice(DR_QUERY), None), ("model", DR_FAILED_SUMMARY, DR_FAILED_REPLY),
-    ("user", cancelled_notice(DR_QUERY), None), ("model", DR_CANCELLED_SUMMARY, DR_CANCELLED_REPLY),
 ]
 
 
@@ -843,8 +834,8 @@ def _seeded_boot(**overrides: Any) -> Boot:
         todo_config=SimpleNamespace(primary_list_id="l1", subscriptions=[SimpleNamespace(sub_id="s1", list_id="l1")]),
         task_bodies=[dict(_REINDEX), dict(_RENEW)],
         indexing_job=SimpleNamespace(status="completed"),
-        slack_posts=[("C1", DR_FAILED_REPLY), ("C1", DR_CANCELLED_REPLY)],
-        claude_calls=[_claude_call(research_failed_notice(DR_QUERY)), _claude_call(cancelled_notice(DR_QUERY))],
+        slack_posts=[("C1", DR_FAILED_REPLY)],
+        claude_calls=[_claude_call(research_failed_notice(DR_QUERY))],
         history=list(_HISTORY),
     )
     fields.update(overrides)
@@ -863,9 +854,9 @@ def test_the_seeded_rows_pass_with_their_outcomes():
         SimpleNamespace(sub_id="s1", list_id="l1"), SimpleNamespace(sub_id="s2", list_id="l1")])), id="second-subscription"),
     pytest.param(dict(task_bodies=[dict(_REINDEX), dict(_REINDEX), dict(_RENEW)]), id="second-reindex-body"),
     pytest.param(dict(indexing_job=SimpleNamespace(status="running")), id="job-running"),
-    pytest.param(dict(slack_posts=[("C1", DR_FAILED_REPLY)]), id="slack-without-cancelled-reply"),
-    pytest.param(dict(claude_calls=[_claude_call(research_failed_notice(DR_QUERY))]), id="one-claude-call"),
-    pytest.param(dict(history=list(_HISTORY[:2])), id="history-without-second-pair"),
+    pytest.param(dict(slack_posts=[]), id="slack-without-failed-reply"),
+    pytest.param(dict(claude_calls=[]), id="no-claude-call"),
+    pytest.param(dict(history=[]), id="history-without-the-pair"),
 ])
 def test_a_seeded_row_outcome_that_is_missing_is_a_problem(overrides):
     assert _check_seeded_rows(_seeded_boot(**overrides))

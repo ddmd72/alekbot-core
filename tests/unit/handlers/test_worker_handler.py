@@ -131,7 +131,7 @@ def _make_worker(
             notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
             notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
             video_registry=video_registry, quota_service=None, media_storage=None, link_service=link_service,
-            short_link_service=short_link_service, deep_research_fetch=None, prompt_content_store=None),
+            short_link_service=short_link_service),
     )
     return worker, ns
 

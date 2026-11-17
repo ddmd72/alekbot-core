@@ -20,8 +20,8 @@ google-genai>=3.3.0,<4.0.0
 # types.Message, messages.stream, the four APIError classes and output_config/thinking/tools all
 # unchanged. Bumps are deliberate — re-run the adapter wire + contract suites.
 anthropic==0.121.0
-# Serves three call sites, not just Grok: OpenAIAdapter + OpenAIDeepResearchAdapter (Responses API)
-# and GrokAdapter (Chat Completions, xAI's OpenAI-compatible endpoint). Pinned so CI matches local
+# Serves more than Grok: OpenAIAdapter (Responses API), OpenAITranscriptionAdapter and GrokAdapter
+# (xAI's OpenAI-compatible endpoint). Pinned so CI matches local
 # and prod — it was `>=1.0.0`, so every image build silently adopted the newest release. That is how
 # 2.45.0 reached prod unreviewed: it made `cache_write_tokens` REQUIRED in Responses
 # `InputTokensDetails` (breaking, never reverted — openai/openai-python#3480). Harmless here (we only
@@ -41,10 +41,10 @@ cryptography==50.0.0  # AES-GCM test cipher (tests/support/aes_gcm_cipher.py); a
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
-hypercorn>=0.14.0
+hypercorn>=0.18,<0.19
 httpx==0.28.1  # sandbox client (HTTP/2); declared explicitly, not only as a transitive dependency of the LLM SDKs
 h2==4.4.1  # HTTP/2 for httpx; declared explicitly, not only as a transitive dependency of hypercorn
-quart>=0.18.0
+quart>=0.22.0,<0.23
 mcp==1.27.*  # MCP Python SDK for remote MCP server exposed to claude.ai Custom Connectors
 google-cloud-tasks>=2.13.0
 numpy>=1.24.0

@@ -1,27 +1,21 @@
 """The deep research report's drive copy at delivery (decisions/deep_research_drive_copy.md).
 
-Every deep research entry point (the Claude runner via agent_execution or the Cloud Run Job, OpenAI's
-webhook via its worker task, the polling path) funnels into `deliver_deep_research`, which marks the HtmlPageGenerator task's
+Every deep research entry point (the Claude runner via agent_execution or the Cloud Run Job) funnels into
+`deliver_deep_research`, which marks the HtmlPageGenerator task's
 context with the research question. When that task's HTML is delivered, AgentWorkerHandler sends the link
 first and then asks the copy service for the drive copy; its one line follows the link. The copy never
 fails the delivery.
 """
 import base64
-import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from quart import Quart
-
-from src.composition.worker_setup import build_worker_tasks
 from src.domain.agent import AgentResponse, DeliveryItem
 from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from src.handlers.agent_worker_handler import AgentWorkerHandler
-from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.agent_manifest import Intent
 from src.services.deep_research_delivery import deliver_deep_research
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DeliveredDocument
-from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
 USER = "user-abc"
 ACCOUNT = "acc-abc"
@@ -192,40 +186,3 @@ class TestEveryDeliveryPathCopies:
                                    "context": {"user_id": USER, "account_id": ACCOUNT}})
         copy = await _replay_html_task(queue.enqueue_agent_task.call_args.kwargs)
         copy.copy_report.assert_awaited_once_with(USER, HTML, "Heat pumps?")
-
-    async def test_openai_webhook_path(self):
-        """OpenAI webhook → its `deep_research_webhook_event` worker task (S1b W) → deliver_deep_research
-        → HtmlPageGenerator task → copy."""
-        webhook_queue = AsyncMock()
-        app = Quart("t")
-        app.register_blueprint(create_deep_research_webhooks_blueprint(webhook_secret=None, task_queue=webhook_queue))
-        payload = {"type": "response.completed", "data": {
-            "id": "resp_1", "output_text": "findings",
-            "metadata": {"user_id": USER, "account_id": ACCOUNT, "query": "What is X?",
-                         "session_id": f"{USER}:C1"}}}
-        async with app.test_client() as client:
-            resp = await client.post("/webhooks/openai/deep-research", data=json.dumps(payload),
-                                     headers={"Content-Type": "application/json"})
-        assert resp.status_code == 200
-        task = webhook_queue.enqueue_worker_task.await_args.kwargs
-
-        queue = AsyncMock()
-        notification = AsyncMock()
-        agent_factory = AsyncMock()
-        worker = WorkerHandler(
-            agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-            consolidation_service=None,
-            agent_factory=agent_factory,
-            user_repo=MagicMock(), task_dispatch=queue,
-            tasks=build_worker_tasks(
-                email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
-                notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
-                notification_service=notification, alert_sink=None, task_dispatch=queue,
-                video_registry=None, quota_service=None, media_storage=None, link_service=None,
-                short_link_service=None, prompt_content_store=None,
-                deep_research_fetch=AsyncMock(return_value={"output_text": "findings", "model": "m"})),
-        )
-        _, status = await worker._dispatch({"task_type": task["task_type"], **task["payload"]}, {})
-        assert status == 200
-        copy = await _replay_html_task(queue.enqueue_agent_task.call_args.kwargs)
-        copy.copy_report.assert_awaited_once_with(USER, HTML, "What is X?")

@@ -10,7 +10,6 @@ LoggerAgent.log_sink  # off-in-prod APP_ENV=development in cloudbuild-dev.yaml:2
 
 # ---- optional settings production leaves unset
 AuthConfig.firebase_service_account  # optional-knob GOOGLE_APPLICATION_CREDENTIALS is not in the deploy (config/auth.py:62, Cloud Run uses ADC)
-OpenAIDeepResearchAdapter._model_override  # optional-knob OPENAI_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
 ClaudeDeepResearchAdapter._model_override  # optional-knob CLAUDE_DEEP_RESEARCH_MODEL via os.getenv (application_graph.py deep research block)
 SmartResponseAgent._default_thinking_effort  # optional-knob UserBotConfig.agent_thinking is unset for the seeded user (user_agent_factory.py:407)
 

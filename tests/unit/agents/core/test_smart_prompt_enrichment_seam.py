@@ -10,8 +10,8 @@ boundary asserted on is the request each scripted model received: what reached t
 `PROMPT_CACHE_BOUNDARY`), the model the tier resolved to (`TieredLLM` names it `tier-<tier>`; the execution context's
 own model is `scripted-model`, so "no override resolved" and "a tier resolved" differ) and the thinking effort.
 
-Pins P13-D3: the daily review asks for `thinking_effort="medium"`, the accepted complexity RFC says that value wins, and
-Smart lets the complexity's own `"high"` win instead.
+Pins P13-D3 (fixed): the daily review asks for `thinking_effort="medium"` and, as the accepted complexity RFC says, that
+value wins over the complexity's own `"high"`.
 """
 import json
 from datetime import date, timedelta
@@ -55,9 +55,6 @@ EMAILS = [
 SUBJECTS = [e["subject"] for e in EMAILS]
 FACT = "Alex's blood type is A Rh+."
 QUESTION = "What is my blood type?"
-D3 = ("P13-D3: the daily review's thinking_effort='medium' is overridden by the complexity's 'high' in Smart, while the "
-      "accepted RFC TASK_COMPLEXITY_EXECUTION_SETTINGS says the context's thinking_effort has priority "
-      "(smart_response_agent.py:389, override wins); fix after the plan (owner)")
 
 
 class TieredLLM(ScriptedLLM):
@@ -188,13 +185,10 @@ async def test_a_daily_review_reaches_smart_s_static_prompt_and_runs_at_the_reas
     assert request.model_name == "tier-performance"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=D3)
 async def test_a_daily_review_runs_at_the_thinking_effort_it_asks_for(monkeypatch):
-    """Pins P13-D3. Guards `thinking_effort` `worker_handler.py:1202` → `ums.py:389` → `smart_response_agent.py:381`
-    (read) → `:389` (dropped when the complexity override sets its own effort) → `:552`.
-    The precondition `model_name == "tier-performance"` holds before and after the fix (the override still resolves).
-    Flipping fix, `smart_response_agent.py:389`: `thinking = message.context.get("thinking_effort") or
-    (override.thinking_effort if override.thinking_effort is not None else ctx_thinking)`."""
+    """Pins P13-D3 (fixed). Guards `thinking_effort` `worker_handler.py:1202` → `ums.py:389` →
+    `SmartResponseAgent._resolve_effective` (the context's effort wins over the complexity override's) → the request.
+    The precondition `model_name == "tier-performance"` shows the override still resolves the tier."""
     s = await _daily_review(monkeypatch)
 
     require(not s.world.unscripted(), "every agent call was scripted")
@@ -207,7 +201,7 @@ async def test_a_daily_review_runs_at_the_thinking_effort_it_asks_for(monkeypatc
 
 
 async def test_a_reminder_without_an_effort_runs_at_its_complexity_s_effort(monkeypatch):
-    """Control for P13-D3: no context effort, so the complexity's own `"high"` is the effort today and after the fix.
+    """Control for P13-D3: no context effort, so the complexity's own `"high"` is the effort.
     Guards `task_complexity` `worker_handler.py:1014` → `ums.py:390` → `smart_response_agent.py:379` (tier) and `:389`
     → `:552` (the override's effort). Dropping `task_complexity` leaves `scripted-model` and no effort."""
     s = await seam(monkeypatch, envelope("Time to call dad.", "Reminded the user to call dad."))

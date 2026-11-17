@@ -375,13 +375,12 @@ class TaskRequest:
 
 
 # `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
-_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
-                "deep_research_fetch", "prompt_content_store")
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service")
 
 
 class SeamWorld:
     """The module docstring's world. `worker_overrides` are `WorkerHandler` keywords added to or replacing the defaults
-    (`email_review=`, `video_registry=`, `deep_research_fetch=`, ...)."""
+    (`email_review=`, `video_registry=`, ...)."""
 
     def __init__(self, monkeypatch: Any, **worker_overrides: Any) -> None:
         self.db = EvalDb()

@@ -375,11 +375,10 @@ class SmartResponseAgent(BaseAgent):
           3. Agent defaults (``self.execution_context`` and
              ``self._default_thinking_effort``).
 
-        ``thinking_effort`` resolution:
-          - When an override is present and its ``thinking_effort`` is set,
-            that value wins.
-          - Otherwise: ``message.context["thinking_effort"]`` →
-            ``self._default_thinking_effort``.
+        ``thinking_effort`` resolution (the caller's context wins, per
+        TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC):
+          ``message.context["thinking_effort"]`` → the override's
+          ``thinking_effort`` (when set) → ``self._default_thinking_effort``.
         """
         explicit = message.context.get("execution_override")
         override: Optional[ExecutionOverride] = (
@@ -396,7 +395,9 @@ class SmartResponseAgent(BaseAgent):
                 thinking_effort=ctx_thinking,
             )
 
-        thinking = override.thinking_effort if override.thinking_effort is not None else ctx_thinking
+        thinking = message.context.get("thinking_effort") or (
+            override.thinking_effort if override.thinking_effort is not None else ctx_thinking
+        )
         logger.info(
             f"⚡ [SmartResponseAgent] Complexity override applied: "
             f"model={override.execution_context.model_name}"

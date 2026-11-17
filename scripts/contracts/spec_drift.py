@@ -56,7 +56,7 @@ SOURCES: tuple[Source, ...] = (
     Source(
         "openai", "openapi", f"{_RAW}/openai/openai-openapi/master/openapi.yaml",
         ("post /responses", "get /responses/{response_id}", "post /audio/transcriptions"),
-        "src/adapters/openai_adapter.py, openai_deep_research_adapter.py, openai_transcription_adapter.py",
+        "src/adapters/openai_adapter.py, openai_transcription_adapter.py",
     ),
     Source(
         "twilio_api_v2010", "openapi", f"{_RAW}/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json",

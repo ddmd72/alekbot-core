@@ -1,10 +1,10 @@
 """P13 card B: the `/worker` paths that route a notice by the origin of a background job (deep research failure, the
-OpenAI webhook's failed event, the Grok video poll) reach that origin, never the primary, and keep the history pair in
+Grok video poll) reach that origin, never the primary, and keep the history pair in
 the origin's session.
 
 Every test runs on `SeamWorld` (tests/support/seam_world.py): the real `WorkerHandler`, `UserNotificationService`,
 `AgentCoordinator`, `TaskDispatchService`, `GcpTaskQueue`, `GcsMediaAdapter`, `FileLinkService` and the session store;
-the quick formatter is a scripted stand-in, the video provider and the OpenAI retrieval are scripted boundaries. The
+the quick formatter is a scripted stand-in, the video provider is a scripted boundary. The
 primary is `("slack", "C1")` in every test, the origin `("telegram", "7001")`: a keyword dropped at a forward lands the
 notice on the primary instead (`ums.py:119-137`), which the assertions on C1 catch.
 """
@@ -46,18 +46,6 @@ def _video_registry(video: ScriptedVideo) -> ProviderRegistry:
     return registry
 
 
-def _fetch(response: dict):
-    """The OpenAI retrieval boundary (`worker_handler.py:648`): a coroutine of the job id."""
-    fetched: List[str] = []
-
-    async def fetch(job_id: str) -> dict:
-        fetched.append(job_id)
-        return response
-
-    fetch.fetched = fetched  # type: ignore[attr-defined]
-    return fetch
-
-
 def _failed_payload(origin_platform: Optional[str] = "telegram") -> dict:
     return {"task_type": "deep_research_failed", "user_id": USER, "account_id": ACCOUNT, "session_id": "u1:7001",
             "origin_platform": origin_platform, "query": QUERY, "reason": "agent_failed"}
@@ -95,37 +83,9 @@ async def test_a_failed_deep_research_job_tells_the_chat_it_came_from(monkeypatc
     assert world.history("u1:C1") == []
 
 
-async def test_a_failed_webhook_event_tells_the_chat_it_came_from(monkeypatch):
-    """Guards: `worker_handler.py:643-644` (origin channel and platform of the webhook event) → `:697-699` →
-    `_send_deep_research_notice` `:604-605` → `ums.py:119-125`; session `ums.py:376,447-449`."""
-    fetch = _fetch({"error": {"message": "x"}})
-    world = SeamWorld(monkeypatch, deep_research_fetch=fetch)
-    await world.set_primary(*PRIMARY)
-    world.agent("quick_response_agent").play(says("The research provider failed; you can ask again."))
-
-    answer = await world.run({
-        "task_type": "deep_research_webhook_event", "event_type": "response.failed", "job_id": "resp_1",
-        "user_id": USER, "account_id": ACCOUNT, "session_id": "u1:7001", "origin_platform": "telegram",
-        "query": QUERY,
-    })
-
-    require(not world.unscripted(), "every agent call was scripted")
-    require(fetch.fetched == ["resp_1"], "the job was retrieved by its id")
-    assert answer == ({"status": "ok"}, 200)
-    assert [(p.kind, p.value) for p in world.posts_to(*TELEGRAM)] == [
-        ("text", "The research provider failed; you can ask again.")]
-    assert world.posts_to(*PRIMARY) == []
-    assert world.history("u1:7001") == [
-        ("user", notices.provider_error_notice(QUERY), None),
-        ("model", "The research provider failed; you can ask again.",
-         "The research provider failed; you can ask again."),
-    ]
-    assert world.history("u1:C1") == []
-
-
 async def test_a_notice_with_no_origin_platform_goes_to_the_primary(monkeypatch):
-    """Control, by design: a payload from before the platform travelled (`origin_platform` empty; the webhook route
-    notes it is "absent on pre-deploy jobs", `deep_research_webhooks.py:174`) falls back to the primary
+    """Control, by design: a payload from before the platform travelled (`origin_platform` empty, as on pre-deploy
+    jobs) falls back to the primary
     (`worker_handler.py:571` → `None` → `ums.py:119` not taken → `:129-131`). Fails if the handler starts inventing a
     platform for the origin channel."""
     world = SeamWorld(monkeypatch)

@@ -78,7 +78,7 @@ class TestActivateCreates:
         assert (stored.user_id, stored.account_id, stored.credential_id, stored.kind) == (
             "usr-1", credential.account_id, credential.credential_id, KIND)
         assert (stored.drive_identity, stored.ref_tag, stored.mount_name) == ("microsoft_onedrive:drive-a", "t1", "Drive")
-        assert (stored.state, stored.indexing_enabled, stored.transcribe_enabled) == (ACTIVE, False, False)
+        assert (stored.state, stored.indexing_enabled, stored.transcribe_enabled) == (ACTIVE, False, True)
         assert stored.created_at == T0
         # slice 2b (D11, I2): a new connection is read-only and not the primary; its first write folder makes it one
         assert (stored.write_folder_id, w.primary_id()) == (None, None)
@@ -375,9 +375,10 @@ class TestSwitches:
         second = await w.connect(subject="subject-b", identity="microsoft_onedrive:drive-b")
         on = await w.service.set_indexing("usr-1", first.connection_id, True)
         assert on.indexing_enabled is True and on == w.stored("usr-1", first.connection_id)
-        assert (await w.service.set_transcribe("usr-1", first.connection_id, True)).transcribe_enabled is True
+        # each switch on `first` is moved away from its creation value, so a leak into `second` would show
+        assert (await w.service.set_transcribe("usr-1", first.connection_id, False)).transcribe_enabled is False
         assert (w.stored("usr-1", second.connection_id).indexing_enabled,
-                w.stored("usr-1", second.connection_id).transcribe_enabled) == (False, False)
+                w.stored("usr-1", second.connection_id).transcribe_enabled) == (False, True)
         assert (await w.service.set_indexing("usr-1", first.connection_id, False)).indexing_enabled is False
 
     async def test_a_flagged_connection_can_be_switched(self):
@@ -386,17 +387,19 @@ class TestSwitches:
         await w.service.flag_reconnect(conn.handle)
         assert (await w.service.set_indexing("usr-1", conn.connection_id, True)).state is NEEDS
 
-    @pytest.mark.parametrize("setter", ["set_indexing", "set_transcribe"])
-    async def test_an_absent_or_disconnected_connection_is_refused(self, setter):
+    # each setter asks for the opposite of the creation value (indexing off, transcription on), so a write would show
+    @pytest.mark.parametrize("setter, value", [pytest.param("set_indexing", True, id="set_indexing"),
+                                               pytest.param("set_transcribe", False, id="set_transcribe")])
+    async def test_an_absent_or_disconnected_connection_is_refused(self, setter, value):
         w = World()
         conn = await w.connect()
         with pytest.raises(DriveNotConnectedError):
-            await getattr(w.service, setter)("usr-1", "conn-x", True)
+            await getattr(w.service, setter)("usr-1", "conn-x", value)
         await w.service.disconnect("usr-1", conn.connection_id)
         with pytest.raises(DriveNotConnectedError):
-            await getattr(w.service, setter)("usr-1", conn.connection_id, True)
+            await getattr(w.service, setter)("usr-1", conn.connection_id, value)
         assert w.stored("usr-1", conn.connection_id).indexing_enabled is False
-        assert w.stored("usr-1", conn.connection_id).transcribe_enabled is False
+        assert w.stored("usr-1", conn.connection_id).transcribe_enabled is True
 
 
 # ---------------------------------------------------------------------------------------------- state

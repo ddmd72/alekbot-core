@@ -296,9 +296,6 @@ _BILLING_TO_OR: dict[str, str] = {
     "gemini-3-flash-preview":            "google/gemini-3-flash-preview",
     "models/gemini-3-pro-preview":       "google/gemini-3.1-pro-preview",
     "deep-research-pro-preview-12-2025": "google/gemini-2.5-pro",  # approx
-    # OpenAI deep research (versioned → unversioned alias on OpenRouter)
-    "o3-deep-research-2025-06-26":       "openai/o3-deep-research",
-    "o4-mini-deep-research-2025-06-26":  "openai/o4-mini-deep-research",
     # Grok (not on OpenRouter, skip)
     "grok-4-1-fast-non-reasoning":       "",
     "grok-4-1-fast-reasoning":           "",

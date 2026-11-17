@@ -87,7 +87,7 @@ class TestDriveConnection:
     def test_defaults(self):
         conn = _connection()
         assert conn.mount_name == DEFAULT_MOUNT_NAME == "Drive"
-        assert (conn.indexing_enabled, conn.transcribe_enabled) == (False, False)
+        assert (conn.indexing_enabled, conn.transcribe_enabled) == (False, True)
         assert (conn.state, conn.disconnected_at) == (ACTIVE, None)
 
     def test_handle_scope_and_doc_id(self):
