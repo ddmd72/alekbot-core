@@ -85,11 +85,24 @@ def test_both_factories_default_to_none(build):
     assert build()["drive_note_service"] is None
 
 
+_GRAPH = "src/composition/application_graph.py"
+
+
+def _trees(paths):
+    return {str(p.relative_to(_ROOT)): ast.parse(p.read_text()) for p in paths}
+
+
+def _sites(trees, match):
+    return sorted(path for path, tree in trees.items() for n in ast.walk(tree) if match(n))
+
+
 def test_both_main_sites_pass_the_gated_service():
     """The application graph builds the Slack and the Telegram adapter (main.py did until `build_application_graph`):
-    each gets the container's service through the switch, from the one `ChatServices` both factories take."""
-    source = (_ROOT / "src" / "composition" / "application_graph.py").read_text()
-    tree = ast.parse(source)
+    each gets the container's service through the switch, from the one `ChatServices` both factories take. The
+    uniqueness checks scan every composition module and main.py, so a second site in a `*_setup.py` bundle is seen."""
+    composition = sorted((_ROOT / "src" / "composition").glob("*.py"))
+    trees = _trees([*composition, _ROOT / "main.py"])
+    tree = trees[_GRAPH]
     [built] = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
                and ast.unparse(n.value.func) == "ChatServices"]
     keywords = {k.arg: ast.unparse(k.value) for k in built.value.keywords}
@@ -101,6 +114,16 @@ def test_both_main_sites_pass_the_gated_service():
                  if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("AdapterFactory.create_adapter")}
     assert set(factories) == {"SlackAdapterFactory.create_adapter", "TelegramAdapterFactory.create_adapter"}
     assert all(kw.get("chat") == name for kw in factories.values()), factories
-    # no other site builds the command's service, gated or not
-    assert source.count("command_drive_note_service(") == 1
-    assert source.count("container.drive_note_service") == 1
+
+    def called(n, suffix):
+        return isinstance(n, ast.Call) and ast.unparse(n.func).endswith(suffix)
+
+    # no other site builds the command's service, gated or not, nor a second chat channel or adapter that could carry it
+    assert _sites(trees, lambda n: called(n, "command_drive_note_service")) == [_GRAPH]
+    assert _sites(trees, lambda n: called(n, "ChatServices")) == [_GRAPH]
+    assert _sites(trees, lambda n: called(n, "AdapterFactory.create_adapter")) == [_GRAPH, _GRAPH]
+    # the builder (the graph and its `*_setup.py` bundles) reads the container's service once, at the gate; the MCP
+    # connector tools and the Cabinet (drive_connector_tools.py, main.py) hand it to other surfaces, not to the command
+    builder = {path: t for path, t in trees.items() if path == _GRAPH or path.endswith("_setup.py")}
+    assert _sites(builder, lambda n: isinstance(n, ast.Attribute)
+                  and ast.unparse(n).endswith("container.drive_note_service")) == [_GRAPH]
