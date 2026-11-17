@@ -15,6 +15,7 @@ from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
 from src.domain.user import UserBotConfig, UserProfile
 from src.ports.dedup_store import DedupStore
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services import daily_email_review_task, start_daily_email_review_task
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.gmail_reconnect_flag import GmailReconnectFlag
@@ -101,7 +102,7 @@ async def _world(zone: str, hour: int):
         gmail_reconnect_flag=GmailReconnectFlag(
             oauth_credentials=None, mail_connector=None, ensure_agents=_Factory().ensure_agents_for_user,
             notification_service=notification),
-        alert_sink=None)
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
     return fan_out, daily, marks, review, client
 
 

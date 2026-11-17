@@ -7,6 +7,7 @@ import pytest
 from src.domain.agent import AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult, empty_answer_alert
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.deep_research_notice_sender import DeepResearchNoticeSender
 
 DELIVERED = NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=True)
@@ -39,7 +40,7 @@ class Sink:
 
 async def _send(result: NotifyResult, sink: Optional[Sink] = None):
     notifier = Notifier(result)
-    sender = DeepResearchNoticeSender(notification_service=notifier, alert_sink=sink)  # type: ignore[arg-type]
+    sender = DeepResearchNoticeSender(notification_service=notifier, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=sink))  # type: ignore[arg-type]
     answer = await sender.send("user-1", "acct-1", "the alert", "chan-1", "slack", context="event=x")
     return answer, notifier
 

@@ -10,6 +10,7 @@ from src.domain.agent import AgentStatus
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult, empty_answer_alert
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services import daily_email_review_task as module
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from tests.support.clock_instants import pin_datetime
@@ -51,7 +52,8 @@ class Rig:
         self._sink_fails = sink_fails
         self.task = DailyEmailReviewTask(
             email_review=self.review, ensure_agents=self._ensure, notification_service=self,  # type: ignore[arg-type]
-            gmail_reconnect_flag=self, alert_sink=None if sink_fails is None else self)  # type: ignore[arg-type]
+            gmail_reconnect_flag=self, empty_answer_reporter=BackgroundEmptyAnswerReporter(
+                alert_sink=None if sink_fails is None else self))  # type: ignore[arg-type]
 
     async def _ensure(self, user_id: str) -> None:
         self.order.append(f"ensure:{user_id}")

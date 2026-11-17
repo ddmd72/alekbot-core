@@ -6,6 +6,7 @@ import pytest
 from src.domain import deep_research_notices as notices
 from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.deep_research_failed_task import DeepResearchFailedTask
 from src.services.deep_research_notice_sender import DeepResearchNoticeSender
 
@@ -21,7 +22,7 @@ class Rig:
                                     error=None if delivered else "boom")
         self.task = DeepResearchFailedTask(
             ensure_agents=self._ensure, notice_sender=DeepResearchNoticeSender(notification_service=self,  # type: ignore[arg-type]
-                                                                               alert_sink=None))
+                                                                               empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None)))
 
     async def _ensure(self, user_id: str) -> None:
         self.order.append(f"ensure:{user_id}")

@@ -28,6 +28,7 @@ from src.domain.notify_result import NotifyResult
 from src.domain.user import UserBotConfig, UserProfile
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.video_generation_port import VideoPollResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
@@ -628,7 +629,8 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     ns.notes_port = notes_port
     ns.execute_reminder = ExecuteReminderTask(
         notes_port=notes_port, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
-        notification_service=notification, alert_sink=billing_webhook,
+        notification_service=notification,
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=billing_webhook),
     )
     ns.start_daily_review = StartDailyEmailReviewTask(
         email_review=email_review, task_dispatch=task_dispatch, user_repo=user_repo, marks=None,
@@ -640,7 +642,7 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         gmail_reconnect_flag=GmailReconnectFlag(
             oauth_credentials=None, mail_connector=None, ensure_agents=agent_factory.ensure_agents_for_user,
             notification_service=notification),
-        alert_sink=billing_webhook,
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=billing_webhook),
     )
     ns.billing_summary = BillingDailySummaryTask(
         billing_webhook=billing_webhook, account_repo=account_repo, user_repo=user_repo,
