@@ -591,7 +591,7 @@ class TestNotifyFileBytes:
             channel_factory=channel_factory,
             coordinator=AsyncMock(),
             notification_sla=NOTIFICATION_SLA,
-            platform_media=platform_media,
+            platform_media={"slack": platform_media} if platform_media else None,
         ), platform_media
 
     async def test_no_platform_media_skips(self, state_repo, channel_factory, response_channel):

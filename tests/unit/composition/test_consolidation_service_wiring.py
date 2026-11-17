@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.composition import slack_adapter_factory, telegram_adapter_factory
+from src.composition import chat_services
+from src.composition.chat_services import ChatServices
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.domain.messaging import MessageContext
@@ -40,25 +41,25 @@ def _service():
 
 
 def _handler_kwargs_from_slack(monkeypatch, service):
-    monkeypatch.setattr(slack_adapter_factory, "ConversationHandler", _recording_handler)
+    monkeypatch.setattr(chat_services, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
-            app=MagicMock(), config={}, env_config=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(),
+            app=MagicMock(), config={}, env_config=MagicMock(),
+            chat=ChatServices(coordinator=MagicMock(), agent_factory=MagicMock(), consolidation_service=service),
             iam_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
-            consolidation_service=service,
         )
     return caught.value.kwargs
 
 
 def _handler_kwargs_from_telegram(monkeypatch, service):
-    monkeypatch.setattr(telegram_adapter_factory, "ConversationHandler", _recording_handler)
+    monkeypatch.setattr(chat_services, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         TelegramAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             token="1:abc", webhook_secret="s", dedup_store=MagicMock(), session_store=MagicMock(),
-            coordinator=MagicMock(), agent_factory=MagicMock(), iam_service=MagicMock(),
-            consolidation_service=service,
+            chat=ChatServices(coordinator=MagicMock(), agent_factory=MagicMock(), consolidation_service=service),
+            iam_service=MagicMock(),
         )
     return caught.value.kwargs
 

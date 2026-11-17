@@ -49,11 +49,11 @@ def _build(platform="slack", stored="U1", with_service=True, answer=None):
     response.result = answer
     coordinator = AsyncMock()
     coordinator.route_message.return_value = response
-    svc = UserNotificationService(state_repo=state, channel_factory=factory, coordinator=coordinator,
-                                  notification_sla=NOTIFICATION_SLA)
     media = FakeMedia()
-    if with_service:
-        svc.register_platform_rich_content(platform, RichContentService(media_port=media))
+    svc = UserNotificationService(state_repo=state, channel_factory=factory, coordinator=coordinator,
+                                  notification_sla=NOTIFICATION_SLA,
+                                  platform_rich_content={platform: RichContentService(media_port=media)}
+                                  if with_service else None)
     return svc, channel, media
 
 
