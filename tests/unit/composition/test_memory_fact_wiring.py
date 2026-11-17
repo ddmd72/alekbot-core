@@ -29,7 +29,7 @@ def test_container_exposes_memory_fact_service(container):  # noqa: F811
 
 
 def test_agent_services_includes_memory_fact_service(container):  # noqa: F811
-    assert container.agent_services()["memory_fact_service"] is container.memory_fact_service
+    assert container.agent_services().memory_fact_service is container.memory_fact_service
 
 
 @pytest.mark.asyncio

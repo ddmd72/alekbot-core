@@ -64,6 +64,11 @@ class _StubAgent:
         self.config = SimpleNamespace(capabilities=[])
         self.built_from = built_from
 
+    def bind_runtime(self, runtime) -> None:
+        self.coordinator = runtime.coordinator
+        self._prompt_content_store = runtime.prompt_content_store
+        self._quota_service = runtime.quota_service
+
     async def process(self, message) -> AgentResponse:
         return AgentResponse.success(
             task_id=message.task_id, agent_id=self.agent_id, result=f"answer from {self.agent_id}",
