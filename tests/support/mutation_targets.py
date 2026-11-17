@@ -151,6 +151,7 @@ TARGETS: tuple[MutationTarget, ...] = (
             "src.composition.telegram_adapter_factory",
             "src.composition.chat_services",
             "src.composition.platform_kit",
+            "src.composition.worker_setup",
         )
     ),
     MutationTarget("src.adapters.firestore_repo", "tests/unit/adapters/fact_store_kit_equivalent_mutants.txt"),

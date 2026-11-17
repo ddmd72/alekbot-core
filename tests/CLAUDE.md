@@ -187,7 +187,7 @@ python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
 ```
 
 The test list is computed, not hand-written: `python -m tests.support.mutation_targets --tests-for <src.module>` prints every `tests/unit`
-test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). The eight wiring targets also get the graph group `graph_tests()` (every unit test reaching `prod_graph`, `worker_triggers`, `main` or `application_graph`). `extra` is the escape hatch for a test that reaches the module only through `src` or only through a conftest fixture
+test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). The nine wiring targets also get the graph group `graph_tests()` (every unit test reaching `prod_graph`, `worker_triggers`, `main` or `application_graph`). `extra` is the escape hatch for a test that reaches the module only through `src` or only through a conftest fixture
 (conftests are never followed). For a registered target `--tests-for <m>` prints the full list (computed closure + graph group + `extra`); it exits 2 with a message when no unit test reaches the module.
 
 Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;
