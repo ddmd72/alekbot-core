@@ -32,8 +32,7 @@ def _deps(notes_port, **overrides):
     factory = _Factory()
     deps = dict(notes_port=notes_port, user_repo=object(), ensure_agents=factory.ensure_agents_for_user,
                 notification_service=object(), alert_sink=object(), task_dispatch=object(), video_registry=None,
-                quota_service=None, media_storage=None, link_service=None, short_link_service=None,
-                deep_research_fetch=None, prompt_content_store=None, email_review=object(),
+                quota_service=None, media_storage=None, link_service=None, short_link_service=None, email_review=object(),
                 daily_review_marks=object(), gmail_reconnect_flag=object(), account_repo=object())
     deps.update(overrides)
     return deps
@@ -99,8 +98,8 @@ async def test_without_a_video_registry_or_a_dispatcher_the_task_answers_the_ref
     assert caplog.messages == ["[Worker] video_generation_polling: video_registry or task_dispatch not configured"]
 
 
-def test_the_failure_notice_runner_is_always_built_and_shares_its_sender_with_the_webhook_runner():
-    deps = _deps(None, deep_research_fetch=object())
+def test_the_failure_notice_runner_is_always_built_over_its_notice_sender():
+    deps = _deps(None)
 
     tasks = build_worker_tasks(**deps)
 
@@ -135,7 +134,7 @@ def test_with_the_review_dependencies_the_fan_out_and_the_review_runners_hold_ex
 
 
 def test_the_reminder_review_and_notice_runners_share_one_empty_answer_reporter_over_the_given_sink():
-    deps = _deps(object(), deep_research_fetch=object())
+    deps = _deps(object())
 
     tasks = build_worker_tasks(**deps)
 

@@ -59,7 +59,7 @@ async def test_the_video_runner_is_built_from_the_graphs_registry_dispatcher_sto
     assert runner._deliver_video is deliver_video
 
 
-async def test_the_deep_research_runners_are_built_from_the_graphs_fetch_store_dispatcher_and_one_shared_sender(
+async def test_the_deep_research_failure_runner_is_built_from_the_graphs_agents_notifier_and_ops_sink(
         prod_graph: ProdGraph):
     app = prod_graph.app
     failed = app.worker_handler._tasks["deep_research_failed"]

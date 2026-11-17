@@ -30,7 +30,7 @@ def build(monkeypatch):
     def run(*, queue="QUEUE", container=None):
         container = container or _container()
         db = EvalDb()
-        jobs = build_background_jobs(db, env, container=container, coordinator=COORDINATOR,  # type: ignore[arg-type]
+        jobs = build_background_jobs(container=container, coordinator=COORDINATOR,  # type: ignore[arg-type]
                                      notification_service=NOTIFY, task_queue=queue, delivery=DELIVERY,
                                      user_repo=USERS, languages=LANGUAGES)
         return SimpleNamespace(jobs=jobs, container=container, db=db, env=env)

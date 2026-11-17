@@ -11,10 +11,9 @@ def _result(delivered=True, sent=True, error=None):
     return MagicMock(delivered=delivered, sent=sent, error=error)
 
 
-def _worker(response=None, notify=None, fetch="default", store=None, claims=None):
+def _worker(notify=None, claims=None):
     notification = AsyncMock()
     notification.notify.return_value = notify or _result()
-    fetch_fn = AsyncMock(return_value=response or {"output_text": "REPORT", "model": "m"}) if fetch == "default" else fetch
     agent_factory = AsyncMock()
     task_dispatch = AsyncMock()
     worker = WorkerHandler(
@@ -28,9 +27,9 @@ def _worker(response=None, notify=None, fetch="default", store=None, claims=None
             notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
             notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
             video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
-            short_link_service=None, deep_research_fetch=fetch_fn, prompt_content_store=store),
+            short_link_service=None),
     )
-    return worker, notification, fetch_fn
+    return worker, notification
 
 
 class TestJobFailedNotice:
@@ -38,18 +37,18 @@ class TestJobFailedNotice:
             "origin_platform": "telegram", "query": "tides", "reason": "agent_failed"}
 
     async def test_sent_but_not_delivered_is_200_and_suppresses_agent_retry(self):
-        worker, notification, _ = _worker(notify=_result(delivered=False, sent=True))
+        worker, notification = _worker(notify=_result(delivered=False, sent=True))
         _, status = await worker._dispatch(dict(self._JOB), {})
         assert status == 200
         assert notification.notify.await_args.kwargs["suppress_transient_retry"] is True
 
     async def test_not_sent_is_500(self):
-        worker, _, _ = _worker(notify=_result(delivered=False, sent=False, error="x"))
+        worker, _ = _worker(notify=_result(delivered=False, sent=False, error="x"))
         _, status = await worker._dispatch(dict(self._JOB), {})
         assert status == 500
 
     async def test_delivery_failed_reason_uses_report_not_prepared_wording(self):
-        worker, notification, _ = _worker()
+        worker, notification = _worker()
         await worker._dispatch({**self._JOB, "reason": "delivery_failed"}, {})
         assert notification.notify.await_args.kwargs["system_alert"] == notices.report_not_prepared_notice("tides")
 
