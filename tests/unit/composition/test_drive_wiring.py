@@ -47,7 +47,7 @@ class TestContainerDriveWiring:
     def test_absent_without_any_drive_client(self, monkeypatch):
         c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.user_drive is None and c.user_drive_service is None
-        assert c.agent_services()["user_drive_service"] is None
+        assert c.agent_services().user_drive_service is None
 
     def test_present_with_microsoft_app_registration(self, monkeypatch):
         c = _container(monkeypatch, MICROSOFT_TODO_CLIENT_ID="cid", MICROSOFT_TODO_CLIENT_SECRET="sec",
@@ -56,7 +56,7 @@ class TestContainerDriveWiring:
         # Both consumers hang off the same adapter: conversion reads, the agent mutates.
         assert c.file_conversion_service._drive is c.user_drive
         assert c.user_drive_service._drive is c.user_drive
-        assert c.agent_services()["user_drive_service"] is c.user_drive_service
+        assert c.agent_services().user_drive_service is c.user_drive_service
 
     def test_both_or_neither(self, monkeypatch):
         absent = _container(monkeypatch, GCS_MEDIA_BUCKET="bucket", **NO_DRIVE_CLIENT)

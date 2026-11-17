@@ -1,5 +1,6 @@
 """Drive search reaches FileManagementAgent and the Cabinet only through composition
 (USER_DRIVE_INDEXING_RFC §10, §13)."""
+import dataclasses
 import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.composition.deploy_topology import build_deploy_topology
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition import service_container, user_agent_factory
+from src.composition.agent_services import AgentServices
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
@@ -35,7 +37,7 @@ class TestContainer:
     def test_absent_without_a_drive(self, monkeypatch):
         c = _container(monkeypatch, **NO_DRIVE_CLIENT)
         assert c.drive_search_service is None
-        assert c.agent_services()["drive_search_service"] is None
+        assert c.agent_services().drive_search_service is None
 
     def test_follows_the_drive_and_the_index_repository(self, monkeypatch):
         # The wiring is under test, not the adapter: any UserDrivePort will do.
@@ -46,11 +48,15 @@ class TestContainer:
         assert c.drive_search_service._repo is c.drive_index_repo
         assert c.drive_search_service._drive is c.user_drive
         assert c.drive_search_service._embeddings is c.embedding_service
-        assert c.agent_services()["drive_search_service"] is c.drive_search_service
+        assert c.agent_services().drive_search_service is c.drive_search_service
 
 
 def test_factory_hands_search_to_the_agent():
-    assert "drive_search_service" in inspect.signature(user_agent_factory.UserAgentFactory.__init__).parameters
+    # The factory takes the container's services as one AgentServices bundle (composition-root assessment D5).
+    assert "services" in inspect.signature(user_agent_factory.UserAgentFactory.__init__).parameters
+    assert "drive_search_service" in {field.name for field in dataclasses.fields(AgentServices)}
+    init = inspect.getsource(user_agent_factory.UserAgentFactory.__init__)
+    assert "self.drive_search_service = services.drive_search_service" in init
     src = inspect.getsource(user_agent_factory.UserAgentFactory._build_file_management)
     assert "drive_search=self.drive_search_service" in src
 
