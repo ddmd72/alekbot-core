@@ -21,6 +21,7 @@ from src.domain.reminder_alert import build_reminder_alert, build_reminder_alert
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
 from src.domain.worker_task import WorkerTask
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.execute_reminder_task import ExecuteReminderTask
 from src.adapters import firestore_agent_note_adapter
 from tests.support.clock_instants import pin_datetime
@@ -67,7 +68,7 @@ class Rig:
         self.sink = sink
         self.task = ExecuteReminderTask(
             notes_port=self.notes, user_repo=self.users, ensure_agents=self._ensure,
-            notification_service=self.notifier, alert_sink=self.sink)
+            notification_service=self.notifier, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=self.sink))
 
     async def _ensure(self, user_id: str) -> None:
         self.order.append("ensure")
@@ -173,7 +174,7 @@ async def test_a_user_without_an_account_is_acked_without_a_run(monkeypatch, cap
     if profile is not None:
         rig.users.put(profile)
     rig.task = ExecuteReminderTask(notes_port=rig.notes, user_repo=rig.users, ensure_agents=rig._ensure,
-                                   notification_service=rig.notifier, alert_sink=None)
+                                   notification_service=rig.notifier, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
     note_id = await rig.seed(monkeypatch)
     with caplog.at_level(logging.WARNING):
         assert await rig.run(note_id) == ({"status": "no_user"}, 200)

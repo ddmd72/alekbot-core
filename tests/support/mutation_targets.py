@@ -280,6 +280,7 @@ TARGETS: tuple[MutationTarget, ...] = (
                    "tests/unit/adapters/prompt_v3_firestore_agent_profile_repository_equivalent_mutants.txt"),
     # Checkpoint 2's new modules (composition-root refactor): header-only equivalent files, a reviewer rules a survivor equivalent there.
     MutationTarget("src.services.execute_reminder_task", "tests/unit/services/execute_reminder_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.background_empty_answer_reporter", "tests/unit/services/background_empty_answer_reporter_equivalent_mutants.txt"),
     MutationTarget("src.services.video_generation_polling_task", "tests/unit/services/video_generation_polling_task_equivalent_mutants.txt"),
     MutationTarget("src.services.deep_research_failed_task", "tests/unit/services/deep_research_failed_task_equivalent_mutants.txt"),
     MutationTarget("src.services.deep_research_webhook_event_task", "tests/unit/services/deep_research_webhook_event_task_equivalent_mutants.txt"),

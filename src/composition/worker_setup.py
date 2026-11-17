@@ -16,6 +16,7 @@ from ..ports.dedup_store import DedupStore
 from ..ports.user_repository import UserRepository
 from ..ports.prompt_content_store import PromptContentStore
 from ..services.billing_daily_summary_task import BillingDailySummaryTask
+from ..services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from ..services.daily_email_review_task import DailyEmailReviewTask
 from ..services.deep_research_delivery import deliver_deep_research
 from ..services.deep_research_failed_task import DeepResearchFailedTask
@@ -46,13 +47,14 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
                        account_repo: Optional[AccountRepository]) -> Mapping[str, WorkerTask]:
     """Task type -> runner for every task served outside `WorkerHandler`."""
     tasks: Dict[str, WorkerTask] = {}
+    empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=alert_sink)
     if notes_port is None:
         tasks["execute_reminder"] = DisabledTask(
             "execute_reminder: notes_port not configured", 501, {"error": "notes_port not configured"})
     else:
         tasks["execute_reminder"] = ExecuteReminderTask(
             notes_port=notes_port, user_repo=user_repo, ensure_agents=ensure_agents,
-            notification_service=notification_service, alert_sink=alert_sink)
+            notification_service=notification_service, empty_answer_reporter=empty_answer_reporter)
     if video_registry is None or task_dispatch is None:
         tasks["video_generation_polling"] = DisabledTask(
             "video_generation_polling: video_registry or task_dispatch not configured", 500,
@@ -62,7 +64,8 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
             video_registry=video_registry, task_dispatch=task_dispatch, ensure_agents=ensure_agents,
             notification_service=notification_service, media_storage=media_storage, quota_service=quota_service,
             link_service=link_service, short_link_service=short_link_service, deliver_video=deliver_video)
-    notice_sender = DeepResearchNoticeSender(notification_service=notification_service, alert_sink=alert_sink)
+    notice_sender = DeepResearchNoticeSender(
+        notification_service=notification_service, empty_answer_reporter=empty_answer_reporter)
     tasks["deep_research_failed"] = DeepResearchFailedTask(ensure_agents=ensure_agents, notice_sender=notice_sender)
     if deep_research_fetch is None:
         tasks["deep_research_webhook_event"] = DisabledTask(
@@ -87,7 +90,7 @@ def build_worker_tasks(*, notes_port: Optional[AgentNotePort], user_repo: UserRe
     else:
         tasks["daily_email_review"] = DailyEmailReviewTask(
             email_review=email_review, ensure_agents=ensure_agents, notification_service=notification_service,
-            gmail_reconnect_flag=gmail_reconnect_flag, alert_sink=alert_sink)
+            gmail_reconnect_flag=gmail_reconnect_flag, empty_answer_reporter=empty_answer_reporter)
     if alert_sink is None:
         tasks["billing_daily_summary"] = DisabledTask(
             "billing_daily_summary: billing_webhook not configured", 501, {"error": "billing_webhook not configured"})

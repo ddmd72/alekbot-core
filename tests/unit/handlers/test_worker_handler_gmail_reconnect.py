@@ -20,6 +20,7 @@ from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.email_review_service import EmailReviewService
@@ -107,7 +108,7 @@ def _review(*, stored_creds, oauth_configured: bool = True):
     oauth, notification, ensure_agents, flag = _parts(stored_creds=stored_creds, oauth_configured=oauth_configured)
     review = DailyEmailReviewTask(
         email_review=email_review, ensure_agents=ensure_agents, notification_service=notification,
-        gmail_reconnect_flag=flag, alert_sink=None)
+        gmail_reconnect_flag=flag, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
     return review, oauth, notification
 
 

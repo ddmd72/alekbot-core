@@ -15,6 +15,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notify_result import NotifyResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.email_review_service import EmailReviewService
 from src.services.gmail_reconnect_flag import GmailReconnectFlag
@@ -66,7 +67,7 @@ def _worker(store, notify):
         gmail_reconnect_flag=GmailReconnectFlag(
             oauth_credentials=store, mail_connector=ConnectorRegistry().get("gmail"), ensure_agents=ensure_agents,
             notification_service=notification),
-        alert_sink=None)
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
 
 
 @pytest.mark.parametrize("outcome", [
