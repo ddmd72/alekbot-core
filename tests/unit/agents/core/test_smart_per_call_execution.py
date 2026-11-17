@@ -6,8 +6,8 @@ Covers Step #2 of NOTIFICATION_DELIVERY_REFACTOR_RFC:
     1. Explicit ``ExecutionOverride`` on ``message.context["execution_override"]``
     2. ``TaskExecutionResolver.resolve`` (task_complexity)
     3. Agent defaults (``self.execution_context``, ``self._default_thinking_effort``)
-- ``thinking_effort`` resolution sub-rules (override wins; otherwise context;
-  otherwise default).
+- ``thinking_effort`` resolution sub-rules (the caller's context wins; otherwise
+  the override's; otherwise default — TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC Q2).
 - Negative invariants: ``_execute_lock`` is gone, ``self.llm`` /
   ``self.model_name`` / ``self._agent_execution_context`` are not mutated
   by ``execute()``.
@@ -204,13 +204,25 @@ class TestResolveEffectivePriorityChain:
 
 
 class TestThinkingEffortResolution:
-    """thinking_effort: override > context > default."""
+    """thinking_effort: context > override > default."""
 
-    def test_override_thinking_effort_wins_over_context(self, smart):
+    def test_context_thinking_effort_wins_over_override(self, smart):
+        # TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC Q2: the caller's
+        # context["thinking_effort"] has priority (P13-D3).
         explicit = ExecutionOverride(
             execution_context=_make_ctx(), thinking_effort="high"
         )
         message = _make_message(execution_override=explicit, thinking_effort="low")
+
+        eff = smart._resolve_effective(message)
+
+        assert eff.thinking_effort == "low"
+
+    def test_override_thinking_effort_applies_when_context_has_none(self, smart):
+        explicit = ExecutionOverride(
+            execution_context=_make_ctx(), thinking_effort="high"
+        )
+        message = _make_message(execution_override=explicit)
 
         eff = smart._resolve_effective(message)
 
