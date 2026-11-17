@@ -1,4 +1,4 @@
-# attach_* / set_* methods of classes in src/services/ and src/handlers/ (test_arch_no_late_wiring.py, part b).
+# attach_* / set_* / register_* methods of classes in src/services/ and src/handlers/ (test_arch_no_late_wiring.py, part b).
 # Line: <path>::<Class>.<method>  # <reason>
 # A dependency setter is debt the composition-root refactor removes; a domain operation that happens to be named set_* is
 # not a setter and stays. A new dependency setter is never added: take the dependency in the constructor.
@@ -16,3 +16,7 @@ src/services/drive_connection_service.py::DriveConnectionService.set_write_folde
 src/services/email_indexing_service.py::EmailIndexingService.attach_card_step  # composition-root refactor (assessment D3)
 src/services/file_conversion_service.py::FileConversionService.attach_documents  # composition-root refactor (assessment D3)
 src/services/language_preference_service.py::LanguagePreferenceService.set_preference  # domain operation, not a dependency setter
+src/handlers/worker_handler.py::WorkerHandler.register_telegram_worker  # permanent: the late Telegram platform binding (owner ruling 2026-11-17: Telegram is all or nothing and its adapter takes the notification service, so register_late_platform binds it only after the whole chain built)
+src/services/authentication_service.py::AuthenticationService.register_new_user  # domain operation, not a dependency setter
+src/services/memory_telemetry_service.py::MemoryTelemetryService.register_contributor  # registry pattern, not a dependency setter
+src/services/user_notification_service.py::UserNotificationService.register_platform  # permanent: the late Telegram platform binding (owner ruling 2026-11-17: Telegram is all or nothing and its adapter takes the notification service, so register_late_platform binds it only after the whole chain built)

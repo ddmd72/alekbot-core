@@ -7,7 +7,7 @@ called expression as written (`worker_handler.attach_slack_worker`) and the coun
 (the Registry pattern, the one real router-factory cycle and the late Telegram platform binding of `register_late_platform`,
 owner ruling 2026-11-17) carry the count `*` and a reason starting with `permanent`.
 
-(b) In `src/services/` and `src/handlers/`, a method named `attach_*` or `set_*` is allowed only on
+(b) In `src/services/` and `src/handlers/`, a method named `attach_*`, `set_*` or `register_*` is allowed only on
 `late_wiring_setters_allowlist.txt`: `<path>::<Class>.<method>  # <reason>`.
 
 A line whose offence is gone fails: delete it.
@@ -23,7 +23,7 @@ CALLS = Path(__file__).with_name("late_wiring_calls_allowlist.txt")
 SETTERS = Path(__file__).with_name("late_wiring_setters_allowlist.txt")
 # A module whose text lacks these cannot hold an offence and is not parsed (keeps the guard fast).
 CALL_TEXT = re.compile(r"\.(?:attach_|set_|register)")
-SETTER_TEXT = re.compile(r"\bdef\s+(?:attach_|set_)")
+SETTER_TEXT = re.compile(r"\bdef\s+(?:attach_|set_|register_)")
 FIX_CALL = ("Do not add a new attach/set/register call: pass the dependency in the constructor and build the object after "
             "its dependencies.")
 FIX_SETTER = ("Do not add a new setter: take the dependency as a constructor parameter (composition/ builds the "
@@ -45,7 +45,7 @@ def calls(module: ast.AST, path: str) -> Dict[str, int]:
 
 def setters(module: ast.AST, path: str) -> Dict[str, int]:
     return {f"{path}::{qualname}": 1 for qualname, fn, owner in arch_ratchet.functions(module)
-            if owner is not None and fn.name.startswith(("attach_", "set_"))}
+            if owner is not None and fn.name.startswith(("attach_", "set_", "register_"))}
 
 
 def test_composition_and_main_call_only_the_listed_late_wiring():
@@ -85,6 +85,7 @@ def test_the_call_scan_keys_by_the_callee_as_written_and_counts():
 def test_the_text_filters_keep_every_module_the_scans_would_report():
     assert CALL_TEXT.search("wh.attach_x(1)") and CALL_TEXT.search("r.register(1)") and CALL_TEXT.search("s.set_y(2)")
     assert SETTER_TEXT.search("    async def set_x(self, x):") and SETTER_TEXT.search("def attach_y(self, y):")
+    assert SETTER_TEXT.search("    async def register_x(self, x):")
     assert not SETTER_TEXT.search("def settle(self):")
 
 
@@ -92,6 +93,26 @@ def test_the_setter_scan_sees_methods_only():
     source = "def set_x(a):\n    pass\nclass S:\n    def attach_y(self, y):\n        self.y = y\n    def settle(self):\n        pass\n"
 
     assert setters(ast.parse(source), "p.py") == {"p.py::S.attach_y": 1}
+
+
+def test_the_setter_scan_sees_register_methods_sync_and_async():
+    source = ("def register_x(a):\n    pass\nclass S:\n    def register_platform(self, p):\n        pass\n"
+              "    async def register_new_user(self):\n        pass\n    def registered(self):\n        pass\n")
+
+    assert setters(ast.parse(source), "p.py") == {"p.py::S.register_platform": 1, "p.py::S.register_new_user": 1}
+
+
+def test_an_unlisted_register_method_fails_a_listed_one_passes_and_a_stale_line_fails():
+    found = setters(ast.parse("class S:\n    def register_a(self):\n        pass\n    def register_b(self):\n"
+                              "        pass\n"), "p.py")
+    listed = arch_ratchet.parse("p.py::S.register_a  # registry pattern, not a dependency setter\n"
+                                "p.py::S.register_gone  # registry pattern, not a dependency setter\n", counted=False)
+
+    problems = arch_ratchet.compare(found, listed, allowlist="L", unit="definition", fix="F")
+
+    assert any("S.register_b" in line for line in problems)
+    assert any("S.register_gone" in line for line in problems)
+    assert not any("S.register_a" in line for line in problems)
 
 
 def test_a_permanent_line_takes_any_count_and_only_a_permanent_line_may():
