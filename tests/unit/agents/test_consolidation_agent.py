@@ -57,7 +57,6 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
 
     embedding = MagicMock()
     fact_write = MagicMock()
-    fact_write.add_facts_batch = AsyncMock(return_value=(0, 0, []))
 
     pb = prompt_builder or MagicMock()
     pb.build_for_agent = AsyncMock(return_value="SYSTEM PROMPT")
@@ -68,7 +67,6 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         execution_context=execution_context,
         repository=repo,
         embedding_service=embedding,
-        fact_write_service=fact_write,
         fact_management_port=fact_management,
         fact_updates=typed_port_for(fact_management),  # reviewer edit (S4 T6b): the typed port is required
         prompt_builder=pb,

@@ -155,7 +155,7 @@ async def run(store: FactStore, script: Pass):
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"),
         execution_context=execution_context(script.llm, "consolidation"),
-        repository=store.repo, embedding_service=store.embedder, fact_write_service=store.write,
+        repository=store.repo, embedding_service=store.embedder,
         fact_management_port=port, fact_updates=port, prompt_builder=StubPromptBuilder(),
         bio_cache=NoCacheRefresh(),
     )

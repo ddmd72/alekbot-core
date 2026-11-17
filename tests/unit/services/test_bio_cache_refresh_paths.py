@@ -179,7 +179,7 @@ def consolidator(repo: Any, store: FactStore, bio: Any, *, email_repo: Any = Non
                  fact_updates: Any = None) -> ConsolidationAgent:
     """The agent over the world's repository, the real fact management and typed write path, with `AGENT_LIMITS`."""
     port = FactManagementAdapter(
-        repo, store.embedder, FactWriteService(repo, store.embedder),
+        repo, store.embedder, FactWriteService(store.embedder),
         SearchEnrichmentService(repo, store.embedder, 7, 10, 10, 20),
     )
     execution = AgentExecutionContext(
@@ -188,7 +188,7 @@ def consolidator(repo: Any, store: FactStore, bio: Any, *, email_repo: Any = Non
     )
     return ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
-        repository=repo, embedding_service=store.embedder, fact_write_service=FactWriteService(repo, store.embedder),
+        repository=repo, embedding_service=store.embedder,
         fact_management_port=fact_updates or port, fact_updates=fact_updates or port, prompt_builder=Prompts(),
         indexed_email_repo=email_repo, email_memory_batches=email_repo, **AGENT_LIMITS, bio_cache=bio,
     )

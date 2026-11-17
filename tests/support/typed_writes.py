@@ -42,7 +42,7 @@ def build_consolidation_agent(*, fact_updates: Any, fact_management_port: Any = 
             tier=PerformanceTier.PERFORMANCE, capabilities=ProviderCapabilities(),
             resilience_port=InMemoryProviderResilience(),
         ),
-        repository=MagicMock(), embedding_service=MagicMock(), fact_write_service=MagicMock(),
+        repository=MagicMock(), embedding_service=MagicMock(),
         fact_management_port=fact_management_port if fact_management_port is not None else MagicMock(),
         fact_updates=fact_updates,
         bio_cache=AsyncMock(),

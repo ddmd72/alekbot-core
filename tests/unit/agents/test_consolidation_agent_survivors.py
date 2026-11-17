@@ -111,7 +111,7 @@ def make_agent(store: FactStore, *, email_repo: Any = None) -> ConsolidationAgen
     )
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
-        repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
+        repository=store.repo, embedding_service=store.embedder,
         fact_management_port=port, fact_updates=port, prompt_builder=TenantPrompts(), indexed_email_repo=email_repo,
         email_memory_batches=email_repo,
         bio_cache=NoCacheRefresh(),

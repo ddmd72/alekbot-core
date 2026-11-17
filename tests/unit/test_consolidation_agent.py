@@ -45,13 +45,6 @@ class TestConsolidationAgent:
         return service
 
     @pytest.fixture
-    def mock_fact_write_service(self):
-        svc = AsyncMock()
-        # add_facts_batch returns (saved_count, skipped_count, saved_ids)
-        svc.add_facts_batch = AsyncMock(return_value=(2, 0, []))
-        return svc
-
-    @pytest.fixture
     def mock_prompt_builder(self):
         builder = MagicMock()
         builder.build_for_agent = AsyncMock(return_value="CONSOLIDATION SYSTEM PROMPT")
@@ -59,7 +52,7 @@ class TestConsolidationAgent:
         return builder
 
     @pytest.fixture
-    def agent(self, mock_llm, mock_repo, mock_embedding, mock_fact_write_service, mock_prompt_builder):
+    def agent(self, mock_llm, mock_repo, mock_embedding, mock_prompt_builder):
         config = AgentConfig(
             agent_id="consolidation_agent",
             agent_type="consolidation",
@@ -78,7 +71,6 @@ class TestConsolidationAgent:
             execution_context=ec,
             repository=mock_repo,
             embedding_service=mock_embedding,
-            fact_write_service=mock_fact_write_service,
             prompt_builder=mock_prompt_builder,
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required
             bio_cache=AsyncMock(),
@@ -276,12 +268,6 @@ class TestConsolidationAgentV3:
         return service
 
     @pytest.fixture
-    def mock_fact_write_service(self):
-        svc = AsyncMock()
-        svc.add_facts_batch = AsyncMock(return_value=(1, 0, []))
-        return svc
-
-    @pytest.fixture
     def mock_prompt_builder(self):
         builder = MagicMock()
         builder.build_for_agent = AsyncMock(return_value="CONSOLIDATION V3 PROMPT")
@@ -293,7 +279,7 @@ class TestConsolidationAgentV3:
         return AsyncMock(spec=FactManagementPort)
 
     @pytest.fixture
-    def agent_v3(self, mock_llm, mock_repo, mock_embedding, mock_fact_write_service,
+    def agent_v3(self, mock_llm, mock_repo, mock_embedding,
                  mock_prompt_builder, mock_fact_management):
         config = AgentConfig(
             agent_id="consolidation_agent",
@@ -313,10 +299,8 @@ class TestConsolidationAgentV3:
             execution_context=ec,
             repository=mock_repo,
             embedding_service=mock_embedding,
-            fact_write_service=mock_fact_write_service,
             fact_management_port=mock_fact_management,
             fact_updates=typed_port_for(mock_fact_management),  # reviewer edit (S4 T6b): the typed port is required
-            prompt_version="v3",
             prompt_builder=mock_prompt_builder,
             bio_cache=AsyncMock(),
         )
@@ -479,10 +463,8 @@ class TestConsolidationAgentV3:
             execution_context=ec,
             repository=mock_repo,
             embedding_service=mock_embedding,
-            fact_write_service=mock_fact_write_service,
             fact_management_port=None,  # explicitly absent
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): every agent gets the typed port; v2 makes no typed write
-            prompt_version="v3",
             prompt_builder=mock_prompt_builder,
             bio_cache=AsyncMock(),
         )

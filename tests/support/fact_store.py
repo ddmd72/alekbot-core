@@ -64,7 +64,7 @@ class FactStore:
         self.db = EvalDb(indexes=indexes, groups=groups)
         self.embedder = HashEmbedder()
         self.repo = FirestoreFactRepository(self.db, make_env_config(), embedding_service=self.embedder)
-        self.write = FactWriteService(self.repo, self.embedder)
+        self.write = FactWriteService(self.embedder)
         self.adapter = FactManagementAdapter(
             self.repo, self.embedder, self.write, AsyncMock(spec=SearchEnrichmentPort)
         )

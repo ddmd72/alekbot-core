@@ -86,7 +86,7 @@ def make_agent(world, *, batches: bool = True, people: bool = True, prompts: Opt
     )
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
-        repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
+        repository=store.repo, embedding_service=store.embedder,
         fact_management_port=port, fact_updates=port, prompt_builder=prompts or RecordingPrompts(),
         indexed_email_repo=emails or world.emails, email_memory_batches=(emails or world.emails) if batches else None,
         confirmed_people=world.people if people else None,
