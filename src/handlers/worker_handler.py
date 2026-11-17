@@ -18,9 +18,8 @@ Supported task_types:
                                      session with stuck batches
   - fire_due_reminders       → cron tick: claim each due note (atomic precondition on `due`)
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
-  - execute_reminder         → run one claimed reminder fire: load note, idempotency
-                                check via `last_delivered_due`, deliver via notify(),
-                                stamp delivery on success
+  - execute_reminder         → ExecuteReminderTask (services/execute_reminder_task.py), passed in by
+                                composition (`tasks`): run one claimed reminder fire
   - setup_microsoft_todo          → TaskSetupService.setup(user_id)
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
@@ -51,6 +50,7 @@ from __future__ import annotations
 import functools
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional, Tuple
 
 
@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from ..services.email_review_service import EmailReviewService
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
-    from ..ports.agent_note_port import AgentNotePort
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..ports.dedup_store import DedupStore
@@ -76,7 +75,6 @@ if TYPE_CHECKING:
     from ..services.integration_reconnect_service import IntegrationReconnectService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
-from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.connector_spec import ConnectorSpec
 from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
@@ -85,18 +83,13 @@ from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoi
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.worker_task import WorkerTask
-from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import NotificationPort, deliver_deep_research
 from ..services.consolidation_service import ConsolidationService
 from ..services.provider_registry import ProviderRegistry
 from ..services.email_indexing_service import EmailIndexingService
-from ..services.reminders_service import (
-    RemindersService,
-    build_reminder_alert,
-    build_reminder_alert_summary,
-)
+from ..services.reminders_service import RemindersService
 from ..services.task_dispatch_service import TaskDispatchService
 from ..services.video_generation_delivery import deliver_video
 from ..utils.logger import logger
@@ -146,7 +139,6 @@ class WorkerHandler:
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         reminders_service: Optional[RemindersService] = None,
-        notes_port: "Optional[AgentNotePort]" = None,
         email_review: "Optional[EmailReviewService]" = None,
         account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
@@ -164,7 +156,10 @@ class WorkerHandler:
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
         reconnect: "Optional[IntegrationReconnectService]" = None,
         mail_connector: Optional[ConnectorSpec] = None,
+        tasks: Mapping[str, WorkerTask] = MappingProxyType({}),
     ) -> None:
+        """`tasks`: the runners composition builds outside this handler (`composition/worker_setup.py`), merged over
+        the handler's own entries; a task type served by both raises ValueError."""
         self._reconnect = reconnect
         # the mail kind's spec: the Gmail credential `_flag_gmail_reconnect` flags is the one of its kind
         self._mail_connector = mail_connector
@@ -195,14 +190,13 @@ class WorkerHandler:
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
-        self._notes_port = notes_port
         self._email_review = email_review
         self._account_repo = account_repo
         self._billing_webhook = billing_webhook
         self._companion_extraction = companion_extraction
         self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
-        self._tasks: Mapping[str, WorkerTask] = {
+        own: dict[str, WorkerTask] = {
             "agent_execution": _payload_task(self._handle_agent_execution),
             "telegram_update": _payload_task(self._handle_telegram_update),
             "email_indexing": _payload_task(self._handle_email_indexing),
@@ -219,7 +213,6 @@ class WorkerHandler:
             "renew_task_subscriptions": _payload_task(self._handle_renew_task_subscriptions),
             "renew_all_task_subscriptions": _no_input_task(self._handle_renew_all_task_subscriptions),
             "fire_due_reminders": _no_input_task(self._handle_fire_due_reminders),
-            "execute_reminder": _payload_task(self._handle_execute_reminder),
             "start_email_indexing": _no_input_task(self._handle_start_email_indexing),
             "start_daily_email_review": _no_input_task(self._handle_start_daily_email_review),
             "daily_email_review": _payload_task(self._handle_daily_email_review),
@@ -231,6 +224,10 @@ class WorkerHandler:
             INTERACTIVE_CHOICE_TASK: _payload_task(self._handle_interactive_choice),
             _QUEUED_SLACK_EVENT: self._handle_queued_slack_event,
         }
+        served_twice = own.keys() & tasks.keys()
+        if served_twice:
+            raise ValueError(f"WorkerHandler: task types passed in that it already serves: {sorted(served_twice)}")
+        self._tasks: Mapping[str, WorkerTask] = {**own, **tasks}
 
     def task_types(self) -> frozenset[str]:
         """The task_type values this handler dispatches (the queued Slack event carries none)."""
@@ -919,144 +916,6 @@ class WorkerHandler:
             logger.warning("[Worker] fire_due_reminders: reminders_service not configured")
             return {"error": "reminders_service not configured"}, 501
         return await self._reminders_service.fire_due_reminders()
-
-    async def _handle_execute_reminder(self, payload: dict) -> Tuple[dict, int]:
-        """Run a single claimed reminder fire (Step #8 of NOTIFICATION_DELIVERY_REFACTOR_RFC).
-
-        Payload (placed by ``RemindersService.fire_due_reminders``):
-            note_id : str          Firestore note id
-            user_id : str          owning user (verified via ownership-scoped get_note)
-            due_at  : str (ISO)    fire-time this task is delivering — used as
-                                   the idempotency token (compared against
-                                   ``last_delivered_due``).
-
-        Outcomes (HTTP status drives Cloud Tasks retry policy — 5xx = retry,
-        2xx = ack and stop):
-            note_gone           note deleted between cron-tick and this run → 200
-            no_user             user repo lost the user → 200
-            already_delivered   ``last_delivered_due == due_at`` → 200 (Cloud
-                                Tasks retry no-op, prevents duplicate Smart run
-                                + duplicate user message)
-            delivery_failed     notify() returned ``delivered=False`` → 500
-                                (Cloud Tasks queue retries with backoff)
-            ok                  delivered + ``mark_fire_delivered`` stamped → 200
-        """
-        if not self._notes_port:
-            logger.warning("[Worker] execute_reminder: notes_port not configured")
-            return {"error": "notes_port not configured"}, 501
-
-        note_id = payload.get("note_id")
-        user_id = payload.get("user_id")
-        due_at_raw = payload.get("due_at")
-        if not note_id or not user_id or not due_at_raw:
-            return {"error": "missing note_id, user_id, or due_at"}, 400
-
-        try:
-            due_at = datetime.fromisoformat(due_at_raw)
-        except ValueError:
-            logger.warning(
-                "[Worker] execute_reminder: bad due_at %r for note=%s",
-                due_at_raw, note_id,
-            )
-            return {"error": "bad due_at"}, 400
-
-        note = await self._notes_port.get_note(user_id=user_id, note_id=note_id)
-        if note is None:
-            # One-time already delivered-and-deleted by a prior worker run, or
-            # a note the user has since removed. Either way: nothing to
-            # deliver, ack the task.
-            logger.info(
-                "[Worker] execute_reminder: note_gone note=%s user=%s",
-                note_id, user_id[:8],
-            )
-            return {"status": "note_gone"}, 200
-
-        # Idempotency guard against Cloud Tasks retries.
-        if note.last_delivered_due is not None and note.last_delivered_due == due_at:
-            # Clean up a one-time note that was stamped but not yet deleted
-            # (prior run crashed between mark_fire_delivered and delete_note).
-            if note.recurrence is None:
-                await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
-            logger.info(
-                "[Worker] execute_reminder: already_delivered note=%s due=%s",
-                note_id, due_at.isoformat(),
-            )
-            return {"status": "already_delivered"}, 200
-
-        user_profile = await self._user_repo.get_user(user_id)
-        if not user_profile or not getattr(user_profile, "account_id", None):
-            logger.warning(
-                "[Worker] execute_reminder: no_user user=%s note=%s",
-                user_id[:8], note_id,
-            )
-            return {"status": "no_user"}, 200
-
-        await self._agent_factory.ensure_agents_for_user(user_id)
-
-        task_complexity = note.complexity.value if note.complexity else "simple_analytics"
-        # Resolve the PerformanceTier for the SLA budget through the SAME merge
-        # TaskExecutionResolver applies to pick the execution context — user
-        # ``complexity_settings_overrides`` on top of the system defaults. Reading the
-        # raw defaults table here (as this did until 2026-08-15) set the clock for one
-        # tier while the work ran at another: a user overriding simple_analytics to
-        # PERFORMANCE got 600s of budget for a 1500s workload, and the daily briefing
-        # was killed mid-turn three runs in a row.
-        # ``tier=None`` means "use the kind's default budget" (handled by notify());
-        # only the kinds with ``tier_overrides`` actually consume this argument.
-        sla_tier = None
-        if note.complexity is not None:
-            settings = resolve_complexity_settings(note.complexity, user_profile.config)
-            if settings is not None:
-                sla_tier = settings.tier
-
-        fire = workspace_fire_key(note_id, due_at)
-        result = await self._notification.notify(
-            user_id=user_id,
-            account_id=user_profile.account_id,
-            system_alert=build_reminder_alert(note),
-            system_alert_summary=build_reminder_alert_summary(note),
-            kind=NotificationKind.REMINDER,
-            tier=sla_tier,
-            agent_id_override=f"smart_response_agent_{user_id}",
-            task_complexity=task_complexity,
-            # This handler returns 5xx on failure → Cloud Tasks retries the task.
-            # Suppress the agent's in-process retry so the two layers don't multiply.
-            suppress_transient_retry=True,
-            # Who started the run, for the workspace's origin labels; the same due_at gives the same key on every
-            # Cloud Tasks re-run of this fire (AGENT_WORKSPACE_RFC §9, §10 row 1).
-            origin_detail="execute_reminder",
-            fire_key=fire,
-        )
-
-        if is_empty_answer(result):
-            # Final (owner decision 2026-10-23): a retry would repeat the SYNC actions the turn took, and a
-            # conditional reminder may end empty every time. Take the success path below.
-            await self._empty_answer_final("execute_reminder", user_id, note_id)
-        elif not result.delivered:
-            logger.warning(
-                "[Worker] execute_reminder: delivery_failed note=%s user=%s "
-                "(agent_status=%s, error=%s)",
-                note_id, user_id[:8], result.agent_status, result.error,
-            )
-            return {
-                "error": result.error or "delivery_failed",
-                "agent_status": result.agent_status.value,
-            }, 500
-
-        # Stamp idempotency FIRST, then remove a fired one-time note. Order
-        # matters: if we crash between the two, a Cloud Tasks retry sees
-        # last_delivered_due == due_at and short-circuits (already_delivered)
-        # rather than re-delivering.
-        await self._notes_port.mark_fire_delivered(note_id=note_id, due_at=due_at)
-        if note.recurrence is None:
-            # One-time reminder: claimed (not deleted) at fire-time so its
-            # content survived for this delivery; remove it now that it fired.
-            await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
-        logger.info(
-            "[Worker] execute_reminder: %s note=%s user=%s due=%s",
-            "empty_answer_final" if is_empty_answer(result) else "ok", note_id, user_id[:8], due_at.isoformat(),
-        )
-        return {"status": "empty_answer_final" if is_empty_answer(result) else "ok"}, 200
 
     # ------------------------------------------------------------------
     # Daily email review

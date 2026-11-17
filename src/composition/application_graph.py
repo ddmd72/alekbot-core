@@ -71,6 +71,7 @@ from src.composition.service_container import ServiceContainer
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
+from src.composition.worker_setup import build_worker_tasks
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
@@ -990,7 +991,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_setup=task_setup_service,
         task_indexing=container.task_indexing,
         reminders_service=_reminders_service,
-        notes_port=container.notes_adapter,
         email_review=container.email_review_service,
         account_repo=account_repo,
         billing_webhook=_alert_webhook,
@@ -1006,6 +1006,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         interactive_choice=_interactive_choice,
         reconnect=_reconnect_service,
         mail_connector=container.connectors.get(GMAIL),
+        tasks=build_worker_tasks(
+            notes_port=container.notes_adapter, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification_service, alert_sink=_alert_webhook),
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
