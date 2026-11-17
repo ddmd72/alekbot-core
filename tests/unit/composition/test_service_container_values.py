@@ -25,7 +25,7 @@ def test_the_claude_and_openai_adapters_hold_the_configured_keys(variant_graph):
 
 async def test_the_sessions_live_in_the_environments_collection(prod_graph):
     app = prod_graph.app
-    env_config = app.agent_factory.env_config
+    env_config = app.agent_factory.config["ENVIRONMENT_CONFIG"]   # the settings the graph was built with
 
     assert app.container.session_store.collection_name == env_config.sessions_collection
 

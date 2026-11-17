@@ -59,7 +59,7 @@ def variant_graph(monkeypatch) -> Iterator[VariantGraph]:
 @pytest.mark.slow
 async def test_accounts_are_stored_in_the_environments_account_collection(prod_graph):
     app = prod_graph.app
-    name = app.agent_factory.env_config.account_collection_name
+    name = app.agent_factory.config["ENVIRONMENT_CONFIG"].account_collection_name
 
     assert app.account_repo.accounts_collection.name == name
     assert "a1" in prod_graph.offline.db.collection(name).docs
