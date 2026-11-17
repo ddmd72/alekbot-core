@@ -70,6 +70,7 @@ from .drive_connection_setup import build_drive_connection_repository
 from .drive_provider_router import DriveProviderRouter
 from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..services.drive_connection_service import DriveConnectionService
+from .agent_services import AgentServices
 from .deploy_topology import DeployTopology
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
@@ -512,43 +513,43 @@ class ServiceContainer:
     # Public API
     # ------------------------------------------------------------------
 
-    def agent_services(self) -> dict:
-        """Return ports dict suitable for **-unpacking into UserAgentFactory."""
-        return {
-            "session_store": self.session_store,
-            "llm_port": self.llm_port,
-            "claude_service": self.claude_service,
-            "grok_service": self.grok_service,
-            "openai_service": self.openai_service,
-            "embedding_service": self.embedding_service,
-            "repository": self.repository,
-            "config_service": self.config_service,
-            "biographical_context_service": self.biographical_context_service,
-            "registry": self.registry,
-            "context_builder": self.context_builder,
-            "assembly_service": self.assembly_service,
-            "fact_write_service": self.fact_write_service,
-            "fact_management_adapter_factory": self.create_fact_management_adapter,
-            "email_search_service": self.email_search_service,
-            "email_card_search": self.email_card_search,
-            "indexed_email_repo": self.indexed_email_repo,
-            "confirmed_people": self.confirmed_people,
-            "tasks_provider": self.ms_todo_adapter,
-            "task_indexing": self.task_indexing,
-            "notes_provider": self.notes_adapter,
-            "recurrence": self.recurrence_adapter,
-            "file_conversion_service": self.file_conversion_service,
-            "file_storage": self.file_storage,
-            "user_drive_service": self.user_drive_service,
-            "drive_search_service": self.drive_search_service,
-            "prompt_content_store": self.prompt_content_store,
-            "skill_service": self.skill_service,
-            "memory_fact_service": self.memory_fact_service,
-            "lifecycle_counters": self.fact_lifecycle_counters,
-            "workspace_service": self.workspace_service,
-            "drive_note_service": self.drive_note_service,
-            "drive_notes_enabled": self.drive_notes_enabled,
-        }
+    def agent_services(self) -> AgentServices:
+        """The shared services UserAgentFactory takes, as one typed bundle."""
+        return AgentServices(
+            session_store=self.session_store,
+            llm_port=self.llm_port,
+            claude_service=self.claude_service,
+            grok_service=self.grok_service,
+            openai_service=self.openai_service,
+            embedding_service=self.embedding_service,
+            repository=self.repository,
+            config_service=self.config_service,
+            biographical_context_service=self.biographical_context_service,
+            registry=self.registry,
+            context_builder=self.context_builder,
+            assembly_service=self.assembly_service,
+            fact_write_service=self.fact_write_service,
+            fact_management_adapter_factory=self.create_fact_management_adapter,
+            email_search_service=self.email_search_service,
+            email_card_search=self.email_card_search,
+            indexed_email_repo=self.indexed_email_repo,
+            confirmed_people=self.confirmed_people,
+            tasks_provider=self.ms_todo_adapter,
+            task_indexing=self.task_indexing,
+            notes_provider=self.notes_adapter,
+            recurrence=self.recurrence_adapter,
+            file_conversion_service=self.file_conversion_service,
+            file_storage=self.file_storage,
+            user_drive_service=self.user_drive_service,
+            drive_search_service=self.drive_search_service,
+            prompt_content_store=self.prompt_content_store,
+            skill_service=self.skill_service,
+            memory_fact_service=self.memory_fact_service,
+            lifecycle_counters=self.fact_lifecycle_counters,
+            workspace_service=self.workspace_service,
+            drive_note_service=self.drive_note_service,
+            drive_notes_enabled=self.drive_notes_enabled,
+        )
 
     def create_fact_management_adapter(
         self, search_enrichment_service: SearchEnrichmentService
