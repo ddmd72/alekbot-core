@@ -32,7 +32,6 @@ from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepos
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
-from src.adapters.gcp_log_sink import GcpLogSink
 from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.adapters.grok_image_adapter import GrokImageAdapter
@@ -55,6 +54,7 @@ from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.boot_setup import build_boot_checks
 from src.composition.identity_setup import build_identity
+from src.composition.operations_setup import build_operations
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -71,7 +71,6 @@ from src.composition.worker_setup import build_worker_tasks
 from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
-from src.domain.agent import AgentConfig
 from src.domain.fact_lifecycle_sweep import sweep_dry_run
 from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.domain.language import LanguageCode
@@ -240,65 +239,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     for descriptor in ALL_DESCRIPTORS:
         agent_registry.register(descriptor)
 
-    agent_task_queue = None
-    if config.get("GOOGLE_CLOUD_PROJECT"):
-        agent_task_queue = GcpTaskQueue(
-            project_id=config["GOOGLE_CLOUD_PROJECT"],
-            location=topology.region,
-            queue_name=f"agent-tasks-{topology.queue_suffix}",
-            service_url=topology.service_url,
-            service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
-        )
-    else:
-        logger.info("📬 Agent task queue: disabled (no GCP project)")
-
-    # Ops alert sink — shared by the AgentCoordinator (delegation-loop alerts),
-    # AlertingLLMProxy (LLM 4xx alerts), the billing daily summary, and the daily
-    # budget alert in FirestoreQuotaService. Optional: wired only when
-    # BILLING_SLACK_WEBHOOK_URL is set. Built here because the coordinator, just
-    # below, is the earliest consumer.
-    _alert_webhook = None
-    _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
-    if _alert_webhook_url:
-        _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
-        logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
+    ops = build_operations(config, env_config, topology=topology, account_repo=account_repo)
+    agent_task_queue, _alert_webhook, quota_service = ops.task_queue, ops.alert_sink, ops.quota_service
+    billing_agent, logger_agent = ops.billing_agent, ops.logger_agent
 
     # Audio transcription (optional — voice messages stay an honest alert without it), with the parse adapter: the
     # container's document service takes both (EXTERNAL_FILES_RFC P21).
     document_backends = build_document_backends(config, parser=parse_adapter)
     audio_service = document_backends.transcriber
-
-    logger.info("💳 Initializing Billing Agent...")
-    quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
-    billing_agent = BillingAgent(
-        config=AgentConfig(
-            agent_id="billing_agent",
-            agent_type="billing",
-            timeout_ms=None,
-            capabilities=["usage_tracking", "quota_management"]
-        ),
-        quota_service=quota_service
-    )
-
-    logger.info("🧾 Initializing Logger Agent...")
-    log_sink = None
-    if not env_config.is_development:
-        try:
-            log_sink = GcpLogSink()
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize GcpLogSink: {e}")
-            raise
-
-    logger_agent = LoggerAgent(
-        config=AgentConfig(
-            agent_id="logger_agent",
-            agent_type="logger",
-            timeout_ms=None,
-            capabilities=["centralized_logging", "trace_correlation"]
-        ),
-        env_config=env_config,
-        log_sink=log_sink
-    )
 
     logger.info("📦 Initializing Consolidation Queue...")
     consolidation_queue = FirestoreConsolidationQueue(
