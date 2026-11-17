@@ -3,6 +3,7 @@ lifecycle; the deleted-files source joins the search whatever the switch; the in
 tick; the `$drive-notes` command gets the container's service only with the switch on, through both adapter factories
 and both main.py sites (review I2: without it the erase codes could never be redeemed). The kill switch's parser and
 the store builders are part A's (their tests are A's)."""
+import ast
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -69,8 +70,20 @@ def test_both_factories_default_to_none(build):
 
 def test_both_main_sites_pass_the_gated_service():
     """The application graph builds the Slack and the Telegram adapter (main.py did until `build_application_graph`):
-    each passes the container's service through the switch."""
+    each gets the container's service through the switch, from the one `ChatServices` both factories take."""
     source = (_ROOT / "src" / "composition" / "application_graph.py").read_text()
-    assert source.count("drive_note_service=command_drive_note_service(container.drive_note_service,") == 2
-    assert source.count("container.drive_notes_enabled)") == 2
-    assert source.count("memory_fact_service=container.memory_fact_service,") == 2
+    tree = ast.parse(source)
+    [built] = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
+               and ast.unparse(n.value.func) == "ChatServices"]
+    keywords = {k.arg: ast.unparse(k.value) for k in built.value.keywords}
+    assert keywords["drive_note_service"] == ("command_drive_note_service(container.drive_note_service, "
+                                              "container.drive_notes_enabled)")
+    assert keywords["memory_fact_service"] == "container.memory_fact_service"
+    [name] = [ast.unparse(t) for t in built.targets]
+    factories = {ast.unparse(n.func): {k.arg: ast.unparse(k.value) for k in n.keywords} for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and ast.unparse(n.func).endswith("AdapterFactory.create_adapter")}
+    assert set(factories) == {"SlackAdapterFactory.create_adapter", "TelegramAdapterFactory.create_adapter"}
+    assert all(kw.get("chat") == name for kw in factories.values()), factories
+    # no other site builds the command's service, gated or not
+    assert source.count("command_drive_note_service(") == 1
+    assert source.count("container.drive_note_service") == 1
