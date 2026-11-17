@@ -1,0 +1,27 @@
+# attach_* / set_* / register_* / register calls in src/composition/ and main.py (test_arch_no_late_wiring.py, part a).
+# Line: <path>::<callee as written>  # <exact call count, or * for a permanent line>  # <reason>
+# Permanent (not debt): the Registry pattern and the one real router-factory cycle; their reason starts with `permanent`.
+# Everything else is late wiring the composition-root refactor removes. A line whose offence is gone fails: delete it.
+main.py::main_app.register_blueprint  # *  # permanent: Registry pattern (web blueprints)
+src/composition/application_graph.py::_language_service.attach_agent_refresher  # 1  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::PlatformAdapterFactory.register  # 1  # composition-root refactor (assessment D3; dead registry, P9-D5)
+src/composition/application_graph.py::agent_registry.register  # *  # permanent: Registry pattern (AgentRegistry)
+src/composition/application_graph.py::container.file_conversion_service.attach_documents  # 1  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::coordinator.register_agent  # *  # permanent: Registry pattern (AgentCoordinator.register_agent)
+src/composition/application_graph.py::coordinator.set_agent_factory  # *  # permanent: the real router-factory cycle (AgentCoordinator.set_agent_factory)
+src/composition/application_graph.py::image_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/application_graph.py::job_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/application_graph.py::notification_channel_factory.register_factory  # 2  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::notification_service.attach_localization  # 1  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::notification_service.register_platform_media  # 2  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::notification_service.register_platform_rich_content  # 2  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::slack_adapter.register_handlers  # 1  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::video_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/application_graph.py::worker_handler.attach_slack_worker  # 1  # composition-root refactor (assessment D3)
+src/composition/application_graph.py::worker_handler.attach_telegram_worker  # 1  # composition-root refactor (assessment D3)
+src/composition/drive_mcp_setup.py::span.set_attribute  # *  # permanent: a tracing span attribute, not wiring
+src/composition/drive_model_setup.py::registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/email_card_setup.py::email_indexing_service.attach_card_step  # 1  # composition-root refactor (assessment D3)
+src/composition/service_container.py::self.biographical_context_service.set_repository  # 1  # composition-root refactor (assessment D3)
+src/composition/service_container.py::self.registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
+src/composition/user_agent_factory.py::self.coordinator.register_agent  # *  # permanent: Registry pattern (AgentCoordinator.register_agent)
