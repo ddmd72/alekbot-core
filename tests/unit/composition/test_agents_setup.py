@@ -20,9 +20,9 @@ class _Factory:
         return None
 
 
-SERVICES = {"session_store": object(), "llm_port": object()}
-CONTAINER = SimpleNamespace(session_store=SERVICES["session_store"], profile_repo=object(), assembly_service=object(),
-                            agent_services=lambda: dict(SERVICES))
+SERVICES = object()    # stands in for the container's typed AgentServices (S7); the factory must get this very object
+CONTAINER = SimpleNamespace(session_store=object(), profile_repo=object(), assembly_service=object(),
+                            agent_services=lambda: SERVICES)
 BOOT = SimpleNamespace(deploy_topology=object(), video_duration=object())
 IDENTITY = SimpleNamespace(user_repo=object(), account_repo=object())
 OPS = SimpleNamespace(task_queue=object(), quota_service=object(), alert_sink=object())
@@ -52,7 +52,7 @@ def test_the_factory_gets_the_container_services_and_each_bundles_piece(build):
     agents = build(config)
 
     kwargs = agents.factory.kwargs
-    assert {k: kwargs[k] for k in SERVICES} == SERVICES
+    assert kwargs["services"] is SERVICES
     expected = {"config": config, "fact_search": SEARCH.fact_search, "deploy_topology": BOOT.deploy_topology,
                 "coordinator": COORDINATOR, "user_repo": IDENTITY.user_repo, "account_repo": IDENTITY.account_repo,
                 "job_registry": JOBS, "image_registry": IMAGES, "video_registry": VIDEOS, "task_queue": OPS.task_queue,
