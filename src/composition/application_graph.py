@@ -15,7 +15,6 @@ from telegram import Bot
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
-from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
@@ -53,6 +52,7 @@ from src.composition.identity_setup import build_identity
 from src.composition.operations_setup import build_operations
 from src.composition.session_routing_setup import build_session_routing
 from src.composition.file_delivery_setup import build_file_delivery
+from src.composition.language_setup import build_languages
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -71,7 +71,6 @@ from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.fact_lifecycle_sweep import sweep_dry_run
 from src.domain.fact_review_question import FACT_QUESTION_KIND
-from src.domain.language import LanguageCode
 from src.domain.notification_kind import NotificationKind as _NotificationKind
 from src.domain.settings import SearchConfig
 from src.handlers.agent_worker_handler import AgentWorkerHandler
@@ -350,17 +349,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     notification_state_repo = FirestoreNotificationStateAdapter(
         db_client=db_client, env_config=env_config
     )
-    logger.info("🌐 Initializing Language Services...")
-    _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
-    _localization = _LocalizationService(_localization_port)
-    _system_lang = LanguageCode.from_str(
-        config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
-    )
-    _language_service = LanguageResolver(
-        user_repo=user_repo,
-        account_repo=account_repo,
-        system_default_language=_system_lang,
-    )
+    languages = build_languages(config, user_repo=user_repo, account_repo=account_repo)
+    _localization_port, _localization = languages.localization_port, languages.localization
+    _system_lang, _language_service = languages.system_default, languages.resolver
 
     # The Slack app is built here, before the notification service and the memory review, whose questions are posted
     # through its client; the Slack adapter below is built over the same app.
