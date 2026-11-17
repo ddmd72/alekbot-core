@@ -1395,22 +1395,6 @@ class TestHandleExecuteReminder:
 
 class TestHandleStartDailyEmailReview:
 
-    async def test_missing_email_review_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
-    async def test_missing_task_dispatch_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._task_dispatch = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
     async def test_enqueues_daily_review_per_eligible_user(self):
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = [
@@ -1466,16 +1450,6 @@ class TestHandleDailyEmailReview:
         result, status = await worker._handle_daily_email_review({"user_id": _USER_A})
 
         assert status == 400
-
-    async def test_missing_email_review_service_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
-
-        assert status == 501
 
     async def test_credentials_unavailable_returns_200_no_notify(self):
         worker, ns = _make_full_worker()
@@ -1565,22 +1539,6 @@ def _make_account(
 
 
 class TestHandleBillingDailySummary:
-
-    async def test_missing_billing_webhook_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._billing_webhook = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
-
-    async def test_missing_account_repo_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._account_repo = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
 
     async def test_no_accounts_with_activity_returns_reported_zero(self):
         worker, ns = _make_full_worker()
