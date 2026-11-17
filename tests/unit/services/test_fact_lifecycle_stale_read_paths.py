@@ -81,7 +81,7 @@ async def test_a_staled_fact_is_absent_from_the_reader_after_the_sweep(reader, d
     world = JanitorWorld()
     gone = await world.seed_due(GONE, domain=domain)
     await world.seed(KEPT, domain=domain)
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     assert await reader(world) >= {GONE, KEPT}                    # the reader does see the due fact until it is staled
 
     result = await world.service.sweep()
@@ -96,7 +96,7 @@ async def test_log_only_leaves_every_reader_as_it_was():
     world = JanitorWorld(dry_run=True)
     await world.seed_due(GONE)
     await world.seed(KEPT)
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     readers = [p.values[0] for p in READ_PATHS if p.values[1] == "health"]
     before = [await reader(world) for reader in readers]
 

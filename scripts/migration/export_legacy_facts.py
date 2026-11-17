@@ -18,8 +18,6 @@ from src.config.settings import load_settings
 from src.config.environment import EnvironmentConfig
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from src.services.biographical_context_service import BiographicalContextService
-from src.services.configuration_service import ConfigurationService
 from src.utils.logger import logger
 
 
@@ -42,20 +40,11 @@ async def export_legacy_facts(account_id: str, output_path: str):
     embedding_service = GeminiEmbeddingAdapter(api_key=settings.get("GEMINI_API_KEY"))
     
     # Initialize repository
-    config_service = ConfigurationService()
-    biographical_context_service = BiographicalContextService(
-        repository=None,
-        config_service=config_service,
-        account_repo=None
-    )
-    
     repo = FirestoreFactRepository(
         db_client=db,
         env_config=env_config,
         embedding_service=embedding_service,
-        biographical_context_service=biographical_context_service
     )
-    biographical_context_service._repository = repo
     await repo.initialize()
     
     # Fetch all legacy facts

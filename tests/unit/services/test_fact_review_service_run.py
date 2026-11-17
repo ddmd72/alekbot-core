@@ -23,6 +23,7 @@ from src.domain.messaging import MessageRef
 from src.domain.user import UserBotConfig, UserProfile
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService, _StepResult, _Timeouts
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_review_world import ReviewWorld
@@ -146,24 +147,30 @@ class Rig:
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
             owner_zones=zones, clock=world.clock,
+            bio_cache=world.bio,
         )
         self.fact_updates = RecordingFactUpdates(world.store.adapter)
         self.refreshes: List[str] = []
-        real = world.repo.refresh_biographical_context_cache
+        real = world.bio.refresh_cache
 
         async def refresh(owner_id: str, *args: Any, **kwargs: Any) -> None:
             self.refreshes.append(owner_id)
             await real(owner_id, *args, **kwargs)
 
-        world.repo.refresh_biographical_context_cache = refresh  # type: ignore[method-assign]
+        world.bio.refresh_cache = refresh  # type: ignore[method-assign]
         self.service = Recording(
             repo=world.repo, review_store=world.review_store, counters=world.counters, lease=lease or world.lease,
             coordinator=self.coordinator, agent_factory=self.agents, user_repo=users, account_repo=accounts,
-            texts=texts, owner_zones=zones, notification_state=world.notification_state,
-            channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
-            task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
+            texts=texts, owner_zones=zones,
+            session_store=world.session_store,
+            task_queue=world.queue, answer_service=answers, alert_sink=world.sink,
             run_timeout_s=600, clock=clock or world.clock,
             fact_updates=self.fact_updates, cabinet_url="https://cabinet.example/cabinet?tab=memory",
+            owner_channel=FactReviewOwnerChannel(
+                notification_state=world.notification_state, channel_bindings=world.channel_bindings,
+                notifications=world.notifier, interactive=world.interactive,
+            ),
+            bio_cache=world.bio,
         )
 
     async def run(self, mode: str = "daily") -> Dict[str, Any]:
@@ -591,8 +598,10 @@ def _kwargs_of(r: Rig) -> Dict[str, Any]:
     return dict(
         repo=s._repo, review_store=s._review_store, counters=s._counters, lease=s._lease, coordinator=s._coordinator,
         agent_factory=s._agent_factory, user_repo=s._user_repo, account_repo=s._account_repo, texts=s._texts,
-        owner_zones=s._owner_zones, notification_state=s._notification_state, channel_bindings=s._channel_bindings,
-        notifications=s._notifications, session_store=s._session_store, task_queue=s._task_queue,
-        answer_service=s._answer_service, interactive=s._interactive, alert_sink=s._alert_sink,
-        fact_updates=s._fact_updates, cabinet_url=s._cabinet_url,
+        owner_zones=s._owner_zones, owner_channel=FactReviewOwnerChannel(
+            notification_state=s._notification_state, channel_bindings=s._channel_bindings,
+            notifications=s._notifications, interactive=s._interactive,
+        ), session_store=s._session_store, task_queue=s._task_queue,
+        answer_service=s._answer_service, alert_sink=s._alert_sink,
+        fact_updates=s._fact_updates, bio_cache=s._bio_cache, cabinet_url=s._cabinet_url,
     )

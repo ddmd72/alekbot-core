@@ -127,6 +127,7 @@ async def test_the_answer_services_whole_constructor_is_the_graphs_objects(prod_
         "_interactive": review._interactive,
         "_owner_zones": review._owner_zones,
         "_clock": answer_module._utcnow,
+        "_bio_cache": app.container.biographical_context_service,
     }
     held = vars(answer)
     # Fact profile §4.7 (5d): `_profile_answers` is built for the answer service, checked below like `_fact_updates`.

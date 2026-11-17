@@ -16,6 +16,7 @@ from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -64,7 +65,6 @@ def make_agent(port=None, *, repo=None):
     if repo is None:
         repo = MagicMock()
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
-        repo.refresh_biographical_context_cache = AsyncMock()
         repo.get_active_facts_ordered = AsyncMock(return_value=[])
     pb = MagicMock()
     pb.build_for_agent = AsyncMock(side_effect=lambda **kw: "SYS|" + "|".join(
@@ -75,6 +75,7 @@ def make_agent(port=None, *, repo=None):
         execution_context=execution_context, repository=repo, embedding_service=MagicMock(),
         fact_write_service=MagicMock(), fact_management_port=port, prompt_builder=pb,
         fact_updates=typed_port_for(port),  # reviewer edit (S4 T6b): the typed port is required
+        bio_cache=AsyncMock(spec=BiographicalCacheRefresher),
     )
     agent.INLINE_CLUSTER_REVIEW = True
     return agent, repo, pb
@@ -289,14 +290,14 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
     agent._run_consolidation_loop = loop
     with pytest.raises(RuntimeError):
         await run_v3(agent, ACC)
-    repo.refresh_biographical_context_cache.assert_awaited_once()
+    agent._bio_cache.refresh_cache.assert_awaited_once()
     pb.invalidate_biographical_cache.assert_called_once_with(ACC)
 
-    clean, repo2, pb2 = make_agent(ScriptedPort())
+    clean, _, pb2 = make_agent(ScriptedPort())
     clean._run_consolidation_loop = writes_then(RuntimeError("provider down"), write=False)
     with pytest.raises(RuntimeError):
         await run_v3(clean, ACC)
-    repo2.refresh_biographical_context_cache.assert_not_awaited()
+    clean._bio_cache.refresh_cache.assert_not_awaited()
     pb2.invalidate_biographical_cache.assert_not_called()
 
 
@@ -317,7 +318,7 @@ async def test_a_backstop_invalidation_counts_as_a_write_of_the_run_and_a_failur
         await run_v3(agent, ACC)
 
     assert [kind for kind, _ in port.calls] == ["update"]                     # one invalidation landed, the second raised
-    repo.refresh_biographical_context_cache.assert_awaited_once()
+    agent._bio_cache.refresh_cache.assert_awaited_once()
     pb.invalidate_biographical_cache.assert_called_once_with(ACC)
 
 
@@ -326,11 +327,11 @@ async def test_a_failed_write_does_not_count_as_a_write():
         async def create_fact(self, content, metadata, *, context):
             return {"fact_id": None, "status": "failed", "message": "invalid domain"}
 
-    agent, repo, _ = make_agent(Refusing())
+    agent, _, _ = make_agent(Refusing())
     agent._run_consolidation_loop = writes_then(RuntimeError("boom"))
     with pytest.raises(RuntimeError):
         await run_v3(agent, ACC)
-    repo.refresh_biographical_context_cache.assert_not_awaited()
+    agent._bio_cache.refresh_cache.assert_not_awaited()
 
 
 async def test_a_run_that_finished_does_not_refresh_inside_the_process():
@@ -342,14 +343,14 @@ async def test_a_run_that_finished_does_not_refresh_inside_the_process():
 
     agent._run_consolidation_loop = loop
     await run_v3(agent, ACC)
-    repo.refresh_biographical_context_cache.assert_not_awaited()      # the success path refreshes once, in the handler
+    agent._bio_cache.refresh_cache.assert_not_awaited()      # the success path refreshes once, in the handler
 
 
 async def test_execute_refreshes_once_on_success_and_once_on_a_failure_after_a_write():
-    ok, repo_ok, _ = make_agent(ScriptedPort())
+    ok, _, _ = make_agent(ScriptedPort())
     ok.INLINE_CLUSTER_REVIEW = False
     script_llm(ok, {"SYS|": [turn(tool("create_fact", **create_args("A1"))), REPORT]})
-    bad, repo_bad, _ = make_agent(ScriptedPort())
+    bad, _, _ = make_agent(ScriptedPort())
     bad._run_consolidation_loop = writes_then(RuntimeError("provider down"))
 
     msg = AgentMessage.create(sender="t", recipient="consolidation_agent", intent=AgentIntent.DELEGATE,
@@ -358,8 +359,8 @@ async def test_execute_refreshes_once_on_success_and_once_on_a_failure_after_a_w
     with RequestContext(user_id=USER, account_id=ACC):
         assert (await ok.execute(msg)).status == AgentStatus.SUCCESS
         assert (await bad.execute(msg)).status == AgentStatus.FAILED
-    repo_ok.refresh_biographical_context_cache.assert_awaited_once()
-    repo_bad.refresh_biographical_context_cache.assert_awaited_once()
+    ok._bio_cache.refresh_cache.assert_awaited_once()
+    bad._bio_cache.refresh_cache.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------------------------- the email pass
@@ -409,7 +410,7 @@ async def test_email_pass_failure_after_a_write_refreshes_the_cache():
 
     assert len(calls) == 2 and calls[0] is calls[1] and isinstance(calls[0], _TrackingFactManagement)
     assert await marked_emails(agent, 2) == ["e1"]                    # the failed pass is not marked consolidated
-    repo.refresh_biographical_context_cache.assert_awaited_once()
+    agent._bio_cache.refresh_cache.assert_awaited_once()
     pb.invalidate_biographical_cache.assert_called_once_with(ACC)
 
 
@@ -418,7 +419,7 @@ async def test_email_pass_clean_failure_does_not_refresh_and_success_refreshes_o
     agent._run_consolidation_loop = AsyncMock(side_effect=RuntimeError("provider down"))
     with pytest.raises(RuntimeError):
         await run_email(agent)
-    repo.refresh_biographical_context_cache.assert_not_awaited()
+    agent._bio_cache.refresh_cache.assert_not_awaited()
 
     ok, repo_ok, _ = await email_agent(2)
 
@@ -433,7 +434,7 @@ async def test_email_pass_clean_failure_does_not_refresh_and_success_refreshes_o
     response = await run_email(ok)
     assert response.status == AgentStatus.SUCCESS and await marked_emails(ok, 2) == ["e1", "e2"]
     assert len(sent) == 2 and '"email_id": "e1"' in sent[0] and '"email_id": "e2"' in sent[1]    # one mail per pass
-    repo_ok.refresh_biographical_context_cache.assert_awaited_once()
+    ok._bio_cache.refresh_cache.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------------------------- the tool schema

@@ -18,24 +18,23 @@ from tests.support.fact_store import FACTS, make_env_config
 CACHE = "eval_user_context"
 
 
-class CountingRepo(FirestoreFactRepository):
-    """The real repository; it keeps the accounts whose biographical cache it refreshed."""
+class CountingRefresher(BiographicalContextService):
+    """The real context service; it keeps the accounts whose biographical cache it refreshed."""
 
     refreshed: list
 
-    async def refresh_biographical_context_cache(self, owner_id, facts_limit=None, principles_limit=None):
+    async def refresh_cache(self, owner_id, facts_limit=None, principles_limit=None):
         self.refreshed.append(owner_id)
-        await super().refresh_biographical_context_cache(owner_id, facts_limit, principles_limit)
+        await super().refresh_cache(owner_id, facts_limit, principles_limit)
 
 
 @pytest.fixture
 def world():
     store, _, _ = make_fact_world()
-    bio = BiographicalContextService(store.repo)
-    repo = CountingRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
-    repo.refreshed = []
-    bio.set_repository(repo)
-    return store, repo, CabinetFactService(repo)
+    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder)
+    bio = CountingRefresher(repo)
+    bio.refreshed = []
+    return store, repo, bio, CabinetFactService(repo, bio_cache=bio)
 
 
 def _bio(name: str, **over):
@@ -54,7 +53,7 @@ def _cached_texts(store):
 
 class TestCabinetFactService:
     async def test_the_fact_is_invalidated_with_its_trail_entry_and_leaves_the_cache_once(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("lives in Springfield"), _bio("has a cat"))
         started = datetime.now(timezone.utc)
 
@@ -66,11 +65,11 @@ class TestCabinetFactService:
         assert doc["lifecycle_events"] == [{"at": doc["valid_to"], "from": "current", "to": "invalidated",
                                             "actor": "cabinet", "reason": "deleted in the Cabinet"}]
         assert store.docs["f-has a cat"]["state"] == "current"
-        assert repo.refreshed == [ACC]
+        assert bio.refreshed == [ACC]
         assert _cached_texts(store) == ["has a cat"]
 
     async def test_a_stale_row_reaches_the_current_version_with_the_same_text(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(
             repo,
             _bio("v1", text="lives in Springfield", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
@@ -84,27 +83,27 @@ class TestCabinetFactService:
         assert store.docs["f-v2"]["state"] == "invalidated" and store.docs["f-v1"] == v1_before
 
     async def test_another_account_is_refused_with_permission_error_nothing_written_no_refresh(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("foreign", account=OTHER))
         before = copy.deepcopy(store.docs)
 
         with pytest.raises(PermissionError, match="Not authorized to modify this fact"):
             await service.invalidate("f-foreign", ACC)
 
-        assert store.docs == before and repo.refreshed == [] and _cached_texts(store) is None
+        assert store.docs == before and bio.refreshed == [] and _cached_texts(store) is None
 
     async def test_a_missing_id_is_refused_with_value_error_nothing_written_no_refresh(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("x"))
         before = copy.deepcopy(store.docs)
 
         with pytest.raises(ValueError, match="Fact not found: f-missing"):
             await service.invalidate("f-missing", ACC)
 
-        assert store.docs == before and repo.refreshed == []
+        assert store.docs == before and bio.refreshed == []
 
     async def test_a_rewritten_version_is_refused_for_the_409_nothing_written_no_refresh(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(
             repo,
             _bio("v1", text="mother is Maria", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
@@ -118,10 +117,10 @@ class TestCabinetFactService:
 
         assert str(caught.value) == "fact f-v1 was rewritten after it was shown"
         assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)
-        assert store.docs == before and repo.refreshed == []
+        assert store.docs == before and bio.refreshed == []
 
     async def test_one_conflict_is_retried_and_the_retry_writes(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("x"))
         store.interfere("f-x", {"last_updated": T0})      # another writer commits once, as the first write reads
 
@@ -129,10 +128,10 @@ class TestCabinetFactService:
 
         doc = store.docs["f-x"]
         assert doc["state"] == "invalidated" and len(doc["lifecycle_events"]) == 1
-        assert repo.refreshed == [ACC]
+        assert bio.refreshed == [ACC]
 
     async def test_two_conflicts_raise_and_neither_writes_nor_refreshes(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("x"))
         store.interfere("f-x", {"last_updated": T0})
         store.interfere("f-x", {"last_updated": T0})
@@ -142,10 +141,10 @@ class TestCabinetFactService:
 
         doc = store.db.collection(FACTS).docs["f-x"]
         assert doc["state"] == "current" and doc["lifecycle_events"] == []
-        assert repo.refreshed == [] and _cached_texts(store) is None
+        assert bio.refreshed == [] and _cached_texts(store) is None
 
     async def test_a_conflict_whose_writer_rewrote_the_text_is_refused_on_the_retry(self, world):
-        store, repo, service = world
+        store, repo, bio, service = world
         await _seed(repo, _bio("v1", text="works remotely", lineage_id="L"),
                     _bio("v2", text="works remotely from Springfield", lineage_id="L", version=2))
         store.interfere("f-v1", {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": T0})
@@ -153,4 +152,4 @@ class TestCabinetFactService:
         with pytest.raises(FactResolutionError, match="rewritten after it was shown"):
             await service.invalidate("f-v1", ACC)
 
-        assert store.docs["f-v2"]["state"] == "current" and repo.refreshed == []
+        assert store.docs["f-v2"]["state"] == "current" and bio.refreshed == []

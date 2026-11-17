@@ -22,7 +22,7 @@ from src.domain.llm import LLMRequest, LLMResponse
 from src.domain.request_context import RequestContext
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER, put_raw
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from tests.support.redelivery_world import require
 from tests.support.scripted_llm import RoutedLLM, execution_context, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder
@@ -157,6 +157,7 @@ async def run(store: FactStore, script: Pass):
         execution_context=execution_context(script.llm, "consolidation"),
         repository=store.repo, embedding_service=store.embedder, fact_write_service=store.write,
         fact_management_port=port, fact_updates=port, prompt_builder=StubPromptBuilder(),
+        bio_cache=NoCacheRefresh(),
     )
     agent.INLINE_CLUSTER_REVIEW = False
     message = AgentMessage(task_id="t", sender="consolidation_queue", recipient="consolidation_agent",

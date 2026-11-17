@@ -66,6 +66,7 @@ def service(world: ReviewWorld, store: Optional[Answers], wired: bool = True) ->
                                 LanguageCode.EN, clock=world.clock),
         interactive=world.interactive, owner_zones=FixedZones(), clock=world.clock,
         profile_answers=ProfileQuestionAnswers(store) if wired and store is not None else None,
+        bio_cache=world.bio,
     )
 
 

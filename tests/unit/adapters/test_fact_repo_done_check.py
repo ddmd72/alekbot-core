@@ -26,16 +26,16 @@ async def test_a_lineage_reads_in_version_order_even_when_the_document_ids_sort_
 
 async def test_a_failed_cache_refresh_is_logged_with_the_cause_and_writes_no_cache(store, monkeypatch):
     errors = []
-    monkeypatch.setattr("src.adapters.firestore_repo.logger.error", lambda msg, *a, **k: errors.append(str(msg)))
+    monkeypatch.setattr("src.services.biographical_context_service.logger.error",
+                        lambda msg, *a, **k: errors.append(str(msg)))
 
     class Failing(BiographicalContextService):
         async def refresh_context(self, *args, **kwargs):
             raise RuntimeError("context service down")
 
-    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
-                                   biographical_context_service=Failing(None))
+    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder)
 
-    assert await repo.refresh_biographical_context_cache(ACC) is None
+    assert await Failing(repo).refresh_cache(ACC) is None
 
     assert store.db.collection(CONTEXT_COLLECTION).docs.get(ACC) is None
     assert len(errors) == 1 and "context service down" in errors[0] and ACC in errors[0]

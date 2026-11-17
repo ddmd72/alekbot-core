@@ -47,6 +47,7 @@ def recent_review():
             world.repo, world.counters, world.sink, dry_run, clock=lambda: world.now,
             review_store=store, task_queue=None, owner_zones=OwnerTimezoneResolver(accounts, users),
             account_repo=accounts, user_repo=users,
+            bio_cache=world.bio,
         )
 
     return reviewed_an_hour_ago
@@ -225,7 +226,7 @@ async def test_log_only_with_a_tripped_breaker_defers_nothing_and_counts_every_f
 async def test_the_cache_of_a_capped_account_is_refreshed_and_shows_only_the_deferred_facts():
     world = JanitorWorld()
     await seed_ordered(world, 52)
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
 
     await world.service.sweep()
 

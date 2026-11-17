@@ -70,6 +70,7 @@ def _agent(world, responses):
         fact_updates=world.store.adapter,
         alert_sink=world.sink,
         lifecycle_counters=world.counters,
+        bio_cache=AsyncMock(),
     )
     agent._llm = provider
     return agent

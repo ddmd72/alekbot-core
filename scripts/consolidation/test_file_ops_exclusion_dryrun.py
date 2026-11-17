@@ -90,7 +90,7 @@ async def _build_agent(user_id: str):
     async def _noop_async(*a, **k):
         pass
 
-    agent._repo.refresh_biographical_context_cache = _noop_async
+    agent._bio_cache.refresh_cache = _noop_async
     if agent.prompt_builder:
         agent.prompt_builder.invalidate_biographical_cache = lambda *a, **k: None
     return agent

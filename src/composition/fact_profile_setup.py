@@ -15,6 +15,7 @@ import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..adapters.geo_place_table import load_place_rows
+from ..domain.fact_profile_run_limits import FactProfileRunLimits
 from ..domain.place_lookup import PlaceRow
 from ..domain.place_names import PlaceNames, atlas_digest
 from ..infrastructure.agent_config import FACT_PROFILER
@@ -99,16 +100,18 @@ def build_fact_profile_service(
     """The profile step over the container's repository, profiler and embedding service; `person_cards` is where it
     rebuilds the people cards (none: it builds no cards). `atlas` is the place atlas to share with the owner's word
     replies (one atlas per process); none: the step loads its own. `quota` is the graph's quota service, which bills the
-    step's label embeddings; none: they are not billed (and logged so)."""
+    step's label embeddings; none: they are not billed (and logged so). The step refreshes the cache through the
+    container's context service."""
     return FactProfileService(
         repo=container.repository,
         profiler=container.fact_profiler,
         embeddings=container.embedding_service,
         atlas=atlas if atlas is not None else LazyAtlas(),
-        max_per_run=max_per_run,
-        call_budget_s=2 * FACT_PROFILER.call_timeout_s,  # one parse retry
+        # call budget: one parse retry
+        limits=FactProfileRunLimits(max_per_run=max_per_run, call_budget_s=2 * FACT_PROFILER.call_timeout_s),
         person_cards=person_cards,
         confirmed_people=container.confirmed_people,
         profile_answers=container.profile_answers,
         quota=quota,
+        bio_cache=container.biographical_context_service,
     )

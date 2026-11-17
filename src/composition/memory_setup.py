@@ -25,6 +25,7 @@ from ..services.consolidation_service import ConsolidationService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from ..services.fact_question_texts import FactQuestionTexts
+from ..services.fact_review_owner_channel import FactReviewOwnerChannel
 from ..services.fact_review_service import FactReviewService
 from ..services.interactive_choice_service import InteractiveChoiceService
 from ..services.owner_timezone_resolver import OwnerTimezoneResolver
@@ -84,6 +85,7 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
         counters=container.fact_lifecycle_counters,
         alert_sink=ops.alert_sink,
         dry_run=dry_run,
+        bio_cache=container.biographical_context_service,
         review_store=container.fact_review_store,
         task_queue=ops.task_queue,
         owner_zones=owner_zones,
@@ -97,7 +99,7 @@ def build_memory(db_client: Any, env_config: EnvironmentConfig, *, container: An
     return Memory(consolidation_service=consolidation, fact_lifecycle_sweep=sweep, fact_answers=answers,
                   interactive_choice=choice, fact_review=review,
                   # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
-                  cabinet_facts=CabinetFactService(container.repository))
+                  cabinet_facts=CabinetFactService(container.repository, container.biographical_context_service))
 
 
 def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_factory: Any, identity: Identity,
@@ -144,6 +146,7 @@ def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_f
         interactive=interactive,
         owner_zones=owner_zones,
         profile_answers=profile_answers,
+        bio_cache=container.biographical_context_service,
     ) if queue else None
     # The Slack interactivity route queues an owner's click; the worker's `interactive_choice` task runs it.
     choice = InteractiveChoiceService(
@@ -163,16 +166,17 @@ def _build_fact_review(*, container: Any, coordinator: AgentCoordinator, agent_f
         account_repo=identity.account_repo,
         texts=texts,
         owner_zones=owner_zones,
-        notification_state=notifications.state_repo,
-        channel_bindings=routing.channel_binding_adapter,
-        notifications=notifications.service,
+        owner_channel=FactReviewOwnerChannel(
+            notification_state=notifications.state_repo, channel_bindings=routing.channel_binding_adapter,
+            notifications=notifications.service, interactive=interactive,
+        ),
         session_store=sessions,
         task_queue=queue,
         answer_service=answers,
-        interactive=interactive,
         alert_sink=ops.alert_sink,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         fact_updates=fact_updates,
+        bio_cache=container.biographical_context_service,
         cabinet_url=cabinet_memory_url,
         profile_step=profile_step,
         person_cards=memory_search.person_cards,

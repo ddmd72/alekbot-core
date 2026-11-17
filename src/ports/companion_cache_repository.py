@@ -1,7 +1,7 @@
 """
 CompanionCacheRepository — port for the per-session context cache doc.
 
-Session analog of FirestoreRepo.refresh_biographical_context_cache /
+Session analog of FirestoreRepo.save_biographical_context_cache /
 get_biographical_context_cached: one summary string per session_id,
 refreshed by a companion's extractor (a later phase — the ConsolidationAgent
 analog named in RFC §6). No AccountRepository/billing-config coupling —

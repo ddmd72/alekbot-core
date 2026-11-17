@@ -51,10 +51,9 @@ def make_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextService
     """The evaluating fact store (index refusal on), a repository over it that refreshes the real biographical cache, and
     that service; `repo.fail_on` names the fact ids whose staling fails."""
     store = FactStore(indexes=INDEXES_FILE)
-    bio = BiographicalContextService(store.repo)
-    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
+    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
-    bio.set_repository(repo)
+    bio = BiographicalContextService(repo)
     return store, repo, bio
 
 
@@ -69,13 +68,14 @@ async def seed_fact(repo: FirestoreFactRepository, text: str, **over: Any) -> st
 
 class JanitorWorld:
     def __init__(self, dry_run: bool = False, with_sink: bool = True) -> None:
-        self.store, self.repo, _ = make_fact_world()
+        self.store, self.repo, self.bio = make_fact_world()
         self.env = EnvironmentConfig()
         self.counters = FirestoreFactLifecycleCounters(self.store.db, self.env)
         self.sink = RecordingSink()
         self.now = NOW
         self.service = FactLifecycleSweepService(
             self.repo, self.counters, self.sink if with_sink else None, dry_run, clock=lambda: self.now,
+            bio_cache=self.bio,
         )
 
     @property

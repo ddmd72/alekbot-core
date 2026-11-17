@@ -51,6 +51,7 @@ from ..domain.pass_actor import PassActor
 from ..domain.profile_apply import ProfileApply
 from ..domain.stored_fact import StoredFact
 from ..domain.ui_messages import UIMessage
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.choice_handler_port import ChoiceHandlerPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
@@ -89,8 +90,11 @@ class FactAnswerService(ChoiceHandlerPort):
         owner_zones: "OwnerTimezoneResolver",
         clock: Callable[[], datetime] = _utcnow,
         profile_answers: Optional["ProfileQuestionAnswers"] = None,
+        *,
+        bio_cache: BiographicalCacheRefresher,
     ) -> None:
         self._profile_answers = profile_answers
+        self._bio_cache = bio_cache
         self._fact_updates = fact_updates
         self._repo = repo
         self._review_store = review_store
@@ -167,7 +171,7 @@ class FactAnswerService(ChoiceHandlerPort):
         if answer_closes_fact(kind, question):
             await self._note_set_aside(account_id, now)
         await self._close(question, ClosedBy.OWNER, kind, source, None, now)
-        await self._repo.refresh_biographical_context_cache(owner_id=account_id)
+        await self._bio_cache.refresh_cache(owner_id=account_id)
         await self._count(account_id, now, {counter: 1})
         logger.info(f"[FactAnswer] question {question_id} answered {kind.value} ({source}); applied")
         return AnswerResult.APPLIED

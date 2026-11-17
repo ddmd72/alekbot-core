@@ -12,7 +12,7 @@ from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, T0, USER, make_fact
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 EARLIER = {"at": T0, "from": None, "to": "current", "actor": "stage1", "reason": "version 2 of old"}
@@ -127,7 +127,7 @@ async def test_the_cabinet_invalidate_writes_its_entry(store):
     await seed(store, "x", lifecycle_events=[EARLIER])
     started = datetime.now(timezone.utc)
 
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
 
     trail = store.docs["f-x"]["lifecycle_events"]
     assert trail[0] == EARLIER and len(trail) == 2
@@ -139,7 +139,7 @@ async def test_the_cabinet_invalidate_writes_its_entry(store):
 
 async def test_invalidating_a_stale_fact_records_stale_as_the_from_state(store):
     await seed(store, "x", state=FactState.STALE)
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
     assert closing_event(store.docs["f-x"])["from"] == "stale"
 
 
@@ -150,7 +150,7 @@ async def test_invalidating_through_a_superseded_id_writes_the_entry_on_the_curr
     await store.repo.write_superseding(new, closed_by(new, [stored], "stage1"))
     old_trail = copy.deepcopy(store.docs["f-old"]["lifecycle_events"])
 
-    await CabinetFactService(store.repo).invalidate("f-old", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-old", ACC)
 
     assert store.docs["f-old"]["lifecycle_events"] == old_trail
     assert closing_event(store.docs["f-new"])["actor"] == "cabinet"

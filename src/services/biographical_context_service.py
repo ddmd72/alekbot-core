@@ -16,6 +16,7 @@ Architecture:
 
 from typing import List, Dict, Optional, Any
 
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.repository import FactRepository
 from ..domain.entities import FactDomain
 from ..domain.settings import SearchConfig
@@ -23,7 +24,7 @@ from ..domain.user import UserBotConfig
 from ..utils.logger import logger
 
 
-class BiographicalContextService:
+class BiographicalContextService(BiographicalCacheRefresher):
     """
     Biographical context cache refresh via priority-based direct query.
     
@@ -66,9 +67,25 @@ class BiographicalContextService:
 
         logger.debug("📚 [BiographicalContext] Initialized with priority-based selection")
 
-    def set_repository(self, repository) -> None:
-        """Resolve circular dependency: call after repository is created."""
-        self._repo = repository
+    async def refresh_cache(
+        self,
+        owner_id: str,
+        facts_limit: Optional[int] = None,
+        principles_limit: Optional[int] = None,
+    ) -> None:
+        """Select the account's context (refresh_context) and save it as its cache (BiographicalCacheRefresher)."""
+        try:
+            context = await self.refresh_context(owner_id, facts_limit=facts_limit, principles_limit=principles_limit)
+            await self._repo.save_biographical_context_cache(owner_id, context)
+            logger.info(
+                f"✅ [BiographicalContext] Cached {len(context['facts'])} facts + "
+                f"{len(context['principles'])} principles for {owner_id[:8]}"
+            )
+        except Exception as e:
+            logger.error(
+                f"❌ [BiographicalContext] Failed to refresh biographical cache for {owner_id[:8]}: {e}",
+                exc_info=True,
+            )
 
     async def refresh_context(
         self,

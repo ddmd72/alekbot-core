@@ -115,6 +115,7 @@ def _agent(world, responses, prompts=None):
         alert_sink=world.sink,
         lifecycle_counters=world.counters,
         fact_updates=world.store.adapter,
+        bio_cache=world.bio,
     )
     agent._llm = provider
     agent._now = lambda: world.now

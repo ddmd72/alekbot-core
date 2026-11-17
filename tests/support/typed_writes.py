@@ -27,7 +27,7 @@ def typed_port_for(port: Any) -> FactUpdatePort:
 def build_consolidation_agent(*, fact_updates: Any, fact_management_port: Any = None) -> Any:
     """A `ConsolidationAgent` with stub collaborators, built with `fact_updates` as its typed port (to check what its
     constructor accepts)."""
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
     from src.agents.consolidation_agent import ConsolidationAgent
@@ -45,4 +45,5 @@ def build_consolidation_agent(*, fact_updates: Any, fact_management_port: Any = 
         repository=MagicMock(), embedding_service=MagicMock(), fact_write_service=MagicMock(),
         fact_management_port=fact_management_port if fact_management_port is not None else MagicMock(),
         fact_updates=fact_updates,
+        bio_cache=AsyncMock(),
     )

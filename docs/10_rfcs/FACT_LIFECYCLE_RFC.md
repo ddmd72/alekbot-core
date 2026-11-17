@@ -238,7 +238,7 @@ message follows it) → `/worker` `task_type=fact_lifecycle_sweep`:
 - **Stale:** `state = stale`, `stale_since = now`, a `lifecycle_events` entry, in place (D8), as a field-masked
   update with a precondition (`state == current` and unchanged `update_time`); a conflict skips that fact until the
   next run. The janitor never archives, never deletes, never reads text.
-- **Cache:** for each account where it staled anything, `refresh_biographical_context_cache(account)` (D5).
+- **Cache:** for each account where it staled anything, `refresh_cache(account)` of its `BiographicalCacheRefresher` (D5).
 - **Enqueue** one `fact_review` task for the owner when any of: stale facts without a decision and without an open
   question; a question with `pair_consolidated_at` set and still open (D7, pending P1); a delivered question past its
   timeout. `deadline_seconds=1800` (the consolidation precedent, `gcp_task_queue.py:464`); `fact_review` is deduped by
@@ -250,8 +250,8 @@ message follows it) → `/worker` `task_type=fact_lifecycle_sweep`:
   `user_agent_factory.py:584`).
 - Wiring: the job goes in `scripts/infrastructure/cloudbuild_scheduler_jobs.sh` (where the consolidation sweep job
   lives, `:160-180`), `docs/07_deployment/SCHEDULERS.md`, the `WorkerHandler` dispatch (`worker_handler.py:166-211`)
-  and the task-type list in `docs/07_deployment/SCHEDULERS.md`. The main service's repository has the biographical context service
-  injected; `refresh_biographical_context_cache` skips silently without it (`firestore_repo.py:805-810`).
+  and the task-type list in `docs/07_deployment/SCHEDULERS.md`. The janitor takes the container's
+  `BiographicalContextService` as its cache refresher (`bio_cache`).
 
 **No Firestore TTL policy on the facts collection, ever.** Nine other collections in this database have an ACTIVE TTL
 policy on a field named `expires_at`, which deletes the document (checked 2026-10-21; the facts collection has none).
@@ -263,7 +263,7 @@ new question collection: its retention field is `purge_after`, not `expires_at`.
 
 | Reader | current | stale | archived / invalidated / superseded |
 |---|---|---|---|
-| Biographical baseline: the cache document (`user_context_col/{account}`), built by `refresh_biographical_context_cache` from `get_active_facts_ordered` (`firestore_repo.py:781-842`), read by Smart, Router, Quick, Lelik, PromptBuilder and the consolidator (`smart_response_agent.py:430`, `router_agent.py:321`, `quick_response_agent.py:182`, `lelik_persona_service.py:48`, `prompt_builder.py:160`, `consolidation_agent.py:234`) | yes | **no**, after the refresh | no |
+| Biographical baseline: the cache document (`user_context_col/{account}`), built by `BiographicalContextService.refresh_cache` from `get_active_facts_ordered` (`firestore_repo.py:781-842`), read by Smart, Router, Quick, Lelik, PromptBuilder and the consolidator (`smart_response_agent.py:430`, `router_agent.py:321`, `quick_response_agent.py:182`, `lelik_persona_service.py:48`, `prompt_builder.py:160`, `consolidation_agent.py:234`) | yes | **no**, after the refresh | no |
 | Smart / Router enrichment, `search_memory`, remote MCP (`search_facts`, `search_facts_by_domain`) | yes | **no** | no |
 | Lelik voice domains (`get_active_facts_ordered`, `companion_context_assembler_service.py:91`) | yes | **no** | no |
 | Cabinet facts list (`get_active_facts`, `get_paginated_facts`) | yes | no (P3: a read-only view) | no (P3) |
@@ -910,7 +910,7 @@ Cites in this RFC that had moved or were wrong:
 | `WorkerHandler` dispatch `:166-211` | `_dispatch` `worker_handler.py:278` (adds `fact_lifecycle_sweep`) |
 | `sweep_consolidation` `worker_handler.py:340-360` | `_handle_sweep_consolidation` `:470` |
 | `_build_cluster_message` `:1111-1138`; `_build_directive_review_message` `:1021-1109`; `_enforce_directive_cap` `:845-865`; Stage 2b reads directives `:798-843`; code tool schema `:1259-1393` | `consolidation_agent.py:1406`; `:1314`; `:1024`; `_review_directives` `:972`; `_get_tool_declarations` `:1600` |
-| `refresh_biographical_context_cache` skips without service `:805-810` | `firestore_repo.py:753` (logs and swallows its errors) |
+| `refresh_biographical_context_cache` skips without service `:805-810` | gone: `BiographicalContextService.refresh_cache` (logs and swallows its errors); the repository only saves (`save_biographical_context_cache`) |
 | `TAXONOMY:78-93` (TTL column); `TOOLS:44`, `TAXONOMY:137`, `POLICIES:49` (`HISTORICAL`) | the TTL column is now the `expiry` block (kinds table, date rules) of `CONSOLIDATION_TAXONOMY`; `ARCHIVAL` since P8, uploaded with S3 |
 
 **S4 as built (2026-10-26).** Deployed 2026-10-27 (with S5, in one switch window). Where this text and

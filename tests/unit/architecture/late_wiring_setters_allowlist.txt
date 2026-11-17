@@ -3,7 +3,6 @@
 # A dependency setter is debt the composition-root refactor removes; a domain operation that happens to be named set_* is
 # not a setter and stays. A new dependency setter is never added: take the dependency in the constructor.
 # A line whose offence is gone fails: delete it.
-src/services/biographical_context_service.py::BiographicalContextService.set_repository  # composition-root refactor (assessment D3)
 src/services/call_control_hub.py::CallControlLink.set_snapshot  # domain operation, not a dependency setter
 src/services/call_control_hub.py::CallControlLink.set_state  # domain operation, not a dependency setter
 src/services/drive_connection_service.py::DriveConnectionService.set_connector_access  # domain operation, not a dependency setter

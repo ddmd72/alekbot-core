@@ -149,7 +149,7 @@ def _silence_side_effects(agent) -> None:
         pass
 
     try:
-        agent._repo.refresh_biographical_context_cache = _noop_async
+        agent._bio_cache.refresh_cache = _noop_async
     except Exception:
         pass
     if getattr(agent, "prompt_builder", None):

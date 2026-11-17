@@ -31,6 +31,7 @@ from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
 from src.domain.entities import ContextPriority, ExpiryKind, FactDomain
 from src.domain.fact_answer_result import AnswerResult
 from src.domain.fact_review_answer_kind import AnswerKind
+from src.domain.fact_profile_run_limits import FactProfileRunLimits
 from src.domain.fact_review_task import FactReviewTask, ReviewItem, encode_review_task
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.memory_write_lease import LEASE_MARGIN
@@ -104,10 +105,9 @@ def account_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextServ
     """`make_fact_world` with the production wiring of the context service (`ServiceContainer`): the configuration
     service and an account store, so a refresh without explicit limits keeps the account's own."""
     store = FactStore(indexes=INDEXES_FILE)
-    bio = BiographicalContextService(store.repo, config_service=ConfigurationService(), account_repo=AccountLimits())
-    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
+    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
-    bio.set_repository(repo)
+    bio = BiographicalContextService(repo, config_service=ConfigurationService(), account_repo=AccountLimits())
     return store, repo, bio
 
 
@@ -175,7 +175,8 @@ def create(content: str) -> LLMResponse:
     return LLMResponse(text=None, tool_calls=[ToolCall(name="create_fact", args={"content": content, "fact_attributes": dict(ATTRS)})])
 
 
-def consolidator(repo: Any, store: FactStore, *, email_repo: Any = None, fact_updates: Any = None) -> ConsolidationAgent:
+def consolidator(repo: Any, store: FactStore, bio: Any, *, email_repo: Any = None,
+                 fact_updates: Any = None) -> ConsolidationAgent:
     """The agent over the world's repository, the real fact management and typed write path, with `AGENT_LIMITS`."""
     port = FactManagementAdapter(
         repo, store.embedder, FactWriteService(repo, store.embedder),
@@ -189,7 +190,7 @@ def consolidator(repo: Any, store: FactStore, *, email_repo: Any = None, fact_up
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=repo, embedding_service=store.embedder, fact_write_service=FactWriteService(repo, store.embedder),
         fact_management_port=fact_updates or port, fact_updates=fact_updates or port, prompt_builder=Prompts(),
-        indexed_email_repo=email_repo, email_memory_batches=email_repo, **AGENT_LIMITS,
+        indexed_email_repo=email_repo, email_memory_batches=email_repo, **AGENT_LIMITS, bio_cache=bio,
     )
 
 
@@ -224,10 +225,10 @@ BATCH = [{"role": "user", "text": "I play tennis on Sundays now", "created_at": 
 
 class TestConsolidationAgent:
     async def test_a_conversation_pass_that_writes_a_fact_rebuilds_the_cache_with_the_agents_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         plant(store.db)
-        agent = consolidator(repo, store)
+        agent = consolidator(repo, store, bio)
         script(agent, lambda: create(TENNIS), STAGE1)
 
         response = await execute(agent, "consolidate", messages=BATCH)
@@ -236,10 +237,10 @@ class TestConsolidationAgent:
         await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
     async def test_a_conversation_pass_that_fails_after_a_write_still_rebuilds_the_cache(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         plant(store.db)
-        agent = consolidator(repo, store)
+        agent = consolidator(repo, store, bio)
 
         def provider_down() -> LLMResponse:
             raise RuntimeError("provider down")
@@ -252,10 +253,10 @@ class TestConsolidationAgent:
         await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
     async def test_a_legacy_v2_pass_that_writes_a_fact_rebuilds_the_cache_with_the_agents_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         plant(store.db)
-        agent = consolidator(repo, store)
+        agent = consolidator(repo, store, bio)
         agent.prompt_version = "v2"
         fact = {"id": "n1", "content": TENNIS, "tags": ["t"], "domain": "biographical", "context_priority": "medium"}
         script(agent, lambda: LLMResponse(text='{"new_facts": [%s], "new_anchors": []}' % json.dumps(fact)))
@@ -266,10 +267,10 @@ class TestConsolidationAgent:
         await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
     async def test_a_cluster_review_rebuilds_the_cache_with_the_agents_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         plant(store.db)
-        agent = consolidator(repo, store)
+        agent = consolidator(repo, store, bio)
         script(agent, lambda: create(TENNIS), CLUSTER)
 
         response = await execute(agent, "consolidate_cluster", cluster=[{"fact_id": "x", "content": "c", "similarity": 0.5}])
@@ -278,12 +279,12 @@ class TestConsolidationAgent:
         await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
     async def test_an_email_pass_that_writes_a_fact_rebuilds_the_cache_with_the_agents_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         plant(store.db)
         mails = await mail_store_with(stored_mail("e1", user_id=USER, account_id=ACC,
                                                   sent=datetime(2026, 10, 10, 9, tzinfo=timezone.utc)))
-        agent = consolidator(repo, store, email_repo=mails)
+        agent = consolidator(repo, store, bio, email_repo=mails)
         script(agent, lambda: create(TENNIS), EMAIL_CANDIDATES_HEADER)
 
         response = await execute(agent, "consolidate_email", number_of_batches=1)
@@ -298,7 +299,7 @@ class TestConsolidationAgent:
                                        reported_date=NOW - timedelta(days=60), **subject())
         evidence = await world.seed(TENNIS, reported_date=NOW - timedelta(days=1), context_priority=ContextPriority.ARCHIVAL)
         plant(world.store.db)
-        agent = consolidator(world.repo, world.store, fact_updates=world.store.adapter)
+        agent = consolidator(world.repo, world.store, world.bio, fact_updates=world.store.adapter)
         agent._now = lambda: world.now  # type: ignore[method-assign]
         revive = {"fact_id": stale, "updates": {"state": "current", "expiry": HORIZON},
                   "basis": {"kind": "evidence", "evidence_fact_id": evidence}}
@@ -317,17 +318,17 @@ class TestConsolidationAgent:
 
 class TestCabinetFactService:
     async def test_a_cabinet_delete_rebuilds_the_cache_with_the_accounts_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         await repo.add_fact(make_fact(LIVES, **subject()))
         plant(store.db)
 
-        await CabinetFactService(repo).invalidate(f"f-{LIVES}", ACC)
+        await CabinetFactService(repo, bio).invalidate(f"f-{LIVES}", ACC)
 
         await assert_rebuilt(repo, *SUBJECT_GONE)
 
     async def test_a_refresh_that_cannot_read_the_facts_never_fails_the_delete_and_the_cache_stays(self, monkeypatch):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await repo.add_fact(make_fact(LIVES, **subject()))
         plant(store.db)
 
@@ -336,13 +337,13 @@ class TestCabinetFactService:
 
         monkeypatch.setattr(repo, "get_active_facts_ordered", facts_unreadable)
 
-        await CabinetFactService(repo).invalidate(f"f-{LIVES}", ACC)
+        await CabinetFactService(repo, bio).invalidate(f"f-{LIVES}", ACC)
 
         assert store.docs[f"f-{LIVES}"]["state"] == "invalidated"
         assert await prompt_view(repo) == ([PLANTED], [])
 
     async def test_a_refresh_that_cannot_write_the_cache_never_fails_the_delete_and_the_cache_stays(self, monkeypatch):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await repo.add_fact(make_fact(LIVES, **subject()))
         plant(store.db)
         real_apply = EvalDocRef._apply
@@ -354,7 +355,7 @@ class TestCabinetFactService:
 
         monkeypatch.setattr(EvalDocRef, "_apply", cache_unwritable)
 
-        await CabinetFactService(repo).invalidate(f"f-{LIVES}", ACC)
+        await CabinetFactService(repo, bio).invalidate(f"f-{LIVES}", ACC)
 
         assert store.docs[f"f-{LIVES}"]["state"] == "invalidated"
         assert await prompt_view(repo) == ([PLANTED], [])
@@ -405,7 +406,7 @@ class TestFactLifecycleSweepService:
 
 class TestFactProfileService:
     async def test_a_profile_run_that_writes_rebuilds_the_cache_with_the_accounts_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         await repo.add_fact(make_fact(LIVES, **subject()))
         plant(store.db)
@@ -414,8 +415,9 @@ class TestFactProfileService:
         async def atlas() -> Tuple[PlaceNames, str]:
             return PlaceNames([ROME]), ATLAS_DIGEST
 
-        profiles = FactProfileService(repo=repo, profiler=Profiler(), embeddings=Embedder(), atlas=atlas, concurrency=4,
-                                      clock=clock, max_per_run=20, call_budget_s=BUDGET)
+        profiles = FactProfileService(repo=repo, profiler=Profiler(), embeddings=Embedder(), atlas=atlas, clock=clock,
+                                      limits=FactProfileRunLimits(max_per_run=20, call_budget_s=BUDGET, concurrency=4),
+                                      bio_cache=bio)
 
         run = await profiles.run(ACC, clock.now + timedelta(seconds=3600) + LEASE_MARGIN)
 

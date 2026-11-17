@@ -213,7 +213,7 @@ async def test_a_seeded_stale_fact_is_stale_since_now_and_in_the_backlog(world):
 async def test_staling_refreshes_the_biographical_cache_built_before(world):
     await world.seed("kept fact")
     gone = await world.seed("old plan", expires_at=PAST)
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     assert {item["text"] for item in await world.repo.get_biographical_context_cached(ACC)} == {"kept fact", "old plan"}
     await world.stale(gone)
     assert {item["text"] for item in await world.repo.get_biographical_context_cached(ACC)} == {"kept fact"}

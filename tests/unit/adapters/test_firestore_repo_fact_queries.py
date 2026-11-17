@@ -8,6 +8,7 @@ from google.cloud import firestore
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.config.environment import EnvironmentConfig
 from src.services.cabinet_fact_service import CabinetFactService
+from tests.support.fact_store import NoCacheRefresh
 
 
 @pytest.fixture
@@ -87,7 +88,7 @@ async def test_invalidate_fact_writes_lifecycle_fields():
     store = FactStore()
     await store.repo.add_fact(make_fact("f1"))
 
-    await CabinetFactService(store.repo).invalidate("f-f1", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-f1", ACC)
 
     written = store.docs["f-f1"]
     assert written["state"] == "invalidated"
@@ -102,7 +103,7 @@ async def test_invalidate_fact_missing_doc(repo, col):
     # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over this repository.
     col.document.return_value = _doc_ref(exists=False)
     with pytest.raises(ValueError):
-        await CabinetFactService(repo).invalidate("f1", "acc")
+        await CabinetFactService(repo, bio_cache=NoCacheRefresh()).invalidate("f1", "acc")
 
 
 @pytest.mark.asyncio
@@ -119,7 +120,7 @@ async def test_invalidate_fact_other_account():
     await store.repo.add_fact(make_fact("f1", account="other"))
     before = copy.deepcopy(store.docs)
     with pytest.raises(PermissionError):
-        await CabinetFactService(store.repo).invalidate("f-f1", "acc")
+        await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-f1", "acc")
     assert store.docs == before
 
 

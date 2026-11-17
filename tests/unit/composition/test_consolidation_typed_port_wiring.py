@@ -45,6 +45,7 @@ def _kwargs(**over):
         embedding_service=MagicMock(),
         fact_write_service=MagicMock(),
         fact_management_port=MagicMock(),
+        bio_cache=AsyncMock(),
     )
     base.update(over)
     return base

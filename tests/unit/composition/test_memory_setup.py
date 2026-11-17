@@ -28,7 +28,7 @@ def _container():
     container = SimpleNamespace(
         repository=object(), embedding_service=object(), fact_lifecycle_counters=object(), fact_review_store=object(),
         indexed_email_repo=object(), session_store=object(), profile_answers=object(), confirmed_people=object(),
-        fact_management_adapters=[])
+        biographical_context_service=object(), fact_management_adapters=[])
 
     def create_fact_management_adapter(search):
         adapter = SimpleNamespace(search=search)

@@ -337,7 +337,7 @@ async def main(limit: int, cluster_size: int, min_words: int, user_id: str, acco
 
     # Suppress post-processing side effects
     async def _noop(*args, **kwargs): pass
-    consolidation_agent._repo.refresh_biographical_context_cache = _noop
+    consolidation_agent._bio_cache.refresh_cache = _noop
     if consolidation_agent.prompt_builder:
         consolidation_agent.prompt_builder.invalidate_biographical_cache = lambda *a, **k: None
 

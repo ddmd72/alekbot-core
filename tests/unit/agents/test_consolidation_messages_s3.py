@@ -25,7 +25,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER, put_raw
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from tests.support.fact_write import ctx, horizon, on
 from tests.support.stored_mail import mail_store_with, stored_mail
 
@@ -77,11 +77,11 @@ def make_agent(store: FactStore, script: Callable[[str], LLMResponse], *, email_
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
         prompt_builder=pb, indexed_email_repo=email_repo, email_memory_batches=email_repo,
+        bio_cache=NoCacheRefresh(),
     )
     agent.INLINE_CLUSTER_REVIEW = False
     agent.firsts = []
     agent.pb = pb
-    store.repo.refresh_biographical_context_cache = AsyncMock()
 
     async def call(request, turn=1):
         first = request.messages[0].parts[0].text

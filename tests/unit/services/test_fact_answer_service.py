@@ -74,15 +74,15 @@ class KeptWrites(FactUpdatePort):
 
 
 def counting_refreshes(world: ReviewWorld) -> List[str]:
-    """Keep each biographical-cache refresh of the world's repository (it still refreshes)."""
+    """Keep each biographical-cache refresh of the world's context service (it still refreshes)."""
     seen: List[str] = []
-    real = world.repo.refresh_biographical_context_cache
+    real = world.bio.refresh_cache
 
     async def refresh(owner_id, *args: Any, **kwargs: Any) -> None:
         seen.append(owner_id)
         await real(owner_id, *args, **kwargs)
 
-    world.repo.refresh_biographical_context_cache = refresh  # type: ignore[method-assign]
+    world.bio.refresh_cache = refresh  # type: ignore[method-assign]
     return seen
 
 
@@ -103,6 +103,7 @@ def service(world: ReviewWorld, fact_updates: Any = None, interactive: Any = Non
         fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
         counters=world.counters, task_queue=world.queue, session_store=world.session_store, texts=texts_of(world),
         interactive=interactive or world.interactive, owner_zones=FixedZones(), clock=clock,
+        bio_cache=world.bio,
     )
 
 

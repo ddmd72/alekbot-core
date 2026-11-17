@@ -243,7 +243,7 @@ async def test_written_entries_leave_out_what_was_retired_and_what_failed(store,
 
     await support.execute(agent, bench3.build_size_review_message(kit, "x", [], USER, ACC), USER, ACC, "Stage 1")
     # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over the kit's repository.
-    await CabinetFactService(kit.repo).invalidate(next(r["fact_id"] for r in kit.rows if r["status"] == "created"), ACC)
+    await CabinetFactService(kit.repo, bio_cache=kit.repo).invalidate(next(r["fact_id"] for r in kit.rows if r["status"] == "created"), ACC)
 
     assert any(r["status"] == "failed" for r in kit.rows)
     assert await support.written_entries(kit, 0, "UTC") == []

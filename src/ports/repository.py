@@ -389,23 +389,14 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def refresh_biographical_context_cache(
-        self, 
-        owner_id: str,
-        facts_limit: Optional[int] = None,
-        principles_limit: Optional[int] = None
-    ) -> None:
-        """Rebuild the cached biographical context of account `owner_id` from its current facts.
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
+        """Replace the cached biographical context of account `owner_id` with `context`.
 
-        Content: up to facts_limit facts in get_active_facts_ordered order, biographical domain
-            first, then other non-directive domains; of these, facts tagged "mindset" become
-            principles (they count toward facts_limit; those beyond principles_limit are dropped);
-            agent_directive facts separately, up to 15 (DEFAULT_DIRECTIVES_CACHE_LIMIT).
-        Limit: facts_limit and principles_limit are what the cache holds; an explicit value wins over the
-            context service's own resolution (account defaults, then system default), None keeps that resolution.
-        Idempotency: refreshing an unchanged account writes the same content.
-        Errors: never raises; on a failure the previous cache stays (observed). Without a context
-            service it does nothing (observed).
+        Input: `context` as BiographicalContextService.refresh_context returns it: "facts" and "principles" lists, and
+            an optional "directives" list (missing: stored empty).
+        Effect: one write of the account's cache document, merged into it: the three lists, their counts, a server
+            refresh time and a version marker; get_biographical_context_cached reads the three lists.
+        Errors: a store failure propagates; the previous cache stays.
         """
         pass
 

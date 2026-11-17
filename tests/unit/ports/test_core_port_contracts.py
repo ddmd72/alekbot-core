@@ -572,9 +572,6 @@ class TestFactRepositoryContract:
     def test_has_add_fact_if_unique(self):
         assert getattr(FactRepository.add_fact_if_unique, "__isabstractmethod__", False)
 
-    def test_has_refresh_biographical_context_cache(self):
-        assert getattr(FactRepository.refresh_biographical_context_cache, "__isabstractmethod__", False)
-
     def test_has_get_biographical_context_cached(self):
         assert getattr(FactRepository.get_biographical_context_cached, "__isabstractmethod__", False)
 

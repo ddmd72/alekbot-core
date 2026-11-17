@@ -13,6 +13,7 @@ from src.agents.consolidation_agent import ConsolidationAgent, _TrackingFactMana
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.llm_port import (
     AgentExecutionContext,
@@ -50,7 +51,6 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
     )
     repo = MagicMock()
     repo.get_biographical_context_cached = AsyncMock(return_value=[])
-    repo.refresh_biographical_context_cache = AsyncMock()
     repo.get_active_facts = AsyncMock(return_value=[])
     repo.get_longest_facts = AsyncMock(return_value=[])
     repo.archive_observations = AsyncMock()
@@ -74,6 +74,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
         email_memory_batches=email_memory_batches,
+        bio_cache=AsyncMock(spec=BiographicalCacheRefresher),
     )
     agent._llm = mock_provider
     return agent, repo, fact_write, pb
@@ -376,7 +377,7 @@ class TestHandleConsolidate:
             with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
                 await agent.execute(msg)
 
-        repo.refresh_biographical_context_cache.assert_awaited_once()
+        agent._bio_cache.refresh_cache.assert_awaited_once()
         pb.invalidate_biographical_cache.assert_called_once_with(_ACCOUNT_ID)
 
     async def test_no_results_returns_failure(self):
@@ -900,7 +901,7 @@ class TestHandleConsolidateClusterDirect:
         assert response.status == AgentStatus.SUCCESS
         assert response.result["operations"] == 1
         assert response.result["facts_affected"] == 1
-        repo.refresh_biographical_context_cache.assert_called_once()
+        agent._bio_cache.refresh_cache.assert_called_once()
 
     async def test_auto_fetch_populates_cluster(self):
         fm = AsyncMock(spec=FactManagementPort)

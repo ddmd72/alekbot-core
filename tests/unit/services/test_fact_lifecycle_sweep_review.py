@@ -56,6 +56,7 @@ def make(world: ReviewWorld, *, dry_run: bool = False, queue: bool = True, owned
         world.repo, world.counters, world.sink, dry_run, clock=world.clock,
         review_store=world.review_store, task_queue=world.queue if queue else None,
         owner_zones=OwnerTimezoneResolver(accounts, users), account_repo=accounts, user_repo=users,
+        bio_cache=world.bio,
     )
 
 
@@ -538,7 +539,7 @@ async def test_without_a_review_store_the_janitor_is_the_one_of_s3():
     world = ReviewWorld()
     await due(world, "Alex has a dentist appointment")
 
-    result = await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock).sweep()
+    result = await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock, bio_cache=world.bio).sweep()
 
     assert (result["staled"], result["review_enqueued"], result["purge_overdue"]) == (1, 0, 0)
 
@@ -546,4 +547,4 @@ async def test_without_a_review_store_the_janitor_is_the_one_of_s3():
 def test_a_review_store_without_the_owner_reads_is_refused():
     world = ReviewWorld()
     with pytest.raises(ValueError, match="owner_zones"):
-        FactLifecycleSweepService(world.repo, world.counters, None, False, review_store=world.review_store)
+        FactLifecycleSweepService(world.repo, world.counters, None, False, review_store=world.review_store, bio_cache=world.bio)

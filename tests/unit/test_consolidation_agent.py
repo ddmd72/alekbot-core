@@ -34,7 +34,6 @@ class TestConsolidationAgent:
         repo.add_fact = AsyncMock()
         repo.add_fact_if_unique = AsyncMock(return_value=(True, "new_id"))
         repo.archive_observations = AsyncMock()
-        repo.refresh_biographical_context_cache = AsyncMock()
         # Returns List[Dict] — empty list is fine for tests
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
         return repo
@@ -82,6 +81,7 @@ class TestConsolidationAgent:
             fact_write_service=mock_fact_write_service,
             prompt_builder=mock_prompt_builder,
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required
+            bio_cache=AsyncMock(),
         )
 
     @pytest.mark.asyncio
@@ -266,7 +266,6 @@ class TestConsolidationAgentV3:
         repo.get_active_facts = AsyncMock(return_value=[])
         repo.get_active_facts_ordered = AsyncMock(return_value=[])  # Stage 2b directive review → empty rulebook
         repo.archive_observations = AsyncMock()
-        repo.refresh_biographical_context_cache = AsyncMock()
         repo.get_biographical_context_cached = AsyncMock(return_value=[])
         return repo
 
@@ -319,6 +318,7 @@ class TestConsolidationAgentV3:
             fact_updates=typed_port_for(mock_fact_management),  # reviewer edit (S4 T6b): the typed port is required
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
+            bio_cache=AsyncMock(),
         )
 
     @pytest.mark.asyncio
@@ -484,6 +484,7 @@ class TestConsolidationAgentV3:
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): every agent gets the typed port; v2 makes no typed write
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
+            bio_cache=AsyncMock(),
         )
 
         mock_response = Mock()

@@ -6,6 +6,6 @@ src/handlers/conversation_handler.py::ConversationHandler  # 21  # composition-r
 src/handlers/worker_handler.py::WorkerHandler  # 19  # composition-root refactor (assessment D1)
 src/services/drive_indexing_service.py::DriveIndexingService  # 25  # composition-root refactor (assessment D1)
 src/services/drive_note_service.py::DriveNoteService  # 14  # composition-root refactor (assessment D1)
-src/services/fact_review_service.py::FactReviewService  # 24  # composition-root refactor (assessment D1)
+src/services/fact_review_service.py::FactReviewService  # 22  # composition-root refactor (assessment D1)
 src/services/mcp_authorization_service.py::MCPAuthorizationService  # 13  # composition-root refactor (assessment D1)
 src/services/voice_session_service.py::VoiceSessionService  # 20  # composition-root refactor (assessment D1)

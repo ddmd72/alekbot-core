@@ -27,6 +27,7 @@ from src.domain.llm import Message
 from src.domain.messaging import MessageRef
 from src.domain.notification import NotificationChannel
 from src.domain.session import SessionState
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.channel_binding_port import ChannelBindingPort
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from src.ports.fact_update_port import FactUpdatePort
@@ -39,6 +40,7 @@ from src.ports.repository import FactRepository
 from src.ports.session_store import SessionStore
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.user_notification_service import UserNotificationService
@@ -301,6 +303,7 @@ class ReviewStandIns:
 def build_review_stand_ins(
     *,
     repo: FactRepository,
+    bio_cache: BiographicalCacheRefresher,
     fact_updates: FactUpdatePort,
     counters: FactLifecycleCountersPort,
     account_repo: Any,
@@ -309,8 +312,8 @@ def build_review_stand_ins(
     system_default: LanguageCode = LanguageCode.EN,
     clock: Callable[[], datetime] = _utcnow,
 ) -> ReviewStandIns:
-    """The stand-ins around `repo` (the kit's overlay store) and `fact_updates` (the kit's `WriteRecorder`), with the real
-    `FactAnswerService` over them. `account_repo` and `user_repo` are read-only ports for the owner's zone; `live_sessions`
+    """The stand-ins around `repo` (the kit's overlay store), `bio_cache` (its cache refresher) and `fact_updates` (the
+    kit's `WriteRecorder`), with the real `FactAnswerService` over them. `account_repo` and `user_repo` are read-only ports for the owner's zone; `live_sessions`
     gives the owner's stored sessions to read."""
     store = RecordingReviewStore()
     interactive = RecordingInteractive()
@@ -322,6 +325,7 @@ def build_review_stand_ins(
     texts = FactQuestionTexts(language, FileLocalizationAdapter(), store, counters, system_default, clock)
     answers = FactAnswerService(
         fact_updates, repo, store, counters, queue, sessions, texts, interactive, owner_zones, clock,   # type: ignore[arg-type]
+        bio_cache=bio_cache,
     )
     return ReviewStandIns(
         store=store, lease=MemoryLease(), task_queue=queue, agent_factory=NoopAgentFactory(), sessions=sessions,
@@ -397,15 +401,16 @@ def build_review_service(
         account_repo=account_repo,
         texts=bundle.texts,
         owner_zones=bundle.owner_zones,
-        notification_state=bundle.notification_state,
-        channel_bindings=bundle.channel_bindings,
-        notifications=bundle.notifier,
+        owner_channel=FactReviewOwnerChannel(
+            notification_state=bundle.notification_state, channel_bindings=bundle.channel_bindings,
+            notifications=bundle.notifier, interactive=bundle.interactive,
+        ),
         session_store=bundle.sessions,
         task_queue=bundle.task_queue,
         answer_service=bundle.answer_service,
-        interactive=bundle.interactive,
         alert_sink=kit.sink,
         fact_updates=kit.recorder,   # the kit's typed path: a history fallback or a fold's supersede lands in the overlay
+        bio_cache=kit.repo,          # the kit's overlay store records the refresh; the live cache is untouched
         cabinet_url=KIT_CABINET_URL,
         run_timeout_s=run_timeout_s if run_timeout_s is not None else CONSOLIDATION.timeout_ms / 1000,
         clock=bundle.clock,

@@ -33,6 +33,7 @@ from src.infrastructure.fact_review_scope import FactReviewScope
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService, _Timeouts
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
@@ -139,15 +140,21 @@ class Rig:
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
             owner_zones=zones, clock=world.clock,
+            bio_cache=world.bio,
         )
         self.service = service_class(
             repo=world.repo, review_store=world.review_store, counters=world.counters, lease=world.lease,
             coordinator=self.agent, agent_factory=Agents(), user_repo=users, account_repo=accounts,
-            texts=texts, owner_zones=zones, notification_state=world.notification_state,
-            channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
-            task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
+            texts=texts, owner_zones=zones,
+            session_store=world.session_store,
+            task_queue=world.queue, answer_service=answers, alert_sink=world.sink,
             run_timeout_s=600, clock=clock or world.clock,
             fact_updates=RecordingFactUpdates(world.store.adapter), cabinet_url="https://cabinet.example/cabinet?tab=memory",
+            owner_channel=FactReviewOwnerChannel(
+                notification_state=world.notification_state, channel_bindings=world.channel_bindings,
+                notifications=world.notifier, interactive=world.interactive,
+            ),
+            bio_cache=world.bio,
         )
 
     async def run(self) -> Dict[str, Any]:
@@ -478,7 +485,7 @@ class TestAfterThePass:
         r.agent.play = play
         await r.run()
         world.advance(days=1)
-        await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock).sweep()
+        await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock, bio_cache=world.bio).sweep()
 
         assert world.docs[fact]["state"] == "current" and world.docs[fact]["stale_since"] is None
         assert fact not in {due.fact_id for due in await world.repo.find_due_facts(world.now)}

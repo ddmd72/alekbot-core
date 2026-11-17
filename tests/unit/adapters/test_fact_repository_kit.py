@@ -24,7 +24,7 @@ from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, DROP, OTHER, T0, USER, as_legacy, make_fact, put_raw
-from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make_env_config
+from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, NoCacheRefresh, embed, make_env_config
 from tests.support.firestore_eval import stored_vector
 
 CONTEXT_COLLECTION = "eval_user_context"
@@ -568,7 +568,7 @@ async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     foreign_before = copy.deepcopy(store.docs["f-foreign"])
     before = plain(store.docs["f-x"])
     started = datetime.now(timezone.utc)
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
     after = plain(store.docs["f-x"])
     # Reviewer edit (facts S3, T3; plan §3.8): the Cabinet invalidate writes its trail entry in the same write, so the
     # changed set gains lifecycle_events, and the entry itself is pinned.
@@ -585,7 +585,7 @@ async def test_invalidate_a_missing_id_raises_value_error_and_writes_nothing(sto
     put_raw(store, "other", "other")
     before = copy.deepcopy(store.docs)
     with pytest.raises(ValueError):
-        await CabinetFactService(store.repo).invalidate("missing", ACC)
+        await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("missing", ACC)
     assert store.docs == before
 
 
@@ -597,15 +597,15 @@ async def test_invalidate_a_fact_of_another_account_or_a_legacy_one_raises_permi
     before = copy.deepcopy(store.docs)
     for fact_id in ("foreign", "legacy"):
         with pytest.raises(PermissionError):
-            await CabinetFactService(store.repo).invalidate(fact_id, ACC)
+            await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate(fact_id, ACC)
     assert store.docs == before
 
 
 async def test_invalidate_twice_succeeds_and_moves_valid_to_and_last_updated(store):
     await store.repo.add_fact(make_fact("x"))
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
     first = copy.deepcopy(store.docs["f-x"])
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
     second = store.docs["f-x"]
     assert second["valid_to"] > first["valid_to"] and second["last_updated"] > first["last_updated"]
     assert second["state"] == "invalidated"
@@ -617,12 +617,9 @@ def _cache(store, account=ACC):
     return store.db.collection(CONTEXT_COLLECTION).docs.get(account)
 
 
-def _repo_with_cache_service(store):
-    service = BiographicalContextService(None)
-    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
-                                   biographical_context_service=service)
-    service.set_repository(repo)
-    return repo
+def _cache_refresher(store):
+    """The production refresher (the context service) over the real repository on the store."""
+    return BiographicalContextService(FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder))
 
 
 async def _seed_account_for_cache(store, account=ACC):
@@ -639,9 +636,9 @@ async def _seed_account_for_cache(store, account=ACC):
 async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
     await _seed_account_for_cache(store)
     await _seed_account_for_cache(store, OTHER)
-    repo = _repo_with_cache_service(store)
+    refresher = _cache_refresher(store)
     started = datetime.now(timezone.utc)
-    await repo.refresh_biographical_context_cache(ACC)
+    await refresher.refresh_cache(ACC)
     cache = _cache(store)
     assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} bio low",
                                                                 f"{ACC} health high"]
@@ -655,34 +652,28 @@ async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
 
 async def test_refresh_of_an_unchanged_account_writes_the_same_content(store):
     await _seed_account_for_cache(store)
-    repo = _repo_with_cache_service(store)
-    await repo.refresh_biographical_context_cache(ACC)
+    refresher = _cache_refresher(store)
+    await refresher.refresh_cache(ACC)
     first = copy.deepcopy(_cache(store))
-    await repo.refresh_biographical_context_cache(ACC)
+    await refresher.refresh_cache(ACC)
     second = _cache(store)
     assert {k: v for k, v in second.items() if k != "refreshed_at"} == {k: v for k, v in first.items() if k != "refreshed_at"}
 
 
 async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(store):
     await _seed_account_for_cache(store)
-    repo = _repo_with_cache_service(store)
-    await repo.refresh_biographical_context_cache(ACC)
+    refresher = _cache_refresher(store)
+    await refresher.refresh_cache(ACC)
     before = copy.deepcopy(_cache(store))
     store.db.collection(FACTS).fail = RuntimeError("backend down")
-    await repo.refresh_biographical_context_cache(ACC)
+    assert await refresher.refresh_cache(ACC) is None
     assert _cache(store) == before
-
-
-async def test_refresh_without_a_context_service_does_nothing(store):
-    await _seed_account_for_cache(store)
-    await store.repo.refresh_biographical_context_cache(ACC)
-    assert _cache(store) is None
 
 
 async def test_refresh_holds_at_most_facts_limit_facts(store):
     for i in range(4):
         await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
-    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC, facts_limit=2)
+    await _cache_refresher(store).refresh_cache(ACC, facts_limit=2)
     assert _cache(store)["facts_count"] == 2
 
 
@@ -693,7 +684,7 @@ async def test_refresh_keeps_directives_separately_up_to_15_highest_priority_fir
                                             context_priority=priority, age_days=i))
     await store.repo.add_fact(make_fact("directive low", domain=FactDomain.AGENT_DIRECTIVE,
                                         context_priority=ContextPriority.LOW, age_days=99))
-    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC)
+    await _cache_refresher(store).refresh_cache(ACC)
     cache = _cache(store)
     assert len(cache["directives"]) == 15 and "directive low" not in [d["text"] for d in cache["directives"]]
     assert (cache["facts_count"], cache["principles_count"]) == (0, 0)

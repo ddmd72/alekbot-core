@@ -339,6 +339,7 @@ class Click:
             fact_updates=review.store.adapter, repo=review.repo, review_store=review.review_store,
             counters=review.counters, task_queue=review.queue, session_store=review.session_store, texts=texts,
             interactive=review.interactive, owner_zones=FixedZones(), clock=review.clock,
+            bio_cache=review.bio,
         )
         self.world = RedeliveryWorld(interactive_choice=InteractiveChoiceService(
             AllowU1(), {self.answers.kind: self.answers}, review.interactive))

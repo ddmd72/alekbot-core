@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_the_builder_hands_its_quota_to_the_step():
-    container = SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(),
+    container = SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(), biographical_context_service=object(),
                                 confirmed_people=None, profile_answers=None)
     quota = object()
     assert build_fact_profile_service(container, max_per_run=None, quota=quota)._quota is quota   # type: ignore[arg-type]

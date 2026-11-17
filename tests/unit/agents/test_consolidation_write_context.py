@@ -27,7 +27,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER, put_raw
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
 REPORT = LLMResponse(text='{"operations": []}')
@@ -99,6 +99,7 @@ def make_agent(store: FactStore, script: Callable[[str, str], LLMResponse], *, e
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
         prompt_builder=pb, indexed_email_repo=email_repo, email_memory_batches=email_repo,
+        bio_cache=NoCacheRefresh(),
     )
     agent.INLINE_CLUSTER_REVIEW = False
     agent.requests = []
@@ -181,7 +182,6 @@ async def test_a_batch_without_readable_times_has_no_span_and_the_write_is_dated
 
 async def test_the_zone_reaches_the_pass_from_the_messages_context(store):
     agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on(SUMMER_TRIP)))}))
-    store.repo.refresh_biographical_context_cache = AsyncMock()
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
         payload={"task": "consolidate", "messages": MESSAGES}, context={"user_id": USER, "owner_timezone": LISBON},
@@ -267,7 +267,6 @@ async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
         payload={"task": "consolidate_cluster", "cluster": [{"fact_id": "x", "content": "c", "similarity": 0.5}]},
         context={"user_id": USER, "owner_timezone": LISBON},
     )
-    store.repo.refresh_biographical_context_cache = AsyncMock()
     before = datetime.now(timezone.utc)
     with RequestContext(user_id=USER, account_id=ACC):
         response = await agent._handle_consolidate_cluster(message, USER, ACC, [], 0.0)
@@ -306,7 +305,6 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
         payload={"task": "consolidate_email", "number_of_batches": 1, "batch_size": 10},
         context={"user_id": USER, "owner_timezone": LISBON},
     )
-    store.repo.refresh_biographical_context_cache = AsyncMock()
     response = await agent._handle_consolidate_email(message, USER, ACC, [], 0.0)
 
     assert response.status.value == "success" and response.result["batches_processed"] == 1

@@ -11,10 +11,11 @@ from quart import Quart
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.domain.stored_fact import StoredFact
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, USER, make_fact
-from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh, make_env_config
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from src.composition.connector_registry import ConnectorRegistry
 
@@ -22,20 +23,20 @@ _META = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal
          "context_priority": "medium", "tags": ["tea"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE}
 
 
-def _app(fact_repo):
+def _app(fact_repo, bio_cache=None):
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
     app = Quart("test_cabinet_invalidate_versions")
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo), connectors=ConnectorRegistry(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo, bio_cache=bio_cache or NoCacheRefresh()), connectors=ConnectorRegistry(),
     ))
     return app
 
 
-async def _invalidate(fact_repo, fact_id):
-    async with _app(fact_repo).test_client() as client:
+async def _invalidate(fact_repo, fact_id, bio_cache=None):
+    async with _app(fact_repo, bio_cache).test_client() as client:
         resp = await client.post(f"/api/user/facts/{fact_id}/invalidate", headers={"Authorization": "Bearer t"})
         return resp.status_code, await resp.get_json()
 
@@ -90,17 +91,18 @@ def _failing_repo(error):
     walk = AsyncMock(side_effect=error) if isinstance(error, FactResolutionError) else AsyncMock(
         return_value=StoredFact(fact, "token"))
     return MagicMock(get_fact_by_id=AsyncMock(return_value=fact), resolve_current=walk,
-                     update_fact_fields=AsyncMock(side_effect=error), refresh_biographical_context_cache=AsyncMock())
+                     update_fact_fields=AsyncMock(side_effect=error))
 
 
 @pytest.mark.parametrize("error", [FactResolutionError("fact x was merged into y"), FactWriteConflict("x")])
 async def test_both_errors_are_a_409_carrying_their_message(error):
     fact_repo = _failing_repo(error)
+    bio_cache = AsyncMock(spec=BiographicalCacheRefresher)
 
-    status, body = await _invalidate(fact_repo, "x")
+    status, body = await _invalidate(fact_repo, "x", bio_cache)
 
     assert (status, body) == (409, {"error": f"{error}; reload"})
-    fact_repo.refresh_biographical_context_cache.assert_not_awaited()
+    bio_cache.refresh_cache.assert_not_awaited()
 
 
 async def test_the_technical_message_is_logged_for_the_operator(caplog):

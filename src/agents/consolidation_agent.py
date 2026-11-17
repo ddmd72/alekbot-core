@@ -38,6 +38,7 @@ from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
 from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
 from ..domain.search import fact_view
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
@@ -827,6 +828,7 @@ class ConsolidationAgent(BaseAgent):
         lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
         *,
         fact_updates: FactUpdatePort,
+        bio_cache: BiographicalCacheRefresher,
         email_memory_batches: Optional[EmailMemoryBatches] = None,
         confirmed_people: Optional[ConfirmedPeopleRepository] = None,
     ):
@@ -849,6 +851,7 @@ class ConsolidationAgent(BaseAgent):
             principles_limit: Principles cache limit
             lifecycle_counters: Per-day lifecycle numbers; the refused calls of each pass are added to it
             fact_updates: The typed write path (code-built updates, the review's writes); required
+            bio_cache: Rebuilds the account's biographical cache after a pass that may have written
             email_memory_batches: Stage 3's reads of mail with its card; None skips email triage
             confirmed_people: The owner's people list, read once per Stage 3 run to withhold a card's title and summary
         """
@@ -866,6 +869,7 @@ class ConsolidationAgent(BaseAgent):
         self._fact_write_service = fact_write_service
         self._fact_management = fact_management_port  # NEW
         self._fact_updates = fact_updates
+        self._bio_cache = bio_cache
         self.prompt_version = prompt_version  # NEW
         self.prompt_builder = prompt_builder
         self.user_id = None  # Consolidation is system-level, no user context
@@ -1039,7 +1043,7 @@ class ConsolidationAgent(BaseAgent):
                 
                 # Trigger cache refresh
                 logger.info(f"🔄 Triggering biographical cache refresh for account {account_id[:8]}...")
-                await self._repo.refresh_biographical_context_cache(
+                await self._bio_cache.refresh_cache(
                     owner_id=account_id,
                     facts_limit=self.facts_limit,
                     principles_limit=self.principles_limit
@@ -1090,7 +1094,7 @@ class ConsolidationAgent(BaseAgent):
             )
 
             # Trigger cache refresh
-            await self._repo.refresh_biographical_context_cache(
+            await self._bio_cache.refresh_cache(
                 owner_id=account_id,
                 facts_limit=self.facts_limit,
                 principles_limit=self.principles_limit
@@ -1176,7 +1180,7 @@ class ConsolidationAgent(BaseAgent):
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
-            await self._repo.refresh_biographical_context_cache(
+            await self._bio_cache.refresh_cache(
                 owner_id=account_id,
                 facts_limit=self.facts_limit,
                 principles_limit=self.principles_limit,
@@ -1362,8 +1366,8 @@ class ConsolidationAgent(BaseAgent):
         return "\n".join(lines), sent
 
     async def _refresh_biographical_cache(self, account_id: str) -> None:
-        """Rebuild the account's biographical cache and drop the PromptBuilder's copy; the repo never raises."""
-        await self._repo.refresh_biographical_context_cache(
+        """Rebuild the account's biographical cache and drop the PromptBuilder's copy; the refresh never raises."""
+        await self._bio_cache.refresh_cache(
             owner_id=account_id,
             facts_limit=self.facts_limit,
             principles_limit=self.principles_limit,

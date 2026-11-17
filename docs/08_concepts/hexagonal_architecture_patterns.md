@@ -152,7 +152,6 @@ class FirestoreFactRepository:
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        biographical_context_service: Optional[BiographicalContextService] = None,
         dedup_service: Optional[SmartDeduplication] = None,  # Injected!
     ):
         self._dedup_service = dedup_service or SmartDeduplication()
@@ -326,43 +325,31 @@ from ..domain.llm import Message    # ✅ domain → ok
 
 ---
 
-## Pattern 5: Circular Dependency Resolution
+## Pattern 5: Breaking an Adapter ↔ Service Cycle
 
 ### Problem
 
-Sometimes Application services need each other or Repository, creating circular dependencies.
+A cycle between an adapter and a service (the adapter calls the service, the service reads through the adapter) forces
+one of them to be built with `None` and completed after construction, and puts orchestration in the adapter.
 
 ### Solution
 
-1. Create objects with `None` for circular dependencies
-2. Set references after both objects exist
+Move the orchestration into the service and leave the adapter persistence only; the service then depends on the
+adapter's port, never the other way. Build the adapter first and the service over it. Callers that need the
+orchestration take it as a port of its own.
 
 ### Example
 
+The biographical cache: `BiographicalContextService.refresh_cache` (port `BiographicalCacheRefresher`) selects the
+context and saves it through `FactRepository.save_biographical_context_cache`, which only writes the document.
+
 ```python
-# Step 1: Create BiographicalContextService with None repository
+repository = FirestoreFactRepository(db_client, env_config, embedding_service=embedding_service)
 biographical_context_service = BiographicalContextService(
-    repository=None,  # Will be set later
-    config_service=config_service,
-    account_repo=account_repo,
+    repository=repository, config_service=config_service, account_repo=account_repo,
 )
-
-# Step 2: Create Repository (needs biographical_context_service)
-repository = FirestoreFactRepository(
-    db_client, env_config,
-    embedding_service=embedding_service,
-    biographical_context_service=biographical_context_service,  # DI
-)
-
-# Step 3: Resolve circular dependency
-biographical_context_service.set_repository(repository)
+# every fact-write path takes `bio_cache=biographical_context_service` (a BiographicalCacheRefresher)
 ```
-
-**Why This Works:**
-
-- Objects created in correct dependency order
-- Circular refs set after initialization
-- Services work correctly when called (refs exist by then)
 
 ---
 
@@ -892,7 +879,6 @@ Bootstrap/wiring rules:
 |---------|---------|-------|
 | Service Layer | FactWriteService extracts embedding generation | `src/services/fact_write_service.py` |
 | DI into Adapter | SmartDeduplication injected into Repository | `src/adapters/firestore_repo.py` |
-| DI into Adapter | BiographicalContextService injected into Repository | `src/adapters/firestore_repo.py` |
 | Composition Root Split | ServiceContainer (shared) + UserAgentFactory (per-user) | `src/composition/service_container.py`, `src/composition/user_agent_factory.py` |
 | Factory Callable | `create_fact_management_adapter()` for per-user adapter | `src/composition/service_container.py` |
 | Port Abstraction | `SessionStore` port, `FirestoreSessionStore` adapter | `src/ports/session_store.py`, `src/adapters/firestore_session_store.py` |
@@ -905,7 +891,7 @@ Bootstrap/wiring rules:
 | Domain Types | `Message`, `MessagePart`, `ToolCall` in domain/ | `src/domain/llm.py` |
 | Domain Logic | `SmartDeduplication` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
 | Composition Factory | `SlackAdapterFactory` creates adapter with ports injected | `src/composition/slack_adapter_factory.py` |
-| Circular Resolution | `BiographicalContextService ↔ FirestoreFactRepository` | `src/composition/service_container.py` |
+| Orchestration in the Service | `BiographicalContextService.refresh_cache` over `FactRepository.save_biographical_context_cache` | `src/services/biographical_context_service.py`, `src/ports/biographical_cache_port.py` |
 | Protocol Decoupling | `MessageRouter` Protocol decouples services/ from infrastructure/ | `src/services/agent_fallback_service.py` |
 | Feature Flag Central | `ENABLE_GROUNDING_ATTRIBUTION` in `agent_config.py` | `src/infrastructure/agent_config.py` |
 | Domain Normalization | `normalize_fact_taxonomy()` eliminates adapter duplication | `src/domain/entities.py` |
