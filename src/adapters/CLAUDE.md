@@ -43,7 +43,7 @@ mocks cannot detect translation regressions) + contract validators in
   - `_NO_FORCED_TOOL_MODELS` — Sonnet 5.5 / Opus 5.5 / Fable 5.1 and 5.2 **400 on `tool_choice` any/tool**;
     a forced request is sent as `auto`.
   - All three are computed in `_model_dependent_params`, which runs again for the same-provider
-    fallback model (`_MODEL_FALLBACK`: 5.5 → 5 → 4.6 on 529/503/5xx, never 4xx) — Sonnet 5 does not
+    fallback model (`_MODEL_FALLBACK`: Opus 5.5 → Sonnet 5.5; Sonnet 5.5 → 5 → 4.6, one retry, on 529/503/5xx, never 4xx) — Sonnet 5 does not
     know `between_tools`. Each trap was reproduced as a live 400 before it was fixed (2026-10-03).
   - **Refusals** — the 5.5 / Fable generation runs safety classifiers; a decline is HTTP 200 with
     `stop_reason:"refusal"` and an empty or partial body. `_raise_on_refusal` turns it into
