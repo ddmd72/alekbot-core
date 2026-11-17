@@ -2,135 +2,34 @@
 Fact Write Service
 ==================
 
-Service for writing facts with automatic multi-vector generation and deduplication.
-
-Session: 2026-02-07 Hexagonal Architecture Refactoring
-Purpose: Extract embedding generation from ConsolidationAgent to maintain clean separation.
+Builds new facts with their multi-vector embeddings; the caller stores them.
 
 Architecture:
 - Application Layer Service
-- Depends on Ports: FactRepository, EmbeddingService
-- Used by: ConsolidationAgent (Domain)
+- Depends on Ports: EmbeddingService
+- Used by: FactManagementAdapter (create, merge, the update's history copy)
 - Analogue: SearchEnrichmentService (for reading)
-
-Responsibilities:
-- Generate multi-vector embeddings (Infrastructure work)
-- Semantic deduplication (Domain logic via Repository)
-- Batch processing for efficiency
 """
 
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Sequence, Tuple
+from typing import List, Sequence
 from ..domain.fact_embedding import fact_embedding_texts
 from ..domain.entities import FactEntity, FactType
-from ..domain.new_fact_attributes import NewFactAttributes, parse_new_fact
-from ..ports.repository import FactRepository
+from ..domain.new_fact_attributes import NewFactAttributes
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_write_port import FactWritePort
 from ..utils.logger import logger
 
 
 class FactWriteService(FactWritePort):
-    """
-    Service for writing facts with automatic multi-vector embedding generation.
-    
-    This service extracts Infrastructure concerns (embedding generation) from Domain agents,
-    maintaining hexagonal architecture principles.
-    
-    Pattern:
-    - Agent (Domain): Synthesizes data from LLM → Provides facts_data (no vectors)
-    - Service (Application): Generates embeddings → Creates FactEntity with vectors
-    - Repository (Infrastructure): Saves to database with deduplication
-    
-    Similar to SearchEnrichmentService but for writes instead of reads.
-    """
+    """Builds new FactEntity objects with their three vectors; the caller (FactManagementAdapter) stores them."""
 
-    def __init__(
-        self,
-        repository: FactRepository,
-        embedding_service: EmbeddingService
-    ):
-        """
-        Initialize fact write service with dependencies.
-        
-        Args:
-            repository: Fact repository for storage (Port)
-            embedding_service: Embedding service for vector generation (Port)
-        """
-        self._repo = repository
+    def __init__(self, embedding_service: EmbeddingService):
         self._embedding = embedding_service
         
         logger.info("📝 [FactWriteService] Initialized")
-
-    async def add_facts_batch(
-        self,
-        account_id: str,
-        user_id: str,
-        facts_data: List[Dict],
-        skip_deduplication: bool = False
-    ) -> Tuple[int, int, List[str]]:
-        """
-        Add batch of facts with automatic multi-vector generation and deduplication.
-
-        Process:
-        1. Parse every fact (a bad value raises ValueError before any embedding or write)
-        2. build_facts: 3 embeddings per fact, FactEntity with all vectors
-        3. Save one by one (skip_deduplication) or with semantic deduplication
-
-        Args:
-            account_id: Account ID (billing entity)
-            user_id: User ID (attribution)
-            facts_data: fact dicts with text/content, tags, type, metadata and the optional taxonomy fields
-            skip_deduplication: If True, skip semantic deduplication (Deliberate Fact Management)
-
-        Returns:
-            Tuple (saved_count, skipped_count, saved_ids)
-        """
-        if not facts_data:
-            return 0, 0, []
-
-        parsed = [parse_new_fact(fact_data) for fact_data in facts_data]
-
-        logger.info(f"📝 [FactWriteService] Adding {len(parsed)} facts for account {account_id[:8]}...")
-
-        entities = await self.build_facts(account_id, user_id, parsed)
-
-        # Semantic deduplication requires sequential processing
-        saved_count = 0
-        skipped_count = 0
-        saved_ids: List[str] = []
-
-        for fact_entity in entities:
-            if skip_deduplication:
-                fact_id = await self._repo.add_fact(fact_entity)
-                saved_ids.append(fact_id)
-                was_added = True
-                duplicate_id = None
-            else:
-                # Raised from 0.85 to 0.96 on 2026-02-08
-                was_added, duplicate_id = await self._repo.add_fact_if_unique(
-                    fact_entity,
-                    similarity_threshold=0.96
-                )
-
-            if was_added:
-                saved_count += 1
-            else:
-                skipped_count += 1
-                logger.debug(f"⏭️  Skipped semantic duplicate (existing: {(duplicate_id or '')[:8]}...)")
-
-        if skip_deduplication:
-            logger.info(
-                f"✅ [FactWriteService] Completed: {saved_count} saved (deduplication skipped)"
-            )
-        else:
-            logger.info(
-                f"✅ [FactWriteService] Completed: {saved_count} saved, {skipped_count} duplicates"
-            )
-
-        return saved_count, skipped_count, saved_ids
 
     async def build_facts(
         self,

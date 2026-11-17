@@ -1097,19 +1097,13 @@ class DryRunKit:
         live = getattr(agent, "_fact_management", None)
         if live is None:
             raise ValueError("the agent has no fact-management port to run the kit on")
-        if getattr(agent, "prompt_version", None) != "v3":
-            raise ValueError(
-                f"the kit runs the v3 passes only (agent prompt_version is {getattr(agent, 'prompt_version', None)!r}); "
-                "the v2 path writes through the live write service"
-            )
         service = getattr(getattr(agent, "prompt_builder", None), "assembly_service", None)
         if service is None:
             raise ValueError("the agent has no prompt assembly service: the snapshot tokens could not be served")
         self.repo = NoWriteFactRepository(agent._repo)
         agent._repo = self.repo
         agent._bio_cache = self.repo
-        write_service = FactWriteService(self.repo, live._embedding)
-        agent._fact_write_service = write_service
+        write_service = FactWriteService(live._embedding)
         adapter = FactManagementAdapter(self.repo, live._embedding, write_service, live._search_enrichment)
         recorder = WriteRecorder(adapter, self)
         agent._fact_management = recorder

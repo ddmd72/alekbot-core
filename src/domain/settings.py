@@ -24,7 +24,6 @@ class ConsolidationSettings:
     batch_size: int = 50  # dev default
     max_queue_messages: int = 600
     max_retry_attempts: int = 3
-    prompt_version: str = "v3"  # "v3" (multi-turn deliberate) or "v2" (legacy single-shot)
 
 
 @dataclass

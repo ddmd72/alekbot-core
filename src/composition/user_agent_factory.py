@@ -191,7 +191,6 @@ class UserAgentFactory(AgentFactoryPort):
         self.biographical_context_service = services.biographical_context_service
         self.context_builder = services.context_builder
         self.assembly_service = services.assembly_service
-        self.fact_write_service = services.fact_write_service
         self.fact_management_adapter_factory = services.fact_management_adapter_factory
         self.email_search_service = services.email_search_service
         self.email_card_search = services.email_card_search
@@ -565,11 +564,9 @@ class UserAgentFactory(AgentFactoryPort):
             execution_context=consolidation_context,
             repository=self.repository,
             embedding_service=self.embedding_service,
-            fact_write_service=self.fact_write_service,
             fact_management_port=fact_management_adapter,
             fact_updates=fact_management_adapter,  # the adapter is both ports
             bio_cache=self.biographical_context_service,
-            prompt_version=self.config["CONSOLIDATION"].prompt_version,
             prompt_builder=prompt_builder,
             facts_limit=facts_limit, principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,

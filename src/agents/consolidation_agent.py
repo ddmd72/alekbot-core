@@ -47,7 +47,6 @@ from ..ports.llm_port import LLMResponse, ToolCall, Message, MessagePart, LLMReq
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
-from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
 from ..domain.consolidation import EMAIL_PROFILE_ID, REVIEW_PROFILE_ID
 from ..domain.confirmed_people import ConfirmedPeople
@@ -816,9 +815,7 @@ class ConsolidationAgent(BaseAgent):
         execution_context: AgentExecutionContext,
         repository: FactRepository,
         embedding_service: EmbeddingService,
-        fact_write_service: FactWritePort,
-        fact_management_port: Optional[FactManagementPort] = None,  # NEW: Phase 3
-        prompt_version: str = "v3",  # Changed default to v3
+        fact_management_port: Optional[FactManagementPort] = None,
         prompt_builder: Optional[PromptBuilderPort] = None,
         facts_limit: int = CONSOLIDATION.facts_limit,
         principles_limit: int = CONSOLIDATION.principles_limit,
@@ -841,11 +838,9 @@ class ConsolidationAgent(BaseAgent):
         Args:
             config: Agent configuration (includes LLM model)
             execution_context: Execution context with provider + model
-            repository: Repository for reading/writing (legacy path)
+            repository: Repository for fact reads
             embedding_service: Service for generating embeddings (legacy)
-            fact_write_service: Service for writing facts (legacy path v2)
-            fact_management_port: Port for deliberate fact operations (NEW v3)
-            prompt_version: Version of the prompt template ("v2" or "v3")
+            fact_management_port: Port for deliberate fact operations; a consolidate task without it fails
             prompt_builder: Prompt builder for cache invalidation
             facts_limit: Biographical cache limit
             principles_limit: Principles cache limit
@@ -866,11 +861,9 @@ class ConsolidationAgent(BaseAgent):
         self.model_name = execution_context.model_name
         self._repo = repository
         self._embedding = embedding_service
-        self._fact_write_service = fact_write_service
-        self._fact_management = fact_management_port  # NEW
+        self._fact_management = fact_management_port
         self._fact_updates = fact_updates
         self._bio_cache = bio_cache
-        self.prompt_version = prompt_version  # NEW
         self.prompt_builder = prompt_builder
         self.user_id = None  # Consolidation is system-level, no user context
         self.facts_limit = facts_limit
@@ -886,7 +879,7 @@ class ConsolidationAgent(BaseAgent):
 
         logger.info(
             f"👨‍🏫 ConsolidationAgent initialized "
-            f"(version={prompt_version}, model={self.model_name}, "
+            f"(model={self.model_name}, "
             f"facts_limit={facts_limit}, principles_limit={principles_limit})"
         )
     
@@ -995,130 +988,62 @@ class ConsolidationAgent(BaseAgent):
         Payload: {"messages": [...]}  (list of conversation turns)
         """
         try:
-            payload = message.payload
-            messages = payload.get("messages", [])
-
-            # Route to v3 or v2 based on configuration
-            if self.prompt_version == "v3" and self._fact_management:
-                logger.info("🧠 [ConsolidationAgent] Using v3 deliberate process")
-                results = await self._execute_deliberate_process_v3(
-                    messages=messages,
-                    user_id=user_id,
-                    account_id=account_id,
-                    bio_context_raw=bio_context_raw,
-                    owner_timezone=self._owner_timezone(message),
+            if self._fact_management is None:
+                logger.error(
+                    f"❌ [ConsolidationAgent] consolidate refused for account {account_id[:8]}: "
+                    f"no fact management port is wired"
                 )
-            else:
-                logger.info("🧠 [ConsolidationAgent] Using v2 legacy process")
-                if messages:
-                    results = await self._synthesize_session_facts_v2(
-                        messages, user_id, account_id, bio_context_raw, self._owner_timezone(message)
-                    )
-                else:
-                    logger.info("ℹ️  [ConsolidationAgent] No data to process")
-                    return AgentResponse.success(
-                        task_id=message.task_id,
-                        agent_id=self.agent_id,
-                        result={"new_facts": 0, "new_anchors": 0, "message": "No data"},
-                        confidence=1.0,
-                        metadata={"processed": 0}
-                    )
-            
-            if not results:
                 return AgentResponse.failure(
                     task_id=message.task_id,
                     agent_id=self.agent_id,
-                    error="Failed to parse consolidation results"
+                    error="Consolidation needs the fact management port; none is wired",
                 )
-            
-            # Handle v3 results (operations list)
-            if "operations" in results:
-                operations = results["operations"]
-                new_facts_count = sum(1 for op in operations if op["action"] in ["CREATE", "UPDATE", "MERGE"])
-                
-                logger.info(
-                    f"✅ [ConsolidationAgent] v3 Completed: {len(operations)} operations "
-                    f"({new_facts_count} facts affected)"
-                )
-                
-                # Trigger cache refresh
-                logger.info(f"🔄 Triggering biographical cache refresh for account {account_id[:8]}...")
-                await self._bio_cache.refresh_cache(
-                    owner_id=account_id,
-                    facts_limit=self.facts_limit,
-                    principles_limit=self.principles_limit
-                )
-                
-                # Invalidate PromptBuilder cache
-                if self.prompt_builder:
-                    self.prompt_builder.invalidate_biographical_cache(account_id)
-                    logger.info(f"♻️  Invalidated PromptBuilder cache for account {account_id[:8]}")
-                
-                total_duration = time.time() - start_time
-                return AgentResponse.success(
-                    task_id=message.task_id,
-                    agent_id=self.agent_id,
-                    result={
-                        "operations": len(operations),
-                        "facts_affected": new_facts_count,
-                        "message": f"Processed {len(operations)} operations"
-                    },
-                    confidence=1.0,
-                    metadata={
-                        "total_duration_ms": int(total_duration * 1000),
-                        "operations": operations,
-                        "version": "v3"
-                    }
-                )
-            
-            # Handle v2 results (legacy)
-            llm_facts = self._sanitize_ids(results.get("new_facts", []))
-            llm_anchors = self._sanitize_ids(results.get("new_anchors", []))
-            
-            if len(llm_facts) == 0 and len(llm_anchors) == 0:
-                if messages:
-                    logger.info("ℹ️  [ConsolidationAgent] Session consolidation yielded 0 new facts (valid).")
-            
-            # Save facts via FactWriteService (v2 path)
-            all_facts_data = llm_facts + llm_anchors
-            saved_count, skipped_count, _ = await self._fact_write_service.add_facts_batch(
-                account_id=account_id,
+
+            results = await self._execute_deliberate_process_v3(
+                messages=message.payload.get("messages", []),
                 user_id=user_id,
-                facts_data=all_facts_data
+                account_id=account_id,
+                bio_context_raw=bio_context_raw,
+                owner_timezone=self._owner_timezone(message),
             )
-            
-            total_duration = time.time() - start_time
+            operations = results["operations"]
+            new_facts_count = sum(1 for op in operations if op["action"] in ["CREATE", "UPDATE", "MERGE"])
+
             logger.info(
-                f"✅ [ConsolidationAgent] v2 Completed in {total_duration:.2f}s "
-                f"(facts={len(llm_facts)}, anchors={len(llm_anchors)})"
+                f"✅ [ConsolidationAgent] v3 Completed: {len(operations)} operations "
+                f"({new_facts_count} facts affected)"
             )
 
             # Trigger cache refresh
+            logger.info(f"🔄 Triggering biographical cache refresh for account {account_id[:8]}...")
             await self._bio_cache.refresh_cache(
                 owner_id=account_id,
                 facts_limit=self.facts_limit,
                 principles_limit=self.principles_limit
             )
-            
+
+            # Invalidate PromptBuilder cache
             if self.prompt_builder:
                 self.prompt_builder.invalidate_biographical_cache(account_id)
-            
+                logger.info(f"♻️  Invalidated PromptBuilder cache for account {account_id[:8]}")
+
+            total_duration = time.time() - start_time
             return AgentResponse.success(
                 task_id=message.task_id,
                 agent_id=self.agent_id,
                 result={
-                    "new_facts": len(llm_facts),
-                    "new_anchors": len(llm_anchors),
-                    "message": f"Added {len(llm_facts)} facts and {len(llm_anchors)} anchors"
+                    "operations": len(operations),
+                    "facts_affected": new_facts_count,
+                    "message": f"Processed {len(operations)} operations"
                 },
                 confidence=1.0,
                 metadata={
                     "total_duration_ms": int(total_duration * 1000),
-                    "llm_payload": {"new_facts": llm_facts, "new_anchors": llm_anchors},
-                    "version": "v2"
+                    "operations": operations,
+                    "version": "v3"
                 }
             )
-            
+
         except Exception as e:
             self._on_agent_error(e)
             return AgentResponse.failure(
@@ -2500,39 +2425,6 @@ class ConsolidationAgent(BaseAgent):
             )
         return _operations_of(report)
 
-    # ========================================================================
-    # Legacy v2 methods (backward compatibility)
-    # ========================================================================
-    
-    def _build_conversation_text(self, messages: List[Dict]) -> str:
-        """Build conversation text from messages (LEGACY for plain text format)."""
-        conv_text = ""
-        for msg in messages:
-            role = msg.get("role") or msg.get("user_id") or "unknown"
-
-            # Normalized role mapping
-            if role == "user":
-                normalized_role = "USER"
-            else:
-                normalized_role = "ASSISTANT"
-
-            text = msg.get("text") or ""
-            if not text and "parts" in msg:
-                text = " ".join([p.get("text", "") for p in msg["parts"]])
-
-            # Timestamp handling
-            timestamp = msg.get('timestamp') or msg.get('created_at')
-            if timestamp:
-                try:
-                    dt = datetime.fromtimestamp(timestamp) if isinstance(timestamp, (int, float)) else datetime.fromisoformat(str(timestamp))
-                    time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    conv_text += f"{normalized_role} ({time_str}): {text}\n"
-                except Exception:
-                     conv_text += f"{normalized_role}: {text}\n"
-            else:
-                conv_text += f"{normalized_role}: {text}\n"
-        return conv_text
-
     def _prepare_structured_conversation(self, messages: List[Dict], timezone: str) -> List[Dict]:
         """
         Prepare structured conversation for VariableFormatter.
@@ -2574,129 +2466,6 @@ class ConsolidationAgent(BaseAgent):
             })
 
         return structured
-
-    async def _get_existing_anchors_list(self, account_id: str) -> List[str]:
-        """
-        Get existing anchors as list (for VariableFormatter).
-        Optimized: uses cached biographical facts instead of Firestore query.
-        """
-        # Get ALL facts from cache (faster than Firestore query)
-        try:
-            all_facts = await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to load existing anchors from cache: {e}")
-            return []
-        # Filter anchors locally
-        return [f.get("text") for f in all_facts if "anchor" in f.get("tags", [])]
-
-    async def _synthesize_session_facts_v2(
-        self,
-        messages: List[Dict],
-        user_id: str,
-        account_id: str,
-        biographical_context: List[Dict] = None,
-        owner_timezone: str = "UTC",
-    ) -> Dict[str, Any]:
-        """Synthesize facts from raw messages using v2 prompt (legacy). Message times are shown in the owner's zone."""
-        # 1. Prepare conversation history
-        structured_conversation = self._prepare_structured_conversation(messages, owner_timezone)
-        conversation_history = [
-            {
-                "role": item.get("role", "user"),
-                "content": item.get("content", ""),
-                "timestamp": item.get("timestamp", "")
-            }
-            for item in structured_conversation
-            if item.get("content")
-        ]
-
-        # 2. Prepare existing anchors
-        existing_anchors_list = await self._get_existing_anchors_list(account_id)
-        biographical_facts = biographical_context or []
-        if existing_anchors_list:
-            biographical_facts = list(biographical_facts)
-            biographical_facts.append({
-                "text": "Existing anchors: " + ", ".join(existing_anchors_list),
-                "type": "PRINCIPLE",
-                "source": "consolidation"
-            })
-
-        # 3. Assemble prompt via PromptBuilder (loads v2 prompt)
-        prompt = await self.prompt_builder.build_for_agent(
-            agent_type="consolidation",
-            user_id=user_id,
-            account_id=account_id,
-            routing_metadata=None,
-            include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
-            biographical_facts=biographical_facts,
-            conversation_history=conversation_history
-        )
-
-        request = LLMRequest(
-            model_name=self.model_name,
-            system_instruction="You are Life Chronicler. Return only valid JSON.",
-            messages=[Message(role="user", parts=[MessagePart(text=prompt)])],
-            timeout=500,
-        )
-        response = await self._call_llm(request)
-
-        return self._parse_consolidation_results(response.text)
-    
-    def _parse_consolidation_results(self, response_text: str) -> Dict[str, Any]:
-        """Parse consolidation results from LLM JSON response (v2 format)."""
-        try:
-            # Try markdown block first
-            json_match = re.search(
-                r"```json\s*(\{.*?\})\s*```",
-                response_text,
-                re.DOTALL
-            )
-            
-            if json_match:
-                return json.loads(json_match.group(1))
-            
-            # Try plain JSON (LLM may return without markdown wrapper)
-            return json.loads(response_text.strip())
-            
-        except json.JSONDecodeError as e:
-            logger.warning("⚠️  No JSON found in LLM response")
-            logger.error(f"Failed to parse JSON: {e}")
-            return {}
-    
-    def _sanitize_ids(self, items: List[Dict]) -> List[Dict]:
-        """Ensure ID uniqueness within batch."""
-        seen_ids = set()
-        sanitized = []
-        
-        for item in items:
-            # Handle case where LLM returns strings instead of dicts
-            if isinstance(item, str):
-                logger.warning(f"LLM returned string instead of dict: '{item}' - skipping")
-                continue
-                
-            if not isinstance(item, dict):
-                logger.warning(f"LLM returned invalid type: {type(item)} - skipping")
-                continue
-            
-            original_id = item.get('id')
-            if not original_id:
-                continue
-            
-            new_id = original_id
-            suffix = 0
-            
-            while new_id in seen_ids:
-                suffix += 1
-                new_id = f"{original_id}_{chr(96 + suffix)}"
-            
-            if new_id != original_id:
-                logger.warning(f"Sanitized duplicate ID: '{original_id}' → '{new_id}'")
-                item['id'] = new_id
-            
-            seen_ids.add(new_id)
-            sanitized.append(item)
-        
-        return sanitized
 
     def _get_alternative_agents(self) -> List[str]:
         """Suggest alternative agents."""
