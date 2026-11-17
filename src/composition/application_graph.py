@@ -18,7 +18,6 @@ from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
-from src.adapters.firestore_person_card_repo import FirestorePersonCardRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -47,6 +46,7 @@ from src.composition.file_delivery_setup import build_file_delivery
 from src.composition.language_setup import build_languages
 from src.composition.notification_setup import build_notifications
 from src.composition.companion_setup import build_companions
+from src.composition.memory_search_setup import build_memory_search
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -106,7 +106,6 @@ from src.services.task_setup_service import TaskSetupService
 from src.composition.deploy_topology import DeployTopology
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
-from src.composition.fact_search_setup import build_fact_search_service
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.ports.fact_search_port import FactSearchPort
 from src.services.credential_revocation_service import CredentialRevocationService
@@ -377,13 +376,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     companion_context_assembler, companion_extractor_runner = companions.context_assembler, companions.extractor_runner
     call_text_files, companion_extraction_service = companions.call_text_files, companions.extraction_service
 
-    # The people cards (RFC §7) and the one fact search: built first, the agent factory hands the search to the
-    # memory agent of every user.
-    _person_cards = FirestorePersonCardRepository(db_client, env_config)
-    # The one place atlas: the fact search and the profile step read it; `start()` loads it before the instance serves.
-    _place_atlas = LazyAtlas()
-    fact_search = build_fact_search_service(container.repository, container.embedding_service, _person_cards,
-                                            atlas=_place_atlas)
+    memory_search = build_memory_search(db_client, env_config, container=container)
+    _person_cards, _place_atlas, fact_search = (
+        memory_search.person_cards, memory_search.place_atlas, memory_search.fact_search)
 
     # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
     logger.info("🏭 Initializing User Agent Factory...")
