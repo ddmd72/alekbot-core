@@ -1,4 +1,4 @@
-"""`attach_agent_refresher` gives LanguagePreferenceService the agent factory's per-user refresh.
+"""The `ensure_agents` constructor argument gives LanguagePreferenceService the agent factory's per-user refresh.
 
 The refresher it is given is the one `set_preference` calls, once per language change and before the notification that
 tells the model about the change. Without one the notification still goes out.
@@ -10,6 +10,7 @@ from src.domain.language import LanguageCode
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.user import UserProfile
 from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 
 USER_ID = "u1"
 ACCOUNT_ID = "a1"
@@ -50,25 +51,25 @@ class _Notifier:
         self.events.append("notify")
 
 
-def _service(events: List[str]) -> LanguagePreferenceService:
+def _service(events: List[str], ensure_agents=None) -> LanguagePreferenceService:
+    users = _Users()
     return LanguagePreferenceService(
-        user_repo=_Users(),
-        account_repo=_Accounts(),
+        user_repo=users,
         profile_repo=_Profiles(),
         prompt_builder=_PromptBuilder(),
-        system_default_language=LanguageCode.EN,
+        resolver=LanguageResolver(user_repo=users, account_repo=_Accounts(), system_default_language=LanguageCode.EN),
         notification_service=_Notifier(events),
+        ensure_agents=ensure_agents,
     )
 
 
-async def test_the_attached_refresher_runs_for_the_user_before_the_notification():
+async def test_the_given_refresher_runs_for_the_user_before_the_notification():
     events: List[str] = []
-    service = _service(events)
 
     async def refresher(user_id: str) -> None:
         events.append(f"refresh:{user_id}")
 
-    service.attach_agent_refresher(refresher)
+    service = _service(events, refresher)
     await service.set_preference(USER_ID, LanguageCode.UK, agent_mirror=False)
 
     assert events == [f"refresh:{USER_ID}", "notify"]
@@ -85,13 +86,12 @@ async def test_without_a_refresher_the_notification_still_goes_out():
 
 async def test_a_failing_refresher_is_logged_and_the_change_is_kept():
     events: List[str] = []
-    service = _service(events)
 
     async def broken(user_id: str) -> None:
         raise RuntimeError("factory down")
 
-    service.attach_agent_refresher(broken)
+    service = _service(events, broken)
     await service.set_preference(USER_ID, LanguageCode.UK, agent_mirror=False)
 
     assert events == []
-    assert (await service.get_preference(USER_ID)) == (LanguageCode.UK, False)
+    assert (await service._resolver.get_preference(USER_ID)) == (LanguageCode.UK, False)

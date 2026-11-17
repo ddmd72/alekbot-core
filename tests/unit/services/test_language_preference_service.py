@@ -1,11 +1,11 @@
 """
-Unit tests for LanguagePreferenceService.
+Unit tests for LanguagePreferenceService and LanguageResolver.
 
 Covers:
 - set_preference(): override token selection, user persistence, cache invalidation,
   notification dispatch, error isolation
-- get_preference(): defaults and stored values
-- resolve_ui_language(): 3-level resolution chain (user → account → system)
+- LanguageResolver.get_preference(): defaults and stored values
+- LanguageResolver.resolve_ui_language(): 3-level resolution chain (user → account → system)
 """
 from unittest.mock import AsyncMock, MagicMock, call
 import pytest
@@ -24,6 +24,7 @@ from src.services.language_preference_service import (
     _ALL_LANG_TOKEN_IDS,
     _LANG_ALERTS,
 )
+from src.services.language_resolver import LanguageResolver
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -88,26 +89,33 @@ def notification_service() -> AsyncMock:
 
 
 @pytest.fixture
-def service(user_repo, account_repo, profile_repo, prompt_builder) -> LanguagePreferenceService:
-    return LanguagePreferenceService(
+def resolver(user_repo, account_repo) -> LanguageResolver:
+    return LanguageResolver(
         user_repo=user_repo,
         account_repo=account_repo,
-        profile_repo=profile_repo,
-        prompt_builder=prompt_builder,
         system_default_language=LanguageCode.EN,
     )
 
 
 @pytest.fixture
+def service(user_repo, profile_repo, prompt_builder, resolver) -> LanguagePreferenceService:
+    return LanguagePreferenceService(
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        prompt_builder=prompt_builder,
+        resolver=resolver,
+    )
+
+
+@pytest.fixture
 def service_with_notify(
-    user_repo, account_repo, profile_repo, prompt_builder, notification_service
+    user_repo, profile_repo, prompt_builder, resolver, notification_service
 ) -> LanguagePreferenceService:
     svc = LanguagePreferenceService(
         user_repo=user_repo,
-        account_repo=account_repo,
         profile_repo=profile_repo,
         prompt_builder=prompt_builder,
-        system_default_language=LanguageCode.EN,
+        resolver=resolver,
         notification_service=notification_service,
     )
     return svc
@@ -327,17 +335,16 @@ class TestSetPreferenceNotification:
         assert kwargs["account_id"] == _ACCOUNT_ID
 
     async def test_account_id_falls_back_to_user_id_when_missing(
-        self, user_repo, account_repo, profile_repo, prompt_builder, notification_service
+        self, user_repo, resolver, profile_repo, prompt_builder, notification_service
     ):
         """User with no account_id → account_id in notify() falls back to user_id."""
         user_repo.get_user.return_value = _make_user(account_id=None)
 
         svc = LanguagePreferenceService(
             user_repo=user_repo,
-            account_repo=account_repo,
             profile_repo=profile_repo,
             prompt_builder=prompt_builder,
-            system_default_language=LanguageCode.EN,
+            resolver=resolver,
             notification_service=notification_service,
         )
 
@@ -383,36 +390,36 @@ class TestSetPreferenceNotification:
 class TestGetPreference:
     """get_preference() returns (preferred_language, agent_mirror) from user config."""
 
-    async def test_returns_stored_language_and_mirror(self, service, user_repo):
+    async def test_returns_stored_language_and_mirror(self, resolver, user_repo):
         user_repo.get_user.return_value = _make_user(
             preferred_language=LanguageCode.EN, agent_mirror=False
         )
 
-        lang, mirror = await service.get_preference(_USER_ID)
+        lang, mirror = await resolver.get_preference(_USER_ID)
 
         assert lang == LanguageCode.EN
         assert mirror is False
 
-    async def test_returns_none_language_and_mirror_true_by_default(self, service, user_repo):
+    async def test_returns_none_language_and_mirror_true_by_default(self, resolver, user_repo):
         user_repo.get_user.return_value = _make_user()  # defaults
 
-        lang, mirror = await service.get_preference(_USER_ID)
+        lang, mirror = await resolver.get_preference(_USER_ID)
 
         assert lang is None
         assert mirror is True
 
-    async def test_returns_none_true_when_user_not_found(self, service, user_repo):
+    async def test_returns_none_true_when_user_not_found(self, resolver, user_repo):
         user_repo.get_user.return_value = None
 
-        lang, mirror = await service.get_preference(_USER_ID)
+        lang, mirror = await resolver.get_preference(_USER_ID)
 
         assert lang is None
         assert mirror is True
 
-    async def test_all_language_codes_round_trip(self, service, user_repo):
+    async def test_all_language_codes_round_trip(self, resolver, user_repo):
         for code in LanguageCode:
             user_repo.get_user.return_value = _make_user(preferred_language=code, agent_mirror=False)
-            lang, _ = await service.get_preference(_USER_ID)
+            lang, _ = await resolver.get_preference(_USER_ID)
             assert lang == code
 
 
@@ -424,77 +431,75 @@ class TestGetPreference:
 class TestResolveUiLanguage:
     """resolve_ui_language() follows: user → account → system chain."""
 
-    async def test_user_preferred_language_takes_priority(self, service, user_repo):
+    async def test_user_preferred_language_takes_priority(self, resolver, user_repo):
         user_repo.get_user.return_value = _make_user(preferred_language=LanguageCode.UK)
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.UK
 
     async def test_account_default_used_when_user_has_no_preference(
-        self, service, user_repo, account_repo
+        self, resolver, user_repo, account_repo
     ):
         user_repo.get_user.return_value = _make_user(preferred_language=None)
         account_repo.get_account.return_value = _make_account(default_language=LanguageCode.FR)
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.FR
 
     async def test_system_default_used_when_neither_user_nor_account_set(
-        self, service, user_repo, account_repo
+        self, resolver, user_repo, account_repo
     ):
         user_repo.get_user.return_value = _make_user(preferred_language=None)
         account_repo.get_account.return_value = _make_account(default_language=None)
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.EN  # system default in fixture
 
-    async def test_system_default_used_when_user_not_found(self, service, user_repo):
+    async def test_system_default_used_when_user_not_found(self, resolver, user_repo):
         user_repo.get_user.return_value = None
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.EN
 
     async def test_system_default_used_when_user_has_no_account_id(
-        self, service, user_repo, account_repo
+        self, resolver, user_repo, account_repo
     ):
         user_repo.get_user.return_value = _make_user(preferred_language=None, account_id=None)
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.EN
         account_repo.get_account.assert_not_awaited()
 
     async def test_system_default_used_when_account_not_found(
-        self, service, user_repo, account_repo
+        self, resolver, user_repo, account_repo
     ):
         user_repo.get_user.return_value = _make_user(preferred_language=None)
         account_repo.get_account.return_value = None
 
-        result = await service.resolve_ui_language(_USER_ID)
+        result = await resolver.resolve_ui_language(_USER_ID)
 
         assert result == LanguageCode.EN
 
     async def test_user_preference_skips_account_lookup(
-        self, service, user_repo, account_repo
+        self, resolver, user_repo, account_repo
     ):
         user_repo.get_user.return_value = _make_user(preferred_language=LanguageCode.ES)
 
-        await service.resolve_ui_language(_USER_ID)
+        await resolver.resolve_ui_language(_USER_ID)
 
         account_repo.get_account.assert_not_awaited()
 
     async def test_custom_system_default_language(
-        self, user_repo, account_repo, profile_repo, prompt_builder
+        self, user_repo, account_repo
     ):
-        svc = LanguagePreferenceService(
+        svc = LanguageResolver(
             user_repo=user_repo,
             account_repo=account_repo,
-            profile_repo=profile_repo,
-            prompt_builder=prompt_builder,
             system_default_language=LanguageCode.UK,
         )
         user_repo.get_user.return_value = _make_user(preferred_language=None, account_id=None)
