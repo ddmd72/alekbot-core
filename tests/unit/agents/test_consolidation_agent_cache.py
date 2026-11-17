@@ -7,6 +7,7 @@ from src.domain.request_context import RequestContext
 from src.ports.llm_port import LLMPort, LLMResponse
 from src.ports.llm_port import ProviderCapabilities
 from src.domain.user import PerformanceTier
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.repository import FactRepository
 from src.ports.embedding_service import EmbeddingService
 from src.services.prompt_builder import PromptBuilder
@@ -25,7 +26,6 @@ def mock_deps():
     repo = MagicMock(spec=FactRepository)
     repo.get_biographical_context_cached = AsyncMock(return_value=[])
     repo.archive_observations = AsyncMock()
-    repo.refresh_biographical_context_cache = AsyncMock()
     repo.add_fact_if_unique = AsyncMock(return_value=(True, "f1"))
     repo.get_active_facts = AsyncMock(return_value=[])
 
@@ -63,6 +63,7 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
         resilience_port=InMemoryProviderResilience(),
     )
 
+    bio_cache = AsyncMock(spec=BiographicalCacheRefresher)
     agent = ConsolidationAgent(
         config=config,
         execution_context=execution_context,
@@ -71,7 +72,7 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
         fact_write_service=fact_write_service,
         prompt_builder=prompt_builder,
         fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required; the v2 path makes no typed write
-        bio_cache=AsyncMock(),
+        bio_cache=bio_cache,
     )
 
     # Use messages (v2 path) — observation-based flow is deprecated and skips refresh
@@ -91,7 +92,7 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
     # Verify PromptBuilder cache was invalidated
     prompt_builder.invalidate_biographical_cache.assert_called_once_with(user_id)
 
-    # Verify Repository cache refresh was triggered (with owner_id=account_id)
-    repo.refresh_biographical_context_cache.assert_called_once()
-    call_kwargs = repo.refresh_biographical_context_cache.call_args
+    # Verify the cache refresher was triggered (with owner_id=account_id)
+    bio_cache.refresh_cache.assert_called_once()
+    call_kwargs = bio_cache.refresh_cache.call_args
     assert call_kwargs.kwargs.get("owner_id") == user_id or call_kwargs.args[0] == user_id
