@@ -3,17 +3,12 @@
 # Permanent (not debt): the Registry pattern and the one real router-factory cycle; their reason starts with `permanent`.
 # Everything else is late wiring the composition-root refactor removes. A line whose offence is gone fails: delete it.
 main.py::main_app.register_blueprint  # *  # permanent: Registry pattern (web blueprints)
-src/composition/application_graph.py::_language_service.attach_agent_refresher  # 1  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::agent_registry.register  # *  # permanent: Registry pattern (AgentRegistry)
 src/composition/application_graph.py::container.file_conversion_service.attach_documents  # 1  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::coordinator.register_agent  # *  # permanent: Registry pattern (AgentCoordinator.register_agent)
 src/composition/application_graph.py::coordinator.set_agent_factory  # *  # permanent: the real router-factory cycle (AgentCoordinator.set_agent_factory)
 src/composition/application_graph.py::image_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
 src/composition/application_graph.py::job_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
-src/composition/application_graph.py::notification_channel_factory.register_factory  # 2  # composition-root refactor (assessment D3)
-src/composition/application_graph.py::notification_service.attach_localization  # 1  # composition-root refactor (assessment D3)
-src/composition/application_graph.py::notification_service.register_platform_media  # 2  # composition-root refactor (assessment D3)
-src/composition/application_graph.py::notification_service.register_platform_rich_content  # 2  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::slack_adapter.register_handlers  # 1  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::video_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
 src/composition/application_graph.py::worker_handler.attach_slack_worker  # 1  # composition-root refactor (assessment D3)
