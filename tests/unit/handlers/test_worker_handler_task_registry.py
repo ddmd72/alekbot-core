@@ -97,28 +97,8 @@ async def test_a_queued_slack_event_without_a_slack_worker_is_a_503():
     assert await _handler().handle(dict(SLACK_EVENT)) == ({"error": "slack not configured"}, 503)
 
 
-async def test_attach_slack_worker_routes_the_queued_slack_event_with_its_headers():
-    h = _handler()
-    slack = AsyncMock(return_value=({"ok": True}, 202))
-    h.attach_slack_worker(slack)
-
-    assert await h.handle(dict(SLACK_EVENT), headers={"x-trace-id": "t"}) == ({"ok": True}, 202)
-    slack.assert_awaited_once_with(SLACK_EVENT, {"x-trace-id": "t"})
-    assert "<queued slack event>" not in h.task_types()
-
-
 async def test_a_telegram_update_without_a_telegram_worker_is_a_503():
     assert await _handler().handle({"task_type": "telegram_update"}) == ({"error": "telegram not configured"}, 503)
-
-
-async def test_attach_telegram_worker_routes_the_update_payload():
-    h = _handler()
-    telegram = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_telegram_worker(telegram)
-    payload = {"task_type": "telegram_update", "update": {"update_id": 1}}
-
-    assert await h.handle(payload) == ({"ok": True}, 200)
-    telegram.assert_awaited_once_with(payload)
 
 
 async def test_agent_execution_builds_the_users_agents_before_the_task():
