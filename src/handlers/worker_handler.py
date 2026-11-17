@@ -74,7 +74,6 @@ from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.worker_task import WorkerTask
 from ..handlers.agent_worker_handler import AgentWorkerHandler
-from ..services.deep_research_delivery import NotificationPort
 from ..services.consolidation_service import ConsolidationService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.reminders_service import RemindersService
@@ -113,7 +112,6 @@ class WorkerHandler:
         self,
         agent_worker_handler: AgentWorkerHandler,
         email_indexing_service: EmailIndexingService,
-        notification_service: NotificationPort,
         consolidation_service: Optional[ConsolidationService],
         agent_factory: Any,  # UserAgentFactory
         user_repo: Any,  # UserRepository
@@ -146,7 +144,6 @@ class WorkerHandler:
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
         self._email_indexing = email_indexing_service
-        self._notification = notification_service
         self._consolidation = consolidation_service
         self._agent_factory = agent_factory
         self._user_repo = user_repo

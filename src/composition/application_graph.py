@@ -1016,7 +1016,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         ),
         agent_worker_handler=agent_worker_handler,
         email_indexing_service=email_indexing_service,
-        notification_service=notification_service,
         consolidation_service=_consolidation_service,
         agent_factory=agent_factory,
         user_repo=user_repo,
