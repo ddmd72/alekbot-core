@@ -4,7 +4,7 @@ VideoGenerationAgent — video generation & editing via grok-imagine-video-1.5.
 DeepResearchAgent-shaped: ExecutionMode.SYNC. execute() does only the fast part
 (craft prompt, submit to xAI, arrange delivery) and returns an ACK in seconds —
 the multi-minute wait happens entirely outside this request, via
-WorkerHandler._handle_video_generation_polling. See
+VideoGenerationPollingTask (services/video_generation_polling_task.py). See
 docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.3-3.4.
 
 Duration/resolution are NOT crafted by the LLM (§3.11 decision #9) — they default

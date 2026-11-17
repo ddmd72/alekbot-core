@@ -30,7 +30,7 @@ no existing httpx.AsyncClient convention elsewhere in src/adapters/ (confirmed b
 grep) — this is a new, narrowly-scoped pattern: one GET, no pooling/retry needed
 since VideoGenerationAgent.RETRY_POLICY is NO_RETRY_POLICY. A failed download (CDN
 blip, expired URL, xAI 5xx) is caught here and surfaces as a "failed" poll result —
-WorkerHandler._handle_video_generation_polling also wraps the whole get_status()
+VideoGenerationPollingTask (services/video_generation_polling_task.py) also wraps the whole get_status()
 call as a belt-and-suspenders backstop for any other unexpected exception.
 """
 import base64

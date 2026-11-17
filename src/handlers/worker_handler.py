@@ -20,6 +20,8 @@ Supported task_types:
                                 and enqueue per-fire `execute_reminder` Cloud Tasks
   - execute_reminder         → ExecuteReminderTask (services/execute_reminder_task.py), passed in by
                                 composition (`tasks`): run one claimed reminder fire
+  - video_generation_polling, deep_research_failed, deep_research_webhook_event → runners passed in by composition
+                                     (`tasks`): VideoGenerationPollingTask, DeepResearchFailedTask, DeepResearchWebhookEventTask
   - setup_microsoft_todo          → TaskSetupService.setup(user_id)
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
