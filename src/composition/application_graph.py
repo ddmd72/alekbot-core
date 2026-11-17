@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from anthropic import AsyncAnthropic
-from slack_bolt.async_app import AsyncApp
 from telegram import Bot
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
@@ -21,7 +20,6 @@ from src.adapters.firestore_companion_memory_repository import FirestoreCompanio
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
-from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.firestore_person_card_repo import FirestorePersonCardRepository
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
@@ -31,15 +29,11 @@ from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.adapters.grok_image_adapter import GrokImageAdapter
 from src.adapters.grok_video_adapter import GrokVideoAdapter
-from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
-from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.slack.interactive_message_adapter import PLATFORM as SLACK_PLATFORM
 from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessageAdapter
-from src.adapters.slack.media_adapter import SlackMediaAdapter
-from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
 from src.adapters.telegram.response_channel import TelegramResponseChannel
@@ -53,11 +47,11 @@ from src.composition.operations_setup import build_operations
 from src.composition.session_routing_setup import build_session_routing
 from src.composition.file_delivery_setup import build_file_delivery
 from src.composition.language_setup import build_languages
+from src.composition.notification_setup import build_notifications
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
 from src.composition.document_service_setup import build_document_backends
-from src.composition.sandbox_client_setup import build_html_renderer
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
 from src.composition.chat_services import ChatServices
@@ -80,7 +74,7 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.interactive_message_router import InteractiveMessageRouter
-from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
+from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.ports.cipher_port import CipherPort
 from src.ports.html_renderer_port import HtmlRendererPort
 from src.services.agent_fallback_service import AgentFallbackService
@@ -345,61 +339,16 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         delivery.media_storage, delivery.file_token_service, delivery.link_service)
     short_link_service, doc_delivery_service = delivery.short_link_service, delivery.doc_delivery_service
 
-    # Notification service — Slack's kit at construction; Telegram's is bound late (register_late_platform).
-    notification_state_repo = FirestoreNotificationStateAdapter(
-        db_client=db_client, env_config=env_config
-    )
     languages = build_languages(config, user_repo=user_repo, account_repo=account_repo)
     _localization_port, _localization = languages.localization_port, languages.localization
     _system_lang, _language_service = languages.system_default, languages.resolver
 
-    # The Slack app is built here, before the notification service and the memory review, whose questions are posted
-    # through its client; the Slack adapter below is built over the same app.
-    bot_token = config["SLACK_BOT_TOKEN"]
-    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
-    logger.debug("Creating AsyncApp...")
-    app = AsyncApp(token=bot_token)
-    logger.debug("AsyncApp created successfully")
-
-    # HTML renderer (optional — lazy-starts Chromium on first widget request)
-    html_renderer = build_html_renderer(
-        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
-    if html_renderer is not None:
-        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
-    else:
-        logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
-    # One media adapter and one RichContentService per platform: the chat handler and the notification service deliver
-    # files through the same ones.
-    slack_media_adapter = SlackMediaAdapter(app_client=app.client, bot_token=bot_token)
-    slack_kit = PlatformKit(
-        platform=SLACK_PLATFORM,
-        media=slack_media_adapter,
-        rich_content=RichContentService(
-            media_port=slack_media_adapter,
-            storage_port=gcs_media_adapter,
-            html_renderer=html_renderer,
-        ),
-        channel=lambda channel_id: SlackResponseChannel(
-            app_client=app.client,
-            channel_id=channel_id,
-            bot_token=bot_token,
-        ),
-    )
-
-    notification_channel_factory = NotificationChannelFactory({slack_kit.platform: slack_kit.channel})
-    notification_service = UserNotificationService(
-        state_repo=notification_state_repo,
-        channel_factory=notification_channel_factory,
-        coordinator=coordinator,
-        notification_sla=NOTIFICATION_SLA,
-        platform_media={slack_kit.platform: slack_kit.media},
-        platform_rich_content={slack_kit.platform: slack_kit.rich_content},
-        session_store=session_store,
-        # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
-        localization=_localization,
-        language=_language_service,
-    )
+    notifications = build_notifications(config, db_client, env_config, coordinator=coordinator,
+                                        session_store=session_store, media_storage=gcs_media_adapter,
+                                        languages=languages)
+    app, html_renderer, slack_kit = notifications.slack_app, notifications.html_renderer, notifications.slack_kit
+    notification_channel_factory, notification_service = notifications.channel_factory, notifications.service
+    notification_state_repo = notifications.state_repo
 
     # Agent worker handler: notification + media + task_queue + doc_delivery are wired at construction.
     logger.info("🔧 Initializing Agent Worker Handler...")
