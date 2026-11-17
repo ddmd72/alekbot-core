@@ -47,3 +47,9 @@ def test_unset_gives_both_services_an_empty_set(monkeypatch):
     phone, web = _boot(monkeypatch)
     assert phone["call_options"].debug_transcript_users == frozenset() and web["call_options"].debug_transcript_users == frozenset()
 
+
+def test_only_the_web_service_gets_the_live_text_lag(monkeypatch):
+    monkeypatch.setenv("LIVE_TEXT_LAG_MS", "120")
+    phone, web = _boot(monkeypatch)
+    assert web["call_options"].live_text_lag_ms == 120
+    assert phone["call_options"].live_text_lag_ms == 0
