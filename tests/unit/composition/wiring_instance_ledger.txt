@@ -124,6 +124,7 @@ src.services.agent_fallback_service.AgentFallbackService 1  # by-design single i
 src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
 src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
 src.services.authentication_service.AuthenticationService 1  # by-design single instance
+src.services.billing_daily_summary_task.BillingDailySummaryTask 1  # by-design the one billing_daily_summary runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
 src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
 src.services.call_text_file_service.CallTextFileService 1  # by-design single instance
@@ -134,6 +135,7 @@ src.services.companion_window_resolver.CompanionWindowResolver 1  # by-design si
 src.services.configuration_service.ConfigurationService 1  # by-design single instance
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
+src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, attached to the file conversion service (application_graph.py, EXTERNAL_FILES_RFC 4.4)
@@ -161,6 +163,7 @@ src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
+src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
@@ -190,6 +193,7 @@ src.services.session_service.SessionService 1  # by-design single instance
 src.services.short_link_service.ShortLinkService 1  # by-design single instance
 src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance
 src.services.skill_service.SkillService 1  # by-design single instance
+src.services.start_daily_email_review_task.StartDailyEmailReviewTask 1  # by-design the one start_daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.task_dispatch_service.TaskDispatchService 1  # by-design single instance
 src.services.task_indexing_service.TaskIndexingService 1  # by-design single instance
 src.services.task_setup_service.TaskSetupService 1  # by-design single instance
