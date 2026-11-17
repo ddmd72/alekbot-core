@@ -32,8 +32,9 @@ Examples (invented):
 - **Read path:** `SearchEnrichmentService.enrich_context` drops duplicates from the ranked list with it (Router
   prefetch, `search_memory`, the claude.ai connector); the consolidator's own search turns it off
   (`skip_semantic_dedup=True`).
-- **Write path:** `FactWriteService` checks it (threshold 0.96) only when `skip_deduplication` is False. Live
-  consolidation writes pass `skip_deduplication=True`: the consolidator decides duplicates itself after searching.
+- **Write path:** no live write checks it: consolidation writes build each fact with `FactWriteService.build_facts`
+  and store it as given, since the consolidator decides duplicates itself after searching. `add_fact_if_unique`
+  (threshold 0.96) keeps the check and has no production caller.
 
 ## Consequences
 

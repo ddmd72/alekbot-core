@@ -437,7 +437,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 **Agent & Service Ports:**
 -   **`prompt_builder_port.py`**: `PromptBuilderPort` ABC — injected into all 6 agents (RouterAgent, QuickResponseAgent, SmartResponseAgent, WebSearchAgent, WebSearchLightAgent, ConsolidationAgent). Implemented by `PromptBuilder`.
--   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Implemented by `FactWriteService`.
+-   **`fact_write_port.py`**: `FactWritePort` ABC (`build_facts`: a new fact with its three vectors, nothing stored) — injected into `FactManagementAdapter`. Implemented by `FactWriteService`.
 -   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`. Implemented by `SearchEnrichmentService`.
 -   **`fact_management_port.py`**: `FactManagementPort` ABC. Deliberate fact management (search, create, merge, discard). Adapter: `FactManagementAdapter`.
 -   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup, `has_open_batches`). Adapter: `FirestoreConsolidationQueue`.

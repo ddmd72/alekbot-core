@@ -217,10 +217,7 @@ extends it to every path.
   close every source (`state=superseded`, `superseded_by=merged.id`, `lifecycle_fields`). A failure anywhere writes
   nothing. Today the sources are superseded first and a failed create orphans them (§1.3).
 - **Version write** (D8): same shape, one transaction creating the new version and closing the old one.
-- Both need a new repository/port method. `FactWriteService.add_facts_batch` cannot be used: it always mints a new
-  `lineage_id` (`fact_write_service.py:169`) and generates the id itself.
-- The legacy v2 path (`_synthesize_session_facts_v2` → `add_facts_batch`, used when `prompt_version != v3`,
-  `consolidation_agent.py:288-388`) goes through the same validation. Deleting it is a separate decision.
+- Both need a new repository/port method.
 
 ### D4. A daily janitor, zero LLM
 
@@ -858,8 +855,7 @@ the rollout notes (ops).
   `_enforce_directive_cap` no longer ignores a refused update.
 - **Owner's timezone.** Resolved once per consolidation run from the account owner's profile (UTC with a WARNING when it
   cannot be); it decides the end of a `date` and every stamp.
-- **Known limits.** The legacy v2 path parses `reported_date` without the zone (its stamp cannot be read back; a naive time is
-  UTC), and writes no expiry. A model `reported_date` with no offset is read as UTC and can be off by the owner's offset; the
+- **Known limits.** A model `reported_date` with no offset is read as UTC and can be off by the owner's offset; the
   clamp bounds it. Abandoned-refusal detection is approximate and errs towards an alert. Late Stage 1 batches (10 of 27 in 31
   days were 1–90 days late) can see a short horizon refused; the dry run's bench 1 reads a fresh window only, so this risk is
   not measured before the deploy.
@@ -868,7 +864,7 @@ the rollout notes (ops).
 agent and adapter over a no-write store, the five edited tokens read from `prompts_snapshot/`, a no-write email repository, a
 recording counters store and a cost meter with a $30 cumulative cap. It writes no fact, cache document, email mark, lifecycle
 counter or account usage counter; `prompt_content` rows (account id empty, only when `DEBUG_PROMPTS=true` with a prompt dataset set), model and embedding
-calls leave the Mac, and no Logfire span does. It needs `CONSOLIDATION__PROMPT_VERSION` v3, one bench at a time. Gates: no
+calls leave the Mac, and no Logfire span does. It runs one bench at a time. Gates: no
 `stage2a` or `cluster` pass over 13 turns, zero abandoned refusals, and the owner reads the decision table. Commands and costs:
 the rollout notes (ops), step M.
 
@@ -896,7 +892,7 @@ Cites in this RFC that had moved or were wrong:
 | `get_lineage` `firestore_repo.py:519-532`; latest `:534-564` | `:515-528`; `:530-539` |
 | Cabinet invalidate `firestore_repo.py:307-319` | `:316-344` |
 | tracker swap `consolidation_agent.py:748-759` | gone: the tracker is a parameter, `:789` |
-| anchors looked up at `consolidation_agent.py:1529,1541` | one reader, `_get_existing_anchors_list`, `consolidation_agent.py:1591`, on the v2 path only |
+| anchors looked up at `consolidation_agent.py:1529,1541` | none: no code reads the anchors |
 | D5: the fact id is "in the consolidator's own prompt" | false: `BiographicalFactsFormatter` renders no id; cache ids are read only by enrichment's baseline dedup (`search_enrichment_service.py:214-231`) and by the cache build |
 | `update_fact` tool schema `:1331-1353` | `:1393-1419` (it now has `superseded_by`) |
 | D8 growth "about 35 updates a month" | 72 content updates a month measured |
@@ -1675,7 +1671,7 @@ field to decide or render anything. Re-check the row before changing a field (§
 | `valid_from`, `valid_to` | none (`valid_to` written by `lifecycle_fields` since S1; `valid_from` set at birth and by the version write) | **write only** |
 | `ttl_days` | `expiry_view` (only when `expiry_kind == horizon`); the re-mention recompute of a horizon. Never rendered to a model as such | written by code only (`compute_expiry`): the horizon's days, else null. The model's value is dropped at every parse boundary. The 113 values the model wrote before S3 mean nothing and are ignored while `expiry_kind` is null |
 | `expires_at` | the janitor's due query (`state == "current" AND expires_at <= now`, index `(state, expires_at)`); `expiry_view` (the `date` answer, `due` for a horizon); the data audit (type only) | written by code only (`compute_expiry`, `born_due`'s floor, the re-mention recompute): create, merge, version, `expiry`-only update. Null for `none`. **Never a TTL policy field**: the janitor stales, it never deletes |
-| `expiry_kind` (S3) | the janitor (a due fact without it is skipped); `expiry_view`; the re-mention recompute; the data audit (enum validity) | `date` / `horizon` / `none`, written by code from the model's `expiry`; null on facts written by the old revision, the legacy v2 path, and every fact before S5's classify |
+| `expiry_kind` (S3) | the janitor (a due fact without it is skipped); `expiry_view`; the re-mention recompute; the data audit (enum validity) | `date` / `horizon` / `none`, written by code from the model's `expiry`; null on facts written by the old revision, the removed single-shot consolidation, and every fact before S5's classify |
 | `stale_since` (S3) | the janitor's backlog (count and oldest age); S4's selection order | written by the janitor and by the deploy-step stamp script only |
 | `lifecycle_events` (S3) | the next transition (read, append, write under the same precondition); copied into a version; S4's "revived 3× in 30 days" alert | every state transition, in the same write (§2.7 of the owner's map): model state changes, version and merge closes, Cabinet invalidate, the directive backstop (reason `directive cap`), the janitor (`expired <ISO>`), the stamp script; the newest 20 `{at, from, to, actor, reason}`, code-built reasons only |
 | `replaces_fact_id` | written by the version write (`fact_update_plan.py:58`); read by the data audit only (target in the same lineage, at version − 1, pointing back with `superseded_by`) | audit only |
