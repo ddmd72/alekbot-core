@@ -12,8 +12,6 @@ src/composition/application_graph.py::image_registry.register  # *  # permanent:
 src/composition/application_graph.py::job_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
 src/composition/application_graph.py::slack_adapter.register_handlers  # 1  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::video_registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
-src/composition/application_graph.py::worker_handler.attach_slack_worker  # 1  # composition-root refactor (assessment D3)
-src/composition/application_graph.py::worker_handler.attach_telegram_worker  # 1  # composition-root refactor (assessment D3)
 src/composition/drive_mcp_setup.py::span.set_attribute  # *  # permanent: a tracing span attribute, not wiring
 src/composition/drive_model_setup.py::registry.register  # *  # permanent: Registry pattern (ProviderRegistry)
 src/composition/email_card_setup.py::email_indexing_service.attach_card_step  # 1  # composition-root refactor (assessment D3)

@@ -52,7 +52,8 @@ async def test_the_late_binding_reaches_the_service_and_the_channel_factory_toge
     media = Media()
     kit, telegram_channel = _telegram_kit(media)
 
-    register_late_platform(kit, notifications=notifications, channels=channels)
+    register_late_platform(kit, notifications=notifications, channels=channels, worker=MagicMock(),
+                           queued_update=AsyncMock())
 
     assert channels.create("telegram", "555") is telegram_channel
     assert channels.create("slack", "C1") is slack_channel

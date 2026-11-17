@@ -60,7 +60,7 @@ def _delivery(name="task-1"):
     return CloudTaskDelivery(task_name=name, retry_count=0, execution_count=0)
 
 
-def _handler(claims=None, agent_worker=None, tasks=None):
+def _handler(claims=None, agent_worker=None, tasks=None, slack_worker=None):
     return WorkerHandler(
         agent_worker_handler=agent_worker or MagicMock(),
         email_indexing_service=MagicMock(),
@@ -68,6 +68,7 @@ def _handler(claims=None, agent_worker=None, tasks=None):
         agent_factory=AsyncMock(),
         user_repo=MagicMock(),
         task_claims=claims,
+        slack_worker=slack_worker,
         tasks=tasks or {},
     )
 
@@ -119,16 +120,15 @@ async def test_execute_reminder_second_delivery_is_duplicate():
 async def test_telegram_update_second_delivery_is_duplicate():
     h = _handler(_MemoryClaims())
     tg = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_telegram_worker(tg)
+    h.register_telegram_worker(tg)
     _, second, runs = await _call_counts(h, {"task_type": "telegram_update"}, tg)
     assert second == ({"status": "duplicate"}, 200)
     assert runs == 1
 
 
 async def test_queued_slack_event_second_delivery_is_duplicate_and_gets_headers():
-    h = _handler(_MemoryClaims())
     sl = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_slack_worker(sl)
+    h = _handler(_MemoryClaims(), slack_worker=sl)
     first = await h.handle(_SLACK_PAYLOAD, delivery=_delivery(), headers={"x-trace-id": "t"})
     second = await h.handle(_SLACK_PAYLOAD, delivery=_delivery(), headers={"x-trace-id": "t"})
     assert first == ({"ok": True}, 200)
@@ -150,9 +150,8 @@ async def test_raise_releases_claim_and_propagates_so_next_delivery_runs():
 @pytest.mark.parametrize("failing_status", [500, 503, 429])
 async def test_retryable_status_releases_claim(failing_status):
     store = _MemoryClaims()
-    h = _handler(store)
     sl = AsyncMock(side_effect=[({"e": 1}, failing_status), ({"ok": True}, 200)])
-    h.attach_slack_worker(sl)
+    h = _handler(store, slack_worker=sl)
     assert (await h.handle(_SLACK_PAYLOAD, delivery=_delivery()))[1] == failing_status
     assert store.claims == {}
     assert (await h.handle(_SLACK_PAYLOAD, delivery=_delivery())) == ({"ok": True}, 200)
@@ -162,8 +161,7 @@ async def test_retryable_status_releases_claim(failing_status):
 @pytest.mark.parametrize("kept_status", [200, 400])
 async def test_claim_marked_done_on_success_and_other_4xx(kept_status):
     store = _MemoryClaims()
-    h = _handler(store)
-    h.attach_slack_worker(AsyncMock(return_value=({"x": 1}, kept_status)))
+    h = _handler(store, slack_worker=AsyncMock(return_value=({"x": 1}, kept_status)))
     await h.handle(_SLACK_PAYLOAD, delivery=_delivery())
     assert store.done_keys() == {"task-1"}
 
@@ -199,9 +197,8 @@ async def test_release_failure_does_not_mask_the_original_exception():
 
 
 async def test_unknown_task_type_is_400_and_never_reaches_slack():
-    h = _handler()
     sl = AsyncMock()
-    h.attach_slack_worker(sl)
+    h = _handler(slack_worker=sl)
     assert await h.handle({"task_type": "nope", **_SLACK_PAYLOAD}) == (
         {"error": "unknown task_type"}, 400)
     assert await h.handle({}) == ({"error": "unknown task_type"}, 400)
@@ -209,9 +206,8 @@ async def test_unknown_task_type_is_400_and_never_reaches_slack():
 
 
 async def test_slack_shaped_payload_without_task_type_goes_to_slack():
-    h = _handler()
     sl = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_slack_worker(sl)
+    h = _handler(slack_worker=sl)
     assert await h.handle(_SLACK_PAYLOAD, headers={"h": "1"}) == ({"ok": True}, 200)
     sl.assert_awaited_once_with(_SLACK_PAYLOAD, {"h": "1"})
 
@@ -259,8 +255,7 @@ async def test_queued_event_busy_session_waits_then_requeues_and_keeps_the_claim
     await lock.acquire()
     slack_adapter._session_locks["u1:C1"] = lock
     store = _MemoryClaims()
-    h = _handler(store)
-    h.attach_slack_worker(slack_adapter.handle_queued_event)
+    h = _handler(store, slack_worker=slack_adapter.handle_queued_event)
     payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi", "user": "U1"}},
                "session_id": "u1:C1"}
 
@@ -416,8 +411,7 @@ async def test_no_delivery_with_a_store_never_touches_the_store():
 async def test_release_failure_on_a_retryable_status_returns_the_original_result():
     store = _store(claimed=True)
     store.release = AsyncMock(side_effect=RuntimeError("firestore down"))
-    h = _handler(store)
-    h.attach_slack_worker(AsyncMock(return_value=({"e": 1}, 500)))
+    h = _handler(store, slack_worker=AsyncMock(return_value=({"e": 1}, 500)))
 
     assert await h.handle(_SLACK_PAYLOAD, delivery=_delivery()) == ({"e": 1}, 500)
     store.release.assert_awaited_once_with("task-1", _claimed_attempt(store, "task-1"))
