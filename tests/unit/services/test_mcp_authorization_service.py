@@ -50,9 +50,6 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def get_client(self, client_id: str) -> Optional[MCPClient]:
         return self.clients.get(client_id)
 
-    async def delete_client(self, client_id: str) -> None:
-        self.clients.pop(client_id, None)
-
     async def save_auth_code(self, auth_code: MCPAuthCode) -> None:
         self.codes[auth_code.code] = auth_code
 

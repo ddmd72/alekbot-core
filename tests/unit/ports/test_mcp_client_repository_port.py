@@ -70,9 +70,6 @@ class InMemoryMCPRepo(MCPClientRepository):
     async def get_client(self, client_id: str) -> Optional[MCPClient]:
         return self.clients.get(client_id)
 
-    async def delete_client(self, client_id: str) -> None:
-        self.clients.pop(client_id, None)
-
     async def save_auth_code(self, auth_code: MCPAuthCode) -> None:
         self.codes[auth_code.code] = auth_code
 
@@ -155,12 +152,6 @@ class TestClientRoundtrip:
 
     async def test_get_missing_returns_none(self, repo):
         assert await repo.get_client("nope") is None
-
-    async def test_delete_removes(self, repo, client_obj):
-        await repo.save_client(client_obj)
-        await repo.delete_client("mcp-test-1")
-        assert await repo.get_client("mcp-test-1") is None
-
 
 class TestAuthCodeRoundtrip:
     async def test_get_is_non_consuming(self, repo, auth_code_obj):

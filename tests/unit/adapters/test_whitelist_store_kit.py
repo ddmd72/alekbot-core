@@ -2,8 +2,7 @@
 `FirestoreWhitelistRepository` on the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on what
 `get_whitelist` returns and on the access decision callers take from it (`WhitelistEntry.is_allowed`).
 
-Only `get_whitelist` has a caller in `src/`; add_email / remove_email / add_domain / remove_domain are marked "no caller in
-src/" and are not tested. The stored config is therefore seeded as a raw document, the way the admin script writes it.
+`get_whitelist` is the port's only method. The stored config is seeded as a raw document, the way the admin script writes it.
 
 `store` is the one fixture that selects the backend.
 """
