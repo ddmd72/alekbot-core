@@ -15,8 +15,6 @@ from telegram import Bot
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
-from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
@@ -48,6 +46,7 @@ from src.composition.session_routing_setup import build_session_routing
 from src.composition.file_delivery_setup import build_file_delivery
 from src.composition.language_setup import build_languages
 from src.composition.notification_setup import build_notifications
+from src.composition.companion_setup import build_companions
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -82,8 +81,6 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.call_text_file_service import CallTextFileService
-from src.services.companion_context_assembler_service import CompanionContextAssemblerService
-from src.services.companion_extraction_service import CompanionExtractionService
 from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.fact_answer_service import FactAnswerService
@@ -99,7 +96,6 @@ from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
-from src.services.prompt_builder import PromptBuilder
 from src.services.provider_registry import ProviderRegistry
 from src.services.reminders_service import RemindersService
 from src.services.search_enrichment_service import SearchEnrichmentService
@@ -375,27 +371,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     if config.get("ANTHROPIC_API_KEY"):
         anthropic_client = AsyncAnthropic(api_key=config["ANTHROPIC_API_KEY"])
 
-    logger.info("🧑‍🏫 Initializing Companion Context infrastructure...")
-
-    companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
-    companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
-
-    _companion_search_config = SearchConfig()
-    _companion_enrichment = SearchEnrichmentService(
-        repository=container.repository,
-        embedding_service=container.embedding_service,
-        keyword_limit=_companion_search_config.DEFAULT_KEYWORD_LIMIT,
-        phrase_one_limit=_companion_search_config.DEFAULT_PHRASE_ONE_LIMIT,
-        phrase_two_limit=_companion_search_config.DEFAULT_PHRASE_TWO_LIMIT,
-        total_limit=10,
-    )
-    companion_context_assembler = CompanionContextAssemblerService(
-        companion_repo=companion_memory_repo,
-        cache_repo=companion_cache_repo,
-        embedding_service=container.embedding_service,
-        enrichment_port=_companion_enrichment,
-        fact_repo=container.repository,
-    )
+    companions = build_companions(db_client, env_config, container=container, user_repo=user_repo,
+                                  quota_service=quota_service, extraction_queue=companion_extraction_queue,
+                                  notification_service=notification_service, languages=languages)
+    companion_context_assembler, companion_extractor_runner = companions.context_assembler, companions.extractor_runner
+    call_text_files, companion_extraction_service = companions.call_text_files, companions.extraction_service
 
     # The people cards (RFC §7) and the one fact search: built first, the agent factory hands the search to the
     # memory agent of every user.
@@ -437,43 +417,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         resolver=_language_service,
         notification_service=notification_service,
         ensure_agents=agent_factory.ensure_agents_for_user,
-    )
-
-    logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
-
-    # companion_memory_repo/companion_cache_repo constructed earlier (before
-    # UserAgentFactory), reused here — see "Initializing Companion Context infrastructure" above.
-    # companion_extraction_queue constructed earlier too (before ServiceContainer) — see
-    # "Initializing Overflow Routing Service" above.
-    # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
-    # include_biographical=False, and PromptBuilder only touches self.repo when
-    # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
-    # as ServiceContainer's prompt builder for EmailClassifierRunner.
-    companion_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
-    companion_extractor_runner = CompanionExtractorRunner(
-        context_builder=container.context_builder,
-        user_repo=user_repo,
-        prompt_builder=companion_prompt_builder,
-        quota_service=quota_service,
-        prompt_content_store=container.prompt_content_store,
-        language_service=_language_service,
-    )
-    call_text_files = CallTextFileService(
-        extractor=companion_extractor_runner,
-        drive=container.user_drive_service,
-        notifications=notification_service,
-        users=user_repo,
-        localization=_localization_port,
-        language=_language_service,
-        prompt_content=container.prompt_content_store,
-    )
-    companion_extraction_service = CompanionExtractionService(
-        queue=companion_extraction_queue,
-        companion_repo=companion_memory_repo,
-        cache_repo=companion_cache_repo,
-        embedding_service=container.embedding_service,
-        extractor=companion_extractor_runner,
-        quota=quota_service,
     )
 
     # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
