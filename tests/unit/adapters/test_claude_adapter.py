@@ -1908,6 +1908,52 @@ async def test_sonnet_5_5_falls_back_to_sonnet_5_with_sonnet_5_thinking_setting(
 
 
 @pytest.mark.asyncio
+async def test_opus_5_5_falls_back_to_sonnet_5_5_with_its_own_thinking_setting():
+    """A transient error on Opus 5.5 retries once on Sonnet 5.5. Opus omits `thinking` when no
+    effort is asked; Sonnet 5.5 needs its floor 'between_tools' (and one retry only)."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    calls = []
+    exc = _FakeAPIStatusError(
+        "{'type':'error','error':{'type':'overloaded_error','message':'Overloaded'}}",
+        status_code=None,
+    )
+
+    def stream(**kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("model") == "claude-opus-5-5":
+            return _make_raising_cm(exc)
+        return _make_claude_cm(_make_sdk_response("recovered"))
+
+    adapter.client.messages.stream = stream
+    result = await adapter.generate_content(
+        request=LLMRequest(model_name="claude-opus-5-5", messages=_MESSAGES)
+    )
+    assert [c["model"] for c in calls] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    assert "thinking" not in calls[0]
+    assert calls[1]["thinking"] == {"type": "between_tools"}
+    assert result.text == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_opus_5_5_no_fallback_on_4xx():
+    """A 400 on Opus 5.5 is a real incompatibility: no retry on Sonnet 5.5."""
+    adapter = ClaudeAdapter(api_key="test-key")
+    models_tried = []
+    exc = _FakeAPIStatusError("bad request", status_code=400)
+
+    def stream(**kwargs):
+        models_tried.append(kwargs.get("model"))
+        return _make_raising_cm(exc)
+
+    adapter.client.messages.stream = stream
+    with pytest.raises(LLMClientError):
+        await adapter.generate_content(
+            request=LLMRequest(model_name="claude-opus-5-5", messages=_MESSAGES)
+        )
+    assert models_tried == ["claude-opus-5-5"]
+
+
+@pytest.mark.asyncio
 async def test_fallback_keeps_structured_output_format():
     """Recomputing model-dependent params on fallback must not drop output_config.format."""
     adapter = ClaudeAdapter(api_key="test-key")
