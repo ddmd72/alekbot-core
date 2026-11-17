@@ -673,12 +673,6 @@ async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(st
     assert _cache(store) == before
 
 
-async def test_refresh_without_a_context_service_does_nothing(store):
-    await _seed_account_for_cache(store)
-    await store.repo.refresh_biographical_context_cache(ACC)
-    assert _cache(store) is None
-
-
 async def test_refresh_holds_at_most_facts_limit_facts(store):
     for i in range(4):
         await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))

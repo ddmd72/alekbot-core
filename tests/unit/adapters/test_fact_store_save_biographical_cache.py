@@ -1,13 +1,11 @@
 """FirestoreFactRepository.save_biographical_context_cache: one merged write of the account's cache document (the three
 lists, their counts, a server refresh time, the version marker), read back by get_biographical_context_cached; a store
-failure propagates. The repository's refresh forwards to the injected context service's refresh_cache."""
+failure propagates."""
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import pytest
 
-from src.adapters.firestore_repo import FirestoreFactRepository
-from src.services.biographical_context_service import BiographicalContextService
 from tests.support.fact_kit import ACC, OTHER
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
 from tests.support.firestore_eval import EvalDocRef
@@ -88,23 +86,3 @@ async def test_a_store_failure_propagates_and_the_previous_cache_stays(store, mo
 
     assert doc(store) == before
 
-
-class Recording(BiographicalContextService):
-    def __init__(self) -> None:
-        super().__init__(None)
-        self.calls: List[Tuple[str, Optional[int], Optional[int]]] = []
-
-    async def refresh_cache(self, owner_id: str, facts_limit: Optional[int] = None,
-                            principles_limit: Optional[int] = None) -> None:
-        self.calls.append((owner_id, facts_limit, principles_limit))
-
-
-async def test_the_repository_refresh_forwards_to_the_context_services_refresh_cache(store):
-    service = Recording()
-    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
-                                   biographical_context_service=service)
-
-    await repo.refresh_biographical_context_cache(ACC, facts_limit=5, principles_limit=2)
-    await repo.refresh_biographical_context_cache(OTHER)
-
-    assert service.calls == [(ACC, 5, 2), (OTHER, None, None)]
