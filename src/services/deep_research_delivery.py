@@ -187,7 +187,6 @@ async def deliver_deep_research(
     platform_override: Optional[str] = None,
     link_service: Optional["FileLinkService"] = None,
     short_link_service: Optional["ShortLinkService"] = None,
-    failure_notification: Optional["NotificationPort"] = None,
     report_dedup_id: Optional[str] = None,
 ) -> bool:
     """
@@ -196,12 +195,12 @@ async def deliver_deep_research(
       2. Send named links to the user (if notification configured).
       3. Enqueue HtmlPageGenerator Cloud Task → styled HTML report delivered to user. The task's context
          carries DEEP_RESEARCH_REPORT_CONTEXT_KEY, so its delivery also offers the HTML to the opt-in
-         drive copy (every entry point — Claude runner, Cloud Run Job, OpenAI webhook, polling — ends here).
+         drive copy (every entry point — Claude runner, Cloud Run Job — ends here).
 
     Returns True when the HTML report task was handed off to the queue, False when that enqueue failed.
 
-    failure_notification — told (origin channel) when the HTML report task cannot be enqueued; falls back
-                  to `notification`. The enqueue failure itself is never raised.
+    notification — also told (origin channel) when the HTML report task cannot be enqueued. The enqueue
+                  failure itself is never raised.
 
     report_dedup_id — names the HTML report task (job or response id), so a retried create whose first
                   attempt timed out after the task was made is a no-op instead of a second report.
@@ -316,10 +315,9 @@ async def deliver_deep_research(
             "[DeepResearch] Failed to enqueue HtmlPageGenerator task for user=%s: %s",
             user_id[:8], exc, exc_info=True,
         )
-        notifier = failure_notification or notification
-        if notifier:
+        if notification:
             try:
-                result = await notifier.notify(
+                result = await notification.notify(
                     kind=NotificationKind.DEEP_RESEARCH,
                     user_id=user_id,
                     account_id=account_id,
