@@ -19,6 +19,11 @@ from src.services.video_generation_delivery import deliver_video
 from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
 
+# Every task type is registered whatever is configured: an absent dependency gives a refusal, never an unknown type.
+_TASK_TYPES = {"execute_reminder", "video_generation_polling", "deep_research_failed", "deep_research_webhook_event",
+               "start_daily_email_review", "daily_email_review", "billing_daily_summary"}
+
+
 class _Factory:
     async def ensure_agents_for_user(self, user_id: str) -> None:
         return None
@@ -40,7 +45,7 @@ def test_with_a_note_store_the_reminder_runner_holds_exactly_the_given_dependenc
 
     tasks = build_worker_tasks(**deps)
 
-    assert set(tasks) == {"execute_reminder"}
+    assert set(tasks) == _TASK_TYPES
     runner = tasks["execute_reminder"]
     assert type(runner) is ExecuteReminderTask
     assert runner._notes_port is deps["notes_port"]
@@ -53,7 +58,7 @@ def test_with_a_note_store_the_reminder_runner_holds_exactly_the_given_dependenc
 async def test_without_a_note_store_the_task_answers_the_refusal_it_gave_inside_the_handler(caplog):
     tasks = build_worker_tasks(**_deps(None))
 
-    assert set(tasks) == {"execute_reminder"}
+    assert set(tasks) == _TASK_TYPES
     assert type(tasks["execute_reminder"]) is DisabledTask
     payload = {"task_type": "execute_reminder", "note_id": "n1", "user_id": "user-1", "due_at": "2026-05-01T06:05:00"}
     with caplog.at_level(logging.WARNING):
