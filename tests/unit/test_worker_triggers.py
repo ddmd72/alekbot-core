@@ -1,8 +1,8 @@
-"""Every `/worker` task type is sent by something and handled by `WorkerHandler._dispatch` (P9 design §5c).
+"""Every `/worker` task type is sent by something and registered in `WorkerHandler`'s task registry (P9 design §5c).
 
-Triggers: the Cloud Scheduler jobs the deploy creates and the enqueue sites in `src/`. Branches: the `if/elif` chain of
-`_dispatch`. A trigger with no branch answers 400 `unknown task_type` in production; a branch with no trigger is dead
-or manual-only, and is named in `MANUAL_ONLY` with a reason (empty today).
+Triggers: the Cloud Scheduler jobs the deploy creates and the enqueue sites in `src/`. Branches: the keys of the
+`self._tasks` literal `_dispatch` looks task types up in. A trigger with no branch answers 400 `unknown task_type` in
+production; a branch with no trigger is dead or manual-only, and is named in `MANUAL_ONLY` with a reason (empty today).
 """
 import json
 
