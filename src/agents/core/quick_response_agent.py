@@ -49,7 +49,7 @@ from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...domain.messaging import SmartResponse
 from ...domain.native_format import NATIVE_FORMATS_KEY, to_plain
-from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
+from ...domain.notify_result import EMPTY_ANSWER_ERROR, TURN_CAP_ERROR, is_empty_turn
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
@@ -279,7 +279,7 @@ class QuickResponseAgent(BaseAgent):
                 return AgentResponse.failure(
                     task_id=message.task_id,
                     agent_id=self.agent_id,
-                    error="max_turns_exhausted",
+                    error=TURN_CAP_ERROR,
                 )
 
             # Parse response text into SmartResponse

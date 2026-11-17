@@ -234,6 +234,17 @@ class UserNotificationService:
             )
             return False
 
+    async def notify_ui_notice(self, user_id: str, account_id: str, message: UIMessage, **fields: str) -> bool:
+        """Post one fixed UI string, in the owner's UI language, to the channel `notify()` would use (primary, else last
+        active). Sent literally: its fields carry stored text (a reminder's name) that the platform must not format or
+        obey. Not written to history. Returns whether it was sent; without localization it is not (logged)."""
+        if self._localization is None:
+            logger.error(f"[Notification] No localization wired: {message.value} not posted for {user_id[:8]}")
+            return False
+        lang = await self._ui_language(user_id)
+        text = self._localization.get_ui_string(lang, message).format(**fields)
+        return await self.notify_raw(user_id, account_id, text, literal=True)
+
     async def notify_call_summary(
         self,
         user_id: str,
@@ -448,11 +459,14 @@ class UserNotificationService:
             origin_detail / fire_key: who started this run, stamped on the workspace writes it makes
                 (AGENT_WORKSPACE_RFC §9): context `run_origin` = "background:<origin_detail>" (falls back to
                 the kind), `run_fire_key` = fire_key for a reminder fire.
-            suppress_transient_retry: set by callers whose /worker handler
-                returns 5xx on failure (reminder, daily email review), so
-                Cloud Tasks retries the whole task. Suppresses the agent's
-                in-process transient retry to avoid layer1 × layer2
-                amplification — the outer queue retry is the single retry.
+            suppress_transient_retry: set by the Cloud-Task-backed background
+                callers (reminder, daily email review, deep-research notice).
+                Suppresses the agent's in-process whole-execution retry, which
+                would re-run every tool call of the turn; the per-call retry in
+                ``_call_llm`` still covers a provider blip. The reminder and
+                daily-review tasks answer 5xx (Cloud Tasks retries) only when
+                ``turn_started`` is False; the deep-research notice only when
+                nothing was sent.
         """
         sla = self._notification_sla[kind]
         # Resolve effective timeout: tier override wins if both the
@@ -519,8 +533,10 @@ class UserNotificationService:
         )
 
         sent = False
+        turn_started = False
         try:
             async with RequestContext(user_id=user_id, account_id=account_id):
+                turn_started = True
                 response = await self._coordinator.route_message(message)
             if response.status != AgentStatus.SUCCESS:
                 logger.warning(
@@ -530,6 +546,7 @@ class UserNotificationService:
                     delivered=False,
                     agent_status=response.status,
                     error=getattr(response, "error", None),
+                    turn_started=True,
                 )
 
             result = response.result
@@ -582,7 +599,7 @@ class UserNotificationService:
                 sent = True
                 await self._send_rich_content(response_channel, channel_info.platform, rich_content)
 
-            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent)
+            return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent, turn_started=True)
 
         except Exception as exc:
             logger.error(
@@ -596,6 +613,7 @@ class UserNotificationService:
                 agent_status=AgentStatus.FAILED,
                 error=str(exc),
                 sent=sent,
+                turn_started=turn_started,
             )
 
     async def notify_document_link(

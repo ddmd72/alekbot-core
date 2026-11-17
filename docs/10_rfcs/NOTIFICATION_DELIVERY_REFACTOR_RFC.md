@@ -401,6 +401,8 @@ return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
   current queue retries 3 times).
 - `WorkerHandler._handle_execute_reminder` (new) returns HTTP 500 on
   failure → same.
+- Superseded for both on 2026-11-17: 500 only when the turn never started
+  (`decisions/background_turn_started_is_final.md`).
 - `AgentWorkerHandler` (async doc) logs ERROR on failure but returns
   HTTP 200 — the document is already in GCS; retrying would re-upload
   and re-deliver the file.
