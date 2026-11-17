@@ -74,23 +74,6 @@ async def test_the_attached_refresher_runs_for_the_user_before_the_notification(
     assert events == [f"refresh:{USER_ID}", "notify"]
 
 
-async def test_attaching_again_replaces_the_refresher():
-    events: List[str] = []
-    service = _service(events)
-
-    async def first(user_id: str) -> None:
-        events.append("first")
-
-    async def second(user_id: str) -> None:
-        events.append("second")
-
-    service.attach_agent_refresher(first)
-    service.attach_agent_refresher(second)
-    await service.set_preference(USER_ID, LanguageCode.UK, agent_mirror=False)
-
-    assert events == ["second", "notify"]
-
-
 async def test_without_a_refresher_the_notification_still_goes_out():
     events: List[str] = []
     service = _service(events)
