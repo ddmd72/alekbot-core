@@ -29,7 +29,7 @@ async def test_the_reminder_runner_is_built_from_the_graphs_note_store_users_age
     assert runner._user_repo is app.user_repo
     assert runner._ensure_agents == app.agent_factory.ensure_agents_for_user
     assert runner._notification is app.notification_service
-    assert runner._alert_sink is app.alert_sink and runner._alert_sink is not None
+    assert runner._empty_answer_reporter._alert_sink is app.alert_sink and app.alert_sink is not None
 
 
 async def test_the_static_reading_of_the_registry_is_the_production_handlers_registry(prod_graph: ProdGraph):
@@ -71,7 +71,7 @@ async def test_the_deep_research_runners_are_built_from_the_graphs_fetch_store_d
     assert failed._ensure_agents == webhook._ensure_agents == app.agent_factory.ensure_agents_for_user
     assert failed._notice_sender is webhook._notice_sender
     assert failed._notice_sender._notification is app.notification_service
-    assert failed._notice_sender._alert_sink is app.alert_sink and failed._notice_sender._alert_sink is not None
+    assert failed._notice_sender._empty_answer_reporter._alert_sink is app.alert_sink and app.alert_sink is not None
     assert webhook._fetch == app.deep_research_fetch and webhook._fetch is not None
     assert webhook._prompt_content_store is app.container.prompt_content_store
     assert webhook._task_dispatch is app.task_dispatch
@@ -98,7 +98,9 @@ async def test_the_review_runners_are_built_from_the_graphs_review_service_queue
     assert review._email_review is app.container.email_review_service
     assert review._ensure_agents == app.agent_factory.ensure_agents_for_user
     assert review._notification is app.notification_service
-    assert review._alert_sink is app.alert_sink and review._alert_sink is not None
+    assert review._empty_answer_reporter._alert_sink is app.alert_sink and app.alert_sink is not None
+    assert review._empty_answer_reporter is handler._tasks["execute_reminder"]._empty_answer_reporter
+    assert review._empty_answer_reporter is handler._tasks["deep_research_failed"]._notice_sender._empty_answer_reporter
     assert type(flag) is GmailReconnectFlag and review._gmail_reconnect_flag is flag
     assert flag._oauth_credentials is app.container.oauth_credentials and flag._oauth_credentials is not None
     assert flag._mail_connector is app.container.connectors.get("gmail")
