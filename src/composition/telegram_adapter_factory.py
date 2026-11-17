@@ -2,23 +2,18 @@
 Telegram Adapter Factory
 
 Composition root for the Telegram integration.
-Mirrors the pattern of SlackAdapterFactory: creates ConversationHandler with
-RichContentService fully wired, then injects it into TelegramWebhookAdapter
-as ConversationHandlerPort.
+Mirrors the pattern of SlackAdapterFactory: builds the ConversationHandler over the
+shared ChatServices and the platform's RichContentService, then injects it into
+TelegramWebhookAdapter as ConversationHandlerPort.
 """
 from typing import Optional
 
 from ..adapters.telegram.webhook_adapter import TelegramWebhookAdapter
-from ..handlers.conversation_handler import ConversationHandler
-from ..infrastructure.agent_coordinator import AgentCoordinator
-from .user_agent_factory import UserAgentFactory
-from ..services.consolidation_service import ConsolidationService
 from ..services.rich_content_service import RichContentService
-from ..services.user_notification_service import UserNotificationService
 from ..ports.platform_auth_port import PlatformAuthPort
 from ..ports.language_service_port import LanguageServicePort
-from ..services.localization_service import LocalizationService
 from ..utils.logger import logger
+from .chat_services import ChatServices, build_conversation_handler
 
 
 class TelegramAdapterFactory:
@@ -35,26 +30,10 @@ class TelegramAdapterFactory:
         webhook_secret: str,
         dedup_store,
         session_store,
-        coordinator: AgentCoordinator,
-        agent_factory: UserAgentFactory,
+        chat: ChatServices,
         iam_service: PlatformAuthPort,
-        consolidation_queue=None,
-        consolidation_config=None,
-        consolidation_service: Optional[ConsolidationService] = None,
-        audio_service=None,
-        notification_service: Optional[UserNotificationService] = None,
         language_service: Optional[LanguageServicePort] = None,
-        localization: Optional[LocalizationService] = None,
-        file_conversion_service=None,
-        fallback_service=None,
-        short_link_service=None,
-        skill_service=None,
-        memory_fact_service=None,
-        fact_answers=None,
-        drive_note_service=None,
         task_queue=None,
-        long_turn_service=None,
-        doc_delivery_service=None,
         *,
         rich_content_service: RichContentService,
     ) -> TelegramWebhookAdapter:
@@ -66,13 +45,9 @@ class TelegramAdapterFactory:
             webhook_secret:      HMAC secret for webhook verification
             dedup_store:         Deduplication store for update_id tracking
             session_store:       Session store for resolving user sessions
-            coordinator:         AgentCoordinator instance
-            agent_factory:       Factory for per-user agents
+            chat:                The chat services both platforms' ConversationHandlers share; Telegram has no
+                                 channel binding (P9-D9) and no history source (the Bot API has none)
             iam_service:         PlatformAuthPort for authorization
-            consolidation_queue: Optional consolidation queue
-            consolidation_config: Optional consolidation config
-            consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
-            audio_service:       Optional audio transcription port
             rich_content_service: The platform's RichContentService (built once by the application graph, shared with the notification service)
             task_queue:          Optional TaskQueue — set, updates are handed off to a
                                  Cloud Task instead of processed inline (see
@@ -81,26 +56,7 @@ class TelegramAdapterFactory:
         Returns:
             TelegramWebhookAdapter ready to handle webhook requests
         """
-        conversation_handler = ConversationHandler(
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            consolidation_queue=consolidation_queue,
-            global_config=consolidation_config,
-            audio_service=audio_service,
-            rich_content_service=rich_content_service,
-            notification_service=notification_service,
-            overflow_callback=consolidation_service.consolidate_now if consolidation_service else None,
-            localization=localization,
-            file_conversion_service=file_conversion_service,
-            fallback_service=fallback_service,
-            short_link_service=short_link_service,
-            skill_service=skill_service,
-            memory_fact_service=memory_fact_service,
-            fact_answers=fact_answers,
-            drive_note_service=drive_note_service,   # `$drive-notes` (DRIVE_FILE_NOTES_RFC §4.8)
-            long_turn_service=long_turn_service,
-            doc_delivery_service=doc_delivery_service,
-        )
+        conversation_handler = build_conversation_handler(chat, rich_content_service)
 
         logger.info("TelegramAdapterFactory: wiring complete")
 
@@ -111,8 +67,8 @@ class TelegramAdapterFactory:
             session_store=session_store,
             conversation_handler=conversation_handler,
             iam_service=iam_service,
-            audio_service=audio_service,
+            audio_service=chat.audio_service,
             language_service=language_service,
-            localization=localization,
+            localization=chat.localization,
             task_queue=task_queue,
         )
