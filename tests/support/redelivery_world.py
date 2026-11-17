@@ -521,7 +521,7 @@ class RedeliveryWorld:
             agent_worker_handler=AgentWorkerHandler(self.router, notification_service=self.notifier,  # type: ignore[arg-type]
                                                     task_queue=self.dispatch),
             email_indexing_service=None, notification_service=self.notifier, consolidation_service=None,
-            coordinator=self.router, agent_factory=self.factory, indexed_email_repo=None, user_repo=self.users,
+            agent_factory=self.factory, user_repo=self.users,
             task_dispatch=self.dispatch, reminders_service=self.reminders, notes_port=self.notes,
             task_claims=self.claims, daily_review_marks=self.marks,
         )

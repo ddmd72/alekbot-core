@@ -413,8 +413,8 @@ class SeamWorld:
         )
         keywords: Dict[str, Any] = dict(
             agent_worker_handler=self.agent_worker, email_indexing_service=None, notification_service=self.notifier,
-            consolidation_service=None, coordinator=self.coordinator, agent_factory=self.factory,
-            indexed_email_repo=None, user_repo=self.users, task_dispatch=self.dispatch, media_storage=self.media_store,
+            consolidation_service=None, agent_factory=self.factory,
+            user_repo=self.users, task_dispatch=self.dispatch, media_storage=self.media_store,
             link_service=self.links, reminders_service=self.reminders, notes_port=self.notes, task_claims=self.claims,
         )
         keywords.update(worker_overrides)
