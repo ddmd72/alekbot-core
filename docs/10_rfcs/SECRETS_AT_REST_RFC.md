@@ -6,7 +6,7 @@
 
 **Related:** `ports/oauth_credentials_port.py`, `adapters/firestore_oauth_credentials_adapter.py` (replaced here);
 `adapters/firestore_mcp_client_repository.py`, `domain/mcp.py`; the voice apps over `adapters/firestore_ephemeral_store.py`;
-`adapters/firestore_invite_code_repo.py`; TELEGRAM_CHANNEL_READER_RFC (§7). The delivery plan and the one-off rollout steps live in the owner's private ops repo
+`adapters/firestore_invite_code_repo.py`; future credential kinds (§7). The delivery plan and the one-off rollout steps live in the owner's private ops repo
 (`alekbot/designs/secrets_at_rest_plan.md`, `alekbot/deploy/secrets_at_rest.md`); this RFC holds what stays true after the deploy.
 
 ## 1. Problem
@@ -257,7 +257,7 @@ I8, checked against the code:
 - **Image:** exempt the pre-cutover images from Artifact Registry cleanup until step 5 + horizon, or rebuild from that commit.
 
 ## 7. Relationship to other work
-- **TELEGRAM_CHANNEL_READER_RFC** (still blocked on this one): its session is one more credential `kind` (§2.3), zero new crypto code.
+- **Future integrations that hold a credential** (designed privately): each is one more credential `kind` (§2.3), zero new crypto code.
 - **Multi-drive stage 1** inherits the store as is (opaque `credential_id`, identity, plaintext/secret split). It re-keys
   the port (§2.4), moves `drive_id` to `DriveConnection`, and applies its revoke rule over `account.realm` + `account.subject`.
 - **Data privacy track** (separate): content is not encrypted here; its first step is IAM least privilege.
