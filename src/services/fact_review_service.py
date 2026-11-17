@@ -111,12 +111,12 @@ from ..ports.session_store import SessionStore
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
-from .fact_review_owner_channel import FactReviewOwnerChannel
 
 if TYPE_CHECKING:
     from .fact_answer_service import FactAnswerService
     from .fact_profile_service import FactProfileService
     from .fact_question_texts import FactQuestionTexts
+    from .fact_review_owner_channel import FactReviewOwnerChannel
     from .owner_timezone_resolver import OwnerTimezoneResolver
 
 _MARGIN_S = LEASE_MARGIN.total_seconds()
@@ -226,7 +226,7 @@ class FactReviewService:
         account_repo: AccountRepository,
         texts: "FactQuestionTexts",
         owner_zones: "OwnerTimezoneResolver",
-        owner_channel: FactReviewOwnerChannel,
+        owner_channel: "FactReviewOwnerChannel",
         session_store: SessionStore,
         task_queue: TaskQueue,
         answer_service: "FactAnswerService",
