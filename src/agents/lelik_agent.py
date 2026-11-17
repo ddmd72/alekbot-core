@@ -151,8 +151,10 @@ class LelikAgent(BaseAgent):
         return config
 
     def _tool_declarations(self, mode: VoiceMode, available: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """The session's tools. An interpreter call has none (owner rule, 2026-11-11): it only translates, with no
-        memory, no drive, no delegation and no send_to_chat. Every other mode declares delegate_to_specialist over
+        """The session's tools. An interpreter call opens with none (owner rule, 2026-11-11): it only translates, with
+        no memory, no drive, no delegation and no send_to_chat. Its one exception, the call-local
+        `set_language_pair`, is never declared here: the relay offers it mid-call only while an "Ask Lelik" cycle is
+        open, and gates it in code (decisions/lelik_voice_modes.md). Every other mode declares delegate_to_specialist over
         `available` and, when the manifest has the errand, send_to_chat."""
         if mode is VoiceMode.INTERPRETER:
             return []
