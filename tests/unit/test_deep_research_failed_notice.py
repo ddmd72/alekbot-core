@@ -160,7 +160,7 @@ class TestDeliveryFailureNotifier:
         await deliver_deep_research(result_text="r", user_id="u1", account_id="a1", query="q",
                                     task_queue=queue, session_id="u1:C9", **kw)
 
-    async def test_falls_back_to_notification_when_no_failure_notification(self):
+    async def test_the_notification_is_told_when_the_report_task_fails(self):
         notification = AsyncMock()
         await self._deliver(notification=notification)
         notification.notify.assert_awaited_once()

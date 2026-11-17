@@ -68,7 +68,7 @@ class TestDeliverReportTask:
         queue = AsyncMock()
         notifier = AsyncMock()
         ok = await deliver_deep_research(result_text="t", user_id="u1", account_id="a1", query="tides",
-                                         task_queue=queue, failure_notification=notifier, **kw)
+                                         task_queue=queue, notification=notifier, **kw)
         return ok, queue, notifier
 
     async def test_task_is_named_when_an_id_is_given(self):
@@ -84,6 +84,6 @@ class TestDeliverReportTask:
         queue.enqueue_agent_task.side_effect = RuntimeError("down")
         notifier = AsyncMock()
         ok = await deliver_deep_research(result_text="t", user_id="u1", account_id="a1", query="tides",
-                                         task_queue=queue, failure_notification=notifier)
+                                         task_queue=queue, notification=notifier)
         assert ok is False
         assert notifier.notify.await_args.kwargs["system_alert"] == notices.report_not_prepared_notice("tides")

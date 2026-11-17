@@ -126,7 +126,7 @@ class TestEnqueueFailureNotice:
         await deliver_deep_research(
             result_text="r", user_id="u", account_id="a", query="q", task_queue=queue,
             session_id="u:C1", channel_id_override="C1", platform_override="telegram",
-            failure_notification=notifier)
+            notification=notifier)
         return notifier
 
     async def test_enqueue_failure_notifies_once_with_overrides(self):
@@ -149,4 +149,4 @@ class TestEnqueueFailureNotice:
         notifier = AsyncMock()
         notifier.notify.side_effect = RuntimeError("slack down")
         await deliver_deep_research(result_text="r", user_id="u", account_id="a", query="q",
-                                    task_queue=queue, failure_notification=notifier)
+                                    task_queue=queue, notification=notifier)
