@@ -15,7 +15,6 @@ from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
-from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -25,10 +24,7 @@ from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.adapters.grok_image_adapter import GrokImageAdapter
 from src.adapters.grok_video_adapter import GrokVideoAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
-from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
-from src.adapters.slack.interactive_message_adapter import PLATFORM as SLACK_PLATFORM
-from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessageAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
 from src.adapters.telegram.response_channel import TelegramResponseChannel
@@ -47,8 +43,9 @@ from src.composition.companion_setup import build_companions
 from src.composition.memory_search_setup import build_memory_search
 from src.composition.agents_setup import build_agents
 from src.composition.integrations_setup import build_integrations
+from src.composition.memory_setup import build_memory
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
-from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
+from src.composition.fact_profile_setup import LazyAtlas
 from src.composition.document_service_setup import build_document_backends
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
@@ -60,17 +57,12 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.worker_setup import build_worker_tasks
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
-from src.domain.fact_lifecycle_sweep import sweep_dry_run
-from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.domain.notification_kind import NotificationKind as _NotificationKind
-from src.domain.settings import SearchConfig
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.handlers.worker_handler import WorkerHandler
-from src.infrastructure.agent_config import CONSOLIDATION as CONSOLIDATION_CFG
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
-from src.infrastructure.interactive_message_router import InteractiveMessageRouter
 from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.ports.cipher_port import CipherPort
 from src.ports.html_renderer_port import HtmlRendererPort
@@ -79,23 +71,15 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.call_text_file_service import CallTextFileService
-from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.fact_answer_service import FactAnswerService
-from src.services.profile_question_answers import ProfileQuestionAnswers
-from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
-from src.services.fact_question_texts import FactQuestionTexts
-from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
-from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
-from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.provider_registry import ProviderRegistry
 from src.services.reminders_service import RemindersService
-from src.services.search_enrichment_service import SearchEnrichmentService
 from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
@@ -224,7 +208,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     routing = build_session_routing(db_client, env_config, user_repo=user_repo, task_queue=agent_task_queue)
     consolidation_queue, companion_extraction_queue = routing.consolidation_queue, routing.companion_extraction_queue
-    channel_binding_adapter, channel_binding_service = routing.channel_binding_adapter, routing.channel_binding_service
+    channel_binding_service = routing.channel_binding_service
 
     # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
     logger.info("🏭 Initializing Service Container...")
@@ -330,7 +314,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                                         languages=languages)
     app, html_renderer, slack_kit = notifications.slack_app, notifications.html_renderer, notifications.slack_kit
     notification_channel_factory, notification_service = notifications.channel_factory, notifications.service
-    notification_state_repo = notifications.state_repo
 
     # Agent worker handler: notification + media + task_queue + doc_delivery are wired at construction.
     logger.info("🔧 Initializing Agent Worker Handler...")
@@ -369,7 +352,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         agents.factory, agents.long_turn_service, agents.language_preferences)
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
 
-    indexed_email_repo = container.indexed_email_repo
     email_indexing_service = container.email_indexing_service
 
     integrations = build_integrations(db_client, env_config, container=container, boot=boot, ops=ops,
@@ -380,33 +362,13 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     _drive_disconnect, _connect_service = integrations.drive_disconnect, integrations.connect
     _gmail_reconnect_flag = integrations.gmail_reconnect_flag
 
-    # The one owner-zone resolver: the consolidation run, the memory review and the owner's answers (Facts S4).
-    _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
-    # The one memory-write lease: a consolidation batch and a memory review of the same account never write at once.
-    _memory_write_lease = FirestoreMemoryWriteLease(db_client, env_config)
-
-    # The profile step (fact profile RFC §4.4): one instance, run inside the lease by both the consolidation and the
-    # memory review; the cap is an optional knob, read here with os.getenv.
-    # The people cards (RFC §7) it rebuilds are listed in the review's weekly digest.
-    # The one place atlas: the step resolves places with it and the owner's word replies to profile questions read it.
-    _fact_profile_step = build_fact_profile_service(
-        container, max_per_run=profile_max_per_run(os.getenv("FACT_PROFILER_MAX_PER_RUN")),
-        person_cards=_person_cards, atlas=_place_atlas, quota=quota_service)
-
-    # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
-    # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
-    _consolidation_service = ConsolidationService(
-        queue=consolidation_queue,
-        coordinator=coordinator,
-        agent_factory=agent_factory,
-        lease=_memory_write_lease,
-        run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
-        task_queue=agent_task_queue,
-        indexed_email_repo=indexed_email_repo,
-        user_repo=user_repo,
-        owner_zones=_owner_zones,
-        profile_step=_fact_profile_step,
-    )
+    memory = build_memory(db_client, env_config, container=container, coordinator=coordinator,
+                          agent_factory=agent_factory, identity=identity, ops=ops, routing=routing,
+                          memory_search=memory_search, notifications=notifications, languages=languages,
+                          cabinet_memory_url=topology.cabinet_memory_url)
+    _consolidation_service, _fact_lifecycle_sweep = memory.consolidation_service, memory.fact_lifecycle_sweep
+    _fact_answer_service, _interactive_choice = memory.fact_answers, memory.interactive_choice
+    _fact_review_service, cabinet_facts = memory.fact_review, memory.cabinet_facts
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(
         notes_port=container.notes_adapter,
@@ -427,103 +389,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         coordinator=coordinator,
         alert_webhook=_alert_webhook,
     )
-
-    # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
-    # an optional rollout knob, read here with os.getenv (not load_settings).
-    _fact_sweep_dry_run = sweep_dry_run(os.getenv("FACT_LIFECYCLE_SWEEP_DRY_RUN"))
-    logger.info("fact lifecycle sweep: log-only" if _fact_sweep_dry_run else "fact lifecycle sweep: writes")
-    _fact_lifecycle_sweep = FactLifecycleSweepService(
-        repo=container.repository,
-        counters=container.fact_lifecycle_counters,
-        alert_sink=_alert_webhook,
-        dry_run=_fact_sweep_dry_run,
-        review_store=container.fact_review_store,
-        task_queue=agent_task_queue,
-        owner_zones=_owner_zones,
-        account_repo=account_repo,
-        user_repo=user_repo,
-    )
-
-    # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
-    cabinet_facts = CabinetFactService(container.repository)
-
-    # Interactive messages (Facts S4 plan §3.20): buttons on Slack, numbered text on Telegram, picked by platform.
-    # The Telegram channel itself is registered on the channel factory below, only when Telegram is configured.
-    _interactive = InteractiveMessageRouter({
-        SLACK_PLATFORM: SlackInteractiveMessageAdapter(app.client),
-        "telegram": PlainTextInteractiveMessageAdapter(notification_channel_factory),
-    })
-    _fact_question_texts = FactQuestionTexts(
-        language=_language_service,
-        localization=_localization_port,
-        review_store=container.fact_review_store,
-        counters=container.fact_lifecycle_counters,
-        system_default=_system_lang,
-    )
-    # The owner's answers (digit, button, Cabinet) and every question close. Its fact writes go through the typed
-    # update path only, which never searches; the search service is the adapter's constructor argument, at the
-    # system defaults.
-    _answer_search_config = SearchConfig()
-    # One adapter instance for both services: the answer service's owner writes, the review's history fallbacks and folds.
-    _review_fact_updates = container.create_fact_management_adapter(SearchEnrichmentService(
-        repository=container.repository,
-        embedding_service=container.embedding_service,
-        keyword_limit=_answer_search_config.DEFAULT_KEYWORD_LIMIT,
-        phrase_one_limit=_answer_search_config.DEFAULT_PHRASE_ONE_LIMIT,
-        phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
-        total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
-    )) if agent_task_queue else None
-    # Profile questions (fact profile RFC §4.7): a picked option or a reply in words read by code is recorded in the
-    # account's answers store; a place reply reads the atlas and a person reply the confirmed list.
-    _profile_question_answers = ProfileQuestionAnswers(
-        container.profile_answers, atlas=_place_atlas, confirmed_people=container.confirmed_people)
-    _fact_answer_service = FactAnswerService(
-        fact_updates=_review_fact_updates,
-        repo=container.repository,
-        review_store=container.fact_review_store,
-        counters=container.fact_lifecycle_counters,
-        task_queue=agent_task_queue,
-        session_store=session_store,
-        texts=_fact_question_texts,
-        interactive=_interactive,
-        owner_zones=_owner_zones,
-        profile_answers=_profile_question_answers,
-    ) if agent_task_queue else None
-    # An owner's click on an interactive message (Facts S4 plan §3.20): the Slack interactivity route queues it, the
-    # worker's `interactive_choice` branch runs it. The handlers are keyed by the binding kind they answer.
-    _interactive_choice = InteractiveChoiceService(
-        iam=iam_service,
-        handlers={FACT_QUESTION_KIND: _fact_answer_service},
-        interactive=_interactive,
-    ) if _fact_answer_service is not None else None
-    # The memory review (Facts S4): built when its answer path (so its task queue, for the deferral and the next
-    # question) and its ops sink exist; without it `/worker` answers fact_review with 501.
-    _fact_review_service = FactReviewService(
-        repo=container.repository,
-        review_store=container.fact_review_store,
-        counters=container.fact_lifecycle_counters,
-        lease=_memory_write_lease,
-        coordinator=coordinator,
-        agent_factory=agent_factory,
-        user_repo=user_repo,
-        account_repo=account_repo,
-        texts=_fact_question_texts,
-        owner_zones=_owner_zones,
-        notification_state=notification_state_repo,
-        channel_bindings=channel_binding_adapter,
-        notifications=notification_service,
-        session_store=session_store,
-        task_queue=agent_task_queue,
-        answer_service=_fact_answer_service,
-        interactive=_interactive,
-        alert_sink=_alert_webhook,
-        run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
-        fact_updates=_review_fact_updates,
-        cabinet_url=topology.cabinet_memory_url,
-        profile_step=_fact_profile_step,
-        person_cards=_person_cards,
-    ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
-          and _alert_webhook is not None) else None
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
     deep_research_dedup_store = FirestoreDedupStore(
