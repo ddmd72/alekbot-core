@@ -9,14 +9,12 @@ from functools import partial
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from anthropic import AsyncAnthropic
 from telegram import Bot
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
-from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
@@ -47,6 +45,7 @@ from src.composition.language_setup import build_languages
 from src.composition.notification_setup import build_notifications
 from src.composition.companion_setup import build_companions
 from src.composition.memory_search_setup import build_memory_search
+from src.composition.agents_setup import build_agents
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -94,7 +93,6 @@ from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
-from src.services.long_turn_service import LongTurnService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.provider_registry import ProviderRegistry
 from src.services.reminders_service import RemindersService
@@ -208,8 +206,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Fail closed before anything else is built.
     boot = build_boot_checks(config, env_config)
     cipher, secret_digest_key, voice_mcp_key = boot.cipher, boot.digest_key, boot.voice_mcp_signing_key
-    auth_config, topology, parse_adapter, video_duration = (
-        boot.auth_config, boot.deploy_topology, boot.parse_adapter, boot.video_duration)
+    auth_config, topology, parse_adapter = boot.auth_config, boot.deploy_topology, boot.parse_adapter
 
     identity = build_identity(config, db_client, env_config, auth_config=auth_config, digest_key=secret_digest_key)
     account_repo, user_repo, whitelist_repo = identity.account_repo, identity.user_repo, identity.whitelist_repo
@@ -250,12 +247,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         document_backends=document_backends,
     )
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
-
-    # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
-    # platform adapters (status/late-answer delivery) and UserAgentFactory (Smart's
-    # running-jobs note + cancel_long_turn tool).
-    long_turn_registry = FirestoreLongTurnRegistry(db_client, env_config.long_turns_collection)
-    long_turn_service = LongTurnService(registry=long_turn_registry, session_store=session_store)
 
     logger.info("🎯 Initializing Agent Coordinator...")
     # The file ref resolver is wired into the coordinator for specialist delegation
@@ -364,55 +355,23 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             language=_language_service,
         ),
     )
-    # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
-    # The agent receives the client via constructor; does not import or instantiate the SDK.
-    anthropic_client = None
-    if config.get("ANTHROPIC_API_KEY"):
-        anthropic_client = AsyncAnthropic(api_key=config["ANTHROPIC_API_KEY"])
-
     companions = build_companions(db_client, env_config, container=container, user_repo=user_repo,
                                   quota_service=quota_service, extraction_queue=companion_extraction_queue,
                                   notification_service=notification_service, languages=languages)
-    companion_context_assembler, companion_extractor_runner = companions.context_assembler, companions.extractor_runner
+    companion_extractor_runner = companions.extractor_runner
     call_text_files, companion_extraction_service = companions.call_text_files, companions.extraction_service
 
     memory_search = build_memory_search(db_client, env_config, container=container)
     _person_cards, _place_atlas, fact_search = (
         memory_search.person_cards, memory_search.place_atlas, memory_search.fact_search)
 
-    # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
-    logger.info("🏭 Initializing User Agent Factory...")
-    agent_factory = UserAgentFactory(
-        config=config,
-        fact_search=fact_search,
-        deploy_topology=topology,
-        coordinator=coordinator,
-        user_repo=user_repo,
-        account_repo=account_repo,
-        **container.agent_services(),
-        job_registry=job_registry,
-        image_registry=image_registry,
-        video_registry=video_registry,
-        task_queue=agent_task_queue,
-        anthropic_client=anthropic_client,
-        quota_service=quota_service,
-        companion_context_assembler=companion_context_assembler,
-        notification_service=notification_service,
-        long_turn_registry=long_turn_registry,
-        localization=_localization,
-        language_service=_language_service,
-        alert_sink=_alert_webhook,
-        video_duration=video_duration,
-    )
+    agents = build_agents(config, db_client, env_config, container=container, coordinator=coordinator, boot=boot,
+                          identity=identity, ops=ops, job_registry=job_registry, image_registry=image_registry,
+                          video_registry=video_registry, companions=companions,
+                          notification_service=notification_service, languages=languages, memory_search=memory_search)
+    agent_factory, long_turn_service, language_preferences = (
+        agents.factory, agents.long_turn_service, agents.language_preferences)
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
-    language_preferences = LanguagePreferenceService(
-        user_repo=user_repo,
-        profile_repo=container.profile_repo,
-        prompt_builder=container.assembly_service,
-        resolver=_language_service,
-        notification_service=notification_service,
-        ensure_agents=agent_factory.ensure_agents_for_user,
-    )
 
     # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
     oauth_credentials_port = container.oauth_credentials
