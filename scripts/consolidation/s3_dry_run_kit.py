@@ -369,7 +369,7 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
     ) -> None:
         self._record("refresh_biographical_context_cache")
 
-    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict]]) -> None:
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         self._record("save_biographical_context_cache")
 
     def _current_view(

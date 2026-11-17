@@ -403,7 +403,7 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict]]) -> None:
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Replace the cached biographical context of account `owner_id` with `context`.
 
         Input: `context` as BiographicalContextService.refresh_context returns it: "facts" and "principles" lists, and

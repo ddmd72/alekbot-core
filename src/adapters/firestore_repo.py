@@ -904,7 +904,7 @@ class FirestoreFactRepository(FactRepository):
             owner_id, facts_limit=facts_limit, principles_limit=principles_limit,
         )
 
-    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict]]) -> None:
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Write `context` to the account's cache document (FactRepository port)."""
         cache_doc = {
             "biographical_facts": context["facts"],
