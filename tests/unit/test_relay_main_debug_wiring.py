@@ -38,11 +38,12 @@ def _boot(monkeypatch, knob: Optional[str] = None) -> List[Dict[str, Any]]:
 
 def test_both_services_get_the_listed_users(monkeypatch):
     phone, web = _boot(monkeypatch, "user-a; user-b")
-    assert phone["debug_transcript_users"] == frozenset({"user-a", "user-b"})
-    assert web["debug_transcript_users"] == frozenset({"user-a", "user-b"})
+    assert phone["call_options"].debug_transcript_users == frozenset({"user-a", "user-b"})
+    assert web["call_options"].debug_transcript_users == frozenset({"user-a", "user-b"})
     assert "control_hub" in web and "control_hub" not in phone  # the two are the phone and the web service
 
 
 def test_unset_gives_both_services_an_empty_set(monkeypatch):
     phone, web = _boot(monkeypatch)
-    assert phone["debug_transcript_users"] == frozenset() and web["debug_transcript_users"] == frozenset()
+    assert phone["call_options"].debug_transcript_users == frozenset() and web["call_options"].debug_transcript_users == frozenset()
+

@@ -16,6 +16,7 @@ from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import VOICE_PROVIDER_PROFILES
+from src.domain.voice_relay_call_options import VoiceRelayCallOptions
 from src.domain.voice_turn_ownership import TurnOwnership
 from src.handlers.call_control_handler import CallControlHandler
 from src.ports.realtime_session_port import RealtimeSessionEvent, RealtimeSessionPort
@@ -172,7 +173,7 @@ async def _run_call(user_id: str, listed: frozenset, mode: str = "interpreter") 
         "control_token_sha256": control_token_digest(TOKEN)})
     service = VoiceSessionService(realtime_session_factory=lambda spec: provider, control_plane=control_plane,
                                   alert_sink=_Alerts(), control_hub=hub, ask_tick_s=0.005,
-                                  debug_transcript_users=listed)
+                                  call_options=VoiceRelayCallOptions(debug_transcript_users=listed))
 
     async def inbound():
         await ends.wait()
