@@ -5,6 +5,7 @@ import pytest
 
 from src.domain.voice_language_pair import (
     LANGUAGE_NAMES,
+    PAIR_TOOL_ALREADY,
     PAIR_TOOL_BAD,
     PAIR_TOOL_REFUSED,
     SET_LANGUAGE_PAIR,
@@ -99,3 +100,20 @@ class TestTexts:
     def test_refusals_are_tool_errors(self):
         assert PAIR_TOOL_REFUSED.startswith("Tool error: ") and PAIR_TOOL_REFUSED.endswith("Nothing changed.")
         assert PAIR_TOOL_BAD == "Tool error: unknown language code. Nothing changed."
+
+
+class TestRefusalTexts:
+    """Each refusal says what is true in the case that produces it (text review)."""
+
+    def test_already_set_names_the_earlier_acceptance_not_translation(self):
+        assert PAIR_TOOL_ALREADY == "Tool error: the pair was already set from these words. Nothing changed."
+        assert "translation" not in PAIR_TOOL_ALREADY
+
+    def test_bad_codes_asks_for_two_different_codes_from_the_list(self):
+        assert PAIR_TOOL_BAD == (
+            "Tool error: the two languages must be two different codes from the list. Nothing changed.")
+
+    def test_the_three_refusals_are_distinct_tool_errors(self):
+        texts = {PAIR_TOOL_REFUSED, PAIR_TOOL_ALREADY, PAIR_TOOL_BAD}
+        assert len(texts) == 3
+        assert all(t.startswith("Tool error: ") and t.endswith("Nothing changed.") for t in texts)

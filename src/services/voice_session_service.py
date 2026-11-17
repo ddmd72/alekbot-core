@@ -18,7 +18,7 @@ from src.domain.voice_control_protocol import (
 )
 from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_language_pair import (
-    PAIR_TOOL_BAD, PAIR_TOOL_REFUSED, SET_LANGUAGE_PAIR, LanguagePair, language_pair_tool_declaration,
+    PAIR_TOOL_ALREADY, PAIR_TOOL_BAD, PAIR_TOOL_REFUSED, SET_LANGUAGE_PAIR, LanguagePair, language_pair_tool_declaration,
     parse_language_pair,
 )
 from src.domain.voice_live_text_pacer import LiveTextPacer
@@ -778,7 +778,7 @@ class VoiceSessionService:
             if not marked:
                 reason, output = "not addressed to Lelik", PAIR_TOOL_REFUSED
             elif state.pair_accepted_since_arm:
-                reason, output = "already set in this ask", PAIR_TOOL_REFUSED
+                reason, output = "already set in this ask", PAIR_TOOL_ALREADY
             else:
                 reason, output = "bad codes", PAIR_TOOL_BAD
             logger.info(f"voice call {fingerprint(state.ticket)}: ask: language pair refused ({reason})")

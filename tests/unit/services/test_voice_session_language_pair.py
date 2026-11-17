@@ -14,6 +14,7 @@ import pytest
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_control_protocol import control_token_digest
 from src.domain.voice_language_pair import (
+    PAIR_TOOL_ALREADY,
     PAIR_TOOL_BAD,
     PAIR_TOOL_REFUSED,
     LanguagePair,
@@ -489,4 +490,39 @@ async def test_a_call_of_a_cancelled_response_keeps_the_cancelled_tool_output():
     await call.end()
 
     assert call.provider.tool_results() == [("call-1", _CANCELLED_TOOL_CALL)]
+    assert call.provider.instruction_updates() == []
+
+
+@pytest.mark.asyncio
+async def test_a_second_call_in_the_same_press_gets_the_already_set_error_not_the_translation_one():
+    call = await _Call().start()
+    await call.press()
+    await call.utterance("item-u1")
+    await call.says("response_created")
+    await call.pair_call("call-1", "uk", "fr")
+    await call.pair_call("call-2", "en", "es")
+    await call.says("response_done")
+    await call.says("response_created")
+    await call.says("response_done")
+    await call.utterance("item-u2")
+    await call.end()
+
+    assert call.provider.tool_results() == [("call-1", UK_FR.tool_ok()), ("call-2", PAIR_TOOL_ALREADY)]
+    assert call.provider.instruction_updates() == [f"{BASE}\n\n{UK_FR.block()}"]
+    assert call.provider.system_notes()[-1] == UK_FR.note()
+    assert call.provider.create_while_active == 0
+
+
+@pytest.mark.asyncio
+async def test_the_same_code_twice_gets_the_two_different_codes_error():
+    call = await _Call().start()
+    await call.press()
+    await call.utterance("item-u1")
+    await call.says("response_created")
+    await call.pair_call("call-1", "es", "es")
+    await call.says("response_done")
+    await call.end()
+
+    assert call.provider.tool_results() == [
+        ("call-1", "Tool error: the two languages must be two different codes from the list. Nothing changed.")]
     assert call.provider.instruction_updates() == []

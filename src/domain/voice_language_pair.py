@@ -72,7 +72,8 @@ PAIR_TOOL_OK = ("Tool note: pair set: the caller speaks {caller}, the other pers
     "in {caller} confirming the pair, said once.")
 PAIR_TOOL_REFUSED = ("Tool error: the pair can be set only from the caller's words addressed to you; these words were "
     "for translation. Nothing changed.")
-PAIR_TOOL_BAD = "Tool error: unknown language code. Nothing changed."
+PAIR_TOOL_ALREADY = "Tool error: the pair was already set from these words. Nothing changed."
+PAIR_TOOL_BAD = "Tool error: the two languages must be two different codes from the list. Nothing changed."
 PAIR_BLOCK = ("Language pair for this call. The caller set it through you, so the code that writes your translation "
     "notes knows it too: the caller speaks {caller}; the person they are talking to speaks {other}. It replaces "
     "guessing the direction from the place or from the first words: words in {caller} you say in {other}; words in "
