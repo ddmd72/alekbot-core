@@ -120,27 +120,23 @@ class FirestoreFactRepository(FactRepository):
         db_client,
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
-        biographical_context_service: Optional[Any] = None,  # a BiographicalContextService — adapters must not import services
         dedup_service: Optional[SmartDeduplication] = None,
     ):
         """
         Initialize repository with database client and environment config.
 
         Session 2026-02-07: Hexagonal Architecture Refactoring
-        Added biographical_context_service for DI - prevents Infrastructure→Application dependency.
         Session 2026-02-20: Added dedup_service via DI (removed lazy service import).
 
         Args:
             db_client: Firestore AsyncClient instance
             env_config: Environment configuration for collection isolation
             embedding_service: Service for generating embeddings (DI)
-            biographical_context_service: Service for biographical cache refresh (DI, NEW)
             dedup_service: Smart deduplication logic (DI; defaults to SmartDeduplication())
         """
         self.db = db_client
         self.env_config = env_config
         self._embedding_service = embedding_service
-        self._biographical_context_service = biographical_context_service
         self._dedup_service = dedup_service or SmartDeduplication()
 
         # Environment-aware collection names (ADR-006 Semantic Naming)
@@ -886,23 +882,6 @@ class FirestoreFactRepository(FactRepository):
         # No duplicate found (or smart dedup said NOT duplicate), add the fact
         fact_id = await self.add_fact(fact)
         return True, fact_id
-
-    async def refresh_biographical_context_cache(
-        self,
-        owner_id: str,
-        facts_limit: Optional[int] = None,
-        principles_limit: Optional[int] = None
-    ) -> None:
-        """Forward to the injected context service's refresh_cache (FactRepository port)."""
-        if not self._biographical_context_service:
-            logger.warning(
-                f"⚠️ [FirestoreRepo] BiographicalContextService not injected, "
-                f"skipping cache refresh for {owner_id[:8]}"
-            )
-            return
-        await self._biographical_context_service.refresh_cache(
-            owner_id, facts_limit=facts_limit, principles_limit=principles_limit,
-        )
 
     async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Write `context` to the account's cache document (FactRepository port)."""

@@ -303,23 +303,18 @@ class ServiceContainer:
         # Config + biographical context (shared; per-user limits resolved later)
         # ------------------------------------------------------------------
         self.config_service = ConfigurationService()
-        self.biographical_context_service = BiographicalContextService(
-            repository=None,  # Resolved after repository is created (circular dep below)
-            config_service=self.config_service,
-            account_repo=account_repo,
-        )
-
-        # Fact repository — needs embedding_service and biographical_context_service
         self.repository = FirestoreFactRepository(
             db_client,
             env_config,
             embedding_service=self.embedding_service,
-            biographical_context_service=self.biographical_context_service,
             dedup_service=SmartDeduplication(),
         )
-
-        # Resolve circular dep: BiographicalContextService → repository
-        self.biographical_context_service.set_repository(self.repository)
+        # Rebuilds the biographical cache over the repository; every fact-write path takes it as its refresher.
+        self.biographical_context_service = BiographicalContextService(
+            repository=self.repository,
+            config_service=self.config_service,
+            account_repo=account_repo,
+        )
 
         # Shared fact write service (no per-user deps)
         self.fact_write_service = FactWriteService(

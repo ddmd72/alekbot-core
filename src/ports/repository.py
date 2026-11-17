@@ -389,20 +389,6 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def refresh_biographical_context_cache(
-        self, 
-        owner_id: str,
-        facts_limit: Optional[int] = None,
-        principles_limit: Optional[int] = None
-    ) -> None:
-        """Rebuild the cached biographical context of account `owner_id` through the injected context service.
-
-        Contract: BiographicalCacheRefresher.refresh_cache (content, limits, idempotency, never raises). Without a
-            context service it does nothing (observed).
-        """
-        pass
-
-    @abstractmethod
     async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict[str, Any]]]) -> None:
         """Replace the cached biographical context of account `owner_id` with `context`.
 

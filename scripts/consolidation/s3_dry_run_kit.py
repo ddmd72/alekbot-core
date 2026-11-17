@@ -166,7 +166,7 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
     `owner_id` (or a stray one beside another account's `account_id`) as the caller's account, so it does not reproduce
     the live store's refusal for such documents; none is live (FACT_LIFECYCLE_RFC D-7).
 
-    It is also the pass's cache refresher: a refresh, through either port, is recorded and the live cache is untouched.
+    It is also the pass's cache refresher: a refresh or a cache save is recorded and the live cache is untouched.
     """
 
     def __init__(self, real: FactRepository) -> None:
@@ -358,11 +358,6 @@ class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
             self._put(fact)
             self._record("add_fact_if_unique", fact_id=fact.id, duplicate_check="not run")
         return True, fact.id
-
-    async def refresh_biographical_context_cache(
-        self, owner_id: str, facts_limit: Optional[int] = None, principles_limit: Optional[int] = None
-    ) -> None:
-        self._record("refresh_biographical_context_cache")
 
     async def refresh_cache(
         self, owner_id: str, facts_limit: Optional[int] = None, principles_limit: Optional[int] = None

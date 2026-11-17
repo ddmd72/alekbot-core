@@ -67,10 +67,6 @@ class BiographicalContextService(BiographicalCacheRefresher):
 
         logger.debug("📚 [BiographicalContext] Initialized with priority-based selection")
 
-    def set_repository(self, repository) -> None:
-        """Resolve circular dependency: call after repository is created."""
-        self._repo = repository
-
     async def refresh_cache(
         self,
         owner_id: str,
