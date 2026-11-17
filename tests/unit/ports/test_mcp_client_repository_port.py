@@ -41,8 +41,7 @@ class TestPortContract:
     def test_abstract_method_set(self):
         assert _abstract_methods(MCPClientRepository) == {
             "save_client",
-            "get_client",
-            "delete_client",
+            "get_client",       # reviewer edit, dead-access deletion: delete_client removed (no production caller)
             "save_auth_code",
             "get_auth_code",
             "consume_auth_code",
@@ -152,6 +151,7 @@ class TestClientRoundtrip:
 
     async def test_get_missing_returns_none(self, repo):
         assert await repo.get_client("nope") is None
+
 
 class TestAuthCodeRoundtrip:
     async def test_get_is_non_consuming(self, repo, auth_code_obj):

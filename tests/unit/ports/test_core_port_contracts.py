@@ -1097,7 +1097,8 @@ class TestWhitelistRepositoryContract:
             name for name, method in inspect.getmembers(WhitelistRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        # reviewer edit, dead-access deletion: the port is read-only (get_whitelist); the four unused mutators are gone
+        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
 
 
 class TestWhitelistRepositoryMockImplementation:
