@@ -91,7 +91,7 @@ class TestDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = [{"email_id": "e1", "subject": "Hello"}]
         ns.notification.notify.return_value = result
-        out = await worker._handle_daily_email_review({"user_id": _USER_A, "account_id": _ACC_A})
+        out = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
         return out, ns
 
     async def test_empty_answer_is_final(self, caplog):

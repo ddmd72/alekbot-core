@@ -31,7 +31,7 @@ in the account settings. That side is not visible to us.
 2. **Persistent flag.** `OAuthCredentials.needs_reconnect` (default `False`, stored in Firestore;
    documents without the field read `False`). Nothing clears it explicitly: a reconnect saves
    freshly exchanged credentials, and so does a successful refresh, and both build the default.
-3. **One notice per breakage.** `WorkerHandler._flag_gmail_reconnect` runs when the daily review
+3. **One notice per breakage.** `GmailReconnectFlag.flag` (`src/services/gmail_reconnect_flag.py`) runs when the daily review
    or an indexing page gets `OAuthGrantRevokedError`. It sets the flag and posts one notice
    through `notify()` (formatter agent, user's language) to the primary channel, only on the
    transition from `False` to `True`. Both paths keep hitting the dead token every day until the

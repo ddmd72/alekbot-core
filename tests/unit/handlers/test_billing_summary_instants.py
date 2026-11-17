@@ -12,8 +12,8 @@ from src.adapters import firestore_account_repo as repo_module
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.domain.billing import AccountUsageStats, BillingAccount
 from src.domain.user import UserProfile
-from src.handlers import worker_handler as worker_module
-from src.handlers.worker_handler import WorkerHandler
+from src.services import billing_daily_summary_task as worker_module
+from src.services.billing_daily_summary_task import BillingDailySummaryTask
 from tests.support import clock_instants as ci
 from tests.support.firestore_eval import EvalDb, eval_transactions
 
@@ -30,26 +30,15 @@ class _RecordingWebhook:
         self.posts.append(text)
 
 
-class _Unused:
-    """A collaborator the billing summary never touches: any attribute access fails the test."""
-
-    def __getattr__(self, name: str):
-        raise AssertionError(f"billing summary touched an unused collaborator: {name}")
-
-
 class _Users:
     async def get_user(self, user_id: str):
         return UserProfile(user_id=user_id, display_name="Clara")
 
 
-def _world() -> tuple[WorkerHandler, FirestoreAccountRepository, _RecordingWebhook]:
+def _world() -> tuple[BillingDailySummaryTask, FirestoreAccountRepository, _RecordingWebhook]:
     repo = FirestoreAccountRepository(EvalDb(), "accounts")
     webhook = _RecordingWebhook()
-    worker = WorkerHandler(
-        agent_worker_handler=_Unused(), email_indexing_service=_Unused(), notification_service=_Unused(),
-        consolidation_service=None, agent_factory=_Unused(),
-        user_repo=_Users(), account_repo=repo, billing_webhook=webhook,
-    )
+    worker = BillingDailySummaryTask(user_repo=_Users(), account_repo=repo, billing_webhook=webhook)
     return worker, repo, webhook
 
 
@@ -71,7 +60,7 @@ async def test_month_line_shows_october_when_nothing_ran_after_utc_midnight(monk
     await _seed_october(repo)
     ci.pin_datetime(monkeypatch, worker_module, SUMMARY_AT)
 
-    body, status = await worker._handle_billing_daily_summary()
+    body, status = await worker({}, {})
 
     assert (status, body["reported"]) == (200, 1)
     assert "2026-10-31" in webhook.posts[0]
@@ -90,7 +79,7 @@ async def test_month_line_shows_october_after_one_increment_past_utc_midnight(mo
         await repo.increment_account_usage("a1", tokens=7, cost=0.01)
     ci.pin_datetime(monkeypatch, worker_module, SUMMARY_AT)
 
-    body, status = await worker._handle_billing_daily_summary()
+    body, status = await worker({}, {})
 
     assert (status, body["reported"]) == (200, 1)
     assert "Yesterday: 1,000 tok" in webhook.posts[0]  # the rotation did save October 31
@@ -105,7 +94,7 @@ async def test_account_idle_yesterday_is_not_in_the_post(monkeypatch):
     await repo.create_account(BillingAccount(account_id="a2", iam_policy={"u2": "owner"}, usage=quiet))
     ci.pin_datetime(monkeypatch, worker_module, SUMMARY_AT)
 
-    body, status = await worker._handle_billing_daily_summary()
+    body, status = await worker({}, {})
 
     assert (status, body["reported"]) == (200, 1)
     assert "1,000" in webhook.posts[0]
@@ -118,7 +107,7 @@ async def test_nothing_is_posted_when_every_account_was_idle_yesterday(monkeypat
     await repo.create_account(BillingAccount(account_id="a2", iam_policy={"u2": "owner"}, usage=quiet))
     ci.pin_datetime(monkeypatch, worker_module, SUMMARY_AT)
 
-    body, status = await worker._handle_billing_daily_summary()
+    body, status = await worker({}, {})
 
     assert (status, body) == (200, {"reported": 0})
     assert webhook.posts == []

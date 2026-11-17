@@ -5,7 +5,7 @@ from google.api_core.exceptions import ServiceUnavailable
 
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.domain.user import UserBotConfig, UserProfile
-from src.handlers import worker_handler
+from src.services import start_daily_email_review_task
 from src.services.email_review_service import EmailReviewService
 from tests.support.clock_instants import pin_datetime
 from tests.support.firestore_eval import EvalDb
@@ -48,7 +48,7 @@ async def test_the_daily_review_fan_out_goes_on_after_a_failed_enqueue_whose_mar
         await oauth.repo.save(creds(user_id, "gmail"))
         world.users.put(UserProfile(user_id=user_id, account_id=account_id, config=UserBotConfig(
             timezone="Europe/Berlin", gmail_daily_review=True, gmail_daily_review_hour=9)))
-    pin_datetime(monkeypatch, worker_handler, T0)   # 09:00 in Berlin: both users are inside their review window
+    pin_datetime(monkeypatch, start_daily_email_review_task, T0)   # 09:00 in Berlin: both users are inside their review window
     world.client.fail_next(exc=ServiceUnavailable("cloud tasks unavailable"))
 
     answer = await deliver(world.handler, world.payload("start_daily_email_review"))

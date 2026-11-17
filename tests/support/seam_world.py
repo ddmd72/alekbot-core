@@ -41,6 +41,7 @@ from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.composition.worker_setup import build_worker_tasks
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentMessage, AgentResponse, DeliveryItem
 from src.domain.agent_note import NoteCreate
@@ -426,10 +427,16 @@ class SeamWorld:
         for name in _RUNNER_DEPS:
             if name in worker_overrides:
                 moved[name] = worker_overrides.pop(name)
+        email_review = worker_overrides.pop("email_review", None)
         keywords.update(worker_overrides)
         keywords["tasks"] = build_worker_tasks(
             notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
             notification_service=self.notifier, alert_sink=None, task_dispatch=keywords["task_dispatch"],
+            email_review=email_review, daily_review_marks=None,
+            gmail_reconnect_flag=GmailReconnectFlag(
+                oauth_credentials=None, mail_connector=None, ensure_agents=self.factory.ensure_agents_for_user,
+                notification_service=self.notifier),
+            account_repo=None,
             **{name: moved.get(name) for name in _RUNNER_DEPS})
         self.handler = WorkerHandler(**keywords)
         self._agents: Dict[str, StandInAgent] = {}

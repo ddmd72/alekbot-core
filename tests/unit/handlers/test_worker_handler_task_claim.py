@@ -101,8 +101,7 @@ async def test_agent_execution_second_delivery_is_duplicate():
 
 async def test_daily_email_review_second_delivery_is_duplicate(monkeypatch):
     runner = AsyncMock(return_value=({"status": "ok"}, 200))
-    monkeypatch.setattr(WorkerHandler, "_handle_daily_email_review", runner)   # before construction: the registry binds it
-    h = _handler(_MemoryClaims())
+    h = _handler(_MemoryClaims(), tasks={"daily_email_review": runner})
     payload = {"task_type": "daily_email_review", "user_id": "u1"}
     _, second, runs = await _call_counts(h, payload, runner)
     assert second == ({"status": "duplicate"}, 200)

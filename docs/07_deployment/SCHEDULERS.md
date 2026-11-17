@@ -122,7 +122,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, finds the review slot open at this tick: the first 3 hours from `config.gmail_daily_review_hour` in the user's timezone (wraps midnight; an invalid timezone counts as UTC). It claims the mark `daily_review:{user}:{slot_date}` (48 h) so the review runs once per local date, then enqueues a `daily_email_review` Cloud Task named after the mark. Worker fetches the last 25 h of emails by exact instants (epoch-second `after:`), so consecutive daily reviews never leave a gap; an overlap of about an hour is accepted (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
-| **Handler** | `WorkerHandler._handle_start_daily_email_review()` → `WorkerHandler._handle_daily_email_review()` |
+| **Handler** | `StartDailyEmailReviewTask` → `DailyEmailReviewTask` (`src/services/`, built by `build_worker_tasks`) |
 | **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
 | **Env** | dev + prod |
 
@@ -260,7 +260,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "billing_daily_summary"}` |
 | **Purpose** | Sends a daily billing report to each account owner with activity today. Shows daily / monthly / total token consumption and cost per account. Skips accounts with zero daily usage. |
-| **Handler** | `WorkerHandler._handle_billing_daily_summary()` |
+| **Handler** | `BillingDailySummaryTask` (`src/services/billing_daily_summary_task.py`, built by `build_worker_tasks`) |
 | **Cost basis** | The summary posts yesterday's `prev_daily_tokens` / `prev_daily_cost` snapshot. Cached input is priced by a per-model `cache_read` multiplier in `_PRICING_PER_MILLION_TOKENS` (`src/domain/billing.py`): 0.1x for Claude, OpenAI and Gemini in general, 0.05x for the newer Claude (Opus 5.5, Sonnet 5.5) and OpenAI (`gpt-6.1-sol`) models. That table is the authority. |
 | **Env** | active on the single live service |
 

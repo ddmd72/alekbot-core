@@ -31,7 +31,12 @@ from src.ports.video_generation_port import VideoPollResult
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
+from src.infrastructure.notification_sla import dispatch_deadline_s
+from src.services.billing_daily_summary_task import BillingDailySummaryTask
+from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.execute_reminder_task import ExecuteReminderTask
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
+from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 from src.services.reminders_service import RemindersService
 from src.services.task_indexing_service import TaskIndexingService
 from src.services.task_setup_service import TaskSetupService
@@ -143,7 +148,6 @@ def worker_handler_factory():
     def _factory(
         *,
         reminders_service=None,
-        email_review=None,
         task_dispatch=None,
         **kwargs
     ) -> WorkerHandler:
@@ -162,7 +166,6 @@ def worker_handler_factory():
             user_repo=MagicMock(),
             task_dispatch=task_dispatch,
             reminders_service=reminders_service,
-            email_review=email_review,
             **kwargs,
         )
         return worker
@@ -628,6 +631,21 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         notes_port=notes_port, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
         notification_service=notification, alert_sink=billing_webhook,
     )
+    ns.start_daily_review = StartDailyEmailReviewTask(
+        email_review=email_review, task_dispatch=task_dispatch, user_repo=user_repo, marks=None,
+        deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+    )
+    ns.daily_review = DailyEmailReviewTask(
+        email_review=email_review, ensure_agents=agent_factory.ensure_agents_for_user,
+        notification_service=notification,
+        gmail_reconnect_flag=GmailReconnectFlag(
+            oauth_credentials=None, mail_connector=None, ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification),
+        alert_sink=billing_webhook,
+    )
+    ns.billing_summary = BillingDailySummaryTask(
+        billing_webhook=billing_webhook, account_repo=account_repo, user_repo=user_repo,
+    )
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
@@ -640,8 +658,6 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         task_setup=task_setup,
         task_indexing=task_indexing,
         reminders_service=reminders_service,
-        email_review=email_review,
-        account_repo=account_repo,
         billing_webhook=billing_webhook,
         tasks={"execute_reminder": ns.execute_reminder},
     )
@@ -1399,22 +1415,6 @@ class TestHandleExecuteReminder:
 
 class TestHandleStartDailyEmailReview:
 
-    async def test_missing_email_review_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
-    async def test_missing_task_dispatch_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._task_dispatch = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
     async def test_enqueues_daily_review_per_eligible_user(self):
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = [
@@ -1422,7 +1422,7 @@ class TestHandleStartDailyEmailReview:
             EligibleReviewUser(_USER_B, _ACC_B, date(2026, 10, 22)),
         ]
 
-        result, status = await worker._handle_start_daily_email_review()
+        result, status = await ns.start_daily_review({}, {})
 
         assert status == 200
         assert result["started"] == 2
@@ -1444,7 +1444,7 @@ class TestHandleStartDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = []
 
-        result, status = await worker._handle_start_daily_email_review()
+        result, status = await ns.start_daily_review({}, {})
 
         assert status == 200
         assert result["started"] == 0
@@ -1452,7 +1452,7 @@ class TestHandleStartDailyEmailReview:
 
 
 # ---------------------------------------------------------------------------
-# _handle_daily_email_review
+# DailyEmailReviewTask
 # ---------------------------------------------------------------------------
 
 class TestHandleDailyEmailReview:
@@ -1460,34 +1460,22 @@ class TestHandleDailyEmailReview:
     async def test_missing_user_id_returns_400(self):
         worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_daily_email_review({"account_id": _ACC_A})
+        result, status = await ns.daily_review({"account_id": _ACC_A}, {})
 
         assert status == 400
 
     async def test_missing_account_id_returns_400(self):
         worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_daily_email_review({"user_id": _USER_A})
+        result, status = await ns.daily_review({"user_id": _USER_A}, {})
 
         assert status == 400
-
-    async def test_missing_email_review_service_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
-
-        assert status == 501
 
     async def test_credentials_unavailable_returns_200_no_notify(self):
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = None
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["error"] == "credentials unavailable"
@@ -1497,9 +1485,7 @@ class TestHandleDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = []
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["status"] == "no_emails"
@@ -1518,9 +1504,7 @@ class TestHandleDailyEmailReview:
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
         ns.notification.notify.side_effect = _track_notify
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["emails"] == 1
@@ -1543,7 +1527,7 @@ class TestHandleDailyEmailReview:
 
 
 # ---------------------------------------------------------------------------
-# _handle_billing_daily_summary
+# BillingDailySummaryTask
 # ---------------------------------------------------------------------------
 
 def _make_account(
@@ -1570,29 +1554,13 @@ def _make_account(
 
 class TestHandleBillingDailySummary:
 
-    async def test_missing_billing_webhook_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._billing_webhook = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
-
-    async def test_missing_account_repo_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._account_repo = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
-
     async def test_no_accounts_with_activity_returns_reported_zero(self):
         worker, ns = _make_full_worker()
         ns.account_repo.list_all_accounts.return_value = [
             _make_account("acc-x", _USER_A, prev_daily_tokens=0, prev_daily_cost=0.0),
         ]
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 0
@@ -1611,7 +1579,7 @@ class TestHandleBillingDailySummary:
             profile_a if uid == _USER_A else None
         )
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 2
@@ -1635,7 +1603,7 @@ class TestHandleBillingDailySummary:
             ),
         ]
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 0
@@ -1657,7 +1625,7 @@ class TestHandleBillingDailySummary:
             UserProfile(user_id=_USER_A, display_name="Robin") if uid == _USER_A else None
         )
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 1

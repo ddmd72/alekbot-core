@@ -50,7 +50,7 @@ async def test_daily_review_passes_its_origin():
     worker, ns = _make_full_worker()
     ns.email_review.fetch_review_payload.return_value = [{"email_id": "e1", "subject": "Hello"}]
     ns.notification.notify.return_value = NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
-    _, status = await worker._handle_daily_email_review({"user_id": _USER_A, "account_id": _ACC_A})
+    _, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
     assert status == 200
     kw = ns.notification.notify.call_args.kwargs
     assert kw["origin_detail"] == "daily_email_review"

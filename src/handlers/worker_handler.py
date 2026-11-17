@@ -22,13 +22,15 @@ Supported task_types:
                                 composition (`tasks`): run one claimed reminder fire
   - video_generation_polling, deep_research_failed, deep_research_webhook_event → runners passed in by composition
                                      (`tasks`): VideoGenerationPollingTask, DeepResearchFailedTask, DeepResearchWebhookEventTask
+  - start_daily_email_review      → StartDailyEmailReviewTask (services/start_daily_email_review_task.py), passed in by
+                                     composition (`tasks`): fan-out, enqueue daily_email_review per Gmail user
+  - daily_email_review            → DailyEmailReviewTask (services/daily_email_review_task.py), passed in by composition
+  - billing_daily_summary         → BillingDailySummaryTask (services/billing_daily_summary_task.py), passed in by composition
   - setup_microsoft_todo          → TaskSetupService.setup(user_id)
   - reindex_task_list             → TaskIndexingService.reindex_list(user_id, list_id)
   - renew_task_subscriptions      → TaskSetupService.renew_expiring_subscriptions(user_id)
   - renew_all_task_subscriptions  → fan-out: enqueue renew_task_subscriptions for all MS To Do users
   - start_email_indexing          → fan-out: start incremental indexing for all Gmail users with auto_index enabled
-  - start_daily_email_review      → fan-out: enqueue daily_email_review for all Gmail users with gmail_daily_review enabled
-  - daily_email_review            → fetch last 24h emails, deliver structured payload to SmartAgent for analysis
   - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
                                      has passed, unless the account's breaker is tripped; log-only until
                                      `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
@@ -55,13 +57,10 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional, T
 
 
 if TYPE_CHECKING:
-    from ..services.email_review_service import EmailReviewService
+    from ..services.gmail_reconnect_flag import GmailReconnectFlag
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
-    from ..ports.account_repository import AccountRepository
-    from ..ports.dedup_store import DedupStore
     from ..ports.task_claim_store import TaskClaimStore
-    from ..ports.oauth_credentials_port import OAuthCredentialsPort
     from ..services.companion_extraction_service import CompanionExtractionService
     from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
     from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
@@ -70,14 +69,12 @@ if TYPE_CHECKING:
     from ..services.integration_reconnect_service import IntegrationReconnectService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
-from ..domain.connector_spec import ConnectorSpec
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.worker_task import WorkerTask
-from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import NotificationPort
 from ..services.consolidation_service import ConsolidationService
@@ -126,26 +123,21 @@ class WorkerHandler:
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         reminders_service: Optional[RemindersService] = None,
-        email_review: "Optional[EmailReviewService]" = None,
-        account_repo: "Optional[AccountRepository]" = None,
         billing_webhook: Any = None,  # SlackWebhookAdapter
         companion_extraction: "Optional[CompanionExtractionService]" = None,
-        oauth_credentials: "Optional[OAuthCredentialsPort]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
         task_claims: "Optional[TaskClaimStore]" = None,
-        daily_review_marks: "Optional[DedupStore]" = None,
         fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
         fact_review: "Optional[FactReviewService]" = None,
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
         reconnect: "Optional[IntegrationReconnectService]" = None,
-        mail_connector: Optional[ConnectorSpec] = None,
+        gmail_reconnect_flag: "Optional[GmailReconnectFlag]" = None,
         tasks: Mapping[str, WorkerTask] = MappingProxyType({}),
     ) -> None:
         """`tasks`: the runners composition builds outside this handler (`composition/worker_setup.py`), merged over
         the handler's own entries; a task type served by both raises ValueError."""
         self._reconnect = reconnect
-        # the mail kind's spec: the Gmail credential `_flag_gmail_reconnect` flags is the one of its kind
-        self._mail_connector = mail_connector
+        self._gmail_reconnect_flag = gmail_reconnect_flag
         self._fact_lifecycle_sweep = fact_lifecycle_sweep
         self._fact_review = fact_review
         self._interactive_choice = interactive_choice
@@ -153,7 +145,6 @@ class WorkerHandler:
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
         self._running_claims: set[str] = set()
-        self._daily_review_marks = daily_review_marks
         self._slack_worker: Optional[Callable[[dict, dict], Awaitable[Tuple[dict, int]]]] = None
         self._telegram_worker: Optional[Callable[[dict], Awaitable[Tuple[dict, int]]]] = None
         self._agent_worker = agent_worker_handler
@@ -166,11 +157,8 @@ class WorkerHandler:
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
-        self._email_review = email_review
-        self._account_repo = account_repo
         self._billing_webhook = billing_webhook
         self._companion_extraction = companion_extraction
-        self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
         own: dict[str, WorkerTask] = {
             "agent_execution": _payload_task(self._handle_agent_execution),
@@ -187,9 +175,6 @@ class WorkerHandler:
             "renew_all_task_subscriptions": _no_input_task(self._handle_renew_all_task_subscriptions),
             "fire_due_reminders": _no_input_task(self._handle_fire_due_reminders),
             "start_email_indexing": _no_input_task(self._handle_start_email_indexing),
-            "start_daily_email_review": _no_input_task(self._handle_start_daily_email_review),
-            "daily_email_review": _payload_task(self._handle_daily_email_review),
-            "billing_daily_summary": _no_input_task(self._handle_billing_daily_summary),
             "start_drive_sync": _no_input_task(self._handle_start_drive_sync),
             "reconnect_notice_sweep": _no_input_task(self._handle_reconnect_notice_sweep),
             "fact_lifecycle_sweep": _no_input_task(self._handle_fact_lifecycle_sweep),
@@ -397,7 +382,10 @@ class WorkerHandler:
         except OAuthGrantRevokedError as exc:
             # Job is already failed_auth (set by the service). Retrying cannot help.
             logger.warning(f"⚠️ [Worker] Indexing job {job_id[:8]}: Gmail grant revoked: {exc}")
-            await self._flag_gmail_reconnect(job.user_id, job.account_id)
+            if self._gmail_reconnect_flag is None:
+                logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
+            else:
+                await self._gmail_reconnect_flag.flag(job.user_id, job.account_id)
             return {"status": "failed", "error": "gmail_reconnect_required"}, 200
         except PROVIDER_OUTAGE_TYPES as exc:
             # The job is still `running` and the page is not stored: a 503 releases the claim and Cloud Tasks retries.
@@ -626,249 +614,6 @@ class WorkerHandler:
             logger.warning("[Worker] fire_due_reminders: reminders_service not configured")
             return {"error": "reminders_service not configured"}, 501
         return await self._reminders_service.fire_due_reminders()
-
-    # ------------------------------------------------------------------
-    # Daily email review
-    # ------------------------------------------------------------------
-
-    async def _flag_gmail_reconnect(self, user_id: str, account_id: str) -> None:
-        """Google rejected the user's Gmail refresh token: mark the credentials
-        `needs_reconnect` (Cabinet shows it) and tell the user once per breakage.
-
-        Only the transition notifies — the daily review and the auto-index keep
-        hitting the dead token every day until the user reconnects, and that must
-        not become a daily message. A reconnect saves fresh credentials, which
-        clears the flag, so the next breakage notifies again. Best-effort: a
-        failure here is logged, never raised into the task.
-        """
-        if not self._oauth_credentials or self._mail_connector is None:
-            logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
-            return
-        try:
-            keys = await self._oauth_credentials.list_keys(user_id, self._mail_connector.kind)
-            creds = await self._oauth_credentials.get(user_id, keys[0].credential_id) if keys else None
-            if creds is None or creds.needs_reconnect:
-                return
-            # Before the save: a failure here must leave the flag down so the next run retries the notice.
-            await self._agent_factory.ensure_agents_for_user(user_id)
-            creds.needs_reconnect = True
-            if not await self._oauth_credentials.update(creds):
-                logger.info(f"[Worker] Gmail disconnected meanwhile for {user_id[:8]}, nothing to flag")
-                return
-            logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")
-            await self._notification.notify(
-                kind=NotificationKind.DOCUMENT_DELIVERY,
-                user_id=user_id,
-                account_id=account_id,
-                system_alert=(
-                    "Google revoked Alek's access to the user's Gmail (refresh token "
-                    "rejected — usually a Google password change or access removed in "
-                    "the Google account settings). Until the user reconnects, the daily "
-                    "email review and email auto-indexing do not run. Tell them, and "
-                    "that the fix is Cabinet → Gmail → Reconnect."
-                ),
-            )
-        except Exception as exc:
-            logger.error(f"[Worker] Gmail reconnect flag/notice failed for {user_id[:8]}: {exc}", exc_info=True)
-
-    async def _handle_start_daily_email_review(self) -> Tuple[dict, int]:
-        """
-        Fan-out: enqueue daily_email_review once per user per local date. Called hourly;
-        a user is eligible during the first 3 hours from gmail_daily_review_hour and the
-        (user, slot date) mark makes every later tick in the window a no-op.
-        """
-        if not self._email_review or not self._task_dispatch:
-            logger.warning("[Worker] start_daily_email_review: required services not configured")
-            return {"error": "services not configured"}, 501
-
-        now_utc = datetime.now(timezone.utc)
-        eligible = await self._email_review.find_eligible_users(self._user_repo, now_utc)
-
-        marks = self._daily_review_marks
-        if marks is None:
-            logger.warning("[Worker] start_daily_email_review: no daily_review_marks store, duplicates possible")
-
-        started = 0
-        failed = 0
-        for user in eligible:
-            mark_key = f"daily_review:{user.user_id}:{user.slot_date.isoformat()}"
-            if marks is not None:
-                try:
-                    claimed = await marks.try_mark_processed(mark_key)
-                except Exception as exc:
-                    # A double review is worse than a one-hour delay: retried next tick.
-                    logger.error(
-                        f"[Worker] start_daily_email_review: claim failed for {user.user_id[:8]}: {exc}",
-                        exc_info=True,
-                    )
-                    failed += 1
-                    continue
-                if not claimed:
-                    logger.info(
-                        f"[Worker] start_daily_email_review: already started for "
-                        f"{user.user_id[:8]} on {user.slot_date}"
-                    )
-                    continue
-            try:
-                await self._task_dispatch.enqueue_worker_task(
-                    "daily_email_review",
-                    {"user_id": user.user_id, "account_id": user.account_id},
-                    deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
-                    # A queue call that errored after creating the task cannot yield a second task.
-                    dedup_key=mark_key,
-                )
-            except Exception as exc:
-                logger.error(
-                    f"[Worker] start_daily_email_review: enqueue failed for {user.user_id[:8]}: {exc}",
-                    exc_info=True,
-                )
-                failed += 1
-                if marks is not None:
-                    try:
-                        await marks.release(mark_key)
-                    except Exception as rel_exc:
-                        logger.error(
-                            f"[Worker] start_daily_email_review: mark release failed for "
-                            f"{user.user_id[:8]}: {rel_exc}",
-                            exc_info=True,
-                        )
-                continue
-            started += 1
-            logger.info(f"[Worker] start_daily_email_review: enqueued for {user.user_id[:8]}")
-
-        logger.info(f"[Worker] start_daily_email_review complete: started={started} failed={failed}")
-        return {"started": started, "failed": failed}, 200
-
-    async def _handle_daily_email_review(self, payload: dict) -> Tuple[dict, int]:
-        """
-        Fetch last 24h emails for a user and deliver to SmartAgent for analysis.
-        SmartAgent produces an HTML page via create_html_page.
-        """
-        user_id = payload.get("user_id")
-        account_id = payload.get("account_id")
-        if not user_id or not account_id:
-            return {"error": "missing user_id or account_id"}, 400
-
-        if not self._email_review:
-            logger.warning("[Worker] daily_email_review: email_review_service not configured")
-            return {"error": "email_review_service not configured"}, 501
-
-        try:
-            emails = await self._email_review.fetch_review_payload(user_id)
-        except OAuthGrantRevokedError:
-            await self._flag_gmail_reconnect(user_id, account_id)
-            return {"error": "gmail_reconnect_required"}, 200
-        if emails is None:
-            return {"error": "credentials unavailable"}, 200
-        if not emails:
-            logger.info(f"[Worker] daily_email_review: no emails in last 24h for {user_id[:8]}")
-            return {"status": "no_emails"}, 200
-
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        system_alert = self._email_review.build_alert(date_str, len(emails))
-
-        await self._agent_factory.ensure_agents_for_user(user_id)
-        result = await self._notification.notify(
-            kind=NotificationKind.DAILY_DIGEST,
-            user_id=user_id,
-            account_id=account_id,
-            system_alert=system_alert,
-            agent_id_override=f"smart_response_agent_{user_id}",
-            save_history=False,
-            framing_suffix="",
-            thinking_effort="medium",
-            task_complexity="deep_reasoning",
-            email_for_triage=emails,
-            # Any HTML page the agent generates in this run is the email review →
-            # file it under email_review/ (gated, 5-day TTL).
-            storage_class="email_review",
-            # 5xx on failure → Cloud Tasks retries the task; suppress in-process
-            # agent retry so the two retry layers don't multiply.
-            suppress_transient_retry=True,
-            origin_detail="daily_email_review",
-        )
-
-        if is_empty_answer(result):
-            # Final: the per-date mark (set at fan-out) stays, so the review does not re-run today.
-            await self._empty_answer_final("daily_email_review", user_id)
-            return {"status": "empty_answer_final", "emails": len(emails)}, 200
-
-        if not result.delivered:
-            # Returning 5xx allows Cloud Tasks queue-level retry to handle
-            # transient failures (channel unavailable, agent timeout, etc.).
-            logger.warning(
-                f"[Worker] daily_email_review: delivery FAILED for {user_id[:8]} "
-                f"(emails={len(emails)}, agent_status={result.agent_status}, "
-                f"error={result.error})"
-            )
-            return {
-                "error": result.error or "delivery_failed",
-                "agent_status": result.agent_status.value,
-                "emails": len(emails),
-            }, 500
-
-        logger.info(
-            f"[Worker] daily_email_review: delivered {len(emails)} emails to Smart for {user_id[:8]}"
-        )
-        return {"status": "ok", "emails": len(emails)}, 200
-
-    # ------------------------------------------------------------------
-    # Billing daily summary
-    # ------------------------------------------------------------------
-
-    async def _handle_billing_daily_summary(self) -> Tuple[dict, int]:
-        """
-        Send daily billing summary to a Slack channel via incoming webhook.
-        Aggregates all accounts with activity today into one message.
-        Called by Cloud Scheduler at 09:00 Europe/Madrid.
-        Requires billing_webhook (SlackWebhookAdapter) to be wired at startup.
-        """
-        if not self._billing_webhook:
-            logger.warning("[Worker] billing_daily_summary: billing_webhook not configured")
-            return {"error": "billing_webhook not configured"}, 501
-
-        if not self._account_repo:
-            logger.warning("[Worker] billing_daily_summary: account_repo not configured")
-            return {"error": "account_repo not configured"}, 501
-
-        accounts = await self._account_repo.list_all_accounts()
-        from datetime import timedelta
-        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
-        yesterday_str = yesterday.strftime("%Y-%m-%d")
-
-        lines = [f"📊 *Billing Summary — {yesterday_str}*\n"]
-        reported = 0
-
-        for account in accounts:
-            u = account.usage
-            # Resolve "yesterday" against the calendar, not the raw snapshot: an idle
-            # yesterday must report 0, never the last active day's leftover total.
-            prev_tokens, prev_cost = u.usage_for_date(yesterday)
-            if prev_tokens == 0 and prev_cost == 0.0:
-                continue
-
-            owner_id = next(
-                (uid for uid, role in account.iam_policy.items() if role == "owner"),
-                None,
-            )
-            profile = await self._user_repo.get_user(owner_id) if owner_id else None
-            name = profile.display_name if profile else account.account_id[:8]
-
-            lines.append(
-                f"*{name}*\n"
-                f"  Yesterday: {prev_tokens:,} tok / ${prev_cost:.4f}\n"
-                f"  Month:     {u.monthly_tokens:,} tok / ${u.monthly_cost:.4f}\n"
-                f"  Total:     {u.total_tokens:,} tok / ${u.total_cost:.4f}"
-            )
-            reported += 1
-
-        if reported == 0:
-            logger.info("[Worker] billing_daily_summary: no accounts with activity yesterday")
-            return {"reported": 0}, 200
-
-        await self._billing_webhook.post("\n\n".join(lines))
-        logger.info(f"[Worker] billing_daily_summary: reported {reported} accounts")
-        return {"reported": reported}, 200
 
     # ------------------------------------------------------------------
     # Fact lifecycle sweep (the janitor)

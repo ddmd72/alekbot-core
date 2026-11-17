@@ -11,6 +11,7 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.composition.connector_registry import ConnectorRegistry
 from src.composition.worker_setup import build_worker_tasks
 from tests.support.oauth_credentials_store import mirror_get
@@ -213,16 +214,21 @@ def _ordered_worker(**kw):
 
     factory.ensure_agents_for_user.side_effect = _ensure
     video_registry = kw.pop("video_registry", None)
+    email_review = kw.pop("email_review", None)
+    flag = GmailReconnectFlag(
+        oauth_credentials=kw.pop("oauth_credentials", None), mail_connector=kw.pop("mail_connector", None),
+        ensure_agents=factory.ensure_agents_for_user, notification_service=notification)
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
         agent_factory=factory,
-        user_repo=MagicMock(),
+        user_repo=MagicMock(), gmail_reconnect_flag=flag,
         tasks=build_worker_tasks(
             notes_port=None, user_repo=MagicMock(), ensure_agents=factory.ensure_agents_for_user,
             notification_service=notification, alert_sink=None, task_dispatch=kw.get("task_dispatch"),
             video_registry=video_registry, quota_service=None, media_storage=None, link_service=None,
-            short_link_service=None, deep_research_fetch=None, prompt_content_store=None), **kw,
+            short_link_service=None, deep_research_fetch=None, prompt_content_store=None,
+            email_review=email_review, daily_review_marks=None, gmail_reconnect_flag=flag, account_repo=None), **kw,
     )
     return worker, log
 
@@ -306,7 +312,7 @@ class TestGmailReconnectEnsureFailure:
         oauth.update.return_value = True        # the record still exists
         worker, log = _ordered_worker(oauth_credentials=oauth, mail_connector=ConnectorRegistry().get("gmail"))
         worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")
-        await worker._flag_gmail_reconnect("u1", "a1")
+        await worker._gmail_reconnect_flag.flag("u1", "a1")
         oauth.update.assert_not_awaited()
         oauth.save.assert_not_awaited()
         assert creds.needs_reconnect is False
@@ -316,7 +322,7 @@ class TestGmailReconnectEnsureFailure:
             log.append("ensure")
 
         worker._agent_factory.ensure_agents_for_user.side_effect = _ok
-        await worker._flag_gmail_reconnect("u1", "a1")
+        await worker._gmail_reconnect_flag.flag("u1", "a1")
         oauth.update.assert_awaited_once_with(creds)
         oauth.save.assert_not_awaited()          # a flag write never creates a record
         assert creds.needs_reconnect is True

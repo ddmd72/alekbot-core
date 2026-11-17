@@ -16,7 +16,7 @@ from src.domain.notification_kind import NotificationKind
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
 from src.domain.workspace import fire_key
-from src.handlers import worker_handler
+from src.services import daily_email_review_task, start_daily_email_review_task
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.services import reminders_service
 from src.services.email_review_service import EmailReviewService
@@ -100,7 +100,7 @@ async def test_a_daily_review_reaches_smart_with_its_payload_writes_no_history_a
     `suppress_transient_retry` `:1210` → `:397`; `origin_detail` `:1211` → `:400`."""
     world = SeamWorld(monkeypatch, email_review=ScriptedReview(EMAILS))
     await world.set_primary(*PRIMARY)
-    pin_datetime(monkeypatch, worker_handler, T0)   # the alert's date is read from real time (worker_handler.py:1190)
+    pin_datetime(monkeypatch, daily_email_review_task, T0)   # the alert's date is read from real time
     smart = world.agent("smart_response_agent").play(
         Step(says("Your inbox review is ready."), Delegation("create_html_page", "The inbox review")))
 
@@ -217,7 +217,7 @@ async def test_a_daily_review_is_enqueued_named_by_its_mark_with_the_digest_dead
     await oauth.repo.save(creds(USER, "gmail"))
     world.users.put(UserProfile(user_id=USER, account_id=ACCOUNT, config=UserBotConfig(
         timezone="Europe/Berlin", gmail_daily_review=True, gmail_daily_review_hour=9)))
-    pin_datetime(monkeypatch, worker_handler, T0)   # 09:00 in Berlin: inside the review window
+    pin_datetime(monkeypatch, start_daily_email_review_task, T0)   # 09:00 in Berlin: inside the review window
 
     answer = await deliver(world.handler, {"task_type": "start_daily_email_review"})
 
