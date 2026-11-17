@@ -3,7 +3,7 @@
 **Date:** 2026-10-12
 **Status:** Accepted, deferred (User Drive Step 2, Slice 1)
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §7.7; `src/adapters/microsoft/graph_auth.py`,
-`OneDriveAdapter.flag_reconnect`, `WorkerHandler._flag_gmail_reconnect`.
+`OneDriveAdapter.flag_reconnect`, `GmailReconnectFlag.flag` (`src/services/gmail_reconnect_flag.py`).
 
 **Decision:** Every write of an `OAuthCredentials` document stays a plain read-then-save, for the drive, To Do and
 Gmail alike. Three writers race without a precondition: a token refresh (read, POST to the token endpoint, save the

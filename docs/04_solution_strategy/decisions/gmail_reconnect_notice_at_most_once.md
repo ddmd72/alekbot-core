@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-12
 **Status:** Accepted, deferred (found while building User Drive Step 2, Slice 1)
-**Context:** [gmail_grant_revoked_reconnect.md](gmail_grant_revoked_reconnect.md); `WorkerHandler._flag_gmail_reconnect`;
+**Context:** [gmail_grant_revoked_reconnect.md](gmail_grant_revoked_reconnect.md); `GmailReconnectFlag.flag` (`src/services/gmail_reconnect_flag.py`);
 `NotifyResult.sent`; the drive equivalent, RFC Δ6 in [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md).
 
 **Decision:** On a revoked Gmail grant the worker sets `needs_reconnect` first, then sends one notice, and the flag
