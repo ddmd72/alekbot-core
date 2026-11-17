@@ -17,7 +17,7 @@ class _Runner:
 
 def _handler(**kwargs) -> WorkerHandler:
     return WorkerHandler(
-        agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=MagicMock(),
+        agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(),
         consolidation_service=MagicMock(), agent_factory=MagicMock(), user_repo=MagicMock(), **kwargs,
     )
 

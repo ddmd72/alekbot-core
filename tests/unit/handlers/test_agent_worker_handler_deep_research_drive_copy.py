@@ -214,10 +214,11 @@ class TestEveryDeliveryPathCopies:
         agent_factory = AsyncMock()
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-            notification_service=notification, consolidation_service=None,
+            consolidation_service=None,
             agent_factory=agent_factory,
             user_repo=MagicMock(), task_dispatch=queue,
             tasks=build_worker_tasks(
+                email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
                 notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
                 notification_service=notification, alert_sink=None, task_dispatch=queue,
                 video_registry=None, quota_service=None, media_storage=None, link_service=None,

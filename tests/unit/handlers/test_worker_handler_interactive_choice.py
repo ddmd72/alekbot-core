@@ -34,7 +34,6 @@ def _worker(choices=None) -> WorkerHandler:
     return WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=MagicMock(),
-        notification_service=AsyncMock(),
         consolidation_service=None,
         agent_factory=MagicMock(),
         user_repo=MagicMock(),

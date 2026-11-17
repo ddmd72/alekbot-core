@@ -121,12 +121,12 @@ def _make_worker(
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=MagicMock(),
         agent_factory=agent_factory,
         user_repo=MagicMock(),
         task_dispatch=task_dispatch,
         tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
             notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
             notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
             video_registry=video_registry, quota_service=None, media_storage=None, link_service=link_service,
@@ -160,7 +160,6 @@ def worker_handler_factory():
         worker = WorkerHandler(
             agent_worker_handler=MagicMock(),
             email_indexing_service=email_indexing,
-            notification_service=notification,
             consolidation_service=MagicMock(),
             agent_factory=agent_factory,
             user_repo=MagicMock(),
@@ -650,7 +649,6 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=consolidation,
         agent_factory=agent_factory,
         user_repo=user_repo,
@@ -658,7 +656,6 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         task_setup=task_setup,
         task_indexing=task_indexing,
         reminders_service=reminders_service,
-        billing_webhook=billing_webhook,
         tasks={"execute_reminder": ns.execute_reminder},
     )
     return worker, ns

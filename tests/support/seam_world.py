@@ -419,7 +419,7 @@ class SeamWorld:
             task_queue=self.queue, doc_delivery_service=self.doc_delivery, link_service=self.links,
         )
         keywords: Dict[str, Any] = dict(
-            agent_worker_handler=self.agent_worker, email_indexing_service=None, notification_service=self.notifier,
+            agent_worker_handler=self.agent_worker, email_indexing_service=None,
             consolidation_service=None, agent_factory=self.factory,
             user_repo=self.users, task_dispatch=self.dispatch, reminders_service=self.reminders, task_claims=self.claims,
         )

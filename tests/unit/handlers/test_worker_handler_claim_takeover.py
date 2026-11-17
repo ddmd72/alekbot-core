@@ -21,7 +21,6 @@ def _handler(db, holder="proc-1"):
     return WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=MagicMock(),
-        notification_service=AsyncMock(),
         consolidation_service=None,
         agent_factory=AsyncMock(),
         user_repo=MagicMock(),

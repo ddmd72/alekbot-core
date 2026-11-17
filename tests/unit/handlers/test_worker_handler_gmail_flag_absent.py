@@ -13,7 +13,7 @@ async def test_a_revoked_grant_without_a_reconnect_flag_warns_and_ends_200(caplo
     indexing.load_job_for_execution = AsyncMock(return_value=(_job(), _creds(), None))
     indexing.run_indexing_job = AsyncMock(side_effect=OAuthGrantRevokedError("invalid_grant"))
     worker = WorkerHandler(
-        agent_worker_handler=MagicMock(), email_indexing_service=indexing, notification_service=AsyncMock(),
+        agent_worker_handler=MagicMock(), email_indexing_service=indexing,
         consolidation_service=None, agent_factory=AsyncMock(), user_repo=MagicMock(), task_dispatch=AsyncMock())
 
     with caplog.at_level(logging.WARNING):

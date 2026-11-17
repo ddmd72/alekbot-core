@@ -64,7 +64,6 @@ def _handler(claims=None, agent_worker=None, tasks=None):
     return WorkerHandler(
         agent_worker_handler=agent_worker or MagicMock(),
         email_indexing_service=MagicMock(),
-        notification_service=AsyncMock(),
         consolidation_service=None,
         agent_factory=AsyncMock(),
         user_repo=MagicMock(),

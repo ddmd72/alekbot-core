@@ -585,11 +585,11 @@ class TestWorkerHandlerSessionExtraction:
         worker = WorkerHandler(
             agent_worker_handler=agent_worker,
             email_indexing_service=MagicMock(),
-            notification_service=notification,
             consolidation_service=None,
             agent_factory=agent_factory,
             user_repo=MagicMock(),
             tasks=build_worker_tasks(
+                email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
                 notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
                 notification_service=notification, alert_sink=None, task_dispatch=AsyncMock(),
                 video_registry=MagicMock(), quota_service=None, media_storage=None, link_service=None,

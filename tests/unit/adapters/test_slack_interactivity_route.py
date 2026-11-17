@@ -552,7 +552,7 @@ class TestFromSlackToTheQuestion:
         assert resp.status_code == 200
         [(task_type, queued)] = [(t, b) for t, b in review.enqueued if t == INTERACTIVE_CHOICE_TASK]
         worker = WorkerHandler(
-            agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=AsyncMock(),
+            agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(),
             consolidation_service=None, agent_factory=MagicMock(),
             user_repo=MagicMock(),
             interactive_choice=InteractiveChoiceService(Iam(), {"fact_question": service(review)}, review.interactive),

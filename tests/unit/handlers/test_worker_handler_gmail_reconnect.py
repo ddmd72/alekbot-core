@@ -91,7 +91,6 @@ def _worker(*, stored_creds, oauth_configured: bool = True):
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=None,
         agent_factory=agent_factory,
         user_repo=MagicMock(),

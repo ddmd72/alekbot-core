@@ -40,7 +40,6 @@ def _handler(agent_worker=None, agent_factory=None) -> WorkerHandler:
     return WorkerHandler(
         agent_worker_handler=agent_worker or MagicMock(),
         email_indexing_service=MagicMock(),
-        notification_service=MagicMock(),
         consolidation_service=MagicMock(),
         agent_factory=agent_factory or MagicMock(),
         user_repo=MagicMock(),

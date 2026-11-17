@@ -527,7 +527,7 @@ class RedeliveryWorld:
         keywords: Dict[str, Any] = dict(
             agent_worker_handler=AgentWorkerHandler(self.router, notification_service=self.notifier,  # type: ignore[arg-type]
                                                     task_queue=self.dispatch),
-            email_indexing_service=None, notification_service=self.notifier, consolidation_service=None,
+            email_indexing_service=None, consolidation_service=None,
             agent_factory=self.factory, user_repo=self.users,
             task_dispatch=self.dispatch, reminders_service=self.reminders,
             task_claims=self.claims,
