@@ -258,12 +258,13 @@ class ClaudeAdapter(LLMPort):
                               "claude-fable-5-1", "claude-fable-5-2")
 
     # Same-provider model fallback: a brand-new model that flakes on a transient/capacity
-    # error (529/503/5xx) retries once on the previous Sonnet before the request propagates
+    # error (529/503/5xx) retries once on the next model down (Opus 5.5 → Sonnet 5.5, Sonnet → previous Sonnet) before the request propagates
     # to the cross-provider (AgentExecutionContext) failover — keeping quality on Claude
     # during a Sonnet 5 capacity blip. NOT applied to 4xx (a 400 is a real incompatibility we
     # must surface, not mask). The instant rollback kill-switch is the CLAUDE_PERFORMANCE_MODEL
     # env var (see __init__).
     _MODEL_FALLBACK = {
+        "claude-opus-5-5": "claude-sonnet-5-5",
         "claude-sonnet-5-5": "claude-sonnet-5",
         "claude-sonnet-5": "claude-sonnet-4-6",
     }
@@ -550,7 +551,7 @@ class ClaudeAdapter(LLMPort):
                 response = await _attempt(create_kwargs)
             except (LLMServerError, LLMUnavailableError) as e:
                 # Same-provider model fallback: a transient/capacity error on a brand-new
-                # model (Sonnet 5) retries once on the previous Sonnet before the request
+                # model (Sonnet 5) retries once on the next model down (Opus 5.5 → Sonnet 5.5, Sonnet → previous Sonnet) before the request
                 # propagates to the cross-provider failover. 4xx client errors are NOT caught
                 # here — real incompatibilities surface instead of being masked.
                 fallback_model = self._MODEL_FALLBACK.get(model_name)
