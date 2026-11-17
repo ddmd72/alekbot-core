@@ -110,7 +110,7 @@ def _container(monkeypatch, **extra):
         "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
         **extra,
     }
-    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
                             account_repo=AsyncMock(spec=AccountRepository))
 
 

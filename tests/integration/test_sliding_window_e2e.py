@@ -148,7 +148,7 @@ async def test_sliding_window_e2e():
             cipher=AesGcmTestCipher(),
             config=config,
             db_client=db_client,
-            env_config=env_config,
+            env_config=env_config, deploy_topology=build_deploy_topology({}, env_config),
             account_repo=account_repo,
         )
         container.session_store = session_store

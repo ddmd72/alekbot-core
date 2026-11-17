@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.adapters.gcp_kms_cipher_adapter import GcpKmsCipherAdapter
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
@@ -26,7 +27,7 @@ def _build(monkeypatch, **extra: object) -> ServiceContainer:
         "BIGQUERY_PROMPT_DATASET": "observability",
         **extra,
     }
-    return ServiceContainer(config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+    return ServiceContainer(config=config, db_client=MagicMock(), env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
                             account_repo=AsyncMock(spec=AccountRepository))
 
 

@@ -2,6 +2,7 @@
 through (roadmap 14b). Its behaviour is in test_email_classifier_runner.py; this file pins the container's wiring."""
 from unittest.mock import AsyncMock, MagicMock
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.email_classifier_runner import EmailClassifierRunner
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
@@ -25,7 +26,7 @@ def _container(monkeypatch, **extra: object) -> ServiceContainer:
         "BIGQUERY_PROMPT_DATASET": "observability",
     }
     return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(),
-                            env_config=EnvironmentConfig(), account_repo=AsyncMock(spec=AccountRepository), **extra)
+                            env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()), account_repo=AsyncMock(spec=AccountRepository), **extra)
 
 
 def test_the_indexing_service_classifies_through_the_runner_with_the_users_quota_and_content_store(monkeypatch):

@@ -2,6 +2,7 @@
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition import user_agent_factory
 from src.composition.service_container import ServiceContainer
@@ -37,7 +38,7 @@ def _container(monkeypatch, **extra):
     }
     return ServiceContainer(
         cipher=AesGcmTestCipher(),
-        config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+        config=config, db_client=MagicMock(), env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
         account_repo=AsyncMock(spec=AccountRepository),
     )
 
