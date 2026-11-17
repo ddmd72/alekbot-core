@@ -121,28 +121,31 @@ def test_a_form_the_extractor_does_not_understand_fails_loudly(source):
         wt.sites_in_source(source)
 
 
-_DISPATCH = """
-class H:
-    async def _dispatch(self, payload, headers):
-        task_type = payload.get("task_type")
-        if task_type == "one":
-            return 1
-        elif task_type == "two":
-            return 2
-        elif task_type is None and "event" in payload and "session_id" in payload:
-            return 3
-        return 4
+_WRAPPERS = """
+def _payload_task(method):
+    async def task(payload, headers):
+        return await method(payload)
+    return task
+
+
+def _no_input_task(method):
+    async def task(payload, headers):
+        return await method()
+    return task
 """
 
 
-def test_the_dispatch_parser_reads_literals_and_the_slack_branch():
-    assert wt.branches_in_source(_DISPATCH) == {"one", "two", wt.SLACK_EVENT_BRANCH}
+def _registry(entries: str) -> str:
+    return _WRAPPERS + f"\n\nclass H:\n    def __init__(self):\n        self._tasks = {{{entries}}}\n"
 
 
-def test_the_dispatch_parser_reads_a_known_constant_as_its_runtime_value():
-    source = ("class H:\n    async def _dispatch(self, payload, headers):\n        task_type = 1\n"
-              "        if task_type == FACT_REVIEW_TASK:\n            return 1\n")
-    assert wt.branches_in_source(source) == {"fact_review"}
+def test_the_registry_parser_reads_literals_and_the_slack_key():
+    source = _registry('"one": _payload_task(self._one), "two": _no_input_task(self._two), _QUEUED_SLACK_EVENT: self._slack')
+    assert wt.branches_in_source(source) == {"one", "two", wt.SLACK_EVENT_BRANCH}
+
+
+def test_the_registry_parser_reads_a_known_constant_as_its_runtime_value():
+    assert wt.branches_in_source(_registry("FACT_REVIEW_TASK: _payload_task(self._review)")) == {"fact_review"}
 
 
 def test_the_review_task_constant_at_an_enqueue_site_resolves_to_its_runtime_value():
@@ -159,6 +162,47 @@ def test_a_comparison_form_the_dispatch_parser_does_not_know_fails(comparison):
     source = f"class H:\n    async def _dispatch(self, payload, headers):\n        task_type = 1\n        if {comparison}:\n            return 1\n"
     with pytest.raises(wt.ExtractorError):
         wt.branches_in_source(source)
+
+
+@pytest.mark.parametrize("key", ["Kinds.A", 'f"x_{1}"', "make()", "CONST"])
+def test_a_registry_key_form_the_parser_does_not_know_fails(key):
+    with pytest.raises(wt.ExtractorError, match="registry key"):
+        wt.branches_in_source(_registry(f"{key}: _payload_task(self._one)"))
+
+
+@pytest.mark.parametrize("entries", [
+    '"one": self._svc.run',                                   # another object's method
+    '"one": lambda payload, headers: None',                   # not a method of the handler
+    '"one": _payload_task(self._one, 1)',                     # a wrapper call with more than the method
+    '"one": _unknown_task(self._one)',                        # a wrapper the source does not define
+    '"one": _payload_task(self._one), "one": self._two',     # a task type registered twice
+    '**base, "one": self._one',                               # a spread
+])
+def test_a_registry_entry_form_the_parser_does_not_know_fails(entries):
+    with pytest.raises(wt.ExtractorError):
+        wt.branches_in_source(_registry(entries))
+
+
+def test_a_source_without_one_registry_literal_fails():
+    with pytest.raises(wt.ExtractorError, match="self._tasks"):
+        wt.branches_in_source("class H:\n    def __init__(self):\n        self._tasks = dict(one=1)\n")
+
+
+_SWAPPED = "\n\ndef _swapped_task(method):\n    async def task(payload, headers):\n        return await method(headers, payload)\n"
+
+
+def test_the_payload_position_is_read_from_the_wrapper_body():
+    source = _registry('"a": _payload_task(self._a), "b": _no_input_task(self._b), "c": self._c, '
+                       '"d": _swapped_task(self._d)') + _SWAPPED
+    assert wt.registry_in_source(source) == {"a": wt.Entry("_a", 0), "b": wt.Entry("_b", None), "c": wt.Entry("_c", 0),
+                                             "d": wt.Entry("_d", 1)}
+
+
+def test_a_wrapper_that_does_not_call_its_method_once_with_its_parameters_fails():
+    source = _registry('"a": _payload_task(self._a)').replace("return await method(payload)",
+                                                              "return await method(payload.get('k'))")
+    with pytest.raises(wt.ExtractorError, match="_payload_task"):
+        wt.registry_in_source(source)
 
 
 def test_a_scheduler_script_form_that_is_not_http_fails(tmp_path):

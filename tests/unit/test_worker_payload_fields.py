@@ -292,49 +292,96 @@ def test_the_comparison_names_a_read_key_a_producer_does_not_write():
                                                                 ("t", "context.user_id"): {"b.py:2"}}
 
 
-def test_a_dispatch_branch_that_calls_no_handler_fails_loudly():
-    source = textwrap.dedent("""
-        class WorkerHandler:
-            async def _dispatch(self, payload, headers):
-                task_type = payload.get("task_type")
-                if task_type == "known":
-                    return await self._handle_known(payload)
-                elif task_type == "orphan":
-                    return {}, 200
-                return {}, 400
+_HANDLER = """
+def _payload_task(method):
+    async def task(payload, headers):
+        return await method(payload)
+    return task
 
-            async def _handle_known(self, payload):
-                return {}, 200
+
+def _no_input_task(method):
+    async def task(payload, headers):
+        return await method()
+    return task
+
+
+class WorkerHandler:
+    def __init__(self):
+        self._tasks = {{{entries}}}
+
+    async def _dispatch(self, payload, headers):
+        task_type = payload.get("task_type")
+        if task_type is None and "event" in payload and "session_id" in payload:
+            task = self._tasks[_QUEUED_SLACK_EVENT]
+        else:
+            task = self._tasks.get(task_type)
+        return await task(payload, headers)
+"""
+
+
+def _handler_source(entries: str, methods: str) -> str:
+    return _HANDLER.format(entries=entries) + textwrap.indent(textwrap.dedent(methods), " " * 4)
+
+
+def test_a_registry_entry_whose_method_does_not_exist_fails_loudly():
+    source = _handler_source('"known": _payload_task(self._handle_known), "orphan": _no_input_task(self._handle_orphan)', """
+        async def _handle_known(self, payload):
+            return {}, 200
     """)
-    with pytest.raises(ExtractorError, match="orphan branch calls no handler"):
+    with pytest.raises(ExtractorError, match="_handle_orphan found 0 times"):
+        wpf.consumers(source=source, delegates={})
+
+
+def test_a_method_registered_without_the_payload_that_takes_parameters_fails_loudly():
+    source = _handler_source('"b": _no_input_task(self._handle_b)', """
+        async def _handle_b(self, payload):
+            return {}, 200
+    """)
+    with pytest.raises(ExtractorError, match="registered without the payload"):
         wpf.consumers(source=source, delegates={})
 
 
 def test_a_dispatch_preamble_read_counts_for_every_branch():
-    source = textwrap.dedent("""
-        class WorkerHandler:
-            async def _dispatch(self, payload, headers):
-                task_type = payload.get("task_type")
-                if task_type == "a":
-                    return await self._handle_a(payload)
-                elif task_type == "b":
-                    return await self._handle_b()
+    source = _handler_source('"a": _payload_task(self._handle_a), "b": _no_input_task(self._handle_b)', """
+        async def _handle_a(self, payload):
+            if not payload.get("x"):
                 return {}, 400
+            job = payload.get("x")
+            if not job:
+                return {}, 400
+            return {}, 200
 
-            async def _handle_a(self, payload):
-                if not payload.get("x"):
-                    return {}, 400
-                job = payload.get("x")
-                if not job:
-                    return {}, 400
-                return {}, 200
-
-            async def _handle_b(self):
-                return {}, 200
+        async def _handle_b(self):
+            return {}, 200
     """)
     found = wpf.consumers(source=source, delegates={})
     assert found["a"].read == {"task_type", "x"} and found["a"].required == {"x"}
     assert found["b"].read == {"task_type"} and found["b"].required == set()
+
+
+def test_the_slack_selecting_test_counts_for_the_queued_slack_event_only():
+    source = _handler_source('"b": _no_input_task(self._handle_b), _QUEUED_SLACK_EVENT: self._handle_slack', """
+        async def _handle_b(self):
+            return {}, 200
+
+        async def _handle_slack(self, payload, headers):
+            if not payload.get("session_id"):
+                return {}, 400
+            return {}, 200
+    """)
+    found = wpf.consumers(source=source, delegates={})
+    assert found[SLACK_EVENT_BRANCH].read == {"task_type", "event", "session_id"}
+    assert found[SLACK_EVENT_BRANCH].functions == ("src/handlers/worker_handler.py::WorkerHandler._handle_slack",)
+    assert found["b"].read == {"task_type"}
+
+
+def test_a_dispatch_without_one_slack_selecting_branch_fails_loudly():
+    source = _handler_source('_QUEUED_SLACK_EVENT: self._handle_slack', """
+        async def _handle_slack(self, payload, headers):
+            return {}, 200
+    """).replace("self._tasks[_QUEUED_SLACK_EVENT]", "self._tasks.get(None)")
+    with pytest.raises(ExtractorError, match="select _QUEUED_SLACK_EVENT"):
+        wpf.consumers(source=source, delegates={})
 
 
 def test_the_comparison_names_a_missing_required_key_and_an_unread_key():
