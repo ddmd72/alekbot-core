@@ -116,7 +116,7 @@ async def test_an_error_other_than_a_conflict_fails_the_run_loudly_after_the_ear
     world = JanitorWorld()
     first = await world.seed_due("a-first")
     broken = await world.seed_due("b-broken")
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     assert await cached_texts(world) == {"a-first", "b-broken"}
     world.repo.fail_on = {broken}
     world.docs[first]["expires_at"] = PAST - timedelta(days=1)             # the fake orders a range query by this field: first goes first
@@ -149,7 +149,7 @@ async def test_the_cache_is_refreshed_only_for_accounts_that_staled_something():
     kept_a = await world.seed("kept-a")
     kept_b = await world.seed("kept-b", account=OTHER)
     for account in (ACC, OTHER):
-        await world.repo.refresh_biographical_context_cache(account)
+        await world.bio.refresh_cache(account)
     world.docs[kept_b]["text"] = "kept-b (edited behind the cache)"          # a refresh of OTHER would show this
 
     await world.service.sweep()
@@ -162,7 +162,7 @@ async def test_the_cache_is_refreshed_only_for_accounts_that_staled_something():
 async def test_log_only_never_touches_the_facts_or_the_cache():
     world = JanitorWorld(dry_run=True)
     await world.seed_due("due")
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     facts_before = {k: dict(v) for k, v in world.docs.items()}
     cache_before = world.store.db.collection("eval_user_context").docs[ACC]
 

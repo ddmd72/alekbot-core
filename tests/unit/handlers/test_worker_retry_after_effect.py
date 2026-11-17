@@ -35,6 +35,7 @@ from src.ports.video_generation_port import VideoPollResult
 from src.services import reminders_service
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.provider_registry import ProviderRegistry
@@ -428,11 +429,16 @@ class Rig:
         self.service = FactReviewService(
             repo=world.repo, review_store=world.review_store, counters=world.counters, lease=world.lease,
             coordinator=NoModel(), agent_factory=Agents(), user_repo=users, account_repo=accounts,
-            texts=texts, owner_zones=zones, notification_state=world.notification_state,
-            channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
-            task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
+            texts=texts, owner_zones=zones,
+            session_store=world.session_store,
+            task_queue=world.queue, answer_service=answers, alert_sink=world.sink,
             run_timeout_s=600, clock=world.clock,
             fact_updates=world.store.adapter, cabinet_url="https://cabinet.example/cabinet?tab=memory",
+            owner_channel=FactReviewOwnerChannel(
+                notification_state=world.notification_state, channel_bindings=world.channel_bindings,
+                notifications=world.notifier, interactive=world.interactive,
+            ),
+            bio_cache=world.bio,
         )
 
     async def run(self, mode: str = "daily") -> Dict[str, Any]:

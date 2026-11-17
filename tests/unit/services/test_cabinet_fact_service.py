@@ -31,10 +31,9 @@ class CountingRepo(FirestoreFactRepository):
 @pytest.fixture
 def world():
     store, _, _ = make_fact_world()
-    bio = BiographicalContextService(store.repo)
-    repo = CountingRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
+    repo = CountingRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.refreshed = []
-    bio.set_repository(repo)
+    bio = BiographicalContextService(repo)
     return store, repo, CabinetFactService(repo, bio_cache=bio)
 
 

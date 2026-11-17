@@ -15,9 +15,11 @@ from src.domain.fact_profile_fingerprint import (
 )
 from src.domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
 from src.domain.fact_profile_run import FactProfileRun
+from src.domain.fact_profile_run_limits import FactProfileRunLimits
 from src.domain.memory_write_lease import LEASE_MARGIN
 from src.domain.place_lookup import PlaceRow
 from src.domain.place_names import PlaceNames
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.embedding_service import EmbeddingService
 from src.ports.fact_profiler_port import FactProfilerPort
 from src.services.fact_profile_service import FactProfileService
@@ -104,10 +106,10 @@ class Embedder(EmbeddingService):
         return [embed(t) for t in texts]
 
 
-class CountingRepo(FirestoreFactRepository):
+class CountingRepo(FirestoreFactRepository, BiographicalCacheRefresher):
     refreshes: List[str]
 
-    async def refresh_biographical_context_cache(self, owner_id, facts_limit=None, principles_limit=None):
+    async def refresh_cache(self, owner_id, facts_limit=None, principles_limit=None):
         self.refreshes.append(owner_id)
 
 
@@ -125,9 +127,10 @@ class World:
         self.atlas_calls = 0
         kwargs: Dict[str, Any] = dict(max_per_run=20, call_budget_s=BUDGET)
         kwargs.update(over)
+        limits = FactProfileRunLimits(kwargs.pop("max_per_run"), kwargs.pop("call_budget_s"), concurrency=4)
         self.service = FactProfileService(
             repo=self.repo, profiler=self.profiler, embeddings=self.embedder, atlas=self._atlas,
-            concurrency=4, clock=self.clock, **kwargs)
+            limits=limits, clock=self.clock, bio_cache=self.repo, **kwargs)
 
     async def _atlas(self):
         self.atlas_calls += 1

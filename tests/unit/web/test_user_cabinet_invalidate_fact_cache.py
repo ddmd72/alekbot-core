@@ -22,11 +22,8 @@ _CONTEXT = "eval_user_context"
 
 
 def _repo(store):
-    service = BiographicalContextService(None)
-    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
-                                   biographical_context_service=service)
-    service.set_repository(repo)
-    return repo, service
+    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder)
+    return repo, BiographicalContextService(repo)
 
 
 def _app(fact_repo, bio):
@@ -47,10 +44,10 @@ def _cached_texts(store):
     return [f["text"] for f in store.db.collection(_CONTEXT).docs[_ACCOUNT_ID]["biographical_facts"]]
 
 
-async def _seed(store, repo):
+async def _seed(store, bio):
     for i, text in enumerate(("keep me", "drop me")):
         await store.repo.add_fact(make_fact(text, account=_ACCOUNT_ID, domain=FactDomain.BIOGRAPHICAL, age_days=i))
-    await repo.refresh_biographical_context_cache(_ACCOUNT_ID)
+    await bio.refresh_cache(_ACCOUNT_ID)
     assert sorted(_cached_texts(store)) == ["drop me", "keep me"]
 
 
@@ -62,7 +59,7 @@ async def _invalidate(app, fact_id):
 async def test_invalidated_fact_leaves_the_cached_baseline_immediately():
     store = FactStore()
     repo, bio = _repo(store)
-    await _seed(store, repo)
+    await _seed(store, bio)
 
     resp = await _invalidate(_app(repo, bio), "f-drop me")
 
@@ -76,7 +73,7 @@ async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog
     # the method with one that breaks the contract: the invalidation stands, the error is logged, the old cache stays.
     store = FactStore()
     repo, bio = _repo(store)
-    await _seed(store, repo)
+    await _seed(store, bio)
     store.db.collection(FACTS).fail = RuntimeError("facts read down")
 
     with caplog.at_level(logging.ERROR):
@@ -91,7 +88,7 @@ async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog
 async def test_failed_invalidate_does_not_touch_the_cache():
     store = FactStore()
     repo, bio = _repo(store)
-    await _seed(store, repo)
+    await _seed(store, bio)
 
     resp = await _invalidate(_app(repo, bio), "no-such-fact")
 

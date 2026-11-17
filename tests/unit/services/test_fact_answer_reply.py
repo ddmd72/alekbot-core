@@ -26,6 +26,7 @@ from src.domain.user import UserBotConfig, UserProfile
 from src.ports.fact_update_port import FactUpdatePort
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_owner_channel import FactReviewOwnerChannel
 from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
@@ -536,11 +537,15 @@ def review_service(world: ReviewWorld, answers: FactAnswerService) -> FactReview
         repo=world.repo, review_store=world.review_store, counters=world.counters, lease=world.lease,
         coordinator=NoModel(), agent_factory=Agents(), user_repo=users, account_repo=accounts,
         texts=texts_of(world), owner_zones=OwnerTimezoneResolver(accounts, users),
-        notification_state=world.notification_state, channel_bindings=world.channel_bindings,
-        notifications=world.notifier, session_store=world.session_store, task_queue=world.queue,
-        answer_service=answers, interactive=world.interactive, alert_sink=world.sink, run_timeout_s=600,
+        session_store=world.session_store, task_queue=world.queue,
+        answer_service=answers, alert_sink=world.sink, run_timeout_s=600,
         clock=world.clock, fact_updates=RecordingFactUpdates(world.store.adapter),
         cabinet_url="https://cabinet.example/cabinet?tab=memory",
+        owner_channel=FactReviewOwnerChannel(
+            notification_state=world.notification_state, channel_bindings=world.channel_bindings,
+            notifications=world.notifier, interactive=world.interactive,
+        ),
+        bio_cache=world.bio,
     )
 
 

@@ -226,7 +226,7 @@ async def test_log_only_with_a_tripped_breaker_defers_nothing_and_counts_every_f
 async def test_the_cache_of_a_capped_account_is_refreshed_and_shows_only_the_deferred_facts():
     world = JanitorWorld()
     await seed_ordered(world, 52)
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
 
     await world.service.sweep()
 

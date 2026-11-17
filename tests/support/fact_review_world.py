@@ -297,7 +297,7 @@ class ReviewWorld:
         if due is None:
             raise AssertionError(f"fact {fact_id!r} is not due at {self.now.isoformat()}")
         await self.repo.stale_due_fact(due, stale_fields(due, self.now))
-        await self.repo.refresh_biographical_context_cache(due.account_id)
+        await self.bio.refresh_cache(due.account_id)
 
     async def seed_stale(self, text: str, **over: Any) -> str:
         """A fact the janitor staled at `now`: seeded due (`expires_at` defaults to two days ago), then `stale`d."""

@@ -67,7 +67,7 @@ async def test_the_cache_of_an_account_in_the_run_that_staled_nothing_is_left_al
     await world.seed_due("gone")                                            # ACC: staled
     await world.seed("already-stale", state="stale", stale_since=PAST, account=OTHER)
     held = await world.seed_due("held-back", account=OTHER)                 # OTHER: in the run, tripped, stales nothing
-    await world.repo.refresh_biographical_context_cache(OTHER)
+    await world.bio.refresh_cache(OTHER)
     world.docs[held]["text"] = "edited behind the cache"                    # a refresh of OTHER would show this
 
     result = await world.service.sweep()
@@ -79,7 +79,7 @@ async def test_the_cache_of_an_account_in_the_run_that_staled_nothing_is_left_al
 async def test_a_conflicting_only_fact_does_not_refresh_its_accounts_cache():
     world = JanitorWorld()
     contested = await world.seed_due("contested")
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     world.docs[contested]["text"] = "edited behind the cache"
     world.store.interfere(contested, {"last_updated": NOW})
 
@@ -202,7 +202,7 @@ async def test_a_failing_stale_write_alerts_once_naming_the_account_and_the_fact
     world = JanitorWorld()
     first = await world.seed_due("a-first", expires_at=PAST - timedelta(days=1))
     broken = await world.seed_due("b-broken")
-    await world.repo.refresh_biographical_context_cache(ACC)
+    await world.bio.refresh_cache(ACC)
     world.repo.fail_on = {broken}
 
     with pytest.raises(RuntimeError, match="store unavailable"):

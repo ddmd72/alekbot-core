@@ -79,7 +79,7 @@ def memory_dir(tmp_path, monkeypatch):
 
 _LIVE_WRITES = frozenset({
     "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "stale_due_fact",
-    "refresh_biographical_context_cache",
+    "save_biographical_context_cache",
 })
 assert _LIVE_WRITES <= FactRepository.__abstractmethods__
 
@@ -686,7 +686,7 @@ async def test_install_puts_the_snapshot_overlay_on_the_prompt_builder_and_the_s
     assert (await service.token_repo.get(TokenId("CONSOLIDATION_TOOLS"))).content == snapshot_body("CONSOLIDATION_TOOLS")
     with pytest.raises(RuntimeError):
         kit.install(agent)
-    await agent._repo.refresh_biographical_context_cache(ACC)
+    await agent._bio_cache.refresh_cache(ACC)
     assert kit.repo.writes == [{"kind": "refresh_biographical_context_cache"}]
 
 

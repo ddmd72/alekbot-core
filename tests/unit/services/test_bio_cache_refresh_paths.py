@@ -31,6 +31,7 @@ from src.domain.email_memory_candidate import EMAIL_CANDIDATES_HEADER
 from src.domain.entities import ContextPriority, ExpiryKind, FactDomain
 from src.domain.fact_answer_result import AnswerResult
 from src.domain.fact_review_answer_kind import AnswerKind
+from src.domain.fact_profile_run_limits import FactProfileRunLimits
 from src.domain.fact_review_task import FactReviewTask, ReviewItem, encode_review_task
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.memory_write_lease import LEASE_MARGIN
@@ -104,10 +105,9 @@ def account_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextServ
     """`make_fact_world` with the production wiring of the context service (`ServiceContainer`): the configuration
     service and an account store, so a refresh without explicit limits keeps the account's own."""
     store = FactStore(indexes=INDEXES_FILE)
-    bio = BiographicalContextService(store.repo, config_service=ConfigurationService(), account_repo=AccountLimits())
-    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
+    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder)
     repo.fail_on = set()
-    bio.set_repository(repo)
+    bio = BiographicalContextService(repo, config_service=ConfigurationService(), account_repo=AccountLimits())
     return store, repo, bio
 
 
@@ -406,7 +406,7 @@ class TestFactLifecycleSweepService:
 
 class TestFactProfileService:
     async def test_a_profile_run_that_writes_rebuilds_the_cache_with_the_accounts_limits(self):
-        store, repo, _ = account_fact_world()
+        store, repo, bio = account_fact_world()
         await seed_background(repo)
         await repo.add_fact(make_fact(LIVES, **subject()))
         plant(store.db)
@@ -415,8 +415,9 @@ class TestFactProfileService:
         async def atlas() -> Tuple[PlaceNames, str]:
             return PlaceNames([ROME]), ATLAS_DIGEST
 
-        profiles = FactProfileService(repo=repo, profiler=Profiler(), embeddings=Embedder(), atlas=atlas, concurrency=4,
-                                      clock=clock, max_per_run=20, call_budget_s=BUDGET)
+        profiles = FactProfileService(repo=repo, profiler=Profiler(), embeddings=Embedder(), atlas=atlas, clock=clock,
+                                      limits=FactProfileRunLimits(max_per_run=20, call_budget_s=BUDGET, concurrency=4),
+                                      bio_cache=bio)
 
         run = await profiles.run(ACC, clock.now + timedelta(seconds=3600) + LEASE_MARGIN)
 

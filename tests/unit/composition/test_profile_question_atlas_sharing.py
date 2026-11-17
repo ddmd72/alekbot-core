@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service
 
-CONTAINER = SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(),
+CONTAINER = SimpleNamespace(repository=object(), fact_profiler=object(), embedding_service=object(), biographical_context_service=object(),
                             confirmed_people=object(), profile_answers=object())
 
 
