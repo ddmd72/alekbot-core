@@ -389,6 +389,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         config=config,
         db_client=db_client,
         env_config=env_config,
+        deploy_topology=topology,
         account_repo=account_repo,
         overflow_callback=overflow_callback,
         threshold_resolver=companion_window_resolver.resolve,
