@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from quart import Quart
 
+from src.composition.worker_setup import build_worker_tasks
 from src.domain.agent import AgentResponse, DeliveryItem
 from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY
 from src.handlers.agent_worker_handler import AgentWorkerHandler
@@ -209,12 +210,19 @@ class TestEveryDeliveryPathCopies:
         task = webhook_queue.enqueue_worker_task.await_args.kwargs
 
         queue = AsyncMock()
+        notification = AsyncMock()
+        agent_factory = AsyncMock()
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-            notification_service=AsyncMock(), consolidation_service=None,
-            agent_factory=AsyncMock(),
-            user_repo=MagicMock(), task_dispatch=queue, media_storage=None,
-            deep_research_fetch=AsyncMock(return_value={"output_text": "findings", "model": "m"}),
+            notification_service=notification, consolidation_service=None,
+            agent_factory=agent_factory,
+            user_repo=MagicMock(), task_dispatch=queue,
+            tasks=build_worker_tasks(
+                notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+                notification_service=notification, alert_sink=None, task_dispatch=queue,
+                video_registry=None, quota_service=None, media_storage=None, link_service=None,
+                short_link_service=None, prompt_content_store=None,
+                deep_research_fetch=AsyncMock(return_value={"output_text": "findings", "model": "m"})),
         )
         _, status = await worker._dispatch({"task_type": task["task_type"], **task["payload"]}, {})
         assert status == 200
