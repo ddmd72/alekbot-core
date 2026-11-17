@@ -14,5 +14,4 @@ src/services/drive_connection_service.py::DriveConnectionService.set_searched_by
 src/services/drive_connection_service.py::DriveConnectionService.set_transcribe  # domain operation, not a dependency setter
 src/services/drive_connection_service.py::DriveConnectionService.set_write_folder  # domain operation, not a dependency setter
 src/services/email_indexing_service.py::EmailIndexingService.attach_card_step  # composition-root refactor (assessment D3)
-src/services/file_conversion_service.py::FileConversionService.attach_documents  # composition-root refactor (assessment D3)
 src/services/language_preference_service.py::LanguagePreferenceService.set_preference  # domain operation, not a dependency setter
