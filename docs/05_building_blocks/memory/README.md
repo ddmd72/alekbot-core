@@ -112,7 +112,7 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | `FactQuestionTexts` | the one resolver of the question's language, its labels and its message | `src/services/fact_question_texts.py` |
 | Interactive messages | a platform-neutral message with options (`InteractiveMessage`), a router that picks the platform's adapter (Slack buttons, plain text with digits on Telegram), and `InteractiveChoiceService` for a click | `src/domain/interactive_message.py`, `src/infrastructure/interactive_message_router.py`, `src/adapters/slack/interactive_message_adapter.py`, `src/adapters/plain_text_interactive_message_adapter.py`, `src/services/interactive_choice_service.py` |
 | `CabinetFactService` | the Cabinet's invalidate (§5.2) | `src/services/cabinet_fact_service.py` |
-| `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
+| `FactWriteService` | builds a `FactEntity` with its three vectors; the fact management adapter stores it | `src/services/fact_write_service.py` |
 | `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document (its write, `save_biographical_context_cache`, and its read) | `src/adapters/firestore_repo.py` |
 | `BiographicalContextService` | chooses the baseline and rebuilds its cache (`refresh_cache`, port `BiographicalCacheRefresher`) | `src/services/biographical_context_service.py`, `src/ports/biographical_cache_port.py` |
 | `FactSearchService` | the scored fact search: candidate lists, the pure scorer, phrase fusion (`FACT_PROFILE_RFC` §5.3) | `src/services/fact_search_service.py` |
@@ -141,7 +141,7 @@ like any other message.
 | `account_id`, `created_by_user_id` | tenant (every query filters `account_id`); author |
 | `text` | the fact, one self-contained sentence; the only thing most readers show |
 | `vector`, `tags_vector`, `metadata_vector` | the three embeddings (§2.6) |
-| `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:153-157`); an update keeps both (§2.4) |
+| `tags` | keywords; `mindset` makes the fact a principle (§4.1); `consolidated` is added to every fact, `anchor` to principles (`fact_write_service.py:53-56`); an update keeps both (§2.4) |
 | `type` | `state`, `event`, `principle`, `system`, `alert` (`entities.py:7-12`); the consolidator does not set it, so it defaults to `event` (`fact_management_adapter.py:207`) |
 | `metadata` | structured values (numbers, dates) |
 | `domain`, `temporal_class`, `state`, `context_priority` | the four axes (§2.2) |
@@ -218,8 +218,7 @@ the live one (a lineage whose last document was merged away has none). Two kinds
   `tags: null`, `tags: []` and an empty `content` are refused: an empty field never destroys data
   (`fact_update.py:81-98`).
 - **Everything is checked before anything is embedded or written**: enums, dates, tags, content, `expiry`, on create,
-  update and merge (`fact_update.py`, `new_fact_attributes.py:45-103`, the expiry rules of §2.7). One bad fact fails a whole `add_facts_batch` call (the
-  legacy v2 path) before any embedding. A fact cannot be created or merged into `state=superseded` or `state=stale` (stale is the janitor's, §2.7).
+  update and merge (`fact_update.py`, `new_fact_attributes.py:45-103`, the expiry rules of §2.7). A fact cannot be created or merged into `state=superseded` or `state=stale` (stale is the janitor's, §2.7).
 - **Vectors follow content.** All three are re-embedded when the three embedding texts change (§2.6), before
   anything is written (`_complete_version`, `fact_management_adapter.py:327-345`); an embedding failure fails the call
   with nothing stored. A `temporal_class`-only version copies the old vectors. After a conflict the retry reuses an
@@ -280,7 +279,7 @@ the source; a pointer that leads into another account is "cannot be resolved" an
 
 `domain/fact_embedding.py:9-17` defines the texts, shared by creation and re-embedding: `text`; `tags` joined (system
 tags `consolidated`/`anchor` left out; the text when no tag is left); `metadata` as JSON (the text when empty). All
-three are embedded with `RETRIEVAL_DOCUMENT` in one batch call (`fact_write_service.py:181-187`), model
+three are embedded with `RETRIEVAL_DOCUMENT` in one batch call (`fact_write_service.py:80-86`), model
 `gemini-embedding-2` at 768 dimensions (`src/adapters/gemini_embedding_adapter.py`). Searches embed queries with
 `RETRIEVAL_QUERY`.
 
@@ -293,7 +292,7 @@ text, tags, metadata or temporal class) need an `expiry` inside `fact_attributes
 again within N days; `{kind: none}` history, stable or permanent. The string `"none"` stands for the last; `days` takes a whole
 number from 1 to 36 500 (an integer, a whole float or a string of digits); a `date` year must be 1900–9998; `null` is
 refused with an explanation. A top-level `expiry` next to `fact_attributes` / `updates` is moved into place (a nested one wins).
-The model's `ttl_days` is dropped at every parse boundary, on the legacy v2 path too. The kinds table that decides lives in
+The model's `ttl_days` is dropped at every parse boundary. The kinds table that decides lives in
 `CONSOLIDATION_TAXONOMY` (planned event / validity → `date`; current activity, changing value, noise → `horizon`; past event,
 stable, directive, principle → `none`); the `temporal_class` line is only a default when no row applies.
 
@@ -391,8 +390,7 @@ newest 20 kept, with code-built reasons only (`model`, `replaced by <id>`, `vers
 predecessor's trail plus its own entry; a merge or version close appends to each closed document. The actor labels are the
 pass labels plus `cabinet`, `janitor` and `migration`. Nothing renders the trail to a model.
 
-**Known limits.** The legacy v2 path writes no expiry decision and parses `reported_date` without the zone (the stamp it
-shows cannot be read back; a naive time is UTC). A resent `reported_date` is read in UTC when it has no offset, so it can be
+**Known limits.** A resent `reported_date` is read in UTC when it has no offset, so it can be
 off by the owner's offset; the clamp bounds it.
 
 ---
@@ -524,7 +522,9 @@ baseline cache (`get_biographical_context_cached`, the whole cache: facts, princ
 logged and the run goes on without it, `consolidation_agent.py:246-254`) and dispatches
 `consolidate_full` → Stage 1, 2a, 2b (`_execute_deliberate_process_v3`, `:747-844`), then Stage 3 (`_handle_consolidate_full`, `:638-712`). The
 agent also accepts `consolidate` (Stage 1–2b only), `consolidate_cluster` and `consolidate_email` (`can_handle`, `:205-209`); the
-queue and `$consolidate` always send `consolidate_full`.
+queue and `$consolidate` always send `consolidate_full`. Stage 1 is always the deliberate process: an agent built without a
+fact management port refuses `consolidate` with one ERROR line (`no fact management port is wired`) and a failed response,
+writes nothing; the factory always wires the port (`user_agent_factory.py`).
 
 - **Model:** agent type `consolidation`, default provider Claude, no cross-provider fallback (`"fallback": None` in `src/services/agent_context_builder.py`; owner ruling 2026-10-23, P9 D8: a memory write never moves to another model on an outage; the declared Gemini fallback was dead before that, the agent never stored its execution context)
   at tier PERFORMANCE (`src/domain/user.py:82`), which on Claude is `claude-opus-5-5` unless the live env var
@@ -560,8 +560,7 @@ once per candidate** → analyse → decide → execute → verify → report (`
 
 **Deduplication is the model's decision.** Code does not reject a near-duplicate on this path; the prompt makes the
 model search first and DISCARD (no tool call) what is already known. The number-aware 0.96 dedup of
-`add_fact_if_unique` (`firestore_repo.py:622-713`) runs only on the legacy v2 path (`prompt_version="v2"`), which is
-not live.
+`add_fact_if_unique` (`firestore_repo.py`) has no production caller.
 
 **Rules that decide what is stored** (prompt tokens, mirrored in `prompts_snapshot/tokens/system/`):
 - `Domain_Scope` (POLICIES): never process ASSISTANT statements as facts unless the USER confirms with new
@@ -1475,7 +1474,7 @@ close-out (an abandoned-refusal alert, the expiry errors added to the account's 
 | `search_existing_facts` fails (embedding, Firestore) | the adapter catches everything and returns `[]` (`fact_management_adapter.py:136-138`), which the model reads as "no match" | a duplicate of an existing fact may be created | — | no |
 | a tool raises past the adapter | `{"error": …}` returned to the model (`consolidation_agent.py:1307-1312`); rarely reached, since create, update and merge catch their own errors and return `status: failed` | nothing of that call | — | the model may retry in a later turn |
 | `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:159-167`) | none | — | the model may retry |
-| bad value (an enum such as `domain`, `state`, `temporal_class`, `context_priority` (`HISTORICAL` is read as `ARCHIVAL`); a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge, `state=stale` on a create, merge or update; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,372-374`; `new_fact_attributes.py:45-103`, `fact_update.py:32-71`). One bad fact fails a whole legacy `add_facts_batch` call | none for that call | — | the model may retry |
+| bad value (an enum such as `domain`, `state`, `temporal_class`, `context_priority` (`HISTORICAL` is read as `ARCHIVAL`); a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge, `state=stale` on a create, merge or update; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,372-374`; `new_fact_attributes.py:45-103`, `fact_update.py:32-71`) | none for that call | — | the model may retry |
 | `create_fact`, `merge_facts` or a version-making `update_fact` with a missing, `null` or malformed `expiry` | `status: failed`, `refused: "expiry"`, the text names where `expiry` goes (`fact_attributes` / `updates`) and the three shapes, and ends "Nothing was written. Resend this call with a valid expiry before retiring any fact it replaces." Checked before any embedding or write (§2.7). A malformed merge leaves its sources current | none | — | the model resends; a refusal never answered is an abandoned refusal (🚨, §3.11) |
 | an `expiry` born due (past or today's `date`; on Stage 1 or email a horizon ending within a day) | as above plus `born_due: true`; on Stage 1 and email the text offers discard, rewrite as history (`none`), or a short or longer horizon, and it is counted as an expiry error, never as abandoned; on a cleanup pass a past date reads "do not drop the fact… rewrite as history or give a future date" (no discard) and an unanswered one is abandoned (🚨, §3.11) | none | — | the model resends, rewrites or (conversation passes only) discards |
 | a due horizon on a cleanup pass (Stage 2a, Stage 2b, backstop, cluster) | **not** refused: written with `expires_at` = now + 2 days and a `note` ("counted from … this horizon had already passed; the fact goes to review on …") | written | — | — |
@@ -1828,7 +1827,7 @@ repository, a recording counters store and the five edited prompt tokens read fr
 document, email mark or lifecycle counter is written. No account usage counter is written either (the benches never open a
 billing scope), so the spend appears only in the kit's ledger `scripts/memory/s3_dry_run_spend.json` (stops every run at $30
 cumulative; it prices the requested model only). What does leave the Mac: the model and embedding calls, `prompt_content` rows
-(account id empty) only when `DEBUG_PROMPTS=true` with a prompt dataset set, and no Logfire span. It needs `CONSOLIDATION__PROMPT_VERSION` v3 and runs one
+(account id empty) only when `DEBUG_PROMPTS=true` with a prompt dataset set, and no Logfire span. It runs one
 bench at a time; bench 1 reads a fresh window only, so the late-batch case (a horizon said days ago) is not exercised. The
 report lists the served tokens, one row per write and the three gates; the commands, costs and gates are in
 the rollout notes (ops), step M.
@@ -2017,7 +2016,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | `src/composition/user_agent_factory.py` | builds the consolidator, the per-user `SearchEnrichmentService`, MemorySearch |
 | `src/services/agent_context_builder.py`, `src/domain/user.py` | provider and tier per agent |
 | `src/ports/fact_management_port.py`, `src/adapters/fact_management_adapter.py` | consolidator tools |
-| `src/ports/fact_write_port.py`, `src/services/fact_write_service.py` | fact creation with vectors (`build_facts` embeds and builds, `add_facts_batch` also stores) |
+| `src/ports/fact_write_port.py`, `src/services/fact_write_service.py` | fact creation with vectors (`build_facts` embeds and builds; the fact management adapter stores) |
 | `src/ports/repository.py`, `src/adapters/firestore_repo.py` | every fact query, the cache document, Cabinet invalidate; `resolve_current`, `write_superseding`, `update_fact_fields`, `get_lineage` |
 | `src/services/biographical_context_service.py`, `src/services/configuration_service.py` | baseline selection and limits |
 | `src/services/prompt_builder.py`, `src/services/prompt_v3/{prompt_assembly_service,biographical_formatter,context_formatter}.py` | channel split, rendering of baseline, directives, conversation |

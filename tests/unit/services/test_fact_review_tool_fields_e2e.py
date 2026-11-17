@@ -138,7 +138,7 @@ def rig(world: ReviewWorld, script: ReviewPass) -> Rig:
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id=consolidation_agent_id(USER), agent_type="consolidation"),
         execution_context=execution_context(script.llm, "consolidation"),
-        repository=world.repo, embedding_service=world.store.embedder, fact_write_service=world.store.write,
+        repository=world.repo, embedding_service=world.store.embedder,
         fact_management_port=world.store.adapter, prompt_builder=StubPromptBuilder(prompt="REVIEW SYSTEM PROMPT"),
         alert_sink=world.sink, lifecycle_counters=world.counters, fact_updates=world.store.adapter,
         bio_cache=world.bio,

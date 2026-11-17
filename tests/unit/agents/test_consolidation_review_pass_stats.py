@@ -65,7 +65,6 @@ def _agent(world, responses):
         ),
         repository=repo,
         embedding_service=MagicMock(),
-        fact_write_service=MagicMock(),
         fact_management_port=world.store.adapter,
         fact_updates=world.store.adapter,
         alert_sink=world.sink,

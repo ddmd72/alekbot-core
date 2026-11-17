@@ -526,8 +526,8 @@ moderate similarity the new fact is kept rather than dropped.
 | --- | --- | --- |
 | **Search results** (`enrich_context`) | `dedup_threshold` 0.98 | the reader gets clean results |
 | **Consolidation search** (`skip_semantic_dedup=True`) | off | the agent must see every candidate to decide a MERGE |
-| **Consolidation writes** (`skip_deduplication=True`) | off | the model decides duplicates after searching |
-| **Non-live v2 write path** (`add_fact_if_unique`) | 0.96 / 0.98 | rejects a duplicate before it is stored |
+| **Consolidation writes** (`build_facts`, then the adapter stores) | off | the model decides duplicates after searching |
+| `add_fact_if_unique` (no production caller) | 0.96 / 0.98 | rejects a duplicate before it is stored |
 
 **Why consolidation turns it off:** the consolidator searches before it writes, and it needs the scattered,
 overlapping facts side by side to merge them into one. A filtered result would hide exactly the facts it is meant to

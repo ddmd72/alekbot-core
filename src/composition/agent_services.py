@@ -17,7 +17,6 @@ from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
-from ..ports.fact_write_port import FactWritePort
 from ..ports.file_storage_port import FileStoragePort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.prompt_content_store import PromptContentStore
@@ -52,7 +51,6 @@ class AgentServices:
     biographical_context_service: BiographicalCacheRefresher
     context_builder: AgentContextBuilder
     assembly_service: Optional[PromptAssemblyService]
-    fact_write_service: FactWritePort
     fact_management_adapter_factory: Callable[[SearchEnrichmentService], FactManagementAdapter]
     email_search_service: EmailSearchService
     email_card_search: EmailCardSearchService

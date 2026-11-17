@@ -371,9 +371,10 @@ async def test_the_kit_session_installs_the_kit_reports_and_releases_the_ledger_
 async def test_the_kit_session_refuses_an_agent_the_kit_cannot_run_on_and_still_frees_the_ledger(store, tmp_path, monkeypatch):
     monkeypatch.setattr(kit_module, "SPEND_LEDGER", tmp_path / "spend.json")
     agent = bench_agent(store, answered())
-    agent.prompt_version = "v2"
+    # Reviewer edit (drop v2): the kit's v2 refusal went with v2; an agent without a fact-management port is still refused.
+    agent._fact_management = None
 
-    with pytest.raises(ValueError, match="v3"):
+    with pytest.raises(ValueError, match="fact-management port"):
         async with support.kit_session(handles_for(agent), SimpleNamespace(budget_usd=30.0, timezone=MADRID), USER, ACC, "probe"):
             pytest.fail("the body must not run")
     DryRunKit(ledger_path=tmp_path / "spend.json").close()

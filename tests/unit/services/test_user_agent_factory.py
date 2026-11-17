@@ -31,7 +31,6 @@ def mock_dependencies():
         "biographical_context_service": Mock(),
         "context_builder": Mock(),
         "assembly_service": None,
-        "fact_write_service": Mock(),
         # Reviewer edit (S4 T6b review M3): the factory passes this adapter as the consolidation agent's model port and
         # typed port, and the agent refuses a typed port that is not a FactUpdatePort; a mock of the production class is both.
         "fact_management_adapter_factory": Mock(return_value=Mock(spec=FactManagementAdapter)),

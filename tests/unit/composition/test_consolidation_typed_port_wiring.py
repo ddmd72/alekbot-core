@@ -43,7 +43,6 @@ def _kwargs(**over):
         ),
         repository=MagicMock(),
         embedding_service=MagicMock(),
-        fact_write_service=MagicMock(),
         fact_management_port=MagicMock(),
         bio_cache=AsyncMock(),
     )

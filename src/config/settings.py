@@ -170,10 +170,6 @@ def load_settings():
     # Add consolidation settings based on environment
     consolidation = ConsolidationSettings()
 
-    # Load overrides from env
-    if os.getenv("CONSOLIDATION__PROMPT_VERSION"):
-        consolidation.prompt_version = os.getenv("CONSOLIDATION__PROMPT_VERSION")
-
     if env_config.is_production:
         consolidation.threshold = 50
         consolidation.batch_size = 30

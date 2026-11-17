@@ -79,7 +79,6 @@ def test_firestore_repo_tests_include_the_kits_reached_through_tests_support():
         "tests/unit/adapters/test_fact_repository_kit.py",
         "tests/unit/adapters/test_fact_repository_versions_kit.py",
         "tests/unit/adapters/test_fact_management_kit.py",
-        "tests/unit/adapters/test_fact_write_kit.py",
     } <= found
 
 

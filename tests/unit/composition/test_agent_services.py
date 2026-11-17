@@ -18,7 +18,6 @@ _CONTAINER_ATTRIBUTE = {
     "biographical_context_service": "biographical_context_service",
     "context_builder": "context_builder",
     "assembly_service": "assembly_service",
-    "fact_write_service": "fact_write_service",
     "email_search_service": "email_search_service",
     "email_card_search": "email_card_search",
     "indexed_email_repo": "indexed_email_repo",
