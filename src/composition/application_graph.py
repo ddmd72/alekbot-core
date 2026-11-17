@@ -75,6 +75,7 @@ from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.worker_setup import build_worker_tasks
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
@@ -1004,17 +1005,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
     # from running twice; a claim whose attempt died is taken over by the retry.
     # TTL 3600s is garbage collection and the done-window, not the liveness rule.
+    _gmail_reconnect_flag = GmailReconnectFlag(
+        oauth_credentials=oauth_credentials_port, mail_connector=container.connectors.get(GMAIL),
+        ensure_agents=agent_factory.ensure_agents_for_user, notification_service=notification_service)
     worker_handler = WorkerHandler(
         task_claims=FirestoreTaskClaimStore(
             db_client=db_client,
             collection_name=env_config.worker_task_dedup_collection,
             ttl_seconds=3600,
-        ),
-        # One review per user per local date; 48 h outlives the 3 h window and the date edge.
-        daily_review_marks=FirestoreDedupStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=172800,
         ),
         agent_worker_handler=agent_worker_handler,
         email_indexing_service=email_indexing_service,
@@ -1029,13 +1027,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_setup=task_setup_service,
         task_indexing=container.task_indexing,
         reminders_service=_reminders_service,
-        email_review=container.email_review_service,
-        account_repo=account_repo,
         billing_webhook=_alert_webhook,
         link_service=file_link_service,
         short_link_service=short_link_service,
         companion_extraction=companion_extraction_service,
-        oauth_credentials=oauth_credentials_port,
         drive_sync_scheduler=_drive_sync_scheduler,
         deep_research_fetch=_openai_dr_fetch,
         prompt_content_store=container.prompt_content_store,
@@ -1043,10 +1038,18 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_review=_fact_review_service,
         interactive_choice=_interactive_choice,
         reconnect=_reconnect_service,
-        mail_connector=container.connectors.get(GMAIL),
+        gmail_reconnect_flag=_gmail_reconnect_flag,
         tasks=build_worker_tasks(
             notes_port=container.notes_adapter, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
-            notification_service=notification_service, alert_sink=_alert_webhook),
+            notification_service=notification_service, alert_sink=_alert_webhook,
+            email_review=container.email_review_service, task_dispatch=_task_dispatch_service,
+            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
+            daily_review_marks=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=172800,
+            ),
+            gmail_reconnect_flag=_gmail_reconnect_flag, account_repo=account_repo),
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
