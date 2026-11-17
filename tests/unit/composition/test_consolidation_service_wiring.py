@@ -136,8 +136,14 @@ def test_the_graph_builds_the_one_service_with_the_lease_the_queue_and_the_run_t
 
 @pytest.mark.parametrize("factory", ["SlackAdapterFactory", "TelegramAdapterFactory"])
 def test_the_graph_passes_the_service_to_both_adapter_factories(factory):
+    """The service rides in the one `ChatServices` the graph builds, and each factory receives that same bundle."""
     tree = ast.parse(_GRAPH.read_text(encoding="utf-8"))
+
+    (bundle,) = _calls(tree, "ChatServices")
+    (bundle_assign,) = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and n.value is bundle]
+    (bundle_name,) = [ast.unparse(t) for t in bundle_assign.targets]
+    assert {k.arg: ast.unparse(k.value) for k in bundle.keywords}["consolidation_service"] == "_consolidation_service"
 
     (call,) = [c for c in _calls(tree, "create_adapter") if getattr(c.func.value, "id", None) == factory]
 
-    assert {k.arg: ast.unparse(k.value) for k in call.keywords}["consolidation_service"] == "_consolidation_service"
+    assert {k.arg: ast.unparse(k.value) for k in call.keywords}["chat"] == bundle_name
