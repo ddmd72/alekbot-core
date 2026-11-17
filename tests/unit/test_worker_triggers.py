@@ -1,7 +1,8 @@
 """Every `/worker` task type is sent by something and registered in `WorkerHandler`'s task registry (P9 design §5c).
 
 Triggers: the Cloud Scheduler jobs the deploy creates and the enqueue sites in `src/`. Branches: the keys of the
-`self._tasks` literal `_dispatch` looks task types up in. A trigger with no branch answers 400 `unknown task_type` in
+`self._tasks` registry `_dispatch` looks task types up in: the handler's own entries and the runners `build_worker_tasks`
+registers. A trigger with no branch answers 400 `unknown task_type` in
 production; a branch with no trigger is dead or manual-only, and is named in `MANUAL_ONLY` with a reason (empty today).
 """
 import json
@@ -210,3 +211,91 @@ def test_a_scheduler_script_form_that_is_not_http_fails(tmp_path):
     script.write_text("gcloud scheduler jobs create pubsub nope --topic=t\n")
     with pytest.raises(wt.ExtractorError):
         wt.scheduler_jobs(script)
+
+
+# ----------------------------------------------------------------------------- the composed runners
+
+def _merged_registry(own: str, merge: str = "**own, **tasks", params: str = "tasks") -> str:
+    return _WRAPPERS + (f"\n\nclass H:\n    def __init__(self, {params}):\n        own = {{{own}}}\n"
+                        f"        self._tasks = {{{merge}}}\n")
+
+
+def test_a_registry_merged_from_an_own_literal_and_a_parameter_reads_the_own_entries_and_composes():
+    own, composes = wt.registry_parts(_merged_registry('"one": _payload_task(self._one), _QUEUED_SLACK_EVENT: self._slack'))
+    assert own == {"one": wt.Entry("_one", 0), wt.SLACK_EVENT_BRANCH: wt.Entry("_slack", 0)}
+    assert composes is True
+    assert wt.registry_parts(_registry('"one": self._one')) == ({"one": wt.Entry("_one", 0)}, False)
+
+
+@pytest.mark.parametrize("merge, params", [
+    ("**own, **other", "tasks"),             # a name neither a parameter nor a local literal
+    ("**own, **tasks, **more", "tasks, more"),  # two composed parameters
+    ("**own, **own2", "tasks"),              # a local bound to something other than one dict literal
+])
+def test_a_registry_spread_the_parser_does_not_know_fails(merge, params):
+    source = _merged_registry('"one": self._one', merge, params).replace("        own = ", "        own2 = make()\n        own = ")
+    with pytest.raises(wt.ExtractorError):
+        wt.registry_parts(source)
+
+
+def test_an_own_literal_that_spreads_again_fails():
+    source = _merged_registry('**tasks, "one": self._one')
+    with pytest.raises(wt.ExtractorError, match="spread"):
+        wt.registry_parts(source)
+
+
+_SETUP = '''
+from ..services.disabled_task import DisabledTask
+from ..services.execute_reminder_task import ExecuteReminderTask
+
+
+def build_worker_tasks(*, dep):
+    tasks = {}
+    if dep is None:
+        tasks["a_task"] = DisabledTask("off", 501, {})
+    else:
+        tasks["a_task"] = ExecuteReminderTask(dep=dep)
+    tasks[FACT_REVIEW_TASK] = ExecuteReminderTask(dep=dep)
+    return tasks
+'''
+_SERVICES = wt.ROOT / "src" / "services"
+
+
+def test_the_runner_reader_names_every_class_a_task_type_may_run():
+    assert wt.runners_in_source(_SETUP) == {
+        "a_task": (wt.Runner(_SERVICES / "disabled_task.py", "DisabledTask"),
+                   wt.Runner(_SERVICES / "execute_reminder_task.py", "ExecuteReminderTask")),
+        "fact_review": (wt.Runner(_SERVICES / "execute_reminder_task.py", "ExecuteReminderTask"),),
+    }
+
+
+def test_a_dict_literal_binding_is_read_too():
+    source = _SETUP.replace("    tasks = {}\n", '    tasks = {"b_task": DisabledTask("off", 501, {})}\n')
+    assert set(wt.runners_in_source(source)) == {"a_task", "b_task", "fact_review"}
+
+
+@pytest.mark.parametrize("old, new", [
+    ('tasks["a_task"] = DisabledTask', "tasks[name] = DisabledTask"),            # a key it cannot resolve
+    ('tasks["a_task"] = DisabledTask("off", 501, {})', 'tasks["a_task"] = make()'),   # a runner not built by an imported class
+    ('tasks["a_task"] = DisabledTask', 'tasks["a_task"] = Unknown'),             # a class the module does not import
+    ("    return tasks\n", "    tasks.update(more)\n    return tasks\n"),          # a fill the reader does not see
+    ("    return tasks\n", "    register(tasks)\n    return tasks\n"),             # the registry handed to a call
+    ("    return tasks\n", "    tasks = {}\n    return tasks\n"),                  # bound twice
+    ("    return tasks\n", "    return dict(tasks)\n"),                           # returns no local name
+    ("    tasks = {}\n", "    tasks = make()\n"),                                # bound to something other than a dict literal
+    ("from ..services.disabled_task", "from ..services.no_such_module"),          # an import that is no file
+    ("def build_worker_tasks", "def build_other_tasks"),                         # no builder
+])
+def test_a_runner_form_the_reader_does_not_know_fails(old, new):
+    assert old in _SETUP
+    with pytest.raises(wt.ExtractorError):
+        wt.runners_in_source(_SETUP.replace(old, new))
+
+
+def test_the_real_registry_composes_and_its_composed_task_types_are_dispatch_branches():
+    own, composes = wt.registry_parts(wt.WORKER_HANDLER.read_text())
+    composed = wt.composed_runners()
+    assert composes and composed, "the handler merges composed runners and build_worker_tasks registers some"
+    assert set(composed) <= wt.dispatch_branches()
+    assert not set(composed) & set(own)
+    assert set(own) - {wt.SLACK_EVENT_BRANCH} | set(composed) == wt.dispatch_branches()

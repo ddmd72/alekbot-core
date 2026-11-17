@@ -390,3 +390,64 @@ def test_the_comparison_names_a_missing_required_key_and_an_unread_key():
     bad = wpf.Producer("t", "b.py:2", frozenset({"task_type", "extra"}), frozenset())
     assert wpf.missing_required([good, bad], {"t": consumer}) == {("t", "b.py:2", "user_id")}
     assert wpf.unread_written([good, bad], {"t": consumer}) == {("t", "extra"): {"b.py:2"}}
+
+
+_RUNNER = """
+class Runner:
+    async def __call__(self, payload, headers):
+        user = payload.get("user_id")
+        if not user or payload["note_id"] is None:
+            return {}, 400
+        return await self._run(payload)
+
+    async def _run(self, payload):
+        return {"due": payload.get("due_at")}, 200
+
+
+class Off:
+    async def __call__(self, payload, headers):
+        return {}, 501
+"""
+
+
+def test_a_composed_runner_is_read_through_its_call_and_every_alternative_class(tmp_path):
+    runner_file = tmp_path / "runner.py"
+    runner_file.write_text(_RUNNER)
+    source = _handler_source('"b": _no_input_task(self._handle_b), **tasks', """
+        async def _handle_b(self):
+            return {}, 200
+    """).replace("def __init__(self):", "def __init__(self, tasks):")
+    runners = {"composed": (wt.Runner(runner_file, "Off"), wt.Runner(runner_file, "Runner"))}
+
+    found = wpf.consumers(source=source, delegates={}, runners=runners)
+
+    assert set(found) == {"b", "composed"}
+    assert found["composed"].read == {"task_type", "note_id", "user_id", "due_at"}
+    assert found["composed"].required == {"note_id", "user_id"}
+    assert [f.rpartition("::")[2] for f in found["composed"].functions] == ["Off.__call__", "Runner.__call__", "Runner._run"]
+    assert found["b"].read == {"task_type"}
+
+
+def test_a_composed_runner_the_handler_also_serves_fails_loudly(tmp_path):
+    runner_file = tmp_path / "runner.py"
+    runner_file.write_text(_RUNNER)
+    source = _handler_source('"b": _no_input_task(self._handle_b), **tasks', """
+        async def _handle_b(self):
+            return {}, 200
+    """).replace("def __init__(self):", "def __init__(self, tasks):")
+    with pytest.raises(ExtractorError, match="both the handler's own and a composed runner"):
+        wpf.consumers(source=source, delegates={}, runners={"b": (wt.Runner(runner_file, "Runner"),)})
+
+
+def test_a_registry_without_a_composed_spread_ignores_the_runners(tmp_path):
+    source = _handler_source('"b": _no_input_task(self._handle_b)', """
+        async def _handle_b(self):
+            return {}, 200
+    """)
+    assert set(wpf.consumers(source=source, delegates={}, runners={"x": (wt.Runner(tmp_path / "none.py", "X"),)})) == {"b"}
+
+
+def test_the_reminder_consumer_is_read_from_the_composed_runner(consumers):
+    reminder = consumers["execute_reminder"]
+    assert reminder.required == {"note_id", "user_id", "due_at"}
+    assert any(f.endswith("ExecuteReminderTask.__call__") for f in reminder.functions)

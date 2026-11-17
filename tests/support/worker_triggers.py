@@ -1,5 +1,9 @@
 """Every `/worker` task type something sends, and every task type `WorkerHandler` registers (P9 design §5c).
 
+`WorkerHandler`'s registry is its own entries (a dict literal in `__init__`) merged with the runners composition passes
+in as `tasks=`; those are the entries `build_worker_tasks` (`src/composition/worker_setup.py`) registers, read from its
+source with the class each one runs (`composed_runners`).
+
 Triggers come from two places the deploy owns: the Cloud Scheduler jobs `scripts/infrastructure/cloudbuild_scheduler_jobs.sh`
 creates, and the enqueue sites in `src/` and the root `*_main.py` (an `enqueue_worker_task(...)` call, or a dict literal
 keyed `"task_type"`). The extractor reads the sources and fails on a form it does not understand: a task type it cannot
@@ -12,12 +16,14 @@ import importlib
 import json
 import shlex
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Set
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEDULER_SCRIPT = ROOT / "scripts" / "infrastructure" / "cloudbuild_scheduler_jobs.sh"
 LEGACY_SCHEDULER_SCRIPT = "setup-daily-email-review-scheduler.sh"
 WORKER_HANDLER = ROOT / "src" / "handlers" / "worker_handler.py"
+WORKER_SETUP = ROOT / "src" / "composition" / "worker_setup.py"
+COMPOSED_BUILDER = "build_worker_tasks"
 
 # Sent to another service's /worker; the main service registers no task for it.
 OTHER_SERVICE: Dict[str, str] = {"drive_sync": "indexer_main.py /worker, delivered by the drive queue"}
@@ -260,30 +266,178 @@ def _registry_value(node: ast.AST, tree: ast.Module) -> Entry:
     raise ExtractorError(f"worker_handler.py:{node.lineno}: unrecognised registry value {ast.unparse(node)!r}")
 
 
-def registry_in_source(source: str) -> Dict[str, Entry]:
-    """`branch -> Entry` of the one `self._tasks = {...}` literal in the `__init__` of `source`."""
+def _init_locals(init: ast.FunctionDef) -> Dict[str, List[ast.AST]]:
+    """`name -> the values assigned to it` for every plain local name of `__init__`."""
+    found: Dict[str, List[ast.AST]] = {}
+    for n in ast.walk(init):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            found.setdefault(n.targets[0].id, []).append(n.value)
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+            found.setdefault(n.target.id, []).append(n.value)
+    return found
+
+
+def registry_parts(source: str) -> Tuple[Dict[str, Entry], bool]:
+    """The handler's own entries (`branch -> Entry`) of the one `self._tasks = {...}` in the `__init__` of `source`, and
+    whether that registry also spreads in a parameter of `__init__` (the runners composition passes in).
+
+    The literal may spread (`**name`) one local dict literal of `__init__` (own entries, no spread of its own) and one
+    parameter of `__init__`; any other spread is a form the extractor does not understand."""
     tree = ast.parse(source)
     inits = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "__init__"]
-    literals = [n.value for init in inits for n in ast.walk(init) if isinstance(n, (ast.Assign, ast.AnnAssign))
-                and ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target) == "self._tasks"]
-    if len(literals) != 1 or not isinstance(literals[0], ast.Dict):
+    found = [(init, n.value) for init in inits for n in ast.walk(init) if isinstance(n, (ast.Assign, ast.AnnAssign))
+             and ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target) == "self._tasks"]
+    if len(found) != 1 or not isinstance(found[0][1], ast.Dict):
         raise ExtractorError("worker_handler.py: no single `self._tasks = {...}` literal in __init__")
+    init, literal = found[0]
+    assert isinstance(literal, ast.Dict)
+    params = _function_params(init)
+    local = _init_locals(init)
     entries: Dict[str, Entry] = {}
-    for key, value in zip(literals[0].keys, literals[0].values):
-        if key is None:
-            raise ExtractorError(f"worker_handler.py:{value.lineno}: a ** spread in the task registry")
-        name = _registry_key(key)
-        if name in entries:
-            raise ExtractorError(f"worker_handler.py:{key.lineno}: the task type {name!r} is registered twice")
-        entries[name] = _registry_value(value, tree)
-    return entries
+    composed: List[str] = []
+
+    def add(node: ast.Dict, spreads: bool) -> None:
+        for key, value in zip(node.keys, node.values):
+            if key is None:
+                if spreads and isinstance(value, ast.Name) and value.id in params:
+                    composed.append(value.id)
+                    continue
+                values = local.get(value.id, []) if spreads and isinstance(value, ast.Name) else []
+                if len(values) == 1 and isinstance(values[0], ast.Dict):
+                    add(values[0], spreads=False)
+                    continue
+                raise ExtractorError(f"worker_handler.py:{value.lineno}: a ** spread of {ast.unparse(value)!r} "
+                                     "in the task registry")
+            name = _registry_key(key)
+            if name in entries:
+                raise ExtractorError(f"worker_handler.py:{key.lineno}: the task type {name!r} is registered twice")
+            entries[name] = _registry_value(value, tree)
+
+    add(literal, spreads=True)
+    if len(composed) > 1:
+        raise ExtractorError(f"worker_handler.py: the task registry spreads {len(composed)} parameters {composed}")
+    return entries, bool(composed)
+
+
+def registry_in_source(source: str) -> Dict[str, Entry]:
+    """`branch -> Entry` of the handler's own entries of its `self._tasks` registry in `source` (`registry_parts`)."""
+    return registry_parts(source)[0]
+
+
+# ----------------------------------------------------------------------------- the composed runners
+
+class Runner(NamedTuple):
+    path: Path   # the module that defines the runner class
+    cls: str     # the class; the task runs its `__call__(payload, headers)`
+
+
+def _imported_paths(tree: ast.Module, path: Path) -> Dict[str, Path]:
+    """`name -> module file` of every `from <module> import <name>` at the top of `tree` (relative or `src.` absolute)."""
+    found: Dict[str, Path] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.level:
+            base = path.parent
+            for _ in range(node.level - 1):
+                base = base.parent
+        else:
+            base = ROOT
+        module = base.joinpath(*node.module.split(".")).with_suffix(".py")
+        for alias in node.names:
+            found[alias.asname or alias.name] = module
+    return found
+
+
+def _runner(node: ast.AST, imports: Dict[str, Path], where: str) -> Runner:
+    # ImportedClass(...)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in imports:
+        module = imports[node.func.id]
+        if not module.is_file():
+            raise ExtractorError(f"{where}:{node.lineno}: {node.func.id} is imported from {module}, which is no file")
+        return Runner(module, node.func.id)
+    raise ExtractorError(f"{where}:{getattr(node, 'lineno', '?')}: unrecognised runner {ast.unparse(node)!r}")
+
+
+def runners_in_source(source: str, path: Path = WORKER_SETUP) -> Dict[str, Tuple[Runner, ...]]:
+    """`task type -> every runner class` the one `build_worker_tasks` of `source` may register for it.
+
+    Forms read: the function returns one local name; that name is bound once (to a dict literal, possibly empty) and
+    filled by `name["<type>"] = ImportedClass(...)`. Any other use of the name (`update`, `setdefault`, a call that gets
+    it, a second binding) is a form the extractor does not understand."""
+    tree = ast.parse(source)
+    where = _rel(path)
+    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == COMPOSED_BUILDER]
+    if len(funcs) != 1:
+        raise ExtractorError(f"{where}: {len(funcs)} module functions {COMPOSED_BUILDER}, expected one")
+    func = funcs[0]
+    imports = _imported_paths(tree, path)
+    returns = [n for n in ast.walk(func) if isinstance(n, ast.Return)]
+    if len(returns) != 1 or not isinstance(returns[0].value, ast.Name):
+        raise ExtractorError(f"{where}: {COMPOSED_BUILDER} does not return one local name")
+    name = returns[0].value.id
+    allowed = {id(returns[0].value)}
+    found: Dict[str, List[Runner]] = {}
+    bindings = 0
+
+    def record(key: ast.AST, value: ast.AST) -> None:
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            task_type = key.value
+        elif isinstance(key, ast.Name) and key.id in CONSTANTS:
+            task_type = _constant_value(key.id)
+        else:
+            raise ExtractorError(f"{where}:{key.lineno}: unrecognised task type key {ast.unparse(key)!r}")
+        runner = _runner(value, imports, where)
+        if runner not in found.setdefault(task_type, []):
+            found[task_type].append(runner)
+
+    for node in ast.walk(func):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        value = getattr(node, "value", None)
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id == name:
+                bindings += 1
+                allowed.add(id(target))
+                if not isinstance(value, ast.Dict):
+                    raise ExtractorError(f"{where}:{node.lineno}: {name} is bound to {ast.unparse(value) if value else None!r}")
+                for key, item in zip(value.keys, value.values):
+                    if key is None:
+                        raise ExtractorError(f"{where}:{node.lineno}: a ** spread in {name}")
+                    record(key, item)
+            elif (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == name
+                  and value is not None):
+                allowed.add(id(target.value))
+                record(target.slice, value)
+    if bindings != 1:
+        raise ExtractorError(f"{where}: {name} is bound {bindings} times in {COMPOSED_BUILDER}, expected once")
+    other = [n for n in ast.walk(func) if isinstance(n, ast.Name) and n.id == name and id(n) not in allowed]
+    if other:
+        raise ExtractorError(f"{where}:{other[0].lineno}: {name} is used in a form the extractor does not read")
+    return {task_type: tuple(runners) for task_type, runners in found.items()}
+
+
+def composed_runners() -> Dict[str, Tuple[Runner, ...]]:
+    """`task type -> runner classes` of the runners composition passes `WorkerHandler` (`build_worker_tasks`)."""
+    return runners_in_source(WORKER_SETUP.read_text())
+
+
+def _rel(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 def branches_in_source(source: str) -> Set[str]:
-    """The task types of the task registry in `source` (the queued Slack event included)."""
+    """The task types of the handler's own registry entries in `source` (the queued Slack event included)."""
     return set(registry_in_source(source))
 
 
 def dispatch_branches() -> Set[str]:
-    """The task types `WorkerHandler` dispatches (the queued Slack event is not one)."""
-    return branches_in_source(WORKER_HANDLER.read_text()) - {SLACK_EVENT_BRANCH}
+    """The task types `WorkerHandler` dispatches: its own entries and the composed runners (the queued Slack event is not
+    one)."""
+    own, composes = registry_parts(WORKER_HANDLER.read_text())
+    composed = set(composed_runners()) if composes else set()
+    if composed & set(own):
+        raise ExtractorError(f"task types both the handler and {COMPOSED_BUILDER} serve: {sorted(composed & set(own))}")
+    return (set(own) | composed) - {SLACK_EVENT_BRANCH}

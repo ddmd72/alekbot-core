@@ -3,8 +3,9 @@ consumer payload fields that do not match").
 
 Producers are the sites `worker_triggers.enqueue_sites()` finds (each re-parsed at its `path:line`), the Cloud Scheduler
 bodies (`worker_triggers.scheduler_task_types()`) and `GcpTaskQueue.enqueue_slack_event`, the producer of the queued Slack
-event. Consumers are the entries of `WorkerHandler`'s task registry (`worker_triggers.registry_in_source`): the statements
-of `_dispatch` before its chain (read by every task), the test that selects the queued Slack event, the registered method,
+event. Consumers are the entries of `WorkerHandler`'s task registry (`worker_triggers.registry_parts`): the statements
+of `_dispatch` before its chain (read by every task), the test that selects the queued Slack event, the registered method
+(for a runner composition passes in, the `__call__` of every class `worker_triggers.composed_runners()` names for it),
 and every function the payload is handed to (a `self.<method>(payload)` of the same class, one of `DELEGATES`, or a model
 of `MODELS`). Both sides fail loudly (`ExtractorError`, naming `path:line`) on a form they do
 not understand, so a new payload shape is a test failure, not a silent pass.
@@ -523,19 +524,31 @@ def _slack_event_test(chain: List[ast.If], where: str) -> ast.expr:
 
 
 def consumers(source_path: Path = WORKER_HANDLER, delegates: Optional[Dict[str, Tuple[Fn, str]]] = None,
-              source: Optional[str] = None) -> Dict[str, Consumer]:
+              source: Optional[str] = None,
+              runners: Optional[Dict[str, Tuple[wt.Runner, ...]]] = None) -> Dict[str, Consumer]:
     """`branch -> Consumer` for every entry of `WorkerHandler`'s task registry (the queued Slack event included): the
     statements of `_dispatch` before its chain (run for every task), the test that selects the queued Slack event (its
-    entry only), and the registered method with every function the payload reaches from it. `source` replaces the
-    file's text (the self-tests); `delegates` replaces `DELEGATES`."""
+    entry only), and the registered method with every function the payload reaches from it; for a composed runner, the
+    `__call__` of each class that may serve it (payload first, the `WorkerTask` protocol). `source` replaces the
+    file's text and `runners` the composed runners (the self-tests); `delegates` replaces `DELEGATES`."""
     delegates = DELEGATES if delegates is None else delegates
     text = source if source is not None else source_path.read_text()
     tree = ast.parse(text)
     where = _rel(source_path)
     func, preamble, chain = _dispatch_chain(tree, where)
     param = _param_at(func, 0, where)
+    own, composes = wt.registry_parts(text)
+    composed = (wt.composed_runners() if runners is None else runners) if composes else {}
     out: Dict[str, Consumer] = {}
-    for name, entry in wt.registry_in_source(text).items():
+    for name, classes in composed.items():
+        if name in own:
+            raise ExtractorError(f"{where}: the task type {name!r} is both the handler's own and a composed runner")
+        walk = _Walk(delegates, {source_path: tree})
+        walk.statements(list(preamble), param, source_path, "WorkerHandler")
+        for runner in classes:
+            walk.function(Fn(runner.path, f"{runner.cls}.__call__"), 0)
+        out[name] = Consumer(frozenset(walk.read), frozenset(walk.required), tuple(walk.functions))
+    for name, entry in own.items():
         method = _find_function(tree, f"WorkerHandler.{entry.method}", where)
         walk = _Walk(delegates, {source_path: tree})
         extra = (_slack_event_test(chain, where),) if name == SLACK_EVENT_BRANCH else ()
