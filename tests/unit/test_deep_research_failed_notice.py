@@ -173,30 +173,6 @@ class TestDeliveryFailureNotifier:
         failure.notify.assert_awaited_once()
         notification.notify.assert_not_awaited()
 
-    async def test_openai_webhook_passes_failure_notification(self):
-        """The OpenAI delivery now runs in the webhook's worker task (S1b W): its notifier is passed on."""
-        service = AsyncMock()
-        agent_factory = AsyncMock()
-        task_dispatch = AsyncMock()
-        worker = WorkerHandler(
-            agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-            consolidation_service=None,
-            agent_factory=agent_factory,
-            user_repo=MagicMock(), task_dispatch=task_dispatch,
-            tasks=build_worker_tasks(
-            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
-            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
-            notification_service=service, alert_sink=None, task_dispatch=task_dispatch,
-            video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
-            short_link_service=None, deep_research_fetch=AsyncMock(return_value={"output_text": "t"}), prompt_content_store=None),
-        )
-        payload = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
-                   "job_id": "r1", "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1",
-                   "origin_platform": ""}
-        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new_callable=AsyncMock) as d:
-            await worker._dispatch(payload, {})
-        assert d.call_args.kwargs["failure_notification"] is service
-
 
 # --- ensure_agents_for_user runs before notify (cold instance) -------------
 

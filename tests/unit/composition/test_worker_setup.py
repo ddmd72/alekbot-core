@@ -10,12 +10,10 @@ from src.services.billing_daily_summary_task import BillingDailySummaryTask
 from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.deep_research_failed_task import DeepResearchFailedTask
 from src.services.deep_research_notice_sender import DeepResearchNoticeSender
-from src.services.deep_research_webhook_event_task import DeepResearchWebhookEventTask
 from src.services.disabled_task import DisabledTask
 from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 from src.services.execute_reminder_task import ExecuteReminderTask
 from src.composition.worker_setup import build_worker_tasks
-from src.services.deep_research_delivery import deliver_deep_research
 from src.services.video_generation_delivery import deliver_video
 from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
@@ -106,39 +104,12 @@ def test_the_failure_notice_runner_is_always_built_and_shares_its_sender_with_th
 
     tasks = build_worker_tasks(**deps)
 
-    failed, webhook = tasks["deep_research_failed"], tasks["deep_research_webhook_event"]
-    assert type(failed) is DeepResearchFailedTask and type(webhook) is DeepResearchWebhookEventTask
+    failed = tasks["deep_research_failed"]
+    assert type(failed) is DeepResearchFailedTask
     assert failed._ensure_agents == deps["ensure_agents"]
     assert type(failed._notice_sender) is DeepResearchNoticeSender
-    assert failed._notice_sender is webhook._notice_sender
     assert failed._notice_sender._notification is deps["notification_service"]
     assert failed._notice_sender._empty_answer_reporter._alert_sink is deps["alert_sink"]
-
-
-def test_with_retrieval_configured_the_webhook_runner_holds_exactly_the_given_dependencies():
-    deps = _deps(None, deep_research_fetch=object(), prompt_content_store=object(), task_dispatch=object(),
-                 media_storage=object(), link_service=object())
-
-    runner = build_worker_tasks(**deps)["deep_research_webhook_event"]
-
-    assert runner._fetch is deps["deep_research_fetch"]
-    assert runner._ensure_agents == deps["ensure_agents"]
-    assert runner._prompt_content_store is deps["prompt_content_store"]
-    assert runner._task_dispatch is deps["task_dispatch"]
-    assert runner._media_storage is deps["media_storage"]
-    assert runner._link_service is deps["link_service"]
-    assert runner._notification is deps["notification_service"]
-    assert runner._deliver_report is deliver_deep_research
-
-
-async def test_without_retrieval_the_webhook_task_answers_the_refusal_it_gave_inside_the_handler(caplog):
-    tasks = build_worker_tasks(**_deps(None))
-
-    assert type(tasks["deep_research_webhook_event"]) is DisabledTask
-    with caplog.at_level(logging.WARNING):
-        assert await tasks["deep_research_webhook_event"]({"event_type": "response.completed"}, {}) == (
-            {"error": "retrieval not configured"}, 422)
-    assert caplog.messages == ["[Worker] deep_research_webhook_event: OpenAI retrieval not configured"]
 
 
 def test_with_the_review_dependencies_the_fan_out_and_the_review_runners_hold_exactly_the_given_ones():
@@ -173,7 +144,6 @@ def test_the_reminder_review_and_notice_runners_share_one_empty_answer_reporter_
     assert reporter._alert_sink is deps["alert_sink"]
     assert tasks["daily_email_review"]._empty_answer_reporter is reporter
     assert tasks["deep_research_failed"]._notice_sender._empty_answer_reporter is reporter
-    assert tasks["deep_research_webhook_event"]._notice_sender._empty_answer_reporter is reporter
 
 async def test_without_the_review_service_both_review_tasks_answer_the_refusals_they_gave_inside_the_handler(caplog):
     tasks = build_worker_tasks(**{**_deps(object()), "email_review": None})

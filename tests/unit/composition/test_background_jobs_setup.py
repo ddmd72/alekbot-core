@@ -1,5 +1,5 @@
 """`build_background_jobs`: the agent worker delivers through the file-delivery bundle and the given notification service,
-reminders dispatch through the one task dispatch, and the deep-research claims live 72 h in the worker dedup collection."""
+and reminders dispatch through the one task dispatch."""
 import dataclasses
 from types import SimpleNamespace
 
@@ -72,14 +72,6 @@ def test_without_a_notes_store_there_are_no_reminders(build):
     jobs = build(container=_container(notes=False)).jobs
 
     assert jobs.task_dispatch is not None and jobs.reminders is None
-
-
-def test_the_deep_research_claims_live_72_hours_in_the_worker_dedup_collection(build):
-    built = build()
-    claims = built.jobs.deep_research_dedup_store
-
-    assert claims.ttl_seconds == 259200 and claims.db_client is built.db
-    assert claims.collection_name == built.env.worker_task_dedup_collection
 
 
 def test_the_bundle_is_frozen(build):

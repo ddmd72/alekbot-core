@@ -75,7 +75,6 @@ src.adapters.microsoft.onedrive_adapter.OneDriveAdapter 1  # by-design single in
 src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single instance
 src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
 src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
-src.adapters.openai_deep_research_adapter.OpenAIDeepResearchAdapter 1  # by-design single instance
 src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
 src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (memory_setup.py, Facts S4 T10a)
 src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
@@ -139,8 +138,7 @@ src.services.credential_revocation_service.CredentialRevocationService 1  # by-d
 src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
-src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender both deep-research runners share, built by build_worker_tasks (worker_setup.py)
-src.services.deep_research_webhook_event_task.DeepResearchWebhookEventTask 1  # by-design the one deep_research_webhook_event runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender of the deep_research_failed runner, built by build_worker_tasks (worker_setup.py)
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, built by the ServiceContainer and held by the file conversion service (service_container.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)

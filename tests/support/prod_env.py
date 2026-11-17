@@ -150,7 +150,6 @@ SECRET_VALUES: Dict[str, str] = {
     "TWILIO_ACCOUNT_SID": "AC" + "0" * 32,
     "TWILIO_VERIFY_SERVICE_SID": "VA" + "0" * 32,
     "BILLING_SLACK_WEBHOOK_URL": "https://hooks.slack.test.example/services/T000/B000/xxxxxxxx",
-    "OPENAI_DEEP_RESEARCH_WEBHOOK_URL": "https://alek-bot-dev.test.example/webhook/openai-deep-research",
     "GCS_WORKSPACE_BUCKET": "alek-workspace-test",
     # the one integration connect callback of every realm (MULTI_DRIVE_RFC §5.2, E4)
     "OAUTH_CONNECT_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect/callback",
@@ -224,7 +223,6 @@ def prod_settings(monkeypatch) -> Tuple[dict, List[str]]:
 
 VALID_TOKEN = "valid-oidc-token"
 EMBEDDING = [0.1] * 768
-CANNED_DEEP_RESEARCH_RESPONSE = {"metadata": {}, "output_text": "", "model": "", "error": None, "incomplete_details": None}
 
 
 class OfflineServices(NamedTuple):
@@ -237,9 +235,9 @@ def install_offline_services(monkeypatch) -> OfflineServices:
     """The deployed environment, and every SDK boundary the application graph touches replaced by a fake.
 
     Fakes sit at SDK modules, not at names a composition module owns, so they hold wherever the graph is built:
-    Firestore (`EvalDb`), Cloud Tasks (a recording client), Gemini embeddings, OpenAI deep-research retrieval and
-    Google's OIDC key check (a token equal to `VALID_TOKEN` carries the deploy's invoker identity) and Cloud KMS (the
-    SDK-shaped `kms_fake`, real AES-GCM with the AAD bound).
+    Firestore (`EvalDb`), Cloud Tasks (a recording client), Gemini embeddings, Google's OIDC key check (a token equal
+    to `VALID_TOKEN` carries the deploy's invoker identity) and Cloud KMS (the SDK-shaped `kms_fake`, real AES-GCM with
+    the AAD bound).
     """
     from tests.support import kms_fake
     from tests.support.cloud_tasks_fake import FakeCloudTasksClient
@@ -256,13 +254,8 @@ def install_offline_services(monkeypatch) -> OfflineServices:
     async def embedding(self, text, task_type="RETRIEVAL_DOCUMENT"):
         return list(EMBEDDING)
 
-    async def deep_research_response(self, job_id):
-        return dict(CANNED_DEEP_RESEARCH_RESPONSE)
-
     from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-    from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
     monkeypatch.setattr(GeminiEmbeddingAdapter, "get_embedding", embedding)
-    monkeypatch.setattr(OpenAIDeepResearchAdapter, "fetch_response", deep_research_response)
 
     def verify_oauth2_token(token, request, *args, **kwargs):
         if token != VALID_TOKEN:

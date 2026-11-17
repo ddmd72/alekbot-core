@@ -28,7 +28,6 @@ SDK_FALLBACK_VARIABLES = (
 )
 MODEL_PINS = {
     "OPENAI_TRANSCRIPTION_MODEL": "pinned-transcription-model",
-    "OPENAI_DEEP_RESEARCH_MODEL": "pinned-openai-research-model",
     "CLAUDE_DEEP_RESEARCH_MODEL": "pinned-claude-research-model",
 }
 NON_DEFAULT_CONSOLIDATION = ConsolidationSettings(threshold=33, batch_size=11, max_queue_messages=222, max_retry_attempts=7)
@@ -111,13 +110,10 @@ async def test_the_firebase_adapter_holds_the_google_oauth_client_of_the_deploy(
 def test_the_openai_clients_hold_the_configured_key_and_the_pinned_models(variant_graph):
     app, config = variant_graph
     audio = app.slack_adapter.conversation_handler.audio_service
-    openai_research = app.agent_factory.job_registry.get("openai")
     claude_research = app.agent_factory.job_registry.get("claude")
 
     assert audio.client.api_key == config["OPENAI_API_KEY"]
     assert audio.model == MODEL_PINS["OPENAI_TRANSCRIPTION_MODEL"]
-    assert openai_research._client.api_key == config["OPENAI_API_KEY"]
-    assert openai_research._model_override == MODEL_PINS["OPENAI_DEEP_RESEARCH_MODEL"]
     assert claude_research._model_override == MODEL_PINS["CLAUDE_DEEP_RESEARCH_MODEL"]
 
 
