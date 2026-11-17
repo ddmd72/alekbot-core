@@ -112,6 +112,7 @@ from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.overflow_routing_service import OverflowRoutingService
@@ -177,7 +178,8 @@ class ApplicationGraph:
     short_link_service: Optional[ShortLinkService]
     companion_extractor_runner: CompanionExtractorRunner
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
-    language_service: LanguagePreferenceService
+    language_service: LanguageResolver
+    language_preferences: LanguagePreferenceService
     localization: _LocalizationService
     # the stored-secrets cipher and the verify-only digest key (SECRETS_AT_REST_RFC §2.6), consumed by main()'s MCP wiring
     cipher: CipherPort
@@ -526,6 +528,18 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     notification_state_repo = FirestoreNotificationStateAdapter(
         db_client=db_client, env_config=env_config
     )
+    logger.info("🌐 Initializing Language Services...")
+    _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
+    _localization = _LocalizationService(_localization_port)
+    _system_lang = LanguageCode.from_str(
+        config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
+    )
+    _language_service = LanguageResolver(
+        user_repo=user_repo,
+        account_repo=account_repo,
+        system_default_language=_system_lang,
+    )
+
     notification_channel_factory = NotificationChannelFactory()  # adapters wired below
     notification_service = UserNotificationService(
         state_repo=notification_state_repo,
@@ -533,24 +547,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         coordinator=coordinator,
         notification_sla=NOTIFICATION_SLA,
         session_store=session_store,
+        # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
+        localization=_localization,
+        language=_language_service,
     )
-
-    logger.info("🌐 Initializing Language Services...")
-    _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
-    _localization = _LocalizationService(_localization_port)
-    _system_lang = LanguageCode.from_str(
-        config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
-    )
-    _language_service = LanguagePreferenceService(
-        user_repo=user_repo,
-        account_repo=account_repo,
-        profile_repo=container.profile_repo,
-        prompt_builder=container.assembly_service,
-        system_default_language=_system_lang,
-        notification_service=notification_service,
-    )
-    # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
-    notification_service.attach_localization(_localization, _language_service)
 
     # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
     # and sync (ConversationHandler) document delivery paths.
@@ -643,7 +643,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         video_duration=video_duration,
     )
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
-    _language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
+    language_preferences = LanguagePreferenceService(
+        user_repo=user_repo,
+        profile_repo=container.profile_repo,
+        prompt_builder=container.assembly_service,
+        resolver=_language_service,
+        notification_service=notification_service,
+        ensure_agents=agent_factory.ensure_agents_for_user,
+    )
 
     logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
 
@@ -1186,6 +1193,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         companion_extractor_runner=companion_extractor_runner,
         call_text_files=call_text_files,
         language_service=_language_service,
+        language_preferences=language_preferences,
         localization=_localization,
         cipher=cipher,
         digest_key=secret_digest_key,

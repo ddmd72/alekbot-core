@@ -35,7 +35,7 @@ The localization system has two independent responsibilities:
 
 These two concerns are configured together in Cabinet UI but work through completely different
 code paths. Changing one does not automatically change the other — they are coordinated by
-`LanguagePreferenceService`.
+`LanguagePreferenceService` (writes); `LanguageResolver` reads them.
 
 ---
 
@@ -59,7 +59,7 @@ class LanguageCode(str, Enum):
 
 ### 3.1 Resolution chain
 
-Per request, platform adapters call `LanguagePreferenceService.resolve_ui_language(user_id)`:
+Per request, platform adapters call `LanguageResolver.resolve_ui_language(user_id)`:
 
 ```
 user.config.preferred_language       (set by user in Cabinet)
@@ -223,41 +223,47 @@ picking up the new override.
 
 ---
 
-## 5. LanguagePreferenceService
+## 5. LanguageResolver and LanguagePreferenceService
 
-`src/services/language_preference_service.py` — single write path for language preference.
+Reads and writes are two classes (command/query separation), so no reader depends on what a write notifies.
+
+`src/services/language_resolver.py` — the read side, the one `LanguageServicePort` implementation. Every reader takes it:
+the platform adapters, the notification service, the agent factory, the drive mirror, the voice routes, the Cabinet's
+`GET /api/user/language`.
 
 ```python
-class LanguagePreferenceService(LanguageServicePort):
+class LanguageResolver(LanguageServicePort):
+    async def get_preference(self, user_id: str) -> Tuple[Optional[LanguageCode], bool]: ...
+    async def resolve_ui_language(self, user_id: str) -> LanguageCode: ...
+    @property
+    def system_default(self) -> LanguageCode: ...
+```
+
+Dependencies: `user_repo`, `account_repo` (account-level default), `system_default_language` (`SYSTEM_DEFAULT_LANGUAGE`).
+
+`src/services/language_preference_service.py` — the single write path; its one caller is the Cabinet's
+`POST /api/user/language`.
+
+```python
+class LanguagePreferenceService:
     async def set_preference(
         self,
         user_id: str,
         preferred_language: Optional[LanguageCode],
         agent_mirror: bool,
     ) -> None: ...
-
-    async def get_preference(self, user_id: str) -> Tuple[Optional[LanguageCode], bool]: ...
-
-    async def resolve_ui_language(self, user_id: str) -> LanguageCode: ...
 ```
 
-**Dependencies (injected):**
-- `user_repo: UserRepository` — reads/writes `UserBotConfig`
-- `account_repo: AccountRepository` — reads account-level language default
+**Dependencies (all constructor arguments):**
+- `user_repo: UserRepository` — writes `UserBotConfig`
 - `profile_repo: AgentProfileRepository` — writes USER override doc via `set_override_tokens()`
 - `prompt_builder: PromptBuilderPort` — cache invalidation
+- `resolver: LanguageResolver` — the system default for a fixed language without a choice
 - `notification_service: UserNotificationService` — alert on language change (optional)
-- `_ensure_agents: Callable` — `agent_factory.ensure_agents_for_user` (attached by `build_application_graph`)
-- `system_default_language: LanguageCode` — resolved from `SYSTEM_DEFAULT_LANGUAGE` env var
+- `ensure_agents: Callable` — `agent_factory.ensure_agents_for_user` (optional)
 
-**Wiring note (`build_application_graph`):** `notification_service` is a constructor argument. The agent refresher cannot be, because
-the agent factory is built after the service and needs it (a cycle), so it is attached once the factory exists, through the public setter:
-
-```python
-_language_service = LanguagePreferenceService(..., notification_service=notification_service)
-...
-_language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
-```
+**Wiring (`build_application_graph`):** the resolver is built first and handed to the notification service and the agent
+factory at construction; the writer is built after the agent factory, so nothing is attached later.
 
 ---
 
@@ -397,7 +403,8 @@ PromptBuilder.build_for_agent()
 | `src/locales/en.py` | English phrases |
 | `src/locales/fr.py` | French phrases |
 | `src/locales/es.py` | Spanish phrases |
-| `src/services/language_preference_service.py` | `LanguagePreferenceService` |
+| `src/services/language_resolver.py` | `LanguageResolver` (reads) |
+| `src/services/language_preference_service.py` | `LanguagePreferenceService` (writes) |
 | `src/adapters/slack/response_channel.py` | `language` + `localization` injection |
 | `src/adapters/slack/http_adapter.py` | Same |
 | `src/adapters/prompt_v3/firestore_agent_profile_repository.py` | `set_override_tokens()` |

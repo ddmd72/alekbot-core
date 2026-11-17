@@ -98,13 +98,6 @@ class UserNotificationService:
         self._localization = localization
         self._language = language
 
-    def attach_localization(self, localization: "LocalizationService", language: LanguageServicePort) -> None:
-        """Give the drive-note receipt its UI strings and the owner's language (DRIVE_FILE_NOTES_RFC §4.9). Called once
-        by the application graph: the service is built before the localization and the language service, which itself
-        takes this service (the `register_platform_media` precedent)."""
-        self._localization = localization
-        self._language = language
-
     def register_platform_media(self, platform: str, port: PlatformMediaPort) -> None:
         """The media port `notify_file_bytes` uses for channels of `platform` ("slack", "telegram")."""
         self._platform_media[platform] = port
