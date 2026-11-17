@@ -40,7 +40,7 @@ def test_every_equivalent_file_belongs_to_a_registered_target():
     registered = {t.equivalent for t in TARGETS if t.equivalent}
     assert on_disk <= registered, f"unregistered equivalent files: {sorted(on_disk - registered)}"
     assert registered <= on_disk
-    # one file per package: only the wiring file is shared (by the six composition modules)
+    # one file per package: only the wiring file is shared (by the eight composition modules)
     shared = {path for path, n in Counter(t.equivalent for t in TARGETS).items() if n > 1}
     assert shared == {"tests/unit/composition/wiring_equivalent_mutants.txt"}
 
@@ -279,7 +279,7 @@ def test_every_prod_graph_user_is_in_every_wiring_target():
         for p in (REPO_ROOT / "tests/unit").rglob("test_*.py")
         if p != Path(__file__) and "tests.support.prod_graph" in p.read_text(encoding="utf-8")
     }
-    assert users and len(_WIRING) == 6
+    assert users and len(_WIRING) == 8
     for target in _WIRING:
         assert users <= set(target.tests), target.module
 

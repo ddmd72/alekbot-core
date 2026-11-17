@@ -28,36 +28,31 @@ class TestNotificationChannelFactory:
         assert "TelegramResponseChannel" not in source
 
     def test_unknown_platform_returns_none(self):
-        factory = NotificationChannelFactory()
+        factory = NotificationChannelFactory({})
         result = factory.create("discord", "123")
         assert result is None
 
     def test_registered_factory_called_with_channel_id(self):
-        factory = NotificationChannelFactory()
         mock_channel = MagicMock()
-        factory.register_factory("slack", lambda ch: mock_channel if ch == "C123" else None)
+        factory = NotificationChannelFactory({"slack": lambda ch: mock_channel if ch == "C123" else None})
 
         result = factory.create("slack", "C123")
         assert result is mock_channel
 
     def test_second_register_overwrites_first(self):
-        factory = NotificationChannelFactory()
         old_channel = MagicMock()
         new_channel = MagicMock()
+        factory = NotificationChannelFactory({"slack": lambda _: old_channel})
 
-        factory.register_factory("slack", lambda _: old_channel)
-        factory.register_factory("slack", lambda _: new_channel)
+        factory.register_platform("slack", lambda _: new_channel)
 
         result = factory.create("slack", "C999")
         assert result is new_channel
 
     def test_multiple_platforms_independent(self):
-        factory = NotificationChannelFactory()
         slack_channel = MagicMock()
         telegram_channel = MagicMock()
-
-        factory.register_factory("slack", lambda _: slack_channel)
-        factory.register_factory("telegram", lambda _: telegram_channel)
+        factory = NotificationChannelFactory({"slack": lambda _: slack_channel, "telegram": lambda _: telegram_channel})
 
         assert factory.create("slack", "C1") is slack_channel
         assert factory.create("telegram", "42") is telegram_channel

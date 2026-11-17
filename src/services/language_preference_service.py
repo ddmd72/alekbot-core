@@ -4,22 +4,22 @@ LanguagePreferenceService — single write path for language preference changes.
 RFC: docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md §11
 
 Writes to UserProfile (for UI language resolution) and to the prompt override
-document (so the correct LANG_* token is picked up during assembly).
+document (so the correct LANG_* token is picked up during assembly). Reads live in
+`LanguageResolver`, which this service takes for the system default.
 """
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
 from ..ports.user_repository import UserRepository
-from ..ports.account_repository import AccountRepository
 from ..ports.prompt_builder_port import PromptBuilderPort
-from ..ports.language_service_port import LanguageServicePort
 from ..ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from ..domain.prompt_v3.slot import OwnerType
 from ..domain.prompt_v3.profile_slot import ProfileToken
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
+    from .language_resolver import LanguageResolver
     from .user_notification_service import UserNotificationService
 
 # All language token IDs — used to atomically swap one for another.
@@ -82,7 +82,7 @@ _LANG_ALERTS: dict = {
 }
 
 
-class LanguagePreferenceService(LanguageServicePort):
+class LanguagePreferenceService:
     """Single write path for language preference changes.
 
     Extension point: add side-effects here, callers never change.
@@ -91,22 +91,18 @@ class LanguagePreferenceService(LanguageServicePort):
     def __init__(
         self,
         user_repo: UserRepository,
-        account_repo: AccountRepository,
         profile_repo: AgentProfileRepository,
         prompt_builder: PromptBuilderPort,
-        system_default_language: LanguageCode = LanguageCode.EN,
+        resolver: "LanguageResolver",
         notification_service: Optional["UserNotificationService"] = None,
+        ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
     ):
         self._user_repo = user_repo
-        self._account_repo = account_repo
         self._profile_repo = profile_repo
         self._prompt_builder = prompt_builder
-        self._system_default = system_default_language
+        self._resolver = resolver
         self._notification_service = notification_service
-        self._ensure_agents = None  # Set by attach_agent_refresher once the agent factory exists
-
-    def attach_agent_refresher(self, ensure_agents: Callable[[str], Awaitable[Any]]) -> None:
-        """Give the service the agent factory's per-user refresh, which it cannot take at construction (cycle)."""
+        # The agent factory's per-user refresh: the user's agents must be routable before the alert is sent.
         self._ensure_agents = ensure_agents
 
     async def set_preference(
@@ -138,7 +134,7 @@ class LanguagePreferenceService(LanguageServicePort):
                 clear_ids=_ALL_LANG_TOKEN_IDS,
             )
         else:
-            effective = preferred_language or self._system_default
+            effective = preferred_language or self._resolver.system_default
             lang_token_id = f"LANG_FIXED_{effective.value.upper()}"
             await self._profile_repo.set_override_tokens(
                 OwnerType.USER, user_id,
@@ -153,7 +149,7 @@ class LanguagePreferenceService(LanguageServicePort):
         self._prompt_builder.invalidate_cache()
 
         if self._notification_service:
-            alert_key = "mirror" if agent_mirror else (preferred_language or self._system_default).value
+            alert_key = "mirror" if agent_mirror else (preferred_language or self._resolver.system_default).value
             alert_text = _LANG_ALERTS.get(alert_key)
             if alert_text:
                 account_id = user.account_id or user_id
@@ -168,27 +164,3 @@ class LanguagePreferenceService(LanguageServicePort):
                     )
                 except Exception as exc:
                     logger.warning(f"Language change notification failed for {user_id[:8]}: {exc}")
-
-    async def get_preference(self, user_id: str) -> Tuple[Optional[LanguageCode], bool]:
-        """Returns (preferred_language, agent_mirror). Defaults: (None, True)."""
-        user = await self._user_repo.get_user(user_id)
-        if not user:
-            return None, True
-        return user.config.preferred_language, user.config.agent_mirror
-
-    async def resolve_ui_language(self, user_id: str) -> LanguageCode:
-        """Resolve effective UI language for a user.
-
-        Chain: USER preferred_language → ACCOUNT default_language → SYSTEM default.
-        Called once per request by platform adapters.
-        """
-        user = await self._user_repo.get_user(user_id)
-        if user and user.config.preferred_language:
-            return user.config.preferred_language
-
-        if user and user.account_id:
-            account = await self._account_repo.get_account(user.account_id)
-            if account and account.default_language:
-                return account.default_language
-
-        return self._system_default

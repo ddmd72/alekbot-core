@@ -392,9 +392,9 @@ class SeamWorld:
         self.channels = SeamChannels()
         self.media: Dict[str, RecordingMedia] = {"slack": RecordingMedia("slack"), "telegram": RecordingMedia("telegram")}
         self.notifier = UserNotificationService(self.state, self.channels, self.coordinator, NOTIFICATION_SLA,
+                                                platform_media={"slack": self.media["slack"],
+                                                                "telegram": self.media["telegram"]},
                                                 session_store=self.sessions)
-        self.notifier.register_platform_media("slack", self.media["slack"])
-        self.notifier.register_platform_media("telegram", self.media["telegram"])
         self.gcs = FakeGcs(buckets={BUCKET: "plain"})
         self.gcs.install(monkeypatch)
         self.media_store = GcsMediaAdapter(BUCKET)

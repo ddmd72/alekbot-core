@@ -74,44 +74,33 @@ class UserNotificationService:
         channel_factory: NotificationChannelFactoryPort,
         coordinator: MessageRouter,
         notification_sla: Mapping[NotificationKind, _SLA],
-        platform_media: Optional[PlatformMediaPort] = None,
+        platform_media: Optional[Mapping[str, PlatformMediaPort]] = None,
         session_store: Optional[SessionStore] = None,
         localization: Optional["LocalizationService"] = None,
         language: Optional[LanguageServicePort] = None,
+        platform_rich_content: Optional[Mapping[str, "RichContentService"]] = None,
     ):
         self._state_repo = state_repo
         self._channel_factory = channel_factory
         self._coordinator = coordinator
         self._notification_sla = notification_sla
         # One media port per platform (USER_DRIVE_INDEXING_RFC §26.2 review): a file goes through the port of the
-        # channel's own platform. The constructor's port is Slack's (the only one wired before); others are added with
-        # register_platform_media.
-        self._platform_media: Dict[str, PlatformMediaPort] = {}
-        if platform_media is not None:
-            self._platform_media[_SLACK] = platform_media
+        # channel's own platform.
+        self._platform_media: Dict[str, PlatformMediaPort] = dict(platform_media or {})
         # One RichContentService per platform: a `file` / `widget` item Smart returns on a background path is delivered
-        # as the real file/image through it, exactly as in a chat turn. Registered with register_platform_rich_content.
-        self._platform_rich_content: Dict[str, "RichContentService"] = {}
+        # as the real file/image through it, exactly as in a chat turn.
+        self._platform_rich_content: Dict[str, "RichContentService"] = dict(platform_rich_content or {})
         self._session_store: Optional[SessionStore] = session_store
         # The drive-note receipt posted from a call (DRIVE_FILE_NOTES_RFC §4.9) is rendered here, in the owner's UI
         # language; without localization it is not posted (logged).
         self._localization = localization
         self._language = language
 
-    def attach_localization(self, localization: "LocalizationService", language: LanguageServicePort) -> None:
-        """Give the drive-note receipt its UI strings and the owner's language (DRIVE_FILE_NOTES_RFC §4.9). Called once
-        by the application graph: the service is built before the localization and the language service, which itself
-        takes this service (the `register_platform_media` precedent)."""
-        self._localization = localization
-        self._language = language
-
-    def register_platform_media(self, platform: str, port: PlatformMediaPort) -> None:
-        """The media port `notify_file_bytes` uses for channels of `platform` ("slack", "telegram")."""
-        self._platform_media[platform] = port
-
-    def register_platform_rich_content(self, platform: str, service: "RichContentService") -> None:
-        """The rich-content delivery `notify` / `notify_answer_copy` use for channels of `platform` ("slack", "telegram")."""
-        self._platform_rich_content[platform] = service
+    def register_platform(self, platform: str, *, media: PlatformMediaPort, rich_content: "RichContentService") -> None:
+        """Add a platform built after this service (its media port for `notify_file_bytes`, its rich-content delivery for
+        `notify` / `notify_answer_copy`); only `register_late_platform` (composition) calls it, for Telegram."""
+        self._platform_media[platform] = media
+        self._platform_rich_content[platform] = rich_content
 
     async def _send_rich_content(self, response_channel, platform: str, content: RichContent) -> None:
         """Deliver one rich-content item the way a chat turn does. Without a registered service every type goes to the

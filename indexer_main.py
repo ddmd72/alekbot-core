@@ -189,7 +189,7 @@ def build_app() -> Quart:
     # only while transcription runs; switch off: none of it, and the object graph keeps only the ledger.
     mirror = build_drive_mirror(
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
-        users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
+        users=users, account_repo=account_repo,
     )
     # The owner's notes (DRIVE_FILE_NOTES_RFC §5.1, §7): the tick merges them into the records, makes the archive checks
     # and runs the daily audit. DRIVE_NOTES_ENABLED (part A's optional kill switch, os.getenv, default on) off gives the

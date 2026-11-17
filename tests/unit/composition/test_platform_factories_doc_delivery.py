@@ -11,6 +11,7 @@ import pytest
 from src.composition.deploy_topology import build_deploy_topology
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
+from src.composition.chat_services import ChatServices
 from src.handlers.conversation_handler import ConversationHandler
 
 _SLACK = "src.composition.slack_adapter_factory."
@@ -26,9 +27,8 @@ def _slack_handler(**extra) -> ConversationHandler:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             app=MagicMock(), config=config, deploy_topology=build_deploy_topology(config, env_config),
-            coordinator=AsyncMock(),
-            agent_factory=AsyncMock(), iam_service=AsyncMock(),
-            session_store=MagicMock(), db_client=MagicMock(), **extra)
+            chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock(), **extra), iam_service=AsyncMock(),
+            session_store=MagicMock(), db_client=MagicMock())
     return adapter.call_args.kwargs["conversation_handler"]
 
 
@@ -37,8 +37,7 @@ def _telegram_handler(**extra) -> ConversationHandler:
         TelegramAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             token="123:abc", webhook_secret="secret", dedup_store=MagicMock(), session_store=MagicMock(),
-            coordinator=AsyncMock(), agent_factory=AsyncMock(), iam_service=AsyncMock(),
-            **extra)
+            chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock(), **extra), iam_service=AsyncMock())
     return adapter.call_args.kwargs["conversation_handler"]
 
 

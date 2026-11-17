@@ -59,9 +59,10 @@ QUESTION_TEXT = (
 @pytest.fixture
 def channels():
     made = {}
-    factory = NotificationChannelFactory()
-    factory.register_factory("telegram", lambda cid: made.setdefault(cid, RefChannel("telegram", cid)))
-    factory.register_factory("bare", lambda cid: made.setdefault(cid, NoRefChannel("bare", cid)))
+    factory = NotificationChannelFactory({
+        "telegram": lambda cid: made.setdefault(cid, RefChannel("telegram", cid)),
+        "bare": lambda cid: made.setdefault(cid, NoRefChannel("bare", cid)),
+    })
     return factory, made
 
 

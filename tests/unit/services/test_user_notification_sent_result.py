@@ -24,7 +24,7 @@ def _service(*, channel=True, send_error=None, upload_error=None, media=True):
     platform_media = AsyncMock()
     platform_media.upload_file = AsyncMock(side_effect=upload_error)
     return UserNotificationService(state_repo=state, channel_factory=factory, coordinator=MagicMock(),
-                                   notification_sla={}, platform_media=platform_media if media else None)
+                                   notification_sla={}, platform_media={"slack": platform_media} if media else None)
 
 
 async def test_notify_raw_says_sent():

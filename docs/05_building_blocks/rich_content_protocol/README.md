@@ -179,7 +179,8 @@ async def _deliver_rich_content(self, content, response_channel, thread_id):
 ## 8. Composition: Factories
 
 `build_application_graph` builds one `RichContentService` per platform and hands the same instance to the platform's
-adapter factory (a required argument) and to `UserNotificationService.register_platform_rich_content`, so a chat turn
+adapter factory (a required argument) and to `UserNotificationService` (Slack's in its constructor, through the
+platform kit; Telegram's through `register_late_platform` once its adapter is built), so a chat turn
 and a background notification (`notify`, `notify_answer_copy`) deliver rich content through one routine,
 `RichContentService.deliver` (`decisions/rich_content_one_delivery_path.md`):
 

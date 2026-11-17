@@ -5,6 +5,7 @@
 """
 import asyncio
 import os
+from functools import partial
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -68,6 +69,8 @@ from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
+from src.composition.chat_services import ChatServices
+from src.composition.platform_kit import PlatformKit, register_late_platform
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
@@ -112,6 +115,7 @@ from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.overflow_routing_service import OverflowRoutingService
@@ -179,7 +183,8 @@ class ApplicationGraph:
     short_link_service: Optional[ShortLinkService]
     companion_extractor_runner: CompanionExtractorRunner
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
-    language_service: LanguagePreferenceService
+    language_service: LanguageResolver
+    language_preferences: LanguagePreferenceService
     localization: _LocalizationService
     # the stored-secrets cipher and the verify-only digest key (SECRETS_AT_REST_RFC §2.6), consumed by main()'s MCP wiring
     cipher: CipherPort
@@ -523,35 +528,69 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         if gcs_media_adapter else None
     )
 
-    # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
+    # Notification service — Slack's kit at construction; Telegram's is bound late (register_late_platform).
     notification_state_repo = FirestoreNotificationStateAdapter(
         db_client=db_client, env_config=env_config
     )
-    notification_channel_factory = NotificationChannelFactory()  # adapters wired below
-    notification_service = UserNotificationService(
-        state_repo=notification_state_repo,
-        channel_factory=notification_channel_factory,
-        coordinator=coordinator,
-        notification_sla=NOTIFICATION_SLA,
-        session_store=session_store,
-    )
-
     logger.info("🌐 Initializing Language Services...")
     _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
     _localization = _LocalizationService(_localization_port)
     _system_lang = LanguageCode.from_str(
         config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
     )
-    _language_service = LanguagePreferenceService(
+    _language_service = LanguageResolver(
         user_repo=user_repo,
         account_repo=account_repo,
-        profile_repo=container.profile_repo,
-        prompt_builder=container.assembly_service,
         system_default_language=_system_lang,
-        notification_service=notification_service,
     )
-    # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
-    notification_service.attach_localization(_localization, _language_service)
+
+    # The Slack app is built here, before the notification service and the memory review, whose questions are posted
+    # through its client; the Slack adapter below is built over the same app.
+    bot_token = config["SLACK_BOT_TOKEN"]
+    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
+    logger.debug("Creating AsyncApp...")
+    app = AsyncApp(token=bot_token)
+    logger.debug("AsyncApp created successfully")
+
+    # HTML renderer (optional — lazy-starts Chromium on first widget request)
+    html_renderer = build_html_renderer(
+        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
+    if html_renderer is not None:
+        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
+    else:
+        logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
+
+    # One media adapter and one RichContentService per platform: the chat handler and the notification service deliver
+    # files through the same ones.
+    slack_media_adapter = SlackMediaAdapter(app_client=app.client, bot_token=bot_token)
+    slack_kit = PlatformKit(
+        platform=SLACK_PLATFORM,
+        media=slack_media_adapter,
+        rich_content=RichContentService(
+            media_port=slack_media_adapter,
+            storage_port=gcs_media_adapter,
+            html_renderer=html_renderer,
+        ),
+        channel=lambda channel_id: SlackResponseChannel(
+            app_client=app.client,
+            channel_id=channel_id,
+            bot_token=bot_token,
+        ),
+    )
+
+    notification_channel_factory = NotificationChannelFactory({slack_kit.platform: slack_kit.channel})
+    notification_service = UserNotificationService(
+        state_repo=notification_state_repo,
+        channel_factory=notification_channel_factory,
+        coordinator=coordinator,
+        notification_sla=NOTIFICATION_SLA,
+        platform_media={slack_kit.platform: slack_kit.media},
+        platform_rich_content={slack_kit.platform: slack_kit.rich_content},
+        session_store=session_store,
+        # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
+        localization=_localization,
+        language=_language_service,
+    )
 
     # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
     # and sync (ConversationHandler) document delivery paths.
@@ -645,7 +684,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         video_duration=video_duration,
     )
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
-    _language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
+    language_preferences = LanguagePreferenceService(
+        user_repo=user_repo,
+        profile_repo=container.profile_repo,
+        prompt_builder=container.assembly_service,
+        resolver=_language_service,
+        notification_service=notification_service,
+        ensure_agents=agent_factory.ensure_agents_for_user,
+    )
 
     logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
 
@@ -876,14 +922,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
     cabinet_facts = CabinetFactService(container.repository)
 
-    # The Slack app is built here, before the memory review, whose questions are posted through its client; the
-    # Slack adapter below is built over the same app.
-    bot_token = config["SLACK_BOT_TOKEN"]
-    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
-    logger.debug("Creating AsyncApp...")
-    app = AsyncApp(token=bot_token)
-    logger.debug("AsyncApp created successfully")
-
     # Interactive messages (Facts S4 plan §3.20): buttons on Slack, numbered text on Telegram, picked by platform.
     # The Telegram channel itself is registered on the channel factory below, only when Telegram is configured.
     _interactive = InteractiveMessageRouter({
@@ -1016,45 +1054,19 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         ttl_seconds=259200,
     )
 
-    # HTML renderer (optional — lazy-starts Chromium on first widget request)
-    html_renderer = build_html_renderer(
-        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
-    if html_renderer is not None:
-        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
-    else:
-        logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
     logger.info("🔌 Initializing Slack Adapter...")
 
-    # One RichContentService per platform: the chat handler and the notification service deliver files through the same one.
-    slack_media_adapter = SlackMediaAdapter(
-        app_client=app.client,
-        bot_token=config.get("SLACK_BOT_TOKEN", ""),
-    )
-    slack_rich_content = RichContentService(
-        media_port=slack_media_adapter,
-        storage_port=gcs_media_adapter,
-        html_renderer=html_renderer,
-    )
-
-    slack_adapter = SlackAdapterFactory.create_adapter(
-        app=app,
-        config=config,
-        deploy_topology=topology,
+    # The ConversationHandler dependencies both platforms share, held once.
+    chat = ChatServices(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        iam_service=iam_service,
-        session_store=session_store,
-        db_client=db_client,
         consolidation_queue=consolidation_queue,
         consolidation_config=config.get("CONSOLIDATION"),
         consolidation_service=_consolidation_service,
         audio_service=audio_service,
         notification_service=notification_service,
-        language_service=_language_service,
         localization=_localization,
         file_conversion_service=container.file_conversion_service,
-        channel_binding_service=channel_binding_service,
         fallback_service=_fallback_service,
         short_link_service=short_link_service,
         skill_service=container.skill_service,
@@ -1063,29 +1075,28 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive_note_service=command_drive_note_service(container.drive_note_service, container.drive_notes_enabled),
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
+    )
+
+    slack_adapter = SlackAdapterFactory.create_adapter(
+        app=app,
+        config=config,
+        deploy_topology=topology,
+        chat=chat,
+        iam_service=iam_service,
+        session_store=session_store,
+        db_client=db_client,
+        language_service=_language_service,
+        channel_binding_service=channel_binding_service,
         worker_queue=agent_task_queue,
-        rich_content_service=slack_rich_content,
+        rich_content_service=slack_kit.rich_content,
     )
     worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
-    notification_channel_factory.register_factory(
-        "slack",
-        lambda channel_id: SlackResponseChannel(
-            app_client=slack_adapter.app.client,
-            channel_id=channel_id,
-            bot_token=slack_adapter.slack_bot_token,
-        ),
-    )
-
-    # Wire Slack media adapter into notification service for async file delivery (DOCX).
-    notification_service.register_platform_media("slack", slack_media_adapter)
-    notification_service.register_platform_rich_content("slack", slack_rich_content)
-
     slack_adapter.register_handlers()
 
     # ====================================================================
     # PHASE 3: Telegram Integration (Optional)
-    # Initialize Telegram adapter if configured. All or nothing: the adapter and its media
-    # adapter are built first; the worker, channel and media registrations run only after both exist.
+    # Initialize Telegram adapter if configured. All or nothing (owner ruling): the adapter and its media
+    # adapter are built first; the worker and the late platform binding run only after both exist.
     # ====================================================================
     telegram_config = validate_telegram_config()
     telegram_adapter = None
@@ -1109,27 +1120,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 webhook_secret=telegram_config["webhook_secret"],
                 dedup_store=dedup_store,
                 session_store=session_store,
-                coordinator=coordinator,
-                agent_factory=agent_factory,
+                chat=chat,
                 iam_service=iam_service,
-                consolidation_queue=consolidation_queue,
-                consolidation_config=config.get("CONSOLIDATION"),
-                consolidation_service=_consolidation_service,
-                audio_service=audio_service,
-                notification_service=notification_service,
                 language_service=_language_service,
-                localization=_localization,
-                file_conversion_service=container.file_conversion_service,
-                fallback_service=_fallback_service,
-                short_link_service=short_link_service,
-                skill_service=container.skill_service,
-                memory_fact_service=container.memory_fact_service,
-                fact_answers=_fact_answer_service,
-                drive_note_service=command_drive_note_service(container.drive_note_service,
-                                                              container.drive_notes_enabled),
                 task_queue=agent_task_queue,
-                long_turn_service=long_turn_service,
-                doc_delivery_service=doc_delivery_service,
                 rich_content_service=telegram_rich_content,
             )
         except Exception as e:
@@ -1138,15 +1132,16 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         else:
             telegram_adapter = built_telegram_adapter
             worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
-            notification_channel_factory.register_factory(
-                "telegram",
-                lambda channel_id: _make_telegram_channel(
-                    telegram_adapter, channel_id
+            register_late_platform(
+                PlatformKit(
+                    platform="telegram",
+                    media=telegram_media_adapter,
+                    rich_content=telegram_rich_content,
+                    channel=partial(_make_telegram_channel, telegram_adapter),
                 ),
+                notifications=notification_service,
+                channels=notification_channel_factory,
             )
-            # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
-            notification_service.register_platform_media("telegram", telegram_media_adapter)
-            notification_service.register_platform_rich_content("telegram", telegram_rich_content)
 
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
@@ -1188,6 +1183,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         companion_extractor_runner=companion_extractor_runner,
         call_text_files=call_text_files,
         language_service=_language_service,
+        language_preferences=language_preferences,
         localization=_localization,
         cipher=cipher,
         digest_key=secret_digest_key,

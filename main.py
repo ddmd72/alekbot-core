@@ -191,6 +191,7 @@ async def main():
             task_setup=app.task_setup_service,
             tasks_provider=app.container.ms_todo_adapter,
             language_service=app.language_service,
+            language_preferences=app.language_preferences,
             agent_note_port=app.container.notes_adapter,
             recurrence_port=app.container.recurrence_adapter,
             twilio_verify_client=app.twilio_verify_client,

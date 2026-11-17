@@ -33,7 +33,6 @@ from ..adapters.openai_adapter import OpenAIAdapter
 from ..domain.document_extraction import PARSER, READER
 from ..domain.user import PerformanceTier
 from ..ports.account_repository import AccountRepository
-from ..ports.prompt_v3.agent_profile_repository import AgentProfileRepository
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
@@ -51,7 +50,7 @@ from ..services.agent_context_builder import AgentContextBuilder
 from ..services.prompt_builder import PromptBuilder
 from ..services.drive_transcript_mirror import DriveTranscriptMirror
 from ..services.drive_transcript_stage import DriveTranscriptStage
-from ..services.language_preference_service import LanguagePreferenceService
+from ..services.language_resolver import LanguageResolver
 from ..services.localization_service import LocalizationService
 from ..services.provider_registry import ProviderRegistry
 from ..utils.logger import logger
@@ -167,19 +166,18 @@ class DriveMirrorWiring:
 
 
 def build_drive_mirror(*, enabled: bool, repo: DriveIndexRepository, mirror_repo: DriveMirrorRepository,
-                       drive: UserDrivePort, users: UserRepository, account_repo: AccountRepository,
-                       profile_repo: AgentProfileRepository, assembly_service: Any) -> DriveMirrorWiring:
+                       drive: UserDrivePort, users: UserRepository,
+                       account_repo: AccountRepository) -> DriveMirrorWiring:
     """The mirror step (§27.9.5), built ONLY while transcription runs (`enabled`: the kill switch on and the stage
     built), so a deploy with the switch off keeps the object graph it had: the ledger (`mirror_repo`) is built by the
     caller whatever the switch, because classification, the deletion marks and the pins need it (§27.9.2, §27.9.4,
     §27.9.12). The step writes through `UserDrivePort`, never `UserDriveService` (whose guard refuses the mirror,
     §27.9.8). Its read-me and file headers are localized: the file strings (`LocalizationService`, no I/O) and the UI
-    language USER -> ACCOUNT -> SYSTEM (`LanguagePreferenceService.resolve_ui_language`, the deep-research copy's
+    language USER -> ACCOUNT -> SYSTEM (`LanguageResolver.resolve_ui_language`, the deep-research copy's
     precedent; the indexer reads only that method)."""
     if not enabled:
         return DriveMirrorWiring()
-    language = LanguagePreferenceService(user_repo=users, account_repo=account_repo, profile_repo=profile_repo,
-                                         prompt_builder=assembly_service)
+    language = LanguageResolver(user_repo=users, account_repo=account_repo)
     return DriveMirrorWiring(mirror=DriveTranscriptMirror(repo, mirror_repo, drive),
                              localization=LocalizationService(FileLocalizationAdapter()), language=language)
 
