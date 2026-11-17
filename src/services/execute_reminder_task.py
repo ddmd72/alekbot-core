@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Tuple
 
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import is_empty_answer
+from ..domain.notify_result import is_empty_answer, is_retryable_failure, is_turn_cap
 from ..domain.reminder_alert import build_reminder_alert, build_reminder_alert_summary
+from ..domain.ui_messages import UIMessage
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..ports.agent_note_port import AgentNotePort
 from ..ports.user_repository import UserRepository
@@ -57,10 +58,18 @@ class ExecuteReminderTask:
             already_delivered   ``last_delivered_due == due_at`` → 200 (Cloud
                                 Tasks retry no-op, prevents duplicate Smart run
                                 + duplicate user message)
-            delivery_failed     notify() returned ``delivered=False`` → 500
-                                (Cloud Tasks queue retries with backoff)
+            delivery_failed     not delivered and the turn never started (no channel,
+                                no channel adapter) → 500 (Cloud Tasks queue retries
+                                with backoff; nothing ran, so nothing repeats)
             empty_answer_final  the turn ended with no answer → stamped like ok, 200
+            turn_cap_final      the turn reached the agent's turn cap → stamped like ok, 200
+            failed_final        any other non-delivery once the turn started (a failed
+                                turn, a post that raised) → stamped like ok, 200: a re-run
+                                would repeat what the turn already did or posted (P15-D1)
             ok                  delivered + ``mark_fire_delivered`` stamped → 200
+
+        Every final outcome with nothing sent (the three ``*_final`` above, unless a post
+        was attempted) also tells the owner once that the reminder did not run.
         """
         note_id = payload.get("note_id")
         user_id = payload.get("user_id")
@@ -130,8 +139,7 @@ class ExecuteReminderTask:
             tier=sla_tier,
             agent_id_override=f"smart_response_agent_{user_id}",
             task_complexity=task_complexity,
-            # This task returns 5xx on failure → Cloud Tasks retries it.
-            # Suppress the agent's in-process retry so the two layers don't multiply.
+            # A whole-execution retry re-runs every tool call of the turn; `_call_llm`'s per-call retry covers a blip.
             suppress_transient_retry=True,
             # Who started the run, for the workspace's origin labels; the same due_at gives the same key on every
             # Cloud Tasks re-run of this fire (AGENT_WORKSPACE_RFC §9, §10 row 1).
@@ -139,11 +147,15 @@ class ExecuteReminderTask:
             fire_key=fire,
         )
 
+        status = "ok"
         if is_empty_answer(result):
             # Final (owner decision 2026-10-23): a retry would repeat the SYNC actions the turn took, and a
             # conditional reminder may end empty every time. Take the success path below.
             await self._empty_answer_reporter.report("execute_reminder", user_id, note_id)
-        elif not result.delivered:
+            status = "empty_answer_final"
+        elif is_turn_cap(result):
+            status = "turn_cap_final"
+        elif is_retryable_failure(result):
             logger.warning(
                 "[Worker] execute_reminder: delivery_failed note=%s user=%s "
                 "(agent_status=%s, error=%s)",
@@ -153,18 +165,43 @@ class ExecuteReminderTask:
                 "error": result.error or "delivery_failed",
                 "agent_status": result.agent_status.value,
             }, 500
+        elif not result.delivered:
+            logger.error(
+                "[Worker] execute_reminder: failed_final note=%s user=%s (agent_status=%s, error=%s, sent=%s); "
+                "the turn started, not retried",
+                note_id, user_id[:8], result.agent_status, result.error, result.sent,
+            )
+            status = "failed_final"
 
-        # Stamp idempotency FIRST, then remove a fired one-time note. Order
-        # matters: if we crash between the two, a Cloud Tasks retry sees
-        # last_delivered_due == due_at and short-circuits (already_delivered)
-        # rather than re-delivering.
+        # Stamp idempotency FIRST: a crash before it re-runs the turn (accepted residual); after it, a Cloud Tasks
+        # retry short-circuits (already_delivered). Nothing after the stamp is retryable, so its errors are logged.
         await self._notes_port.mark_fire_delivered(note_id=note_id, due_at=due_at)
+        if not result.delivered and not result.sent:
+            # Before the delete, so a failing delete never costs the owner the notice; once per fire (the stamp).
+            try:
+                notice_sent = await self._notification.notify_ui_notice(
+                    user_id, user_profile.account_id, UIMessage.REMINDER_NOT_RUN, name=note.text)
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s notice_sent=%s; not retried",
+                    status, note_id, user_id[:8], notice_sent,
+                )
+            except Exception as exc:
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s notice failed: %s; not retried",
+                    status, note_id, user_id[:8], exc, exc_info=True,
+                )
         if note.recurrence is None:
             # One-time reminder: claimed (not deleted) at fire-time so its
             # content survived for this delivery; remove it now that it fired.
-            await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
+            try:
+                await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
+            except Exception as exc:
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s delete after the stamp failed: %s",
+                    status, note_id, user_id[:8], exc, exc_info=True,
+                )
         logger.info(
             "[Worker] execute_reminder: %s note=%s user=%s due=%s",
-            "empty_answer_final" if is_empty_answer(result) else "ok", note_id, user_id[:8], due_at.isoformat(),
+            status, note_id, user_id[:8], due_at.isoformat(),
         )
-        return {"status": "empty_answer_final" if is_empty_answer(result) else "ok"}, 200
+        return {"status": status}, 200

@@ -27,7 +27,7 @@ from ...domain.agent import (
     RoutingMetadata,
 )
 from ...domain.messaging import SmartResponse
-from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
+from ...domain.notify_result import EMPTY_ANSWER_ERROR, TURN_CAP_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK, RUNNING_JOBS_HEADER
 from ...domain.untrusted_text import EXTERNAL_REMINDER, wrap_untrusted
@@ -613,7 +613,7 @@ class SmartResponseAgent(BaseAgent):
                 return AgentResponse.failure(
                     task_id=message.task_id,
                     agent_id=self.agent_id,
-                    error="max_turns_exhausted",
+                    error=TURN_CAP_ERROR,
                 )
 
             smart_response, history_summary = self._build_smart_response(delegation_result)
