@@ -398,6 +398,42 @@ async def test_the_cache_is_refreshed_once_after_a_write():
     assert refreshes == [ACC]
 
 
+async def test_a_close_that_raises_after_the_write_still_leaves_the_cache_refreshed_once(monkeypatch):
+    world = ReviewWorld()
+    fact = await stale_fact(world)
+    await question_on(world, fact)
+    refreshes = counting_refreshes(world)
+    svc = service(world)
+
+    async def broken_close(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(svc, "_close", broken_close)
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await svc.apply(ACC, USER, "q1", AnswerKind.STILL_TRUE, "digit", world.now)
+
+    assert refreshes == [ACC]
+
+
+async def test_a_set_aside_note_that_raises_after_the_write_still_leaves_the_cache_refreshed_once(monkeypatch):
+    world = ReviewWorld()
+    fact = await stale_fact(world)
+    await question_on(world, fact)
+    refreshes = counting_refreshes(world)
+    svc = service(world)
+
+    async def broken_note(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("note failed")
+
+    monkeypatch.setattr(svc, "_note_set_aside", broken_note)
+
+    with pytest.raises(RuntimeError, match="note failed"):
+        await svc.apply(ACC, USER, "q1", AnswerKind.NEVER, "digit", world.now)
+
+    assert refreshes == [ACC]
+
+
 @pytest.mark.parametrize("status", list(OWNER_SOURCES))
 async def test_the_answers_are_counted_by_source(status):
     world = ReviewWorld()

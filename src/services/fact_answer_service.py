@@ -123,8 +123,8 @@ class FactAnswerService(ChoiceHandlerPort):
         write, or a `FactExpiryError`, is `not_applied` (WARNING, `answers_not_applied`); so is an answer that is not an option of
         the question's kind (`answer_fits`: `happened` on a `still_true` question, `dont_know` on a digest question), refused
         before the fact is read. Only an applied answer closes
-        the question (`close_question`, the owner's close), refreshes the biographical cache once and is counted by its
-        source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
+        the question (`close_question`, the owner's close), refreshes the biographical cache once, right after the write
+        and before the close (so it is refreshed even when a later step raises), and is counted by its source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
         ValueError for a source that is not the owner's; store errors raise."""
         counter = ANSWER_COUNTERS.get(source)
         if counter is None:
@@ -168,10 +168,10 @@ class FactAnswerService(ChoiceHandlerPort):
             return AnswerResult.CONFLICT
         except FactExpiryError as exc:
             return await self._not_applied(question, now, f"expiry: {exc}")
+        await self._bio_cache.refresh_cache(owner_id=account_id)  # first: a later step may raise, the fact is already written
         if answer_closes_fact(kind, question):
             await self._note_set_aside(account_id, now)
         await self._close(question, ClosedBy.OWNER, kind, source, None, now)
-        await self._bio_cache.refresh_cache(owner_id=account_id)
         await self._count(account_id, now, {counter: 1})
         logger.info(f"[FactAnswer] question {question_id} answered {kind.value} ({source}); applied")
         return AnswerResult.APPLIED
