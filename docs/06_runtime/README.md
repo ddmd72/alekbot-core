@@ -75,7 +75,7 @@ runs `ConsolidationAgent` on the oldest pending batch. Each step, its thresholds
 ## 3. Background work
 
 All background work arrives as `POST /worker` (Cloud Tasks or Cloud Scheduler, OIDC-verified) and is dispatched by
-`WorkerHandler` on `task_type`. The task types and their schedules: `docs/07_deployment/SCHEDULERS.md`. Proactive
+`WorkerHandler` on `task_type`: its own handlers for the lightweight types, and one runner service per heavier type (`WorkerTask`, built by `build_worker_tasks`). The task types and their schedules: `docs/07_deployment/SCHEDULERS.md`. Proactive
 messages (reminders, daily email review, job results) go out through `UserNotificationService`.
 
 Three more runtime units run outside the main service:
