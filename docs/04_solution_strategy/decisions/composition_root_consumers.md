@@ -17,7 +17,9 @@ call failed only at run time.
 1. **Option B: a bundle per subsystem, nothing attached after construction.** A subsystem gets one `*_setup.py` returning
    one frozen bundle, and a service is built where its bundle is built. The exceptions are named in
    `tests/unit/architecture/late_wiring_calls_allowlist.txt` with a `permanent` reason (Registry pattern, the agent-factory
-   cycle, the Telegram binding below).
+   cycle, the Telegram binding below). This record's change makes the consumers take their dependencies at
+   construction; splitting `build_application_graph` itself into those bundles, typing the agent services and moving the
+   biographical-cache refresh out of the fact repository are the next step of the same refactor.
 2. **`/worker` is a registry of runners.** `WorkerHandler` dispatches through a task registry (`WorkerTask`, a Protocol in
    `domain/worker_task.py`, so handlers still import no `ports/`). The six logic-heavy tasks are runner services in
    `src/services/*_task.py`, built by `composition/worker_setup.py::build_worker_tasks`, each holding only its own
@@ -37,7 +39,7 @@ call failed only at run time.
    `permanent` allowlist line.
 6. **Language is split by command and query.** `LanguageResolver` reads (UI language, stored preference) and implements
    `LanguageServicePort`; `LanguagePreferenceService` writes and takes the resolver. Readers (platform adapters, the
-   notification service, the agent factory, the drive mirror) depend on nothing that notifies or refreshes agents,.
+   notification service, the agent factory, the drive mirror) depend on nothing that notifies or refreshes agents.
 7. **`DeployTopology` is the one source of deploy literals.** `composition/deploy_topology.py` derives the service URL, the
    Cloud Tasks queue suffix and the regions once; everything else receives the value. `CLOUD_RUN_SERVICE_URL` is read
    there only, and a ratchet test keeps the literals out of other modules.
@@ -53,15 +55,17 @@ deep-research runners, so that code is not copied between runners.
 
 - **Option A, leave the late calls and add a lint:** the order of calls stays an invisible contract; a lint can only count
   them.
-- **Option C, a DI container or a global service locator:** hides the same dependencies behind a lookup, and the repo
-  rules out containers (manual DI in `composition/`).
+- **Option C, B plus dissolving `ServiceContainer` and splitting `ConversationHandler` by command family:** deferred, not
+  rejected — about twice B's cost and real regression risk in the agent factory's per-user cache; revisit once B has been
+  live and only if `ConversationHandler` or the agent factory is still what new code copies. A DI container stays out
+  (manual DI in `composition/`).
 - **Runner methods on `WorkerHandler`, split into mixins:** the arity and the mixed dependencies stay; only the file
   shrinks.
 - **A `DisabledTask` for every absent dependency:** a silent success would hide a misconfigured deploy. Only a refusal the
   caller already received is preserved.
-- **Telegram "outbound survives":** build the adapter without the notification service and let notifications work
-  when the chat side failed. The owner rejected it: Telegram is all or nothing, so a half-built platform is never
-  served.
+- **Telegram "outbound survives":** hand Telegram's kit to the notification service at construction, so outbound
+  notifications keep working even when the Telegram adapter then fails to build. The owner rejected it: Telegram is all or
+  nothing, so a half-built platform is never served.
 - **Telegram built at construction like Slack:** needs the notification service inside the kit it is built from, a real
   cycle; the named exception is cheaper than a proxy object.
 - **One language service with a read-only interface:** the writer still pulls in the notifier and the refresher, which was
