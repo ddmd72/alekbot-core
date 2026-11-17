@@ -3,9 +3,10 @@ consumer payload fields that do not match").
 
 Producers are the sites `worker_triggers.enqueue_sites()` finds (each re-parsed at its `path:line`), the Cloud Scheduler
 bodies (`worker_triggers.scheduler_task_types()`) and `GcpTaskQueue.enqueue_slack_event`, the producer of the queued Slack
-event. Consumers are the branches of `WorkerHandler._dispatch`: the statements before the chain (read by every branch), the
-branch test, the branch body, and every function the payload is handed to (a `self.<method>(payload)` of the same class, one
-of `DELEGATES`, or a model of `MODELS`). Both sides fail loudly (`ExtractorError`, naming `path:line`) on a form they do
+event. Consumers are the entries of `WorkerHandler`'s task registry (`worker_triggers.registry_in_source`): the statements
+of `_dispatch` before its chain (read by every task), the test that selects the queued Slack event, the registered method,
+and every function the payload is handed to (a `self.<method>(payload)` of the same class, one of `DELEGATES`, or a model
+of `MODELS`). Both sides fail loudly (`ExtractorError`, naming `path:line`) on a form they do
 not understand, so a new payload shape is a test failure, not a silent pass.
 
 A key is a field name, or `outer.inner` for a field of a nested dict (`payload.get("context", {}).get("user_id")` reads
@@ -51,7 +52,7 @@ class Fn(NamedTuple):
     qualname: str   # "Class.method"
 
 
-# Calls in `WorkerHandler._dispatch` that hand the payload to a consumer outside worker_handler.py: call text -> (consumer, reason).
+# Calls in `WorkerHandler`'s task methods that hand the payload to a consumer outside worker_handler.py: call text -> (consumer, reason).
 DELEGATES: Dict[str, Tuple[Fn, str]] = {
     "self._agent_worker.handle_task": (
         Fn(ROOT / "src" / "handlers" / "agent_worker_handler.py", "AgentWorkerHandler.handle_task"),
@@ -498,7 +499,7 @@ class _Walk:
 
 
 def _dispatch_chain(tree: ast.Module, where: str) -> Tuple[FunctionNode, List[ast.stmt], List[ast.If]]:
-    """`_dispatch`, the statements before its `if/elif` chain (read by every branch), and the chain's `if` nodes."""
+    """`_dispatch`, the statements before its `if/elif` chain (run for every task), and the chain's `if` nodes."""
     func = _find_function(tree, "WorkerHandler._dispatch", where)
     body = func.body
     first = next((i for i, s in enumerate(body) if isinstance(s, ast.If)), None)
@@ -512,40 +513,45 @@ def _dispatch_chain(tree: ast.Module, where: str) -> Tuple[FunctionNode, List[as
     return func, body[:first], chain
 
 
-def _calls_a_handler(statements: List[ast.stmt], delegates: Dict[str, Tuple[Fn, str]]) -> bool:
-    for node in ast.walk(ast.Module(body=list(statements), type_ignores=[])):
-        if isinstance(node, ast.Call):
-            text = ast.unparse(node.func)
-            if text in delegates or text.startswith("self._handle_"):
-                return True
-    return False
+def _slack_event_test(chain: List[ast.If], where: str) -> ast.expr:
+    """The test of the one `_dispatch` branch that selects the queued Slack event's registry entry."""
+    found = [branch for branch in chain if any(isinstance(n, ast.Name) and n.id == wt.SLACK_EVENT_KEY
+                                               for stmt in branch.body for n in ast.walk(stmt))]
+    if len(found) != 1:
+        raise ExtractorError(f"{where}: {len(found)} _dispatch branches select {wt.SLACK_EVENT_KEY}, expected one")
+    return found[0].test
 
 
 def consumers(source_path: Path = WORKER_HANDLER, delegates: Optional[Dict[str, Tuple[Fn, str]]] = None,
               source: Optional[str] = None) -> Dict[str, Consumer]:
-    """`branch -> Consumer` for every branch of `WorkerHandler._dispatch` (the queued Slack event included). `source`
-    replaces the file's text (the self-tests); `delegates` replaces `DELEGATES`."""
+    """`branch -> Consumer` for every entry of `WorkerHandler`'s task registry (the queued Slack event included): the
+    statements of `_dispatch` before its chain (run for every task), the test that selects the queued Slack event (its
+    entry only), and the registered method with every function the payload reaches from it. `source` replaces the
+    file's text (the self-tests); `delegates` replaces `DELEGATES`."""
     delegates = DELEGATES if delegates is None else delegates
-    tree = ast.parse(source) if source is not None else _tree(source_path)
+    text = source if source is not None else source_path.read_text()
+    tree = ast.parse(text)
     where = _rel(source_path)
     func, preamble, chain = _dispatch_chain(tree, where)
     param = _param_at(func, 0, where)
     out: Dict[str, Consumer] = {}
-    for branch in chain:
-        name = wt._branch_name(branch.test)
-        if not _calls_a_handler(branch.body, delegates):
-            raise ExtractorError(f"{where}:{branch.lineno}: the {name} branch calls no handler")
+    for name, entry in wt.registry_in_source(text).items():
+        method = _find_function(tree, f"WorkerHandler.{entry.method}", where)
         walk = _Walk(delegates, {source_path: tree})
-        walk.statements(list(preamble) + list(branch.body), param, source_path, "WorkerHandler", extra=(branch.test,))
+        extra = (_slack_event_test(chain, where),) if name == SLACK_EVENT_BRANCH else ()
+        walk.statements(list(preamble), param, source_path, "WorkerHandler", extra=extra)
+        if entry.payload_at is not None:
+            walk.function(Fn(source_path, f"WorkerHandler.{entry.method}"), entry.payload_at)
+        elif [a.arg for a in method.args.posonlyargs + method.args.args] != ["self"]:
+            raise ExtractorError(f"{where}:{method.lineno}: {entry.method} is registered without the payload but takes parameters")
         out[name] = Consumer(frozenset(walk.read), frozenset(walk.required), tuple(walk.functions))
     return out
 
 
 def delegates_used() -> Set[str]:
-    """The `DELEGATES` call texts the real `_dispatch` contains."""
-    _, _, chain = _dispatch_chain(_tree(WORKER_HANDLER), _rel(WORKER_HANDLER))
-    return {ast.unparse(n.func) for branch in chain for stmt in branch.body for n in ast.walk(stmt)
-            if isinstance(n, ast.Call) and ast.unparse(n.func) in DELEGATES}
+    """The `DELEGATES` call texts whose consumer the payload reaches from some registered task."""
+    reached = {f for consumer in consumers().values() for f in consumer.functions}
+    return {text for text, (fn, _) in DELEGATES.items() if f"{_rel(fn.path)}::{fn.qualname}" in reached}
 
 
 def function_consumer(source: str, qualname: str, position: object = 0, name: str = "inline.py") -> Consumer:

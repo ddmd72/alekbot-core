@@ -1,4 +1,4 @@
-"""Every `/worker` task type something sends, and every branch `WorkerHandler._dispatch` has (P9 design §5c).
+"""Every `/worker` task type something sends, and every task type `WorkerHandler` registers (P9 design §5c).
 
 Triggers come from two places the deploy owns: the Cloud Scheduler jobs `scripts/infrastructure/cloudbuild_scheduler_jobs.sh`
 creates, and the enqueue sites in `src/` and the root `*_main.py` (an `enqueue_worker_task(...)` call, or a dict literal
@@ -19,19 +19,19 @@ SCHEDULER_SCRIPT = ROOT / "scripts" / "infrastructure" / "cloudbuild_scheduler_j
 LEGACY_SCHEDULER_SCRIPT = "setup-daily-email-review-scheduler.sh"
 WORKER_HANDLER = ROOT / "src" / "handlers" / "worker_handler.py"
 
-# Sent to another service's /worker; the main service has no branch for it.
+# Sent to another service's /worker; the main service registers no task for it.
 OTHER_SERVICE: Dict[str, str] = {"drive_sync": "indexer_main.py /worker, delivered by the drive queue"}
-# A branch nothing sends. Empty: every handler has a trigger.
+# A registered task type nothing sends. Empty: every task has a trigger.
 MANUAL_ONLY: Dict[str, str] = {}
 # Names that stand for a task type: the module attribute they are read from, checked against its runtime value.
 CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys", "FACT_REVIEW_TASK": "src.domain.fact_review_task_keys",
                             "INTERACTIVE_CHOICE_TASK": "src.domain.interactive_choice"}
-# The `task_type is None` branch of `_dispatch`: a queued Slack event has no task type by design.
+# The registry entry `_dispatch` runs for a payload without a task type: a queued Slack event has none by design.
 SLACK_EVENT_BRANCH = "<queued slack event>"
 
 
 class ExtractorError(AssertionError):
-    """A form of enqueue site or dispatch comparison the extractor does not understand."""
+    """A form of enqueue site or task registry entry the extractor does not understand."""
 
 
 class Site(NamedTuple):
@@ -204,41 +204,86 @@ def trigger_types() -> Set[str]:
     return set(scheduler_task_types()) | {site.task_type for site in enqueue_sites()}
 
 
-# ----------------------------------------------------------------------------- the dispatch branches
+# ----------------------------------------------------------------------------- the dispatch registry
 
-def _branch_name(test: ast.AST) -> str:
-    # task_type == "literal" | task_type == KNOWN_CONSTANT
-    if (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "task_type"
-            and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)):
-        right = test.comparators[0]
-        if isinstance(right, ast.Constant) and isinstance(right.value, str):
-            return right.value
-        if isinstance(right, ast.Name) and right.id in CONSTANTS:
-            return _constant_value(right.id)
-    # task_type is None and "event" in payload and "session_id" in payload
-    if (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and isinstance(test.values[0], ast.Compare)
-            and isinstance(test.values[0].left, ast.Name) and test.values[0].left.id == "task_type"
-            and isinstance(test.values[0].ops[0], ast.Is)
-            and isinstance(test.values[0].comparators[0], ast.Constant) and test.values[0].comparators[0].value is None):
+# The name of the registry key of the queued Slack event in worker_handler.py; the extractor maps it to SLACK_EVENT_BRANCH.
+SLACK_EVENT_KEY = "_QUEUED_SLACK_EVENT"
+
+
+class Entry(NamedTuple):
+    method: str                 # the WorkerHandler method the task runs
+    payload_at: Optional[int]   # the payload's positional index in its call; None when the method gets no payload
+
+
+def _registry_key(node: ast.AST) -> str:
+    # "literal" | KNOWN_CONSTANT | _QUEUED_SLACK_EVENT
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in CONSTANTS:
+        return _constant_value(node.id)
+    if isinstance(node, ast.Name) and node.id == SLACK_EVENT_KEY:
         return SLACK_EVENT_BRANCH
-    raise ExtractorError(f"worker_handler.py:{test.lineno}: unrecognised dispatch comparison {ast.unparse(test)!r}")
+    raise ExtractorError(f"worker_handler.py:{node.lineno}: unrecognised registry key {ast.unparse(node)!r}")
+
+
+def _self_method(node: ast.AST) -> Optional[str]:
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
+        return node.attr
+    return None
+
+
+def _wrapper_payload_at(tree: ast.Module, name: str) -> Optional[int]:
+    """Where the module-level wrapper `name(method)` puts the task's payload when it calls `method`, read from its body:
+    `async def task(payload, headers): return await method(payload)` -> 0; `... method()` -> None."""
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
+    if len(found) != 1 or len(found[0].args.args) != 1:
+        raise ExtractorError(f"worker_handler.py: the registry wrapper {name} is not one module function of one parameter")
+    method = found[0].args.args[0].arg
+    inner = [n for n in found[0].body if isinstance(n, ast.AsyncFunctionDef)]
+    if len(inner) != 1:
+        raise ExtractorError(f"worker_handler.py: the registry wrapper {name} defines {len(inner)} async tasks")
+    params = [a.arg for a in inner[0].args.args]
+    calls = [n for n in ast.walk(inner[0]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == method]
+    if len(calls) != 1 or calls[0].keywords or not all(isinstance(a, ast.Name) and a.id in params for a in calls[0].args):
+        raise ExtractorError(f"worker_handler.py: the registry wrapper {name} does not call {method} once with its own parameters")
+    passed = [a.id for a in calls[0].args if isinstance(a, ast.Name)]
+    return passed.index(params[0]) if params and params[0] in passed else None
+
+
+def _registry_value(node: ast.AST, tree: ast.Module) -> Entry:
+    # wrapper(self.<method>) | self.<method> (a method of the WorkerTask shape itself: payload first)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and len(node.args) == 1 and not node.keywords
+            and _self_method(node.args[0])):
+        return Entry(str(_self_method(node.args[0])), _wrapper_payload_at(tree, node.func.id))
+    if _self_method(node):
+        return Entry(str(_self_method(node)), 0)
+    raise ExtractorError(f"worker_handler.py:{node.lineno}: unrecognised registry value {ast.unparse(node)!r}")
+
+
+def registry_in_source(source: str) -> Dict[str, Entry]:
+    """`branch -> Entry` of the one `self._tasks = {...}` literal in the `__init__` of `source`."""
+    tree = ast.parse(source)
+    inits = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "__init__"]
+    literals = [n.value for init in inits for n in ast.walk(init) if isinstance(n, (ast.Assign, ast.AnnAssign))
+                and ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target) == "self._tasks"]
+    if len(literals) != 1 or not isinstance(literals[0], ast.Dict):
+        raise ExtractorError("worker_handler.py: no single `self._tasks = {...}` literal in __init__")
+    entries: Dict[str, Entry] = {}
+    for key, value in zip(literals[0].keys, literals[0].values):
+        if key is None:
+            raise ExtractorError(f"worker_handler.py:{value.lineno}: a ** spread in the task registry")
+        name = _registry_key(key)
+        if name in entries:
+            raise ExtractorError(f"worker_handler.py:{key.lineno}: the task type {name!r} is registered twice")
+        entries[name] = _registry_value(value, tree)
+    return entries
 
 
 def branches_in_source(source: str) -> Set[str]:
-    """The task types of the `if/elif` chain of the first `_dispatch` function in `source`."""
-    [dispatch] = [n for n in ast.walk(ast.parse(source))
-                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "_dispatch"]
-    names: Set[str] = set()
-    chain = [s for s in dispatch.body if isinstance(s, ast.If)]
-    if not chain:
-        raise ExtractorError("_dispatch has no if/elif chain")
-    node: Optional[ast.If] = chain[0]
-    while node is not None:
-        names.add(_branch_name(node.test))
-        node = node.orelse[0] if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If) else None
-    return names
+    """The task types of the task registry in `source` (the queued Slack event included)."""
+    return set(registry_in_source(source))
 
 
 def dispatch_branches() -> Set[str]:
-    """The task types `WorkerHandler._dispatch` handles (the queued Slack event is not one)."""
+    """The task types `WorkerHandler` dispatches (the queued Slack event is not one)."""
     return branches_in_source(WORKER_HANDLER.read_text()) - {SLACK_EVENT_BRANCH}

@@ -48,9 +48,10 @@ Supported task_types:
 
 from __future__ import annotations
 
+import functools
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional, Tuple
 
 
 if TYPE_CHECKING:
@@ -83,6 +84,7 @@ from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
+from ..domain.worker_task import WorkerTask
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -101,6 +103,23 @@ from ..utils.logger import logger
 
 
 DEFAULT_VIDEO_DURATION_S_FALLBACK = 5  # only used if a poll payload is somehow missing duration_s
+
+# The registry key of the queued Slack event, which carries no task_type; never matched by a sent task_type.
+_QUEUED_SLACK_EVENT = "<queued slack event>"
+
+
+def _payload_task(method: Callable[[dict], Awaitable[Tuple[dict, int]]]) -> WorkerTask:
+    @functools.wraps(method)
+    async def task(payload: dict, headers: dict) -> Tuple[dict, int]:
+        return await method(payload)
+    return task
+
+
+def _no_input_task(method: Callable[[], Awaitable[Tuple[dict, int]]]) -> WorkerTask:
+    @functools.wraps(method)
+    async def task(payload: dict, headers: dict) -> Tuple[dict, int]:
+        return await method()
+    return task
 
 
 class WorkerHandler:
@@ -183,6 +202,39 @@ class WorkerHandler:
         self._companion_extraction = companion_extraction
         self._oauth_credentials = oauth_credentials
         self._drive_sync_scheduler = drive_sync_scheduler
+        self._tasks: Mapping[str, WorkerTask] = {
+            "agent_execution": _payload_task(self._handle_agent_execution),
+            "telegram_update": _payload_task(self._handle_telegram_update),
+            "email_indexing": _payload_task(self._handle_email_indexing),
+            "email_indexing_watchdog": _no_input_task(self._handle_watchdog),
+            "consolidation": _payload_task(self._handle_consolidation),
+            "sweep_consolidation": _no_input_task(self._handle_sweep_consolidation),
+            "companion_consolidation": _payload_task(self._handle_companion_consolidation),
+            "sweep_companion_consolidation": _no_input_task(self._handle_sweep_companion_consolidation),
+            "deep_research_failed": _payload_task(self._handle_deep_research_failed),
+            "deep_research_webhook_event": _payload_task(self._handle_deep_research_webhook_event),
+            "video_generation_polling": _payload_task(self._handle_video_generation_polling),
+            "setup_microsoft_todo": _payload_task(self._handle_setup_microsoft_todo),
+            "reindex_task_list": _payload_task(self._handle_reindex_task_list),
+            "renew_task_subscriptions": _payload_task(self._handle_renew_task_subscriptions),
+            "renew_all_task_subscriptions": _no_input_task(self._handle_renew_all_task_subscriptions),
+            "fire_due_reminders": _no_input_task(self._handle_fire_due_reminders),
+            "execute_reminder": _payload_task(self._handle_execute_reminder),
+            "start_email_indexing": _no_input_task(self._handle_start_email_indexing),
+            "start_daily_email_review": _no_input_task(self._handle_start_daily_email_review),
+            "daily_email_review": _payload_task(self._handle_daily_email_review),
+            "billing_daily_summary": _no_input_task(self._handle_billing_daily_summary),
+            "start_drive_sync": _no_input_task(self._handle_start_drive_sync),
+            "reconnect_notice_sweep": _no_input_task(self._handle_reconnect_notice_sweep),
+            "fact_lifecycle_sweep": _no_input_task(self._handle_fact_lifecycle_sweep),
+            FACT_REVIEW_TASK: _payload_task(self._handle_fact_review),
+            INTERACTIVE_CHOICE_TASK: _payload_task(self._handle_interactive_choice),
+            _QUEUED_SLACK_EVENT: self._handle_queued_slack_event,
+        }
+
+    def task_types(self) -> frozenset[str]:
+        """The task_type values this handler dispatches (the queued Slack event carries none)."""
+        return frozenset(self._tasks) - {_QUEUED_SLACK_EVENT}
 
     def attach_slack_worker(
         self, fn: Callable[[dict, dict], Awaitable[Tuple[dict, int]]],
@@ -290,73 +342,36 @@ class WorkerHandler:
 
     async def _dispatch(self, payload: dict, headers: dict) -> Tuple[dict, int]:
         task_type = payload.get("task_type")
-        if task_type == "agent_execution":
-            user_id = payload.get("context", {}).get("user_id", "")
-            if user_id:
-                await self._agent_factory.ensure_agents_for_user(user_id)
-            result = await self._agent_worker.handle_task(payload)
-            return result, 200
-        elif task_type == "telegram_update":
-            if self._telegram_worker is None:
-                logger.error("[WorkerHandler] telegram_update delivered but Telegram is not configured")
-                return {"error": "telegram not configured"}, 503
-            return await self._telegram_worker(payload)
-        elif task_type == "email_indexing":
-            return await self._handle_email_indexing(payload)
-        elif task_type == "email_indexing_watchdog":
-            return await self._handle_watchdog()
-        elif task_type == "consolidation":
-            return await self._handle_consolidation(payload)
-        elif task_type == "sweep_consolidation":
-            return await self._handle_sweep_consolidation()
-        elif task_type == "companion_consolidation":
-            return await self._handle_companion_consolidation(payload)
-        elif task_type == "sweep_companion_consolidation":
-            return await self._handle_sweep_companion_consolidation()
-        elif task_type == "deep_research_failed":
-            return await self._handle_deep_research_failed(payload)
-        elif task_type == "deep_research_webhook_event":
-            return await self._handle_deep_research_webhook_event(payload)
-        elif task_type == "video_generation_polling":
-            return await self._handle_video_generation_polling(payload)
-        elif task_type == "setup_microsoft_todo":
-            return await self._handle_setup_microsoft_todo(payload)
-        elif task_type == "reindex_task_list":
-            return await self._handle_reindex_task_list(payload)
-        elif task_type == "renew_task_subscriptions":
-            return await self._handle_renew_task_subscriptions(payload)
-        elif task_type == "renew_all_task_subscriptions":
-            return await self._handle_renew_all_task_subscriptions()
-        elif task_type == "fire_due_reminders":
-            return await self._handle_fire_due_reminders()
-        elif task_type == "execute_reminder":
-            return await self._handle_execute_reminder(payload)
-        elif task_type == "start_email_indexing":
-            return await self._handle_start_email_indexing()
-        elif task_type == "start_daily_email_review":
-            return await self._handle_start_daily_email_review()
-        elif task_type == "daily_email_review":
-            return await self._handle_daily_email_review(payload)
-        elif task_type == "billing_daily_summary":
-            return await self._handle_billing_daily_summary()
-        elif task_type == "start_drive_sync":
-            return await self._handle_start_drive_sync()
-        elif task_type == "reconnect_notice_sweep":
-            return await self._handle_reconnect_notice_sweep()
-        elif task_type == "fact_lifecycle_sweep":
-            return await self._handle_fact_lifecycle_sweep()
-        elif task_type == FACT_REVIEW_TASK:
-            return await self._handle_fact_review(payload)
-        elif task_type == INTERACTIVE_CHOICE_TASK:
-            return await self._handle_interactive_choice(payload)
-        elif task_type is None and "event" in payload and "session_id" in payload:
+        if task_type is None and "event" in payload and "session_id" in payload:
             # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
-            if self._slack_worker is None:
-                logger.error("[WorkerHandler] Slack event delivered but no Slack worker is attached")
-                return {"error": "slack not configured"}, 503
-            return await self._slack_worker(payload, headers)
-        logger.error("[WorkerHandler] unknown task_type=%r", task_type)
-        return {"error": "unknown task_type"}, 400
+            task: Optional[WorkerTask] = self._tasks[_QUEUED_SLACK_EVENT]
+        elif isinstance(task_type, str) and task_type != _QUEUED_SLACK_EVENT:
+            task = self._tasks.get(task_type)
+        else:
+            task = None
+        if task is None:
+            logger.error("[WorkerHandler] unknown task_type=%r", task_type)
+            return {"error": "unknown task_type"}, 400
+        return await task(payload, headers)
+
+    async def _handle_agent_execution(self, payload: dict) -> Tuple[dict, int]:
+        user_id = payload.get("context", {}).get("user_id", "")
+        if user_id:
+            await self._agent_factory.ensure_agents_for_user(user_id)
+        result = await self._agent_worker.handle_task(payload)
+        return result, 200
+
+    async def _handle_telegram_update(self, payload: dict) -> Tuple[dict, int]:
+        if self._telegram_worker is None:
+            logger.error("[WorkerHandler] telegram_update delivered but Telegram is not configured")
+            return {"error": "telegram not configured"}, 503
+        return await self._telegram_worker(payload)
+
+    async def _handle_queued_slack_event(self, payload: dict, headers: dict) -> Tuple[dict, int]:
+        if self._slack_worker is None:
+            logger.error("[WorkerHandler] Slack event delivered but no Slack worker is attached")
+            return {"error": "slack not configured"}, 503
+        return await self._slack_worker(payload, headers)
 
     # ------------------------------------------------------------------
     # Email indexing
