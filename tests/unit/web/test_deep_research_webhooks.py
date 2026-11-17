@@ -164,18 +164,10 @@ class TestFactoryWiring:
         bp = create_deep_research_webhooks_blueprint()
         assert bp.name == "deep_research_webhooks"
 
-    def test_main_py_wires_media_storage_to_the_delivering_worker(self):
-        """R12.3 (round files lost for the OpenAI DR path): media_storage must reach the OpenAI
-        delivery. Delivery now runs in WorkerHandler, so main.py must pass media_storage= (and the
-        link service, task queue and notification service delivery uses) to WorkerHandler, and the
-        webhook factory must still get its task queue and retrieval callable. WorkerHandler is built by
-        build_application_graph (P9 T2); the webhook factory is still called in main.py."""
-        worker_kwargs = _call_kwargs("WorkerHandler", "src/composition/application_graph.py")
-        assert worker_kwargs, "WorkerHandler(...) call not found in application_graph.py"
-        for kw in ("media_storage", "link_service", "task_dispatch", "notification_service",
-                   "deep_research_fetch"):
-            assert kw in worker_kwargs, f"application_graph.py must pass {kw}= to WorkerHandler; got {worker_kwargs}"
-
+    def test_main_py_wires_the_webhook_factorys_queue_retrieval_dedup_and_secret(self):
+        """The webhook factory, still called in main.py, gets its task queue, retrieval callable, dedup store and
+        secret. What the delivering worker gets (R12.3: media_storage must reach the OpenAI delivery) is pinned on the
+        built graph by test_worker_tasks_wiring.py."""
         factory_kwargs = _call_kwargs("create_deep_research_webhooks_blueprint")
         assert factory_kwargs, "create_deep_research_webhooks_blueprint(...) call not found in main.py"
         for kw in ("task_queue", "fetch_response", "dedup_store", "webhook_secret"):
