@@ -124,6 +124,7 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
+from src.composition.deploy_topology import DeployTopology, build_deploy_topology
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
 from src.composition.fact_search_setup import build_fact_search_service
@@ -162,6 +163,7 @@ class ApplicationGraph:
     auth_service: AuthenticationService
     auth_registry: AuthProviderRegistry
     auth_config: AuthConfig
+    deploy_topology: DeployTopology
     # the integration connect flow and the Cabinet's credential removal (MULTI_DRIVE_RFC §4.3, §5.2)
     connect_service: OAuthConnectService
     credential_revocation: CredentialRevocationService
@@ -237,6 +239,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # localhost callback on Cloud Run refuses the start before anything is built.
     auth_config = AuthConfig(config)
     auth_config.validate()
+    topology = build_deploy_topology(config, env_config)
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
     # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
@@ -281,13 +284,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     agent_task_queue = None
     if config.get("GOOGLE_CLOUD_PROJECT"):
-        queue_suffix = "dev" if env_config.is_development else "prod"
-        service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         agent_task_queue = GcpTaskQueue(
             project_id=config["GOOGLE_CLOUD_PROJECT"],
-            location="us-central1",
-            queue_name=f"agent-tasks-{queue_suffix}",
-            service_url=service_url,
+            location=topology.region,
+            queue_name=f"agent-tasks-{topology.queue_suffix}",
+            service_url=topology.service_url,
             service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
         )
     else:
@@ -448,14 +449,13 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         job_registry.register("openai", _openai_dr_adapter)
         logger.info("🔬 Deep research adapter registered: provider=openai")
     if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
-        queue_suffix = "dev" if env_config.is_development else "prod"
         cloud_jobs_adapter = CloudRunJobsAdapter(
             project=config["GOOGLE_CLOUD_PROJECT"],
-            region="us-central1",
+            region=topology.region,
         )
         job_registry.register("claude", ClaudeDeepResearchAdapter(
             job_runner=cloud_jobs_adapter,
-            job_name=f"alek-research-job-{queue_suffix}",
+            job_name=f"alek-research-job-{topology.queue_suffix}",
             model_override=os.getenv("CLAUDE_DEEP_RESEARCH_MODEL"),
         ))
         logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
@@ -506,7 +506,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     file_link_service = (
         FileLinkService(
             token_service=file_token_service,
-            base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            base_url=topology.service_url,
         )
         if gcs_media_adapter else None
     )
@@ -517,7 +517,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     short_link_service = (
         ShortLinkService(
             repository=FirestoreShortLinkRepository(db_client=db_client, env_config=env_config),
-            base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            base_url=topology.service_url,
         )
         if gcs_media_adapter else None
     )
@@ -624,6 +624,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         config=config,
         fact_search=fact_search,
         env_config=env_config,
+        deploy_topology=topology,
         coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
@@ -720,7 +721,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # MS To Do services — reuse adapters from ServiceContainer
     task_setup_service = None
     if container.ms_todo_adapter and agent_task_queue:
-        service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         task_setup_service = TaskSetupService(
             lifecycle=container.ms_todo_adapter,
             task_config=container.task_config_repo,
@@ -728,7 +728,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             oauth_credentials=oauth_credentials_port,
             task_search_index=container.task_search_index,
             task_queue=agent_task_queue,
-            notification_url_base=service_url,
+            notification_url_base=topology.service_url,
             connector=container.connectors.get(MICROSOFT_TODO),
         )
 
@@ -955,7 +955,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         alert_sink=_alert_webhook,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         fact_updates=_review_fact_updates,
-        cabinet_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/cabinet?tab=memory",
+        cabinet_url=topology.cabinet_memory_url,
         profile_step=_fact_profile_step,
         person_cards=_person_cards,
     ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
@@ -1039,7 +1039,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=app,
         config=config,
-        env_config=env_config,
+        deploy_topology=topology,
         coordinator=coordinator,
         agent_factory=agent_factory,
         iam_service=iam_service,
@@ -1171,6 +1171,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         auth_service=auth_service,
         auth_registry=auth_registry,
         auth_config=auth_config,
+        deploy_topology=topology,
         connect_service=_connect_service,
         credential_revocation=_credential_revocation,
         drive_disconnect_service=_drive_disconnect,
