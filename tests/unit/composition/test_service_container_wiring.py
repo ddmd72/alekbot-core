@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
@@ -53,7 +54,7 @@ def container(monkeypatch, fake_config):
         cipher=AesGcmTestCipher(),
         config=fake_config,
         db_client=db_client,
-        env_config=env_config,
+        env_config=env_config, deploy_topology=build_deploy_topology({}, env_config),
         account_repo=account_repo,
     )
 
@@ -82,7 +83,7 @@ class TestServiceContainerWiring:
             cipher=AesGcmTestCipher(),
             config=fake_config,
             db_client=MagicMock(),
-            env_config=EnvironmentConfig(),
+            env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
             account_repo=AsyncMock(spec=AccountRepository),
             alert_webhook=webhook,
         )
@@ -170,7 +171,7 @@ class TestPromptCaptureFlag:
             cipher=AesGcmTestCipher(),
             config=cfg,
             db_client=MagicMock(),
-            env_config=EnvironmentConfig(),
+            env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
             account_repo=AsyncMock(spec=AccountRepository),
         )
 
@@ -213,7 +214,7 @@ class TestThresholdResolverWiring:
 
         container = ServiceContainer(
             cipher=AesGcmTestCipher(),
-            config=fake_config, db_client=db_client, env_config=env_config,
+            config=fake_config, db_client=db_client, env_config=env_config, deploy_topology=build_deploy_topology({}, env_config),
             account_repo=account_repo, threshold_resolver=resolver,
         )
 

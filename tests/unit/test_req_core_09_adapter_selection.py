@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 
 
@@ -22,7 +23,7 @@ def test_factory_requires_db_client():
                 iam_service=AsyncMock(),
                 session_store=AsyncMock(),
                 config={"SLACK_BOT_TOKEN": "prod-bot"},
-                env_config=MagicMock(),
+                deploy_topology=build_deploy_topology({}, MagicMock()),
                 db_client=None,
             )
 
@@ -63,7 +64,7 @@ def test_factory_selects_http_mode_with_dependencies():
             iam_service=iam_service,
             session_store=MagicMock(),
             config=config,
-            env_config=env_config,
+            deploy_topology=build_deploy_topology(config, env_config),
             db_client=MagicMock()
         )
         mock_tasks.assert_called_once()
@@ -103,7 +104,7 @@ def test_factory_forwards_skill_service_to_conversation_handler():
             iam_service=AsyncMock(),
             session_store=MagicMock(),
             config=config,
-            env_config=env_config,
+            deploy_topology=build_deploy_topology(config, env_config),
             db_client=MagicMock(),
             skill_service=sentinel_skill_service,
         )

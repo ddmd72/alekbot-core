@@ -65,13 +65,14 @@ def queue_command(verb: str, queue_path: str) -> str:
 def check_drive_queue(settings: Mapping[str, Any], client: Any) -> str:
     """The drive queue's path, once its state reads PAUSED; LiveCheckError otherwise (the owner pauses it, never the
     script). `client` is a Cloud Tasks client (`get_queue(name=...)`)."""
-    from src.composition.drive_indexing_setup import DRIVE_QUEUE_LOCATION, drive_queue_name
+    from src.composition.deploy_topology import build_deploy_topology
+    from src.composition.drive_indexing_setup import drive_queue_name
 
     project = (settings.get("GOOGLE_CLOUD_PROJECT") or "").strip()
     if not project:
         raise LiveCheckError("GOOGLE_CLOUD_PROJECT is not set (.env): cannot check that the drive queue is paused")
-    queue_path = (f"projects/{project}/locations/{DRIVE_QUEUE_LOCATION}/queues/"
-                  f"{drive_queue_name(settings['ENVIRONMENT_CONFIG'])}")
+    topology = build_deploy_topology(settings, settings["ENVIRONMENT_CONFIG"])
+    queue_path = f"projects/{project}/locations/{topology.region}/queues/{drive_queue_name(topology)}"
     state = client.get_queue(name=queue_path).state
     state_name = getattr(state, "name", str(state))
     if state_name != "PAUSED":

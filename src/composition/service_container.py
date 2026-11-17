@@ -70,6 +70,7 @@ from .drive_connection_setup import build_drive_connection_repository
 from .drive_provider_router import DriveProviderRouter
 from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..services.drive_connection_service import DriveConnectionService
+from .deploy_topology import DeployTopology
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
     DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
@@ -116,6 +117,7 @@ class ServiceContainer:
         config: dict,
         db_client: Any,
         env_config: EnvironmentConfig,
+        deploy_topology: DeployTopology,
         account_repo: AccountRepository,
         overflow_callback: Optional[Callable] = None,
         threshold_resolver: Optional[Callable] = None,
@@ -244,7 +246,7 @@ class ServiceContainer:
             self.drive_connection_service = DriveConnectionService(self.drive_connection_repo,
                                                                    self.oauth_credentials)
             self.drive_index_repo = build_drive_index_repository(db_client, env_config)
-            self.drive_task_queue = build_drive_task_queue(config, env_config)
+            self.drive_task_queue = build_drive_task_queue(config, deploy_topology)
             self.drive_mirror_repo = build_drive_mirror_repository(db_client, env_config)
             self.user_drive_service = UserDriveService(self.user_drive, self.drive_connection_service,
                                                        nudge_queue=self.drive_task_queue,

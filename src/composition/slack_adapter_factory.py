@@ -14,9 +14,9 @@ from ..adapters.slack.base import SlackAdapter
 from ..adapters.slack.http_adapter import HTTPModeAdapter
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
-from ..config.environment import EnvironmentConfig
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
+from .deploy_topology import DeployTopology
 from .user_agent_factory import UserAgentFactory
 from ..services.consolidation_service import ConsolidationService
 from ..services.iam_service import IAMService
@@ -42,7 +42,7 @@ class SlackAdapterFactory:
     def create_adapter(
         app: AsyncApp,
         config: dict,
-        env_config: EnvironmentConfig,
+        deploy_topology: DeployTopology,
         coordinator: AgentCoordinator,
         agent_factory: UserAgentFactory,
         iam_service: IAMService,
@@ -75,7 +75,7 @@ class SlackAdapterFactory:
         Args:
             app: Slack Bolt AsyncApp instance
             config: Configuration dictionary
-            env_config: EnvironmentConfig instance
+            deploy_topology: The service URL, queue suffix and regions
             coordinator: AgentCoordinator instance
             agent_factory: Factory for creating per-user agents
             iam_service: IAMService for centralized authorization
@@ -126,18 +126,11 @@ class SlackAdapterFactory:
         if not db_client:
             raise ValueError("db_client is required for HTTP mode (session persistence)")
 
-        queue_suffix = "dev" if env_config.is_development else "prod"
-
-        service_url = config.get("CLOUD_RUN_SERVICE_URL")
-        if not service_url:
-            logger.warning("⚠️ CLOUD_RUN_SERVICE_URL not set, defaulting to http://localhost:8080")
-            service_url = "http://localhost:8080"
-
         task_service = GcpTaskQueue(
             project_id=config["GOOGLE_CLOUD_PROJECT"],
-            location="europe-west1",
-            queue_name=f"alek-bot-tasks-{queue_suffix}",
-            service_url=service_url,
+            location=deploy_topology.slack_intake_region,
+            queue_name=f"alek-bot-tasks-{deploy_topology.queue_suffix}",
+            service_url=deploy_topology.service_url,
             service_account_email=config.get("SERVICE_ACCOUNT_EMAIL")
         )
 

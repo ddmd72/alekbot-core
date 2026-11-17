@@ -2,6 +2,7 @@
 SERVICE_ACCOUNT_EMAIL (today's behaviour while the new secret is absent)."""
 import pytest
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition import drive_indexing_setup as setup
 from src.config.environment import EnvironmentConfig
 
@@ -18,7 +19,8 @@ def build(monkeypatch):
     monkeypatch.setattr(setup, "GcpTaskQueue", _Q)
 
     def _build(**config):
-        return setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p", **config}, EnvironmentConfig())
+        return setup.build_drive_task_queue({"GOOGLE_CLOUD_PROJECT": "p", **config},
+                                            build_deploy_topology({}, EnvironmentConfig()))
     return _build
 
 
