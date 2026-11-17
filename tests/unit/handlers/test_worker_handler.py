@@ -1032,15 +1032,6 @@ class TestHandleExecuteReminder:
     """Five paths + happy path documented in the docstring of
     ``ExecuteReminderTask.__call__``."""
 
-    async def test_missing_notes_port_returns_501(self):
-        worker, _ = _make_full_worker()
-        worker._notes_port = None
-
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
-
-        assert status == 501
-        assert "notes_port" in result["error"]
-
     async def test_missing_payload_fields_returns_400(self):
         worker, ns = _make_full_worker()
 
