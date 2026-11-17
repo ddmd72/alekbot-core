@@ -2,8 +2,8 @@
 FactProfileService — the profile step of the memory-write lease (docs/10_rfcs/FACT_PROFILE_RFC.md §4.2, §4.4).
 
 Public interface:
-    FactProfileService(repo, profiler, embeddings, atlas, max_per_run, concurrency, call_budget_s, clock, person_cards,
-                       confirmed_people, profile_answers)
+    FactProfileService(repo, profiler, embeddings, atlas, limits, clock, person_cards, confirmed_people, profile_answers,
+                       quota, *, bio_cache)
         async scan(account_id) -> FactProfileScan                 what a run would find; reads, writes nothing
         async run(account_id, deadline, collect_points=False)     never raises; `deadline` is the lease's `until`;
             -> FactProfileRun                                     with `collect_points` the run carries the open points
@@ -21,7 +21,7 @@ One run, inside a lease the caller holds, reads the account's current facts once
   4. one embedding batch for the label texts, then one compare-and-set write per fact (a fact that changed meanwhile is
      left for the next cycle), stopping when the lease has no time left;
   5. people cards rebuilt by code from the current facts (when a card repository is wired; RFC §7);
-  6. one baseline refresh when any profile was written, so the search snapshot (keyed by the baseline) sees it.
+  6. one baseline refresh (`bio_cache`) when any profile was written, so the search snapshot (keyed by the baseline) sees it.
   7. when asked (`collect_points`) and the answers store is wired, the open points over the facts as the run left them
      (a fact written this run by its new profile, any other as read); a run that ended with an error carries none.
 The service never touches the lease. Logs carry ids (8 characters), counts, reasons, ms and usd, never fact content.
@@ -49,12 +49,14 @@ from ..domain.fact_profile_fingerprint import (
     registry_digest,
 )
 from ..domain.fact_profile_run import FactProfileRun, FactProfileScan
+from ..domain.fact_profile_run_limits import FactProfileRunLimits
 from ..domain.fact_profiler_reply import FactProfilerReply, ProfilerStatus
 from ..domain.memory_write_lease import agent_timeout_s
 from ..domain.person_cards import build_person_cards_counted
 from ..domain.place_names import PlaceNames
 from ..domain.profile_answers import EMPTY_ANSWERS, ProfileAnswers, answers_digest
 from ..domain.profile_open_points import OpenPoint, PointFact, open_points
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_profiler_port import FactProfilerPort
@@ -195,23 +197,24 @@ class FactProfileService:
         profiler: FactProfilerPort,
         embeddings: EmbeddingService,
         atlas: Atlas,
-        max_per_run: Optional[int],
-        call_budget_s: float,
-        concurrency: int = 4,
+        limits: FactProfileRunLimits,
         clock: Callable[[], datetime] = _utcnow,
         person_cards: Optional[PersonCardRepository] = None,
         confirmed_people: Optional[ConfirmedPeopleRepository] = None,
         profile_answers: Optional[ProfileAnswerRepository] = None,
         quota: Optional[QuotaService] = None,
+        *,
+        bio_cache: BiographicalCacheRefresher,
     ) -> None:
         self._quota = quota   # bills the label embeddings (outside any agent execution) to the account
         self._repo = repo
         self._profiler = profiler
         self._embeddings = embeddings
         self._atlas = atlas
-        self._max_per_run = max_per_run
-        self._call_budget_s = call_budget_s
-        self._concurrency = concurrency
+        self._max_per_run = limits.max_per_run
+        self._call_budget_s = limits.call_budget_s
+        self._concurrency = limits.concurrency
+        self._bio_cache = bio_cache
         self._clock = clock
         self._person_cards = person_cards
         self._confirmed_people = confirmed_people
@@ -357,7 +360,7 @@ class FactProfileService:
 
         if tally.written:
             try:
-                await self._repo.refresh_biographical_context_cache(owner_id=account_id)
+                await self._bio_cache.refresh_cache(owner_id=account_id)
                 tally.refreshed = True
             except Exception:
                 logger.warning(f"[FactProfile] baseline refresh failed account={account_id[:8]}", exc_info=True)
