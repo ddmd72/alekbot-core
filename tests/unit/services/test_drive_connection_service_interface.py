@@ -30,6 +30,7 @@ SIGNATURES = {
     "reconnect_needed": ["user_id"],
     "mounts": ["user_id"],
     "connection_of_tag": ["user_id", "tag"],
+    "mount_name_of_tag": ["user_id", "tag"],   # the owner-notes source of the deleted-files search reads it (§9 tags)
     # slice 2b, the Cabinet's settings (RFC §11.3, §11.4, §11.8, §11.9; design §1.6; E85 adds the folder ancestries)
     "default_name": ["user_id"],
     "rename": ["user_id", "connection_id", "name", "primary_top_folders"],
