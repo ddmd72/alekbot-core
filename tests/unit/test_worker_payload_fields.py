@@ -29,6 +29,7 @@ UNWRITTEN_BY_DESIGN = {
 }
 
 APPLICATION_GRAPH = wt.ROOT / "src" / "composition" / "application_graph.py"
+PLATFORM_KIT = wt.ROOT / "src" / "composition" / "platform_kit.py"
 
 
 @pytest.fixture(scope="module")
@@ -85,18 +86,47 @@ def test_the_generic_queue_adds_only_the_task_type():
     assert wpf.generic_envelope() == {"task_type"}
 
 
-def test_every_delegate_is_the_function_production_attaches():
-    """The three hand-mapped consumers are what the code binds: the attach calls of the builder, and the constructor
-    annotation of WorkerHandler for the agent worker."""
-    attached = {}
-    for node in ast.walk(ast.parse(APPLICATION_GRAPH.read_text())):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("attach_slack_worker", "attach_telegram_worker")):
-            [arg] = node.args
-            attached[node.func.attr] = arg.attr
-    assert attached == {"attach_slack_worker": wpf.DELEGATES["self._slack_worker"][0].qualname.split(".")[1],
-                        "attach_telegram_worker": wpf.DELEGATES["self._telegram_worker"][0].qualname.split(".")[1]}
-    init = wpf._find_function(ast.parse(wt.WORKER_HANDLER.read_text()), "WorkerHandler.__init__", "worker_handler.py")
+def _keyword_of_the_one_call(tree: ast.AST, callee: str, keyword: str) -> str:
+    """The method name passed as `keyword=` to the one call of the bare name `callee` in `tree`."""
+    found = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == callee]
+    assert len(found) == 1, f"{callee}(...) is called {len(found)} times"
+    [value] = [k.value for k in found[0].keywords if k.arg == keyword]
+    assert isinstance(value, ast.Attribute), ast.unparse(value)
+    return value.attr
+
+
+def _assignments(owner: ast.AST, attribute: str) -> list:
+    """(function, value as written) of every assignment of `attribute` in the functions of `owner`."""
+    return [(fn.name, ast.unparse(n.value)) for fn in ast.walk(owner) if isinstance(fn, ast.FunctionDef)
+            for n in ast.walk(fn) if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target) == attribute]
+
+
+def test_every_delegate_is_the_function_production_binds():
+    """The three hand-mapped consumers are what the code binds: the Slack worker by the builder's `WorkerHandler(...,
+    slack_worker=...)`, the Telegram worker by the builder's `register_late_platform(..., queued_update=...)` through
+    `register_telegram_worker`, each followed to the attribute DELEGATES names, and the agent worker by the constructor
+    annotation of WorkerHandler."""
+    graph = ast.parse(APPLICATION_GRAPH.read_text())
+    handler = ast.parse(wt.WORKER_HANDLER.read_text())
+    [handler_class] = [n for n in handler.body if isinstance(n, ast.ClassDef) and n.name == "WorkerHandler"]
+    method = {key: wpf.DELEGATES[key][0].qualname.split(".")[1] for key in ("self._slack_worker", "self._telegram_worker")}
+
+    assert _keyword_of_the_one_call(graph, "WorkerHandler", "slack_worker") == method["self._slack_worker"]
+    assert _assignments(handler_class, "self._slack_worker") == [("__init__", "slack_worker")]
+
+    assert _keyword_of_the_one_call(graph, "register_late_platform", "queued_update") == method["self._telegram_worker"]
+    late = wpf._find_function(ast.parse(PLATFORM_KIT.read_text()), "register_late_platform", "platform_kit.py")
+    binds = [ast.unparse(n) for n in ast.walk(late) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute) and n.func.attr == "register_telegram_worker"]
+    assert binds == ["worker.register_telegram_worker(queued_update)"]
+    register = wpf._find_function(handler, "WorkerHandler.register_telegram_worker", "worker_handler.py")
+    [parameter] = [a.arg for a in register.args.args[1:]]
+    assert _assignments(handler_class, "self._telegram_worker") == [
+        ("__init__", "None"), ("register_telegram_worker", parameter)]
+
+    init = wpf._find_function(handler, "WorkerHandler.__init__", "worker_handler.py")
     [annotation] = [a.annotation for a in init.args.args if a.arg == "agent_worker_handler"]
     bound = [n for n in ast.walk(init) if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "self._agent_worker"]
     assert ast.unparse(annotation) == wpf.DELEGATES["self._agent_worker.handle_task"][0].qualname.split(".")[0]

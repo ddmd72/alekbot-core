@@ -57,13 +57,14 @@ class Fn(NamedTuple):
 DELEGATES: Dict[str, Tuple[Fn, str]] = {
     "self._agent_worker.handle_task": (
         Fn(ROOT / "src" / "handlers" / "agent_worker_handler.py", "AgentWorkerHandler.handle_task"),
-        "WorkerHandler.__init__ binds agent_worker_handler: AgentWorkerHandler to self._agent_worker (worker_handler.py:116,161)"),
+        "WorkerHandler.__init__ binds agent_worker_handler: AgentWorkerHandler to self._agent_worker"),
     "self._telegram_worker": (
         Fn(ROOT / "src" / "adapters" / "telegram" / "webhook_adapter.py", "TelegramWebhookAdapter.handle_queued_update"),
-        "application_graph attaches telegram_adapter.handle_queued_update via attach_telegram_worker"),
+        "application_graph passes telegram_adapter.handle_queued_update to register_late_platform(queued_update=), "
+        "which binds it through WorkerHandler.register_telegram_worker"),
     "self._slack_worker": (
         Fn(ROOT / "src" / "adapters" / "slack" / "http_adapter.py", "HTTPModeAdapter.handle_queued_event"),
-        "application_graph attaches slack_adapter.handle_queued_event via attach_slack_worker"),
+        "application_graph passes slack_adapter.handle_queued_event to WorkerHandler(slack_worker=)"),
 }
 # A call that validates the whole payload into a model: its fields are the keys, all required.
 MODELS: Dict[str, "type[BaseModel]"] = {"InteractiveChoice.from_payload": InteractiveChoice}
