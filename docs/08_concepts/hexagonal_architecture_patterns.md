@@ -325,7 +325,7 @@ from ..domain.llm import Message    # ✅ domain → ok
 
 ---
 
-## Pattern 5: Circular Dependency Resolution
+## Pattern 5: Breaking an Adapter ↔ Service Cycle
 
 ### Problem
 
@@ -879,7 +879,6 @@ Bootstrap/wiring rules:
 |---------|---------|-------|
 | Service Layer | FactWriteService extracts embedding generation | `src/services/fact_write_service.py` |
 | DI into Adapter | SmartDeduplication injected into Repository | `src/adapters/firestore_repo.py` |
-| DI into Adapter | BiographicalContextService injected into Repository | `src/adapters/firestore_repo.py` |
 | Composition Root Split | ServiceContainer (shared) + UserAgentFactory (per-user) | `src/composition/service_container.py`, `src/composition/user_agent_factory.py` |
 | Factory Callable | `create_fact_management_adapter()` for per-user adapter | `src/composition/service_container.py` |
 | Port Abstraction | `SessionStore` port, `FirestoreSessionStore` adapter | `src/ports/session_store.py`, `src/adapters/firestore_session_store.py` |
@@ -892,7 +891,7 @@ Bootstrap/wiring rules:
 | Domain Types | `Message`, `MessagePart`, `ToolCall` in domain/ | `src/domain/llm.py` |
 | Domain Logic | `SmartDeduplication` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
 | Composition Factory | `SlackAdapterFactory` creates adapter with ports injected | `src/composition/slack_adapter_factory.py` |
-| Circular Resolution | `BiographicalContextService ↔ FirestoreFactRepository` | `src/composition/service_container.py` |
+| Orchestration in the Service | `BiographicalContextService.refresh_cache` over `FactRepository.save_biographical_context_cache` | `src/services/biographical_context_service.py`, `src/ports/biographical_cache_port.py` |
 | Protocol Decoupling | `MessageRouter` Protocol decouples services/ from infrastructure/ | `src/services/agent_fallback_service.py` |
 | Feature Flag Central | `ENABLE_GROUNDING_ATTRIBUTION` in `agent_config.py` | `src/infrastructure/agent_config.py` |
 | Domain Normalization | `normalize_fact_taxonomy()` eliminates adapter duplication | `src/domain/entities.py` |
