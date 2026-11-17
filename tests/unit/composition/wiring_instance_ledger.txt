@@ -135,6 +135,9 @@ src.services.configuration_service.ConfigurationService 1  # by-design single in
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
+src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender both deep-research runners share, built by build_worker_tasks (worker_setup.py)
+src.services.deep_research_webhook_event_task.DeepResearchWebhookEventTask 1  # by-design the one deep_research_webhook_event runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, attached to the file conversion service (application_graph.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
@@ -195,4 +198,5 @@ src.services.task_indexing_service.TaskIndexingService 1  # by-design single ins
 src.services.task_setup_service.TaskSetupService 1  # by-design single instance
 src.services.user_drive_service.UserDriveService 1  # by-design single instance
 src.services.user_notification_service.UserNotificationService 1  # by-design single instance
+src.services.video_generation_polling_task.VideoGenerationPollingTask 1  # by-design the one video_generation_polling runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.workspace_service.WorkspaceService 1  # by-design single instance
