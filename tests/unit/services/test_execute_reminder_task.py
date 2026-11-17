@@ -19,6 +19,7 @@ from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult, empty_answer_alert
 from src.domain.reminder_alert import build_reminder_alert, build_reminder_alert_summary
 from src.domain.task_complexity import TaskComplexity
+from src.domain.ui_messages import UIMessage
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
 from src.domain.worker_task import WorkerTask
 from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
@@ -34,15 +35,22 @@ EMPTY = NotifyResult(delivered=False, agent_status=AgentStatus.FAILED, error="em
 
 @dataclass
 class Notifier:
-    """`notify` records its keywords and the order against `ensure_agents`, and answers the scripted result."""
+    """`notify` records its keywords and the order against `ensure_agents`, and answers the scripted result;
+    `notify_ui_notice` records the notice it was asked to post and answers that it was sent."""
     result: NotifyResult
     order: List[str]
     calls: List[Dict[str, Any]] = field(default_factory=list)
+    notices: List[tuple] = field(default_factory=list)
 
     async def notify(self, **kwargs: Any) -> NotifyResult:
         self.order.append("notify")
         self.calls.append(kwargs)
         return self.result
+
+    async def notify_ui_notice(self, user_id: str, account_id: str, message: UIMessage, **fields: str) -> bool:
+        self.order.append("notice")
+        self.notices.append((user_id, account_id, message, fields))
+        return True
 
 
 class Sink:
@@ -256,6 +264,8 @@ async def test_an_empty_answer_is_final_one_error_line_one_alert_and_the_note_is
         (logging.ERROR, f"[Worker] background_empty_answer path=execute_reminder note={note_id} user={USER[:8]}",
          "execute_reminder", note_id, USER[:8])]
     assert rig.sink.posts == [empty_answer_alert("execute_reminder", USER, note_id)]
+    assert rig.notifier.notices == [(USER, ACCOUNT, UIMessage.REMINDER_NOT_RUN, {"name": "water the plants"})]
+    assert rig.order == ["ensure", "notify", "notice"]
     assert rig.doc(note_id) is None
     assert f"[Worker] execute_reminder: empty_answer_final note={note_id} user={USER[:8]} due={T0.isoformat()}" \
         in caplog.messages
