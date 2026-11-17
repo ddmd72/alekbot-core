@@ -37,7 +37,6 @@ from ..ports.user_drive_port import UserDrivePort
 from ..services.drive_note_deleted_search import DriveNoteDeletedSearch
 from ..services.drive_note_lifecycle import DriveNoteLifecycle
 from ..services.drive_note_service import DriveNoteService
-from ..services.drive_search_service import DriveSearchService
 from ..utils.logger import logger
 
 if TYPE_CHECKING:

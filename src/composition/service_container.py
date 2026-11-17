@@ -260,9 +260,8 @@ class ServiceContainer:
         # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The indexing switch is
         # the connection's (MULTI_DRIVE_RFC §4.4), read fresh through the connection service on every search.
         self.drive_search_service: Optional[DriveSearchService] = None
-        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): one note store for the process, shared by the note
-        # service below and the deleted-files source the search service takes at construction (§6.4, §0.3). The source
-        # is a read, so it is built whatever DRIVE_NOTES_ENABLED says (§3.6).
+        # Owner notes (DRIVE_FILE_NOTES_RFC §4.4): one store, shared by the note service and the deleted-files source (§6.4)
+        # the search takes at construction; a read, so built whatever DRIVE_NOTES_ENABLED says (§3.6).
         self.drive_note_repo: Optional[DriveNoteRepository] = None
         note_deleted_sources: List[DeletedSource] = []
         if self.user_drive is not None and self.drive_index_repo is not None \
@@ -290,9 +289,7 @@ class ServiceContainer:
                 deleted_sources=note_deleted_sources,
             )
 
-        # The note service: on the same drive pair, with the connection service (refs, and each connection's indexing
-        # switch for the receipt's status). Built whatever the kill switch says: off stops writes (no tool), reads keep
-        # answering (§3.6). Never handed to the memory side (§1.4 anti-goal).
+        # The note service: built whatever the kill switch says (off stops writes, reads answer, §3.6); not for memory (§1.4).
         self.drive_note_service: Optional[DriveNoteService] = None
         self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
         if self.user_drive is not None and self.drive_index_repo is not None \
