@@ -122,7 +122,6 @@ def _make_handler(
     return ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         rich_content_service=rich_content_service,
         doc_delivery_service=doc_delivery_service,
         notification_service=notification_service,
@@ -1187,7 +1186,6 @@ class TestHandleCommandConsolidateExtra:
         handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
-            file_service=MagicMock(),
             consolidation_queue=consolidation_queue,
             global_config=ConsolidationSettings(threshold=50, batch_size=30),
             notification_service=notification_service,

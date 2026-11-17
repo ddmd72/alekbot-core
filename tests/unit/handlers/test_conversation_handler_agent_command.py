@@ -46,7 +46,6 @@ def _make_handler():
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=MagicMock(),
-        file_service=MagicMock(),
         channel_binding_service=channel_binding,
     )
     return handler, channel_binding

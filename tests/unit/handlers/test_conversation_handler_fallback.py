@@ -64,7 +64,6 @@ def make_handler():
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=MagicMock(),
         fallback_service=fallback_service,
     )
     return handler, coordinator, session_store

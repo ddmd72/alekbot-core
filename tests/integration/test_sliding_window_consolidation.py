@@ -36,7 +36,6 @@ async def test_sliding_window_trigger_logic():
     agent_factory.user_repo.get_user = AsyncMock(return_value=MagicMock(config=MagicMock(consolidation_threshold=200, consolidation_batch_size=100)))
     
     coordinator = AsyncMock()
-    file_service = MagicMock()
     
     user_id = "test_user"
     session_id = "test_session"
@@ -44,7 +43,6 @@ async def test_sliding_window_trigger_logic():
     handler = ConversationHandler(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        file_service=file_service,
         consolidation_queue=consolidation_queue
     )
     

@@ -20,7 +20,6 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.adapters.gemini_adapter import GeminiAdapter
-from src.services.file_upload_service import FileUploadService
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.handlers.conversation_handler import ConversationHandler
 from src.composition.user_agent_factory import UserAgentFactory
@@ -153,8 +152,6 @@ async def test_sliding_window_e2e():
         )
         container.session_store = session_store
 
-        llm_port = container.llm_port
-        file_service = FileUploadService(llm_port)
 
         agent_factory = UserAgentFactory(
             config=config,
@@ -168,7 +165,6 @@ async def test_sliding_window_e2e():
         handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
-            file_service=file_service,
             consolidation_queue=None # Disable auto-processing in test
         )
         

@@ -15,9 +15,7 @@ from .user_agent_factory import UserAgentFactory
 from ..services.consolidation_service import ConsolidationService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
-from ..ports.html_renderer_port import HtmlRendererPort
 from ..ports.platform_auth_port import PlatformAuthPort
-from ..ports.file_service import FileService
 from ..ports.language_service_port import LanguageServicePort
 from ..services.localization_service import LocalizationService
 from ..utils.logger import logger
@@ -40,12 +38,10 @@ class TelegramAdapterFactory:
         coordinator: AgentCoordinator,
         agent_factory: UserAgentFactory,
         iam_service: PlatformAuthPort,
-        file_service: FileService,
         consolidation_queue=None,
         consolidation_config=None,
         consolidation_service: Optional[ConsolidationService] = None,
         audio_service=None,
-        html_renderer: Optional[HtmlRendererPort] = None,
         notification_service: Optional[UserNotificationService] = None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationService] = None,
@@ -73,12 +69,10 @@ class TelegramAdapterFactory:
             coordinator:         AgentCoordinator instance
             agent_factory:       Factory for per-user agents
             iam_service:         PlatformAuthPort for authorization
-            file_service:        FileService for attachment handling
             consolidation_queue: Optional consolidation queue
             consolidation_config: Optional consolidation config
             consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
             audio_service:       Optional audio transcription port
-            html_renderer:       Optional HtmlRendererPort (the widget renderer lives in rich_content_service)
             rich_content_service: The platform's RichContentService (built once by the application graph, shared with the notification service)
             task_queue:          Optional TaskQueue — set, updates are handed off to a
                                  Cloud Task instead of processed inline (see
@@ -90,7 +84,6 @@ class TelegramAdapterFactory:
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
-            file_service=file_service,
             consolidation_queue=consolidation_queue,
             global_config=consolidation_config,
             audio_service=audio_service,
@@ -109,7 +102,7 @@ class TelegramAdapterFactory:
             doc_delivery_service=doc_delivery_service,
         )
 
-        logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)
+        logger.info("TelegramAdapterFactory: wiring complete")
 
         return TelegramWebhookAdapter(
             token=token,

@@ -424,8 +424,8 @@ async def _todo_consent_and_setup(world: World):
     setups = [b for b in world.bodies() if b["task_type"] == "setup_microsoft_todo"]
     assert setups == [{"task_type": "setup_microsoft_todo", "user_id": USER}]
     worker = WorkerHandler(agent_worker_handler=None, email_indexing_service=None, notification_service=None,
-                           consolidation_service=None, coordinator=None, agent_factory=None,
-                           indexed_email_repo=None, user_repo=None, task_setup=world.task_setup)
+                           consolidation_service=None, agent_factory=None,
+                           user_repo=None, task_setup=world.task_setup)
     assert await worker.handle(setups[0]) == ({"status": "ok"}, 200)
 
 

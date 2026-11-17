@@ -1,8 +1,8 @@
 """Wiring of `build_application_graph` that no other test observes (mutation survivors, wire-drop).
 
 The graph is built with the deployed environment over fakes at the SDK boundaries (`tests/support/prod_env.py`). The
-collaborators handed to `build_drive_activation` and the HTML renderer handed to the Slack and Telegram adapter
-factories are recorded while the real callee still runs, then compared by identity with the objects the graph built.
+collaborators handed to `build_drive_activation` are recorded while the real callee still runs, then compared by
+identity with the objects the graph built.
 """
 import pytest
 
@@ -58,9 +58,3 @@ def test_the_drive_activation_gets_the_drive_services_of_the_container(monkeypat
     assert kwargs["task_queue"] is container.drive_task_queue
     assert kwargs["task_queue"] is not None
 
-
-def test_the_html_renderer_reaches_the_slack_and_telegram_adapters(monkeypatch):
-    _graph, renderer, _activation, slack, telegram = _build(monkeypatch)
-
-    assert len(slack) == 1 and slack[0]["html_renderer"] is renderer
-    assert len(telegram) == 1 and telegram[0]["html_renderer"] is renderer

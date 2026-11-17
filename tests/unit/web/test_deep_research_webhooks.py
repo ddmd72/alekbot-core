@@ -60,8 +60,8 @@ def _worker(media_storage=None, task_dispatch=None, notification=None):
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        coordinator=MagicMock(), agent_factory=AsyncMock(),
-        indexed_email_repo=None, user_repo=MagicMock(),
+        agent_factory=AsyncMock(),
+        user_repo=MagicMock(),
         task_dispatch=task_dispatch or AsyncMock(), media_storage=media_storage,
         deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"}),
     )

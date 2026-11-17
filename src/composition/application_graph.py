@@ -43,7 +43,6 @@ from src.adapters.grok_video_adapter import GrokVideoAdapter
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
-from src.adapters.platform.factory import PlatformAdapterFactory
 from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
@@ -109,7 +108,6 @@ from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
-from src.services.file_upload_service import FileUploadService
 from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
@@ -412,7 +410,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             parser=parse_adapter,
         )
         container.file_conversion_service.attach_documents(documents, containers=parse_adapter)   # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
-    file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
 
     # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
@@ -777,7 +774,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         user_repo=user_repo,
         owner_zones=_owner_zones,
         profile_step=_fact_profile_step,
-    ) if consolidation_queue else None
+    )
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(
         notes_port=container.notes_adapter,
@@ -984,9 +981,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         email_indexing_service=email_indexing_service,
         notification_service=notification_service,
         consolidation_service=_consolidation_service,
-        coordinator=coordinator,
         agent_factory=agent_factory,
-        indexed_email_repo=indexed_email_repo,
         user_repo=user_repo,
         task_dispatch=_task_dispatch_service,
         video_registry=video_registry,
@@ -1048,14 +1043,12 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         coordinator=coordinator,
         agent_factory=agent_factory,
         iam_service=iam_service,
-        file_service=file_service,
         session_store=session_store,
         db_client=db_client,
         consolidation_queue=consolidation_queue,
         consolidation_config=config.get("CONSOLIDATION"),
         consolidation_service=_consolidation_service,
         audio_service=audio_service,
-        html_renderer=html_renderer,
         notification_service=notification_service,
         language_service=_language_service,
         localization=_localization,
@@ -1109,7 +1102,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             telegram_media_adapter = TelegramMediaAdapter(bot=Bot(telegram_config["token"]))
             telegram_rich_content = RichContentService(media_port=telegram_media_adapter, html_renderer=html_renderer)
 
-            # Create adapter via factory (wires RichContentService + html_renderer)
+            # Create adapter via factory (wires RichContentService)
             built_telegram_adapter = TelegramAdapterFactory.create_adapter(
                 token=telegram_config["token"],
                 webhook_secret=telegram_config["webhook_secret"],
@@ -1118,12 +1111,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 coordinator=coordinator,
                 agent_factory=agent_factory,
                 iam_service=iam_service,
-                file_service=file_service,
                 consolidation_queue=consolidation_queue,
                 consolidation_config=config.get("CONSOLIDATION"),
                 consolidation_service=_consolidation_service,
                 audio_service=audio_service,
-                html_renderer=html_renderer,
                 notification_service=notification_service,
                 language_service=_language_service,
                 localization=_localization,
@@ -1156,8 +1147,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             notification_service.register_platform_media("telegram", telegram_media_adapter)
             notification_service.register_platform_rich_content("telegram", telegram_rich_content)
 
-            # Register in factory
-            PlatformAdapterFactory.register("telegram", telegram_adapter)
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
 

@@ -152,8 +152,8 @@ def _dr_worker(response=None, notification=None, task_claims=None):
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        coordinator=MagicMock(), agent_factory=AsyncMock(),
-        indexed_email_repo=None, user_repo=MagicMock(), task_dispatch=AsyncMock(),
+        agent_factory=AsyncMock(),
+        user_repo=MagicMock(), task_dispatch=AsyncMock(),
         media_storage=MagicMock(), task_claims=task_claims,
         deep_research_fetch=AsyncMock(return_value=response or {"output_text": "text", "model": "m"}),
     )

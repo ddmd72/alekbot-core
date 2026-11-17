@@ -45,7 +45,7 @@ def _handler_kwargs_from_slack(monkeypatch, service):
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             app=MagicMock(), config={}, env_config=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(),
-            iam_service=MagicMock(), file_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
+            iam_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
             consolidation_service=service,
         )
     return caught.value.kwargs
@@ -57,7 +57,7 @@ def _handler_kwargs_from_telegram(monkeypatch, service):
         TelegramAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             token="1:abc", webhook_secret="s", dedup_store=MagicMock(), session_store=MagicMock(),
-            coordinator=MagicMock(), agent_factory=MagicMock(), iam_service=MagicMock(), file_service=MagicMock(),
+            coordinator=MagicMock(), agent_factory=MagicMock(), iam_service=MagicMock(),
             consolidation_service=service,
         )
     return caught.value.kwargs
@@ -87,7 +87,7 @@ async def test_without_a_service_the_consolidate_command_still_only_enqueues():
     store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock())
     agent_factory = MagicMock(get_session_store=MagicMock(return_value=store), ensure_agents_for_user=AsyncMock())
     handler = ConversationHandler(
-        coordinator=MagicMock(), agent_factory=agent_factory, file_service=MagicMock(),
+        coordinator=MagicMock(), agent_factory=agent_factory,
         consolidation_queue=queue, overflow_callback=None,
     )
     channel = MagicMock(send_message=AsyncMock(), send_status=AsyncMock())

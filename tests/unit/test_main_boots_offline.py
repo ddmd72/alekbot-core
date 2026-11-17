@@ -568,7 +568,6 @@ def _check_matrix(boot: Boot) -> List[str]:
 
 
 def _check_platform_workers(boot: Boot) -> List[str]:
-    from src.adapters.platform.factory import PlatformAdapterFactory
     from src.adapters.slack.http_adapter import HTTPModeAdapter
     from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 
@@ -583,8 +582,6 @@ def _check_platform_workers(boot: Boot) -> List[str]:
         problems.append("the attached Slack adapter does not serve the shared app (its start is not start_shared_app)")
     if getattr(telegram, "__func__", None) is not TelegramWebhookAdapter.handle_queued_update:
         problems.append("the attached Telegram worker is not TelegramWebhookAdapter.handle_queued_update")
-    elif PlatformAdapterFactory._adapters.get("telegram") is not telegram.__self__:
-        problems.append("the registered Telegram adapter is not the one the worker is attached to")
     return problems
 
 
@@ -801,7 +798,6 @@ def test_a_pep604_optional_parameter_is_recognised():
 
 def test_the_slack_worker_must_belong_to_an_adapter_that_serves_the_shared_app(monkeypatch):
     from types import MethodType, SimpleNamespace
-    from src.adapters.platform.factory import PlatformAdapterFactory
     from src.adapters.slack.http_adapter import HTTPModeAdapter
     from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 
@@ -810,7 +806,6 @@ def test_the_slack_worker_must_belong_to_an_adapter_that_serves_the_shared_app(m
 
     def worker(start):
         telegram = MethodType(TelegramWebhookAdapter.handle_queued_update, SimpleNamespace())
-        monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {"telegram": telegram.__self__})
         handler = SimpleNamespace(
             _slack_worker=MethodType(HTTPModeAdapter.handle_queued_event, SimpleNamespace(start=start)),
             _telegram_worker=telegram)

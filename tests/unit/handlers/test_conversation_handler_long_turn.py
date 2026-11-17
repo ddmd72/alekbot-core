@@ -45,7 +45,7 @@ def _build(notice_after_s: float, heartbeat_s: float):
     service.new_clock = MagicMock(side_effect=lambda session_id: TurnClock.start())
 
     handler = ConversationHandler(
-        coordinator=coordinator, agent_factory=factory, file_service=MagicMock(),
+        coordinator=coordinator, agent_factory=factory,
         global_config=ConsolidationSettings(threshold=50, batch_size=30),
         fallback_service=fallback, long_turn_service=service,
     )

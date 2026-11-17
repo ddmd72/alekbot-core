@@ -1,12 +1,11 @@
 """Telegram in the application graph is all or nothing (P9 design §7 delta f).
 
 The graph is built with the deployed environment (`tests/support/prod_env.py`) over fakes at the SDK boundaries. The
-adapter and its media adapter are built first; the worker, channel and media registrations and the platform factory
-entry follow only when both exist. A malformed secret still raises out of the build, so the deploy fails.
+adapter and its media adapter are built first; the worker, channel and media registrations
+follow only when both exist. A malformed secret still raises out of the build, so the deploy fails.
 """
 import pytest
 
-from src.adapters.platform.factory import PlatformAdapterFactory
 from src.composition.application_graph import build_application_graph
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from tests.support import prod_env
@@ -25,7 +24,6 @@ def test_a_configured_telegram_is_built_attached_and_registered(monkeypatch):
 
     assert graph.telegram_adapter is not None
     assert graph.worker_handler._telegram_worker == graph.telegram_adapter.handle_queued_update
-    assert PlatformAdapterFactory._adapters.get("telegram") is graph.telegram_adapter
     assert "telegram" in graph.notification_service._platform_media
     assert graph.notification_service._channel_factory.create("telegram", "1") is not None
 
@@ -39,7 +37,6 @@ def test_a_failure_while_building_registers_nothing(monkeypatch):
 
     assert graph.telegram_adapter is None
     assert graph.worker_handler._telegram_worker is None
-    assert "telegram" not in PlatformAdapterFactory._adapters
     assert "telegram" not in graph.notification_service._platform_media
     assert graph.notification_service._channel_factory.create("telegram", "1") is None
     assert graph.slack_adapter is not None
@@ -54,7 +51,6 @@ def test_a_failure_in_the_media_adapter_registers_nothing(monkeypatch):
 
     assert graph.telegram_adapter is None
     assert graph.worker_handler._telegram_worker is None
-    assert "telegram" not in PlatformAdapterFactory._adapters
     assert "telegram" not in graph.notification_service._platform_media
 
 
@@ -66,7 +62,6 @@ def test_an_unset_token_builds_no_telegram(monkeypatch):
 
     assert graph.telegram_adapter is None
     assert graph.worker_handler._telegram_worker is None
-    assert "telegram" not in PlatformAdapterFactory._adapters
 
 
 def test_a_malformed_secret_raises_out_of_the_build(monkeypatch):

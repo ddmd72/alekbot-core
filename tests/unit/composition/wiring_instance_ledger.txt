@@ -159,7 +159,6 @@ src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
-src.services.file_upload_service.FileUploadService 1  # by-design single instance
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
