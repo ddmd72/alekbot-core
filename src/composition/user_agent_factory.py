@@ -188,6 +188,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.fact_search = fact_search
         self.repository = services.repository
         self.config_service = services.config_service
+        self.biographical_context_service = services.biographical_context_service
         self.context_builder = services.context_builder
         self.assembly_service = services.assembly_service
         self.fact_write_service = services.fact_write_service
@@ -567,6 +568,7 @@ class UserAgentFactory(AgentFactoryPort):
             fact_write_service=self.fact_write_service,
             fact_management_port=fact_management_adapter,
             fact_updates=fact_management_adapter,  # the adapter is both ports
+            bio_cache=self.biographical_context_service,
             prompt_version=self.config["CONSOLIDATION"].prompt_version,
             prompt_builder=prompt_builder,
             facts_limit=facts_limit,

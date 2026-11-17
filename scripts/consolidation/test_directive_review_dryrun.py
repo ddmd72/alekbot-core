@@ -716,7 +716,7 @@ async def main(runs: int, prompt: str, provider: str, tier: str, user_id: str, a
     def _noop_invalidate(*args, **kwargs):
         pass
 
-    agent._repo.refresh_biographical_context_cache = _noop_refresh
+    agent._bio_cache.refresh_cache = _noop_refresh
     if agent.prompt_builder:
         agent.prompt_builder.invalidate_biographical_cache = _noop_invalidate
 

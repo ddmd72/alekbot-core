@@ -315,7 +315,7 @@ async def main(rule: str, n_messages: int, user_id: str, account_id: str) -> Non
     def _noop(*a, **k):
         pass
 
-    agent._repo.refresh_biographical_context_cache = _noop_async
+    agent._bio_cache.refresh_cache = _noop_async
     if agent.prompt_builder:
         agent.prompt_builder.invalidate_biographical_cache = _noop
 

@@ -65,6 +65,7 @@ from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.search import EnrichedFact, consolidation_hit
 from src.domain.stored_fact import StoredFact
 from src.ports.alert_sink import AlertSinkPort
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.email_memory_batches import EmailMemoryBatches
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from src.ports.fact_management_port import FactManagementPort
@@ -151,7 +152,7 @@ def inside_memory_dir(path: Path) -> Path:
 
 # ------------------------------------------------------------------------------------------------ the fact store
 
-class NoWriteFactRepository(FactRepository):
+class NoWriteFactRepository(FactRepository, BiographicalCacheRefresher):
     """The live fact repository for reads; every write goes to an in-memory overlay and is recorded in `writes`.
 
     Documents and change tokens of the overlay stand in for the store's: a precondition is checked against the overlay
@@ -164,6 +165,8 @@ class NoWriteFactRepository(FactRepository):
     was read with, as the live store does. The kit reads live documents through the port, which shows a legacy
     `owner_id` (or a stray one beside another account's `account_id`) as the caller's account, so it does not reproduce
     the live store's refusal for such documents; none is live (FACT_LIFECYCLE_RFC D-7).
+
+    It is also the pass's cache refresher: a refresh, through either port, is recorded and the live cache is untouched.
     """
 
     def __init__(self, real: FactRepository) -> None:
@@ -360,6 +363,14 @@ class NoWriteFactRepository(FactRepository):
         self, owner_id: str, facts_limit: Optional[int] = None, principles_limit: Optional[int] = None
     ) -> None:
         self._record("refresh_biographical_context_cache")
+
+    async def refresh_cache(
+        self, owner_id: str, facts_limit: Optional[int] = None, principles_limit: Optional[int] = None
+    ) -> None:
+        self._record("refresh_biographical_context_cache")
+
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict]]) -> None:
+        self._record("save_biographical_context_cache")
 
     def _current_view(
         self, listed: Sequence[FactEntity], account_id: str, domain: Optional[str] = None,
@@ -1084,7 +1095,7 @@ class DryRunKit:
         return FactWriteContext.for_pass(PassActor(pass_label), self.timezone, span)
 
     def install(self, agent: Any) -> None:
-        """Put the kit under `agent`: its repository, its fact-management port, its counters, its alert sink, its model
+        """Put the kit under `agent`: its repository and cache refresher, its fact-management port, its counters, its alert sink, its model
         calls, its prompt tokens and (when it has one) its email repository."""
         if self._installed:
             raise RuntimeError("the kit is already installed")
@@ -1101,6 +1112,7 @@ class DryRunKit:
             raise ValueError("the agent has no prompt assembly service: the snapshot tokens could not be served")
         self.repo = NoWriteFactRepository(agent._repo)
         agent._repo = self.repo
+        agent._bio_cache = self.repo
         write_service = FactWriteService(self.repo, live._embedding)
         agent._fact_write_service = write_service
         adapter = FactManagementAdapter(self.repo, live._embedding, write_service, live._search_enrichment)
@@ -1169,7 +1181,7 @@ class DryRunKit:
             raise RuntimeError("install the kit before building the review's stand-ins")
         options = {} if clock is None else {"clock": clock}
         self.review_world = build_review_stand_ins(
-            repo=self.repo, fact_updates=self.recorder, counters=self.counters, account_repo=account_repo,
+            repo=self.repo, bio_cache=self.repo, fact_updates=self.recorder, counters=self.counters, account_repo=account_repo,
             user_repo=user_repo, live_sessions=live_sessions, **options,
         )
         return self.review_world

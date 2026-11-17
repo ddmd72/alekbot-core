@@ -38,6 +38,7 @@ from ..ports.account_repository import AccountRepository
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.repository import FactRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
@@ -66,6 +67,7 @@ class FactLifecycleSweepService:
         dry_run: bool,
         clock: Callable[[], datetime] = _utcnow,
         *,
+        bio_cache: BiographicalCacheRefresher,
         review_store: Optional[FactReviewStore] = None,
         task_queue: Optional[TaskQueue] = None,
         owner_zones: "Optional[OwnerTimezoneResolver]" = None,
@@ -75,6 +77,7 @@ class FactLifecycleSweepService:
         if review_store is not None and None in (owner_zones, account_repo, user_repo):
             raise ValueError("a janitor with a review store needs owner_zones, account_repo and user_repo")
         self._repo = repo
+        self._bio_cache = bio_cache
         self._counters = counters
         self._alert_sink = alert_sink
         self._dry_run = dry_run
@@ -338,7 +341,7 @@ class FactLifecycleSweepService:
                     staled += 1
         finally:
             if staled:
-                await self._repo.refresh_biographical_context_cache(account_id)     # a staled fact leaves every prompt (D5)
+                await self._bio_cache.refresh_cache(account_id)     # a staled fact leaves every prompt (D5)
         return staled, conflicts, len(decided) - attempted
 
     def _hold_back(self, account_id: str, reason: str, held: int) -> Optional[str]:

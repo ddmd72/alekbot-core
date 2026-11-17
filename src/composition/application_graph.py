@@ -913,6 +913,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         counters=container.fact_lifecycle_counters,
         alert_sink=_alert_webhook,
         dry_run=_fact_sweep_dry_run,
+        bio_cache=container.biographical_context_service,
         review_store=container.fact_review_store,
         task_queue=agent_task_queue,
         owner_zones=_owner_zones,
@@ -921,7 +922,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
 
     # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
-    cabinet_facts = CabinetFactService(container.repository)
+    cabinet_facts = CabinetFactService(container.repository, container.biographical_context_service)
 
     # Interactive messages (Facts S4 plan §3.20): buttons on Slack, numbered text on Telegram, picked by platform.
     # The Telegram channel itself is registered on the channel factory below, only when Telegram is configured.
@@ -964,6 +965,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         interactive=_interactive,
         owner_zones=_owner_zones,
         profile_answers=_profile_question_answers,
+        bio_cache=container.biographical_context_service,
     ) if agent_task_queue else None
     # An owner's click on an interactive message (Facts S4 plan §3.20): the Slack interactivity route queues it, the
     # worker's `interactive_choice` branch runs it. The handlers are keyed by the binding kind they answer.

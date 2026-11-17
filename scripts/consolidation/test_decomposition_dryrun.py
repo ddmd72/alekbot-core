@@ -574,10 +574,10 @@ async def main(
 
     # Suppress post-processing side effects
     async def _noop_refresh(*args, **kwargs):
-        print("    [DRY-RUN] Skipping refresh_biographical_context_cache")
+        print("    [DRY-RUN] Skipping the biographical cache refresh")
     def _noop_invalidate(*args, **kwargs):
         print("    [DRY-RUN] Skipping invalidate_biographical_cache")
-    consolidation_agent._repo.refresh_biographical_context_cache = _noop_refresh
+    consolidation_agent._bio_cache.refresh_cache = _noop_refresh
     if consolidation_agent.prompt_builder:
         consolidation_agent.prompt_builder.invalidate_biographical_cache = _noop_invalidate
 

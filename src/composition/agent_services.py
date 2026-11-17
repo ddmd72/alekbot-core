@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from ..adapters.fact_management_adapter import FactManagementAdapter
 from ..ports.agent_note_port import AgentNotePort
+from ..ports.biographical_cache_port import BiographicalCacheRefresher
 from ..ports.confirmed_people_repository import ConfirmedPeopleRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -25,7 +26,6 @@ from ..ports.repository import FactRepository
 from ..ports.session_store import SessionStore
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..services.agent_context_builder import AgentContextBuilder
-from ..services.biographical_context_service import BiographicalContextService
 from ..services.configuration_service import ConfigurationService
 from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
@@ -49,7 +49,7 @@ class AgentServices:
     embedding_service: EmbeddingService
     repository: FactRepository
     config_service: ConfigurationService
-    biographical_context_service: BiographicalContextService
+    biographical_context_service: BiographicalCacheRefresher
     context_builder: AgentContextBuilder
     assembly_service: Optional[PromptAssemblyService]
     fact_write_service: FactWritePort
