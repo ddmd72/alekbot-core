@@ -46,8 +46,9 @@ async def world():
     assert w.drive.plant(w.one.handle, "root", "one.txt", b"from one") == "item-1"
     assert w.drive.plant(w.two.handle, "root", "two.txt", b"from two") == "item-1"   # the same item id on purpose (T-4)
     w.conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-                                         connections=w.connections, access=allow_access())
-    w.conversion.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
+                                         connections=w.connections, access=allow_access(),
+                                         documents=DocumentService(FakeExtractor("parser"), FakeExtractor("reader"),
+                                                                   FakeSplitter()))
     return w
 
 

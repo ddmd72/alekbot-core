@@ -116,8 +116,8 @@ def stored():
     since U3 the native decision for a declaration is the document service's (EXTERNAL_FILES_RFC P16, §4.4 step 3)."""
     uploads = _Uploads({"lease.pdf": b"%PDF-1.7\n" + b"x" * 64})
     parser, reader, splitter = FakeExtractor("parser"), FakeExtractor("reader", READER_OUT), FakeSplitter(pages=3)
-    conversion = FileConversionService(storage=uploads, access=allow_access())
-    conversion.attach_documents(DocumentService(parser, reader, splitter))
+    conversion = FileConversionService(storage=uploads, access=allow_access(),
+                                       documents=DocumentService(parser, reader, splitter))
     agent = FileManagementAgent(
         config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management",
                            capabilities={}, metadata={}),

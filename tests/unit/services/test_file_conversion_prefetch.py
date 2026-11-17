@@ -47,8 +47,8 @@ async def test_prefetch_of_a_skill_ref_is_the_unmarked_body(world):
     from tests.support.drive_access_stub import allow_access
     skills = AsyncMock()
     skills.read.return_value = "Step 1"
-    service = FileConversionService(storage=world.storage, skill_files=skills, access=allow_access())
-    service.attach_documents(world.documents)
+    service = FileConversionService(storage=world.storage, skill_files=skills, access=allow_access(),
+                                    documents=world.documents)
     prefetched = await service.prefetch("skill:greeter/SKILL.md", "ann", "ann", deadline_at=DEADLINE)
     assert prefetched.content == "[File: skill:greeter/SKILL.md]\nStep 1\n[/File: skill:greeter/SKILL.md]"
 

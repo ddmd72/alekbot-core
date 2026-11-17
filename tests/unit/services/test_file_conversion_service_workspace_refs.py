@@ -21,8 +21,7 @@ USER = "u1"
 
 def _service(store=None, storage=None, documents=None):
     service = FileConversionService(storage=storage or AsyncMock(spec=FileStoragePort), workspace=store,
-                                    access=allow_access())
-    service.attach_documents(documents or RecordingDocuments())
+                                    access=allow_access(), documents=documents or RecordingDocuments())
     return service
 
 

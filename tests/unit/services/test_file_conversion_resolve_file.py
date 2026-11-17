@@ -83,10 +83,14 @@ async def world():
         blobs={"h-bathroom": b"%PDF-bathroom", "h-docx": zc.macro_docm(), "h-huge": b"%PDF"})
     w.email = FakeEmailSearch(w.mailbox)
     w.containers = FakeContainers()
-    w.service = FileConversionService(
-        storage=w.storage, media_storage=w.media, drive=w.drive, workspace=w.workspace,
-        connections=DriveConnectionService(repo, None), access=allow_access(), email=w.email)
-    w.service.attach_documents(RecordingDocuments(), containers=w.containers)
+
+    def conversion(containers):
+        return FileConversionService(
+            storage=w.storage, media_storage=w.media, drive=w.drive, workspace=w.workspace,
+            connections=DriveConnectionService(repo, None), access=allow_access(), email=w.email,
+            documents=RecordingDocuments(), containers=containers)
+    w.conversion = conversion
+    w.service = conversion(w.containers)
     return w
 
 
@@ -289,7 +293,7 @@ async def test_header_bytes_decide_without_the_sandbox(world):
     None,
 ])
 async def test_an_unchecked_container_fails_closed(world, containers, caplog):
-    world.service.attach_documents(RecordingDocuments(), containers=containers)
+    world.service = world.conversion(containers)
     resolved = ResolvedFile(data=zc.plain_docx(), name="invoice_bathroom_es.docx", mime=DOCX)
     with caplog.at_level(logging.INFO):
         assert await world.service.active_kind_of(resolved, deadline_at=DEADLINE) == ak.UNCHECKED

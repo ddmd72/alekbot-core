@@ -229,7 +229,7 @@ class TestResolveContent:
     async def test_downloads_converts_and_returns_text(self, service, mock_storage):
         mock_storage.download = AsyncMock(return_value=b"raw file bytes")
         documents = RecordingDocuments(ReadOutcome(status=ReadStatus.TEXT, kind="docx", text="Converted text content"))
-        service.attach_documents(documents)
+        service = FileConversionService(storage=mock_storage, access=allow_access(), documents=documents)
 
         opened = await service.open("report.docx", "user1", "user1", deadline_at=time.time() + 60)
 
@@ -241,7 +241,8 @@ class TestResolveContent:
     async def test_temp_file_cleaned_on_error(self, service, mock_storage):
         """A chat upload's bytes go to the read in memory: no temp file is made, so none can be left on an error."""
         mock_storage.download = AsyncMock(return_value=b"data")
-        service.attach_documents(RecordingDocuments(raises=RuntimeError("conversion error")))
+        service = FileConversionService(storage=mock_storage, access=allow_access(),
+                                        documents=RecordingDocuments(raises=RuntimeError("conversion error")))
 
         with patch("src.services.file_conversion_service.tempfile") as mock_tempfile:
             with pytest.raises(RuntimeError, match="conversion error"):
