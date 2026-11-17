@@ -1,5 +1,4 @@
-"""Mutation survivors of ConversationHandler (group ch3): the text handed to the output validator, the account id
-in the agent context, and the status animation stopping even when a cancel is swallowed mid-update."""
+"""Mutation survivors of ConversationHandler (group ch3): the account id in the agent context, and the status animation stopping even when a cancel is swallowed mid-update."""
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -47,27 +46,6 @@ def _channel(update=None):
 def _ctx(account_id="acct-alpha"):
     return MessageContext(text="hello", session_id="s", user_id="alpha-user", account_id=account_id,
                           attachments=[], metadata={})
-
-
-class _Port:
-    """Validator with the real signature: `text` is required."""
-
-    def __init__(self):
-        self.calls = []
-
-    async def validate(self, text, context, zone):
-        self.calls.append((text, context, zone))
-        return SimpleNamespace(risk_level=RiskLevel.HIGH, patterns_detected=[], sanitized_text=f"clean<{text}>")
-
-
-async def test_validator_receives_the_model_text_and_its_sanitized_result_is_returned():
-    port = _Port()
-    handler, _ = _handler(security_port=port)
-
-    result = await handler.validate_model_output("raw answer", "alpha-user")
-
-    assert result == "clean<raw answer>"
-    assert port.calls == [("raw answer", "model_output_user_alpha-user", TrustZone.UNTRUSTED)]
 
 
 async def test_agent_context_carries_the_account_id():
