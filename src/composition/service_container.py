@@ -10,7 +10,7 @@ overflow-callback's deferred factory reference.
 """
 
 import os
-from typing import Callable, Dict, Optional, Any
+from typing import Any, Callable, Dict, List, Optional
 
 from ..config.environment import EnvironmentConfig
 from . import cipher_setup
@@ -65,7 +65,7 @@ from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
-from ..services.drive_search_service import DriveSearchService
+from ..services.drive_search_service import DeletedSource, DriveSearchService
 from .drive_connection_setup import build_drive_connection_repository
 from .drive_provider_router import DriveProviderRouter
 from ..ports.drive_connection_repository import DriveConnectionRepository
@@ -74,7 +74,7 @@ from .agent_services import AgentServices
 from .deploy_topology import DeployTopology
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
 from .drive_note_setup import (
-    DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
+    DRIVE_NOTES_ENABLED_ENV, build_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
     drive_notes_switch_on,
 )
 from ..services.drive_note_service import DriveNoteService
@@ -260,6 +260,17 @@ class ServiceContainer:
         # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The indexing switch is
         # the connection's (MULTI_DRIVE_RFC §4.4), read fresh through the connection service on every search.
         self.drive_search_service: Optional[DriveSearchService] = None
+        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): one note store for the process, shared by the note
+        # service below and the deleted-files source the search service takes at construction (§6.4, §0.3). The source
+        # is a read, so it is built whatever DRIVE_NOTES_ENABLED says (§3.6).
+        self.drive_note_repo: Optional[DriveNoteRepository] = None
+        note_deleted_sources: List[DeletedSource] = []
+        if self.user_drive is not None and self.drive_index_repo is not None \
+                and self.drive_connection_service is not None:
+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
+            note_deleted_sources.append(build_drive_note_deleted_source(
+                self.drive_note_repo, self.embedding_service, embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
+                connections=self.drive_connection_service))
         # One stateless security port, shared by the note service and the skill service below: built once, injected.
         shared_security_port = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
         # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
@@ -276,30 +287,22 @@ class ServiceContainer:
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
                 transcribe_switch_on=self.drive_transcribe_switch_on,
+                deleted_sources=note_deleted_sources,
             )
 
-        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with the connection service (refs,
-        # and each connection's indexing switch for the receipt's status). Built whatever the kill switch says: off stops
-        # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal). One note
-        # store for the process: the service and the deleted-files source share `drive_note_repo`.
-        self.drive_note_repo: Optional[DriveNoteRepository] = None
+        # The note service: on the same drive pair, with the connection service (refs, and each connection's indexing
+        # switch for the receipt's status). Built whatever the kill switch says: off stops writes (no tool), reads keep
+        # answering (§3.6). Never handed to the memory side (§1.4 anti-goal).
         self.drive_note_service: Optional[DriveNoteService] = None
         self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
         if self.user_drive is not None and self.drive_index_repo is not None \
                 and self.drive_connection_service is not None:
-            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
             self.drive_note_service = build_drive_note_service(
                 db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
                 embeddings=self.embedding_service, connections=self.drive_connection_service,
                 security_port=shared_security_port,
                 nudge_queue=self.drive_task_queue, access=self.user_drive_service, quota=quota_service,
             )
-            # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
-            # DRIVE_NOTES_ENABLED says (§3.6). The search service is built under the same condition above.
-            if self.drive_search_service is not None:
-                add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
-                                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
-                                              connections=self.drive_connection_service)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()

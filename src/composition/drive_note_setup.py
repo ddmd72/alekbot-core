@@ -16,7 +16,7 @@ Public interface:
     build_drive_note_service(db_client, env_config, *, notes, drive, index, embeddings, connections, security_port,
                              nudge_queue) -> DriveNoteService
     build_drive_note_lifecycle(*, enabled, notes, index, drive) -> Optional[DriveNoteLifecycle]
-    add_drive_note_deleted_source(search, notes, embeddings, *, embedding_space, connections) -> DriveNoteDeletedSearch
+    build_drive_note_deleted_source(notes, embeddings, *, embedding_space, connections) -> DriveNoteDeletedSearch
     command_drive_note_service(service, enabled) -> Optional[DriveNoteService]
 """
 from __future__ import annotations
@@ -89,18 +89,16 @@ def build_drive_note_lifecycle(*, enabled: bool, notes: Optional[DriveNoteReposi
     return DriveNoteLifecycle(notes, index, drive)
 
 
-def add_drive_note_deleted_source(search: DriveSearchService, notes: DriveNoteRepository,
-                                  embeddings: EmbeddingService, *, embedding_space: str,
-                                  connections: "DriveConnectionService") -> DriveNoteDeletedSearch:
+def build_drive_note_deleted_source(notes: DriveNoteRepository, embeddings: EmbeddingService, *,
+                                    embedding_space: str, connections: "DriveConnectionService") -> DriveNoteDeletedSearch:
     """The notes source of the drive specialist's deleted-files search (`search_deleted_recordings_and_notes`, §6.4): one
-    section with the archived transcripts. Added whatever the switch (a read, §3.6). `connections` gives the ref tags of
+    section with the archived transcripts. Built whatever the switch (a read, §3.6); the search service takes it at construction. `connections` gives the ref tags of
     the user's live connections: a note on another live drive is not dormant (multi-drive 2b, E-9)."""
     async def live_tags(user_id: str) -> FrozenSet[str]:
         return frozenset(c.ref_tag for c in await connections.list_for_user(user_id))
 
     source = DriveNoteDeletedSearch(notes, embeddings, embedding_space=embedding_space,
-                                    mount_name_of=search.mount_name_of_tag, live_tags=live_tags)
-    search.add_deleted_source(source)
+                                    mount_name_of=connections.mount_name_of_tag, live_tags=live_tags)
     return source
 
 
@@ -111,6 +109,6 @@ def command_drive_note_service(service: Optional[DriveNoteService], enabled: boo
 
 
 __all__ = [
-    "DRIVE_NOTES_ENABLED_ENV", "add_drive_note_deleted_source", "build_drive_note_lifecycle",
+    "DRIVE_NOTES_ENABLED_ENV", "build_drive_note_deleted_source", "build_drive_note_lifecycle",
     "build_drive_note_repository", "build_drive_note_service", "command_drive_note_service", "drive_notes_switch_on",
 ]
