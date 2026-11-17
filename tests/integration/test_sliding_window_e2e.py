@@ -156,7 +156,6 @@ async def test_sliding_window_e2e():
 
         agent_factory = UserAgentFactory(
             config=config,
-            env_config=env_config,
             deploy_topology=build_deploy_topology(config, env_config),
             coordinator=coordinator,
             user_repo=user_repo,

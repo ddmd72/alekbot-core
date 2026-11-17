@@ -19,7 +19,6 @@ src/agents/web_search_light_agent.py::WebSearchLightAgent::execution_context  # 
 src/composition/service_container.py::ServiceContainer::alert_webhook  # composition-root refactor (assessment S1: stored, never read)
 src/composition/user_agent_factory.py::UserAgentFactory::biographical_context_service  # composition-root refactor (assessment S1: stored, never read)
 src/composition/user_agent_factory.py::UserAgentFactory::claude_service  # composition-root refactor (assessment S1: stored, never read)
-src/composition/user_agent_factory.py::UserAgentFactory::env_config  # composition-root refactor (assessment S1: stored, never read)
 src/composition/user_agent_factory.py::UserAgentFactory::grok_service  # composition-root refactor (assessment S1: stored, never read)
 src/composition/user_agent_factory.py::UserAgentFactory::llm_port  # composition-root refactor (assessment S1: stored, never read)
 src/composition/user_agent_factory.py::UserAgentFactory::openai_service  # composition-root refactor (assessment S1: stored, never read)

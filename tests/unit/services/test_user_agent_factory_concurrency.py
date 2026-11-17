@@ -24,7 +24,6 @@ def _make_factory():
 
     return UserAgentFactory(
         config={"GEMINI_API_KEY": "k", "ANTHROPIC_API_KEY": "k"},
-        env_config=MagicMock(),
         deploy_topology=MagicMock(),
         coordinator=MagicMock(),
         user_repo=AsyncMock(),
