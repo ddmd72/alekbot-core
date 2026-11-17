@@ -1,18 +1,16 @@
 """Mutation survivors of ConversationHandler (group ch3): the account id in the agent context, and the status animation stopping even when a cancel is swallowed mid-update."""
 import asyncio
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.domain.agent import AgentResponse
 from src.domain.messaging import MessageContext, SmartResponse
-from src.domain.prompt_v3.security import RiskLevel, TrustZone
 from src.domain.settings import ConsolidationSettings
 from src.handlers.conversation_handler import ConversationHandler
 
 _REAL_SLEEP = asyncio.sleep
 
 
-def _handler(security_port=None, route=None):
+def _handler(route=None):
     response = AgentResponse.success(task_id="t", agent_id="smart", result=SmartResponse(text="Hi."))
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
@@ -24,8 +22,7 @@ def _handler(security_port=None, route=None):
     coordinator = MagicMock()
     coordinator.route_message = AsyncMock(return_value=response) if route is None else route
     handler = ConversationHandler(coordinator=coordinator, agent_factory=factory,
-                                  global_config=ConsolidationSettings(threshold=50, batch_size=30),
-                                  security_port=security_port)
+                                  global_config=ConsolidationSettings(threshold=50, batch_size=30))
     return handler, coordinator
 
 
@@ -50,8 +47,7 @@ def _ctx(account_id="acct-alpha"):
 
 async def test_agent_context_carries_the_account_id():
     handler, coordinator = _handler()
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(_ctx("acct-alpha"), _channel())
+    await handler.handle_message(_ctx("acct-alpha"), _channel())
     assert coordinator.route_message.await_args.args[0].context["account_id"] == "acct-alpha"
 
 
@@ -76,8 +72,7 @@ async def test_stop_signal_ends_the_animation_even_if_the_update_swallows_the_ca
         await _REAL_SLEEP(0.001)
 
     handler, _ = _handler(route=AsyncMock(side_effect=route))
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t), \
-            patch("src.handlers.conversation_handler.asyncio.sleep", fast_sleep):
+    with patch("src.handlers.conversation_handler.asyncio.sleep", fast_sleep):
         await asyncio.wait_for(handler.handle_message(_ctx(), _channel(update=update)), timeout=3)
 
     assert len(calls) == 1

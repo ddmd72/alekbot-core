@@ -5,7 +5,7 @@ full_text, never into its summary, and the next turn's history carries the refs 
 "delete it" / "the second one" reach the next commission. The specialist itself never reads history."""
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.base_agent import BaseAgent
 from src.domain.agent import AgentConfig, AgentResponse
@@ -88,8 +88,7 @@ async def test_the_refs_land_in_full_text_and_never_in_the_summary():
     handler, store = _handler(response)
     ctx = MessageContext(text="find my leases", session_id="s", user_id="u", account_id="a", attachments=[],
                          metadata={})
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(ctx, _channel())
+    await handler.handle_message(ctx, _channel())
     model = next(m for m in store.append_messages_batch.call_args[0][1] if m.role == "model")
     # one line per file since 2026-10-29 (§7.4): the repeated Porto entry is one line, both refs kept
     lines = ("[Drive: Contracts/Lease agreement — Porto.pdf ref=drive:AAA]\n"

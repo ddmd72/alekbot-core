@@ -80,7 +80,6 @@ WebSearchLightAgent._agent_execution_context  # by-design STRATEGIES["web_search
 
 # ---- known defects, owner questions open (P9 design §6)
 app.telegram_adapter.conversation_handler._channel_binding  # by-design owner ruling 2026-10-23: channel binding is Slack-only; only slack_adapter_factory.py passes the service (slack_adapter_factory.py:66,129), so $agent on Telegram answers "not configured" (conversation_handler.py:1634)
-ConversationHandler.security_port  # defect:D6 no caller passes security_port= to ConversationHandler, so its output check is dead code (conversation_handler.py:568; other security_port= uses in service_container.py:300,491,499 feed other services)
 
 # ---- D8: a declared provider fallback that cannot run
 # web_search, tasks, domain_researcher, tutor and lelik_summarizer were fixed in P9 (they call _set_execution_context now, see

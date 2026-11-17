@@ -3,7 +3,7 @@
 Coverage targets:
   handle_message — skill_context from response.metadata → full_text (raw block) + summary (stub)
 """
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
 from src.domain.messaging import MessageContext, SmartResponse
@@ -54,8 +54,7 @@ async def test_skill_body_raw_in_full_text_and_stub_in_summary():
     response.metadata["skill_context"] = [{"name": "flight-status", "version": 2, "body": "1. Open *page*.\n2. Read `gate`."}]
     handler, store = _handler(response)
 
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(_ctx(), _channel())
+    await handler.handle_message(_ctx(), _channel())
 
     model = next(m for m in store.append_messages_batch.call_args[0][1] if m.role == "model")
     part = model.parts[0]

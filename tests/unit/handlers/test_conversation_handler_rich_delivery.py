@@ -14,7 +14,7 @@ Routes:
   link_list
       → passed to update_message() or send_chunked_message() as kwarg
 """
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -138,8 +138,7 @@ class TestRichContentDelivery:
         handler = _make_handler(coordinator)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_rich_content.assert_awaited_once_with(rich, thread_id=None)
         channel.send_message.assert_not_awaited()
@@ -162,8 +161,7 @@ class TestRichContentDelivery:
         handler = _make_handler(coordinator, rich_content_service=rcs)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # The file reached the platform upload, on this channel
         assert media.files == [(b"%PDF-1.4 binary content", "report.pdf", "Report", channel.channel_id)]
@@ -190,8 +188,7 @@ class TestRichContentDelivery:
         handler = _make_handler(coordinator, rich_content_service=rcs)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # HTML stored in GCS, not uploaded to the platform
         assert [(data, ctype) for data, _key, ctype in storage.stored] == [
@@ -213,8 +210,7 @@ class TestRichContentDelivery:
         handler = _make_handler(coordinator)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_rich_content.assert_not_awaited()
         # No structured_data → send_chunked_message with link_list
@@ -238,8 +234,7 @@ class TestRichContentDelivery:
         handler = _make_handler(coordinator)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # Text with link_list goes to send_chunked_message (replaces status bubble, supports long text)
         channel.send_chunked_message.assert_awaited_once()

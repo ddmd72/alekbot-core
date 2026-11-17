@@ -1,7 +1,7 @@
 """A chat turn's id is fixed before Smart runs (DRIVE_FILE_NOTES_RFC §4.2, core contract §6): the platform's turn id
 (`slack:<event_id>` / `telegram:<update_id>`) under TURN_ID_CONTEXT_KEY, else a fresh `chat:` id — never empty, and
 never written back to `metadata.turn_id` (which turns the long-turn machinery on)."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
 from src.domain.messaging import MessageContext, SmartResponse
@@ -47,8 +47,7 @@ def _ctx(metadata):
 
 async def _routed_context(metadata):
     handler, coordinator = _handler()
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(_ctx(metadata), _channel())
+    await handler.handle_message(_ctx(metadata), _channel())
     return coordinator.route_message.await_args.args[0].context
 
 

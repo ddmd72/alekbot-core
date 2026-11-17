@@ -4,7 +4,7 @@ sees the line while the turn is recent, and the ref copied from it resolves thro
 keys keep their JSON block. Invented items only."""
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.agents.base_agent import BaseAgent
 from src.domain import drive_answer_texts as t
@@ -77,8 +77,7 @@ async def _stored_pair(metadata):
     handler, store = _handler(response)
     ctx = MessageContext(text="what does my lab report say?", session_id="s", user_id="u", account_id="a",
                          attachments=[], metadata={})
-    with patch.object(handler, "validate_model_output", side_effect=lambda text, u: text):
-        await handler.handle_message(ctx, _channel())
+    await handler.handle_message(ctx, _channel())
     return store.append_messages_batch.call_args[0][1]
 
 

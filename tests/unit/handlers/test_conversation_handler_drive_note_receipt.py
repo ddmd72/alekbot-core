@@ -102,7 +102,6 @@ async def test_a_turn_with_a_receipt_posts_it_after_the_answer():
     channel = _channel()
     context = MessageContext(text="c'est l'estimation de l'entrepreneur", session_id="s", user_id="u", account_id="a",
                              attachments=[], metadata={})
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(context, channel)
+    await handler.handle_message(context, channel)
     receipt = render_drive_note_receipt(RECEIPT.delivery_data(), _fr)
     assert receipt in _sent(channel) and ("literal", receipt) in [(m, t) for m, t, _ in channel.posted]
