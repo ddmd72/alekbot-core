@@ -174,13 +174,18 @@ def _drive_cap(mime: str, consumer: Tuple[NativeFormat, ...]) -> int:
 
 
 def _native_file(outcome: ReadOutcome, content: bytes, declared_mime: str, name: str) -> OpenedFile:
-    """Write the bytes of a NATIVE outcome outside any staging directory: the adapter reads the file later in the turn
-    (the leak is today's, EXTERNAL_FILES_RFC §10)."""
+    """Write the bytes of a NATIVE outcome outside any staging directory: the adapter reads the file later in the turn.
+    The consumer that attaches `native_path` owns the file; `DelegationEngine.execute` removes it when the run ends.
+    A failed write removes it here."""
     native_mime = outcome.native_mime or declared_mime
     suffix = os.path.splitext(name)[1] or mimetypes.guess_extension(native_mime) or ".bin"
     fd, path = tempfile.mkstemp(suffix=suffix)
-    with os.fdopen(fd, "wb") as f:
-        f.write(content)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+    except BaseException:
+        os.unlink(path)
+        raise
     return OpenedFile(outcome, native_path=path, native_mime=native_mime)
 
 
