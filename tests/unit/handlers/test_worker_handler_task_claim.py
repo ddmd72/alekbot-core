@@ -60,7 +60,7 @@ def _delivery(name="task-1"):
     return CloudTaskDelivery(task_name=name, retry_count=0, execution_count=0)
 
 
-def _handler(claims=None, agent_worker=None):
+def _handler(claims=None, agent_worker=None, tasks=None):
     return WorkerHandler(
         agent_worker_handler=agent_worker or MagicMock(),
         email_indexing_service=MagicMock(),
@@ -69,6 +69,7 @@ def _handler(claims=None, agent_worker=None):
         agent_factory=AsyncMock(),
         user_repo=MagicMock(),
         task_claims=claims,
+        tasks=tasks or {},
     )
 
 
@@ -108,10 +109,9 @@ async def test_daily_email_review_second_delivery_is_duplicate(monkeypatch):
     assert runs == 1
 
 
-async def test_execute_reminder_second_delivery_is_duplicate(monkeypatch):
+async def test_execute_reminder_second_delivery_is_duplicate():
     runner = AsyncMock(return_value=({"status": "ok"}, 200))
-    monkeypatch.setattr(WorkerHandler, "_handle_execute_reminder", runner)   # before construction: the registry binds it
-    h = _handler(_MemoryClaims())
+    h = _handler(_MemoryClaims(), tasks={"execute_reminder": runner})   # a runner composition passes in
     payload = {"task_type": "execute_reminder", "note_id": "n1"}
     _, second, runs = await _call_counts(h, payload, runner)
     assert second == ({"status": "duplicate"}, 200)
