@@ -83,6 +83,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **Payload** | `{"task_type": "fire_due_reminders"}` |
 | **Purpose** | Fires proactive self-reminders whose `due <= now`. Idempotency guard: skips notes fired within the last 4 min. |
 | **Handler** | `WorkerHandler._handle_fire_due_reminders()` |
+| **Each fire** | One `execute_reminder` Cloud Task per claimed fire → `ExecuteReminderTask`. 500 (Cloud Tasks retries) only when the turn never started (no channel, no channel adapter); once the turn started every outcome is final and 200: `ok`, `empty_answer_final`, `turn_cap_final` (the fire is stamped, then the owner gets one localized "reminder did not run" notice) and `failed_final` (a failed or timed-out turn, a post that raised). Stamped fires answer `already_delivered` on a redelivery (`decisions/background_turn_started_is_final.md`). |
 | **Cadence is a contract** | The 5-min cadence is the floor for sub-hourly rules: `FREQ=MINUTELY;INTERVAL≥5`, and no two occurrences closer than 5 min (BYMINUTE/BYSECOND lists included; `_MIN_MINUTELY_INTERVAL` in `dateutil_recurrence_adapter.py`). Change both together. Missed occurrences are skipped, not replayed. |
 | **Env** | dev + prod |
 
@@ -127,6 +128,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, finds the review slot open at this tick: the first 3 hours from `config.gmail_daily_review_hour` in the user's timezone (wraps midnight; an invalid timezone counts as UTC). It claims the mark `daily_review:{user}:{slot_date}` (48 h) so the review runs once per local date, then enqueues a `daily_email_review` Cloud Task named after the mark. Worker fetches the last 25 h of emails by exact instants (epoch-second `after:`), so consecutive daily reviews never leave a gap; an overlap of about an hour is accepted (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
 | **Handler** | `StartDailyEmailReviewTask` → `DailyEmailReviewTask` (`src/services/`, built by `build_worker_tasks`) |
+| **Retry** | `daily_email_review` answers 500 (Cloud Tasks retries) only when the turn never started (no channel, no channel adapter); a turn that started and failed is `failed_final`, 200, not re-run (it may already have posted or enqueued the report; `decisions/background_turn_started_is_final.md`). |
 | **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
 | **Env** | dev + prod |
 

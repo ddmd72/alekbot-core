@@ -820,11 +820,11 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Retry after an effect.** `tests/unit/handlers/test_worker_retry_after_effect.py`: the first attempt makes its effect, then answers 5xx or
   raises; the claim is released and the same task name is delivered again. Passing pins: a turn that reached no channel is retried and posts once; a
   lost video next-poll enqueue is retried and the chain continues once; a Telegram update or a Slack event whose turn failed after its reply is not run
-  again; a question posted and recorded is not posted again.
+  again; a question posted and recorded is not posted again. P15-D1 (a reminder or a daily review whose turn already posted or enqueued was answered
+  500, so the retry repeated it: a failed rich part after the text, a report enqueued before the failure) is fixed and its four tests pass without
+  xfail: the two tasks answer 5xx only when the turn never started (`decisions/background_turn_started_is_final.md`).
 - **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker). Each has a precondition that holds before and after the
   fix and a passing control in the same file:
-  - P15-D1 (four tests, `test_worker_retry_after_effect.py`): a background turn that already posted or enqueued is answered 500, so the retry repeats it (a reminder or a daily review,
-    a failed rich part after the text, a report enqueued before the failure).
   - P15-D3 (`test_worker_retry_after_effect.py`): a lost `execute_reminder` enqueue leaves the fire claimed and it is never enqueued again.
   - P15-D5 (two tests, `test_worker_redelivery_chains.py`): a companion batch is extracted by two concurrent deliveries; a batch that always fails is revived and extracted without bound.
   - P15-D6 (`test_worker_redelivery_scheduler.py`): two concurrent auto-index ticks both pass the running-job guard and start two jobs.
