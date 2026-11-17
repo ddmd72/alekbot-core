@@ -273,7 +273,7 @@ async def main(mode: str, limit: int, user_id: str, account_id: str, openai_mode
 
     factory = UserAgentFactory(
         config=config_settings, env_config=env_config, coordinator=coordinator,
-        user_repo=user_repo, account_repo=account_repo, **container.agent_services(),
+        user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     print("Creating agents...")
     agents = await factory.ensure_agents_for_user(user_id)

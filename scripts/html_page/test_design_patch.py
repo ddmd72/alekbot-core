@@ -404,7 +404,7 @@ async def main(query: str, provider: str, tier_name: str, user_id: str, account_
 
     factory = UserAgentFactory(
         config=config_settings, env_config=env_config, coordinator=coordinator,
-        user_repo=user_repo, account_repo=account_repo, **container.agent_services(),
+        user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     print("Creating agents...")
     await factory.ensure_agents_for_user(user_id)

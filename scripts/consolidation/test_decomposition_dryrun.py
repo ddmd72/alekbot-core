@@ -557,7 +557,7 @@ async def main(
         coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
-        **container.agent_services(),
+        services=container.agent_services(),
     )
 
     print("Creating agents...")

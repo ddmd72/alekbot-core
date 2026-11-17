@@ -338,7 +338,7 @@ async def test_agent_e2e(agent_type: str, user_id: str, account_id: str):
         coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
-        **container.agent_services()
+        services=container.agent_services()
     )
 
     print(f"✅ UserAgentFactory created")

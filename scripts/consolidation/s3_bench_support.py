@@ -116,7 +116,7 @@ async def build_agent(user_id: str) -> BenchHandles:
     container = ServiceContainer(config=config, db_client=db, env_config=env_config, account_repo=account_repo)
     factory = UserAgentFactory(
         config=config, env_config=env_config, coordinator=AgentCoordinator(),
-        user_repo=user_repo, account_repo=account_repo, **container.agent_services(),
+        user_repo=user_repo, account_repo=account_repo, services=container.agent_services(),
     )
     agents = await factory.ensure_agents_for_user(user_id)
     agent = agents.get("consolidation_agent")
