@@ -11,7 +11,6 @@ ABC interfaces. Contracts between domain/services and the external world. ~100 p
 | `SessionStore` | `session_store.py` | FirestoreSessionStore | Sessions: history + overflow callback |
 | `EmbeddingService` | `embedding_service.py` | GeminiEmbeddingAdapter | Vector embeddings |
 | `ConsolidationQueue` | `consolidation_queue.py` | FirestoreConsolidationQueue | Consolidation queue |
-| `IAMPort` | `iam_port.py` | FirestoreIAMAdapter (no caller in `src/` yet) | Account roles: `BillingAccount.iam_policy` maps user_id to a `Role` |
 | `PlatformAuthPort` | `platform_auth_port.py` | IAMService (`services/iam_service.py`) | Authorization: platform + platform user id → `IAMDecision` |
 | `QuotaService` | `quota_service.py` | FirestoreQuotaService | Billing: deduct/check quota |
 | `PromptBuilderPort` | `prompt_builder_port.py` | PromptBuilder | Agent prompt assembly |

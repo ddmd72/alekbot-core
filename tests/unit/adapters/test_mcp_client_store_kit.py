@@ -7,8 +7,6 @@ or token, the service a revoked one), so they are checked through the real chain
 SDK's `TokenHandler` and `ClientAuthenticator` -> `MCPSdkOAuthProvider` -> `MCPAuthorizationService` -> the adapter, with
 every outcome asserted on the HTTP answer and on the stored documents.
 
-`delete_client` is marked "no caller in src/" and is not tested.
-
 At rest (SECRETS_AT_REST_RFC §2.2, §2.5): a client secret is stored as ciphertext bound to `mcp_clients/{client_id}` and an
 authorization code under its keyed digest with no `code` field; what each stored shape must not hold, and the cipher's
 failure modes, are in `test_mcp_client_store_cipher_kit.py`. This kit keeps every other behaviour on the new shape.

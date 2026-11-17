@@ -7,10 +7,10 @@ Verifies that each ABC port interface:
 3. Has no unexpected additions (method count assertion).
 4. Exposes correct signatures for key methods.
 
-Ports covered (18):
+Ports covered (17):
   AccountRepository, AudioTranscriptionPort, AuthPort,
   ConversationHandlerPort, EmbeddingService, FactManagementPort,
-  FactWritePort, FactRepository, IAMPort,
+  FactWritePort, FactRepository,
   InviteCodeRepository, LLMPort, LogSink (Protocol),
   PlatformAuthPort, QuotaService, SearchEnrichmentPort,
   TaskQueue (Protocol), UserRepository, WhitelistRepository.
@@ -31,7 +31,6 @@ from src.domain.fact_update import ParsedFactUpdate
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from src.ports.fact_write_port import FactWritePort
-from src.ports.iam_port import IAMPort, ResourceType, Action, Role
 from src.ports.invite_code_repository import InviteCodeRepository
 from src.ports.llm_port import LLMPort, LLMResponse, LLMRequest, Message, MessagePart
 from src.ports.log_sink import LogSink
@@ -654,83 +653,6 @@ class TestFactRepositoryMockImplementation:
 
 
 # =============================================================================
-# IAMPort
-# =============================================================================
-
-class TestIAMPortContract:
-    def test_is_abstract_class(self):
-        assert issubclass(IAMPort, ABC)
-
-    def test_cannot_instantiate_directly(self):
-        with pytest.raises(TypeError):
-            IAMPort()
-
-    def test_has_can_access_resource(self):
-        assert getattr(IAMPort.can_access_resource, "__isabstractmethod__", False)
-
-    def test_has_get_user_role(self):
-        assert getattr(IAMPort.get_user_role, "__isabstractmethod__", False)
-
-    def test_has_assign_role(self):
-        assert getattr(IAMPort.assign_role, "__isabstractmethod__", False)
-
-    def test_has_revoke_access(self):
-        assert getattr(IAMPort.revoke_access, "__isabstractmethod__", False)
-
-    def test_has_get_account_members(self):
-        assert getattr(IAMPort.get_account_members, "__isabstractmethod__", False)
-
-    def test_has_permission_is_not_abstract(self):
-        """has_permission is a concrete helper method, must NOT be abstract."""
-        assert not getattr(IAMPort.has_permission, "__isabstractmethod__", False)
-
-    def test_all_abstract_methods_count(self):
-        """Port should have exactly 5 abstract methods (has_permission is concrete)."""
-        abstract_methods = {
-            name for name, method in inspect.getmembers(IAMPort)
-            if getattr(method, "__isabstractmethod__", False)
-        }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
-
-    def test_has_permission_uses_role_permissions_matrix(self):
-        """has_permission is a concrete sync method — verify it works without a DB call."""
-
-        class _ConcreteIAM(IAMPort):
-            async def can_access_resource(self, *a, **kw): ...
-            async def get_user_role(self, *a, **kw): ...
-            async def assign_role(self, *a, **kw): ...
-            async def revoke_access(self, *a, **kw): ...
-            async def get_account_members(self, *a, **kw): ...
-
-        iam = _ConcreteIAM()
-        assert iam.has_permission(Role.OWNER, ResourceType.ACCOUNT, Action.ADMIN) is True
-        assert iam.has_permission(Role.VIEWER, ResourceType.ACCOUNT, Action.ADMIN) is False
-
-
-class TestIAMPortMockImplementation:
-    @pytest.fixture
-    def mock_port(self):
-        return AsyncMock(spec=IAMPort)
-
-    async def test_can_access_resource(self, mock_port):
-        mock_port.can_access_resource.return_value = True
-        result = await mock_port.can_access_resource(
-            "u1", ResourceType.FACT, "fact-1", Action.READ, account_id="acc1"
-        )
-        assert result is True
-
-    async def test_get_user_role(self, mock_port):
-        mock_port.get_user_role.return_value = Role.MEMBER
-        result = await mock_port.get_user_role("u1", "acc1")
-        assert result == Role.MEMBER
-
-    async def test_get_account_members(self, mock_port):
-        mock_port.get_account_members.return_value = {"u1": Role.OWNER}
-        result = await mock_port.get_account_members("acc1")
-        assert isinstance(result, dict)
-
-
-# =============================================================================
 # InviteCodeRepository
 # =============================================================================
 
@@ -1170,24 +1092,13 @@ class TestWhitelistRepositoryContract:
     def test_has_get_whitelist(self):
         assert getattr(WhitelistRepository.get_whitelist, "__isabstractmethod__", False)
 
-    def test_has_add_email(self):
-        assert getattr(WhitelistRepository.add_email, "__isabstractmethod__", False)
-
-    def test_has_remove_email(self):
-        assert getattr(WhitelistRepository.remove_email, "__isabstractmethod__", False)
-
-    def test_has_add_domain(self):
-        assert getattr(WhitelistRepository.add_domain, "__isabstractmethod__", False)
-
-    def test_has_remove_domain(self):
-        assert getattr(WhitelistRepository.remove_domain, "__isabstractmethod__", False)
-
     def test_all_abstract_methods_count(self):
         abstract_methods = {
             name for name, method in inspect.getmembers(WhitelistRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
+        # reviewer edit, dead-access deletion: the port is read-only (get_whitelist); the four unused mutators are gone
+        assert len(abstract_methods) == 1, f"Expected 1 abstract method, got {abstract_methods}"
 
 
 class TestWhitelistRepositoryMockImplementation:
@@ -1200,11 +1111,3 @@ class TestWhitelistRepositoryMockImplementation:
         mock_repo.get_whitelist.return_value = wl
         result = await mock_repo.get_whitelist()
         assert result is wl
-
-    async def test_add_email(self, mock_repo):
-        await mock_repo.add_email("user@example.com")
-        mock_repo.add_email.assert_called_once_with("user@example.com")
-
-    async def test_remove_domain(self, mock_repo):
-        await mock_repo.remove_domain("example.com")
-        mock_repo.remove_domain.assert_called_once_with("example.com")

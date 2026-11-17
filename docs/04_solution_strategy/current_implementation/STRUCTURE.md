@@ -52,7 +52,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── firestore_dedup_store.py # 🆕 Firestore-backed event deduplication
 │   ├── firestore_email_exclusions_adapter.py # 🆕 Sender/domain/subject skip patterns
 │   ├── firestore_email_job_repo.py # 🆕 Email indexing job journal (resume + status)
-│   ├── firestore_iam_adapter.py # 🆕 Firestore IAM (role-based access control)
 │   ├── firestore_indexed_email_repo.py # 🆕 IndexedEmail storage + 4-vector search
 │   ├── firestore_invite_code_repo.py # Invite code storage
 │   ├── firestore_notification_state_adapter.py # 🆕 Last active messaging channel per user
@@ -241,7 +240,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   ├── auth_port.py    # OAuth 2.0 / OIDC authentication port (AuthPort ABC only; data models in domain/auth.py)
 │   ├── security_port.py # 🆕 SecurityPort ABC — validate(message) → ValidationResult. Prompt injection + trust zone enforcement.
 │   ├── platform_port.py # 🆕 PlatformPort ABC — start/stop/get_platform_name/_translate_platform_files. Base for Slack + Telegram adapters.
-│   ├── iam_port.py     # Role-based access control port
+│   ├── iam_port.py     # Role enum (iam_policy values)
 │   ├── invite_code_repository.py # Invite code management port
 │   ├── whitelist_repository.py # Email/domain whitelist port
 │   ├── quota_service.py # Usage tracking + quota port
@@ -423,7 +422,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`account_repository.py`**: Port for billing account operations + quota management. Adapter: `FirestoreAccountRepository`.
 -   **`user_repository.py`**: Port for user profile CRUD + platform identity linking. Adapter: `FirestoreUserRepository`.
 -   **`auth_port.py`**: `AuthPort` ABC. OAuth 2.0 / OIDC authentication (authorization URL, token exchange, verification). Adapter: `FirebaseAuthAdapter`.
--   **`iam_port.py`**: `IAMPort` ABC. Role-based access control (OWNER/MEMBER/VIEWER, resource-level permissions). Adapter: `FirestoreIAMAdapter`.
+-   **`iam_port.py`**: the `Role` enum (OWNER/MEMBER/VIEWER), the stored values of `BillingAccount.iam_policy`.
 -   **`invite_code_repository.py`**: Port for invite code management (create, consume, list). Adapter: `FirestoreInviteCodeRepository`.
 -   **`whitelist_repository.py`**: Port for email/domain whitelist management. Adapter: `FirestoreWhitelistRepository`.
 -   **`quota_service.py`**: Port for non-blocking usage tracking and quota management. Key method: `record_usage(account_id, model, tokens, cost)`. Adapter: `FirestoreQuotaService`.

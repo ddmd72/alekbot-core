@@ -295,7 +295,7 @@ _ABSTRACT_BASES = {"ABC", "Protocol"}
 # Non-abstract classes legitimately living in ports/ (exception subclasses, enums).
 # Data models (Pydantic BaseModel subclasses) are tracked separately in arch_tech_debt.py.
 _PORT_CONCRETE_WHITELIST = {
-    "ResourceType", "Action", "Role",    # Enums in iam_port
+    "Role",                              # Enum in iam_port
     "IAMDecision",                       # dataclass in platform_auth_port
     "AssemblyError", "HtmlRenderError",  # Exception subclasses (legit in ports)
 } | PORT_DATA_MODELS_WHITELIST | {"TokenClaims", "OAuthTokens", "OAuthUserInfo"}

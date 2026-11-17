@@ -2,10 +2,9 @@
 Integration tests for OAuth Multi-Tenant system (Session 9).
 
 Tests complete flows with multiple services working together:
-- AuthenticationService + SessionService + IAMPort + ConfigurationService
+- AuthenticationService + SessionService + ConfigurationService
 - UserRepository + AccountRepository
 - End-to-end OAuth registration and login
-- IAM permission enforcement
 - Configuration inheritance
 
 RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
@@ -19,11 +18,10 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.session_service import SessionService
 from src.services.configuration_service import ConfigurationService
-from src.adapters.firestore_iam_adapter import FirestoreIAMAdapter
 from src.domain.user import UserProfile, UserBotConfig
 from src.domain.billing import BillingAccount, AccountTier
 from src.domain.whitelist import WhitelistEntry
-from src.ports.iam_port import Role, ResourceType, Action
+from src.ports.iam_port import Role
 
 
 # ============================================================================
@@ -89,12 +87,6 @@ def session_service():
         access_token_ttl=3600,
         refresh_token_ttl=86400,
     )
-
-
-@pytest.fixture
-def iam_adapter(mock_account_repo):
-    """Create FirestoreIAMAdapter."""
-    return FirestoreIAMAdapter(account_repo=mock_account_repo)
 
 
 @pytest.fixture
@@ -278,114 +270,6 @@ async def test_jwt_session_flow(session_service):
 
 
 # ============================================================================
-# Integration Test: IAM Permission Enforcement
-# ============================================================================
-@pytest.mark.asyncio
-async def test_iam_owner_has_full_access(iam_adapter, mock_account_repo):
-    """Test OWNER role has full access to all resources."""
-    account = BillingAccount(
-        account_id="account-1",
-        tier=AccountTier.FREE,
-        iam_policy={"owner-user": "owner"},
-    )
-    mock_account_repo.get_account.return_value = account
-
-    # Test OWNER can do everything
-    assert await iam_adapter.can_access_resource(
-        "owner-user", ResourceType.ACCOUNT, "account-1", Action.ADMIN, "account-1"
-    )
-    assert await iam_adapter.can_access_resource(
-        "owner-user", ResourceType.FACT, "fact-1", Action.DELETE, "account-1"
-    )
-    assert await iam_adapter.can_access_resource(
-        "owner-user", ResourceType.CONFIG, "config-1", Action.WRITE, "account-1"
-    )
-
-
-@pytest.mark.asyncio
-async def test_iam_member_limited_access(iam_adapter, mock_account_repo):
-    """Test MEMBER role has limited access."""
-    account = BillingAccount(
-        account_id="account-1",
-        tier=AccountTier.FREE,
-        iam_policy={"owner-user": "owner", "member-user": "member"},
-    )
-    mock_account_repo.get_account.return_value = account
-
-    # Member can read/write facts
-    assert await iam_adapter.can_access_resource(
-        "member-user", ResourceType.FACT, "fact-1", Action.READ, "account-1"
-    )
-    assert await iam_adapter.can_access_resource(
-        "member-user", ResourceType.FACT, "fact-1", Action.WRITE, "account-1"
-    )
-
-    # Member cannot delete or admin
-    assert not await iam_adapter.can_access_resource(
-        "member-user", ResourceType.FACT, "fact-1", Action.DELETE, "account-1"
-    )
-    assert not await iam_adapter.can_access_resource(
-        "member-user", ResourceType.ACCOUNT, "account-1", Action.ADMIN, "account-1"
-    )
-
-
-@pytest.mark.asyncio
-async def test_iam_viewer_read_only(iam_adapter, mock_account_repo):
-    """Test VIEWER role has read-only access."""
-    account = BillingAccount(
-        account_id="account-1",
-        tier=AccountTier.FREE,
-        iam_policy={"owner-user": "owner", "viewer-user": "viewer"},
-    )
-    mock_account_repo.get_account.return_value = account
-
-    # Viewer can read
-    assert await iam_adapter.can_access_resource(
-        "viewer-user", ResourceType.FACT, "fact-1", Action.READ, "account-1"
-    )
-
-    # Viewer cannot write, delete, or admin
-    assert not await iam_adapter.can_access_resource(
-        "viewer-user", ResourceType.FACT, "fact-1", Action.WRITE, "account-1"
-    )
-    assert not await iam_adapter.can_access_resource(
-        "viewer-user", ResourceType.FACT, "fact-1", Action.DELETE, "account-1"
-    )
-    assert not await iam_adapter.can_access_resource(
-        "viewer-user", ResourceType.ACCOUNT, "account-1", Action.ADMIN, "account-1"
-    )
-
-
-@pytest.mark.asyncio
-async def test_iam_role_assignment_requires_owner(iam_adapter, mock_account_repo):
-    """Test only OWNER can assign roles."""
-    account = BillingAccount(
-        account_id="account-1",
-        tier=AccountTier.FREE,
-        iam_policy={"owner-user": "owner", "member-user": "member"},
-    )
-    mock_account_repo.get_account.return_value = account
-
-    # Owner can assign roles
-    success = await iam_adapter.assign_role(
-        user_id="new-user",
-        account_id="account-1",
-        role=Role.MEMBER,
-        assigned_by="owner-user",
-    )
-    assert success
-
-    # Member cannot assign roles
-    with pytest.raises(PermissionError):
-        await iam_adapter.assign_role(
-            user_id="another-user",
-            account_id="account-1",
-            role=Role.MEMBER,
-            assigned_by="member-user",
-        )
-
-
-# ============================================================================
 # Integration Test: Configuration Inheritance
 # ============================================================================
 @pytest.mark.asyncio
@@ -498,11 +382,11 @@ async def test_platform_linking_flow(mock_user_repo):
 
 
 # ============================================================================
-# Integration Test: Complete OAuth → IAM → Config Flow
+# Integration Test: Complete OAuth → Config Flow
 # ============================================================================
 @pytest.mark.asyncio
 async def test_complete_oauth_to_config_flow(
-    auth_service, iam_adapter, config_service,
+    auth_service, config_service,
     mock_user_repo, mock_account_repo, mock_auth_provider
 ):
     """
@@ -563,30 +447,7 @@ async def test_complete_oauth_to_config_flow(
     parent_account.iam_policy[child_user.user_id] = "member"
     await mock_account_repo.update_account(parent_account)
 
-    # Step 4: Verify child has MEMBER role
-    mock_account_repo.get_account.return_value = parent_account
-    child_role = await iam_adapter.get_user_role(
-        child_user.user_id, parent_account.account_id
-    )
-    assert child_role == Role.MEMBER
-
-    # Step 5: Verify child uses parent's account defaults
+    # Step 4: Verify child uses parent's account defaults
     effective_config = config_service.get_effective_config(child_user, parent_account)
     assert effective_config.temperature == 0.7  # Parent's default
     assert effective_config.default_tier == "eco"  # Parent's default
-
-    # Verify child has limited permissions (MEMBER role)
-    assert await iam_adapter.can_access_resource(
-        child_user.user_id,
-        ResourceType.FACT,
-        "fact-1",
-        Action.READ,
-        parent_account.account_id,
-    )
-    assert not await iam_adapter.can_access_resource(
-        child_user.user_id,
-        ResourceType.ACCOUNT,
-        parent_account.account_id,
-        Action.ADMIN,
-        parent_account.account_id,
-    )

@@ -65,11 +65,11 @@ class AccountRepository(ABC):
     # OAuth Multi-Tenant Session 2: IAM Policy Operations
     # RFC: docs/10_rfcs/MULTI_TENANT_OAUTH_RFC.md
     # Note: IAM operations use existing get_account() and update_account()
-    #       IAMPort adapter will modify BillingAccount.iam_policy and call update_account()
+    #       iam_policy is changed by reading the account and calling update_account()
     # ========================================================================
 
     # No additional methods needed for MVP.
-    # IAMPort adapter will use:
+    # iam_policy changes use:
     #   - get_account(account_id) → read iam_policy
     #   - update_account(account) → write modified iam_policy
     #

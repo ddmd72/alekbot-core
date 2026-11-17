@@ -3,7 +3,7 @@
 Smart only offers draft_skill when this flag is true (Task 5). A normal (unbound)
 conversational turn must carry it so the preview/save-command flow is reachable.
 """
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
 from src.domain.messaging import MessageContext, SmartResponse
@@ -51,8 +51,7 @@ async def test_interactive_delivery_set_for_a_normal_message():
     response = AgentResponse.success(task_id="t", agent_id="smart", result=SmartResponse(text="Hi."))
     handler, coordinator = _handler(response)
 
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(_ctx(), _channel())
+    await handler.handle_message(_ctx(), _channel())
 
     routed_message = coordinator.route_message.await_args.args[0]
     assert routed_message.context["interactive_delivery"] is True

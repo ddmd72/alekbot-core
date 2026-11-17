@@ -122,9 +122,6 @@ class FirestoreMCPClientRepository(MCPClientRepository):
             secret = await self._cipher.decrypt(sealed, aad=self._client_aad(client_id))
         return self._client_from_fs(data, client_id, secret)
 
-    async def delete_client(self, client_id: str) -> None:
-        await self._clients.document(client_id).delete()
-
     # --- auth codes ---
 
     def _code_doc_id(self, code: str) -> str:

@@ -12,13 +12,6 @@ Coverage:
     - user not found         → returns global config
     - exception in user_repo → returns global config (fail-safe)
 
-  validate_model_output
-    - no security_port  → pass through unchanged
-    - CRITICAL risk     → returns blocked placeholder
-    - HIGH risk         → returns sanitized text
-    - SAFE/other risk   → returns sanitized text unchanged
-    - exception in port → returns original text (fail open)
-
   _save_history_with_retry
     - success on first attempt → append_messages_batch called once
     - transient error then success → retries, ultimately saves
@@ -168,67 +161,6 @@ class TestGetConsolidationConfig:
         result = await handler._get_consolidation_config(_USER_ID)
 
         assert result is handler.global_config
-
-
-# ---------------------------------------------------------------------------
-# validate_model_output
-# ---------------------------------------------------------------------------
-
-class TestValidateModelOutput:
-
-    async def test_no_security_port_passes_through_unchanged(self):
-        handler, _, _, _ = _make_handler()
-        assert handler.security_port is None
-
-        result = await handler.validate_model_output("hello world", _USER_ID)
-
-        assert result == "hello world"
-
-    async def test_critical_risk_returns_blocked_message(self):
-        handler, _, _, _ = _make_handler()
-        handler.security_port = AsyncMock()
-        validation_result = MagicMock()
-        validation_result.risk_level = RiskLevel.CRITICAL
-        validation_result.patterns_detected = ["injection"]
-        handler.security_port.validate = AsyncMock(return_value=validation_result)
-
-        result = await handler.validate_model_output("bad content", _USER_ID)
-
-        assert "blocked" in result.lower() or "unsafe" in result.lower()
-
-    async def test_high_risk_returns_sanitized_text(self):
-        handler, _, _, _ = _make_handler()
-        handler.security_port = AsyncMock()
-        validation_result = MagicMock()
-        validation_result.risk_level = RiskLevel.HIGH
-        validation_result.sanitized_text = "sanitized version"
-        validation_result.patterns_detected = ["suspicious"]
-        handler.security_port.validate = AsyncMock(return_value=validation_result)
-
-        result = await handler.validate_model_output("original", _USER_ID)
-
-        assert result == "sanitized version"
-
-    async def test_safe_risk_returns_sanitized_text(self):
-        handler, _, _, _ = _make_handler()
-        handler.security_port = AsyncMock()
-        validation_result = MagicMock()
-        validation_result.risk_level = RiskLevel.SAFE
-        validation_result.sanitized_text = "safe original"
-        handler.security_port.validate = AsyncMock(return_value=validation_result)
-
-        result = await handler.validate_model_output("safe original", _USER_ID)
-
-        assert result == "safe original"
-
-    async def test_exception_in_security_port_returns_original(self):
-        handler, _, _, _ = _make_handler()
-        handler.security_port = AsyncMock()
-        handler.security_port.validate = AsyncMock(side_effect=RuntimeError("port down"))
-
-        result = await handler.validate_model_output("original text", _USER_ID)
-
-        assert result == "original text"
 
 
 # ---------------------------------------------------------------------------

@@ -269,29 +269,13 @@ Expected response:
 Test that OWNER role works correctly:
 
 ```python
-from src.adapters.firestore_iam_adapter import FirestoreIAMAdapter
-from src.ports.iam_port import Action, ResourceType
+from src.ports.iam_port import Role
 
-# Initialize IAM adapter
-iam = FirestoreIAMAdapter(account_repo)
-
-# Get your user and account
 user = await user_repo.get_user("your-user-id")
 account = await account_repo.get_account(user.account_id)
 
-# Test OWNER permissions
-can_admin = await iam.can_access_resource(
-    user.user_id,
-    ResourceType.ACCOUNT,
-    account.account_id,
-    Action.ADMIN,
-    account.account_id
-)
-print(f"Can admin account: {can_admin}")  # Should be True
-
-# Test role retrieval
-role = await iam.get_user_role(user.user_id, account.account_id)
-print(f"User role: {role}")  # Should be Role.OWNER
+role = account.iam_policy.get(user.user_id)
+print(f"User role: {role}")  # Should be Role.OWNER.value ("owner")
 ```
 
 ---

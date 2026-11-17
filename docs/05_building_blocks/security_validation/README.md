@@ -84,10 +84,6 @@ text and loaded history lose system-tag look-alikes in memory (persisted text un
 keys) and the reply (text, structured data, rich content, link list, history summary) are scrubbed of the key. Spec:
 `docs/10_rfcs/SYSTEM_TURN_FINGERPRINT_RFC.md`; code `src/domain/system_fingerprint.py`, `src/infrastructure/turn_fingerprint.py`.
 
-### 5.2 Conversation Handling
-
-The `ConversationHandler` uses `validate_model_output()` to check LLM responses. This prevents "indirect injection" where a model is tricked into generating malicious instructions that are then stored and used in future turns.
-
 ---
 
 ## 6. Code References

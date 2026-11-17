@@ -11,7 +11,7 @@ imports).
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -163,8 +163,7 @@ class TestSkillPreviewEndToEnd:
         parent.attach_mock(channel.send_file, "send_file")
         parent.attach_mock(channel.send_message, "send_message")
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_file.assert_awaited_once_with(
             content=_SKILL_MD.encode("utf-8"),
@@ -237,8 +236,7 @@ class TestSkillPreviewEndToEndFailureHandling:
         channel = _make_channel()
         channel.send_file = AsyncMock(side_effect=RuntimeError("upload failed"))
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -261,8 +259,7 @@ class TestSkillPreviewEndToEndFailureHandling:
         # only the command send fails here.
         channel.send_message = AsyncMock(side_effect=RuntimeError("command send failed"))
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_file.assert_awaited_once()
         session_store = handler.agent_factory.get_session_store()

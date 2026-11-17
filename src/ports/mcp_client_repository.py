@@ -48,14 +48,6 @@ class MCPClientRepository(ABC):
             as "user_context" (observed).
         """
 
-    @abstractmethod
-    async def delete_client(self, client_id: str) -> None:
-        """Delete the client.
-
-        Contract (observed; no caller in src/).
-        Idempotency: an absent id is a no-op. The client's codes and refresh tokens stay.
-        """
-
     # --- authorization codes (one-shot) ---
 
     @abstractmethod

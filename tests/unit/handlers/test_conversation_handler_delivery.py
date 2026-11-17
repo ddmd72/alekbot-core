@@ -516,8 +516,7 @@ class TestHandleMessageEdgeCases:
 
         ctx = _make_context(metadata={"channel_type": "channel"})
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         # Give the background task a chance to run
         await asyncio.sleep(0.05)
@@ -540,8 +539,7 @@ class TestHandleMessageEdgeCases:
             metadata={"channel": "D-dm", "channel_type": "im", "slack_user_id": "U-slack-123"}
         )
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         await asyncio.sleep(0.05)
         notif.save_channel.assert_awaited_once_with(
@@ -567,8 +565,7 @@ class TestHandleMessageEdgeCases:
         channel = _make_channel(channel_id="C-main")
         ctx = _make_context(metadata={"channel_type": "channel"})
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         await asyncio.sleep(0.05)
         assert len(handler._background_tasks) == 1
@@ -588,8 +585,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord, notification_service=None)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_chunked_message.assert_awaited_once()
 
@@ -628,8 +624,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.update_message.assert_awaited_once_with(_STATUS_MSG_ID, "✅ Відповідь готова.")
         channel.send_rich_content.assert_awaited_once_with(rich, thread_id=None)
@@ -644,8 +639,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         channel.send_chunked_message.assert_awaited_once()
         sent_text = channel.send_chunked_message.call_args[0][0]
@@ -665,8 +659,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # History was saved — check append_messages_batch was called
         session_store = handler.agent_factory.get_session_store()
@@ -681,8 +674,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -704,8 +696,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # Should not raise; history saved with full text
         session_store = handler.agent_factory.get_session_store()
@@ -724,10 +715,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with (
-            patch.object(handler, "validate_model_output", side_effect=lambda t, u: t),
-            patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()),
-        ):
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
             await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
@@ -746,8 +734,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -764,8 +751,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -801,8 +787,7 @@ class TestHandleMessageEdgeCases:
         ctx = _make_context(attachments=[attachment])
         channel.download_file = AsyncMock(return_value=tmp_path)
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -824,8 +809,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -846,8 +830,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -873,8 +856,7 @@ class TestHandleMessageEdgeCases:
         handler = _make_handler(coord)
         channel = _make_channel()
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(_make_context(), channel)
+        await handler.handle_message(_make_context(), channel)
 
         # send_message called for both delivery items
         calls = channel.send_message.call_args_list
@@ -969,8 +951,7 @@ class TestHandleMessageEdgeCases:
         attachment = FileAttachment(url="http://x.com/img.jpg", mime_type="image/jpeg", filename="img.jpg")
         ctx = _make_context(text="", attachments=[attachment])
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         localization.get_file_prompt.assert_called_once()
         # context.text should have been populated
@@ -994,8 +975,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_IMAGE
 
@@ -1017,8 +997,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_PDF
 
@@ -1040,8 +1019,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_DOCUMENT
 
@@ -1063,8 +1041,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_VIDEO
 
@@ -1086,8 +1063,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_GENERIC
 
@@ -1109,8 +1085,7 @@ class TestHandleMessageEdgeCases:
 
         from src.locales import uk as uk_locale
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         assert ctx.text == uk_locale.FILE_FALLBACK_DOCUMENT
 
@@ -1129,8 +1104,7 @@ class TestHandleMessageEdgeCases:
         object.__setattr__(attachment, "url", None)
         ctx = _make_context(attachments=[attachment])
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         channel.download_file.assert_not_awaited()
 
@@ -1148,8 +1122,7 @@ class TestHandleMessageEdgeCases:
         attachment = FileAttachment(url="http://x.com/f.png", mime_type="image/png", filename="f.png")
         ctx = _make_context(attachments=[attachment])
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         # History still saved; just no file part added
         session_store = handler.agent_factory.get_session_store()
@@ -1378,8 +1351,7 @@ class TestGcsRefHistoryCleanup:
         ctx = _make_context(attachments=[attachment])
         channel.download_file = AsyncMock(return_value=tmp_path)
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         session_store = handler.agent_factory.get_session_store()
         session_store.append_messages_batch.assert_awaited_once()
@@ -1423,8 +1395,7 @@ class TestGcsRefHistoryCleanup:
         ctx = _make_context(attachments=[attachment])
         channel.download_file = AsyncMock(return_value=tmp_path)
 
-        with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-            await handler.handle_message(ctx, channel)
+        await handler.handle_message(ctx, channel)
 
         mock_fcs.process_attachment.assert_awaited_once_with(
             tmp_path,

@@ -144,7 +144,6 @@ class ConversationHandler(ConversationHandlerPort):
         agent_factory: "UserAgentFactory",
         consolidation_queue: Optional[Any] = None,
         global_config: Optional[ConsolidationSettings] = None,
-        security_port: Optional[Any] = None,
         audio_service: Optional[AudioTranscriptionPort] = None,
         rich_content_service: Optional[RichContentService] = None,
         notification_service: Optional[UserNotificationService] = None,
@@ -168,7 +167,6 @@ class ConversationHandler(ConversationHandlerPort):
         self._file_conversion_service = file_conversion_service
         self.consolidation_queue = consolidation_queue
         self.global_config = global_config or ConsolidationSettings()
-        self.security_port = security_port  # Phase 4: v3 OUTPUT validation
         self.audio_service = audio_service
         self._rich_content_service = rich_content_service
         self._notification_service = notification_service
@@ -562,63 +560,6 @@ class ConversationHandler(ConversationHandlerPort):
         lines = "\n".join(f"[{a}]" for a in anchors)
         sep = "\n\n" if text.strip() else ""
         return f"{text}{sep}{heading}\n{lines}"
-
-    async def validate_model_output(self, response_text: str, user_id: str) -> str:
-        """
-        Validate model output before storing in conversation history (Phase 4).
-
-        This prevents indirect prompt injection:
-        - Model generates malicious response
-        - Response stored in conversation history
-        - Malicious text injected into next prompt
-
-        Args:
-            response_text: Model response to validate
-            user_id: User identifier for logging context
-
-        Returns:
-            Validated (and possibly sanitized) response text
-
-        Raises:
-            No exceptions - always returns safe text
-        """
-        if not self.security_port:
-            # Phase 4 MVP: security_port is optional, pass through if not configured
-            return response_text
-
-        try:
-            # Import locally to avoid circular dependency
-            from ..domain.prompt_v3.security import TrustZone, RiskLevel
-
-            # Validate model output (UNTRUSTED zone)
-            result = await self.security_port.validate(
-                text=response_text,
-                context=f"model_output_user_{user_id}",
-                zone=TrustZone.UNTRUSTED  # Model output is untrusted
-            )
-
-            if result.risk_level == RiskLevel.CRITICAL:
-                logger.error(
-                    f"🚨 [OUTPUT VALIDATION] Model output BLOCKED for user {user_id[:8]}: "
-                    f"patterns={result.patterns_detected}"
-                )
-                return "[SYSTEM: Response contained unsafe content and was blocked]"
-
-            elif result.risk_level == RiskLevel.HIGH:
-                logger.warning(
-                    f"⚠️ [OUTPUT VALIDATION] Model output SANITIZED for user {user_id[:8]}: "
-                    f"patterns={result.patterns_detected}"
-                )
-                return result.sanitized_text
-
-            else:
-                # SAFE, LOW, MEDIUM → pass through
-                return result.sanitized_text
-
-        except Exception as e:
-            logger.error(f"❌ [OUTPUT VALIDATION] Validation failed for user {user_id[:8]}: {e}", exc_info=True)
-            # On error, pass through original text (fail open to avoid breaking user experience)
-            return response_text
 
     def _resolve_session_mode(
         self, channel_id: Optional[str], binding: Optional[ChannelBinding], platform: str,
@@ -1060,9 +1001,6 @@ class ConversationHandler(ConversationHandlerPort):
                 if not response_text.strip():
                     response_text = self._ui_string(context, UIMessage.EMPTY_MODEL_RESPONSE)
 
-                # Validate User Output
-                response_text = await self.validate_model_output(response_text, context.user_id)
-                
                 if mode.use_threads:
                     # Standard: chunked with thread support
                     await response_channel.send_chunked_message(
@@ -1331,7 +1269,6 @@ class ConversationHandler(ConversationHandlerPort):
             history_text = text or (structured.fallback_text if structured else "")
             shown = text if text.strip() else (
                 "" if structured else self._ui_string(context, UIMessage.EMPTY_MODEL_RESPONSE))
-            shown = await self.validate_model_output(shown, context.user_id)
 
             # full_text starts from the sanitised text, as on the normal path — the raw text
             # must not reach history, where it is re-injected into later prompts.
@@ -1424,9 +1361,6 @@ class ConversationHandler(ConversationHandlerPort):
             elif "response_summary" in response.metadata:
                 history_text = response.metadata["response_summary"] or response_text
                 logger.debug("💾 [History] Using pre-computed summary")
-
-        # Validate History Output
-        history_text = await self.validate_model_output(history_text, context.user_id)
 
         # Append *_context blocks to full_text for tiered history loading.
         # Any metadata key ending in "_context" is persisted — orchestrators control what they expose.

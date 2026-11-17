@@ -47,8 +47,7 @@ def _ctx(attachments=(), thread_id=None):
 
 
 async def _run(handler, ctx, channel):
-    with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
-        await handler.handle_message(ctx, channel)
+    await handler.handle_message(ctx, channel)
 
 
 async def test_thread_id_reaches_the_router_agent_context():
