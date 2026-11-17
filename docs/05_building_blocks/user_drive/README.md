@@ -110,7 +110,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the connection's own flag
-  (`DriveConnection.transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
+  (`DriveConnection.transcribe_enabled`, **on for a newly created connection**; connections created earlier keep their stored value, a document without the field reads as off; the owner's script sets it). The T2 mirror folder (live since 2026-10-21, owner) writes the
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3). Decoding of recordings (S5, live, accepted 2026-11-05) runs in the sandbox light service over a reverse tunnel, never in the indexer (`UNTRUSTED_CONTENT_SANDBOX_RFC.md` §7 S5).
 - **T2 read side (live since 2026-10-21 with T2; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
@@ -1569,11 +1569,12 @@ open the transcript and answer from it. Nothing is read aloud or sent to a chat 
 
 **Where it runs.** The job states (`transcript_state`: `none ready working waiting current held parked failed`) are advanced across ticks by `DriveTranscriptStage` (`src/services/drive_transcript_stage.py`) on the indexer; the mirror folder is reconciled by `DriveTranscriptMirror` (`src/services/drive_transcript_mirror.py`, ports only). **Live deploy values:** the kill switch's deploy key `DRIVE_TRANSCRIBE_ENABLED_DEV` is `on` (the substitution `_DRIVE_TRANSCRIBE_ENABLED`; the Makefile default is off) and `DRIVE_TRANSCRIBE_USD_CAP_DEV` lowers the cap to $10 under the code's $20; the user flag is on for the owner only, until the zero-credential parser service exists.
 
-**Who gets it.** Two switches, both off by default. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer: off means the
+**Who gets it.** Two switches. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer, off by default: off means the
 transcription stage is not even built. (2) The connection's own flag `DriveConnection.transcribe_enabled`, separate from "index my drive": indexing alone
-never sends a recording anywhere. It is set by the owner's script; there is no Cabinet toggle yet, and only the owner has it on (the
-decoder surface of ffmpeg on other people's files waits for the zero-credential parser service). The Cabinet shows a sentence about it
-only while the flag is on.
+never sends a recording anywhere. A **newly created connection starts with the flag on** (`DriveConnection` default, the only creation path is
+`DriveConnectionService._create`); connections created before that keep what they stored, and a stored document without the field reads as off
+(`firestore_drive_connection_repo`), so nothing was migrated. The spend stays bounded by the kill switch and the monthly USD cap. The owner's
+script can change the flag; there is no Cabinet toggle yet. The Cabinet shows a sentence about it only while the flag is on.
 
 **What happens to one recording** (the stage, `drive_transcript_stage.py`):
 1. A recording the policy admits becomes `ready` on the record (`transcript_state`). The queue is newest first. A recording still being

@@ -17,7 +17,7 @@ deltas of the build are Δ136–Δ175 in §27.16 and the as-built summary is §2
    window results are separate collections; the record keeps only plain fields (no enum value added, so the previous image still parses it).
 3. **Gemini Flash on the Batch API**, half price on input and output, one request per ≈ 30-minute window with a 60 s overlap, windows
    independent (stitched and speaker-aligned by code). Never flash-lite.
-4. **Two switches, both off by default:** the indexer kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution, from the deploy-only
+4. **Two switches:** (amended: a newly created connection now starts with its flag on; the kill switch stays off by default and the cap still bounds spend) the indexer kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution, from the deploy-only
    `DRIVE_TRANSCRIBE_ENABLED_DEV`) and the user's own flag `drive_transcribe_enabled` (set by the owner's script; no Cabinet toggle yet). Consent is
    per user and explicit; indexing alone sends no recording anywhere.
 5. **A hard monthly cap with reservations:** `TRANSCRIBE_USD_PER_MONTH` $20; a file's estimate is reserved before its first window, settled at
