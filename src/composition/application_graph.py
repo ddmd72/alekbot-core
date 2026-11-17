@@ -663,7 +663,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     agent_factory = UserAgentFactory(
         config=config,
         fact_search=fact_search,
-        env_config=env_config,
         deploy_topology=topology,
         coordinator=coordinator,
         user_repo=user_repo,

@@ -23,7 +23,6 @@ from .voice_mcp_setup import voice_mcp_servers
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
-from ..config.environment import EnvironmentConfig
 from ..domain.agent import AgentConfig
 from ..domain.user import UserProfile
 from ..domain.voice_provider_profile import (
@@ -174,7 +173,6 @@ class UserAgentFactory(AgentFactoryPort):
         self,
         *,
         config: dict,
-        env_config: EnvironmentConfig,
         deploy_topology: DeployTopology,
         coordinator: AgentCoordinator,
         user_repo: UserRepository,
@@ -231,7 +229,6 @@ class UserAgentFactory(AgentFactoryPort):
         self._docx_runner_factory = docx_runner_factory()
         self._pdf_runner_factory = pdf_runner_factory()
         self.config = config
-        self.env_config = env_config
         self.deploy_topology = deploy_topology
         self.coordinator = coordinator
         self.user_repo = user_repo
