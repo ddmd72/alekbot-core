@@ -2,8 +2,8 @@
 is read by its consumer (P15 card I; the P9 residual "producer and consumer payload fields that do not match").
 
 A static test over the sources (`tests/support/worker_payload_fields.py`): producers are the enqueue sites
-`worker_triggers` finds, the Cloud Scheduler bodies and `GcpTaskQueue.enqueue_slack_event`; consumers are the branches
-of `WorkerHandler._dispatch` and every function the payload is handed to. `drive_sync` is another service's task
+`worker_triggers` finds, the Cloud Scheduler bodies and `GcpTaskQueue.enqueue_slack_event`; consumers are the entries
+of `WorkerHandler`'s task registry and every function the payload is handed to. `drive_sync` is another service's task
 (`worker_triggers.OTHER_SERVICE`) and is not compared; its payload builder is still parsed, so a new form fails here.
 """
 import ast
@@ -48,7 +48,7 @@ def test_every_dispatch_branch_has_a_consumer_mapping(consumers):
     # A branch that hands the payload on reaches the function that reads it; the payload-free handlers read nothing.
     handed_on = {name for name, c in consumers.items() if c.functions}
     assert {"agent_execution", "telegram_update", SLACK_EVENT_BRANCH, "interactive_choice", "email_indexing"} <= handed_on
-    assert wpf.delegates_used() == set(wpf.DELEGATES), "a stale DELEGATES entry: _dispatch no longer calls it"
+    assert wpf.delegates_used() == set(wpf.DELEGATES), "a stale DELEGATES entry: no registered task hands it the payload"
 
 
 @pytest.mark.slow   # enqueue_sites() parses every src file: about 2.5 s (precedent: test_worker_triggers.py)
