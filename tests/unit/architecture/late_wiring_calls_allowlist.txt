@@ -4,7 +4,6 @@
 # Everything else is late wiring the composition-root refactor removes. A line whose offence is gone fails: delete it.
 main.py::main_app.register_blueprint  # *  # permanent: Registry pattern (web blueprints)
 src/composition/application_graph.py::_language_service.attach_agent_refresher  # 1  # composition-root refactor (assessment D3)
-src/composition/application_graph.py::PlatformAdapterFactory.register  # 1  # composition-root refactor (assessment D3; dead registry, P9-D5)
 src/composition/application_graph.py::agent_registry.register  # *  # permanent: Registry pattern (AgentRegistry)
 src/composition/application_graph.py::container.file_conversion_service.attach_documents  # 1  # composition-root refactor (assessment D3)
 src/composition/application_graph.py::coordinator.register_agent  # *  # permanent: Registry pattern (AgentCoordinator.register_agent)
