@@ -146,6 +146,7 @@ class Rig:
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
             owner_zones=zones, clock=world.clock,
+            bio_cache=world.bio,
         )
         self.fact_updates = RecordingFactUpdates(world.store.adapter)
         self.refreshes: List[str] = []

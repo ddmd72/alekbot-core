@@ -139,6 +139,7 @@ class Rig:
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
             owner_zones=zones, clock=world.clock,
+            bio_cache=world.bio,
         )
         self.service = service_class(
             repo=world.repo, review_store=world.review_store, counters=world.counters, lease=world.lease,
@@ -478,7 +479,7 @@ class TestAfterThePass:
         r.agent.play = play
         await r.run()
         world.advance(days=1)
-        await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock).sweep()
+        await FactLifecycleSweepService(world.repo, world.counters, None, False, clock=world.clock, bio_cache=world.bio).sweep()
 
         assert world.docs[fact]["state"] == "current" and world.docs[fact]["stale_since"] is None
         assert fact not in {due.fact_id for due in await world.repo.find_due_facts(world.now)}

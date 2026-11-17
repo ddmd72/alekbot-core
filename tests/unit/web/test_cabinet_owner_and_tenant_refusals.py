@@ -19,7 +19,7 @@ from src.domain.email import IndexingJob
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web import user_cabinet_app
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
-from tests.support.fact_store import FactStore
+from tests.support.fact_store import FactStore, NoCacheRefresh
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, access_token, forged_token, session_service
@@ -51,7 +51,7 @@ class World:
             embedding_service=self.facts.embedder,
             email_job_repo=self.jobs,
             agent_note_port=self.notes,
-            cabinet_facts=CabinetFactService(self.facts.repo), connectors=ConnectorRegistry(),   # reviewer edit, facts S4 T2c: the route delegates to it
+            cabinet_facts=CabinetFactService(self.facts.repo, bio_cache=NoCacheRefresh()), connectors=ConnectorRegistry(),   # reviewer edit, facts S4 T2c: the route delegates to it
         ))
         self.client = app.test_client()
 

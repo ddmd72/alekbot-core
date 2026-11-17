@@ -47,6 +47,7 @@ def recent_review():
             world.repo, world.counters, world.sink, dry_run, clock=lambda: world.now,
             review_store=store, task_queue=None, owner_zones=OwnerTimezoneResolver(accounts, users),
             account_repo=accounts, user_repo=users,
+            bio_cache=world.bio,
         )
 
     return reviewed_an_hour_ago

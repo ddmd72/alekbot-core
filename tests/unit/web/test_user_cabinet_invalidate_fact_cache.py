@@ -26,17 +26,17 @@ def _repo(store):
     repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
                                    biographical_context_service=service)
     service.set_repository(repo)
-    return repo
+    return repo, service
 
 
-def _app(fact_repo):
+def _app(fact_repo, bio):
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(
         return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"})
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo), connectors=ConnectorRegistry(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo, bio), connectors=ConnectorRegistry(),
     )
     app = Quart("test_app")
     app.register_blueprint(bp)
@@ -61,10 +61,10 @@ async def _invalidate(app, fact_id):
 
 async def test_invalidated_fact_leaves_the_cached_baseline_immediately():
     store = FactStore()
-    repo = _repo(store)
+    repo, bio = _repo(store)
     await _seed(store, repo)
 
-    resp = await _invalidate(_app(repo), "f-drop me")
+    resp = await _invalidate(_app(repo, bio), "f-drop me")
 
     assert resp.status_code == 200
     assert _cached_texts(store) == ["keep me"]
@@ -75,12 +75,12 @@ async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog
     # So the failure is driven inside the real repository (its facts read fails during the rebuild), not by replacing
     # the method with one that breaks the contract: the invalidation stands, the error is logged, the old cache stays.
     store = FactStore()
-    repo = _repo(store)
+    repo, bio = _repo(store)
     await _seed(store, repo)
     store.db.collection(FACTS).fail = RuntimeError("facts read down")
 
     with caplog.at_level(logging.ERROR):
-        resp = await _invalidate(_app(repo), "f-drop me")
+        resp = await _invalidate(_app(repo, bio), "f-drop me")
 
     assert resp.status_code == 200
     assert store.docs["f-drop me"]["state"] == "invalidated"
@@ -90,10 +90,10 @@ async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog
 
 async def test_failed_invalidate_does_not_touch_the_cache():
     store = FactStore()
-    repo = _repo(store)
+    repo, bio = _repo(store)
     await _seed(store, repo)
 
-    resp = await _invalidate(_app(repo), "no-such-fact")
+    resp = await _invalidate(_app(repo, bio), "no-such-fact")
 
     assert resp.status_code == 404
     assert sorted(_cached_texts(store)) == ["drop me", "keep me"]

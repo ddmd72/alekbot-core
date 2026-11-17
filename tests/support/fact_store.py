@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.adapters.firestore_repo import FirestoreFactRepository
+from src.ports.biographical_cache_port import BiographicalCacheRefresher
 from src.ports.embedding_service import EmbeddingService
 from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.services.fact_write_service import FactWriteService
@@ -34,6 +35,14 @@ class HashEmbedder(EmbeddingService):
 
     async def get_embeddings_batch(self, texts: List[str], task_type: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
         return [embed(t) for t in texts]
+
+
+class NoCacheRefresh(BiographicalCacheRefresher):
+    """The refresher of a `FactStore`, which wires no context service: a refresh does nothing."""
+
+    async def refresh_cache(self, owner_id: str, facts_limit: Optional[int] = None,
+                            principles_limit: Optional[int] = None) -> None:
+        return None
 
 
 def make_env_config() -> SimpleNamespace:

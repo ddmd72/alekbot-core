@@ -46,6 +46,7 @@ def _service(world: ReviewWorld) -> FactAnswerService:
         fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
         task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
         owner_zones=FixedZones(),
+        bio_cache=world.bio,
     )
 
 

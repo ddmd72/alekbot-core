@@ -141,6 +141,7 @@ def rig(world: ReviewWorld, script: ReviewPass) -> Rig:
         repository=world.repo, embedding_service=world.store.embedder, fact_write_service=world.store.write,
         fact_management_port=world.store.adapter, prompt_builder=StubPromptBuilder(prompt="REVIEW SYSTEM PROMPT"),
         alert_sink=world.sink, lifecycle_counters=world.counters, fact_updates=world.store.adapter,
+        bio_cache=world.bio,
     )
     coordinator = AgentCoordinator()
     coordinator.register_agent(agent)

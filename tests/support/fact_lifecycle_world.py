@@ -69,13 +69,14 @@ async def seed_fact(repo: FirestoreFactRepository, text: str, **over: Any) -> st
 
 class JanitorWorld:
     def __init__(self, dry_run: bool = False, with_sink: bool = True) -> None:
-        self.store, self.repo, _ = make_fact_world()
+        self.store, self.repo, self.bio = make_fact_world()
         self.env = EnvironmentConfig()
         self.counters = FirestoreFactLifecycleCounters(self.store.db, self.env)
         self.sink = RecordingSink()
         self.now = NOW
         self.service = FactLifecycleSweepService(
             self.repo, self.counters, self.sink if with_sink else None, dry_run, clock=lambda: self.now,
+            bio_cache=self.bio,
         )
 
     @property

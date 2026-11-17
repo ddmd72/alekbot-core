@@ -32,7 +32,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER
-from tests.support.fact_store import FactStore, make_env_config
+from tests.support.fact_store import FactStore, NoCacheRefresh, make_env_config
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.unit.domain.email_card_fixtures import BOOKING_BODY, NONCE, PEOPLE, answer_json, mail
 
@@ -90,6 +90,7 @@ def make_agent(world, *, batches: bool = True, people: bool = True, prompts: Opt
         fact_management_port=port, fact_updates=port, prompt_builder=prompts or RecordingPrompts(),
         indexed_email_repo=emails or world.emails, email_memory_batches=(emails or world.emails) if batches else None,
         confirmed_people=world.people if people else None,
+        bio_cache=NoCacheRefresh(),
     )
     agent.firsts = []
     agent.systems = []

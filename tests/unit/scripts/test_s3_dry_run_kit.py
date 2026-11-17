@@ -146,7 +146,7 @@ async def test_a_create_a_version_a_merge_and_an_invalidate_leave_the_live_store
     created = await adapter.create_fact("new fact", meta(), context=context)
     versioned = await adapter.update_fact(first, {"content": "alpha fact, corrected", "expiry": EXPIRY_NONE}, ACC, context=context)
     merged = await adapter.merge_facts([second, third], "beta and gamma", meta(), context=context)
-    await CabinetFactService(repo).invalidate(fourth, ACC)
+    await CabinetFactService(repo, bio_cache=repo).invalidate(fourth, ACC)
 
     assert (created["status"], versioned["status"], merged["status"]) == ("created", "updated", "merged"), (created, versioned, merged)
     assert live_state(store) == before
@@ -230,11 +230,11 @@ async def test_invalidate_refuses_a_foreign_account_a_missing_id_and_a_page_olde
                                           context=ctx(actor="stage1", timezone="UTC"))
 
     with pytest.raises(PermissionError):
-        await CabinetFactService(repo).invalidate(first, "acc-other")
+        await CabinetFactService(repo, bio_cache=repo).invalidate(first, "acc-other")
     with pytest.raises(ValueError):
-        await CabinetFactService(repo).invalidate("missing", ACC)
+        await CabinetFactService(repo, bio_cache=repo).invalidate("missing", ACC)
     with pytest.raises(FactResolutionError):                # the page showed the old text; a newer one is never deleted unseen
-        await CabinetFactService(repo).invalidate(first, ACC)
+        await CabinetFactService(repo, bio_cache=repo).invalidate(first, ACC)
 
     assert (await repo.get_fact_by_id(versioned["fact_id"])).state is FactState.CURRENT
     assert live_state(store) == before

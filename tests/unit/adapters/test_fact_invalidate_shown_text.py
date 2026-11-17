@@ -13,7 +13,7 @@ from src.domain.entities import FactState
 from src.domain.exceptions import FactResolutionError
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, T0, make_fact
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactResolutionError, match="rewritten after it was shown") as caught:
-        await CabinetFactService(store.repo).invalidate("f-v1", ACC)
+        await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-v1", ACC)
 
     assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)
     assert store.docs == before
@@ -48,7 +48,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
 async def test_the_current_row_itself_is_invalidated_whatever_its_text(store):
     await _seed(store, "x", "lives in Springfield")
 
-    await CabinetFactService(store.repo).invalidate("f-x", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-x", ACC)
 
     assert store.docs["f-x"]["state"] == "invalidated"
 
@@ -61,7 +61,7 @@ async def test_a_version_written_between_resolve_and_write_with_another_text_is_
     v2_before = copy.deepcopy(store.docs["f-v2"])
 
     with pytest.raises(FactResolutionError, match="rewritten after it was shown"):
-        await CabinetFactService(store.repo).invalidate("f-v1", ACC)
+        await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("f-v1", ACC)
 
     assert store.docs["f-v2"] == v2_before
     assert store.docs["f-v1"]["state"] == "superseded"

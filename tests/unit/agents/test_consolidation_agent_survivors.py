@@ -30,7 +30,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, OTHER, USER, put_raw
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from tests.support.stored_mail import mail_store_with, stored_mail
 
 OTHER_USER = "usr-2"
@@ -114,6 +114,7 @@ def make_agent(store: FactStore, *, email_repo: Any = None) -> ConsolidationAgen
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port, prompt_builder=TenantPrompts(), indexed_email_repo=email_repo,
         email_memory_batches=email_repo,
+        bio_cache=NoCacheRefresh(),
     )
     seen: List[Tuple[str, str]] = []
     agent.seen = seen

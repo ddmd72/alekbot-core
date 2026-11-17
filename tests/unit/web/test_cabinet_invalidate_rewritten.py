@@ -11,7 +11,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, USER
-from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh, make_env_config
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from src.composition.connector_registry import ConnectorRegistry
 
@@ -26,7 +26,7 @@ def _app(fact_repo):
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo), connectors=ConnectorRegistry(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo, bio_cache=NoCacheRefresh()), connectors=ConnectorRegistry(),
     ))
     return app
 

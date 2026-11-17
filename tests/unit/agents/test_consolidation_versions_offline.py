@@ -18,7 +18,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from tests.support.fact_write import EXPIRY_NONE, ctx
 
 REPORT = LLMResponse(text='{"operations": []}')
@@ -48,6 +48,7 @@ def build_agent(store):
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
         fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
         prompt_builder=pb,
+        bio_cache=NoCacheRefresh(),
     )
     agent.INLINE_CLUSTER_REVIEW = True
     return agent, port

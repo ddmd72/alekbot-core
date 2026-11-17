@@ -74,6 +74,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
         email_memory_batches=email_memory_batches,
+        bio_cache=AsyncMock(),
     )
     agent._llm = mock_provider
     return agent, repo, fact_write, pb

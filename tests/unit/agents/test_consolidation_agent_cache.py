@@ -71,6 +71,7 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
         fact_write_service=fact_write_service,
         prompt_builder=prompt_builder,
         fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required; the v2 path makes no typed write
+        bio_cache=AsyncMock(),
     )
 
     # Use messages (v2 path) — observation-based flow is deprecated and skips refresh

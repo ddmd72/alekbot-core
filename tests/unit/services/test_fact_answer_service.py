@@ -103,6 +103,7 @@ def service(world: ReviewWorld, fact_updates: Any = None, interactive: Any = Non
         fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
         counters=world.counters, task_queue=world.queue, session_store=world.session_store, texts=texts_of(world),
         interactive=interactive or world.interactive, owner_zones=FixedZones(), clock=clock,
+        bio_cache=world.bio,
     )
 
 

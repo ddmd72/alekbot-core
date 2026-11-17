@@ -35,7 +35,7 @@ def world():
     repo = CountingRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
     repo.refreshed = []
     bio.set_repository(repo)
-    return store, repo, CabinetFactService(repo)
+    return store, repo, CabinetFactService(repo, bio_cache=bio)
 
 
 def _bio(name: str, **over):

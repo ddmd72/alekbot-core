@@ -14,7 +14,7 @@ from src.domain.fact_lifecycle import CABINET_ACCEPTS
 from src.domain.stored_fact import StoredFact
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, DROP, OTHER, as_legacy, make_fact, put_raw
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 
 INVALIDATE = {"state": FactState.INVALIDATED, "is_current": True}
 
@@ -34,7 +34,7 @@ async def test_the_cabinet_delete_refuses_a_document_not_stored_as_the_callers_a
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(PermissionError):
-        await CabinetFactService(store.repo).invalidate(fact_id, ACC)
+        await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate(fact_id, ACC)
 
     assert store.docs == before
 
@@ -71,7 +71,7 @@ async def test_a_document_stored_as_the_callers_is_still_written(store):
 
 
 async def test_the_cabinet_delete_of_the_callers_own_fact_still_succeeds(store):
-    await CabinetFactService(store.repo).invalidate("mine", ACC)
+    await CabinetFactService(store.repo, bio_cache=NoCacheRefresh()).invalidate("mine", ACC)
 
     assert store.docs["mine"]["state"] == "invalidated"
 

@@ -56,7 +56,7 @@ def service(world: ReviewWorld, store: Answers, *, with_atlas: bool = True, with
                                 LanguageCode.EN, clock=world.clock),
         interactive=world.interactive, owner_zones=FixedZones(), clock=world.clock,
         profile_answers=ProfileQuestionAnswers(
-            store, atlas=atlas if with_atlas else None, confirmed_people=Lists() if with_list else None))
+            store, atlas=atlas if with_atlas else None, confirmed_people=Lists() if with_list else None), bio_cache=world.bio)
 
 
 async def closed_by_words(world: ReviewWorld, question_id: str) -> None:

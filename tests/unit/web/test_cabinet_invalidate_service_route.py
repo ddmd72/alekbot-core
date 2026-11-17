@@ -10,7 +10,7 @@ from src.domain.entities import FactState
 from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
-from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_store import INDEXES_FILE, FactStore, NoCacheRefresh
 from src.composition.connector_registry import ConnectorRegistry
 
 
@@ -50,7 +50,7 @@ async def store():
 
 
 async def test_an_owned_fact_is_invalidated_and_answered_200(store):
-    status, body = await _post(store, "f-x", CabinetFactService(store.repo))
+    status, body = await _post(store, "f-x", CabinetFactService(store.repo, bio_cache=NoCacheRefresh()))
 
     assert (status, body) == (200, {"status": "invalidated"})
     assert store.docs["f-x"]["state"] == "invalidated"
@@ -64,12 +64,12 @@ async def test_an_owned_fact_is_invalidated_and_answered_200(store):
 async def test_each_refusal_keeps_its_code_and_body_and_writes_nothing(store, fact_id, want):
     before = copy.deepcopy(store.docs)
 
-    assert await _post(store, fact_id, CabinetFactService(store.repo)) == want
+    assert await _post(store, fact_id, CabinetFactService(store.repo, bio_cache=NoCacheRefresh())) == want
     assert store.docs == before
 
 
 async def test_an_unexpected_error_is_a_500(store):
-    assert await _post(store, "f-x", Exploding(store.repo)) == (500, {"error": "Internal server error"})
+    assert await _post(store, "f-x", Exploding(store.repo, bio_cache=NoCacheRefresh())) == (500, {"error": "Internal server error"})
 
 
 async def test_without_the_service_the_route_answers_503_and_writes_nothing(store):

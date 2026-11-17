@@ -66,6 +66,7 @@ class Rig:
             fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
             task_queue=world.queue, session_store=world.session_store, texts=self.texts, interactive=world.interactive,
             owner_zones=FixedZones(), clock=world.clock,
+            bio_cache=world.bio,
         )
         self.coordinator = MagicMock()
         smart = AgentResponse.success(task_id="t1", agent_id=f"smart_response_agent_{USER}",

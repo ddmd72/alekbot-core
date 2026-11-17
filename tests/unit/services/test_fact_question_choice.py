@@ -87,6 +87,7 @@ def service(world: ReviewWorld, review_store: Any = None, fact_updates: Any = No
         fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
         counters=world.counters, task_queue=world.queue, session_store=world.session_store,
         texts=texts_of(world), interactive=world.interactive, owner_zones=FixedZones(), clock=no_clock,
+        bio_cache=world.bio,
     )
 
 
@@ -135,7 +136,7 @@ def closer(world: ReviewWorld) -> FactAnswerService:
     return FactAnswerService(
         fact_updates=world.store.adapter, repo=world.repo, review_store=world.review_store, counters=world.counters,
         task_queue=world.queue, session_store=world.session_store, texts=texts_of(world),
-        interactive=world.interactive, owner_zones=FixedZones(), clock=world.clock)
+        interactive=world.interactive, owner_zones=FixedZones(), clock=world.clock, bio_cache=world.bio)
 
 
 def stored(world: ReviewWorld, question_id: str = "q1") -> dict:

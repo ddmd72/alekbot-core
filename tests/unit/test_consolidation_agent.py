@@ -82,6 +82,7 @@ class TestConsolidationAgent:
             fact_write_service=mock_fact_write_service,
             prompt_builder=mock_prompt_builder,
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required
+            bio_cache=AsyncMock(),
         )
 
     @pytest.mark.asyncio
@@ -319,6 +320,7 @@ class TestConsolidationAgentV3:
             fact_updates=typed_port_for(mock_fact_management),  # reviewer edit (S4 T6b): the typed port is required
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
+            bio_cache=AsyncMock(),
         )
 
     @pytest.mark.asyncio
@@ -484,6 +486,7 @@ class TestConsolidationAgentV3:
             fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): every agent gets the typed port; v2 makes no typed write
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
+            bio_cache=AsyncMock(),
         )
 
         mock_response = Mock()
