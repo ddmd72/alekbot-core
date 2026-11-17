@@ -48,7 +48,7 @@ sla = NOTIFICATION_SLA[kind]
 timeout = sla.tier_overrides.get(tier, sla.timeout_ms) if tier else sla.timeout_ms
 ```
 
-The ``RemindersService`` worker (``_handle_execute_reminder``) reads
+The ``ExecuteReminderTask`` runner (``src/services/execute_reminder_task.py``) reads
 ``note.complexity`` and resolves the tier through the same
 ``DEFAULT_COMPLEXITY_SETTINGS`` table that ``TaskExecutionResolver``
 uses — single source of truth for the complexity → tier mapping.

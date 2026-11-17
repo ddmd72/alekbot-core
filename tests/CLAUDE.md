@@ -169,7 +169,8 @@ The main service's non-web objects are built by `build_application_graph(config,
 AST checks over `src/` that keep the wiring from regrowing: constructor arity (≤ 12 params in handlers, services,
 composition), late wiring (`attach_*`/`set_*`/`register_*` calls in composition and `main.py`, setter methods in services
 and handlers), writes to another object's private attribute, injected dependencies stored and never read, composition
-function size (≤ 150 lines); plus `tests/unit/composition/test_platform_handler_parity.py`
+function size (≤ 150 lines), deploy literals outside `DeployTopology` (the service URL, queue suffix and regions are read only in
+`composition/deploy_topology.py`); plus `tests/unit/composition/test_platform_handler_parity.py`
 (Slack and Telegram `ConversationHandler`s differ only in the declared platform-only attributes). Today's offenders sit in
 the `*_allowlist.txt` next to each test, and the lists only shrink: a new offender fails, and so does a line whose offence
 is gone or whose count fell (lower or delete it in the same change). A new line is never the way to make new code pass —
