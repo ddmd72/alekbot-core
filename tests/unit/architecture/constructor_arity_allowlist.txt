@@ -3,7 +3,7 @@
 # A count that grew fails; a count that fell fails until the line is lowered; a line whose offence is gone fails: delete it.
 src/composition/user_agent_factory.py::UserAgentFactory  # 52  # composition-root refactor (assessment D1, D5)
 src/handlers/conversation_handler.py::ConversationHandler  # 21  # composition-root refactor (assessment D1)
-src/handlers/worker_handler.py::WorkerHandler  # 20  # composition-root refactor (assessment D1)
+src/handlers/worker_handler.py::WorkerHandler  # 18  # composition-root refactor (assessment D1)
 src/services/drive_indexing_service.py::DriveIndexingService  # 25  # composition-root refactor (assessment D1)
 src/services/drive_note_service.py::DriveNoteService  # 14  # composition-root refactor (assessment D1)
 src/services/fact_review_service.py::FactReviewService  # 24  # composition-root refactor (assessment D1)
