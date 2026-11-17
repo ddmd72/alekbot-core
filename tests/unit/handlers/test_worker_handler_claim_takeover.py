@@ -15,7 +15,7 @@ def _delivery(name="task-1"):
     return CloudTaskDelivery(task_name=name, retry_count=0, execution_count=0)
 
 
-def _handler(db, holder="proc-1"):
+def _handler(db, holder="proc-1", slack_worker=None):
     store = FirestoreTaskClaimStore(db_client=db, collection_name=COL, ttl_seconds=3600)
     store.holder = holder
     return WorkerHandler(
@@ -25,6 +25,7 @@ def _handler(db, holder="proc-1"):
         agent_factory=AsyncMock(),
         user_repo=MagicMock(),
         task_claims=store,
+        slack_worker=slack_worker,
     )
 
 
@@ -109,11 +110,10 @@ async def test_chat_retry_after_a_crash_reaches_the_handler():
     dead = FirestoreTaskClaimStore(db_client=db, collection_name=COL)
     dead.holder = "proc-dead"
     await dead.try_claim("task-1", "dead-attempt")  # telegram_update crashed mid-turn
-    h = _handler(db, "proc-new")
-    tg = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_telegram_worker(tg)
     slack = AsyncMock(return_value=({"ok": True}, 200))
-    h.attach_slack_worker(slack)
+    h = _handler(db, "proc-new", slack_worker=slack)
+    tg = AsyncMock(return_value=({"ok": True}, 200))
+    h.register_telegram_worker(tg)
     assert await h.handle({"task_type": "telegram_update"}, delivery=_delivery()) == ({"ok": True}, 200)
     tg.assert_awaited_once()
     # and the queued Slack event path, after another crash

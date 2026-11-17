@@ -1,5 +1,5 @@
 """`PlatformKit` and `register_late_platform`: the one late binding of a platform (Telegram) reaches the notification
-service and the channel factory together, and nothing of it is there before the call (the graph makes it only after the
+service, the channel factory and the `/worker` handler together, and nothing of it is there before the call (the graph makes it only after the
 Telegram adapter's whole chain built). The service and the factory are the real ones."""
 import dataclasses
 from datetime import datetime
@@ -10,6 +10,7 @@ import pytest
 from src.adapters.notification_channel_factory import NotificationChannelFactory
 from src.composition.platform_kit import PlatformKit, register_late_platform
 from src.domain.notification import NotificationChannel
+from src.handlers.worker_handler import WorkerHandler
 from src.ports.notification_state_port import NotificationStatePort
 from src.services.user_notification_service import UserNotificationService
 
@@ -52,13 +53,40 @@ async def test_the_late_binding_reaches_the_service_and_the_channel_factory_toge
     media = Media()
     kit, telegram_channel = _telegram_kit(media)
 
-    register_late_platform(kit, notifications=notifications, channels=channels)
+    register_late_platform(kit, notifications=notifications, channels=channels, worker=MagicMock(),
+                           queued_update=AsyncMock())
 
     assert channels.create("telegram", "555") is telegram_channel
     assert channels.create("slack", "C1") is slack_channel
     assert notifications._platform_rich_content["telegram"] is kit.rich_content
     assert await notifications.notify_file_bytes("user-1", "acct-1", b"x", "list.txt", "List") is True
     assert media.uploads == [{"file_bytes": b"x", "filename": "list.txt", "title": "List", "channel_id": "555"}]
+
+
+def _worker_handler(slack_worker=None) -> WorkerHandler:
+    return WorkerHandler(agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(),
+                         consolidation_service=None, agent_factory=MagicMock(), user_repo=MagicMock(),
+                         slack_worker=slack_worker)
+
+
+async def test_the_late_binding_binds_the_telegram_worker_and_only_then():
+    notifications, channels, _ = _world()
+    kit, _ = _telegram_kit()
+    slack = AsyncMock(return_value=({"ok": True}, 200))
+    worker = _worker_handler(slack_worker=slack)
+    queued_update = AsyncMock(return_value=({"ok": True}, 200))
+    update = {"task_type": "telegram_update", "update": {"update_id": 1}}
+    slack_event = {"event": {"type": "message"}, "session_id": "user-1:chan-1"}
+
+    assert await worker.handle(dict(update)) == ({"error": "telegram not configured"}, 503)
+
+    register_late_platform(kit, notifications=notifications, channels=channels, worker=worker,
+                           queued_update=queued_update)
+
+    assert await worker.handle(dict(update)) == ({"ok": True}, 200)
+    queued_update.assert_awaited_once_with(update)
+    assert await worker.handle(dict(slack_event)) == ({"ok": True}, 200)
+    slack.assert_awaited_once_with(slack_event, {})
 
 
 def test_the_constructor_mappings_are_copied():

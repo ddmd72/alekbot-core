@@ -1001,51 +1001,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
           and _alert_webhook is not None) else None
 
-    # Worker handler — dispatches Cloud Tasks to appropriate handlers
-    # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-    # from running twice; a claim whose attempt died is taken over by the retry.
-    # TTL 3600s is garbage collection and the done-window, not the liveness rule.
-    _gmail_reconnect_flag = GmailReconnectFlag(
-        oauth_credentials=oauth_credentials_port, mail_connector=container.connectors.get(GMAIL),
-        ensure_agents=agent_factory.ensure_agents_for_user, notification_service=notification_service)
-    worker_handler = WorkerHandler(
-        task_claims=FirestoreTaskClaimStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=3600,
-        ),
-        agent_worker_handler=agent_worker_handler,
-        email_indexing_service=email_indexing_service,
-        consolidation_service=_consolidation_service,
-        agent_factory=agent_factory,
-        user_repo=user_repo,
-        task_dispatch=_task_dispatch_service,
-        task_setup=task_setup_service,
-        task_indexing=container.task_indexing,
-        reminders_service=_reminders_service,
-        companion_extraction=companion_extraction_service,
-        drive_sync_scheduler=_drive_sync_scheduler,
-        fact_lifecycle_sweep=_fact_lifecycle_sweep,
-        fact_review=_fact_review_service,
-        interactive_choice=_interactive_choice,
-        reconnect=_reconnect_service,
-        gmail_reconnect_flag=_gmail_reconnect_flag,
-        tasks=build_worker_tasks(
-            notes_port=container.notes_adapter, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
-            notification_service=notification_service, alert_sink=_alert_webhook,
-            task_dispatch=_task_dispatch_service, video_registry=video_registry, quota_service=quota_service,
-            media_storage=gcs_media_adapter, link_service=file_link_service, short_link_service=short_link_service,
-            deep_research_fetch=_openai_dr_fetch, prompt_content_store=container.prompt_content_store,
-            email_review=container.email_review_service,
-            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
-            daily_review_marks=FirestoreDedupStore(
-                db_client=db_client,
-                collection_name=env_config.worker_task_dedup_collection,
-                ttl_seconds=172800,
-            ),
-            gmail_reconnect_flag=_gmail_reconnect_flag, account_repo=account_repo),
-    )
-
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
     deep_research_dedup_store = FirestoreDedupStore(
         db_client=db_client,
@@ -1089,8 +1044,53 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         worker_queue=agent_task_queue,
         rich_content_service=slack_kit.rich_content,
     )
-    worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
     slack_adapter.register_handlers()
+
+    # Worker handler — dispatches Cloud Tasks to appropriate handlers
+    # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
+    # from running twice; a claim whose attempt died is taken over by the retry.
+    # TTL 3600s is garbage collection and the done-window, not the liveness rule.
+    _gmail_reconnect_flag = GmailReconnectFlag(
+        oauth_credentials=oauth_credentials_port, mail_connector=container.connectors.get(GMAIL),
+        ensure_agents=agent_factory.ensure_agents_for_user, notification_service=notification_service)
+    worker_handler = WorkerHandler(
+        task_claims=FirestoreTaskClaimStore(
+            db_client=db_client,
+            collection_name=env_config.worker_task_dedup_collection,
+            ttl_seconds=3600,
+        ),
+        agent_worker_handler=agent_worker_handler,
+        email_indexing_service=email_indexing_service,
+        consolidation_service=_consolidation_service,
+        agent_factory=agent_factory,
+        user_repo=user_repo,
+        task_dispatch=_task_dispatch_service,
+        task_setup=task_setup_service,
+        task_indexing=container.task_indexing,
+        reminders_service=_reminders_service,
+        companion_extraction=companion_extraction_service,
+        drive_sync_scheduler=_drive_sync_scheduler,
+        fact_lifecycle_sweep=_fact_lifecycle_sweep,
+        fact_review=_fact_review_service,
+        interactive_choice=_interactive_choice,
+        reconnect=_reconnect_service,
+        gmail_reconnect_flag=_gmail_reconnect_flag,
+        slack_worker=slack_adapter.handle_queued_event,
+        tasks=build_worker_tasks(
+            notes_port=container.notes_adapter, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification_service, alert_sink=_alert_webhook,
+            task_dispatch=_task_dispatch_service, video_registry=video_registry, quota_service=quota_service,
+            media_storage=gcs_media_adapter, link_service=file_link_service, short_link_service=short_link_service,
+            deep_research_fetch=_openai_dr_fetch, prompt_content_store=container.prompt_content_store,
+            email_review=container.email_review_service,
+            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
+            daily_review_marks=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=172800,
+            ),
+            gmail_reconnect_flag=_gmail_reconnect_flag, account_repo=account_repo),
+    )
 
     # ====================================================================
     # PHASE 3: Telegram Integration (Optional)
@@ -1130,7 +1130,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             logger.warning("🤖 Bot will continue without Telegram support")
         else:
             telegram_adapter = built_telegram_adapter
-            worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
             register_late_platform(
                 PlatformKit(
                     platform="telegram",
@@ -1140,6 +1139,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 ),
                 notifications=notification_service,
                 channels=notification_channel_factory,
+                worker=worker_handler,
+                queued_update=telegram_adapter.handle_queued_update,
             )
 
     else:
