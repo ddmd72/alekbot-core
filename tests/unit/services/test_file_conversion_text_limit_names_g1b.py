@@ -29,8 +29,8 @@ async def world():
     w.drive = FakeDriveAdapter("fake_b", feed_scope=FeedScope.ACCOUNT)
     w.service = FileConversionService(
         storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
-        connections=DriveConnectionService(repo, None), access=allow_access())
-    w.service.attach_documents(DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
+        connections=DriveConnectionService(repo, None), access=allow_access(),
+        documents=DocumentService(FakeExtractor("parser"), FakeExtractor("reader"), FakeSplitter()))
     return w
 
 

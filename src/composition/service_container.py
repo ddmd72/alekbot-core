@@ -83,6 +83,7 @@ from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
 from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.bigquery_prompt_content_adapter import BigQueryPromptContentAdapter
+from ..adapters.firestore_transcript_cache import FirestoreTranscriptCache
 from ..adapters.firestore_skill_repository import FirestoreSkillRepository
 from ..adapters.filesystem_skill_loader import load_system_skill_bundle, SYSTEM_SKILLS_ROOT
 from ..adapters.security.composite_adapter import CompositeAdapter
@@ -96,7 +97,10 @@ from ..adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
 from ..services.skill_file_resolver import SkillFileResolver
+from ..services.document_service import DocumentService
 from ..services.file_conversion_service import FileConversionService
+from .document_service_setup import DocumentBackends, build_document_service
+from .email_card_setup import attach_email_card_step
 from .email_classifier_runner import EmailClassifierRunner
 from .fact_profiler_runner import FactProfilerRunner, profiler_model
 from ..ports.quota_service import QuotaService
@@ -125,6 +129,7 @@ class ServiceContainer:
         cipher: Optional[CipherPort] = None,
         user_repo: Optional[UserRepository] = None,
         quota_service: Optional[QuotaService] = None,
+        document_backends: Optional[DocumentBackends] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -359,24 +364,7 @@ class ServiceContainer:
         # ------------------------------------------------------------------
         self.assembly_service, self.profile_repo = self._init_assembly_service(config, db_client, env_config)
 
-        # ------------------------------------------------------------------
-        # LLM prompt/response content store (BigQuery, 30-day TTL).
-        # DEBUG_PROMPTS is the GLOBAL capture switch (write / don't write) — it
-        # gates whether the store is wired at all, so None propagates through the
-        # factory and BaseAgent skips the write. The wired adapter is BigQuery;
-        # the flag decides on/off, not which adapter. BIGQUERY_PROMPT_DATASET is
-        # required config for the adapter (no dataset → nothing to write to).
-        # ------------------------------------------------------------------
-        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
-        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
-        self.prompt_content_store = (
-            BigQueryPromptContentAdapter(
-                dataset=bq_dataset,
-                table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
-                project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
-            )
-            if capture_enabled and bq_dataset else None
-        )
+        self.prompt_content_store = self._init_prompt_content_store(config)
 
         # ------------------------------------------------------------------
         # Email classification + indexing pipeline
@@ -467,6 +455,16 @@ class ServiceContainer:
         skill_file_resolver = SkillFileResolver(
             skill_repository, system_skills, system_skill_contents
         )
+        # The document service (EXTERNAL_FILES_RFC §4.4): the graph's parse adapter and transcriber, the reader over this
+        # context builder and the graph's one quota service. Only with file storage, like the conversion service over it;
+        # the email card step reads attachments through it too.
+        documents: Optional[DocumentService] = (
+            build_document_service(
+                context_builder=self.context_builder, users=user_repo, assembly_service=self.assembly_service,
+                quota=quota_service, transcriber=document_backends.transcriber,
+                transcript_cache=FirestoreTranscriptCache(db_client, env_config.audio_transcripts_collection),
+                parser=document_backends.parser)
+            if self.file_storage and document_backends is not None else None)
         self.file_conversion_service = (
             FileConversionService(
                 storage=self.file_storage,
@@ -477,9 +475,14 @@ class ServiceContainer:
                 connections=self.drive_connection_service,
                 access=self.user_drive_service,
                 email=self.email_search_service,
+                documents=documents,
+                # D13's ZIP macro facts, read by the same light service (U4b, owner decision O2)
+                containers=document_backends.parser if documents is not None else None,
             )
             if self.file_storage else None
         )
+        attach_email_card_step(self.email_indexing_service, self, documents, db_client, env_config, user_repo,
+                               quota_service)
         # The shared stateless port (built with the drive wiring above), not the assembly service's: that one is a
         # local inside build_prompt_assembly_service and _init_assembly_service may return None — widening its
         # return for skills would couple two unrelated features.
@@ -590,6 +593,21 @@ class ServiceContainer:
             logger.error(f"❌ Failed to initialize OpenAI adapter: {e}")
             logger.warning("🤖 Bot will continue without OpenAI support")
             return None
+
+    @staticmethod
+    def _init_prompt_content_store(config: dict) -> Optional[BigQueryPromptContentAdapter]:
+        """The LLM prompt/response content store (BigQuery, 30-day TTL). DEBUG_PROMPTS is the GLOBAL capture switch: it
+        gates whether the store is wired at all, so None propagates through the factory and BaseAgent skips the write.
+        BIGQUERY_PROMPT_DATASET is required for the adapter (no dataset, nothing to write to)."""
+        capture_enabled = config.get("DEBUG_PROMPTS", "false").lower() == "true"
+        bq_dataset = config.get("BIGQUERY_PROMPT_DATASET", "")
+        if not (capture_enabled and bq_dataset):
+            return None
+        return BigQueryPromptContentAdapter(
+            dataset=bq_dataset,
+            table=config.get("BIGQUERY_PROMPT_TABLE", "prompt_content"),
+            project=config.get("GOOGLE_CLOUD_PROJECT", "") or "",
+        )
 
     @staticmethod
     def _init_assembly_service(

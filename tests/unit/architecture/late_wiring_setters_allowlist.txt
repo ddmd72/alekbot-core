@@ -14,7 +14,6 @@ src/services/drive_connection_service.py::DriveConnectionService.set_searched_by
 src/services/drive_connection_service.py::DriveConnectionService.set_transcribe  # domain operation, not a dependency setter
 src/services/drive_connection_service.py::DriveConnectionService.set_write_folder  # domain operation, not a dependency setter
 src/services/email_indexing_service.py::EmailIndexingService.attach_card_step  # composition-root refactor (assessment D3)
-src/services/file_conversion_service.py::FileConversionService.attach_documents  # composition-root refactor (assessment D3)
 src/services/language_preference_service.py::LanguagePreferenceService.set_preference  # domain operation, not a dependency setter
 src/handlers/worker_handler.py::WorkerHandler.register_telegram_worker  # permanent: the late Telegram platform binding (owner ruling 2026-11-17: Telegram is all or nothing and its adapter takes the notification service, so register_late_platform binds it only after the whole chain built)
 src/services/authentication_service.py::AuthenticationService.register_new_user  # domain operation, not a dependency setter

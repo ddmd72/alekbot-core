@@ -96,8 +96,7 @@ def world():
                "h-d1": b"%PDF-d1", "h-d2": b"%PDF-d2"})
     w.email = FakeEmailSearch(w.mailbox)
     w.documents = RecordingDocuments()
-    w.service = FileConversionService(storage=_Storage(), access=allow_access(), email=w.email)
-    w.service.attach_documents(w.documents)
+    w.service = FileConversionService(storage=_Storage(), access=allow_access(), email=w.email, documents=w.documents)
     return w
 
 
@@ -327,7 +326,8 @@ async def test_a_document_port_that_raises_is_logged_and_the_same_error_propagat
         async def read(self, request):
             raise Boom("parser crashed")
 
-    world.service.attach_documents(RaisingDocuments())
+    world.service = FileConversionService(storage=_Storage(), access=allow_access(), email=world.email,
+                                          documents=RaisingDocuments())
     with caplog.at_level(logging.ERROR):
         with pytest.raises(Boom, match="parser crashed"):
             await _open(world, part_id="1.3")

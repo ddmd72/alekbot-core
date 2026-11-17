@@ -98,9 +98,9 @@ class TestOpenFileSkillRef:
         # without a read, a byte download or a wrapper (§4.6: skill text is never marked).
         skills = AsyncMock()
         skills.read.return_value = "skill file body"
-        conversion = FileConversionService(storage=mock_storage, skill_files=skills, access=allow_access())
         documents = AsyncMock(spec=DocumentReadPort)
-        conversion.attach_documents(documents)
+        conversion = FileConversionService(storage=mock_storage, skill_files=skills, access=allow_access(),
+                                           documents=documents)
         agent = FileManagementAgent(config=_make_config(), conversion_service=conversion, storage=mock_storage)
         msg = _make_message(Intent.OPEN_FILE, file_ref="skill:fs/r.md")
 

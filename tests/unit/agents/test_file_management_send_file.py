@@ -97,10 +97,14 @@ async def world():
                                  blobs={f"h{pid}": d for pid, (_, _, d) in EMAIL_FILES.items()})
     w.email = FakeEmailSearch(w.mailbox)
     w.containers = FakeContainers()
-    w.service = FileConversionService(
-        storage=w.storage, media_storage=w.media, drive=w.drive, workspace=w.workspace,
-        connections=DriveConnectionService(repo, None), access=allow_access(), email=w.email)
-    w.service.attach_documents(RecordingDocuments(), containers=w.containers)
+
+    def conversion(containers):
+        return FileConversionService(
+            storage=w.storage, media_storage=w.media, drive=w.drive, workspace=w.workspace,
+            connections=DriveConnectionService(repo, None), access=allow_access(), email=w.email,
+            documents=RecordingDocuments(), containers=containers)
+    w.conversion = conversion
+    w.service = conversion(w.containers)
     w.notify = RecordingNotification()
     w.agent = _agent(w.service, w.notify)
     return w
@@ -247,7 +251,8 @@ async def test_an_office_file_with_macros_is_refused(world):
 
 @pytest.mark.parametrize("containers", [FakeContainers(raises=ParserUnavailable("busy")), None])
 async def test_a_container_check_that_could_not_run_fails_closed(world, containers):
-    world.service.attach_documents(RecordingDocuments(), containers=containers)
+    world.service = world.conversion(containers)
+    world.agent = _agent(world.service, world.notify)
     response = await _send(world, _email("13"))
     assert response.status == AgentStatus.SUCCESS
     assert response.result == active_kind_refusal_note(ak.UNCHECKED)
