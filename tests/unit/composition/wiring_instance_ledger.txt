@@ -124,6 +124,7 @@ src.services.agent_fallback_service.AgentFallbackService 1  # by-design single i
 src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
 src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
 src.services.authentication_service.AuthenticationService 1  # by-design single instance
+src.services.background_empty_answer_reporter.BackgroundEmptyAnswerReporter 1  # by-design the one empty-answer reporter, built by build_worker_tasks (worker_setup.py) and shared by the reminder, daily-review and deep-research notice runners
 src.services.billing_daily_summary_task.BillingDailySummaryTask 1  # by-design the one billing_daily_summary runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
 src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
