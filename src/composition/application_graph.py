@@ -12,12 +12,10 @@ from typing import Any, Callable, Optional
 from anthropic import AsyncAnthropic
 from slack_bolt.async_app import AsyncApp
 from telegram import Bot
-from twilio.rest import Client as TwilioClient
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
-from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
@@ -25,7 +23,6 @@ from src.adapters.firestore_companion_extraction_queue import FirestoreCompanion
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
-from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
@@ -57,6 +54,7 @@ from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.boot_setup import build_boot_checks
+from src.composition.identity_setup import build_identity
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.fact_profile_setup import LazyAtlas, build_fact_profile_service, max_per_run as profile_max_per_run
@@ -108,7 +106,6 @@ from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
-from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
@@ -234,37 +231,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     auth_config, topology, parse_adapter, video_duration = (
         boot.auth_config, boot.deploy_topology, boot.parse_adapter, boot.video_duration)
 
-    logger.info("� Initializing Account Repository...")
-    account_repo = FirestoreAccountRepository(
-        db_client=db_client,
-        collection_name=env_config.account_collection_name
-    )
-
-    logger.info("�👤 Initializing User Repository...")
-    user_repo = FirestoreUserRepository(db_client, env_config, account_repo)
-
-    logger.info("💌 Initializing Invite Code Service...")
-
-    invite_repo = FirestoreInviteCodeRepository(db_client, env_config, digest_key=secret_digest_key)
-
-    # IAM-Centric Architecture (2026-02-05)
-    logger.info("📋 Initializing Whitelist Repository...")
-    whitelist_repo = FirestoreWhitelistRepository(db_client, env_config)
-
-    logger.info("🆔 Initializing IAM Service...")
-    iam_service = IAMService(
-        user_repo=user_repo,
-        account_repo=account_repo,
-        whitelist_repo=whitelist_repo
-    )
-
-    logger.info("💌 Initializing Invite Code Service (with whitelist)...")
-    invite_service = InviteCodeService(
-        invite_repo,
-        user_repo,
-        account_repo,
-        whitelist_repo
-    )
+    identity = build_identity(config, db_client, env_config, auth_config=auth_config, digest_key=secret_digest_key)
+    account_repo, user_repo, whitelist_repo = identity.account_repo, identity.user_repo, identity.whitelist_repo
+    iam_service, invite_service = identity.iam_service, identity.invite_service
 
     logger.info("🎯 Initializing Agent Registry...")
     agent_registry = AgentRegistry()
@@ -694,34 +663,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         quota=quota_service,
     )
 
-    # ====================================================================
-    # Initialize OAuth + Cabinet Services (will be registered on Slack app)
-    # RFC: docs/10_rfcs/USER_INVITE_DEEP_LINK_RFC.md
-    # Note: Blueprints registered after slack_adapter creation
-    # ====================================================================
-    logger.info("🔐 Initializing OAuth + Cabinet Services...")
-    firebase_adapter = FirebaseAuthAdapter(
-        project_id=auth_config.firebase_project_id,
-        web_api_key=auth_config.firebase_web_api_key,
-        service_account_path=auth_config.firebase_service_account,
-        oauth_client_id=auth_config.google_oauth_client_id,
-        oauth_client_secret=auth_config.google_oauth_client_secret,
-    )
-    auth_registry = AuthProviderRegistry(providers={"firebase": firebase_adapter})
-
-    # Services
-    auth_service = AuthenticationService(
-        auth_registry=auth_registry,
-        user_repo=user_repo,
-        account_repo=account_repo,
-        whitelist_repo=whitelist_repo,
-    )
-    session_service = SessionService(
-        secret_key=auth_config.oauth_session_secret,
-        access_token_ttl=auth_config.access_token_ttl,
-        refresh_token_ttl=auth_config.refresh_token_ttl
-    )
-
     # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
     oauth_credentials_port = container.oauth_credentials
     indexed_email_repo = container.indexed_email_repo
@@ -740,22 +681,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             notification_url_base=topology.service_url,
             connector=container.connectors.get(MICROSOFT_TODO),
         )
-
-    # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
-    # Slice 1 Task 11) — same conditional-construction guard as
-    # UserAgentFactory._telephony (user_agent_factory.py ~line 208-212):
-    # optional, MVP/dev-only feature, gracefully absent when unconfigured.
-    # The Cabinet's phone-binding routes already 501 cleanly on None.
-    twilio_account_sid = config.get("TWILIO_ACCOUNT_SID")
-    twilio_auth_token = config.get("TWILIO_AUTH_TOKEN")
-    twilio_verify_service_sid = config.get("TWILIO_VERIFY_SERVICE_SID")
-    twilio_verify_client = (
-        TwilioClient(twilio_account_sid, twilio_auth_token).verify.v2.services(
-            twilio_verify_service_sid
-        )
-        if twilio_account_sid and twilio_auth_token and twilio_verify_service_sid
-        else None
-    )
 
     # The one owner-zone resolver: the consolidation run, the memory review and the owner's answers (Facts S4).
     _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
@@ -1124,9 +1049,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_answers=_fact_answer_service,
         quota_service=quota_service,
         alert_sink=_alert_webhook,
-        session_service=session_service,
-        auth_service=auth_service,
-        auth_registry=auth_registry,
+        session_service=identity.session_service,
+        auth_service=identity.auth_service,
+        auth_registry=identity.auth_registry,
         auth_config=auth_config,
         deploy_topology=topology,
         connect_service=_connect_service,
@@ -1134,7 +1059,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive_disconnect_service=_drive_disconnect,
         task_setup_service=task_setup_service,
         reconnect_service=_reconnect_service,
-        twilio_verify_client=twilio_verify_client,
+        twilio_verify_client=identity.twilio_verify_client,
         task_dispatch=_task_dispatch_service,
         deep_research_fetch=_openai_dr_fetch,
         deep_research_dedup_store=deep_research_dedup_store,
