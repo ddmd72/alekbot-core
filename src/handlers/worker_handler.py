@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from ..services.task_indexing_service import TaskIndexingService
     from ..services.task_setup_service import TaskSetupService
     from ..ports.agent_note_port import AgentNotePort
-    from ..ports.indexed_email_repository import IndexedEmailRepository
     from ..ports.media_storage_port import MediaStoragePort
     from ..ports.account_repository import AccountRepository
     from ..ports.dedup_store import DedupStore
@@ -119,9 +118,7 @@ class WorkerHandler:
         email_indexing_service: EmailIndexingService,
         notification_service: NotificationPort,
         consolidation_service: Optional[ConsolidationService],
-        coordinator: Any,  # AgentCoordinator (avoid infrastructure import in handlers)
         agent_factory: Any,  # UserAgentFactory
-        indexed_email_repo: Optional[IndexedEmailRepository],
         user_repo: Any,  # UserRepository
         task_dispatch: Optional[TaskDispatchService] = None,
         video_registry: Optional[ProviderRegistry] = None,
@@ -168,9 +165,7 @@ class WorkerHandler:
         self._email_indexing = email_indexing_service
         self._notification = notification_service
         self._consolidation = consolidation_service
-        self._coordinator = coordinator
         self._agent_factory = agent_factory
-        self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
         self._task_dispatch = task_dispatch
         self._video_registry: Optional[ProviderRegistry] = video_registry

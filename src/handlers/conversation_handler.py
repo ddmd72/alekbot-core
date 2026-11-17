@@ -59,7 +59,6 @@ from ..services.localization_service import LocalizationService
 
 if TYPE_CHECKING:
     from ..composition.user_agent_factory import UserAgentFactory
-    from ..ports.file_service import FileService
     from ..ports.audio_transcription_port import AudioTranscriptionPort
     from ..services.file_conversion_service import FileConversionService
     from ..services.short_link_service import ShortLinkService
@@ -143,7 +142,6 @@ class ConversationHandler(ConversationHandlerPort):
         self,
         coordinator: AgentCoordinator,
         agent_factory: "UserAgentFactory",
-        file_service: FileService,
         consolidation_queue: Optional[Any] = None,
         global_config: Optional[ConsolidationSettings] = None,
         security_port: Optional[Any] = None,
@@ -167,7 +165,6 @@ class ConversationHandler(ConversationHandlerPort):
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
-        self.file_service = file_service
         self._file_conversion_service = file_conversion_service
         self.consolidation_queue = consolidation_queue
         self.global_config = global_config or ConsolidationSettings()
