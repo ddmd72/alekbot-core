@@ -164,6 +164,18 @@ The main service's non-web objects are built by `build_application_graph(config,
   an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
   empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
 
+## Composition ratchets (`tests/unit/architecture/`)
+
+AST checks over `src/` that keep the wiring from regrowing: constructor arity (≤ 12 params in handlers, services,
+composition), late wiring (`attach_*`/`set_*`/`register_*` calls in composition and `main.py`, setter methods in services
+and handlers), writes to another object's private attribute, injected dependencies stored and never read, composition
+function size (≤ 150 lines); plus `tests/unit/composition/test_platform_handler_parity.py`
+(Slack and Telegram `ConversationHandler`s differ only in the declared platform-only attributes). Today's offenders sit in
+the `*_allowlist.txt` next to each test, and the lists only shrink: a new offender fails, and so does a line whose offence
+is gone or whose count fell (lower or delete it in the same change). A new line is never the way to make new code pass —
+pass the dependency in the constructor, split the class. Lines marked `permanent` are the Registry pattern or a real cycle.
+Several of these checks are `slow` (they parse all of `src/`).
+
 ## Mutation check: the weekly run
 
 Mutation testing is the weekly cloud run (owner decision 2026-10-27). The driver below is the tool the run uses. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
