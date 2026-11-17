@@ -80,30 +80,31 @@ class ConsolidationAgent:
 
 ```python
 # FactWriteService (Application Layer) — src/services/fact_write_service.py
-class FactWriteService:
-    def __init__(self, repository: FactRepository, embedding_service: EmbeddingService):
-        self._repo = repository
+class FactWriteService(FactWritePort):
+    def __init__(self, embedding_service: EmbeddingService):
         self._embedding = embedding_service
 
-    async def add_facts_batch(self, account_id, user_id, facts_data):
-        vectors = await self._generate_multi_vectors(facts_data)
-        entities = self._create_entities(account_id, user_id, facts_data, vectors)
-        return await self._repo.add_facts(entities)
+    async def build_facts(self, account_id, user_id, facts):
+        vectors = await asyncio.gather(*(self._generate_multi_vectors(attrs) for attrs in facts))
+        return [FactEntity(..., vector=v[0], tags_vector=v[1], metadata_vector=v[2]) for v in vectors]
 
-# ConsolidationAgent (Domain Layer)
-class ConsolidationAgent:
-    def __init__(self, fact_write_service: FactWriteService):
-        self._fact_write_service = fact_write_service  # Application dependency (OK!)
+# FactManagementAdapter — src/adapters/fact_management_adapter.py
+class FactManagementAdapter(FactManagementPort):
+    def __init__(self, repository: FactRepository, fact_write_service: FactWritePort, ...):
+        self._fact_write_service = fact_write_service  # the port, not the service
 
-    async def _save_facts(self, account_id, user_id, facts_data):
-        return await self._fact_write_service.add_facts_batch(account_id, user_id, facts_data)
+    async def create_fact(self, content, metadata, *, context):
+        (entity,) = await self._fact_write_service.build_facts(account_id, user_id, [attrs])
+        return await self._repo.add_fact(entity)
+
+# ConsolidationAgent (Domain Layer) calls the FactManagementPort tools; it never embeds
 ```
 
 **Benefits:**
 
 - ✅ Domain → Application → Infrastructure (correct direction!)
 - ✅ Agent focuses on business logic (synthesizing facts)
-- ✅ Service handles technical concerns (embeddings, persistence)
+- ✅ Service handles technical concerns (embeddings); the adapter stores
 - ✅ Testable (Service can be mocked)
 
 ---
@@ -200,10 +201,7 @@ class ServiceContainer:
         )
 
         # 2. Create shared Application services
-        self.fact_write_service = FactWriteService(
-            repository=self.repository,
-            embedding_service=self.embedding_service,
-        )
+        self.fact_write_service = FactWriteService(embedding_service=self.embedding_service)
 
         # 3. Expose factory callable for per-user adapters
         # (FactManagementAdapter needs per-user SearchEnrichmentService)
@@ -222,7 +220,6 @@ class ServiceContainer:
     def agent_services(self) -> AgentServices:   # frozen typed bundle, src/composition/agent_services.py
         return AgentServices(
             session_store=self.session_store,        # SessionStore port
-            fact_write_service=self.fact_write_service,
             fact_management_adapter_factory=self.create_fact_management_adapter,
             # ... other shared services
         )
@@ -235,11 +232,10 @@ class UserAgentFactory:
     def __init__(
         self,
         *,
-        services: AgentServices,   # shared ports and services: session_store (a port, not FirestoreSessionStore), fact_write_service, ...
+        services: AgentServices,   # shared ports and services: session_store (a port, not FirestoreSessionStore), ...
         # ... other ports and services
     ):
         self.session_store = services.session_store
-        self.fact_write_service = services.fact_write_service
         self.fact_management_adapter_factory = services.fact_management_adapter_factory
 
     async def _create_and_cache_agents(self, user_id: str):
@@ -254,7 +250,7 @@ class UserAgentFactory:
         fact_management_adapter = self.fact_management_adapter_factory(search_enrichment_service)
 
         consolidation_agent = ConsolidationAgent(
-            fact_write_service=self.fact_write_service,       # shared
+            repository=self.repository,                       # shared
             fact_management_port=fact_management_adapter,     # per-user
         )
 ```
@@ -375,10 +371,7 @@ Some services are shared (singleton per worker process), others are per-user (di
 
 ```python
 # ServiceContainer: creates shared services once
-self.fact_write_service = FactWriteService(
-    repository=self.repository,
-    embedding_service=self.embedding_service,
-)
+self.fact_write_service = FactWriteService(embedding_service=self.embedding_service)
 
 # UserAgentFactory._create_and_cache_agents(): creates per-user
 search_enrichment_service = SearchEnrichmentService(

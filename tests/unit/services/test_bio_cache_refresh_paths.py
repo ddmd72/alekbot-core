@@ -15,7 +15,6 @@ The repository and the context service are wired as `ServiceContainer` wires the
 janitor worlds are built on it by replacing their `make_fact_world`. The failure contract (port docstring: a refresh never
 raises into the write path, the previous cache stays) fails the refresh at the two boundaries every design crosses: the
 read of the account's facts and the cache document write."""
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock
@@ -179,7 +178,7 @@ def consolidator(repo: Any, store: FactStore, bio: Any, *, email_repo: Any = Non
                  fact_updates: Any = None) -> ConsolidationAgent:
     """The agent over the world's repository, the real fact management and typed write path, with `AGENT_LIMITS`."""
     port = FactManagementAdapter(
-        repo, store.embedder, FactWriteService(repo, store.embedder),
+        repo, store.embedder, FactWriteService(store.embedder),
         SearchEnrichmentService(repo, store.embedder, 7, 10, 10, 20),
     )
     execution = AgentExecutionContext(
@@ -188,7 +187,7 @@ def consolidator(repo: Any, store: FactStore, bio: Any, *, email_repo: Any = Non
     )
     return ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
-        repository=repo, embedding_service=store.embedder, fact_write_service=FactWriteService(repo, store.embedder),
+        repository=repo, embedding_service=store.embedder,
         fact_management_port=fact_updates or port, fact_updates=fact_updates or port, prompt_builder=Prompts(),
         indexed_email_repo=email_repo, email_memory_batches=email_repo, **AGENT_LIMITS, bio_cache=bio,
     )
@@ -252,19 +251,6 @@ class TestConsolidationAgent:
         assert response.status is AgentStatus.FAILED, response
         await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
-    async def test_a_legacy_v2_pass_that_writes_a_fact_rebuilds_the_cache_with_the_agents_limits(self):
-        store, repo, bio = account_fact_world()
-        await seed_background(repo)
-        plant(store.db)
-        agent = consolidator(repo, store, bio)
-        agent.prompt_version = "v2"
-        fact = {"id": "n1", "content": TENNIS, "tags": ["t"], "domain": "biographical", "context_priority": "medium"}
-        script(agent, lambda: LLMResponse(text='{"new_facts": [%s], "new_anchors": []}' % json.dumps(fact)))
-
-        response = await execute(agent, "consolidate", messages=BATCH)
-
-        assert response.status is AgentStatus.SUCCESS, response
-        await assert_rebuilt(repo, *agent_view_of_new(TENNIS))
 
     async def test_a_cluster_review_rebuilds_the_cache_with_the_agents_limits(self):
         store, repo, bio = account_fact_world()

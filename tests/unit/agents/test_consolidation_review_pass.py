@@ -109,7 +109,6 @@ def _agent(world, responses, prompts=None):
         ),
         repository=world.repo,
         embedding_service=MagicMock(),
-        fact_write_service=MagicMock(),
         fact_management_port=world.store.adapter,
         prompt_builder=prompts or Prompts(),
         alert_sink=world.sink,

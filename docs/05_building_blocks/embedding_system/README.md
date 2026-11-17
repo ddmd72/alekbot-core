@@ -45,7 +45,7 @@ AI Studio API key).
 The adapter caps **in-flight requests** with a process-local
 `asyncio.Semaphore` and retries **`RESOURCE_EXHAUSTED` (429)** with exponential
 backoff. Both the read path (`SearchEnrichmentService.enrich_context`) and the
-write path (`FactWriteService` storing 3 vectors per fact) go through this
+write path (`FactWriteService` building 3 vectors per fact) go through this
 adapter, so consolidation runs that fan out parallel `search_existing_facts`
 + `create_fact` tool calls can momentarily burst above Google's per-second
 limiter even when the per-minute quota has plenty of headroom.

@@ -322,10 +322,7 @@ class ServiceContainer:
         )
 
         # Shared fact write service (no per-user deps)
-        self.fact_write_service = FactWriteService(
-            repository=self.repository,
-            embedding_service=self.embedding_service,
-        )
+        self.fact_write_service = FactWriteService(embedding_service=self.embedding_service)
 
         # ------------------------------------------------------------------
         # Provider registry + context builder
@@ -521,7 +518,6 @@ class ServiceContainer:
             biographical_context_service=self.biographical_context_service,
             context_builder=self.context_builder,
             assembly_service=self.assembly_service,
-            fact_write_service=self.fact_write_service,
             fact_management_adapter_factory=self.create_fact_management_adapter,
             email_search_service=self.email_search_service,
             email_card_search=self.email_card_search,

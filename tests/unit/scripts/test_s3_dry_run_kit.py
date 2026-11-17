@@ -693,35 +693,6 @@ async def test_install_puts_the_snapshot_overlay_on_the_prompt_builder_and_the_s
 # ----------------------------------------------------------------------------------------------- M1: no live write service
 
 
-async def test_a_v2_agent_is_refused_and_no_write_service_under_a_v3_agent_holds_the_live_repository(store, tmp_path):
-    old = make_agent(store, scripted(answered()))
-    old.prompt_version = "v2"
-    old.prompt_builder.assembly_service = assembly()
-    kit = DryRunKit(ledger_path=tmp_path / "old.json")
-
-    with pytest.raises(ValueError, match="v3"):
-        kit.install(old)
-    assert old._repo is store.repo and not kit._installed                         # nothing was swapped
-
-    agent, kit = await kit_agent(store, tmp_path, answered())
-    assert agent._fact_write_service._repo is kit.repo
-    assert agent._fact_management._inner._fact_write_service._repo is kit.repo
-    assert agent._fact_management._inner._repo is kit.repo
-
-
-async def test_the_write_service_under_the_agent_cannot_reach_the_live_store(store, tmp_path):
-    guarded = GuardedRepo(store.repo)
-    agent, kit = await kit_agent(store, tmp_path, answered(), live_repo=guarded)
-    before = live_state(store)
-    fact = {"content": "walks daily", "tags": ["t"], "type": "event", "domain": "biographical",
-            "temporal_class": "stable", "context_priority": "medium", "metadata": {}, "expiry": EXPIRY_NONE}
-
-    saved, skipped, ids = await agent._fact_write_service.add_facts_batch(ACC, USER, [fact])       # the v2 path's write
-
-    assert (saved, skipped) == (1, 0) and ids == []
-    assert live_state(store) == before
-    assert [w["kind"] for w in kit.repo.writes] == ["add_fact_if_unique"]
-
 
 # ----------------------------------------------------------------------------------------------- M2: the snapshot tokens
 

@@ -111,7 +111,7 @@ def make_agent(store: FactStore, *, email_repo: Any = None) -> ConsolidationAgen
     )
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
-        repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
+        repository=store.repo, embedding_service=store.embedder,
         fact_management_port=port, fact_updates=port, prompt_builder=TenantPrompts(), indexed_email_repo=email_repo,
         email_memory_batches=email_repo,
         bio_cache=NoCacheRefresh(),
@@ -185,12 +185,3 @@ async def test_the_email_task_prompt_is_the_tenants(store):
     assert prompt_of(agent, EMAIL) == tenant_prompt(["the user's mother is Maria"], EMAIL_PROFILE_ID)
 
 
-async def test_the_legacy_v2_prompt_is_the_tenants(store):
-    agent = make_agent(store)
-    agent.prompt_version = "v2"
-    batch = [{"role": "user", "text": "remind me to read the Springfield news every morning", "created_at": "2026-10-22T10:00:00Z"}]
-    with RequestContext(user_id=USER, account_id=ACC):
-        response = await agent._handle_consolidate(message("consolidate", {"messages": batch}), USER, ACC, PASSED, 0.0)
-    assert response.status.value == "success", response
-    ((first, _system),) = agent.seen
-    assert first == tenant_prompt(["the user's mother is Maria"])  # v2 sends the built prompt as the user turn

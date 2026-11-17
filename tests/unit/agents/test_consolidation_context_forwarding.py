@@ -52,7 +52,7 @@ def make_agent(port=None):
     return ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"),
         execution_context=execution_context, repository=repo, embedding_service=MagicMock(),
-        fact_write_service=MagicMock(), fact_management_port=port, prompt_builder=MagicMock(),
+        fact_management_port=port, prompt_builder=MagicMock(),
         fact_updates=typed_port_for(port),  # reviewer edit (S4 T6b): the typed port is required
         bio_cache=AsyncMock(),
     ), repo
