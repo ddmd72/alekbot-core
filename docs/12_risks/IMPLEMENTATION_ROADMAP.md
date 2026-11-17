@@ -284,9 +284,9 @@ the next free id and says what is wrong, where (file and function, not line numb
 
 - Three composition runners, `DriveReaderRunner`, `CompanionExtractorRunner` and `EmailClassifierRunner`
   (`src/composition/`), each repeat one sequence: load the user, build the execution context through
-  `AgentContextBuilder`, construct the agent, then set the private `_quota_service` and `_prompt_content_store` on it.
-  `UserAgentFactory` repeats the same post-construction step for its agents. A runner that forgets a line bills nothing
-  or records nothing, silently (the email classifier did both until roadmap 14b).
+  `AgentContextBuilder`, construct the agent, then call `bind_runtime(AgentRuntime(...))` on it.
+  `UserAgentFactory` repeats the same step for its agents. A runner that forgets the call bills nothing
+  or records nothing, silently.
 - `DriveReaderRunner` has no `request_user_scope`, so its rows carry no `user_id` (a `/worker` request names no user).
   It sets no prompt-content store today by decision (verbatim scans stay out of BigQuery), so this bites the moment one is wired.
 - Trigger: the next per-user agent that is not a delegation agent, or any change to how billing or capture is attached

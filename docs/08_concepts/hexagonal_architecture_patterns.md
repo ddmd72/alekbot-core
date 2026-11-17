@@ -220,13 +220,13 @@ class ServiceContainer:
             search_enrichment_service=search_enrichment_service,  # per-user
         )
 
-    def agent_services(self) -> dict:
-        return {
-            "session_store": self.session_store,        # SessionStore port
-            "fact_write_service": self.fact_write_service,
-            "fact_management_adapter_factory": self.create_fact_management_adapter,
+    def agent_services(self) -> AgentServices:   # frozen typed bundle, src/composition/agent_services.py
+        return AgentServices(
+            session_store=self.session_store,        # SessionStore port
+            fact_write_service=self.fact_write_service,
+            fact_management_adapter_factory=self.create_fact_management_adapter,
             # ... other shared services
-        }
+        )
 ```
 
 ```python
@@ -236,14 +236,12 @@ class UserAgentFactory:
     def __init__(
         self,
         *,
-        session_store: SessionStore,           # Port type, not FirestoreSessionStore
-        fact_write_service: FactWriteService,  # Shared, injected
-        fact_management_adapter_factory: Callable,  # Factory for per-user adapter
+        services: AgentServices,   # shared ports and services: session_store (a port, not FirestoreSessionStore), fact_write_service, ...
         # ... other ports and services
     ):
-        self.session_store = session_store
-        self.fact_write_service = fact_write_service
-        self.fact_management_adapter_factory = fact_management_adapter_factory
+        self.session_store = services.session_store
+        self.fact_write_service = services.fact_write_service
+        self.fact_management_adapter_factory = services.fact_management_adapter_factory
 
     async def _create_and_cache_agents(self, user_id: str):
         # Per-user: SearchEnrichmentService uses user-specific limits
