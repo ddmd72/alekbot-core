@@ -1121,7 +1121,8 @@ Re-verified at `2280ca78`; items 1–8 held, items 9–12 were new. Items 4, 6, 
 
 These were found during the study. They are tracked on the defect list (items 7, 11 and 12) and are not part of this
 design; all three still hold:
-- Native opens leave temp files behind (`drive_operations.py:727`, `:1049`). Carrying native bytes as base64 instead
-  would end this, but changes a provider's request path.
+- ~~Native opens leave temp files behind.~~ Fixed: `DelegationEngine.execute` removes every `file_data["path"]` its
+  tool results carried when the run ends (success, terminal tool, exception); `_native_file` removes its file when the
+  write fails.
 - `process_attachment` keeps a `path` for images and PDFs that no adapter reads (`file_conversion_service.py:320-321`).
 - Gemini re-uploads a `path` file part to its Files API on every call of a loop (`gemini_adapter.py:361-373`).

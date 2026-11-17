@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
@@ -129,6 +130,26 @@ def _format_result(intent: str, result: Any) -> str:
 
 
 _BUDGET_ENDED_RESULT = "not finished: turn budget ended"
+
+
+def _note_temp_files(paths: List[str], results: List["ToolResult"]) -> None:
+    """Remember the temp files tool results carry (a native open's `file_data["path"]`) so `execute` removes them."""
+    for result in results:
+        data = result.file_data
+        for entry in (data if isinstance(data, list) else [data]):
+            path = entry.get("path") if isinstance(entry, dict) else None
+            if path:
+                paths.append(path)
+
+
+def _remove_temp_files(paths: List[str]) -> None:
+    for path in paths:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("[DelegationEngine] temp file not removed: %s (%s)", path, exc)
 
 
 def _append_user_note(history: List[Message], text: str) -> None:
@@ -371,22 +392,27 @@ class DelegationEngine:
             "delegation.max_turns": max_turns,
             "delegation.terminal_tool": terminal_tool or "none",
         }):
-            return await self._execute_loop(
-                call_llm=call_llm,
-                base_request=base_request,
-                context=context,
-                max_turns=max_turns,
-                terminal_tool=terminal_tool,
-                intent_remap=intent_remap,
-                intent_fanout=intent_fanout,
-                calling_agent_id=calling_agent_id,
-                max_retries=max_retries,
-                retry_backoff=retry_backoff,
-                local_tools=local_tools,
-                use_turn_clock=use_turn_clock,
-                allow_delegation=allow_delegation,
-                turn_key=turn_key,
-            )
+            temp_files: List[str] = []
+            try:
+                return await self._execute_loop(
+                    call_llm=call_llm,
+                    base_request=base_request,
+                    context=context,
+                    max_turns=max_turns,
+                    terminal_tool=terminal_tool,
+                    intent_remap=intent_remap,
+                    intent_fanout=intent_fanout,
+                    calling_agent_id=calling_agent_id,
+                    max_retries=max_retries,
+                    retry_backoff=retry_backoff,
+                    local_tools=local_tools,
+                    use_turn_clock=use_turn_clock,
+                    allow_delegation=allow_delegation,
+                    turn_key=turn_key,
+                    temp_files=temp_files,
+                )
+            finally:
+                _remove_temp_files(temp_files)
 
     async def _execute_loop(
         self,
@@ -404,6 +430,7 @@ class DelegationEngine:
         use_turn_clock: bool = False,
         allow_delegation: bool = True,
         turn_key: Optional[str] = None,
+        temp_files: Optional[List[str]] = None,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -448,6 +475,7 @@ class DelegationEngine:
         """
         if turn_key is not None:
             require_valid_key(turn_key)
+        spent_files: List[str] = temp_files if temp_files is not None else []
         history = list(base_request.messages)
         total_tokens = 0
         accumulated_contexts: Dict[str, List[Any]] = {}
@@ -562,6 +590,7 @@ class DelegationEngine:
                         )
                         # Nobody reads a sibling's result: the answer is already written.
                         # A local tool (use_skill) must not leave a body in history that was never followed.
+                        _note_temp_files(spent_files, sibling_results)
                         sibling_results = [
                             replace(r, history_context=None) if r.name in local else r
                             for r in sibling_results
@@ -637,6 +666,7 @@ class DelegationEngine:
                     ]
                     budget_out = True
 
+            _note_temp_files(spent_files, tool_results)
             # --- Accumulate metadata ---
             all_async.extend(r.async_intent for r in tool_results if r.async_intent)
             accumulated_structured = self._accumulate_tool_metadata(
