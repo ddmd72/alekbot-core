@@ -83,7 +83,7 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | Facts | `{prefix}domain_facts_v2` (`src/config/environment.py:114-120`) | one document per fact **version** (a content change adds a document, a lifecycle change edits one, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2), the janitor (§5.5, a state change to `stale` only), the review pass and the owner's answers (§5.6) |
 | Sessions | `{prefix}sessions` (`environment.py:455-463`), doc id `{user_id}:{channel_id}` | the channel's recent messages (the sliding window) | `ConversationHandler`, notifications, `$memory save` |
 | Consolidation queue | `{prefix}consolidation_queue` (`environment.py:465-472`) | batches cut from sessions, until consolidated | overflow routing (§3 step 3), `$consolidate` |
-| Baseline cache | `{prefix}user_context`, doc id = account id (`environment.py:524-531`) | `biographical_facts`, `principles`, `directives` lists | `refresh_biographical_context_cache` (§3 step 9) |
+| Baseline cache | `{prefix}user_context`, doc id = account id (`environment.py:524-531`) | `biographical_facts`, `principles`, `directives` lists | `BiographicalContextService.refresh_cache` (§3 step 9) |
 | Memory-write lease | `{prefix}memory_write_leases`, doc id = account id (`environment.py:507-513`) | `lease_owner`, `lease_until`, `acquired_at`; no TTL policy | `ConsolidationService`, one lease per batch (§3 step 3) |
 | Memory drafts | `{prefix}memory_fact_drafts`, doc id `{user_id}:{code}` (`environment.py:350-354`) | facts Smart proposed, 7-day TTL | `propose_memory_facts` (§5.1) |
 | Janitor counters | `{prefix}fact_lifecycle_daily` (`environment.py:515-521`), doc id `{account_id}:{UTC day}` | one snapshot of the day's janitor run per account (last run of the day wins) and the day's `expiry_tool_errors` count; **no TTL policy**, no field named `expires_at` | the janitor, the consolidator's tool handler (§5.5) |
@@ -113,8 +113,8 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | Interactive messages | a platform-neutral message with options (`InteractiveMessage`), a router that picks the platform's adapter (Slack buttons, plain text with digits on Telegram), and `InteractiveChoiceService` for a click | `src/domain/interactive_message.py`, `src/infrastructure/interactive_message_router.py`, `src/adapters/slack/interactive_message_adapter.py`, `src/adapters/plain_text_interactive_message_adapter.py`, `src/services/interactive_choice_service.py` |
 | `CabinetFactService` | the Cabinet's invalidate (§5.2) | `src/services/cabinet_fact_service.py` |
 | `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
-| `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document | `src/adapters/firestore_repo.py` |
-| `BiographicalContextService` | chooses the baseline | `src/services/biographical_context_service.py` |
+| `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document (its write, `save_biographical_context_cache`, and its read) | `src/adapters/firestore_repo.py` |
+| `BiographicalContextService` | chooses the baseline and rebuilds its cache (`refresh_cache`, port `BiographicalCacheRefresher`) | `src/services/biographical_context_service.py`, `src/ports/biographical_cache_port.py` |
 | `FactSearchService` | the scored fact search: candidate lists, the pure scorer, phrase fusion (`FACT_PROFILE_RFC` §5.3) | `src/services/fact_search_service.py` |
 | `SearchEnrichmentService` | the older multi-vector search + RRF, kept for the callers that still use `enrich_context` (the companion context, the fact-management adapter); no longer used by the Router, `search_memory` or the connector | `src/services/search_enrichment_service.py` |
 | Router, Smart, `FactsMemoryAgent`, Lelik, MCP | readers (§4) | §11 |
@@ -672,10 +672,15 @@ composite (user_id, consolidated_at, card_state, indexed_at). The plain dry run 
 
 ### Step 9 — the baseline is rebuilt; the batch is deleted
 
-After Stage 1–2b, `refresh_biographical_context_cache` rebuilds the `{prefix}user_context` document
-(`consolidation_agent.py:346-352`, `firestore_repo.py:715-779`); Stage 3 rebuilds it again when it processed emails.
-The refresh logs and swallows its own errors. `ConsolidationService` then deletes the batch (§3 step 3). The Cabinet
-invalidate (§5.2) and the janitor (§5.5, for each account it changed) call the same refresh.
+After Stage 1–2b, the agent's cache refresher rebuilds the `{prefix}user_context` document; Stage 3 rebuilds it again
+when it processed emails. The refresher is `BiographicalContextService.refresh_cache` (port `BiographicalCacheRefresher`,
+handed to the agent through `AgentServices`): the service selects the baseline (`refresh_context`, §4.1) and saves it with
+the repository's `save_biographical_context_cache`, which only writes the document and lets a store error propagate. The
+refresh logs and swallows its own errors, so the previous cache stays. `ConsolidationService` then deletes the batch
+(§3 step 3). The Cabinet invalidate (§5.2), the janitor (§5.5, for each account it changed) and the owner's answer take
+the same refresher at construction. The memory review and the profile step still reach it through the repository's
+`refresh_biographical_context_cache`, which forwards to the service (the repository holds the service for them; the
+service gets the repository by `set_repository`).
 
 **A run that fails after it wrote refreshes too.** Stages 1–2b run inside a `try/finally`: if the run did not finish and
 its tracker saw a write (`wrote`), the `finally` rebuilds the cache (`consolidation_agent.py:789-844`); Stage 3 does the
@@ -1026,8 +1031,8 @@ document and left two `is_current` documents in one lineage), **but only when th
 page showed**: a closed version keeps its own text, so the service compares it with the text of the id the page
 sent. On a conflict it resolves once more, and the text check runs again.
 Search stops returning the fact at once. **The service then rebuilds the baseline** with
-`refresh_biographical_context_cache(owner_id=account_id)` (§3 step 9), so the fact leaves the next prompt too. That
-method never raises: it logs `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>: …` (ERROR) and
+`refresh_cache(owner_id=account_id)` (§3 step 9), so the fact leaves the next prompt too. That
+method never raises: it logs `❌ [BiographicalContext] Failed to refresh biographical cache for <account8>: …` (ERROR) and
 returns, the invalidate still answers 200, and the baseline keeps the fact until the next consolidation run. (The route
 once had its own `Fact <id> invalidated but the biographical cache refresh failed` guard; it could never fire and is
 gone, so grep the repository's line.) The route's own log line (`🗑️ Fact <id> invalidated by user …`) names the id the
@@ -1147,7 +1152,7 @@ plan in `src/domain/fact_lifecycle_sweep.py`, the alerts in `fact_lifecycle_aler
    10; the breaker line. The marks the repeat rules need are written before the post, so a lost post is not repeated. Once
    per run, one more 🚨 when closed review records are still stored more than 3 days past their `purge_after` (the TTL policy
    is late or missing). The review service itself posts one when a fact is revived a third time within 30 days.
-9. *Baseline:* each account that staled anything gets `refresh_biographical_context_cache`, so the fact leaves every prompt
+9. *Baseline:* each account that staled anything gets a cache refresh (`refresh_cache`), so the fact leaves every prompt
    (§4.1).
 10. *Snapshot and line:* one snapshot per account is stored (below), one log line per account
    (`[FactLifecycle] account=<8> due=N newly_due=N no_decision=N staled=N would_stale=N deferred=N conflicts=N backlog=N
@@ -1700,7 +1705,7 @@ Log lines, in pipeline order:
   `❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=… user_id=<8> revivals=3 …` (the batch stays `failed`; grep this to find batches that need the owner)
   Stage 3: `Stage 3 (email) failed` / `timed out` (ERROR, batch still succeeds), `Stage 3 skipped` (INFO)
 - `[Librarian] $consolidate failed for user <8>` (ERROR) and `[Librarian] no queue for the continuation` (WARNING, local runs): the `$consolidate` path (§5.4)
-- Cabinet: `Fact <id> not invalidated: FactResolutionError|FactWriteConflict: …` (WARNING, the 409 of §5.2), `[FactRepo] invalidate of <id> conflicted (attempt n)`, and, if the baseline rebuild after a delete fails, `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>`
+- Cabinet: `Fact <id> not invalidated: FactResolutionError|FactWriteConflict: …` (WARNING, the 409 of §5.2), `[FactRepo] invalidate of <id> conflicted (attempt n)`, and, if the baseline rebuild after a delete fails, `❌ [BiographicalContext] Failed to refresh biographical cache for <account8>`
 - `[Worker] sweep_consolidation complete: swept=N` (each swept user's FAILED batches were revived first)
 - janitor (§5.5): startup `fact lifecycle sweep: log-only` / `: writes`; per account `[FactLifecycle] account=<8> due=… newly_due=… no_decision=… staled=… would_stale=… deferred=… conflicts=… backlog=… breaker=<ok|reason> review_enqueued=0 dry_run=<bool>`; `[FactLifecycle] breaker tripped for account <8>: …` (WARNING); `[FactLifecycle] the run failed (<Type>) at <stage>` (ERROR) and `[Worker] fact_lifecycle_sweep failed (<Type>)`; `an ops message was cut after 10s` / `was not delivered` (WARNING)
 - review (§5.6): `[FactReview] …` lines: `user <8> is not the owner of account <8> … nothing done`, `memory-write lease busy: deferred

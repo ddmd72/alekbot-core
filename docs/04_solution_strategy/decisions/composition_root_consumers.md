@@ -19,7 +19,12 @@ call failed only at run time.
    `tests/unit/architecture/late_wiring_calls_allowlist.txt` with a `permanent` reason (Registry pattern, the agent-factory
    cycle, the Telegram binding below). This record's change makes the consumers take their dependencies at
    construction; splitting `build_application_graph` itself into those bundles, typing the agent services and moving the
-   biographical-cache refresh out of the fact repository are the next step of the same refactor.
+   biographical-cache refresh out of the fact repository are the next step of the same refactor. The bio-cache cycle is
+   half untangled: the refresh is `BiographicalContextService.refresh_cache` (port `BiographicalCacheRefresher`), taken at
+   construction by the consolidation agent (through `AgentServices`), the janitor, the owner's answer and the Cabinet;
+   the repository only saves the cache document. The memory review and the profile step, whose constructors sit at the
+   arity ceiling, still call the repository's forwarding `refresh_biographical_context_cache`, so the repository still
+   holds the service and the service still takes the repository by `set_repository`.
 2. **`/worker` is a registry of runners.** `WorkerHandler` dispatches through a task registry (`WorkerTask`, a Protocol in
    `domain/worker_task.py`, so handlers still import no `ports/`). The six logic-heavy tasks are runner services in
    `src/services/*_task.py`, built by `composition/worker_setup.py::build_worker_tasks`, each holding only its own
