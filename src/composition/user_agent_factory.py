@@ -571,8 +571,7 @@ class UserAgentFactory(AgentFactoryPort):
             bio_cache=self.biographical_context_service,
             prompt_version=self.config["CONSOLIDATION"].prompt_version,
             prompt_builder=prompt_builder,
-            facts_limit=facts_limit,
-            principles_limit=principles_limit,
+            facts_limit=facts_limit, principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,
             # Stage 3 reads mail with its card; a repository without those reads skips email triage
             email_memory_batches=(
