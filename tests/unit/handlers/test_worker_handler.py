@@ -30,6 +30,7 @@ from src.ports.video_generation_port import VideoPollResult
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
+from src.services.execute_reminder_task import ExecuteReminderTask
 from src.services.reminders_service import RemindersService
 from src.services.task_indexing_service import TaskIndexingService
 from src.services.task_setup_service import TaskSetupService
@@ -138,7 +139,6 @@ def worker_handler_factory():
     def _factory(
         *,
         reminders_service=None,
-        notes_port=None,
         email_review=None,
         task_dispatch=None,
         **kwargs
@@ -158,7 +158,6 @@ def worker_handler_factory():
             user_repo=MagicMock(),
             task_dispatch=task_dispatch,
             reminders_service=reminders_service,
-            notes_port=notes_port,
             email_review=email_review,
             **kwargs,
         )
@@ -621,6 +620,10 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     ns.notification = notification
     ns.user_repo = user_repo
     ns.notes_port = notes_port
+    ns.execute_reminder = ExecuteReminderTask(
+        notes_port=notes_port, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
+        notification_service=notification, alert_sink=billing_webhook,
+    )
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
@@ -633,10 +636,10 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         task_setup=task_setup,
         task_indexing=task_indexing,
         reminders_service=reminders_service,
-        notes_port=notes_port,
         email_review=email_review,
         account_repo=account_repo,
         billing_webhook=billing_webhook,
+        tasks={"execute_reminder": ns.execute_reminder},
     )
     return worker, ns
 
@@ -990,7 +993,7 @@ class TestHandleFireDueReminders:
 
 
 # ---------------------------------------------------------------------------
-# _handle_execute_reminder (Step #8 — per-fire worker)
+# ExecuteReminderTask (Step #8 — per-fire worker)
 # ---------------------------------------------------------------------------
 
 _EXECUTE_NOTE_ID = "note-execute-001"
@@ -1027,7 +1030,7 @@ def _make_reminder_note(
 
 class TestHandleExecuteReminder:
     """Five paths + happy path documented in the docstring of
-    ``_handle_execute_reminder``."""
+    ``ExecuteReminderTask.__call__``."""
 
     async def test_missing_notes_port_returns_501(self):
         worker, _ = _make_full_worker()
@@ -1039,18 +1042,18 @@ class TestHandleExecuteReminder:
         assert "notes_port" in result["error"]
 
     async def test_missing_payload_fields_returns_400(self):
-        worker, _ = _make_full_worker()
+        worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_execute_reminder({"note_id": "x"})
+        result, status = await ns.execute_reminder({"note_id": "x"}, {})
 
         assert status == 400
         assert "missing" in result["error"]
 
     async def test_bad_due_at_returns_400(self):
-        worker, _ = _make_full_worker()
+        worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_execute_reminder(
-            {**_EXECUTE_PAYLOAD, "due_at": "not-a-date"}
+        result, status = await ns.execute_reminder(
+            {**_EXECUTE_PAYLOAD, "due_at": "not-a-date"}, {}
         )
 
         assert status == 400
@@ -1061,7 +1064,7 @@ class TestHandleExecuteReminder:
         worker, ns = _make_full_worker()
         ns.notes_port.get_note.return_value = None
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "note_gone"
@@ -1077,7 +1080,7 @@ class TestHandleExecuteReminder:
             last_delivered_due=_EXECUTE_DUE,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "already_delivered"
@@ -1090,7 +1093,7 @@ class TestHandleExecuteReminder:
         ns.notes_port.get_note.return_value = _make_reminder_note()
         ns.user_repo.get_user.return_value = None
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "no_user"
@@ -1115,7 +1118,7 @@ class TestHandleExecuteReminder:
             error="agent_timeout",
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 500
         assert result["error"] == "agent_timeout"
@@ -1141,7 +1144,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "ok"
@@ -1179,7 +1182,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
@@ -1213,7 +1216,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
@@ -1227,7 +1230,7 @@ class TestHandleExecuteReminder:
             last_delivered_due=_EXECUTE_DUE,  # recurrence=None
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "already_delivered"
@@ -1251,7 +1254,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert ns.notification.notify.call_args.kwargs["suppress_transient_retry"] is True
 
@@ -1279,7 +1282,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["task_complexity"] == "deep_reasoning"
@@ -1316,7 +1319,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["tier"] == PerformanceTier[expected_tier_name]
@@ -1358,7 +1361,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         # Not BALANCED, which the raw defaults table would have given.
@@ -1380,7 +1383,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["tier"] is None

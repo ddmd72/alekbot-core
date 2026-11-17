@@ -42,7 +42,7 @@ class TestExecuteReminder:
     async def test_empty_answer_is_final_success_path(self, caplog):
         worker, ns = _reminder_worker(EMPTY)
         with caplog.at_level(logging.ERROR):
-            body, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            body, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert (status, body["status"]) == (200, "empty_answer_final")
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.notes_port.delete_note.assert_awaited_once()  # one-time note removed
@@ -55,7 +55,7 @@ class TestExecuteReminder:
     async def test_recurring_note_is_marked_but_kept(self):
         worker, ns = _reminder_worker(EMPTY)
         ns.notes_port.get_note.return_value = dataclasses.replace(_make_reminder_note(), recurrence=MagicMock())
-        _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.notes_port.delete_note.assert_not_awaited()
@@ -63,14 +63,14 @@ class TestExecuteReminder:
     async def test_alert_failure_does_not_break_the_final_path(self):
         worker, ns = _reminder_worker(EMPTY)
         ns.billing_webhook.post.side_effect = RuntimeError("webhook down")
-        _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
 
     async def test_other_failure_still_retries(self, caplog):
         worker, ns = _reminder_worker(OTHER)
         with caplog.at_level(logging.ERROR):
-            _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 500
         ns.notes_port.mark_fire_delivered.assert_not_awaited()
         ns.billing_webhook.post.assert_not_awaited()
@@ -79,7 +79,7 @@ class TestExecuteReminder:
     async def test_success_unchanged(self, caplog):
         worker, ns = _reminder_worker(OK)
         with caplog.at_level(logging.ERROR):
-            body, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            body, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert (status, body["status"]) == (200, "ok")
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.billing_webhook.post.assert_not_awaited()
@@ -136,9 +136,9 @@ class TestDeepResearchNotice:
 class TestNoAlertSinkConfigured:
     async def test_final_path_still_logs_and_returns_200(self, caplog):
         worker, ns = _reminder_worker(EMPTY)
-        worker._billing_webhook = None
+        ns.execute_reminder._alert_sink = None
         with caplog.at_level(logging.ERROR):
-            _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200 and len(_empty_records(caplog)) == 1
 
 

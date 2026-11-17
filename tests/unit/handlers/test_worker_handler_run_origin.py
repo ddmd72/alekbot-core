@@ -30,7 +30,7 @@ def _reminder_worker(delivered=True):
 
 async def test_execute_reminder_passes_origin_and_fire_key():
     worker, ns = _reminder_worker()
-    _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+    _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
     assert status == 200
     kw = ns.notification.notify.call_args.kwargs
     assert kw["origin_detail"] == "execute_reminder"
@@ -39,8 +39,8 @@ async def test_execute_reminder_passes_origin_and_fire_key():
 
 async def test_a_rerun_of_the_same_fire_has_the_same_key():
     worker, ns = _reminder_worker(delivered=False)
-    _, first = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
-    _, second = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+    _, first = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
+    _, second = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
     assert (first, second) == (500, 500)
     keys = [c.kwargs["fire_key"] for c in ns.notification.notify.call_args_list]
     assert keys == [FIRE, FIRE]
