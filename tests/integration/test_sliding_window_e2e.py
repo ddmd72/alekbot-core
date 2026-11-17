@@ -160,7 +160,7 @@ async def test_sliding_window_e2e():
             coordinator=coordinator,
             user_repo=user_repo,
             account_repo=account_repo,
-            **container.agent_services()
+            services=container.agent_services()
         )
         
         handler = ConversationHandler(

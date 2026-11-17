@@ -12,6 +12,7 @@ from src.ports.video_duration_port import VideoDurationPort
 from src.ports.image_generation_port import GeneratedImage, ImageGenerationPort
 from src.ports.video_generation_port import VideoGenerationPort, VideoPollResult
 from src.services.provider_registry import ProviderRegistry
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def mock_dependencies():
 
 @pytest.fixture
 def factory(mock_dependencies):
-    return UserAgentFactory(**mock_dependencies)
+    return UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))
 
 
 def _make_context(agent_type: str, model_name: str, tier=PerformanceTier.BALANCED):
@@ -119,7 +120,7 @@ def test_build_image_generation_returns_configured_agent(mock_dependencies):
     mock_dependencies["file_conversion_service"] = Mock()
     image_registry = ProviderRegistry()
     image_registry.register("grok", FakeImagePort())
-    factory_with_registry = UserAgentFactory(**mock_dependencies, image_registry=image_registry)
+    factory_with_registry = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies, image_registry=image_registry))
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig()
@@ -135,7 +136,7 @@ def test_build_image_generation_returns_configured_agent(mock_dependencies):
 
 
 def test_build_image_generation_returns_none_without_registry(mock_dependencies):
-    factory_without_registry = UserAgentFactory(**mock_dependencies)  # no image_registry
+    factory_without_registry = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))  # no image_registry
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig()
@@ -175,8 +176,8 @@ def test_build_video_generation_returns_configured_agent(mock_dependencies):
     mock_dependencies["file_conversion_service"] = Mock()
     video_registry = ProviderRegistry()
     video_registry.register("grok", FakeVideoPort())
-    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry,
-                                             video_duration=AsyncMock(spec=VideoDurationPort))
+    factory_with_registry = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies, video_registry=video_registry,
+                                             video_duration=AsyncMock(spec=VideoDurationPort)))
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig()
@@ -192,7 +193,7 @@ def test_build_video_generation_returns_configured_agent(mock_dependencies):
 
 
 def test_build_video_generation_returns_none_without_registry(mock_dependencies):
-    factory_without_registry = UserAgentFactory(**mock_dependencies)  # no video_registry
+    factory_without_registry = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies))  # no video_registry
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig()
@@ -216,8 +217,8 @@ def test_build_video_generation_resolves_max_duration_from_config_service(mock_d
     mock_dependencies["file_conversion_service"] = Mock()
     video_registry = ProviderRegistry()
     video_registry.register("grok", FakeVideoPort())
-    factory_with_registry = UserAgentFactory(**mock_dependencies, video_registry=video_registry,
-                                             video_duration=AsyncMock(spec=VideoDurationPort))
+    factory_with_registry = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies, video_registry=video_registry,
+                                             video_duration=AsyncMock(spec=VideoDurationPort)))
 
     user_profile = Mock(spec=UserProfile)
     user_profile.config = UserBotConfig(max_video_duration_s=25)
@@ -266,7 +267,7 @@ async def test_smart_agent_built_with_injected_skill_service(mock_dependencies):
     mock_dependencies["config_service"].get_principles_cache_limit = Mock(return_value=10)
     mock_dependencies["config_service"].get_history_recent_full_turns = Mock(return_value=2)
 
-    factory_with_skills = UserAgentFactory(**mock_dependencies, skill_service=sentinel)
+    factory_with_skills = UserAgentFactory(**user_agent_factory_kwargs(**mock_dependencies, skill_service=sentinel))
 
     cached = await factory_with_skills._create_and_cache_agents("user123")
 

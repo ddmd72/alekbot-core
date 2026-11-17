@@ -12,6 +12,7 @@ Covers:
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ def _make_factory():
     """Create a UserAgentFactory with all external dependencies mocked."""
     from src.composition.user_agent_factory import UserAgentFactory
 
-    return UserAgentFactory(
+    return UserAgentFactory(**user_agent_factory_kwargs(
         config={"GEMINI_API_KEY": "k", "ANTHROPIC_API_KEY": "k"},
         deploy_topology=MagicMock(),
         coordinator=MagicMock(),
@@ -43,7 +44,7 @@ def _make_factory():
         fact_write_service=MagicMock(),
         fact_management_adapter_factory=MagicMock(return_value=MagicMock()),
         email_search_service=MagicMock(),
-    )
+    ))
 
 
 # ---------------------------------------------------------------------------

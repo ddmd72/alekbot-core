@@ -10,6 +10,7 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
 from src.services.workspace_service import WorkspaceService
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 from tests.unit.composition.test_drive_wiring import _container
 from tests.unit.services.test_user_agent_factory import (  # noqa: F401 — fixture + helper
     _make_context,
@@ -55,7 +56,7 @@ def _factory(deps, **extra):
     cs.get_principles_cache_limit = Mock(return_value=10)
     cs.get_history_recent_full_turns = Mock(return_value=2)
     deps["config_service"] = cs
-    return UserAgentFactory(**deps, notes_provider=AsyncMock(), recurrence=Mock(), **extra)
+    return UserAgentFactory(**user_agent_factory_kwargs(**deps, notes_provider=AsyncMock(), recurrence=Mock(), **extra))
 
 
 @pytest.mark.asyncio

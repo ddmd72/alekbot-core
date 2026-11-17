@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.settings import ConsolidationSettings
 from src.domain.user import UserBotConfig, UserProfile
+from tests.support.agent_services_kit import user_agent_factory_kwargs
 
 from tests.unit.services.test_user_agent_factory import _make_context, mock_dependencies  # noqa: F401
 
@@ -29,7 +30,7 @@ def _wire(deps, fact_search):
                  "get_principles_cache_limit", "get_history_recent_full_turns"):
         setattr(cfg, name, Mock(return_value=10))
     deps["config_service"] = cfg
-    return UserAgentFactory(**deps)
+    return UserAgentFactory(**user_agent_factory_kwargs(**deps))
 
 
 async def test_building_the_agents_starts_the_warm_up_without_waiting_for_it(mock_dependencies):  # noqa: F811
