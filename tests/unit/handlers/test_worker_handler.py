@@ -18,6 +18,7 @@ import pytest
 
 from datetime import date, datetime, timedelta, timezone
 
+from src.composition.worker_setup import build_worker_tasks
 from src.domain.agent import AgentStatus
 from src.domain.billing import BillingAccount, AccountUsageStats
 from src.domain.daily_review_window import EligibleReviewUser
@@ -34,6 +35,7 @@ from src.services.execute_reminder_task import ExecuteReminderTask
 from src.services.reminders_service import RemindersService
 from src.services.task_indexing_service import TaskIndexingService
 from src.services.task_setup_service import TaskSetupService
+from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
 
 # ---------------------------------------------------------------------------
@@ -119,9 +121,11 @@ def _make_worker(
         agent_factory=agent_factory,
         user_repo=MagicMock(),
         task_dispatch=task_dispatch,
-        video_registry=video_registry,
-        link_service=link_service,
-        short_link_service=short_link_service,
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=video_registry, quota_service=None, media_storage=None, link_service=link_service,
+            short_link_service=short_link_service, deep_research_fetch=None, prompt_content_store=None),
     )
     return worker, ns
 
@@ -302,7 +306,7 @@ class TestHandleVideoGenerationPolling:
         worker, ns = _make_worker()
         ns.video_registry.get.side_effect = ValueError("provider not found")
 
-        result, status = await worker._handle_video_generation_polling(_VIDEO_BASE_PAYLOAD)
+        result, status = await worker._tasks["video_generation_polling"](_VIDEO_BASE_PAYLOAD, {})
 
         assert status == 500
 
@@ -345,7 +349,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 3, "duration_s": 8}
             result, status = await worker.handle(payload)
 
@@ -366,7 +370,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
             result, status = await worker.handle(payload)
 
@@ -382,7 +386,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
 
         assert status == 200
@@ -394,7 +398,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
 
         assert status == 200
@@ -467,7 +471,7 @@ class TestHandleVideoGenerationPolling:
         worker, ns = _make_worker()
 
         payload = {
-            **_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            **_VIDEO_BASE_PAYLOAD, "attempt": VideoGenerationPollingTask._MAX_VIDEO_POLL_ATTEMPTS,
             "origin_platform": "slack",
         }
         result, status = await worker.handle(payload)
@@ -519,7 +523,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes", duration_s=12)
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "duration_s": 5}
             result, status = await worker.handle(payload)
 
@@ -529,7 +533,7 @@ class TestHandleVideoGenerationPolling:
     async def test_max_attempts_times_out(self):
         worker, ns = _make_worker()
 
-        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS}
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": VideoGenerationPollingTask._MAX_VIDEO_POLL_ATTEMPTS}
         result, status = await worker.handle(payload)
 
         assert status == 200
