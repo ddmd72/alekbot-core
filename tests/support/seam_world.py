@@ -41,6 +41,7 @@ from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.composition.worker_setup import build_worker_tasks
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentMessage, AgentResponse, DeliveryItem
 from src.domain.agent_note import NoteCreate
@@ -417,10 +418,16 @@ class SeamWorld:
             consolidation_service=None, agent_factory=self.factory,
             user_repo=self.users, task_dispatch=self.dispatch, media_storage=self.media_store,
             link_service=self.links, reminders_service=self.reminders, task_claims=self.claims,
-            tasks=build_worker_tasks(notes_port=self.notes, user_repo=self.users,
-                                     ensure_agents=self.factory.ensure_agents_for_user,
-                                     notification_service=self.notifier, alert_sink=None),
         )
+        email_review = worker_overrides.pop("email_review", None)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, email_review=email_review,
+            task_dispatch=worker_overrides.get("task_dispatch", self.dispatch), daily_review_marks=None,
+            gmail_reconnect_flag=GmailReconnectFlag(
+                oauth_credentials=None, mail_connector=None, ensure_agents=self.factory.ensure_agents_for_user,
+                notification_service=self.notifier),
+            account_repo=None)
         keywords.update(worker_overrides)
         self.handler = WorkerHandler(**keywords)
         self._agents: Dict[str, StandInAgent] = {}

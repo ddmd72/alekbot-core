@@ -48,6 +48,7 @@ from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.services.email_review_service import EmailReviewService
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.services.reminders_service import RemindersService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.user_notification_service import UserNotificationService
@@ -496,7 +497,8 @@ def _consumers() -> Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]]:
 
 class RedeliveryWorld:
     """Everything a redelivered `/worker` task touches, on one `EvalDb` (module docstring). `handler_overrides` are
-    keywords of `WorkerHandler` that replace or add to the defaults (`email_review=`, `video_registry=`,
+    keywords of `WorkerHandler` that replace or add to the defaults (`email_review=` and `daily_review_marks=` go to the
+    runners instead; `video_registry=`,
     `companion_extraction=`, `interactive_choice=`, ...)."""
 
     def __init__(self, **handler_overrides: Any) -> None:
@@ -524,11 +526,18 @@ class RedeliveryWorld:
             email_indexing_service=None, notification_service=self.notifier, consolidation_service=None,
             agent_factory=self.factory, user_repo=self.users,
             task_dispatch=self.dispatch, reminders_service=self.reminders,
-            task_claims=self.claims, daily_review_marks=self.marks,
-            tasks=build_worker_tasks(notes_port=self.notes, user_repo=self.users,
-                                     ensure_agents=self.factory.ensure_agents_for_user,
-                                     notification_service=self.notifier, alert_sink=None),
+            task_claims=self.claims,
         )
+        email_review = handler_overrides.pop("email_review", None)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, email_review=email_review,
+            task_dispatch=handler_overrides.get("task_dispatch", self.dispatch),
+            daily_review_marks=handler_overrides.pop("daily_review_marks", self.marks),
+            gmail_reconnect_flag=GmailReconnectFlag(
+                oauth_credentials=None, mail_connector=None, ensure_agents=self.factory.ensure_agents_for_user,
+                notification_service=self.notifier),
+            account_repo=None)
         keywords.update(handler_overrides)
         self.handler = WorkerHandler(**keywords)
 
