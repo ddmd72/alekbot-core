@@ -644,7 +644,7 @@ async def test_a_failing_refresh_does_not_fail_the_run(world, caplog):
 
     async def boom(owner_id, *a, **k):
         raise RuntimeError("cache down")
-    world.repo.refresh_biographical_context_cache = boom
+    world.repo.refresh_cache = boom
 
     with caplog.at_level(logging.WARNING):
         run = await world.run()
