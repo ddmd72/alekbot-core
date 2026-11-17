@@ -888,70 +888,34 @@ class FirestoreFactRepository(FactRepository):
         return True, fact_id
 
     async def refresh_biographical_context_cache(
-        self, 
+        self,
         owner_id: str,
         facts_limit: Optional[int] = None,
         principles_limit: Optional[int] = None
     ) -> None:
-        """
-        Refresh cached biographical context using injected BiographicalContextService.
-
-        SESSION 2026-02-07: Hexagonal Architecture Refactoring
-        Repository (Infrastructure) DELEGATES to Application Service (DI).
-        No longer creates services internally - respects dependency direction.
-
-        Fire-and-forget safe: errors are logged but don't stop the flow.
-
-        Session: docs/SESSION_2026_02_07_BIOGRAPHICAL_CACHE_OPTIMIZATION.md
-        RFC: docs/10_rfcs/BIOGRAPHICAL_CACHE_MULTI_VECTOR_RFC.md
-        
-        Args:
-            owner_id: Account ID
-            facts_limit: Max biographical facts (None = the service's own resolution)
-            principles_limit: Max principles (None = the service's own resolution)
-        """
-        # SESSION 2026-02-07: Check if service is injected
+        """Forward to the injected context service's refresh_cache (FactRepository port)."""
         if not self._biographical_context_service:
             logger.warning(
                 f"⚠️ [FirestoreRepo] BiographicalContextService not injected, "
                 f"skipping cache refresh for {owner_id[:8]}"
             )
             return
+        await self._biographical_context_service.refresh_cache(
+            owner_id, facts_limit=facts_limit, principles_limit=principles_limit,
+        )
 
-        try:
-            logger.info(f"🔄 [FirestoreRepo] Refreshing biographical cache for {owner_id[:8]}...")
-
-            # DELEGATE to injected Application Service. Explicit limits win over the
-            # service's own resolution; None keeps it (account/system defaults).
-            context = await self._biographical_context_service.refresh_context(
-                owner_id,
-                facts_limit=facts_limit,
-                principles_limit=principles_limit,
-            )
-
-            # Save to cache with version marker (Infrastructure responsibility)
-            cache_doc = {
-                "biographical_facts": context["facts"],
-                "principles": context["principles"],
-                "directives": context.get("directives", []),
-                "refreshed_at": firestore.SERVER_TIMESTAMP,
-                "facts_count": len(context["facts"]),
-                "principles_count": len(context["principles"]),
-                "version": "v3_hexagonal_di"  # New version marker
-            }
-
-            await self.user_context_col.document(owner_id).set(cache_doc, merge=True)
-
-            logger.info(
-                f"✅ [FirestoreRepo] Cached {len(context['facts'])} facts + "
-                f"{len(context['principles'])} principles for {owner_id[:8]}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"❌ [FirestoreRepo] Failed to refresh biographical cache for {owner_id}: {e}",
-                exc_info=True
-            )
+    async def save_biographical_context_cache(self, owner_id: str, context: Dict[str, List[Dict]]) -> None:
+        """Write `context` to the account's cache document (FactRepository port)."""
+        cache_doc = {
+            "biographical_facts": context["facts"],
+            "principles": context["principles"],
+            "directives": context.get("directives", []),
+            "refreshed_at": firestore.SERVER_TIMESTAMP,
+            "facts_count": len(context["facts"]),
+            "principles_count": len(context["principles"]),
+            "version": "v3_hexagonal_di"
+        }
+        await self.user_context_col.document(owner_id).set(cache_doc, merge=True)
 
     async def get_biographical_context_cached(
         self,
