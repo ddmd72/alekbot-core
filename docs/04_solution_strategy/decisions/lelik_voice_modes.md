@@ -48,6 +48,20 @@ with names, terms and current events met while translating.
 `LelikAgent` leaves the tools out where the session is built (`_tool_declarations`), and `permitted_intents` is empty
 for the mode, so `/voice/delegate` refuses every intent a call in this mode names.
 
+**Exception: the language pair.** The session still opens with no function tools. While an "Ask Lelik" cycle is open
+(the button's latch is not idle, or the confirmation of an accepted pair has not finished), the relay offers one tool,
+`set_language_pair(caller_language, other_language)`, by a mid-call session update (`RealtimeSessionPort.update_session`,
+xAI only), and withdraws it when the cycle is over. Code, not the model, decides a call: it is accepted only when the
+codes are two different ones of a closed set, one of the caller's turns committed since the latest press is the one the
+Ask note marked, and no call was accepted since that press; every other call is refused with a tool error and nothing
+changes. The tool changes call-local state only (`VoiceSessionService`, `src/domain/voice_language_pair.py`): no memory,
+no chat, no web. An accepted pair goes into every later translate note, which names the direction, and also into the
+session instructions as a standing block (the opening instructions plus that block): a note is placed on
+`speech_started`, and when speech starts in the tail of Lelik's playback the note lands late, so the direction must not
+depend on it alone. The persona token (`VOICE_PERSONA_INTERPRETER`) lets a set pair decide over guessing from the place
+or the first words. The texts were validated in a probe; what is recorded here is the behaviour, not numbers from live
+calls.
+
 Universal: the caller's language is the one they speak on the call, and the other language is learned
 from the other person's first words. Without a press of the **"Ask Lelik"** button Lelik only translates:
 everything either side says, even nonsense, even words that sound meant for him (owner, 2026-11-08). The

@@ -294,6 +294,11 @@ class OpenAIRealtimeAdapter(RealtimeSessionPort):
             "item": {"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]},
         }))
 
+    async def update_session(self, instructions: Optional[str] = None,
+                             tools: Optional[Sequence[Dict[str, Any]]] = None) -> None:
+        """Not supported: interpreter mode (the only caller) runs on xAI only, so nothing is sent."""
+        raise NotImplementedError("OpenAI realtime sessions are not updated mid-call")
+
     async def request_response(self) -> None:
         await self._socket.send(json.dumps({"type": "response.create"}))
 

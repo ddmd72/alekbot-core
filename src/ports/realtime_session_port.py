@@ -102,6 +102,17 @@ class RealtimeSessionPort(ABC):
         without late_tool_result_after_caller_turn."""
 
     @abstractmethod
+    async def update_session(self, instructions: Optional[str] = None,
+                             tools: Optional[Sequence[Dict[str, Any]]] = None) -> None:
+        """Replace the session's instructions and/or its FUNCTION tools mid-call, in one update; what is None stays
+        as it is. `instructions` must already have PROMPT_CACHE_BOUNDARY stripped by the caller (an adapter strips it
+        again). `tools` are function tools in the neutral shape open() takes; `tools=[]` removes all function tools,
+        while what the provider runs itself (built-in tools, remote MCP servers from open()) stays.
+
+        Used by the interpreter's language pair (decisions/lelik_voice_modes.md). An adapter whose provider never runs
+        that mode raises NotImplementedError; the caller then offers no pair tool on the call."""
+
+    @abstractmethod
     async def request_response(self) -> None:
         """Trigger response.create. Caller is responsible for not calling
         this while a response is already active (RFC §4.7 corner-case table)."""

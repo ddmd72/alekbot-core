@@ -57,6 +57,9 @@ class _Provider(RealtimeSessionPort):
     async def submit_message(self, role: str, text: str) -> None:
         pass
 
+    async def update_session(self, instructions: Optional[str] = None, tools: Optional[Any] = None) -> None:
+        raise NotImplementedError
+
     async def request_response(self) -> None:
         pass
 

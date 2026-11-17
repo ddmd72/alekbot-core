@@ -193,6 +193,10 @@ to, in the first person, as the speaker; do not answer or comment on them, even 
 request to you.]` Same channel and placement as the Ask note; logged at DEBUG only (`ask: translate note inserted`),
 since it fires on every utterance.
 
+**Language pair.** An open Ask cycle (latch not idle, or an accepted pair's confirmation not finished) also offers the
+one tool `set_language_pair`, gated in code; once a pair is set, the translate note names it
+(`decisions/lelik_voice_modes.md` § Interpreter behaviour, "Exception: the language pair").
+
 **Fallback** if P2 shows `speech_started` is unreliable: insert at press, delete on cancel. It needs the note's item id
 (a client-set `item.id`, or a surfaced `conversation.item.added`), so it is built only if P2 asks for it.
 
@@ -205,6 +209,8 @@ The caller controls the button, so this is accepted. A false VAD start that neve
   `src/adapters/openai_realtime_adapter.py:260-263`; OpenAI's events carry it too, changed for port honesty under
   `docs/how_to/ADAPTER_WIRE_TESTING.md`). The `receive_events` docstring (`src/ports/realtime_session_port.py:41-53`)
   lists the keys. No new port method (`submit_message` exists).
+- `RealtimeSessionPort.update_session(instructions=None, tools=None)` (non-abstract; xAI only): one mid-call
+  `session.update` with only what changes, for the interpreter's language pair tool and its standing instructions block.
 
 ### 5.5 Page
 

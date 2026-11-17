@@ -135,6 +135,13 @@ def _flatten_usage(usage: dict) -> Dict[str, float]:
     }
 
 
+def _refuse_builtin_names(tools: Sequence[dict]) -> None:
+    clashing = sorted(tool["name"] for tool in tools if tool.get("name") in _BUILTIN_TOOL_LEGS)
+    if clashing:
+        # Calls of a function named after a built-in are taken for xAI's own and never answered.
+        raise ValueError(f"function tools named like xAI built-in tools: {clashing}")
+
+
 def _mcp_entry(server: RemoteToolServer) -> Dict[str, Any]:
     return {
         "type": "mcp",
@@ -221,6 +228,9 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
         # Highest running total of billable_audio_seconds seen this session. One adapter
         # per call (relay_main), so this is the call's billed time so far.
         self._billed_audio_seconds: float = 0
+        # What open() offered beside the function tools, kept for a mid-call tools update (update_session).
+        self._builtins: List[Dict[str, Any]] = []
+        self._mcp_entries: List[Dict[str, Any]] = []
         # The labels of the session's MCP servers: the only server names an event or a log line may carry.
         self._server_labels: frozenset = frozenset()
         # item_id of an mcp_list_tools conversation item -> its server label, for list events that name the item only.
@@ -266,22 +276,42 @@ class XaiRealtimeAdapter(RealtimeSessionPort):
             "reasoning": {"effort": reasoning_effort},
             "resumption": {"enabled": True},
         }
-        clashing = sorted(tool["name"] for tool in tools if tool.get("name") in _BUILTIN_TOOL_LEGS)
-        if clashing:
-            # Calls of a function named after a built-in are taken for xAI's own and never answered.
-            raise ValueError(f"function tools named like xAI built-in tools: {clashing}")
+        _refuse_builtin_names(tools)
         # Built-ins go bare; our own tools are functions; remote MCP servers are `mcp` entries. tool_choice is sent
         # even with built-ins alone. Nothing here is logged: the mcp entries carry the call's bearer tokens.
-        builtins = list(_BUILTIN_TOOLS) if self._builtin_search else []
+        self._builtins = list(_BUILTIN_TOOLS) if self._builtin_search else []
+        self._mcp_entries = [_mcp_entry(server) for server in mcp_servers]
         self._server_labels = frozenset(server.label for server in mcp_servers)
         self._secrets = tuple(server.token for server in mcp_servers if server.token)
-        if builtins or tools or mcp_servers:
-            session["tools"] = [*builtins, *({"type": "function", **tool} for tool in tools),
-                                *(_mcp_entry(server) for server in mcp_servers)]
+        session_tools = self._session_tools(tools)
+        if session_tools:
+            session["tools"] = session_tools
             session["tool_choice"] = "auto"
         await self._socket.send(json.dumps({"type": "session.update", "session": session}))
         if resume_handle:
             await self._read_until_session_updated()
+
+    async def update_session(self, instructions: Optional[str] = None,
+                             tools: Optional[Sequence[Dict[str, Any]]] = None) -> None:
+        """One mid-call session.update with only what changes. New function tools keep the session's built-ins and
+        MCP entries from open() beside them (a `tools` list replaces the whole list on the wire); an empty list sends
+        `"tools": []` with no tool_choice. `session.updated` stays dropped; an `error` surfaces as any other."""
+        session: Dict[str, Any] = {}
+        if instructions is not None:
+            session["instructions"] = _strip_cache_boundary(instructions)
+        if tools is not None:
+            _refuse_builtin_names(tools)
+            session_tools = self._session_tools(tools)
+            session["tools"] = session_tools
+            if session_tools:
+                session["tool_choice"] = "auto"
+        if not session:
+            return
+        # Never logged: the tools list carries the mcp entries' bearer tokens.
+        await self._socket.send(json.dumps({"type": "session.update", "session": session}))
+
+    def _session_tools(self, tools: Sequence[dict]) -> List[Dict[str, Any]]:
+        return [*self._builtins, *({"type": "function", **tool} for tool in tools), *self._mcp_entries]
 
     async def _read_until_session_updated(self) -> None:
         """A resume: read up to session.updated to learn whether the server honoured the id (it replays items
