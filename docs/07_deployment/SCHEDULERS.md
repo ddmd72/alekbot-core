@@ -5,6 +5,10 @@ All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using 
 Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
 `start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` (`cloudbuild-dev.yaml`).
 
+Handlers: a `Handler` row naming `WorkerHandler._handle_*` is a method on the handler; one naming a `*Task` is a runner
+service in `src/services/` registered by `build_worker_tasks` (`src/composition/worker_setup.py`). A feature whose
+dependencies are absent answers its refusal through `DisabledTask`.
+
 ## Two deadlines, do not confuse them
 
 The Scheduler attempt deadline above bounds only the **fan-out** call — the tick that

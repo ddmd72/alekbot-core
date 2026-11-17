@@ -18,7 +18,7 @@ Alek said a file was attached, and none arrived.
   (`MEDIA_CONTENT_TYPES`, `domain/messaging.py`) → `process()` on the channel's id, a returned URL as a message;
   everything else → `send_rich_content`. `ConversationHandler` calls it.
 - `application_graph` builds one `RichContentService` per platform, passes it to that platform's adapter factory
-  (a required argument), and registers the same instance on `UserNotificationService.register_platform_rich_content`.
+  (a required argument), and hands the same instance to `UserNotificationService` through that platform's `PlatformKit` (`composition/platform_kit.py`).
 - On Slack, a channel stored as a user id (`U…`) is turned into the DM id before an upload (a `📎` marker when no
   text went first), as `notify_file_bytes` already does.
 
