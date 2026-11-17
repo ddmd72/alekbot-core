@@ -26,6 +26,7 @@ from src.domain.voice_mode import VOICE_MODES_WITH_LIVE_TEXT, VoiceMode
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
+from src.domain.voice_relay_call_options import VoiceRelayCallOptions
 from src.domain.voice_resume import RESUME_CONFIG_FIELD
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.domain.voice_turn_ownership import TurnOwnership
@@ -211,7 +212,7 @@ class _CallState:
     pair_followup_started: bool = False
     # The provider session cannot change its tools mid-call: the tool is never offered on this call.
     pair_unsupported: bool = False
-    # Debug only (`debug_transcript_users`): this call logs `voice debug` lines, timed from `debug_t0` (loop time).
+    # Debug only (`VoiceRelayCallOptions.debug_transcript_users`): this call logs `voice debug` lines, timed from `debug_t0` (loop time).
     debug: bool = False
     debug_t0: float = 0.0
     debug_latch: str = AskState.IDLE.value
@@ -244,9 +245,8 @@ class VoiceSessionService:
         ask_tick_s: float = _ASK_TICK_S,
         remote_tool_wait_s: float = _REMOTE_TOOL_WAIT_S,
         web_pickup_max_wait_s: float = 0.0,
-        live_text_lag_ms: int = 0,
         live_text_tick_s: float = _LIVE_TEXT_TICK_S,
-        debug_transcript_users: frozenset = frozenset(),
+        call_options: Optional[VoiceRelayCallOptions] = None,
     ) -> None:
         """The provider, its turn ownership, voice and effort come per call from the session
         config's "voice" spec (VOICE_MULTI_PROVIDER_RFC §4.2). `reasoning_effort`, when given,
@@ -269,13 +269,11 @@ class VoiceSessionService:
         control link (it has subscribed to Lelik's audio), at most this long; a web call without a link waits all of
         it. 0 = no wait. Phone calls never wait.
 
-        `live_text_lag_ms`, `live_text_tick_s` (web calls only, interpreter and tutor mode calls with a control link,
-        VOICE_CALL_LIVE_TEXT_RFC §4.3): the audio, in ms, the live text waits behind the played audio, and the beat on
-        which text whose audio has been played is sent to the page.
+        `live_text_tick_s` (web calls only, interpreter and tutor mode calls with a control link,
+        VOICE_CALL_LIVE_TEXT_RFC §4.3): the beat on which text whose audio has been played is sent to the page.
 
-        `debug_transcript_users` (debug only, temporary; empty = off): a call of a listed user, in any mode, logs its
-        turn events, notes, tool calls and both sides' transcript text as `voice debug <fingerprint>:` INFO lines. Text
-        never appears in any other line, and nothing changes for other users."""
+        `call_options`: the relay's optional knobs read at boot, one bundle (`VoiceRelayCallOptions`: the live text's lag
+        behind the played audio, and the users whose calls log debug lines with speech text); None = all off."""
         self._session_factory = realtime_session_factory
         self._control_plane = control_plane
         self._alert_sink = alert_sink
@@ -294,9 +292,10 @@ class VoiceSessionService:
         self._ask_tick_s = ask_tick_s
         self._remote_tool_wait_s = remote_tool_wait_s
         self._web_pickup_max_wait_s = web_pickup_max_wait_s
-        self._live_text_lag_ms = live_text_lag_ms
         self._live_text_tick_s = live_text_tick_s
-        self._debug_transcript_users = frozenset(debug_transcript_users)
+        options = call_options or VoiceRelayCallOptions()
+        self._live_text_lag_ms = options.live_text_lag_ms
+        self._debug_transcript_users = frozenset(options.debug_transcript_users)
 
     def _in_greeting_guard(self, state: "_CallState") -> bool:
         # The browser's echo canceller adapts over the first second or two of far-end audio, and
@@ -688,7 +687,7 @@ class VoiceSessionService:
             logger.debug(f"voice call {fingerprint(state.ticket)}: ask: translate note inserted")
         self._apply_ask(state, step)
 
-    # ------------------------------------------------------------------ debug lines (`debug_transcript_users`)
+    # ------------------------------------------------------------------ debug lines (`VoiceRelayCallOptions`)
 
     @staticmethod
     def _debug(state: _CallState, message: str) -> None:

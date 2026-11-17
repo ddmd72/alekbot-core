@@ -62,6 +62,7 @@ from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.voice_audio_format import MULAW_8K, PCM16_24K, AudioFormat
+from src.domain.voice_relay_call_options import VoiceRelayCallOptions
 from src.domain.voice_session_spec import VoiceSessionSpec
 from src.handlers.call_control_handler import CallControlHandler
 from src.handlers.media_stream_handler import MediaStreamHandler
@@ -218,7 +219,7 @@ async def main() -> None:
         # thinking_cue deliberately not passed (off): with it on, Lelik's replies were cut
         # after ~0.4-0.8 s on the live calls of 2026-09-24 and stopped when the relay was
         # routed back to a revision without it. Cause not found yet; the clip stays shipped.
-        debug_transcript_users=debug_users,
+        call_options=VoiceRelayCallOptions(debug_transcript_users=debug_users),
     )
     handler = MediaStreamHandler(session_service=session_service)
 
@@ -247,8 +248,7 @@ async def main() -> None:
         # Web calls only (VOICE_CALL_CONTROL_CHANNEL_RFC §4.3): the phone service gets no hub.
         control_hub=control_hub,
         web_pickup_max_wait_s=_WEB_PICKUP_MAX_WAIT_S,
-        live_text_lag_ms=_live_text_lag_ms(),
-        debug_transcript_users=debug_users,
+        call_options=VoiceRelayCallOptions(live_text_lag_ms=_live_text_lag_ms(), debug_transcript_users=debug_users),
     )
     sfu_handler = SfuStreamHandler(session_service=web_session_service, dead_peer_timeout_s=_dead_peer_timeout_s())
     control_handler = CallControlHandler(control_hub)
