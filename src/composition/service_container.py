@@ -517,15 +517,10 @@ class ServiceContainer:
         """The shared services UserAgentFactory takes, as one typed bundle."""
         return AgentServices(
             session_store=self.session_store,
-            llm_port=self.llm_port,
-            claude_service=self.claude_service,
-            grok_service=self.grok_service,
-            openai_service=self.openai_service,
             embedding_service=self.embedding_service,
             repository=self.repository,
             config_service=self.config_service,
             biographical_context_service=self.biographical_context_service,
-            registry=self.registry,
             context_builder=self.context_builder,
             assembly_service=self.assembly_service,
             fact_write_service=self.fact_write_service,

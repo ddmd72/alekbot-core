@@ -12,15 +12,10 @@ from tests.unit.composition.test_service_container_wiring import container, fake
 # field -> the container attribute it carries; a field added to AgentServices without a line here fails the first test.
 _CONTAINER_ATTRIBUTE = {
     "session_store": "session_store",
-    "llm_port": "llm_port",
-    "claude_service": "claude_service",
-    "grok_service": "grok_service",
-    "openai_service": "openai_service",
     "embedding_service": "embedding_service",
     "repository": "repository",
     "config_service": "config_service",
     "biographical_context_service": "biographical_context_service",
-    "registry": "registry",
     "context_builder": "context_builder",
     "assembly_service": "assembly_service",
     "fact_write_service": "fact_write_service",
@@ -44,9 +39,8 @@ _CONTAINER_ATTRIBUTE = {
     "drive_note_service": "drive_note_service",
     "drive_notes_enabled": "drive_notes_enabled",
 }
-# Fields UserAgentFactory never read; it no longer stores them (assessment S1 owns dropping them from the bundle).
-_NOT_STORED_BY_THE_FACTORY = {"llm_port", "claude_service", "grok_service", "openai_service",
-                              "biographical_context_service", "registry"}
+# Not read by UserAgentFactory yet, so not stored on it (the bio-cycle slice makes it read this one).
+_NOT_STORED_BY_THE_FACTORY = {"biographical_context_service"}
 
 
 def test_each_field_carries_the_containers_own_object(container):  # noqa: F811
@@ -87,4 +81,4 @@ def test_the_test_kit_moves_service_keywords_into_the_bundle_and_keeps_the_rest(
 
     assert set(kwargs) == {"coordinator", "services"} and kwargs["coordinator"] is coordinator
     assert kwargs["services"].session_store is session_store
-    assert kwargs["services"].drive_notes_enabled is True and kwargs["services"].llm_port is None
+    assert kwargs["services"].drive_notes_enabled is True and kwargs["services"].biographical_context_service is None

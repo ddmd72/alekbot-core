@@ -19,7 +19,6 @@ from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_write_port import FactWritePort
 from ..ports.file_storage_port import FileStoragePort
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..ports.llm_port import LLMPort
 from ..ports.prompt_content_store import PromptContentStore
 from ..ports.recurrence_port import RecurrencePort
 from ..ports.repository import FactRepository
@@ -35,7 +34,6 @@ from ..services.email_search_service import EmailSearchService
 from ..services.file_conversion_service import FileConversionService
 from ..services.memory_fact_service import MemoryFactService
 from ..services.prompt_v3.prompt_assembly_service import PromptAssemblyService
-from ..services.provider_registry import ProviderRegistry
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..services.skill_service import SkillService
 from ..services.task_indexing_service import TaskIndexingService
@@ -48,15 +46,10 @@ class AgentServices:
     """The shared services every user's agents are built from; one per process, built by the container."""
 
     session_store: SessionStore
-    llm_port: LLMPort
-    claude_service: LLMPort
-    grok_service: Optional[LLMPort]
-    openai_service: Optional[LLMPort]
     embedding_service: EmbeddingService
     repository: FactRepository
     config_service: ConfigurationService
     biographical_context_service: BiographicalContextService
-    registry: ProviderRegistry
     context_builder: AgentContextBuilder
     assembly_service: Optional[PromptAssemblyService]
     fact_write_service: FactWritePort
