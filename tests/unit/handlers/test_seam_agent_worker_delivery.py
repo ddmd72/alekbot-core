@@ -9,9 +9,12 @@ and delivered through `/worker` with `world.run`.
 Not here (P13 inventory §4): the raw report link (no live path posts it), the `execute_deep_research_claude` branch
 (no producer), the drive copy line.
 """
+import hashlib
 
 import pytest
 
+from src.domain.deep_research_drive_copy import DEEP_RESEARCH_REPORT_CONTEXT_KEY, marker_query
+from src.services.deep_research_delivery import deliver_deep_research
 from tests.support.redelivery_world import Post
 from tests.support.seam_world import (
     ACCOUNT, OTHER_SLACK, PRIMARY, TELEGRAM, USER, SeamWorld, docx, fails, page, pdf, require, says,
@@ -171,3 +174,31 @@ async def test_a_failed_job_is_reported_in_the_chat_it_came_from(world, intent, 
     assert world.history("u1:C1") == []
 
 
+async def test_a_finished_research_jobs_report_reaches_the_chat_it_came_from(monkeypatch):
+    """The deep-research Cloud Run Job hands its report to `deliver_deep_research` with the raw task queue, the origin
+    taken from the per-channel session id and the job id as the report's dedup id (`job_main.py`); the named report task
+    carries the origin and the drive-copy marker, and its page reaches that origin, never the primary."""
+    world = SeamWorld(monkeypatch)
+    await world.set_primary(*PRIMARY)
+
+    handed_off = await deliver_deep_research(
+        result_text="Findings on heat pumps in Springfield.", user_id=USER, account_id=ACCOUNT, query=QUERY,
+        task_queue=world.queue, session_id="u1:7001", channel_id_override="7001", platform_override="telegram",
+        report_dedup_id="job-1")
+
+    assert handed_off is True
+    [request] = world.requests("agent_execution")
+    assert request.name == "agent_execution-" + hashlib.sha256(b"deep_research_report:job-1").hexdigest()[:32]
+    context = request.body["context"]
+    assert (context["session_id"], context["origin_channel_id"], context["origin_platform"]) == (
+        "u1:7001", "7001", "telegram")
+    assert context[DEEP_RESEARCH_REPORT_CONTEXT_KEY] == marker_query(QUERY)
+
+    world.agent("html_page_generator_agent").play(page("heat-pumps.html", "Heat pumps in Springfield.html"))
+    await world.run(request.body)
+
+    require(not world.unscripted(), "every agent call was scripted")
+    assert [label for label, _ in world.docs_to(*TELEGRAM)] == ["Heat pumps in Springfield.html"]
+    assert world.posts_to(*PRIMARY) == []
+    [key] = [k for k in world.stored_keys() if k.startswith("docs/u1/")]
+    assert document_note(world.history("u1:7001"), "Heat pumps in Springfield.html") == key
