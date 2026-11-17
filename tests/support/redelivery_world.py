@@ -494,6 +494,11 @@ def _consumers() -> Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]]:
 
 # ----------------------------------------------------------------------------- the world
 
+# `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
+                "deep_research_fetch", "prompt_content_store")
+
+
 class RedeliveryWorld:
     """Everything a redelivered `/worker` task touches, on one `EvalDb` (module docstring). `handler_overrides` are
     keywords of `WorkerHandler` that replace or add to the defaults (`email_review=`, `video_registry=`,
@@ -525,11 +530,16 @@ class RedeliveryWorld:
             agent_factory=self.factory, user_repo=self.users,
             task_dispatch=self.dispatch, reminders_service=self.reminders,
             task_claims=self.claims, daily_review_marks=self.marks,
-            tasks=build_worker_tasks(notes_port=self.notes, user_repo=self.users,
-                                     ensure_agents=self.factory.ensure_agents_for_user,
-                                     notification_service=self.notifier, alert_sink=None),
         )
+        moved: Dict[str, Any] = {}
+        for name in _RUNNER_DEPS:
+            if name in handler_overrides:
+                moved[name] = handler_overrides.pop(name)
         keywords.update(handler_overrides)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, task_dispatch=keywords["task_dispatch"],
+            **{name: moved.get(name) for name in _RUNNER_DEPS})
         self.handler = WorkerHandler(**keywords)
 
     async def set_primary_channel(self) -> None:

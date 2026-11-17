@@ -12,6 +12,7 @@ from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
 from src.composition.connector_registry import ConnectorRegistry
+from src.composition.worker_setup import build_worker_tasks
 from tests.support.oauth_credentials_store import mirror_get
 
 
@@ -21,11 +22,17 @@ def _worker(delivered=True):
     notification = AsyncMock()
     notification.notify.return_value = MagicMock(delivered=delivered, sent=delivered,
                                                      error=None if delivered else "boom")
+    agent_factory = AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
+        agent_factory=agent_factory,
         user_repo=MagicMock(),
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=None,
+            video_registry=None, quota_service=None, media_storage=None, link_service=None,
+            short_link_service=None, deep_research_fetch=None, prompt_content_store=None),
     )
     return worker, notification
 
@@ -167,17 +174,23 @@ class TestDeliveryFailureNotifier:
     async def test_openai_webhook_passes_failure_notification(self):
         """The OpenAI delivery now runs in the webhook's worker task (S1b W): its notifier is passed on."""
         service = AsyncMock()
+        agent_factory = AsyncMock()
+        task_dispatch = AsyncMock()
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
             notification_service=service, consolidation_service=None,
-            agent_factory=AsyncMock(),
-            user_repo=MagicMock(), task_dispatch=AsyncMock(),
-            media_storage=MagicMock(), deep_research_fetch=AsyncMock(return_value={"output_text": "t"}),
+            agent_factory=agent_factory,
+            user_repo=MagicMock(), task_dispatch=task_dispatch,
+            tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=service, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
+            short_link_service=None, deep_research_fetch=AsyncMock(return_value={"output_text": "t"}), prompt_content_store=None),
         )
         payload = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
                    "job_id": "r1", "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1",
                    "origin_platform": ""}
-        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as d:
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new_callable=AsyncMock) as d:
             await worker._dispatch(payload, {})
         assert d.call_args.kwargs["failure_notification"] is service
 
@@ -199,11 +212,17 @@ def _ordered_worker(**kw):
         log.append("ensure")
 
     factory.ensure_agents_for_user.side_effect = _ensure
+    video_registry = kw.pop("video_registry", None)
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
         agent_factory=factory,
-        user_repo=MagicMock(), **kw,
+        user_repo=MagicMock(),
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=kw.get("task_dispatch"),
+            video_registry=video_registry, quota_service=None, media_storage=None, link_service=None,
+            short_link_service=None, deep_research_fetch=None, prompt_content_store=None), **kw,
     )
     return worker, log
 

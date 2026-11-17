@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from quart import Quart
 
+from src.composition.worker_setup import build_worker_tasks
 from src.handlers.worker_handler import WorkerHandler
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
@@ -57,13 +58,20 @@ def _completed_payload(session_id: str) -> dict:
 def _worker(media_storage=None, task_dispatch=None, notification=None):
     notification = notification or AsyncMock()
     notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
+    agent_factory = AsyncMock()
+    task_dispatch = task_dispatch or AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
+        agent_factory=agent_factory,
         user_repo=MagicMock(),
-        task_dispatch=task_dispatch or AsyncMock(), media_storage=media_storage,
-        deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"}),
+        task_dispatch=task_dispatch,
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=media_storage, link_service=None,
+            short_link_service=None, prompt_content_store=None,
+            deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"})),
     )
     return worker, notification
 
@@ -82,7 +90,7 @@ class TestOpenAIWebhookChannelPropagation:
         task_dispatch = AsyncMock()
         worker, _ = _worker(media_storage=media_storage, task_dispatch=task_dispatch)
 
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(), {})
 
@@ -113,7 +121,7 @@ class TestOpenAIWebhookChannelPropagation:
     async def test_legacy_session_id_without_colon_yields_none(self):
         """Legacy session_id (pre-per-channel-sessions) must not crash; channel=None."""
         worker, _ = _worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(session_id=_USER), {})  # no colon
         assert status == 200
@@ -123,7 +131,7 @@ class TestOpenAIWebhookChannelPropagation:
     async def test_empty_session_id_yields_none(self):
         """Empty session_id (no metadata) must not crash; channel=None."""
         worker, _ = _worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(session_id=""), {})
         assert status == 200

@@ -38,7 +38,7 @@ class VideoGenerationPort(ABC):
         ClaudeDeepResearchAdapter.create_interaction() triggering its Cloud Run Job.
         origin_platform is carried through to delivery so the finished video reaches
         the same channel the request came from, not the user's primary/last-active
-        channel — see WorkerHandler._handle_video_generation_polling.
+        channel — see VideoGenerationPollingTask (services/video_generation_polling_task.py).
         Returns request_id.
         """
 

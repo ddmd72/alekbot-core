@@ -373,6 +373,11 @@ class TaskRequest:
     scheduled: bool
 
 
+# `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
+                "deep_research_fetch", "prompt_content_store")
+
+
 class SeamWorld:
     """The module docstring's world. `worker_overrides` are `WorkerHandler` keywords added to or replacing the defaults
     (`email_review=`, `video_registry=`, `deep_research_fetch=`, ...)."""
@@ -415,13 +420,17 @@ class SeamWorld:
         keywords: Dict[str, Any] = dict(
             agent_worker_handler=self.agent_worker, email_indexing_service=None, notification_service=self.notifier,
             consolidation_service=None, agent_factory=self.factory,
-            user_repo=self.users, task_dispatch=self.dispatch, media_storage=self.media_store,
-            link_service=self.links, reminders_service=self.reminders, task_claims=self.claims,
-            tasks=build_worker_tasks(notes_port=self.notes, user_repo=self.users,
-                                     ensure_agents=self.factory.ensure_agents_for_user,
-                                     notification_service=self.notifier, alert_sink=None),
+            user_repo=self.users, task_dispatch=self.dispatch, reminders_service=self.reminders, task_claims=self.claims,
         )
+        moved: Dict[str, Any] = dict(media_storage=self.media_store, link_service=self.links)
+        for name in _RUNNER_DEPS:
+            if name in worker_overrides:
+                moved[name] = worker_overrides.pop(name)
         keywords.update(worker_overrides)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, task_dispatch=keywords["task_dispatch"],
+            **{name: moved.get(name) for name in _RUNNER_DEPS})
         self.handler = WorkerHandler(**keywords)
         self._agents: Dict[str, StandInAgent] = {}
         self._runs = 0

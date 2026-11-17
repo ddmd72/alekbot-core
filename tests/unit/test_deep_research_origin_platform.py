@@ -10,6 +10,7 @@ import pytest
 from quart import Quart
 
 import job_main
+from src.composition.worker_setup import build_worker_tasks
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
 from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.agents.deep_research_agent import DeepResearchAgent
@@ -149,13 +150,20 @@ def _dr_worker(response=None, notification=None, task_claims=None):
     notification = notification or AsyncMock()
     if notification.notify.side_effect is None:
         notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
+    agent_factory = AsyncMock()
+    task_dispatch = AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
         notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
-        user_repo=MagicMock(), task_dispatch=AsyncMock(),
-        media_storage=MagicMock(), task_claims=task_claims,
-        deep_research_fetch=AsyncMock(return_value=response or {"output_text": "text", "model": "m"}),
+        agent_factory=agent_factory,
+        user_repo=MagicMock(), task_dispatch=task_dispatch,
+        task_claims=task_claims,
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
+            short_link_service=None, prompt_content_store=None,
+            deep_research_fetch=AsyncMock(return_value=response or {"output_text": "text", "model": "m"})),
     )
     return worker, notification
 
@@ -179,7 +187,7 @@ class TestWebhookPlatform:
         assert payload["origin_platform"] == "telegram" and payload["session_id"] == "u:C1"
 
         worker, _ = _dr_worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as deliver:
             _, status = await worker._dispatch({"task_type": "deep_research_webhook_event", **payload}, {})
         assert status == 200
@@ -197,7 +205,7 @@ class TestWebhookPlatform:
         payload = queue.enqueue_worker_task.await_args.kwargs["payload"]
 
         worker, _ = _dr_worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as deliver:
             _, status = await worker._dispatch({"task_type": "deep_research_webhook_event", **payload}, {})
         assert status == 200
@@ -206,7 +214,7 @@ class TestWebhookPlatform:
     async def test_absent_platform_in_an_old_payload_is_no_override(self):
         worker, _ = _dr_worker()
         event = {k: v for k, v in _dr_event().items() if k != "origin_platform"}
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as deliver:
             await worker._dispatch(event, {})
         assert deliver.call_args.kwargs["platform_override"] is None
@@ -376,7 +384,7 @@ class TestDedup:
         worker, _ = _dr_worker(task_claims=dedup)
         delivery = MagicMock(spec=CloudTaskDelivery)
         delivery.task_name = "projects/p/tasks/deep_research_webhook_event-r1"
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError):
                 await worker.handle(_dr_event(), delivery)
@@ -408,7 +416,7 @@ class TestEmptyUserAndIncomplete:
     async def test_incomplete_notifies_origin_channel(self):
         worker, notification = _dr_worker(response={
             "metadata": _MD2, "incomplete_details": {"reason": "max_output_tokens"}})
-        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as deliver:
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new_callable=AsyncMock) as deliver:
             _, status = await worker._dispatch(_dr_event("response.incomplete", job_id="r4"), {})
         assert status == 200
         kw = notification.notify.await_args.kwargs
