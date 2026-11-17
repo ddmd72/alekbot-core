@@ -617,12 +617,9 @@ def _cache(store, account=ACC):
     return store.db.collection(CONTEXT_COLLECTION).docs.get(account)
 
 
-def _repo_with_cache_service(store):
-    service = BiographicalContextService(None)
-    repo = FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder,
-                                   biographical_context_service=service)
-    service.set_repository(repo)
-    return repo
+def _cache_refresher(store):
+    """The production refresher (the context service) over the real repository on the store."""
+    return BiographicalContextService(FirestoreFactRepository(store.db, make_env_config(), embedding_service=store.embedder))
 
 
 async def _seed_account_for_cache(store, account=ACC):
@@ -639,9 +636,9 @@ async def _seed_account_for_cache(store, account=ACC):
 async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
     await _seed_account_for_cache(store)
     await _seed_account_for_cache(store, OTHER)
-    repo = _repo_with_cache_service(store)
+    refresher = _cache_refresher(store)
     started = datetime.now(timezone.utc)
-    await repo.refresh_biographical_context_cache(ACC)
+    await refresher.refresh_cache(ACC)
     cache = _cache(store)
     assert [f["text"] for f in cache["biographical_facts"]] == [f"{ACC} bio critical", f"{ACC} bio low",
                                                                 f"{ACC} health high"]
@@ -655,28 +652,28 @@ async def test_refresh_rebuilds_the_cache_from_the_current_facts(store):
 
 async def test_refresh_of_an_unchanged_account_writes_the_same_content(store):
     await _seed_account_for_cache(store)
-    repo = _repo_with_cache_service(store)
-    await repo.refresh_biographical_context_cache(ACC)
+    refresher = _cache_refresher(store)
+    await refresher.refresh_cache(ACC)
     first = copy.deepcopy(_cache(store))
-    await repo.refresh_biographical_context_cache(ACC)
+    await refresher.refresh_cache(ACC)
     second = _cache(store)
     assert {k: v for k, v in second.items() if k != "refreshed_at"} == {k: v for k, v in first.items() if k != "refreshed_at"}
 
 
 async def test_refresh_never_raises_and_keeps_the_previous_cache_on_a_failure(store):
     await _seed_account_for_cache(store)
-    repo = _repo_with_cache_service(store)
-    await repo.refresh_biographical_context_cache(ACC)
+    refresher = _cache_refresher(store)
+    await refresher.refresh_cache(ACC)
     before = copy.deepcopy(_cache(store))
     store.db.collection(FACTS).fail = RuntimeError("backend down")
-    await repo.refresh_biographical_context_cache(ACC)
+    assert await refresher.refresh_cache(ACC) is None
     assert _cache(store) == before
 
 
 async def test_refresh_holds_at_most_facts_limit_facts(store):
     for i in range(4):
         await store.repo.add_fact(make_fact(f"bio {i}", domain=FactDomain.BIOGRAPHICAL, age_days=i))
-    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC, facts_limit=2)
+    await _cache_refresher(store).refresh_cache(ACC, facts_limit=2)
     assert _cache(store)["facts_count"] == 2
 
 
@@ -687,7 +684,7 @@ async def test_refresh_keeps_directives_separately_up_to_15_highest_priority_fir
                                             context_priority=priority, age_days=i))
     await store.repo.add_fact(make_fact("directive low", domain=FactDomain.AGENT_DIRECTIVE,
                                         context_priority=ContextPriority.LOW, age_days=99))
-    await _repo_with_cache_service(store).refresh_biographical_context_cache(ACC)
+    await _cache_refresher(store).refresh_cache(ACC)
     cache = _cache(store)
     assert len(cache["directives"]) == 15 and "directive low" not in [d["text"] for d in cache["directives"]]
     assert (cache["facts_count"], cache["principles_count"]) == (0, 0)
