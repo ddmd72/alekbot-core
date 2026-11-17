@@ -1,6 +1,7 @@
 """A mid-call session update on xAI, at the websocket boundary (the interpreter's language pair,
 decisions/lelik_voice_modes.md): one `session.update` with only what changes; a tools update keeps the session's
-built-ins and MCP entries from open() beside the new function tools."""
+built-ins and MCP entries from open() beside the new function tools. The shape is asserted here by `_validate`; it is a
+candidate contract rule for `tests/contracts/adapter_contracts.py` once the owner confirms it."""
 import json
 from unittest.mock import AsyncMock
 
@@ -8,7 +9,6 @@ import pytest
 
 from src.adapters.xai_realtime_adapter import XaiRealtimeAdapter
 from src.domain.remote_tool_server import RemoteToolServer
-from tests.contracts.adapter_contracts import XAI_REALTIME_MID_CALL_SESSION_UPDATE
 
 _TOKEN = "token-placeholder-0001"
 _SERVER = RemoteToolServer("server_one", "https://mcp.example.test/mcp", "A placeholder server.", ("tool_a",),
@@ -50,9 +50,34 @@ def _entry(server: RemoteToolServer) -> dict:
             "authorization": server.token}
 
 
+_MID_CALL_KEYS = {"instructions", "tools", "tool_choice"}
+
+
 def _validate(update: dict, functions=(), entries=()) -> None:
-    XAI_REALTIME_MID_CALL_SESSION_UPDATE.validate("xai_realtime", {
-        **update, "expected_function_names": list(functions), "expected_mcp_entries": list(entries)})
+    """The shape of a mid-call session.update: one session.update carrying only what changes; a tools list is
+    built-ins (bare), then the new function tools, then the mcp entries from open(), verbatim; tool_choice 'auto' when
+    the list is non-empty and absent when it is empty."""
+    assert update.get("type") == "session.update", "a mid-call update is one session.update"
+    session = update["session"]
+    assert session and set(session) <= _MID_CALL_KEYS, f"only what changes; got {sorted(session or {})}"
+    if "instructions" in session:
+        assert "<!-- CACHE_BOUNDARY -->" not in session["instructions"], "the cache boundary must be stripped"
+    if "tools" not in session:
+        assert "tool_choice" not in session, "no tool_choice without a tools list"
+        return
+    tools = session["tools"]
+    builtins = [t for t in tools if t.get("type") in ("web_search", "x_search")]
+    functions_sent = [t for t in tools if t.get("type") == "function"]
+    mcp = [t for t in tools if t.get("type") == "mcp"]
+    assert len(builtins) + len(functions_sent) + len(mcp) == len(tools), "only built-ins, functions and mcp entries"
+    assert tools == [*builtins, *functions_sent, *mcp], "built-ins, then functions, then mcp entries, as open() sends"
+    assert all(set(t) == {"type"} for t in builtins), "built-ins stay bare"
+    assert [t.get("name") for t in functions_sent] == list(functions), "the function tools are the new ones, in order"
+    assert mcp == list(entries), "the mcp entries from open() are kept verbatim"
+    if tools:
+        assert session.get("tool_choice") == "auto", "tool_choice 'auto' when tools are offered"
+    else:
+        assert "tool_choice" not in session, "an empty tools list carries no tool_choice"
 
 
 async def test_an_instructions_update_sends_only_the_instructions():
@@ -156,8 +181,8 @@ async def test_an_update_before_open_raises():
         await adapter.update_session(tools=[])
 
 
-class TestTheContractRuleCatches:
-    """The rule itself fails a shape the adapter must never send."""
+class TestTheShapeCheckCatches:
+    """The shape check itself fails a shape the adapter must never send."""
 
     def test_a_session_field_that_did_not_change(self):
         with pytest.raises(AssertionError):
