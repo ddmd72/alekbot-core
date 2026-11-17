@@ -173,23 +173,33 @@ class ExecuteReminderTask:
             )
             status = "failed_final"
 
-        # Stamp idempotency FIRST, then remove a fired one-time note. Order
-        # matters: if we crash between the two, a Cloud Tasks retry sees
-        # last_delivered_due == due_at and short-circuits (already_delivered)
-        # rather than re-delivering.
+        # Stamp idempotency FIRST: a crash before it re-runs the turn (accepted residual); after it, a Cloud Tasks
+        # retry short-circuits (already_delivered). Nothing after the stamp is retryable, so its errors are logged.
         await self._notes_port.mark_fire_delivered(note_id=note_id, due_at=due_at)
+        if not result.delivered and not result.sent:
+            # Before the delete, so a failing delete never costs the owner the notice; once per fire (the stamp).
+            try:
+                notice_sent = await self._notification.notify_ui_notice(
+                    user_id, user_profile.account_id, UIMessage.REMINDER_NOT_RUN, name=note.text)
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s notice_sent=%s; not retried",
+                    status, note_id, user_id[:8], notice_sent,
+                )
+            except Exception as exc:
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s notice failed: %s; not retried",
+                    status, note_id, user_id[:8], exc, exc_info=True,
+                )
         if note.recurrence is None:
             # One-time reminder: claimed (not deleted) at fire-time so its
             # content survived for this delivery; remove it now that it fired.
-            await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
-        if not result.delivered and not result.sent:
-            # After the stamp: a Cloud Tasks re-run of this task answers already_delivered, so the owner hears it once.
-            notice_sent = await self._notification.notify_ui_notice(
-                user_id, user_profile.account_id, UIMessage.REMINDER_NOT_RUN, name=note.text)
-            logger.error(
-                "[Worker] execute_reminder: %s note=%s user=%s notice_sent=%s; not retried",
-                status, note_id, user_id[:8], notice_sent,
-            )
+            try:
+                await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
+            except Exception as exc:
+                logger.error(
+                    "[Worker] execute_reminder: %s note=%s user=%s delete after the stamp failed: %s",
+                    status, note_id, user_id[:8], exc, exc_info=True,
+                )
         logger.info(
             "[Worker] execute_reminder: %s note=%s user=%s due=%s",
             status, note_id, user_id[:8], due_at.isoformat(),

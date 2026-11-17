@@ -7,6 +7,7 @@ On the redelivery world (`tests/support/redelivery_world.py`): the real `WorkerH
 fire that was not retried. The turn cap is what `SmartResponseAgent` answers when its tool loop ends without an answer
 (`TURN_CAP_ERROR`).
 """
+import logging
 from datetime import timedelta
 from typing import Any
 
@@ -93,6 +94,52 @@ class TestTurnCap:
 
         assert second == [({"status": "already_delivered"}, 200)]
         assert len(world.router.messages) == 1 and len(world.texts) == 1
+
+
+class TestAfterTheStamp:
+    """Nothing after the stamp is retryable: a retry would answer `already_delivered` and never send the notice."""
+
+    async def test_a_delete_that_raises_still_sends_the_notice_once_and_answers_2xx(self, monkeypatch, caplog):
+        world = await _world()
+        world.router.always(failed("provider down"))
+        note_id, payload = await _fire(world, monkeypatch)
+
+        async def broken_delete(**kwargs: Any) -> None:
+            raise RuntimeError("delete lost")
+
+        monkeypatch.setattr(world.notes, "delete_note", broken_delete)
+        with caplog.at_level(logging.ERROR):
+            outcomes = await deliver_with_retry(world.handler, payload, "t-1")
+
+        assert outcomes == [({"status": "failed_final"}, 200)]
+        assert world.texts == [_notice(LanguageCode.EN)] and len(world.router.messages) == 1
+        assert world.note_docs[note_id]["last_delivered_due"] == T0
+        assert any(r.levelno == logging.ERROR and "delete after the stamp failed: delete lost" in r.getMessage()
+                   for r in caplog.records)
+
+    async def test_a_notice_that_raises_answers_2xx_logs_an_error_and_still_deletes_the_note(self, monkeypatch, caplog):
+        world = await _world()
+        world.router.always(failed(TURN_CAP_ERROR))
+        note_id, payload = await _fire(world, monkeypatch)
+
+        resolve = world.notifier.resolve_channel
+        calls = []
+
+        async def broken_after_the_turn(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            if len(calls) > 1:                              # the turn's own resolve works; the notice's raises
+                raise RuntimeError("state store down")
+            return await resolve(*args, **kwargs)
+
+        monkeypatch.setattr(world.notifier, "resolve_channel", broken_after_the_turn)
+        with caplog.at_level(logging.ERROR):
+            outcomes = await deliver_with_retry(world.handler, payload, "t-1")
+
+        assert outcomes == [({"status": "turn_cap_final"}, 200)]
+        assert world.posts == [] and len(world.router.messages) == 1
+        assert note_id not in world.note_docs
+        assert any(r.levelno == logging.ERROR and "notice failed: state store down" in r.getMessage()
+                   for r in caplog.records)
 
 
 class TestStartedTurnIsFinal:

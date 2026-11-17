@@ -41,6 +41,9 @@ did not run. Making the failures final without telling the owner would turn a re
    per-cause variants) in the owner's UI language, sent literally (the name is stored text) to the channel
    `notify()` would have used (primary, else last active). It is not written to history and does not claim the
    system's voice. A notice that fails to post is logged; the outcome stays final. The daily review gets no notice.
+   **Nothing after the stamp is retryable:** the notice goes out before a one-time note is deleted, and an error in
+   the notice or the delete is logged at ERROR while the answer stays the final 2xx (a retry would only answer
+   `already_delivered` and never send the notice). A one-time note whose delete failed stays stored, stamped.
 5. **`suppress_transient_retry` stays on** for both tasks: a whole-execution retry would re-run every tool call of
    the turn. The per-call retry in `_call_llm` and Smart's provider rotation still cover a provider blip.
 
@@ -59,6 +62,8 @@ did not run. Making the failures final without telling the owner would turn a re
 
 - A provider outage that outlasts the per-call retry and the provider rotation now loses that fire instead of being
   retried by the queue; the owner is told it did not run. A daily review lost the same way is ops-visible only.
+- Known residual, accepted: if the stamp itself (`mark_fire_delivered`) raises, the answer is a 500 and the started
+  turn runs again.
 - A conditional reminder ("tell me only if X") that ends with an empty answer posts the notice on every such fire.
 - The deep-research notice (`DeepResearchNoticeSender`) keeps its own rule: 5xx only when nothing was sent.
 - Tests: `tests/unit/handlers/test_worker_retry_after_effect.py` (the four P15-D1 pins, now passing),
