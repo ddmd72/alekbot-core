@@ -1024,7 +1024,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_setup=task_setup_service,
         task_indexing=container.task_indexing,
         reminders_service=_reminders_service,
-        billing_webhook=_alert_webhook,
         companion_extraction=companion_extraction_service,
         drive_sync_scheduler=_drive_sync_scheduler,
         fact_lifecycle_sweep=_fact_lifecycle_sweep,

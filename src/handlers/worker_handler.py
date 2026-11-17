@@ -72,8 +72,6 @@ from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.exceptions import PROVIDER_OUTAGE_TYPES, OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
-from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.worker_task import WorkerTask
 from ..handlers.agent_worker_handler import AgentWorkerHandler
 from ..services.deep_research_delivery import NotificationPort
@@ -123,7 +121,6 @@ class WorkerHandler:
         task_setup: "Optional[TaskSetupService]" = None,
         task_indexing: "Optional[TaskIndexingService]" = None,
         reminders_service: Optional[RemindersService] = None,
-        billing_webhook: Any = None,  # SlackWebhookAdapter
         companion_extraction: "Optional[CompanionExtractionService]" = None,
         drive_sync_scheduler: "Optional[DriveSyncSchedulerService]" = None,
         task_claims: "Optional[TaskClaimStore]" = None,
@@ -157,7 +154,6 @@ class WorkerHandler:
         self._task_setup = task_setup
         self._task_indexing = task_indexing
         self._reminders_service = reminders_service
-        self._billing_webhook = billing_webhook
         self._companion_extraction = companion_extraction
         self._drive_sync_scheduler = drive_sync_scheduler
         own: dict[str, WorkerTask] = {
@@ -497,25 +493,6 @@ class WorkerHandler:
 
         logger.info(f"[Worker] sweep_companion_consolidation complete: swept={len(session_ids)}")
         return {"swept": len(session_ids)}, 200
-
-    async def _empty_answer_final(
-        self, path: str, user_id: str, note_id: Optional[str] = None,
-    ) -> None:
-        """A background turn ended with no answer: final, never retried (one ERROR line + one ops alert).
-
-        No content in either; the caller then takes its success path and answers 200."""
-        logger.error(
-            "[Worker] background_empty_answer path=%s note=%s user=%s",
-            path, note_id, user_id[:8],
-            extra={"event": "background_empty_answer", "path": path, "note_id": note_id,
-                   "user_id": user_id[:8]},
-        )
-        if self._billing_webhook is None:
-            return
-        try:
-            await self._billing_webhook.post(empty_answer_alert(path, user_id, note_id))
-        except Exception as exc:
-            logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
 
     # ------------------------------------------------------------------
     # MS To Do task handlers
