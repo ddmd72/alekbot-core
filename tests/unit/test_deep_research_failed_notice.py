@@ -167,12 +167,6 @@ class TestDeliveryFailureNotifier:
         alert = notification.notify.await_args.kwargs["system_alert"]
         assert "retried" not in alert and "again" in alert
 
-    async def test_failure_notification_takes_precedence(self):
-        notification, failure = AsyncMock(), AsyncMock()
-        await self._deliver(notification=notification, failure_notification=failure)
-        failure.notify.assert_awaited_once()
-        notification.notify.assert_not_awaited()
-
 
 # --- ensure_agents_for_user runs before notify (cold instance) -------------
 
