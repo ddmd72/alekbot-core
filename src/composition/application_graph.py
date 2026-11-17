@@ -44,6 +44,7 @@ from src.composition.memory_search_setup import build_memory_search
 from src.composition.agents_setup import build_agents
 from src.composition.integrations_setup import build_integrations
 from src.composition.memory_setup import build_memory
+from src.composition.background_jobs_setup import build_background_jobs
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.fact_profile_setup import LazyAtlas
 from src.composition.document_service_setup import build_document_backends
@@ -57,13 +58,11 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.composition.worker_setup import build_worker_tasks
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
-from src.domain.notification_kind import NotificationKind as _NotificationKind
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
-from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.ports.cipher_port import CipherPort
 from src.ports.html_renderer_port import HtmlRendererPort
 from src.services.agent_fallback_service import AgentFallbackService
@@ -71,7 +70,6 @@ from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.cabinet_fact_service import CabinetFactService
 from src.services.call_text_file_service import CallTextFileService
-from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.fact_answer_service import FactAnswerService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.invite_code_service import InviteCodeService
@@ -79,7 +77,6 @@ from src.services.language_preference_service import LanguagePreferenceService
 from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.provider_registry import ProviderRegistry
-from src.services.reminders_service import RemindersService
 from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
@@ -315,25 +312,13 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     app, html_renderer, slack_kit = notifications.slack_app, notifications.html_renderer, notifications.slack_kit
     notification_channel_factory, notification_service = notifications.channel_factory, notifications.service
 
-    # Agent worker handler: notification + media + task_queue + doc_delivery are wired at construction.
-    logger.info("🔧 Initializing Agent Worker Handler...")
-    agent_worker_handler = AgentWorkerHandler(
-        coordinator=coordinator,
-        notification_service=notification_service,
-        media_storage=gcs_media_adapter,
-        task_queue=agent_task_queue,
-        doc_delivery_service=doc_delivery_service,
-        link_service=file_link_service,
-        short_link_service=short_link_service,
-        # Opt-in copy of deep research reports to the user's drive (decisions/deep_research_drive_copy.md).
-        # Always wired: with no drive on this deployment, an opted-in user gets the "not connected" line.
-        deep_research_drive_copy=DeepResearchDriveCopyService(
-            users=user_repo,
-            drive=container.user_drive_service,
-            localization=_localization,
-            language=_language_service,
-        ),
-    )
+    jobs = build_background_jobs(db_client, env_config, container=container, coordinator=coordinator,
+                                 notification_service=notification_service, task_queue=agent_task_queue,
+                                 delivery=delivery, user_repo=user_repo, languages=languages)
+    agent_worker_handler, _task_dispatch_service, _reminders_service = (
+        jobs.agent_worker_handler, jobs.task_dispatch, jobs.reminders)
+    deep_research_dedup_store = jobs.deep_research_dedup_store
+
     companions = build_companions(db_client, env_config, container=container, user_repo=user_repo,
                                   quota_service=quota_service, extraction_queue=companion_extraction_queue,
                                   notification_service=notification_service, languages=languages)
@@ -369,17 +354,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     _consolidation_service, _fact_lifecycle_sweep = memory.consolidation_service, memory.fact_lifecycle_sweep
     _fact_answer_service, _interactive_choice = memory.fact_answers, memory.interactive_choice
     _fact_review_service, cabinet_facts = memory.fact_review, memory.cabinet_facts
-    _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
-    _reminders_service = RemindersService(
-        notes_port=container.notes_adapter,
-        user_repo=user_repo,
-        task_dispatch=_task_dispatch_service,
-        recurrence=container.recurrence_adapter,
-        # Derived from NOTIFICATION_SLA here, in the composition root, because
-        # services cannot import the infrastructure layer (REQ-ARCH-22).
-        dispatch_deadline_s=dispatch_deadline_s(_NotificationKind.REMINDER),
-    ) if (container.notes_adapter and _task_dispatch_service) else None
-
     # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.
     # Built once here (composition root) and injected into ConversationHandler —
     # it no longer assembles its own fallback service from raw parts (that was a
@@ -388,13 +362,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     _fallback_service = AgentFallbackService(
         coordinator=coordinator,
         alert_webhook=_alert_webhook,
-    )
-
-    # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
-    deep_research_dedup_store = FirestoreDedupStore(
-        db_client=db_client,
-        collection_name=env_config.worker_task_dedup_collection,
-        ttl_seconds=259200,
     )
 
     logger.info("🔌 Initializing Slack Adapter...")
