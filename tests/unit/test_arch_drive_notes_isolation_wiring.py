@@ -17,8 +17,8 @@ from src.services.consolidation_service import ConsolidationService
 from src.services.search_enrichment_service import SearchEnrichmentService
 
 _ROOT = Path(__file__).resolve().parents[2]
-_ROOTS = ["main.py", "src/composition/application_graph.py", "src/composition/service_container.py",
-          "src/composition/user_agent_factory.py", "src/composition/mcp_setup.py"]
+# Every composition module, not a fixed list: the builder split (S6) moved constructions into *_setup.py modules.
+_ROOTS = ["main.py", *sorted(str(p.relative_to(_ROOT)) for p in (_ROOT / "src" / "composition").glob("*.py"))]
 _MEMORY_SIDE_FILES = ["src/services/consolidation_service.py",
                       "src/agents/consolidation_agent.py", "src/services/biographical_context_service.py",
                       "src/services/search_enrichment_service.py",
@@ -42,6 +42,13 @@ def _names(node: ast.AST):
 
 def test_every_composition_root_exists():
     assert [r for r in _ROOTS if not (_ROOT / r).exists()] == []
+
+
+def test_the_roots_hold_every_memory_side_construction():
+    """A construction moved out of the scanned files would leave the check below green and blind."""
+    found = {_callee(n) for rel in _ROOTS for n in ast.walk(ast.parse((_ROOT / rel).read_text()))
+             if isinstance(n, ast.Call)}
+    assert set(_MEMORY_SIDE) <= found, set(_MEMORY_SIDE) - found
 
 
 @pytest.mark.parametrize("rel", _ROOTS)
