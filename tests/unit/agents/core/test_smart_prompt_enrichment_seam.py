@@ -188,7 +188,6 @@ async def test_a_daily_review_reaches_smart_s_static_prompt_and_runs_at_the_reas
     assert request.model_name == "tier-performance"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=D3)
 async def test_a_daily_review_runs_at_the_thinking_effort_it_asks_for(monkeypatch):
     """Pins P13-D3. Guards `thinking_effort` `worker_handler.py:1202` → `ums.py:389` → `smart_response_agent.py:381`
     (read) → `:389` (dropped when the complexity override sets its own effort) → `:552`.
