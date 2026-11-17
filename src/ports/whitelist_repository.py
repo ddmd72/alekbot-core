@@ -17,8 +17,6 @@ class WhitelistRepository(ABC):
     Holds for every method:
     - Tenancy: one global whitelist; no account or user scope.
     - Case: entries are lowercase and stripped; callers compare a lowercased email (WhitelistEntry.is_allowed).
-    - Atomicity: a write adds or removes one entry and keeps every other; concurrent writes of different entries
-      are all kept.
     - Errors: backend errors propagate; every caller treats a raise as a refusal, never as access.
     """
 
