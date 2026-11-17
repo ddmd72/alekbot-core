@@ -149,6 +149,9 @@ TARGETS: tuple[MutationTarget, ...] = (
             "src.composition.user_agent_factory",
             "src.composition.slack_adapter_factory",
             "src.composition.telegram_adapter_factory",
+            "src.composition.chat_services",
+            "src.composition.platform_kit",
+            "src.composition.worker_setup",
         )
     ),
     MutationTarget("src.adapters.firestore_repo", "tests/unit/adapters/fact_store_kit_equivalent_mutants.txt"),
@@ -275,6 +278,21 @@ TARGETS: tuple[MutationTarget, ...] = (
                    "tests/unit/adapters/prompt_v3_firestore_blueprint_repository_equivalent_mutants.txt"),
     MutationTarget("src.adapters.prompt_v3.firestore_agent_profile_repository",
                    "tests/unit/adapters/prompt_v3_firestore_agent_profile_repository_equivalent_mutants.txt"),
+    # Checkpoint 2's new modules (composition-root refactor): header-only equivalent files, a reviewer rules a survivor equivalent there.
+    MutationTarget("src.services.execute_reminder_task", "tests/unit/services/execute_reminder_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.background_empty_answer_reporter", "tests/unit/services/background_empty_answer_reporter_equivalent_mutants.txt"),
+    MutationTarget("src.services.video_generation_polling_task", "tests/unit/services/video_generation_polling_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.deep_research_failed_task", "tests/unit/services/deep_research_failed_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.deep_research_webhook_event_task", "tests/unit/services/deep_research_webhook_event_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.deep_research_notice_sender", "tests/unit/services/deep_research_notice_sender_equivalent_mutants.txt"),
+    MutationTarget("src.services.start_daily_email_review_task", "tests/unit/services/start_daily_email_review_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.daily_email_review_task", "tests/unit/services/daily_email_review_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.billing_daily_summary_task", "tests/unit/services/billing_daily_summary_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.gmail_reconnect_flag", "tests/unit/services/gmail_reconnect_flag_equivalent_mutants.txt"),
+    MutationTarget("src.services.disabled_task", "tests/unit/services/disabled_task_equivalent_mutants.txt"),
+    MutationTarget("src.services.language_resolver", "tests/unit/services/language_resolver_equivalent_mutants.txt"),
+    MutationTarget("src.composition.deploy_topology", "tests/unit/composition/deploy_topology_equivalent_mutants.txt"),
+    MutationTarget("src.domain.reminder_alert", "tests/unit/domain/reminder_alert_equivalent_mutants.txt"),
 )
 
 

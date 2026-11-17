@@ -1,9 +1,9 @@
 """The date a daily email review is reported under, against the slot date that decided it (P16-C item 2, P16-D2).
 
-Wiring: the real `WorkerHandler` fan-out (`_handle_start_daily_email_review`) over the real `EmailReviewService.find_eligible_users`
+Wiring: the real `StartDailyEmailReviewTask` fan-out over the real `EmailReviewService.find_eligible_users`
 and the real `GcpTaskQueue` (a Cloud Tasks client that refuses a used name); the created task's body goes to
-`_handle_daily_email_review`, whose review service records the date handed to `build_alert`. `datetime` is pinned in
-`src.handlers.worker_handler`; the tick is built from a local wall time of the zone, not typed as a UTC number.
+`DailyEmailReviewTask`, whose review service records the date handed to `build_alert`. `datetime` is pinned in
+`src.services.start_daily_email_review_task` and `src.services.daily_email_review_task`; the tick is built from a local wall time of the zone, not typed as a UTC number.
 """
 from datetime import date, datetime
 from typing import List, Optional
@@ -14,11 +14,16 @@ import pytest
 from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
 from src.domain.user import UserBotConfig, UserProfile
-from src.handlers import worker_handler
-from src.handlers.worker_handler import WorkerHandler
 from src.ports.dedup_store import DedupStore
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
+from src.services import daily_email_review_task, start_daily_email_review_task
+from src.services.daily_email_review_task import DailyEmailReviewTask
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
+from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 from src.services.email_review_service import EmailReviewService
 from src.services.task_dispatch_service import TaskDispatchService
+from src.infrastructure.notification_sla import dispatch_deadline_s
+from src.domain.notification_kind import NotificationKind
 from tests.support.clock_instants import BERLIN, HELSINKI, NEW_YORK, UTC, pin_datetime
 from tests.support.oauth_credentials_store import CredentialsStore, creds
 from tests.support.recording_task_queue import make_task_queue
@@ -74,10 +79,6 @@ class _Notification:
         return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
 
 
-class _Unused:
-    """A collaborator the two daily-review handlers never touch."""
-
-
 class _Factory:
     async def ensure_agents_for_user(self, user_id: str) -> None:
         return None
@@ -91,13 +92,18 @@ async def _world(zone: str, hour: int):
     review = _RecordingReview(store.repo)
     queue, client = make_task_queue()
 
-    worker = WorkerHandler(
-        agent_worker_handler=_Unused(), email_indexing_service=_Unused(), notification_service=_Notification(),
-        consolidation_service=None, agent_factory=_Factory(),
-        user_repo=_Users(profile), task_dispatch=TaskDispatchService(queue), email_review=review,
-        daily_review_marks=_Marks(),
-    )
-    return worker, review, client
+    marks = _Marks()
+    notification = _Notification()
+    fan_out = StartDailyEmailReviewTask(
+        email_review=review, task_dispatch=TaskDispatchService(queue), user_repo=_Users(profile), marks=marks,
+        deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST))
+    daily = DailyEmailReviewTask(
+        email_review=review, ensure_agents=_Factory().ensure_agents_for_user, notification_service=notification,
+        gmail_reconnect_flag=GmailReconnectFlag(
+            oauth_credentials=None, mail_connector=None, ensure_agents=_Factory().ensure_agents_for_user,
+            notification_service=notification),
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
+    return fan_out, daily, marks, review, client
 
 
 def _tick(zone: str, wall: datetime) -> datetime:
@@ -105,14 +111,15 @@ def _tick(zone: str, wall: datetime) -> datetime:
 
 
 async def _run(monkeypatch, zone: str, hour: int, wall: datetime, slot: date):
-    worker, review, client = await _world(zone, hour)
-    pin_datetime(monkeypatch, worker_handler, _tick(zone, wall))
-    result, status = await worker._handle_start_daily_email_review()
+    fan_out, daily, marks, review, client = await _world(zone, hour)
+    pin_datetime(monkeypatch, start_daily_email_review_task, _tick(zone, wall))
+    pin_datetime(monkeypatch, daily_email_review_task, _tick(zone, wall))
+    result, status = await fan_out({}, {})
     assert (status, result["started"]) == (200, 1)
-    assert worker._daily_review_marks.marks == {f"daily_review:u1:{slot}"}
+    assert marks.marks == {f"daily_review:u1:{slot}"}
     (task_type, body), = client.worker_tasks()
     assert task_type == "daily_email_review"
-    result, status = await worker._handle_daily_email_review(body)
+    result, status = await daily(body, {})
     assert (status, result["status"]) == (200, "ok")
     (alert_date,) = review.alert_dates
     return alert_date

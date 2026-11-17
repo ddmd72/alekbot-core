@@ -1,16 +1,11 @@
 """UserNotificationService.notify_drive_note_receipt, every failure path (DRIVE_FILE_NOTES_RFC §4.9): each one is
 logged at its level, posts nothing it must not, writes no history pair it must not, and never raises."""
 import logging
-from unittest.mock import AsyncMock
 
 import pytest
 
-from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.drive_note_receipt import render_drive_note_receipt
-from src.domain.language import LanguageCode
 from src.locales import en
-from src.ports.language_service_port import LanguageServicePort
-from src.services.localization_service import LocalizationService
 
 from src.domain.agent import AgentMessage, AgentResponse, DeliveryItem
 from src.domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY
@@ -118,16 +113,5 @@ async def test_a_message_router_implementation_can_defer_to_the_protocol_stub():
 async def test_a_service_wired_without_a_language_service_posts_in_english():
     service, channel, _, _ = _service()
     service._language = None
-    await service.notify_drive_note_receipt("u1", "a1", RECEIPT_ITEM)
-    assert channel.posted == [("literal", render_drive_note_receipt(RECEIPT.delivery_data(), _strings(en)))]
-
-
-async def test_attach_localization_late_wires_strings_and_language():
-    service, channel, _, _ = _service(localization=False)
-    await service.notify_drive_note_receipt("u1", "a1", RECEIPT_ITEM)
-    assert channel.posted == []
-    lang = AsyncMock(spec=LanguageServicePort)
-    lang.resolve_ui_language.return_value = LanguageCode.EN
-    service.attach_localization(LocalizationService(FileLocalizationAdapter()), lang)
     await service.notify_drive_note_receipt("u1", "a1", RECEIPT_ITEM)
     assert channel.posted == [("literal", render_drive_note_receipt(RECEIPT.delivery_data(), _strings(en)))]

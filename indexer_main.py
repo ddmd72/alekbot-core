@@ -75,6 +75,7 @@ from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.composition.cipher_setup import build_cipher
 from src.composition.connector_registry import GOOGLE_DRIVE, MICROSOFT_ONEDRIVE, ConnectorRegistry
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.drive_connection_setup import build_drive_connection_service
 from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.drive_indexing_setup import (
@@ -124,10 +125,8 @@ def build_app() -> Quart:
     db = firestore.AsyncClient(project=project, database=env_config.firestore_database_id)
 
     app = Quart(__name__)
-    queue = build_drive_task_queue(
-        {"GOOGLE_CLOUD_PROJECT": project, "SERVICE_ACCOUNT_EMAIL": sa_email, "DRIVE_INVOKER_SA_EMAIL": drive_invoker},
-        env_config,
-    )
+    queue_config = {"GOOGLE_CLOUD_PROJECT": project, "SERVICE_ACCOUNT_EMAIL": sa_email, "DRIVE_INVOKER_SA_EMAIL": drive_invoker}
+    queue = build_drive_task_queue(queue_config, build_deploy_topology(queue_config, env_config))
     if queue is None:
         # First pass of the two-pass first deploy (Makefile, _INDEXER_URL): start anyway so the deploy
         # step succeeds; /worker answers 503 and nothing is enqueued to it until the second pass.
@@ -189,7 +188,7 @@ def build_app() -> Quart:
     # only while transcription runs; switch off: none of it, and the object graph keeps only the ledger.
     mirror = build_drive_mirror(
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
-        users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
+        users=users, account_repo=account_repo,
     )
     # The owner's notes (DRIVE_FILE_NOTES_RFC §5.1, §7): the tick merges them into the records, makes the archive checks
     # and runs the daily audit. DRIVE_NOTES_ENABLED (part A's optional kill switch, os.getenv, default on) off gives the

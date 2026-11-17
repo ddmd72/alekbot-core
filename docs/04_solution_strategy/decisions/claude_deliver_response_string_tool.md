@@ -161,7 +161,7 @@ What the build settled beyond the requirements above.
 - **Background empty answer is final.** `notify()` returns `delivered=False, error="empty_answer"`; the old
   retry re-ran the whole turn, repeating SYNC actions it had taken (task, reminder, drive save, workspace write),
   and a conditional reminder ("tell me only if X") may end empty every time. Now, for `execute_reminder`,
-  `daily_email_review` and the deep-research notice (`WorkerHandler._empty_answer_final`) and the drive
+  `daily_email_review` and the deep-research notice (`_empty_answer_final` of the `DailyEmailReviewTask`, `ExecuteReminderTask` and `DeepResearchNoticeSender` runners) and the drive
   reconnect notice (`DriveSyncSchedulerService`): one ERROR line (`event=background_empty_answer`, task type,
   note id, user id first 8 chars, no content), one ops alert through the existing alert sink, then the success
   path (fire marked delivered, a one-time note deleted, the daily-review per-date mark stays, the reconnect flag

@@ -8,6 +8,7 @@ import pytest
 
 from src.domain.agent import AgentStatus
 from src.domain.notify_result import NotifyResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from tests.unit.handlers.test_worker_deep_research_webhook_event import _payload
 from tests.unit.handlers.test_worker_deep_research_webhook_event import _worker as _dr_worker
 from tests.unit.handlers.test_worker_handler import (
@@ -42,7 +43,7 @@ class TestExecuteReminder:
     async def test_empty_answer_is_final_success_path(self, caplog):
         worker, ns = _reminder_worker(EMPTY)
         with caplog.at_level(logging.ERROR):
-            body, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            body, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert (status, body["status"]) == (200, "empty_answer_final")
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.notes_port.delete_note.assert_awaited_once()  # one-time note removed
@@ -55,7 +56,7 @@ class TestExecuteReminder:
     async def test_recurring_note_is_marked_but_kept(self):
         worker, ns = _reminder_worker(EMPTY)
         ns.notes_port.get_note.return_value = dataclasses.replace(_make_reminder_note(), recurrence=MagicMock())
-        _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.notes_port.delete_note.assert_not_awaited()
@@ -63,14 +64,14 @@ class TestExecuteReminder:
     async def test_alert_failure_does_not_break_the_final_path(self):
         worker, ns = _reminder_worker(EMPTY)
         ns.billing_webhook.post.side_effect = RuntimeError("webhook down")
-        _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
 
     async def test_other_failure_still_retries(self, caplog):
         worker, ns = _reminder_worker(OTHER)
         with caplog.at_level(logging.ERROR):
-            _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 500
         ns.notes_port.mark_fire_delivered.assert_not_awaited()
         ns.billing_webhook.post.assert_not_awaited()
@@ -79,7 +80,7 @@ class TestExecuteReminder:
     async def test_success_unchanged(self, caplog):
         worker, ns = _reminder_worker(OK)
         with caplog.at_level(logging.ERROR):
-            body, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            body, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert (status, body["status"]) == (200, "ok")
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
         ns.billing_webhook.post.assert_not_awaited()
@@ -91,7 +92,7 @@ class TestDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = [{"email_id": "e1", "subject": "Hello"}]
         ns.notification.notify.return_value = result
-        out = await worker._handle_daily_email_review({"user_id": _USER_A, "account_id": _ACC_A})
+        out = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
         return out, ns
 
     async def test_empty_answer_is_final(self, caplog):
@@ -116,9 +117,11 @@ class TestDailyEmailReview:
 class TestDeepResearchNotice:
     async def _run(self, result):
         worker, _, _ = _dr_worker(notify=result)
-        worker._billing_webhook = AsyncMock()
+        alert_sink = AsyncMock()
+        worker._tasks["deep_research_webhook_event"]._notice_sender._empty_answer_reporter = (
+            BackgroundEmptyAnswerReporter(alert_sink=alert_sink))
         out = await worker._dispatch(_payload(event_type="response.cancelled"), {})
-        return out, worker._billing_webhook
+        return out, alert_sink
 
     async def test_empty_answer_is_final(self, caplog):
         with caplog.at_level(logging.ERROR):
@@ -136,10 +139,11 @@ class TestDeepResearchNotice:
 class TestNoAlertSinkConfigured:
     async def test_final_path_still_logs_and_returns_200(self, caplog):
         worker, ns = _reminder_worker(EMPTY)
-        worker._billing_webhook = None
+        ns.execute_reminder._empty_answer_reporter = BackgroundEmptyAnswerReporter(alert_sink=None)
         with caplog.at_level(logging.ERROR):
-            _, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+            _, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
         assert status == 200 and len(_empty_records(caplog)) == 1
+        ns.billing_webhook.post.assert_not_awaited()  # the runner really ran without a sink
 
 
 @pytest.mark.parametrize("delivered,sent,error,expected", [

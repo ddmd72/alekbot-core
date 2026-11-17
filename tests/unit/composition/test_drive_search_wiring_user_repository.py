@@ -5,6 +5,7 @@ The search service reads the opt-in flag fresh on every search (§10.1 step 0); 
 (MULTI_DRIVE_RFC §3 "Removed"), read through the connection service. Without one, every search raises in production."""
 from unittest.mock import AsyncMock, MagicMock
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition import service_container
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
@@ -22,7 +23,7 @@ def _container(monkeypatch, **extra):
         "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
         **extra,
     }
-    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
                             account_repo=AsyncMock(spec=AccountRepository))
 
 

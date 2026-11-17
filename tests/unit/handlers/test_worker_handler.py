@@ -18,6 +18,7 @@ import pytest
 
 from datetime import date, datetime, timedelta, timezone
 
+from src.composition.worker_setup import build_worker_tasks
 from src.domain.agent import AgentStatus
 from src.domain.billing import BillingAccount, AccountUsageStats
 from src.domain.daily_review_window import EligibleReviewUser
@@ -27,12 +28,20 @@ from src.domain.notify_result import NotifyResult
 from src.domain.user import UserBotConfig, UserProfile
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.video_generation_port import VideoPollResult
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.consolidation_service import ConsolidationService
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
+from src.infrastructure.notification_sla import dispatch_deadline_s
+from src.services.billing_daily_summary_task import BillingDailySummaryTask
+from src.services.daily_email_review_task import DailyEmailReviewTask
+from src.services.execute_reminder_task import ExecuteReminderTask
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
+from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 from src.services.reminders_service import RemindersService
 from src.services.task_indexing_service import TaskIndexingService
 from src.services.task_setup_service import TaskSetupService
+from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
 
 # ---------------------------------------------------------------------------
@@ -113,14 +122,16 @@ def _make_worker(
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=MagicMock(),
         agent_factory=agent_factory,
         user_repo=MagicMock(),
         task_dispatch=task_dispatch,
-        video_registry=video_registry,
-        link_service=link_service,
-        short_link_service=short_link_service,
+        tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=video_registry, quota_service=None, media_storage=None, link_service=link_service,
+            short_link_service=short_link_service, deep_research_fetch=None, prompt_content_store=None),
     )
     return worker, ns
 
@@ -138,8 +149,6 @@ def worker_handler_factory():
     def _factory(
         *,
         reminders_service=None,
-        notes_port=None,
-        email_review=None,
         task_dispatch=None,
         **kwargs
     ) -> WorkerHandler:
@@ -152,14 +161,11 @@ def worker_handler_factory():
         worker = WorkerHandler(
             agent_worker_handler=MagicMock(),
             email_indexing_service=email_indexing,
-            notification_service=notification,
             consolidation_service=MagicMock(),
             agent_factory=agent_factory,
             user_repo=MagicMock(),
             task_dispatch=task_dispatch,
             reminders_service=reminders_service,
-            notes_port=notes_port,
-            email_review=email_review,
             **kwargs,
         )
         return worker
@@ -303,7 +309,7 @@ class TestHandleVideoGenerationPolling:
         worker, ns = _make_worker()
         ns.video_registry.get.side_effect = ValueError("provider not found")
 
-        result, status = await worker._handle_video_generation_polling(_VIDEO_BASE_PAYLOAD)
+        result, status = await worker._tasks["video_generation_polling"](_VIDEO_BASE_PAYLOAD, {})
 
         assert status == 500
 
@@ -346,7 +352,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "attempt": 3, "duration_s": 8}
             result, status = await worker.handle(payload)
 
@@ -367,7 +373,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "origin_platform": "slack"}
             result, status = await worker.handle(payload)
 
@@ -383,7 +389,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
 
         assert status == 200
@@ -395,7 +401,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes")
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             result, status = await worker.handle(dict(_VIDEO_BASE_PAYLOAD))
 
         assert status == 200
@@ -468,7 +474,7 @@ class TestHandleVideoGenerationPolling:
         worker, ns = _make_worker()
 
         payload = {
-            **_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            **_VIDEO_BASE_PAYLOAD, "attempt": VideoGenerationPollingTask._MAX_VIDEO_POLL_ATTEMPTS,
             "origin_platform": "slack",
         }
         result, status = await worker.handle(payload)
@@ -520,7 +526,7 @@ class TestHandleVideoGenerationPolling:
             return_value=VideoPollResult(status="done", data=b"video-bytes", duration_s=12)
         )
 
-        with patch("src.handlers.worker_handler.deliver_video", new=AsyncMock()) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new=AsyncMock()) as mock_deliver:
             payload = {**_VIDEO_BASE_PAYLOAD, "duration_s": 5}
             result, status = await worker.handle(payload)
 
@@ -530,7 +536,7 @@ class TestHandleVideoGenerationPolling:
     async def test_max_attempts_times_out(self):
         worker, ns = _make_worker()
 
-        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS}
+        payload = {**_VIDEO_BASE_PAYLOAD, "attempt": VideoGenerationPollingTask._MAX_VIDEO_POLL_ATTEMPTS}
         result, status = await worker.handle(payload)
 
         assert status == 200
@@ -621,11 +627,30 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
     ns.notification = notification
     ns.user_repo = user_repo
     ns.notes_port = notes_port
+    ns.execute_reminder = ExecuteReminderTask(
+        notes_port=notes_port, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
+        notification_service=notification,
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=billing_webhook),
+    )
+    ns.start_daily_review = StartDailyEmailReviewTask(
+        email_review=email_review, task_dispatch=task_dispatch, user_repo=user_repo, marks=None,
+        deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
+    )
+    ns.daily_review = DailyEmailReviewTask(
+        email_review=email_review, ensure_agents=agent_factory.ensure_agents_for_user,
+        notification_service=notification,
+        gmail_reconnect_flag=GmailReconnectFlag(
+            oauth_credentials=None, mail_connector=None, ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification),
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=billing_webhook),
+    )
+    ns.billing_summary = BillingDailySummaryTask(
+        billing_webhook=billing_webhook, account_repo=account_repo, user_repo=user_repo,
+    )
 
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=consolidation,
         agent_factory=agent_factory,
         user_repo=user_repo,
@@ -633,10 +658,7 @@ def _make_full_worker() -> tuple[WorkerHandler, MagicMock]:
         task_setup=task_setup,
         task_indexing=task_indexing,
         reminders_service=reminders_service,
-        notes_port=notes_port,
-        email_review=email_review,
-        account_repo=account_repo,
-        billing_webhook=billing_webhook,
+        tasks={"execute_reminder": ns.execute_reminder},
     )
     return worker, ns
 
@@ -990,7 +1012,7 @@ class TestHandleFireDueReminders:
 
 
 # ---------------------------------------------------------------------------
-# _handle_execute_reminder (Step #8 — per-fire worker)
+# ExecuteReminderTask (Step #8 — per-fire worker)
 # ---------------------------------------------------------------------------
 
 _EXECUTE_NOTE_ID = "note-execute-001"
@@ -1027,30 +1049,21 @@ def _make_reminder_note(
 
 class TestHandleExecuteReminder:
     """Five paths + happy path documented in the docstring of
-    ``_handle_execute_reminder``."""
-
-    async def test_missing_notes_port_returns_501(self):
-        worker, _ = _make_full_worker()
-        worker._notes_port = None
-
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
-
-        assert status == 501
-        assert "notes_port" in result["error"]
+    ``ExecuteReminderTask.__call__``."""
 
     async def test_missing_payload_fields_returns_400(self):
-        worker, _ = _make_full_worker()
+        worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_execute_reminder({"note_id": "x"})
+        result, status = await ns.execute_reminder({"note_id": "x"}, {})
 
         assert status == 400
         assert "missing" in result["error"]
 
     async def test_bad_due_at_returns_400(self):
-        worker, _ = _make_full_worker()
+        worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_execute_reminder(
-            {**_EXECUTE_PAYLOAD, "due_at": "not-a-date"}
+        result, status = await ns.execute_reminder(
+            {**_EXECUTE_PAYLOAD, "due_at": "not-a-date"}, {}
         )
 
         assert status == 400
@@ -1061,7 +1074,7 @@ class TestHandleExecuteReminder:
         worker, ns = _make_full_worker()
         ns.notes_port.get_note.return_value = None
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "note_gone"
@@ -1077,7 +1090,7 @@ class TestHandleExecuteReminder:
             last_delivered_due=_EXECUTE_DUE,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "already_delivered"
@@ -1090,7 +1103,7 @@ class TestHandleExecuteReminder:
         ns.notes_port.get_note.return_value = _make_reminder_note()
         ns.user_repo.get_user.return_value = None
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "no_user"
@@ -1115,7 +1128,7 @@ class TestHandleExecuteReminder:
             error="agent_timeout",
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 500
         assert result["error"] == "agent_timeout"
@@ -1141,7 +1154,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "ok"
@@ -1179,7 +1192,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
@@ -1213,7 +1226,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         ns.notes_port.mark_fire_delivered.assert_awaited_once()
@@ -1227,7 +1240,7 @@ class TestHandleExecuteReminder:
             last_delivered_due=_EXECUTE_DUE,  # recurrence=None
         )
 
-        result, status = await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        result, status = await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert status == 200
         assert result["status"] == "already_delivered"
@@ -1251,7 +1264,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         assert ns.notification.notify.call_args.kwargs["suppress_transient_retry"] is True
 
@@ -1279,7 +1292,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["task_complexity"] == "deep_reasoning"
@@ -1316,7 +1329,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["tier"] == PerformanceTier[expected_tier_name]
@@ -1358,7 +1371,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         # Not BALANCED, which the raw defaults table would have given.
@@ -1380,7 +1393,7 @@ class TestHandleExecuteReminder:
             delivered=True, agent_status=AgentStatus.SUCCESS,
         )
 
-        await worker._handle_execute_reminder(_EXECUTE_PAYLOAD)
+        await ns.execute_reminder(_EXECUTE_PAYLOAD, {})
 
         kw = ns.notification.notify.call_args.kwargs
         assert kw["tier"] is None
@@ -1401,22 +1414,6 @@ class TestHandleExecuteReminder:
 
 class TestHandleStartDailyEmailReview:
 
-    async def test_missing_email_review_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
-    async def test_missing_task_dispatch_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._task_dispatch = None
-
-        result, status = await worker._handle_start_daily_email_review()
-
-        assert status == 501
-
     async def test_enqueues_daily_review_per_eligible_user(self):
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = [
@@ -1424,7 +1421,7 @@ class TestHandleStartDailyEmailReview:
             EligibleReviewUser(_USER_B, _ACC_B, date(2026, 10, 22)),
         ]
 
-        result, status = await worker._handle_start_daily_email_review()
+        result, status = await ns.start_daily_review({}, {})
 
         assert status == 200
         assert result["started"] == 2
@@ -1446,7 +1443,7 @@ class TestHandleStartDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.find_eligible_users.return_value = []
 
-        result, status = await worker._handle_start_daily_email_review()
+        result, status = await ns.start_daily_review({}, {})
 
         assert status == 200
         assert result["started"] == 0
@@ -1454,7 +1451,7 @@ class TestHandleStartDailyEmailReview:
 
 
 # ---------------------------------------------------------------------------
-# _handle_daily_email_review
+# DailyEmailReviewTask
 # ---------------------------------------------------------------------------
 
 class TestHandleDailyEmailReview:
@@ -1462,34 +1459,22 @@ class TestHandleDailyEmailReview:
     async def test_missing_user_id_returns_400(self):
         worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_daily_email_review({"account_id": _ACC_A})
+        result, status = await ns.daily_review({"account_id": _ACC_A}, {})
 
         assert status == 400
 
     async def test_missing_account_id_returns_400(self):
         worker, ns = _make_full_worker()
 
-        result, status = await worker._handle_daily_email_review({"user_id": _USER_A})
+        result, status = await ns.daily_review({"user_id": _USER_A}, {})
 
         assert status == 400
-
-    async def test_missing_email_review_service_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._email_review = None
-
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
-
-        assert status == 501
 
     async def test_credentials_unavailable_returns_200_no_notify(self):
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = None
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["error"] == "credentials unavailable"
@@ -1499,9 +1484,7 @@ class TestHandleDailyEmailReview:
         worker, ns = _make_full_worker()
         ns.email_review.fetch_review_payload.return_value = []
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["status"] == "no_emails"
@@ -1520,9 +1503,7 @@ class TestHandleDailyEmailReview:
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
         ns.notification.notify.side_effect = _track_notify
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER_A, "account_id": _ACC_A}
-        )
+        result, status = await ns.daily_review({"user_id": _USER_A, "account_id": _ACC_A}, {})
 
         assert status == 200
         assert result["emails"] == 1
@@ -1545,7 +1526,7 @@ class TestHandleDailyEmailReview:
 
 
 # ---------------------------------------------------------------------------
-# _handle_billing_daily_summary
+# BillingDailySummaryTask
 # ---------------------------------------------------------------------------
 
 def _make_account(
@@ -1572,29 +1553,13 @@ def _make_account(
 
 class TestHandleBillingDailySummary:
 
-    async def test_missing_billing_webhook_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._billing_webhook = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
-
-    async def test_missing_account_repo_returns_501(self):
-        worker, ns = _make_full_worker()
-        worker._account_repo = None
-
-        result, status = await worker._handle_billing_daily_summary()
-
-        assert status == 501
-
     async def test_no_accounts_with_activity_returns_reported_zero(self):
         worker, ns = _make_full_worker()
         ns.account_repo.list_all_accounts.return_value = [
             _make_account("acc-x", _USER_A, prev_daily_tokens=0, prev_daily_cost=0.0),
         ]
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 0
@@ -1613,7 +1578,7 @@ class TestHandleBillingDailySummary:
             profile_a if uid == _USER_A else None
         )
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 2
@@ -1637,7 +1602,7 @@ class TestHandleBillingDailySummary:
             ),
         ]
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 0
@@ -1659,7 +1624,7 @@ class TestHandleBillingDailySummary:
             UserProfile(user_id=_USER_A, display_name="Robin") if uid == _USER_A else None
         )
 
-        result, status = await worker._handle_billing_daily_summary()
+        result, status = await ns.billing_summary({}, {})
 
         assert status == 200
         assert result["reported"] == 1

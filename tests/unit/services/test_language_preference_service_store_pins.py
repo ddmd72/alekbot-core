@@ -25,6 +25,7 @@ from src.ports.auth_port import AuthPort
 from src.services.auth_provider_registry import AuthProviderRegistry
 from src.services.authentication_service import AuthenticationService
 from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import Rendezvous, require
 
@@ -60,8 +61,8 @@ class World:
         accounts = FirestoreAccountRepository(self.db, "accounts")
         self.users = FirestoreUserRepository(self.db, ENV, accounts)
         self.language = LanguagePreferenceService(
-            self.users, accounts, FirestoreAgentProfileRepository(self.db, "profiles", "overrides"),
-            SimpleNamespace(invalidate_cache=lambda: None))
+            self.users, FirestoreAgentProfileRepository(self.db, "profiles", "overrides"),
+            SimpleNamespace(invalidate_cache=lambda: None), LanguageResolver(self.users, accounts))
         self.auth = AuthenticationService(AuthProviderRegistry({"google": Google()}, default_provider_name="google"),
                                           self.users, accounts, whitelist_repo=FirestoreWhitelistRepository(self.db, ENV))
         self.accounts = accounts

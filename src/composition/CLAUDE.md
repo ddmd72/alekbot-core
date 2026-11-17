@@ -1,5 +1,11 @@
 # Composition — traps
 
+- **A new subsystem gets one `*_setup.py` returning one frozen bundle; a service is built where its bundle is built;
+  nothing is attached after construction** (the named exceptions are listed in
+  `tests/unit/architecture/late_wiring_calls_allowlist.txt` as `permanent`).
+- **A new `/worker` task is a runner in `services/` (a `WorkerTask`), registered in `build_worker_tasks` (`worker_setup.py`);**
+  `DisabledTask` stands in only where an absent feature's honest answer is a refusal.
+
 - **MCP tool schema: accept liberally, advertise strictly.** FastMCP builds the schema from type hints and validates with
   pydantic: `Optional[T]` emits `anyOf:[T,null]`, and any advertised constraint turns bad input into an `isError` round-trip.
   Optionality through defaults, a `description` per param, constraints in `BeforeValidator` normalizers (`domain/mcp.py`).

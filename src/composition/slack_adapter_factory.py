@@ -3,8 +3,8 @@ Slack Adapter Factory
 Creates appropriate Slack adapter based on configuration.
 
 Lives in composition/ so it can legally import from handlers/, infrastructure/,
-services/, and adapters/. Creates ConversationHandler here and injects it as
-ConversationHandlerPort into the platform adapter.
+services/, and adapters/. Builds the ConversationHandler over the shared ChatServices
+(`build_conversation_handler`) and injects it as ConversationHandlerPort into the platform adapter.
 """
 import os
 from typing import Optional
@@ -14,18 +14,13 @@ from ..adapters.slack.base import SlackAdapter
 from ..adapters.slack.http_adapter import HTTPModeAdapter
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
-from ..config.environment import EnvironmentConfig
-from ..handlers.conversation_handler import ConversationHandler
-from ..infrastructure.agent_coordinator import AgentCoordinator
-from .user_agent_factory import UserAgentFactory
-from ..services.consolidation_service import ConsolidationService
+from .deploy_topology import DeployTopology
 from ..services.iam_service import IAMService
 from ..services.rich_content_service import RichContentService
-from ..services.user_notification_service import UserNotificationService
 from ..ports.language_service_port import LanguageServicePort
-from ..services.localization_service import LocalizationService
 from ..services.channel_binding_service import ChannelBindingService
 from ..adapters.slack.channel_history import SlackChannelHistorySource
+from .chat_services import ChatServices, build_conversation_handler
 from ..utils.logger import logger
 
 
@@ -34,7 +29,7 @@ class SlackAdapterFactory:
     Factory for creating Slack adapters based on configuration.
     Implements Factory pattern for dual-mode support.
 
-    Composition root: creates ConversationHandler and injects it
+    Composition root: builds the ConversationHandler and injects it
     as ConversationHandlerPort into the platform adapter.
     """
 
@@ -42,29 +37,13 @@ class SlackAdapterFactory:
     def create_adapter(
         app: AsyncApp,
         config: dict,
-        env_config: EnvironmentConfig,
-        coordinator: AgentCoordinator,
-        agent_factory: UserAgentFactory,
+        deploy_topology: DeployTopology,
+        chat: ChatServices,
         iam_service: IAMService,
         session_store: FirestoreSessionStore,
         db_client=None,
-        consolidation_queue=None,
-        consolidation_config=None,
-        consolidation_service: Optional[ConsolidationService] = None,
-        audio_service=None,
-        notification_service: Optional[UserNotificationService] = None,
         language_service: Optional[LanguageServicePort] = None,
-        localization: Optional[LocalizationService] = None,
-        file_conversion_service=None,
         channel_binding_service: Optional[ChannelBindingService] = None,
-        fallback_service=None,
-        short_link_service=None,
-        skill_service=None,
-        memory_fact_service=None,
-        fact_answers=None,
-        drive_note_service=None,
-        long_turn_service=None,
-        doc_delivery_service=None,
         worker_queue=None,
         *,
         rich_content_service: RichContentService,
@@ -75,16 +54,12 @@ class SlackAdapterFactory:
         Args:
             app: Slack Bolt AsyncApp instance
             config: Configuration dictionary
-            env_config: EnvironmentConfig instance
-            coordinator: AgentCoordinator instance
-            agent_factory: Factory for creating per-user agents
+            deploy_topology: The service URL, queue suffix and regions
+            chat: The chat services both platforms' ConversationHandlers share
             iam_service: IAMService for centralized authorization
             session_store: Session store (required for HTTP mode)
             db_client: Firestore AsyncClient (required for HTTP mode)
-            consolidation_queue: Optional consolidation queue
-            consolidation_config: Optional consolidation config
-            consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
-            audio_service: Optional audio transcription service
+            channel_binding_service: Slack only (P9-D9): `$agent` / `$primary` and bound channel sessions
             rich_content_service: The platform's RichContentService (built once by the application graph, shared with the notification service)
             worker_queue: The main task queue; a button press on an interactive message is queued on it as a `/worker` task
 
@@ -93,51 +68,26 @@ class SlackAdapterFactory:
         """
         logger.info("🏭 Creating Slack adapter: http")
 
-        # Create ConversationHandler here (composition root)
         # Channel history source for bound channel sessions (Slack API)
         channel_history_source = SlackChannelHistorySource(
             slack_client=app.client,
             bot_user_id=os.getenv("SLACK_BOT_USER_ID", ""),
         )
 
-        conversation_handler = ConversationHandler(
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            consolidation_queue=consolidation_queue,
-            global_config=consolidation_config,
-            audio_service=audio_service,
-            rich_content_service=rich_content_service,
-            notification_service=notification_service,
-            overflow_callback=consolidation_service.consolidate_now if consolidation_service else None,
-            localization=localization,
-            file_conversion_service=file_conversion_service,
-            channel_binding_service=channel_binding_service,
-            channel_history_source=channel_history_source,
-            fallback_service=fallback_service,
-            short_link_service=short_link_service,
-            skill_service=skill_service,
-            memory_fact_service=memory_fact_service,
-            fact_answers=fact_answers,
-            drive_note_service=drive_note_service,   # `$drive-notes` (DRIVE_FILE_NOTES_RFC §4.8)
-            long_turn_service=long_turn_service,
-            doc_delivery_service=doc_delivery_service,
+        conversation_handler = build_conversation_handler(
+            chat, rich_content_service,
+            channel_binding=channel_binding_service,
+            channel_history=channel_history_source,
         )
 
         if not db_client:
             raise ValueError("db_client is required for HTTP mode (session persistence)")
 
-        queue_suffix = "dev" if env_config.is_development else "prod"
-
-        service_url = config.get("CLOUD_RUN_SERVICE_URL")
-        if not service_url:
-            logger.warning("⚠️ CLOUD_RUN_SERVICE_URL not set, defaulting to http://localhost:8080")
-            service_url = "http://localhost:8080"
-
         task_service = GcpTaskQueue(
             project_id=config["GOOGLE_CLOUD_PROJECT"],
-            location="europe-west1",
-            queue_name=f"alek-bot-tasks-{queue_suffix}",
-            service_url=service_url,
+            location=deploy_topology.slack_intake_region,
+            queue_name=f"alek-bot-tasks-{deploy_topology.queue_suffix}",
+            service_url=deploy_topology.service_url,
             service_account_email=config.get("SERVICE_ACCOUNT_EMAIL")
         )
 
@@ -148,8 +98,8 @@ class SlackAdapterFactory:
             session_store=session_store,
             conversation_handler=conversation_handler,
             iam_service=iam_service,
-            audio_service=audio_service,
+            audio_service=chat.audio_service,
             language_service=language_service,
-            localization=localization,
+            localization=chat.localization,
             worker_queue=worker_queue,
         )

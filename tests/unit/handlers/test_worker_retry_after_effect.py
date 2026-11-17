@@ -342,7 +342,7 @@ class TestChatIntakeIsNotRunAgain:
                                          iam_service=AsyncMock(), task_queue=world.queue)
         recorder = Recorder()
         adapter._process_message = recorder  # type: ignore[method-assign]
-        world.handler.attach_telegram_worker(adapter.handle_queued_update)
+        world.handler.register_telegram_worker(adapter.handle_queued_update)
 
         outcomes = await deliver_with_retry(world.handler, {"task_type": "telegram_update", "update": TELEGRAM_UPDATE},
                                             "t-tg")
@@ -358,12 +358,11 @@ class TestChatIntakeIsNotRunAgain:
         Regression: the swallow removed → 500 → Cloud Tasks re-runs a turn that already posted. Not a duplicate of
         `test_worker_handler_task_claim.py:300-303`, which pins that a raise from `_process_message_event` itself is a 500.
         The adapter is built as the fixture at `test_worker_handler_task_claim.py:227-237`."""
-        world = RedeliveryWorld()
         conversation = RecordingConversation()
         adapter = HTTPModeAdapter(app=AsyncMock(), config={"SLACK_SIGNING_SECRET": "s", "SLACK_BOT_TOKEN": "xoxb-test"},
                                   task_service=AsyncMock(), session_store=AsyncMock(),
                                   conversation_handler=conversation, iam_service=AllowU1())  # type: ignore[arg-type]
-        world.handler.attach_slack_worker(adapter.handle_queued_event)
+        world = RedeliveryWorld(slack_worker=adapter.handle_queued_event)
         payload = {"event": {"event_id": "E1", "event": {"type": "message", "text": "hi", "user": "U1",
                                                          "channel": CHANNEL}},
                    "session_id": f"{USER}:{CHANNEL}"}

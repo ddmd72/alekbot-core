@@ -10,7 +10,7 @@ import pytest
 
 from src.adapters.google_tasks_adapter import GoogleTasksAdapter
 from src.adapters.microsoft.graph_auth import MicrosoftGraphTokenProvider
-from src.handlers.worker_handler import WorkerHandler
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.services.email_review_service import EmailReviewService
 from src.services.email_search_service import EmailSearchService
 from tests.support.oauth_credentials_store import CredentialsStore, creds, delete_kind, has_kind, one
@@ -166,18 +166,16 @@ async def test_the_review_refresh_of_a_connected_grant_is_stored(store):
 def _worker(store, notify):
     notification = AsyncMock()
     notification.notify = notify
-    return WorkerHandler(
-        agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=notification,
-        consolidation_service=None, agent_factory=AsyncMock(),
-        user_repo=MagicMock(), task_dispatch=AsyncMock(), email_review=MagicMock(), oauth_credentials=store.repo, mail_connector=ConnectorRegistry().get("gmail"),
-    )
+    return GmailReconnectFlag(
+        oauth_credentials=store.repo, mail_connector=ConnectorRegistry().get("gmail"), ensure_agents=AsyncMock(),
+        notification_service=notification)
 
 
 async def test_a_gmail_grant_disconnected_before_the_flag_is_not_flagged_and_nobody_is_told(store):
     await store.repo.save(creds(USER, "gmail"))
     store.disconnect_after_read(USER, "gmail")
     notify = AsyncMock()
-    await _worker(store, notify)._flag_gmail_reconnect(USER, "acc")
+    await _worker(store, notify).flag(USER, "acc")
     assert store.docs == {}
     notify.assert_not_called()
 
@@ -186,7 +184,7 @@ async def test_a_revoked_gmail_grant_is_flagged_and_the_user_told_once(store):
     await store.repo.save(creds(USER, "gmail"))
     notify = AsyncMock()
     worker = _worker(store, notify)
-    await worker._flag_gmail_reconnect(USER, "acc")
-    await worker._flag_gmail_reconnect(USER, "acc")
+    await worker.flag(USER, "acc")
+    await worker.flag(USER, "acc")
     assert (await one(store.repo, USER, "gmail")).needs_reconnect is True
     assert notify.await_count == 1

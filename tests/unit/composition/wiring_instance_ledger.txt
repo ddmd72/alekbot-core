@@ -22,7 +22,7 @@ src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepos
 src.adapters.firestore_confirmed_people_repo.FirestoreConfirmedPeopleRepository 1  # by-design the one owner-confirmed people list store, built once on the ServiceContainer as confirmed_people and held by the one FactProfileService (service_container.py, fact_profile_setup.py, FACT_PROFILE_RFC 4.5)
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
-src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py build_worker_tasks, held by StartDailyEmailReviewTask), deep-research webhook claims, Telegram update dedup
 src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
@@ -104,6 +104,7 @@ src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
+src.composition.deploy_topology.DeployTopology 1  # by-design the graph's one topology, built by build_deploy_topology in build_application_graph (application_graph.py:242) and passed to the ServiceContainer, UserAgentFactory and SlackAdapterFactory
 src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.drive_reader_runner.DriveReaderRunner 1  # by-design the document service's one reader over the main context builder (document_service_setup.py, EXTERNAL_FILES_RFC 4.4)
 src.composition.email_card_runner.EmailCardRunner 1  # by-design the card step's one writer; it builds its agent once, lazily, on the pinned model (email_card_setup.py:35, email_card_runner.py:51-55)
@@ -123,6 +124,8 @@ src.services.agent_fallback_service.AgentFallbackService 1  # by-design single i
 src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
 src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
 src.services.authentication_service.AuthenticationService 1  # by-design single instance
+src.services.background_empty_answer_reporter.BackgroundEmptyAnswerReporter 1  # by-design the one empty-answer reporter, built by build_worker_tasks (worker_setup.py) and shared by the reminder, daily-review and deep-research notice runners
+src.services.billing_daily_summary_task.BillingDailySummaryTask 1  # by-design the one billing_daily_summary runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
 src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
 src.services.call_text_file_service.CallTextFileService 1  # by-design single instance
@@ -133,7 +136,11 @@ src.services.companion_window_resolver.CompanionWindowResolver 1  # by-design si
 src.services.configuration_service.ConfigurationService 1  # by-design single instance
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
+src.services.daily_email_review_task.DailyEmailReviewTask 1  # by-design the one daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
+src.services.deep_research_failed_task.DeepResearchFailedTask 1  # by-design the one deep_research_failed runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
+src.services.deep_research_notice_sender.DeepResearchNoticeSender 1  # by-design the one notice sender both deep-research runners share, built by build_worker_tasks (worker_setup.py)
+src.services.deep_research_webhook_event_task.DeepResearchWebhookEventTask 1  # by-design the one deep_research_webhook_event runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.document_service.DocumentService 1  # by-design one document service, attached to the file conversion service (application_graph.py, EXTERNAL_FILES_RFC 4.4)
 src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
@@ -149,6 +156,7 @@ src.services.email_card_service.EmailCardService 1  # by-design single instance,
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
+src.services.execute_reminder_task.ExecuteReminderTask 1  # by-design the one execute_reminder runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (application_graph.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_profile_service.FactProfileService 1  # by-design the one profile step, built once as _fact_profile_step in application_graph.py over the container's repository, fact profiler and embedding service, and held by the one ConsolidationService and the one FactReviewService inside the memory-write lease (application_graph.py:724,739,921, FACT_PROFILE_RFC 4.4)
@@ -159,12 +167,14 @@ src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
+src.services.gmail_reconnect_flag.GmailReconnectFlag 1  # by-design the one Gmail reconnect flag, held by WorkerHandler (email indexing) and by the daily_email_review runner
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
 src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance
 src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
+src.services.language_resolver.LanguageResolver 1  # by-design the one language read side, shared by the notification service, the agent factory and the writer (application_graph.py, localization_system README §5)
 src.services.localization_service.LocalizationService 1  # by-design single instance
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
@@ -187,9 +197,11 @@ src.services.session_service.SessionService 1  # by-design single instance
 src.services.short_link_service.ShortLinkService 1  # by-design single instance
 src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance
 src.services.skill_service.SkillService 1  # by-design single instance
+src.services.start_daily_email_review_task.StartDailyEmailReviewTask 1  # by-design the one start_daily_email_review runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.task_dispatch_service.TaskDispatchService 1  # by-design single instance
 src.services.task_indexing_service.TaskIndexingService 1  # by-design single instance
 src.services.task_setup_service.TaskSetupService 1  # by-design single instance
 src.services.user_drive_service.UserDriveService 1  # by-design single instance
 src.services.user_notification_service.UserNotificationService 1  # by-design single instance
+src.services.video_generation_polling_task.VideoGenerationPollingTask 1  # by-design the one video_generation_polling runner, built by build_worker_tasks (worker_setup.py) and held in WorkerHandler._tasks
 src.services.workspace_service.WorkspaceService 1  # by-design single instance

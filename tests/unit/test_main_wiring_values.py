@@ -210,7 +210,7 @@ async def test_with_the_emulator_host_set_the_firestore_client_gets_the_emulator
 
 async def test_one_voice_ticket_store_with_the_environments_collection_serves_all_three_voice_consumers(booted):
     [(args, kwargs, store)] = booted.stores
-    env_config = booted.app.agent_factory.env_config
+    env_config = booted.app.agent_factory.config["ENVIRONMENT_CONFIG"]   # the settings main() built the graph with
     assert args == (booted.db,)
     assert kwargs == {"collection": env_config.voice_tickets_collection}
     assert env_config.voice_tickets_collection

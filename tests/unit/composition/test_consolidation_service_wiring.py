@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.composition import slack_adapter_factory, telegram_adapter_factory
+from src.composition.deploy_topology import build_deploy_topology
+from src.composition import chat_services
+from src.composition.chat_services import ChatServices
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.domain.messaging import MessageContext
@@ -40,25 +42,25 @@ def _service():
 
 
 def _handler_kwargs_from_slack(monkeypatch, service):
-    monkeypatch.setattr(slack_adapter_factory, "ConversationHandler", _recording_handler)
+    monkeypatch.setattr(chat_services, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
-            app=MagicMock(), config={}, env_config=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(),
+            app=MagicMock(), config={}, deploy_topology=build_deploy_topology({}, MagicMock()),
+            chat=ChatServices(coordinator=MagicMock(), agent_factory=MagicMock(), consolidation_service=service),
             iam_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
-            consolidation_service=service,
         )
     return caught.value.kwargs
 
 
 def _handler_kwargs_from_telegram(monkeypatch, service):
-    monkeypatch.setattr(telegram_adapter_factory, "ConversationHandler", _recording_handler)
+    monkeypatch.setattr(chat_services, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         TelegramAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             token="1:abc", webhook_secret="s", dedup_store=MagicMock(), session_store=MagicMock(),
-            coordinator=MagicMock(), agent_factory=MagicMock(), iam_service=MagicMock(),
-            consolidation_service=service,
+            chat=ChatServices(coordinator=MagicMock(), agent_factory=MagicMock(), consolidation_service=service),
+            iam_service=MagicMock(),
         )
     return caught.value.kwargs
 
@@ -135,8 +137,14 @@ def test_the_graph_builds_the_one_service_with_the_lease_the_queue_and_the_run_t
 
 @pytest.mark.parametrize("factory", ["SlackAdapterFactory", "TelegramAdapterFactory"])
 def test_the_graph_passes_the_service_to_both_adapter_factories(factory):
+    """The service rides in the one `ChatServices` the graph builds, and each factory receives that same bundle."""
     tree = ast.parse(_GRAPH.read_text(encoding="utf-8"))
+
+    (bundle,) = _calls(tree, "ChatServices")
+    (bundle_assign,) = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and n.value is bundle]
+    (bundle_name,) = [ast.unparse(t) for t in bundle_assign.targets]
+    assert {k.arg: ast.unparse(k.value) for k in bundle.keywords}["consolidation_service"] == "_consolidation_service"
 
     (call,) = [c for c in _calls(tree, "create_adapter") if getattr(c.func.value, "id", None) == factory]
 
-    assert {k.arg: ast.unparse(k.value) for k in call.keywords}["consolidation_service"] == "_consolidation_service"
+    assert {k.arg: ast.unparse(k.value) for k in call.keywords}["chat"] == bundle_name

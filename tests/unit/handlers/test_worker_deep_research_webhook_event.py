@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.composition.worker_setup import build_worker_tasks
 from src.domain import deep_research_notices as notices
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
@@ -22,13 +23,20 @@ def _worker(response=None, notify=None, fetch="default", store=None, claims=None
     notification = AsyncMock()
     notification.notify.return_value = notify or _result()
     fetch_fn = AsyncMock(return_value=response or {"output_text": "REPORT", "model": "m"}) if fetch == "default" else fetch
+    agent_factory = AsyncMock()
+    task_dispatch = AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-        notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
-        user_repo=MagicMock(), task_dispatch=AsyncMock(),
-        media_storage=MagicMock(), deep_research_fetch=fetch_fn, prompt_content_store=store,
+        consolidation_service=None,
+        agent_factory=agent_factory,
+        user_repo=MagicMock(), task_dispatch=task_dispatch,
         task_claims=claims,
+        tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
+            short_link_service=None, deep_research_fetch=fetch_fn, prompt_content_store=store),
     )
     return worker, notification, fetch_fn
 
@@ -41,7 +49,7 @@ class TestCompleted:
     async def test_delivers_once_to_origin_channel_and_platform(self):
         store = AsyncMock()
         worker, _, fetch = _worker(store=store)
-        with patch("src.handlers.worker_handler.deliver_deep_research", new=AsyncMock(return_value=True)) as dl:
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new=AsyncMock(return_value=True)) as dl:
             body, status = await worker._dispatch(_payload(), {})
         assert status == 200
         fetch.assert_awaited_once_with("resp_1")
@@ -60,13 +68,13 @@ class TestCompleted:
         async def _dl(**_):
             order.append("deliver")
             return True
-        with patch("src.handlers.worker_handler.deliver_deep_research", new=_dl):
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new=_dl):
             await worker._dispatch(_payload(), {})
         assert order == ["store", "deliver"]
 
     async def test_report_task_not_enqueued_is_200_not_a_retry(self):
         worker, _, _ = _worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research", new=AsyncMock(return_value=False)):
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new=AsyncMock(return_value=False)):
             _, status = await worker._dispatch(_payload(), {})
         assert status == 200
 
@@ -223,16 +231,3 @@ class TestThroughHandle:
         assert key == "t"
         claims.mark_done.assert_awaited_once_with("t", attempt)
         claims.release.assert_not_awaited()
-
-
-def test_main_py_wires_fetch_and_store_into_worker_handler():
-    # The WorkerHandler the main service serves is built by build_application_graph (P9 T2).
-    import ast
-    from pathlib import Path
-    source = Path(__file__).resolve().parents[3] / "src" / "composition" / "application_graph.py"
-    tree = ast.parse(source.read_text())
-    kwargs = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "WorkerHandler":
-            kwargs = [kw.arg for kw in node.keywords]
-    assert "deep_research_fetch" in kwargs and "prompt_content_store" in kwargs

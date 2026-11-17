@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from quart import Quart
 
+from src.composition.worker_setup import build_worker_tasks
 from src.handlers.worker_handler import WorkerHandler
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 
@@ -57,13 +58,21 @@ def _completed_payload(session_id: str) -> dict:
 def _worker(media_storage=None, task_dispatch=None, notification=None):
     notification = notification or AsyncMock()
     notification.notify.return_value = MagicMock(delivered=True, sent=True, error=None)
+    agent_factory = AsyncMock()
+    task_dispatch = task_dispatch or AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-        notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
+        consolidation_service=None,
+        agent_factory=agent_factory,
         user_repo=MagicMock(),
-        task_dispatch=task_dispatch or AsyncMock(), media_storage=media_storage,
-        deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"}),
+        task_dispatch=task_dispatch,
+        tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=media_storage, link_service=None,
+            short_link_service=None, prompt_content_store=None,
+            deep_research_fetch=AsyncMock(return_value={"output_text": "Research findings text.", "model": "m"})),
     )
     return worker, notification
 
@@ -82,7 +91,7 @@ class TestOpenAIWebhookChannelPropagation:
         task_dispatch = AsyncMock()
         worker, _ = _worker(media_storage=media_storage, task_dispatch=task_dispatch)
 
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(), {})
 
@@ -113,7 +122,7 @@ class TestOpenAIWebhookChannelPropagation:
     async def test_legacy_session_id_without_colon_yields_none(self):
         """Legacy session_id (pre-per-channel-sessions) must not crash; channel=None."""
         worker, _ = _worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(session_id=_USER), {})  # no colon
         assert status == 200
@@ -123,7 +132,7 @@ class TestOpenAIWebhookChannelPropagation:
     async def test_empty_session_id_yields_none(self):
         """Empty session_id (no metadata) must not crash; channel=None."""
         worker, _ = _worker()
-        with patch("src.handlers.worker_handler.deliver_deep_research",
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report",
                    new_callable=AsyncMock, return_value=True) as mock_deliver:
             _, status = await worker._dispatch(_event(session_id=""), {})
         assert status == 200
@@ -155,18 +164,10 @@ class TestFactoryWiring:
         bp = create_deep_research_webhooks_blueprint()
         assert bp.name == "deep_research_webhooks"
 
-    def test_main_py_wires_media_storage_to_the_delivering_worker(self):
-        """R12.3 (round files lost for the OpenAI DR path): media_storage must reach the OpenAI
-        delivery. Delivery now runs in WorkerHandler, so main.py must pass media_storage= (and the
-        link service, task queue and notification service delivery uses) to WorkerHandler, and the
-        webhook factory must still get its task queue and retrieval callable. WorkerHandler is built by
-        build_application_graph (P9 T2); the webhook factory is still called in main.py."""
-        worker_kwargs = _call_kwargs("WorkerHandler", "src/composition/application_graph.py")
-        assert worker_kwargs, "WorkerHandler(...) call not found in application_graph.py"
-        for kw in ("media_storage", "link_service", "task_dispatch", "notification_service",
-                   "deep_research_fetch"):
-            assert kw in worker_kwargs, f"application_graph.py must pass {kw}= to WorkerHandler; got {worker_kwargs}"
-
+    def test_main_py_wires_the_webhook_factorys_queue_retrieval_dedup_and_secret(self):
+        """The webhook factory, still called in main.py, gets its task queue, retrieval callable, dedup store and
+        secret. What the delivering worker gets (R12.3: media_storage must reach the OpenAI delivery) is pinned on the
+        built graph by test_worker_tasks_wiring.py."""
         factory_kwargs = _call_kwargs("create_deep_research_webhooks_blueprint")
         assert factory_kwargs, "create_deep_research_webhooks_blueprint(...) call not found in main.py"
         for kw in ("task_queue", "fetch_response", "dedup_store", "webhook_secret"):

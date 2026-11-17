@@ -2,8 +2,8 @@
 is read by its consumer (P15 card I; the P9 residual "producer and consumer payload fields that do not match").
 
 A static test over the sources (`tests/support/worker_payload_fields.py`): producers are the enqueue sites
-`worker_triggers` finds, the Cloud Scheduler bodies and `GcpTaskQueue.enqueue_slack_event`; consumers are the branches
-of `WorkerHandler._dispatch` and every function the payload is handed to. `drive_sync` is another service's task
+`worker_triggers` finds, the Cloud Scheduler bodies and `GcpTaskQueue.enqueue_slack_event`; consumers are the entries
+of `WorkerHandler`'s task registry and every function the payload is handed to. `drive_sync` is another service's task
 (`worker_triggers.OTHER_SERVICE`) and is not compared; its payload builder is still parsed, so a new form fails here.
 """
 import ast
@@ -29,6 +29,7 @@ UNWRITTEN_BY_DESIGN = {
 }
 
 APPLICATION_GRAPH = wt.ROOT / "src" / "composition" / "application_graph.py"
+PLATFORM_KIT = wt.ROOT / "src" / "composition" / "platform_kit.py"
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +49,7 @@ def test_every_dispatch_branch_has_a_consumer_mapping(consumers):
     # A branch that hands the payload on reaches the function that reads it; the payload-free handlers read nothing.
     handed_on = {name for name, c in consumers.items() if c.functions}
     assert {"agent_execution", "telegram_update", SLACK_EVENT_BRANCH, "interactive_choice", "email_indexing"} <= handed_on
-    assert wpf.delegates_used() == set(wpf.DELEGATES), "a stale DELEGATES entry: _dispatch no longer calls it"
+    assert wpf.delegates_used() == set(wpf.DELEGATES), "a stale DELEGATES entry: no registered task hands it the payload"
 
 
 @pytest.mark.slow   # enqueue_sites() parses every src file: about 2.5 s (precedent: test_worker_triggers.py)
@@ -85,18 +86,47 @@ def test_the_generic_queue_adds_only_the_task_type():
     assert wpf.generic_envelope() == {"task_type"}
 
 
-def test_every_delegate_is_the_function_production_attaches():
-    """The three hand-mapped consumers are what the code binds: the attach calls of the builder, and the constructor
-    annotation of WorkerHandler for the agent worker."""
-    attached = {}
-    for node in ast.walk(ast.parse(APPLICATION_GRAPH.read_text())):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("attach_slack_worker", "attach_telegram_worker")):
-            [arg] = node.args
-            attached[node.func.attr] = arg.attr
-    assert attached == {"attach_slack_worker": wpf.DELEGATES["self._slack_worker"][0].qualname.split(".")[1],
-                        "attach_telegram_worker": wpf.DELEGATES["self._telegram_worker"][0].qualname.split(".")[1]}
-    init = wpf._find_function(ast.parse(wt.WORKER_HANDLER.read_text()), "WorkerHandler.__init__", "worker_handler.py")
+def _keyword_of_the_one_call(tree: ast.AST, callee: str, keyword: str) -> str:
+    """The method name passed as `keyword=` to the one call of the bare name `callee` in `tree`."""
+    found = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == callee]
+    assert len(found) == 1, f"{callee}(...) is called {len(found)} times"
+    [value] = [k.value for k in found[0].keywords if k.arg == keyword]
+    assert isinstance(value, ast.Attribute), ast.unparse(value)
+    return value.attr
+
+
+def _assignments(owner: ast.AST, attribute: str) -> list:
+    """(function, value as written) of every assignment of `attribute` in the functions of `owner`."""
+    return [(fn.name, ast.unparse(n.value)) for fn in ast.walk(owner) if isinstance(fn, ast.FunctionDef)
+            for n in ast.walk(fn) if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target) == attribute]
+
+
+def test_every_delegate_is_the_function_production_binds():
+    """The three hand-mapped consumers are what the code binds: the Slack worker by the builder's `WorkerHandler(...,
+    slack_worker=...)`, the Telegram worker by the builder's `register_late_platform(..., queued_update=...)` through
+    `register_telegram_worker`, each followed to the attribute DELEGATES names, and the agent worker by the constructor
+    annotation of WorkerHandler."""
+    graph = ast.parse(APPLICATION_GRAPH.read_text())
+    handler = ast.parse(wt.WORKER_HANDLER.read_text())
+    [handler_class] = [n for n in handler.body if isinstance(n, ast.ClassDef) and n.name == "WorkerHandler"]
+    method = {key: wpf.DELEGATES[key][0].qualname.split(".")[1] for key in ("self._slack_worker", "self._telegram_worker")}
+
+    assert _keyword_of_the_one_call(graph, "WorkerHandler", "slack_worker") == method["self._slack_worker"]
+    assert _assignments(handler_class, "self._slack_worker") == [("__init__", "slack_worker")]
+
+    assert _keyword_of_the_one_call(graph, "register_late_platform", "queued_update") == method["self._telegram_worker"]
+    late = wpf._find_function(ast.parse(PLATFORM_KIT.read_text()), "register_late_platform", "platform_kit.py")
+    binds = [ast.unparse(n) for n in ast.walk(late) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute) and n.func.attr == "register_telegram_worker"]
+    assert binds == ["worker.register_telegram_worker(queued_update)"]
+    register = wpf._find_function(handler, "WorkerHandler.register_telegram_worker", "worker_handler.py")
+    [parameter] = [a.arg for a in register.args.args[1:]]
+    assert _assignments(handler_class, "self._telegram_worker") == [
+        ("__init__", "None"), ("register_telegram_worker", parameter)]
+
+    init = wpf._find_function(handler, "WorkerHandler.__init__", "worker_handler.py")
     [annotation] = [a.annotation for a in init.args.args if a.arg == "agent_worker_handler"]
     bound = [n for n in ast.walk(init) if isinstance(n, ast.Assign) and ast.unparse(n.targets[0]) == "self._agent_worker"]
     assert ast.unparse(annotation) == wpf.DELEGATES["self._agent_worker.handle_task"][0].qualname.split(".")[0]
@@ -292,49 +322,96 @@ def test_the_comparison_names_a_read_key_a_producer_does_not_write():
                                                                 ("t", "context.user_id"): {"b.py:2"}}
 
 
-def test_a_dispatch_branch_that_calls_no_handler_fails_loudly():
-    source = textwrap.dedent("""
-        class WorkerHandler:
-            async def _dispatch(self, payload, headers):
-                task_type = payload.get("task_type")
-                if task_type == "known":
-                    return await self._handle_known(payload)
-                elif task_type == "orphan":
-                    return {}, 200
-                return {}, 400
+_HANDLER = """
+def _payload_task(method):
+    async def task(payload, headers):
+        return await method(payload)
+    return task
 
-            async def _handle_known(self, payload):
-                return {}, 200
+
+def _no_input_task(method):
+    async def task(payload, headers):
+        return await method()
+    return task
+
+
+class WorkerHandler:
+    def __init__(self):
+        self._tasks = {{{entries}}}
+
+    async def _dispatch(self, payload, headers):
+        task_type = payload.get("task_type")
+        if task_type is None and "event" in payload and "session_id" in payload:
+            task = self._tasks[_QUEUED_SLACK_EVENT]
+        else:
+            task = self._tasks.get(task_type)
+        return await task(payload, headers)
+"""
+
+
+def _handler_source(entries: str, methods: str) -> str:
+    return _HANDLER.format(entries=entries) + textwrap.indent(textwrap.dedent(methods), " " * 4)
+
+
+def test_a_registry_entry_whose_method_does_not_exist_fails_loudly():
+    source = _handler_source('"known": _payload_task(self._handle_known), "orphan": _no_input_task(self._handle_orphan)', """
+        async def _handle_known(self, payload):
+            return {}, 200
     """)
-    with pytest.raises(ExtractorError, match="orphan branch calls no handler"):
+    with pytest.raises(ExtractorError, match="_handle_orphan found 0 times"):
+        wpf.consumers(source=source, delegates={})
+
+
+def test_a_method_registered_without_the_payload_that_takes_parameters_fails_loudly():
+    source = _handler_source('"b": _no_input_task(self._handle_b)', """
+        async def _handle_b(self, payload):
+            return {}, 200
+    """)
+    with pytest.raises(ExtractorError, match="registered without the payload"):
         wpf.consumers(source=source, delegates={})
 
 
 def test_a_dispatch_preamble_read_counts_for_every_branch():
-    source = textwrap.dedent("""
-        class WorkerHandler:
-            async def _dispatch(self, payload, headers):
-                task_type = payload.get("task_type")
-                if task_type == "a":
-                    return await self._handle_a(payload)
-                elif task_type == "b":
-                    return await self._handle_b()
+    source = _handler_source('"a": _payload_task(self._handle_a), "b": _no_input_task(self._handle_b)', """
+        async def _handle_a(self, payload):
+            if not payload.get("x"):
                 return {}, 400
+            job = payload.get("x")
+            if not job:
+                return {}, 400
+            return {}, 200
 
-            async def _handle_a(self, payload):
-                if not payload.get("x"):
-                    return {}, 400
-                job = payload.get("x")
-                if not job:
-                    return {}, 400
-                return {}, 200
-
-            async def _handle_b(self):
-                return {}, 200
+        async def _handle_b(self):
+            return {}, 200
     """)
     found = wpf.consumers(source=source, delegates={})
     assert found["a"].read == {"task_type", "x"} and found["a"].required == {"x"}
     assert found["b"].read == {"task_type"} and found["b"].required == set()
+
+
+def test_the_slack_selecting_test_counts_for_the_queued_slack_event_only():
+    source = _handler_source('"b": _no_input_task(self._handle_b), _QUEUED_SLACK_EVENT: self._handle_slack', """
+        async def _handle_b(self):
+            return {}, 200
+
+        async def _handle_slack(self, payload, headers):
+            if not payload.get("session_id"):
+                return {}, 400
+            return {}, 200
+    """)
+    found = wpf.consumers(source=source, delegates={})
+    assert found[SLACK_EVENT_BRANCH].read == {"task_type", "event", "session_id"}
+    assert found[SLACK_EVENT_BRANCH].functions == ("src/handlers/worker_handler.py::WorkerHandler._handle_slack",)
+    assert found["b"].read == {"task_type"}
+
+
+def test_a_dispatch_without_one_slack_selecting_branch_fails_loudly():
+    source = _handler_source('_QUEUED_SLACK_EVENT: self._handle_slack', """
+        async def _handle_slack(self, payload, headers):
+            return {}, 200
+    """).replace("self._tasks[_QUEUED_SLACK_EVENT]", "self._tasks.get(None)")
+    with pytest.raises(ExtractorError, match="select _QUEUED_SLACK_EVENT"):
+        wpf.consumers(source=source, delegates={})
 
 
 def test_the_comparison_names_a_missing_required_key_and_an_unread_key():
@@ -343,3 +420,64 @@ def test_the_comparison_names_a_missing_required_key_and_an_unread_key():
     bad = wpf.Producer("t", "b.py:2", frozenset({"task_type", "extra"}), frozenset())
     assert wpf.missing_required([good, bad], {"t": consumer}) == {("t", "b.py:2", "user_id")}
     assert wpf.unread_written([good, bad], {"t": consumer}) == {("t", "extra"): {"b.py:2"}}
+
+
+_RUNNER = """
+class Runner:
+    async def __call__(self, payload, headers):
+        user = payload.get("user_id")
+        if not user or payload["note_id"] is None:
+            return {}, 400
+        return await self._run(payload)
+
+    async def _run(self, payload):
+        return {"due": payload.get("due_at")}, 200
+
+
+class Off:
+    async def __call__(self, payload, headers):
+        return {}, 501
+"""
+
+
+def test_a_composed_runner_is_read_through_its_call_and_every_alternative_class(tmp_path):
+    runner_file = tmp_path / "runner.py"
+    runner_file.write_text(_RUNNER)
+    source = _handler_source('"b": _no_input_task(self._handle_b), **tasks', """
+        async def _handle_b(self):
+            return {}, 200
+    """).replace("def __init__(self):", "def __init__(self, tasks):")
+    runners = {"composed": (wt.Runner(runner_file, "Off"), wt.Runner(runner_file, "Runner"))}
+
+    found = wpf.consumers(source=source, delegates={}, runners=runners)
+
+    assert set(found) == {"b", "composed"}
+    assert found["composed"].read == {"task_type", "note_id", "user_id", "due_at"}
+    assert found["composed"].required == {"note_id", "user_id"}
+    assert [f.rpartition("::")[2] for f in found["composed"].functions] == ["Off.__call__", "Runner.__call__", "Runner._run"]
+    assert found["b"].read == {"task_type"}
+
+
+def test_a_composed_runner_the_handler_also_serves_fails_loudly(tmp_path):
+    runner_file = tmp_path / "runner.py"
+    runner_file.write_text(_RUNNER)
+    source = _handler_source('"b": _no_input_task(self._handle_b), **tasks', """
+        async def _handle_b(self):
+            return {}, 200
+    """).replace("def __init__(self):", "def __init__(self, tasks):")
+    with pytest.raises(ExtractorError, match="both the handler's own and a composed runner"):
+        wpf.consumers(source=source, delegates={}, runners={"b": (wt.Runner(runner_file, "Runner"),)})
+
+
+def test_a_registry_without_a_composed_spread_ignores_the_runners(tmp_path):
+    source = _handler_source('"b": _no_input_task(self._handle_b)', """
+        async def _handle_b(self):
+            return {}, 200
+    """)
+    assert set(wpf.consumers(source=source, delegates={}, runners={"x": (wt.Runner(tmp_path / "none.py", "X"),)})) == {"b"}
+
+
+def test_the_reminder_consumer_is_read_from_the_composed_runner(consumers):
+    reminder = consumers["execute_reminder"]
+    assert reminder.required == {"note_id", "user_id", "due_at"}
+    assert any(f.endswith("ExecuteReminderTask.__call__") for f in reminder.functions)

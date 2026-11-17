@@ -18,11 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 
 from .sandbox_client_setup import docx_runner_factory, pdf_runner_factory
+from .deploy_topology import DeployTopology
 from .voice_mcp_setup import voice_mcp_servers
 from ..adapters.mcp.mcp_client import MCPClient
 from ..adapters.mcp.mcp_maps_adapter import MCPMapsAdapter
 
-from ..config.environment import EnvironmentConfig
 from ..domain.agent import AgentConfig
 from ..domain.user import UserProfile
 from ..domain.voice_provider_profile import (
@@ -173,7 +173,7 @@ class UserAgentFactory(AgentFactoryPort):
         self,
         *,
         config: dict,
-        env_config: EnvironmentConfig,
+        deploy_topology: DeployTopology,
         coordinator: AgentCoordinator,
         user_repo: UserRepository,
         account_repo: AccountRepository,
@@ -229,7 +229,7 @@ class UserAgentFactory(AgentFactoryPort):
         self._docx_runner_factory = docx_runner_factory()
         self._pdf_runner_factory = pdf_runner_factory()
         self.config = config
-        self.env_config = env_config
+        self.deploy_topology = deploy_topology
         self.coordinator = coordinator
         self.user_repo = user_repo
         self.account_repo = account_repo
@@ -1058,13 +1058,12 @@ class UserAgentFactory(AgentFactoryPort):
         if not self.notification_service:
             logger.warning("[UserAgentFactory] No notification_service, skipping lelik")
             return None
-        service_url = self.config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         return LelikAgent(
             config=AgentConfig(agent_id=f"lelik_agent_{user_id}", agent_type="lelik",
                                timeout_ms=10_000, capabilities=[]),
             telephony=self._telephony,
             from_number=from_number,
-            status_callback_url=f"{service_url}/voice/status",
+            status_callback_url=f"{self.deploy_topology.service_url}/voice/status",
             prompt_builder=ctx.prompt_builder,
             persona=LelikPersonaService(
                 fact_repository=self.repository,

@@ -18,6 +18,7 @@ from ..services.user_drive_service import UserDriveService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.localization_service import LocalizationService
+from ..services.language_preference_service import LanguagePreferenceService
 from ..services.integration_reconnect_service import IntegrationReconnectService
 from ..domain.email import GMAIL_INDEX_PROVIDER
 from ..domain.integration import Integration
@@ -85,6 +86,7 @@ def create_user_cabinet_blueprint(
     task_setup=None,
     tasks_provider=None,
     language_service: Optional[LanguageServicePort] = None,
+    language_preferences: Optional[LanguagePreferenceService] = None,
     agent_note_port: Optional[AgentNotePort] = None,
     recurrence_port: Optional[RecurrencePort] = None,
     twilio_verify_client: Optional[Any] = None,
@@ -110,7 +112,8 @@ def create_user_cabinet_blueprint(
     Tasks and drive disconnects go through it (501 without it). `connectors` is the connector registry: the cards' kinds
     and `GET /api/connectors`. `drive_connections` owns the drive connections (§4.4) and `user_drive_service` reads the
     folders the pickers show and the chains `set_scope` / `set_write_folder` need; `drive_notes` gives each drive's note;
-    `drive_disconnect` runs a disconnect (the Cabinet is its only caller, REQ-ARCH-34).
+    `drive_disconnect` runs a disconnect (the Cabinet is its only caller, REQ-ARCH-34). `language_service` reads the
+    language settings and `language_preferences` writes them.
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -662,8 +665,8 @@ def create_user_cabinet_blueprint(
                 if preferred is None:
                     return jsonify({"error": f"Unsupported language: {lang_raw!r}"}), 400
 
-            if language_service:
-                await language_service.set_preference(g.user_id, preferred, mirror)
+            if language_preferences:
+                await language_preferences.set_preference(g.user_id, preferred, mirror)
 
             return jsonify({
                 "preferred_language": preferred.value if preferred else None,

@@ -40,6 +40,8 @@ from src.adapters.firestore_notification_state_adapter import FirestoreNotificat
 from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.gcs_media_adapter import GcsMediaAdapter
+from src.composition.worker_setup import build_worker_tasks
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentMessage, AgentResponse, DeliveryItem
 from src.domain.agent_note import NoteCreate
@@ -372,6 +374,11 @@ class TaskRequest:
     scheduled: bool
 
 
+# `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
+                "deep_research_fetch", "prompt_content_store")
+
+
 class SeamWorld:
     """The module docstring's world. `worker_overrides` are `WorkerHandler` keywords added to or replacing the defaults
     (`email_review=`, `video_registry=`, `deep_research_fetch=`, ...)."""
@@ -392,9 +399,9 @@ class SeamWorld:
         self.channels = SeamChannels()
         self.media: Dict[str, RecordingMedia] = {"slack": RecordingMedia("slack"), "telegram": RecordingMedia("telegram")}
         self.notifier = UserNotificationService(self.state, self.channels, self.coordinator, NOTIFICATION_SLA,
+                                                platform_media={"slack": self.media["slack"],
+                                                                "telegram": self.media["telegram"]},
                                                 session_store=self.sessions)
-        self.notifier.register_platform_media("slack", self.media["slack"])
-        self.notifier.register_platform_media("telegram", self.media["telegram"])
         self.gcs = FakeGcs(buckets={BUCKET: "plain"})
         self.gcs.install(monkeypatch)
         self.media_store = GcsMediaAdapter(BUCKET)
@@ -412,12 +419,25 @@ class SeamWorld:
             task_queue=self.queue, doc_delivery_service=self.doc_delivery, link_service=self.links,
         )
         keywords: Dict[str, Any] = dict(
-            agent_worker_handler=self.agent_worker, email_indexing_service=None, notification_service=self.notifier,
+            agent_worker_handler=self.agent_worker, email_indexing_service=None,
             consolidation_service=None, agent_factory=self.factory,
-            user_repo=self.users, task_dispatch=self.dispatch, media_storage=self.media_store,
-            link_service=self.links, reminders_service=self.reminders, notes_port=self.notes, task_claims=self.claims,
+            user_repo=self.users, task_dispatch=self.dispatch, reminders_service=self.reminders, task_claims=self.claims,
         )
+        moved: Dict[str, Any] = dict(media_storage=self.media_store, link_service=self.links)
+        for name in _RUNNER_DEPS:
+            if name in worker_overrides:
+                moved[name] = worker_overrides.pop(name)
+        email_review = worker_overrides.pop("email_review", None)
         keywords.update(worker_overrides)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, task_dispatch=keywords["task_dispatch"],
+            email_review=email_review, daily_review_marks=None,
+            gmail_reconnect_flag=GmailReconnectFlag(
+                oauth_credentials=None, mail_connector=None, ensure_agents=self.factory.ensure_agents_for_user,
+                notification_service=self.notifier),
+            account_repo=None,
+            **{name: moved.get(name) for name in _RUNNER_DEPS})
         self.handler = WorkerHandler(**keywords)
         self._agents: Dict[str, StandInAgent] = {}
         self._runs = 0

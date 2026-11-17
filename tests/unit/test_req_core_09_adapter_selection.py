@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from src.composition.deploy_topology import build_deploy_topology
 from src.composition.slack_adapter_factory import SlackAdapterFactory
+from src.composition.chat_services import ChatServices
 
 
 @pytest.mark.requirement("REQ-CORE-09")
@@ -12,17 +14,16 @@ def test_factory_requires_db_client():
     without a session store.
     Covers: REQ-CORE-09 (Adapter Mode Selection)
     """
-    with patch("src.composition.slack_adapter_factory.ConversationHandler"):
+    with patch("src.composition.chat_services.ConversationHandler"):
         with pytest.raises(ValueError, match="db_client is required"):
             SlackAdapterFactory.create_adapter(
                 rich_content_service=MagicMock(),
                 app=AsyncMock(),
-                coordinator=AsyncMock(),
-                agent_factory=AsyncMock(),
+                chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock()),
                 iam_service=AsyncMock(),
                 session_store=AsyncMock(),
                 config={"SLACK_BOT_TOKEN": "prod-bot"},
-                env_config=MagicMock(),
+                deploy_topology=build_deploy_topology({}, MagicMock()),
                 db_client=None,
             )
 
@@ -54,16 +55,15 @@ def test_factory_selects_http_mode_with_dependencies():
 
     with patch("src.composition.slack_adapter_factory.GcpTaskQueue") as mock_tasks, \
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter") as mock_http, \
-         patch("src.composition.slack_adapter_factory.ConversationHandler"):
+         patch("src.composition.chat_services.ConversationHandler"):
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             app=app,
-            coordinator=AsyncMock(),
-            agent_factory=agent_factory,
+            chat=ChatServices(coordinator=AsyncMock(), agent_factory=agent_factory),
             iam_service=iam_service,
             session_store=MagicMock(),
             config=config,
-            env_config=env_config,
+            deploy_topology=build_deploy_topology(config, env_config),
             db_client=MagicMock()
         )
         mock_tasks.assert_called_once()
@@ -94,17 +94,15 @@ def test_factory_forwards_skill_service_to_conversation_handler():
 
     with patch("src.composition.slack_adapter_factory.GcpTaskQueue"), \
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter"), \
-         patch("src.composition.slack_adapter_factory.ConversationHandler") as mock_handler:
+         patch("src.composition.chat_services.ConversationHandler") as mock_handler:
         SlackAdapterFactory.create_adapter(
             rich_content_service=MagicMock(),
             app=app,
-            coordinator=AsyncMock(),
-            agent_factory=AsyncMock(),
+            chat=ChatServices(coordinator=AsyncMock(), agent_factory=AsyncMock(), skill_service=sentinel_skill_service),
             iam_service=AsyncMock(),
             session_store=MagicMock(),
             config=config,
-            env_config=env_config,
+            deploy_topology=build_deploy_topology(config, env_config),
             db_client=MagicMock(),
-            skill_service=sentinel_skill_service,
         )
         assert mock_handler.call_args.kwargs["skill_service"] is sentinel_skill_service

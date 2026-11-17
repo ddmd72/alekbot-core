@@ -27,7 +27,7 @@ from src.domain.entities import FactDomain, FactEntity
 from src.domain.fact_query import FactQuery
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig
-from src.handlers import worker_handler
+from src.services import daily_email_review_task
 from src.infrastructure.task_execution_resolver import TaskExecutionResolver
 from src.domain.llm import Message
 from src.ports.fact_search_port import FactSearchPort
@@ -162,7 +162,7 @@ async def seam(monkeypatch: Any, *smart_script: Any, router_script: Optional[Lis
 async def _daily_review(monkeypatch: Any) -> SimpleNamespace:
     s = await seam(monkeypatch, envelope("Your inbox review is ready.", "Reviewed the inbox."),
                    email_review=ScriptedReview(EMAILS))
-    pin_datetime(monkeypatch, worker_handler, T0)   # the alert's date is read from real time (worker_handler.py:1190)
+    pin_datetime(monkeypatch, daily_email_review_task, T0)   # the alert's date is read from real time
     s.answer = await s.world.run({"task_type": "daily_email_review", "user_id": USER, "account_id": ACCOUNT})
     return s
 

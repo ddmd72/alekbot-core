@@ -48,6 +48,7 @@ from src.handlers.worker_handler import WorkerHandler
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.services.email_review_service import EmailReviewService
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.services.reminders_service import RemindersService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.user_notification_service import UserNotificationService
@@ -56,6 +57,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import SERVICE_URL, DedupCloudTasksClient
 from tests.support.worker_payload_fields import consumers
 from src.composition.connector_registry import ConnectorRegistry
+from src.composition.worker_setup import build_worker_tasks
 
 # 09:00 in Berlin (CET, after the October transition). No boundary is under test at this instant.
 T0 = datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
@@ -493,10 +495,15 @@ def _consumers() -> Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]]:
 
 # ----------------------------------------------------------------------------- the world
 
+# `WorkerHandler` keywords that moved into the task runners `build_worker_tasks` builds.
+_RUNNER_DEPS = ("video_registry", "quota_service", "media_storage", "link_service", "short_link_service",
+                "deep_research_fetch", "prompt_content_store")
+
+
 class RedeliveryWorld:
     """Everything a redelivered `/worker` task touches, on one `EvalDb` (module docstring). `handler_overrides` are
-    keywords of `WorkerHandler` that replace or add to the defaults (`email_review=`, `video_registry=`,
-    `companion_extraction=`, `interactive_choice=`, ...)."""
+    keywords of `WorkerHandler` that replace or add to the defaults (`email_review=`, `daily_review_marks=` and the
+    `_RUNNER_DEPS` go to the runners instead; `companion_extraction=`, `interactive_choice=`, ...)."""
 
     def __init__(self, **handler_overrides: Any) -> None:
         self.db = EvalDb()
@@ -520,12 +527,27 @@ class RedeliveryWorld:
         keywords: Dict[str, Any] = dict(
             agent_worker_handler=AgentWorkerHandler(self.router, notification_service=self.notifier,  # type: ignore[arg-type]
                                                     task_queue=self.dispatch),
-            email_indexing_service=None, notification_service=self.notifier, consolidation_service=None,
+            email_indexing_service=None, consolidation_service=None,
             agent_factory=self.factory, user_repo=self.users,
-            task_dispatch=self.dispatch, reminders_service=self.reminders, notes_port=self.notes,
-            task_claims=self.claims, daily_review_marks=self.marks,
+            task_dispatch=self.dispatch, reminders_service=self.reminders,
+            task_claims=self.claims,
         )
+        moved: Dict[str, Any] = {}
+        for name in _RUNNER_DEPS:
+            if name in handler_overrides:
+                moved[name] = handler_overrides.pop(name)
+        email_review = handler_overrides.pop("email_review", None)
+        daily_review_marks = handler_overrides.pop("daily_review_marks", self.marks)
         keywords.update(handler_overrides)
+        keywords["tasks"] = build_worker_tasks(
+            notes_port=self.notes, user_repo=self.users, ensure_agents=self.factory.ensure_agents_for_user,
+            notification_service=self.notifier, alert_sink=None, task_dispatch=keywords["task_dispatch"],
+            email_review=email_review, daily_review_marks=daily_review_marks,
+            gmail_reconnect_flag=GmailReconnectFlag(
+                oauth_credentials=None, mail_connector=None, ensure_agents=self.factory.ensure_agents_for_user,
+                notification_service=self.notifier),
+            account_repo=None,
+            **{name: moved.get(name) for name in _RUNNER_DEPS})
         self.handler = WorkerHandler(**keywords)
 
     async def set_primary_channel(self) -> None:

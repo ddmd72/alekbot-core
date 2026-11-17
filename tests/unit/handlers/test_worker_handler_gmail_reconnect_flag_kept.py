@@ -15,8 +15,10 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notify_result import NotifyResult
-from src.handlers.worker_handler import WorkerHandler
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
+from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.email_review_service import EmailReviewService
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.composition.connector_registry import ConnectorRegistry
 
 _NOW = datetime(2026, 10, 10, 11, 12, tzinfo=timezone.utc)
@@ -59,11 +61,13 @@ def _worker(store, notify):
     review.fetch_review_payload = AsyncMock(side_effect=OAuthGrantRevokedError("invalid_grant"))
     notification = AsyncMock()
     notification.notify = notify
-    return WorkerHandler(
-        agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=notification,
-        consolidation_service=None, agent_factory=AsyncMock(),
-        user_repo=MagicMock(), task_dispatch=AsyncMock(), email_review=review, oauth_credentials=store, mail_connector=ConnectorRegistry().get("gmail"),
-    )
+    ensure_agents = AsyncMock()
+    return DailyEmailReviewTask(
+        email_review=review, ensure_agents=ensure_agents, notification_service=notification,
+        gmail_reconnect_flag=GmailReconnectFlag(
+            oauth_credentials=store, mail_connector=ConnectorRegistry().get("gmail"), ensure_agents=ensure_agents,
+            notification_service=notification),
+        empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
 
 
 @pytest.mark.parametrize("outcome", [
@@ -77,7 +81,7 @@ async def test_the_flag_stays_up_and_no_second_notice_follows(outcome):
                                                           sent=True)])
     worker = _worker(store, notify)
     for _ in range(2):
-        _, status = await worker._handle_daily_email_review({"user_id": "u", "account_id": "a"})
+        _, status = await worker({"user_id": "u", "account_id": "a"}, {})
         assert status == 200
     assert store.creds.needs_reconnect is True
     assert store.saves == [True]

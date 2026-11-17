@@ -35,8 +35,7 @@ def message(**over):
 
 async def sent_text(msg):
     channel = Channel()
-    factory = NotificationChannelFactory()
-    factory.register_factory("telegram", lambda cid: channel)
+    factory = NotificationChannelFactory({"telegram": lambda cid: channel})
     await PlainTextInteractiveMessageAdapter(factory).post("telegram", "555", msg)
     return channel.sent[0]
 

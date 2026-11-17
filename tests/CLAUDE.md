@@ -169,7 +169,8 @@ The main service's non-web objects are built by `build_application_graph(config,
 AST checks over `src/` that keep the wiring from regrowing: constructor arity (≤ 12 params in handlers, services,
 composition), late wiring (`attach_*`/`set_*`/`register_*` calls in composition and `main.py`, setter methods in services
 and handlers), writes to another object's private attribute, injected dependencies stored and never read, composition
-function size (≤ 150 lines); plus `tests/unit/composition/test_platform_handler_parity.py`
+function size (≤ 150 lines), deploy literals outside `DeployTopology` (the service URL, queue suffix and regions are read only in
+`composition/deploy_topology.py`); plus `tests/unit/composition/test_platform_handler_parity.py`
 (Slack and Telegram `ConversationHandler`s differ only in the declared platform-only attributes). Today's offenders sit in
 the `*_allowlist.txt` next to each test, and the lists only shrink: a new offender fails, and so does a line whose offence
 is gone or whose count fell (lower or delete it in the same change). A new line is never the way to make new code pass —
@@ -187,7 +188,7 @@ python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
 ```
 
 The test list is computed, not hand-written: `python -m tests.support.mutation_targets --tests-for <src.module>` prints every `tests/unit`
-test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). The six wiring targets also get the graph group `graph_tests()` (every unit test reaching `prod_graph`, `worker_triggers`, `main` or `application_graph`). `extra` is the escape hatch for a test that reaches the module only through `src` or only through a conftest fixture
+test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). The nine wiring targets also get the graph group `graph_tests()` (every unit test reaching `prod_graph`, `worker_triggers`, `main` or `application_graph`). `extra` is the escape hatch for a test that reaches the module only through `src` or only through a conftest fixture
 (conftests are never followed). For a registered target `--tests-for <m>` prints the full list (computed closure + graph group + `extra`); it exits 2 with a message when no unit test reaches the module.
 
 Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;

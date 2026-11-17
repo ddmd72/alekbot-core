@@ -20,8 +20,11 @@ from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.services.background_empty_answer_reporter import BackgroundEmptyAnswerReporter
 from src.services.email_indexing_service import EmailIndexingService
+from src.services.daily_email_review_task import DailyEmailReviewTask
 from src.services.email_review_service import EmailReviewService
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
 
@@ -61,16 +64,7 @@ def _job() -> IndexingJob:
     )
 
 
-def _worker(*, stored_creds, oauth_configured: bool = True):
-    email_indexing = MagicMock(spec=EmailIndexingService)
-    email_indexing.load_job_for_execution = AsyncMock(
-        return_value=(_job(), _creds(), None)
-    )
-    email_indexing.run_indexing_job = AsyncMock(side_effect=_REVOKED)
-
-    email_review = MagicMock(spec=EmailReviewService)
-    email_review.fetch_review_payload = AsyncMock(side_effect=_REVOKED)
-
+def _parts(*, stored_creds, oauth_configured: bool = True):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = stored_creds
     mirror_get(oauth)
@@ -78,28 +72,53 @@ def _worker(*, stored_creds, oauth_configured: bool = True):
 
     notification = AsyncMock()
     notification.notify = AsyncMock()
+    ensure_agents = AsyncMock()
+    flag = GmailReconnectFlag(
+        oauth_credentials=oauth if oauth_configured else None, mail_connector=ConnectorRegistry().get("gmail"),
+        ensure_agents=ensure_agents, notification_service=notification)
+    return oauth, notification, ensure_agents, flag
 
+
+def _worker(*, stored_creds, oauth_configured: bool = True):
+    email_indexing = MagicMock(spec=EmailIndexingService)
+    email_indexing.load_job_for_execution = AsyncMock(
+        return_value=(_job(), _creds(), None)
+    )
+    email_indexing.run_indexing_job = AsyncMock(side_effect=_REVOKED)
+
+    oauth, notification, ensure_agents, flag = _parts(stored_creds=stored_creds, oauth_configured=oauth_configured)
+    agent_factory = MagicMock()
+    agent_factory.ensure_agents_for_user = ensure_agents
     worker = WorkerHandler(
         agent_worker_handler=MagicMock(),
         email_indexing_service=email_indexing,
-        notification_service=notification,
         consolidation_service=None,
-        agent_factory=AsyncMock(),
+        agent_factory=agent_factory,
         user_repo=MagicMock(),
         task_dispatch=AsyncMock(),
-        email_review=email_review,
-        oauth_credentials=oauth if oauth_configured else None, mail_connector=ConnectorRegistry().get("gmail"),
+        gmail_reconnect_flag=flag,
     )
     return worker, oauth, notification
+
+
+def _review(*, stored_creds, oauth_configured: bool = True):
+    email_review = MagicMock(spec=EmailReviewService)
+    email_review.fetch_review_payload = AsyncMock(side_effect=_REVOKED)
+
+    oauth, notification, ensure_agents, flag = _parts(stored_creds=stored_creds, oauth_configured=oauth_configured)
+    review = DailyEmailReviewTask(
+        email_review=email_review, ensure_agents=ensure_agents, notification_service=notification,
+        gmail_reconnect_flag=flag, empty_answer_reporter=BackgroundEmptyAnswerReporter(alert_sink=None))
+    return review, oauth, notification
 
 
 class TestDailyReviewGrantRevoked:
 
     async def test_marks_needs_reconnect_and_notifies(self):
-        worker, oauth, notification = _worker(stored_creds=_creds())
+        worker, oauth, notification = _review(stored_creds=_creds())
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER, "account_id": _ACC}
+        result, status = await worker(
+            {"user_id": _USER, "account_id": _ACC}, {}
         )
 
         assert status == 200
@@ -116,10 +135,10 @@ class TestDailyReviewGrantRevoked:
         assert "Reconnect" in kw["system_alert"]
 
     async def test_already_flagged_does_not_notify_again(self):
-        worker, oauth, notification = _worker(stored_creds=_creds(needs_reconnect=True))
+        worker, oauth, notification = _review(stored_creds=_creds(needs_reconnect=True))
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER, "account_id": _ACC}
+        result, status = await worker(
+            {"user_id": _USER, "account_id": _ACC}, {}
         )
 
         assert status == 200
@@ -128,10 +147,10 @@ class TestDailyReviewGrantRevoked:
         notification.notify.assert_not_awaited()
 
     async def test_credentials_gone_does_nothing(self):
-        worker, oauth, notification = _worker(stored_creds=None)
+        worker, oauth, notification = _review(stored_creds=None)
 
-        _, status = await worker._handle_daily_email_review(
-            {"user_id": _USER, "account_id": _ACC}
+        _, status = await worker(
+            {"user_id": _USER, "account_id": _ACC}, {}
         )
 
         assert status == 200
@@ -140,21 +159,21 @@ class TestDailyReviewGrantRevoked:
         notification.notify.assert_not_awaited()
 
     async def test_notify_failure_is_not_raised(self):
-        worker, oauth, notification = _worker(stored_creds=_creds())
+        worker, oauth, notification = _review(stored_creds=_creds())
         notification.notify.side_effect = RuntimeError("channel down")
 
-        result, status = await worker._handle_daily_email_review(
-            {"user_id": _USER, "account_id": _ACC}
+        result, status = await worker(
+            {"user_id": _USER, "account_id": _ACC}, {}
         )
 
         assert status == 200
         assert result == {"error": "gmail_reconnect_required"}
 
     async def test_without_oauth_port_still_returns_200(self):
-        worker, _, notification = _worker(stored_creds=_creds(), oauth_configured=False)
+        worker, _, notification = _review(stored_creds=_creds(), oauth_configured=False)
 
-        _, status = await worker._handle_daily_email_review(
-            {"user_id": _USER, "account_id": _ACC}
+        _, status = await worker(
+            {"user_id": _USER, "account_id": _ACC}, {}
         )
 
         assert status == 200

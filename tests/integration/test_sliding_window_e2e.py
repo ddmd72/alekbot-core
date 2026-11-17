@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.config.settings import load_settings
 from src.config.environment import EnvironmentConfig
 from src.domain.user import UserProfile, UserBotConfig
@@ -147,7 +148,7 @@ async def test_sliding_window_e2e():
             cipher=AesGcmTestCipher(),
             config=config,
             db_client=db_client,
-            env_config=env_config,
+            env_config=env_config, deploy_topology=build_deploy_topology({}, env_config),
             account_repo=account_repo,
         )
         container.session_store = session_store
@@ -155,7 +156,7 @@ async def test_sliding_window_e2e():
 
         agent_factory = UserAgentFactory(
             config=config,
-            env_config=env_config,
+            deploy_topology=build_deploy_topology(config, env_config),
             coordinator=coordinator,
             user_repo=user_repo,
             account_repo=account_repo,

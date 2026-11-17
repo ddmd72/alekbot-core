@@ -1,6 +1,7 @@
 """Drive indexing composition passes every collaborator through and uses the real repository (RFC §13)."""
 from unittest.mock import AsyncMock, MagicMock
 
+from src.composition.deploy_topology import build_deploy_topology
 from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from src.composition import drive_indexing_setup as setup
 from src.composition.service_container import ServiceContainer
@@ -38,6 +39,6 @@ class TestContainerDriveIndexRepositoryConcrete:
             "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
             "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
         }
-        c = ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+        c = ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(), deploy_topology=build_deploy_topology({}, EnvironmentConfig()),
                              account_repo=AsyncMock(spec=AccountRepository))
         assert isinstance(c.drive_index_repo, FirestoreDriveIndexRepository)

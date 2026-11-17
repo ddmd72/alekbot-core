@@ -34,10 +34,8 @@ def _port():
 
 
 async def test_telegram_uploads_to_the_chat_id_without_a_placeholder():
-    svc, response, _ = _service("telegram", "12345")
     slack, telegram = _port(), _port()
-    svc.register_platform_media("slack", slack)
-    svc.register_platform_media("telegram", telegram)
+    svc, response, _ = _service("telegram", "12345", platform_media={"slack": slack, "telegram": telegram})
     assert await svc.notify_file_bytes("u", "a", b"x", "list.txt", "List") is True
     telegram.upload_file.assert_awaited_once_with(file_bytes=b"x", filename="list.txt", title="List",
                                                   channel_id="12345")
@@ -46,7 +44,7 @@ async def test_telegram_uploads_to_the_chat_id_without_a_placeholder():
 
 
 async def test_a_platform_without_a_port_posts_nothing():
-    svc, response, factory = _service("telegram", "12345", platform_media=_port())   # only Slack's
+    svc, response, factory = _service("telegram", "12345", platform_media={"slack": _port()})   # only Slack's
     assert await svc.notify_file_bytes("u", "a", b"x", "list.txt", "List") is False
     response.send_message.assert_not_awaited()
     factory.create.assert_not_called()
@@ -54,8 +52,7 @@ async def test_a_platform_without_a_port_posts_nothing():
 
 async def test_slack_still_resolves_the_dm_channel_with_a_placeholder():
     slack = _port()
-    svc, response, _ = _service("slack", "U1")
-    svc.register_platform_media("slack", slack)
+    svc, response, _ = _service("slack", "U1", platform_media={"slack": slack})
     assert await svc.notify_file_bytes("u", "a", b"x", "list.txt", "List") is True
     response.send_message.assert_awaited_once_with("📎")
     slack.upload_file.assert_awaited_once_with(file_bytes=b"x", filename="list.txt", title="List", channel_id="D1")
@@ -63,6 +60,6 @@ async def test_slack_still_resolves_the_dm_channel_with_a_placeholder():
 
 async def test_the_constructor_port_is_slack_s():
     slack = _port()
-    svc, _, _ = _service("slack", "U1", platform_media=slack)
+    svc, _, _ = _service("slack", "U1", platform_media={"slack": slack})
     assert await svc.notify_file_bytes("u", "a", b"x", "list.txt", "List") is True
     slack.upload_file.assert_awaited_once()

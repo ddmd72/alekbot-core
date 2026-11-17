@@ -5,6 +5,7 @@
 """
 import asyncio
 import os
+from functools import partial
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -68,9 +69,13 @@ from src.composition.sandbox_media_setup import build_sandbox_media
 from src.composition.sandbox_parse_setup import build_sandbox_parser
 from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
+from src.composition.chat_services import ChatServices
+from src.composition.platform_kit import PlatformKit, register_late_platform
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
 from src.composition.user_agent_factory import UserAgentFactory
+from src.composition.worker_setup import build_worker_tasks
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
@@ -112,6 +117,7 @@ from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
+from src.services.language_resolver import LanguageResolver
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.overflow_routing_service import OverflowRoutingService
@@ -124,6 +130,7 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
+from src.composition.deploy_topology import DeployTopology, build_deploy_topology
 from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.composition.drive_connection_setup import build_drive_activation
 from src.composition.fact_search_setup import build_fact_search_service
@@ -162,6 +169,7 @@ class ApplicationGraph:
     auth_service: AuthenticationService
     auth_registry: AuthProviderRegistry
     auth_config: AuthConfig
+    deploy_topology: DeployTopology
     # the integration connect flow and the Cabinet's credential removal (MULTI_DRIVE_RFC §4.3, §5.2)
     connect_service: OAuthConnectService
     credential_revocation: CredentialRevocationService
@@ -177,7 +185,8 @@ class ApplicationGraph:
     short_link_service: Optional[ShortLinkService]
     companion_extractor_runner: CompanionExtractorRunner
     call_text_files: CallTextFileService    # the web call's "keep as a file" (VOICE_CALL_LIVE_TEXT_RFC §4.11)
-    language_service: LanguagePreferenceService
+    language_service: LanguageResolver
+    language_preferences: LanguagePreferenceService
     localization: _LocalizationService
     # the stored-secrets cipher and the verify-only digest key (SECRETS_AT_REST_RFC §2.6), consumed by main()'s MCP wiring
     cipher: CipherPort
@@ -237,6 +246,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # localhost callback on Cloud Run refuses the start before anything is built.
     auth_config = AuthConfig(config)
     auth_config.validate()
+    topology = build_deploy_topology(config, env_config)
     # Every document is parsed by the sandbox's light service: no URL refuses the start, before any repository.
     parse_adapter = build_sandbox_parser(config.get("SANDBOX_PARSE_URL") or "")
     # An edit-video source's duration is probed by the same light service's media op: the main service never decodes it.
@@ -281,13 +291,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     agent_task_queue = None
     if config.get("GOOGLE_CLOUD_PROJECT"):
-        queue_suffix = "dev" if env_config.is_development else "prod"
-        service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         agent_task_queue = GcpTaskQueue(
             project_id=config["GOOGLE_CLOUD_PROJECT"],
-            location="us-central1",
-            queue_name=f"agent-tasks-{queue_suffix}",
-            service_url=service_url,
+            location=topology.region,
+            queue_name=f"agent-tasks-{topology.queue_suffix}",
+            service_url=topology.service_url,
             service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
         )
     else:
@@ -388,6 +396,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         config=config,
         db_client=db_client,
         env_config=env_config,
+        deploy_topology=topology,
         account_repo=account_repo,
         overflow_callback=overflow_callback,
         threshold_resolver=companion_window_resolver.resolve,
@@ -448,14 +457,13 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         job_registry.register("openai", _openai_dr_adapter)
         logger.info("🔬 Deep research adapter registered: provider=openai")
     if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
-        queue_suffix = "dev" if env_config.is_development else "prod"
         cloud_jobs_adapter = CloudRunJobsAdapter(
             project=config["GOOGLE_CLOUD_PROJECT"],
-            region="us-central1",
+            region=topology.region,
         )
         job_registry.register("claude", ClaudeDeepResearchAdapter(
             job_runner=cloud_jobs_adapter,
-            job_name=f"alek-research-job-{queue_suffix}",
+            job_name=f"alek-research-job-{topology.queue_suffix}",
             model_override=os.getenv("CLAUDE_DEEP_RESEARCH_MODEL"),
         ))
         logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
@@ -506,7 +514,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     file_link_service = (
         FileLinkService(
             token_service=file_token_service,
-            base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            base_url=topology.service_url,
         )
         if gcs_media_adapter else None
     )
@@ -517,40 +525,74 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     short_link_service = (
         ShortLinkService(
             repository=FirestoreShortLinkRepository(db_client=db_client, env_config=env_config),
-            base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
+            base_url=topology.service_url,
         )
         if gcs_media_adapter else None
     )
 
-    # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
+    # Notification service — Slack's kit at construction; Telegram's is bound late (register_late_platform).
     notification_state_repo = FirestoreNotificationStateAdapter(
         db_client=db_client, env_config=env_config
     )
-    notification_channel_factory = NotificationChannelFactory()  # adapters wired below
-    notification_service = UserNotificationService(
-        state_repo=notification_state_repo,
-        channel_factory=notification_channel_factory,
-        coordinator=coordinator,
-        notification_sla=NOTIFICATION_SLA,
-        session_store=session_store,
-    )
-
     logger.info("🌐 Initializing Language Services...")
     _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
     _localization = _LocalizationService(_localization_port)
     _system_lang = LanguageCode.from_str(
         config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
     )
-    _language_service = LanguagePreferenceService(
+    _language_service = LanguageResolver(
         user_repo=user_repo,
         account_repo=account_repo,
-        profile_repo=container.profile_repo,
-        prompt_builder=container.assembly_service,
         system_default_language=_system_lang,
-        notification_service=notification_service,
     )
-    # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
-    notification_service.attach_localization(_localization, _language_service)
+
+    # The Slack app is built here, before the notification service and the memory review, whose questions are posted
+    # through its client; the Slack adapter below is built over the same app.
+    bot_token = config["SLACK_BOT_TOKEN"]
+    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
+    logger.debug("Creating AsyncApp...")
+    app = AsyncApp(token=bot_token)
+    logger.debug("AsyncApp created successfully")
+
+    # HTML renderer (optional — lazy-starts Chromium on first widget request)
+    html_renderer = build_html_renderer(
+        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
+    if html_renderer is not None:
+        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
+    else:
+        logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
+
+    # One media adapter and one RichContentService per platform: the chat handler and the notification service deliver
+    # files through the same ones.
+    slack_media_adapter = SlackMediaAdapter(app_client=app.client, bot_token=bot_token)
+    slack_kit = PlatformKit(
+        platform=SLACK_PLATFORM,
+        media=slack_media_adapter,
+        rich_content=RichContentService(
+            media_port=slack_media_adapter,
+            storage_port=gcs_media_adapter,
+            html_renderer=html_renderer,
+        ),
+        channel=lambda channel_id: SlackResponseChannel(
+            app_client=app.client,
+            channel_id=channel_id,
+            bot_token=bot_token,
+        ),
+    )
+
+    notification_channel_factory = NotificationChannelFactory({slack_kit.platform: slack_kit.channel})
+    notification_service = UserNotificationService(
+        state_repo=notification_state_repo,
+        channel_factory=notification_channel_factory,
+        coordinator=coordinator,
+        notification_sla=NOTIFICATION_SLA,
+        platform_media={slack_kit.platform: slack_kit.media},
+        platform_rich_content={slack_kit.platform: slack_kit.rich_content},
+        session_store=session_store,
+        # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
+        localization=_localization,
+        language=_language_service,
+    )
 
     # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
     # and sync (ConversationHandler) document delivery paths.
@@ -623,7 +665,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     agent_factory = UserAgentFactory(
         config=config,
         fact_search=fact_search,
-        env_config=env_config,
+        deploy_topology=topology,
         coordinator=coordinator,
         user_repo=user_repo,
         account_repo=account_repo,
@@ -643,7 +685,14 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         video_duration=video_duration,
     )
     coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
-    _language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
+    language_preferences = LanguagePreferenceService(
+        user_repo=user_repo,
+        profile_repo=container.profile_repo,
+        prompt_builder=container.assembly_service,
+        resolver=_language_service,
+        notification_service=notification_service,
+        ensure_agents=agent_factory.ensure_agents_for_user,
+    )
 
     logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
 
@@ -720,7 +769,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # MS To Do services — reuse adapters from ServiceContainer
     task_setup_service = None
     if container.ms_todo_adapter and agent_task_queue:
-        service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
         task_setup_service = TaskSetupService(
             lifecycle=container.ms_todo_adapter,
             task_config=container.task_config_repo,
@@ -728,7 +776,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             oauth_credentials=oauth_credentials_port,
             task_search_index=container.task_search_index,
             task_queue=agent_task_queue,
-            notification_url_base=service_url,
+            notification_url_base=topology.service_url,
             connector=container.connectors.get(MICROSOFT_TODO),
         )
 
@@ -875,14 +923,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
     cabinet_facts = CabinetFactService(container.repository)
 
-    # The Slack app is built here, before the memory review, whose questions are posted through its client; the
-    # Slack adapter below is built over the same app.
-    bot_token = config["SLACK_BOT_TOKEN"]
-    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
-    logger.debug("Creating AsyncApp...")
-    app = AsyncApp(token=bot_token)
-    logger.debug("AsyncApp created successfully")
-
     # Interactive messages (Facts S4 plan §3.20): buttons on Slack, numbered text on Telegram, picked by platform.
     # The Telegram channel itself is registered on the channel factory below, only when Telegram is configured.
     _interactive = InteractiveMessageRouter({
@@ -955,58 +995,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         alert_sink=_alert_webhook,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         fact_updates=_review_fact_updates,
-        cabinet_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/cabinet?tab=memory",
+        cabinet_url=topology.cabinet_memory_url,
         profile_step=_fact_profile_step,
         person_cards=_person_cards,
     ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
           and _alert_webhook is not None) else None
-
-    # Worker handler — dispatches Cloud Tasks to appropriate handlers
-    # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-    # from running twice; a claim whose attempt died is taken over by the retry.
-    # TTL 3600s is garbage collection and the done-window, not the liveness rule.
-    worker_handler = WorkerHandler(
-        task_claims=FirestoreTaskClaimStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=3600,
-        ),
-        # One review per user per local date; 48 h outlives the 3 h window and the date edge.
-        daily_review_marks=FirestoreDedupStore(
-            db_client=db_client,
-            collection_name=env_config.worker_task_dedup_collection,
-            ttl_seconds=172800,
-        ),
-        agent_worker_handler=agent_worker_handler,
-        email_indexing_service=email_indexing_service,
-        notification_service=notification_service,
-        consolidation_service=_consolidation_service,
-        agent_factory=agent_factory,
-        user_repo=user_repo,
-        task_dispatch=_task_dispatch_service,
-        video_registry=video_registry,
-        quota_service=quota_service,
-        media_storage=gcs_media_adapter,
-        task_setup=task_setup_service,
-        task_indexing=container.task_indexing,
-        reminders_service=_reminders_service,
-        notes_port=container.notes_adapter,
-        email_review=container.email_review_service,
-        account_repo=account_repo,
-        billing_webhook=_alert_webhook,
-        link_service=file_link_service,
-        short_link_service=short_link_service,
-        companion_extraction=companion_extraction_service,
-        oauth_credentials=oauth_credentials_port,
-        drive_sync_scheduler=_drive_sync_scheduler,
-        deep_research_fetch=_openai_dr_fetch,
-        prompt_content_store=container.prompt_content_store,
-        fact_lifecycle_sweep=_fact_lifecycle_sweep,
-        fact_review=_fact_review_service,
-        interactive_choice=_interactive_choice,
-        reconnect=_reconnect_service,
-        mail_connector=container.connectors.get(GMAIL),
-    )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
     deep_research_dedup_store = FirestoreDedupStore(
@@ -1015,45 +1008,19 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         ttl_seconds=259200,
     )
 
-    # HTML renderer (optional — lazy-starts Chromium on first widget request)
-    html_renderer = build_html_renderer(
-        enabled=bool(config.get("ENABLE_HTML_RENDERER")), inprocess_factory=PlaywrightHtmlRenderer)
-    if html_renderer is not None:
-        logger.info("✅ HTML renderer enabled (%s)", type(html_renderer).__name__)
-    else:
-        logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
     logger.info("🔌 Initializing Slack Adapter...")
 
-    # One RichContentService per platform: the chat handler and the notification service deliver files through the same one.
-    slack_media_adapter = SlackMediaAdapter(
-        app_client=app.client,
-        bot_token=config.get("SLACK_BOT_TOKEN", ""),
-    )
-    slack_rich_content = RichContentService(
-        media_port=slack_media_adapter,
-        storage_port=gcs_media_adapter,
-        html_renderer=html_renderer,
-    )
-
-    slack_adapter = SlackAdapterFactory.create_adapter(
-        app=app,
-        config=config,
-        env_config=env_config,
+    # The ConversationHandler dependencies both platforms share, held once.
+    chat = ChatServices(
         coordinator=coordinator,
         agent_factory=agent_factory,
-        iam_service=iam_service,
-        session_store=session_store,
-        db_client=db_client,
         consolidation_queue=consolidation_queue,
         consolidation_config=config.get("CONSOLIDATION"),
         consolidation_service=_consolidation_service,
         audio_service=audio_service,
         notification_service=notification_service,
-        language_service=_language_service,
         localization=_localization,
         file_conversion_service=container.file_conversion_service,
-        channel_binding_service=channel_binding_service,
         fallback_service=_fallback_service,
         short_link_service=short_link_service,
         skill_service=container.skill_service,
@@ -1062,29 +1029,73 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive_note_service=command_drive_note_service(container.drive_note_service, container.drive_notes_enabled),
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
+    )
+
+    slack_adapter = SlackAdapterFactory.create_adapter(
+        app=app,
+        config=config,
+        deploy_topology=topology,
+        chat=chat,
+        iam_service=iam_service,
+        session_store=session_store,
+        db_client=db_client,
+        language_service=_language_service,
+        channel_binding_service=channel_binding_service,
         worker_queue=agent_task_queue,
-        rich_content_service=slack_rich_content,
+        rich_content_service=slack_kit.rich_content,
     )
-    worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
-    notification_channel_factory.register_factory(
-        "slack",
-        lambda channel_id: SlackResponseChannel(
-            app_client=slack_adapter.app.client,
-            channel_id=channel_id,
-            bot_token=slack_adapter.slack_bot_token,
-        ),
-    )
-
-    # Wire Slack media adapter into notification service for async file delivery (DOCX).
-    notification_service.register_platform_media("slack", slack_media_adapter)
-    notification_service.register_platform_rich_content("slack", slack_rich_content)
-
     slack_adapter.register_handlers()
+
+    # Worker handler — dispatches Cloud Tasks to appropriate handlers
+    # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
+    # from running twice; a claim whose attempt died is taken over by the retry.
+    # TTL 3600s is garbage collection and the done-window, not the liveness rule.
+    _gmail_reconnect_flag = GmailReconnectFlag(
+        oauth_credentials=oauth_credentials_port, mail_connector=container.connectors.get(GMAIL),
+        ensure_agents=agent_factory.ensure_agents_for_user, notification_service=notification_service)
+    worker_handler = WorkerHandler(
+        task_claims=FirestoreTaskClaimStore(
+            db_client=db_client,
+            collection_name=env_config.worker_task_dedup_collection,
+            ttl_seconds=3600,
+        ),
+        agent_worker_handler=agent_worker_handler,
+        email_indexing_service=email_indexing_service,
+        consolidation_service=_consolidation_service,
+        agent_factory=agent_factory,
+        user_repo=user_repo,
+        task_dispatch=_task_dispatch_service,
+        task_setup=task_setup_service,
+        task_indexing=container.task_indexing,
+        reminders_service=_reminders_service,
+        companion_extraction=companion_extraction_service,
+        drive_sync_scheduler=_drive_sync_scheduler,
+        fact_lifecycle_sweep=_fact_lifecycle_sweep,
+        fact_review=_fact_review_service,
+        interactive_choice=_interactive_choice,
+        reconnect=_reconnect_service,
+        gmail_reconnect_flag=_gmail_reconnect_flag,
+        slack_worker=slack_adapter.handle_queued_event,
+        tasks=build_worker_tasks(
+            notes_port=container.notes_adapter, user_repo=user_repo, ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification_service, alert_sink=_alert_webhook,
+            task_dispatch=_task_dispatch_service, video_registry=video_registry, quota_service=quota_service,
+            media_storage=gcs_media_adapter, link_service=file_link_service, short_link_service=short_link_service,
+            deep_research_fetch=_openai_dr_fetch, prompt_content_store=container.prompt_content_store,
+            email_review=container.email_review_service,
+            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
+            daily_review_marks=FirestoreDedupStore(
+                db_client=db_client,
+                collection_name=env_config.worker_task_dedup_collection,
+                ttl_seconds=172800,
+            ),
+            gmail_reconnect_flag=_gmail_reconnect_flag, account_repo=account_repo),
+    )
 
     # ====================================================================
     # PHASE 3: Telegram Integration (Optional)
-    # Initialize Telegram adapter if configured. All or nothing: the adapter and its media
-    # adapter are built first; the worker, channel and media registrations run only after both exist.
+    # Initialize Telegram adapter if configured. All or nothing (owner ruling): the adapter and its media
+    # adapter are built first; the worker and the late platform binding run only after both exist.
     # ====================================================================
     telegram_config = validate_telegram_config()
     telegram_adapter = None
@@ -1108,27 +1119,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 webhook_secret=telegram_config["webhook_secret"],
                 dedup_store=dedup_store,
                 session_store=session_store,
-                coordinator=coordinator,
-                agent_factory=agent_factory,
+                chat=chat,
                 iam_service=iam_service,
-                consolidation_queue=consolidation_queue,
-                consolidation_config=config.get("CONSOLIDATION"),
-                consolidation_service=_consolidation_service,
-                audio_service=audio_service,
-                notification_service=notification_service,
                 language_service=_language_service,
-                localization=_localization,
-                file_conversion_service=container.file_conversion_service,
-                fallback_service=_fallback_service,
-                short_link_service=short_link_service,
-                skill_service=container.skill_service,
-                memory_fact_service=container.memory_fact_service,
-                fact_answers=_fact_answer_service,
-                drive_note_service=command_drive_note_service(container.drive_note_service,
-                                                              container.drive_notes_enabled),
                 task_queue=agent_task_queue,
-                long_turn_service=long_turn_service,
-                doc_delivery_service=doc_delivery_service,
                 rich_content_service=telegram_rich_content,
             )
         except Exception as e:
@@ -1136,16 +1130,18 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             logger.warning("🤖 Bot will continue without Telegram support")
         else:
             telegram_adapter = built_telegram_adapter
-            worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
-            notification_channel_factory.register_factory(
-                "telegram",
-                lambda channel_id: _make_telegram_channel(
-                    telegram_adapter, channel_id
+            register_late_platform(
+                PlatformKit(
+                    platform="telegram",
+                    media=telegram_media_adapter,
+                    rich_content=telegram_rich_content,
+                    channel=partial(_make_telegram_channel, telegram_adapter),
                 ),
+                notifications=notification_service,
+                channels=notification_channel_factory,
+                worker=worker_handler,
+                queued_update=telegram_adapter.handle_queued_update,
             )
-            # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
-            notification_service.register_platform_media("telegram", telegram_media_adapter)
-            notification_service.register_platform_rich_content("telegram", telegram_rich_content)
 
     else:
         logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
@@ -1171,6 +1167,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         auth_service=auth_service,
         auth_registry=auth_registry,
         auth_config=auth_config,
+        deploy_topology=topology,
         connect_service=_connect_service,
         credential_revocation=_credential_revocation,
         drive_disconnect_service=_drive_disconnect,
@@ -1186,6 +1183,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         companion_extractor_runner=companion_extractor_runner,
         call_text_files=call_text_files,
         language_service=_language_service,
+        language_preferences=language_preferences,
         localization=_localization,
         cipher=cipher,
         digest_key=secret_digest_key,

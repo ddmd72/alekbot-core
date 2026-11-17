@@ -28,6 +28,7 @@ from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.task_queue import TaskQueue
 from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
 from ..utils.logger import logger
+from .deploy_topology import DeployTopology
 
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
@@ -35,12 +36,11 @@ if TYPE_CHECKING:
     from ..services.localization_service import LocalizationService
     from ..services.user_notification_service import UserNotificationService
 
-DRIVE_QUEUE_LOCATION = "us-central1"
 
 
-def drive_queue_name(env_config: EnvironmentConfig) -> str:
+def drive_queue_name(topology: DeployTopology) -> str:
     """`drive-sync-{suffix}`, the same suffix rule as `agent-tasks-{suffix}`."""
-    return f"drive-sync-{'dev' if env_config.is_development else 'prod'}"
+    return f"drive-sync-{topology.queue_suffix}"
 
 
 def build_drive_index_repository(db_client: Any, env_config: EnvironmentConfig) -> DriveIndexRepository:
@@ -53,7 +53,7 @@ def build_drive_mirror_repository(db_client: Any, env_config: EnvironmentConfig)
     return FirestoreDriveMirrorRepository(db_client, env_config)
 
 
-def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentConfig) -> Optional[TaskQueue]:
+def build_drive_task_queue(config: Mapping[str, Any], topology: DeployTopology) -> Optional[TaskQueue]:
     """The drive queue, targeting the indexer service; None when `DRIVE_INDEXER_URL` is unset."""
     indexer_url = (os.getenv("DRIVE_INDEXER_URL") or "").strip().rstrip("/")
     project = config.get("GOOGLE_CLOUD_PROJECT")
@@ -62,12 +62,12 @@ def build_drive_task_queue(config: Mapping[str, Any], env_config: EnvironmentCon
         return None
     queue = GcpTaskQueue(
         project_id=project,
-        location=DRIVE_QUEUE_LOCATION,
-        queue_name=drive_queue_name(env_config),
+        location=topology.region,
+        queue_name=drive_queue_name(topology),
         service_url=indexer_url,
         service_account_email=config.get("DRIVE_INVOKER_SA_EMAIL") or config.get("SERVICE_ACCOUNT_EMAIL"),
     )
-    logger.info(f"📬 Drive sync queue initialized: {drive_queue_name(env_config)}")
+    logger.info(f"📬 Drive sync queue initialized: {drive_queue_name(topology)}")
     return queue
 
 

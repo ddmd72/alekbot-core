@@ -113,9 +113,8 @@ class World:
         self.media.upload_file = AsyncMock()
         self.sessions = AsyncMock(spec=SessionStore)
         self.notifications = UserNotificationService(state_repo=state, channel_factory=factory, coordinator=MagicMock(),
-                                                     notification_sla={}, session_store=self.sessions)
-        if chat:
-            self.notifications.register_platform_media("telegram", self.media)
+                                                     notification_sla={}, session_store=self.sessions,
+                                                     platform_media={"telegram": self.media} if chat else None)
 
         self.users = AsyncMock(spec=UserRepository)
         self.users.get_user.return_value = UserProfile(user_id="usr-1", account_id="acc-1",

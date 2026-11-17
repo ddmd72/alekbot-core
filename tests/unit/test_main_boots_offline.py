@@ -278,7 +278,7 @@ async def _seed_rows(boot: Boot) -> None:
     now = datetime.now(timezone.utc)
     expiry = now + timedelta(hours=1)
     for provider in ("microsoft_todo", "gmail"):
-        await worker._oauth_credentials.save(creds("u1", provider, token_expiry=expiry))
+        await worker._gmail_reconnect_flag._oauth_credentials.save(creds("u1", provider, token_expiry=expiry))
     await worker._email_indexing._job_repo.create_job(IndexingJob(
         job_id=INDEXING_JOB_ID, user_id="u1", account_id="a1", provider="gmail", triggered_by="scheduler",
         status="running", started_at=now, updated_at=now))
@@ -313,7 +313,7 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
         boot.rows[task_type] = Row(status, answer, list(caplog.records[start:]), boot.connects[connects:])
     worker = boot.worker_closure["worker_handler"]
     boot.task_bodies = [b for c in FakeCloudTasksClient.instances for b in c.created_bodies()]
-    session = await worker._notification._session_store.load_session("u1:C1")
+    session = await worker._gmail_reconnect_flag._notification._session_store.load_session("u1:C1")
     boot.history = [(m.role, p.text, p.full_text) for m in session.messages for p in m.parts]
     boot.todo_config = await worker._task_setup._task_config.get_config("u1")
     boot.indexing_job = await worker._email_indexing._job_repo.get_job(INDEXING_JOB_ID)

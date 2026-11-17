@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 from src.domain.notification_kind import NotificationKind
 from src.infrastructure.notification_sla import dispatch_deadline_s
 from src.domain.daily_review_window import EligibleReviewUser
-from src.handlers.worker_handler import WorkerHandler
 from src.ports.dedup_store import DedupStore
 from src.services.email_review_service import EmailReviewService
+from src.services.start_daily_email_review_task import StartDailyEmailReviewTask
 
 _SLOT = date(2026, 10, 22)
 
@@ -38,16 +38,12 @@ def _worker(users, marks, enqueue=None):
     dispatch = AsyncMock()
     if enqueue is not None:
         dispatch.enqueue_worker_task = enqueue
-    worker = WorkerHandler(
-        agent_worker_handler=MagicMock(),
-        email_indexing_service=MagicMock(),
-        notification_service=AsyncMock(),
-        consolidation_service=None,
-        agent_factory=AsyncMock(),
-        user_repo=MagicMock(),
-        task_dispatch=dispatch,
+    worker = StartDailyEmailReviewTask(
         email_review=review,
-        daily_review_marks=marks,
+        task_dispatch=dispatch,
+        user_repo=MagicMock(),
+        marks=marks,
+        deadline_seconds=dispatch_deadline_s(NotificationKind.DAILY_DIGEST),
     )
     return worker, dispatch
 
@@ -59,15 +55,15 @@ def _u(uid, acc="acc"):
 async def test_three_ticks_inside_window_enqueue_once():
     worker, dispatch = _worker([_u("user-1")], _MemoryDedup())
     for _ in range(3):
-        result, status = await worker._handle_start_daily_email_review()
+        result, status = await worker({}, {})
         assert status == 200
     assert dispatch.enqueue_worker_task.call_count == 1
 
 
 async def test_scheduler_recall_in_same_hour_does_not_enqueue_twice():
     worker, dispatch = _worker([_u("user-1")], _MemoryDedup())
-    first, _ = await worker._handle_start_daily_email_review()
-    second, _ = await worker._handle_start_daily_email_review()
+    first, _ = await worker({}, {})
+    second, _ = await worker({}, {})
     assert first["started"] == 1 and second["started"] == 0
     assert dispatch.enqueue_worker_task.call_count == 1
 
@@ -75,11 +71,11 @@ async def test_scheduler_recall_in_same_hour_does_not_enqueue_twice():
 async def test_next_local_date_enqueues_again():
     marks = _MemoryDedup()
     worker, dispatch = _worker([_u("user-1")], marks)
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
     worker._email_review.find_eligible_users.return_value = [
         EligibleReviewUser("user-1", "acc", date(2026, 10, 23))
     ]
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
     assert dispatch.enqueue_worker_task.call_count == 2
 
 
@@ -88,11 +84,11 @@ async def test_enqueue_failure_releases_mark_and_next_tick_enqueues():
     enqueue = AsyncMock(side_effect=[RuntimeError("tasks down"), None])
     worker, dispatch = _worker([_u("user-1")], marks, enqueue)
 
-    result, status = await worker._handle_start_daily_email_review()
+    result, status = await worker({}, {})
     assert status == 200 and result["started"] == 0 and result["failed"] == 1
     assert marks.marks == set()
 
-    result, _ = await worker._handle_start_daily_email_review()
+    result, _ = await worker({}, {})
     assert result["started"] == 1
     assert enqueue.call_count == 2
 
@@ -100,14 +96,14 @@ async def test_enqueue_failure_releases_mark_and_next_tick_enqueues():
 async def test_enqueue_failure_for_one_user_does_not_stop_the_next():
     enqueue = AsyncMock(side_effect=[RuntimeError("boom"), None])
     worker, _ = _worker([_u("user-1"), _u("user-2")], _MemoryDedup(), enqueue)
-    result, _ = await worker._handle_start_daily_email_review()
+    result, _ = await worker({}, {})
     assert result["started"] == 1 and result["failed"] == 1
 
 
 async def test_claim_store_raises_skips_that_user_only():
     marks = _MemoryDedup(fail_for=["user-1"])
     worker, dispatch = _worker([_u("user-1"), _u("user-2")], marks)
-    result, status = await worker._handle_start_daily_email_review()
+    result, status = await worker({}, {})
     assert status == 200 and result["started"] == 1 and result["failed"] == 1
     dispatch.enqueue_worker_task.assert_awaited_once()
     assert dispatch.enqueue_worker_task.call_args.args[1]["user_id"] == "user-2"
@@ -115,15 +111,15 @@ async def test_claim_store_raises_skips_that_user_only():
 
 async def test_no_store_configured_enqueues_every_tick_as_before():
     worker, dispatch = _worker([_u("user-1")], None)
-    await worker._handle_start_daily_email_review()
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
+    await worker({}, {})
     assert dispatch.enqueue_worker_task.call_count == 2
 
 
 async def test_mark_key_names_user_and_slot_date():
     marks = _MemoryDedup()
     worker, _ = _worker([_u("user-1")], marks)
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
     assert marks.marks == {"daily_review:user-1:2026-10-22"}
 
 
@@ -135,13 +131,13 @@ async def test_mark_is_held_when_enqueue_is_called():
         seen.append("daily_review:user-1:2026-10-22" in marks.marks)
 
     worker, _ = _worker([_u("user-1")], marks, AsyncMock(side_effect=enqueue))
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
     assert seen == [True]
 
 
 async def test_enqueue_passes_dedup_key_and_deadline():
     worker, dispatch = _worker([_u("user-1", "acc-9")], _MemoryDedup())
-    await worker._handle_start_daily_email_review()
+    await worker({}, {})
     dispatch.enqueue_worker_task.assert_awaited_once_with(
         "daily_email_review",
         {"user_id": "user-1", "account_id": "acc-9"},

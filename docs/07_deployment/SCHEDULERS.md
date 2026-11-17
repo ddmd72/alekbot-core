@@ -5,6 +5,10 @@ All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using 
 Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
 `start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` (`cloudbuild-dev.yaml`).
 
+Handlers: a `Handler` row naming `WorkerHandler._handle_*` is a method on the handler; one naming a `*Task` is a runner
+service in `src/services/` registered by `build_worker_tasks` (`src/composition/worker_setup.py`). A feature whose
+dependencies are absent answers its refusal through `DisabledTask`.
+
 ## Two deadlines, do not confuse them
 
 The Scheduler attempt deadline above bounds only the **fan-out** call — the tick that
@@ -122,7 +126,7 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "start_daily_email_review"}` |
 | **Purpose** | Fan-out: for every Gmail user with `config.gmail_daily_review=True`, finds the review slot open at this tick: the first 3 hours from `config.gmail_daily_review_hour` in the user's timezone (wraps midnight; an invalid timezone counts as UTC). It claims the mark `daily_review:{user}:{slot_date}` (48 h) so the review runs once per local date, then enqueues a `daily_email_review` Cloud Task named after the mark. Worker fetches the last 25 h of emails by exact instants (epoch-second `after:`), so consecutive daily reviews never leave a gap; an overlap of about an hour is accepted (up to 200, full body via BS4 HTML→text + invisible char stripping) and passes structured JSON to SmartAgent via `notify(save_history=False)`. SmartAgent runs Phase 0 triage → Phase 1 deep reads (`get_email_details`) → Phase 2 research (`search_web`) → delivers HTML report (GCS link) + short chat message. After HTML delivery, URL is saved to session history via `notify_document_link()`. |
-| **Handler** | `WorkerHandler._handle_start_daily_email_review()` → `WorkerHandler._handle_daily_email_review()` |
+| **Handler** | `StartDailyEmailReviewTask` → `DailyEmailReviewTask` (`src/services/`, built by `build_worker_tasks`) |
 | **User setting** | Toggle + hour picker in Cabinet UI > Integrations > Gmail |
 | **Env** | dev + prod |
 
@@ -225,7 +229,7 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 |-------|-------|
 | **Payload** | `{"task_type": "deep_research_failed", "user_id", "account_id", "session_id", "origin_platform", "query", "reason"}` |
 | **Enqueued by** | `job_main.py` on an agent failure, an empty result or a failed delivery (`reason`: `agent_failed` / `empty_result` / `delivery_failed`), with `dedup_key` `deep_research_failed:<job_id>` |
-| **Handler** | `WorkerHandler._handle_deep_research_failed()`: tells the user in the origin channel; 400 without user/account, 500 only when the notice was not sent at all (Cloud Tasks retries); a sent notice is never resent. `reason=delivery_failed` uses the "report could not be prepared" wording |
+| **Handler** | `DeepResearchFailedTask` (`services/deep_research_failed_task.py`): tells the user in the origin channel; 400 without user/account, 500 only when the notice was not sent at all (Cloud Tasks retries); a sent notice is never resent. `reason=delivery_failed` uses the "report could not be prepared" wording |
 | **Residual** | A job killed by its task timeout or by the OS (out of memory, SIGKILL) sends nothing |
 
 ---
@@ -236,7 +240,7 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 |-------|-------|
 | **Payload** | `{"task_type": "deep_research_webhook_event", "event_type", "job_id", "user_id", "account_id", "session_id", "origin_platform", "query"}` (no report text) |
 | **Enqueued by** | `POST /webhooks/openai/deep-research` after the signature check, the 72 h job claim `openai_deep_research:<job_id>` and the empty-user filter, with `dedup_key` `<job_id>`; an enqueue failure releases the claim and answers 500 |
-| **Handler** | `WorkerHandler._handle_deep_research_webhook_event()`: re-reads the response by job id, then delivers the report (`response.completed`) or sends one notice with the query (`failed` / `incomplete` / `cancelled`). 400 on a missing field or unknown event, 422 without OpenAI retrieval (no retry), 500 on a retrieval failure or a notice that was not sent at all (Cloud Tasks retries); a report task that could not be enqueued is 200 (the user was already told) |
+| **Handler** | `DeepResearchWebhookEventTask` (`services/deep_research_webhook_event_task.py`): re-reads the response by job id, then delivers the report (`response.completed`) or sends one notice with the query (`failed` / `incomplete` / `cancelled`). 400 on a missing field or unknown event, 422 without OpenAI retrieval (no retry), 500 on a retrieval failure or a notice that was not sent at all (Cloud Tasks retries); a report task that could not be enqueued is 200 (the user was already told) |
 | **Residuals** | Local dev without `OPENAI_API_KEY` cannot deliver webhook events (422). An event that exhausts its Cloud Tasks retries (retrieval keeps failing) loses the report silently: OpenAI was already acked |
 | **Report task** | The HTML report agent task has the dedup key `deep_research_report:<job_id>` (also from `job_main.py`); its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then tells the user |
 
@@ -260,7 +264,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "billing_daily_summary"}` |
 | **Purpose** | Sends a daily billing report to each account owner with activity today. Shows daily / monthly / total token consumption and cost per account. Skips accounts with zero daily usage. |
-| **Handler** | `WorkerHandler._handle_billing_daily_summary()` |
+| **Handler** | `BillingDailySummaryTask` (`src/services/billing_daily_summary_task.py`, built by `build_worker_tasks`) |
 | **Cost basis** | The summary posts yesterday's `prev_daily_tokens` / `prev_daily_cost` snapshot. Cached input is priced by a per-model `cache_read` multiplier in `_PRICING_PER_MILLION_TOKENS` (`src/domain/billing.py`): 0.1x for Claude, OpenAI and Gemini in general, 0.05x for the newer Claude (Opus 5.5, Sonnet 5.5) and OpenAI (`gpt-6.1-sol`) models. That table is the authority. |
 | **Env** | active on the single live service |
 

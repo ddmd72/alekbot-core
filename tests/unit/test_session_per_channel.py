@@ -578,15 +578,22 @@ class TestWorkerHandlerSessionExtraction:
         notification = AsyncMock()
         notification.notify = AsyncMock()
 
+        from src.composition.worker_setup import build_worker_tasks
         from src.handlers.worker_handler import WorkerHandler
 
+        agent_factory = AsyncMock()
         worker = WorkerHandler(
             agent_worker_handler=agent_worker,
             email_indexing_service=MagicMock(),
-            notification_service=notification,
             consolidation_service=None,
-            agent_factory=AsyncMock(),
+            agent_factory=agent_factory,
             user_repo=MagicMock(),
+            tasks=build_worker_tasks(
+                email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+                notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+                notification_service=notification, alert_sink=None, task_dispatch=AsyncMock(),
+                video_registry=MagicMock(), quota_service=None, media_storage=None, link_service=None,
+                short_link_service=None, deep_research_fetch=None, prompt_content_store=None),
         )
         return worker, notification
 
@@ -596,8 +603,9 @@ class TestWorkerHandlerSessionExtraction:
         mock_video_port.get_status = AsyncMock(return_value=poll_result)
         mock_registry = MagicMock()
         mock_registry.get.return_value = mock_video_port
-        worker._video_registry = mock_registry
-        worker._task_dispatch = AsyncMock()
+        runner = worker._tasks["video_generation_polling"]
+        runner._video_registry = mock_registry
+        runner._task_dispatch = AsyncMock()
 
     async def test_video_generation_polling_extracts_channel_from_session_id(self):
         from src.ports.video_generation_port import VideoPollResult
@@ -615,7 +623,7 @@ class TestWorkerHandlerSessionExtraction:
             "provider": "grok",
         }
 
-        with patch("src.handlers.worker_handler.deliver_video", new_callable=AsyncMock) as mock_deliver:
+        with patch.object(worker._tasks["video_generation_polling"], "_deliver_video", new_callable=AsyncMock) as mock_deliver:
             await worker.handle(payload)
 
             mock_deliver.assert_called_once()
@@ -624,8 +632,8 @@ class TestWorkerHandlerSessionExtraction:
 
     async def test_session_id_without_colon_yields_no_channel(self):
         """Legacy session_id (no colon) yields origin_channel_id=None."""
-        from src.handlers.worker_handler import WorkerHandler
         from src.ports.video_generation_port import VideoPollResult
+        from src.services.video_generation_polling_task import VideoGenerationPollingTask
 
         worker, notification = self._make_worker()
         self._arm_video_polling(worker, VideoPollResult(status="pending"))
@@ -636,7 +644,7 @@ class TestWorkerHandlerSessionExtraction:
             "user_id": _USER,
             "account_id": _ACCOUNT,
             "session_id": _USER,  # legacy: no colon
-            "attempt": WorkerHandler._MAX_VIDEO_POLL_ATTEMPTS,
+            "attempt": VideoGenerationPollingTask._MAX_VIDEO_POLL_ATTEMPTS,
             "provider": "grok",
         }
 
@@ -654,7 +662,7 @@ class TestWorkerHandlerSessionExtraction:
         worker, _notification = self._make_worker()
 
         mock_media_storage = MagicMock()
-        worker._media_storage = mock_media_storage
+        worker._tasks["video_generation_polling"]._media_storage = mock_media_storage
         self._arm_video_polling(worker, VideoPollResult(status="done", data=b"video-bytes"))
 
         payload = {
@@ -667,8 +675,8 @@ class TestWorkerHandlerSessionExtraction:
             "provider": "grok",
         }
 
-        with patch(
-            "src.handlers.worker_handler.deliver_video", new_callable=AsyncMock
+        with patch.object(
+            worker._tasks["video_generation_polling"], "_deliver_video", new_callable=AsyncMock
         ) as mock_deliver:
             await worker.handle(payload)
 

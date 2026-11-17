@@ -34,11 +34,8 @@ import pytest
 from src.adapters.dateutil_recurrence_adapter import DateutilRecurrenceAdapter
 from src.domain.agent_note import AgentNote
 from src.ports.agent_note_port import AgentNotePort
-from src.services.reminders_service import (
-    RemindersService,
-    build_reminder_alert,
-    build_reminder_alert_summary,
-)
+from src.domain.reminder_alert import build_reminder_alert, build_reminder_alert_summary
+from src.services.reminders_service import RemindersService
 from src.services.task_dispatch_service import TaskDispatchService
 
 

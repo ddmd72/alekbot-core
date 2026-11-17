@@ -11,7 +11,9 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
+from src.services.gmail_reconnect_flag import GmailReconnectFlag
 from src.composition.connector_registry import ConnectorRegistry
+from src.composition.worker_setup import build_worker_tasks
 from tests.support.oauth_credentials_store import mirror_get
 
 
@@ -21,11 +23,18 @@ def _worker(delivered=True):
     notification = AsyncMock()
     notification.notify.return_value = MagicMock(delivered=delivered, sent=delivered,
                                                      error=None if delivered else "boom")
+    agent_factory = AsyncMock()
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-        notification_service=notification, consolidation_service=None,
-        agent_factory=AsyncMock(),
+        consolidation_service=None,
+        agent_factory=agent_factory,
         user_repo=MagicMock(),
+        tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=None,
+            video_registry=None, quota_service=None, media_storage=None, link_service=None,
+            short_link_service=None, deep_research_fetch=None, prompt_content_store=None),
     )
     return worker, notification
 
@@ -167,17 +176,24 @@ class TestDeliveryFailureNotifier:
     async def test_openai_webhook_passes_failure_notification(self):
         """The OpenAI delivery now runs in the webhook's worker task (S1b W): its notifier is passed on."""
         service = AsyncMock()
+        agent_factory = AsyncMock()
+        task_dispatch = AsyncMock()
         worker = WorkerHandler(
             agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-            notification_service=service, consolidation_service=None,
-            agent_factory=AsyncMock(),
-            user_repo=MagicMock(), task_dispatch=AsyncMock(),
-            media_storage=MagicMock(), deep_research_fetch=AsyncMock(return_value={"output_text": "t"}),
+            consolidation_service=None,
+            agent_factory=agent_factory,
+            user_repo=MagicMock(), task_dispatch=task_dispatch,
+            tasks=build_worker_tasks(
+            email_review=None, daily_review_marks=None, gmail_reconnect_flag=None, account_repo=None,
+            notes_port=None, user_repo=MagicMock(), ensure_agents=agent_factory.ensure_agents_for_user,
+            notification_service=service, alert_sink=None, task_dispatch=task_dispatch,
+            video_registry=None, quota_service=None, media_storage=MagicMock(), link_service=None,
+            short_link_service=None, deep_research_fetch=AsyncMock(return_value={"output_text": "t"}), prompt_content_store=None),
         )
         payload = {"task_type": "deep_research_webhook_event", "event_type": "response.completed",
                    "job_id": "r1", "user_id": "u", "account_id": "a", "query": "q", "session_id": "u:C1",
                    "origin_platform": ""}
-        with patch("src.handlers.worker_handler.deliver_deep_research", new_callable=AsyncMock) as d:
+        with patch.object(worker._tasks["deep_research_webhook_event"], "_deliver_report", new_callable=AsyncMock) as d:
             await worker._dispatch(payload, {})
         assert d.call_args.kwargs["failure_notification"] is service
 
@@ -199,11 +215,22 @@ def _ordered_worker(**kw):
         log.append("ensure")
 
     factory.ensure_agents_for_user.side_effect = _ensure
+    video_registry = kw.pop("video_registry", None)
+    email_review = kw.pop("email_review", None)
+    flag = GmailReconnectFlag(
+        oauth_credentials=kw.pop("oauth_credentials", None), mail_connector=kw.pop("mail_connector", None),
+        ensure_agents=factory.ensure_agents_for_user, notification_service=notification)
     worker = WorkerHandler(
         agent_worker_handler=AsyncMock(), email_indexing_service=MagicMock(),
-        notification_service=notification, consolidation_service=None,
+        consolidation_service=None,
         agent_factory=factory,
-        user_repo=MagicMock(), **kw,
+        user_repo=MagicMock(), gmail_reconnect_flag=flag,
+        tasks=build_worker_tasks(
+            notes_port=None, user_repo=MagicMock(), ensure_agents=factory.ensure_agents_for_user,
+            notification_service=notification, alert_sink=None, task_dispatch=kw.get("task_dispatch"),
+            video_registry=video_registry, quota_service=None, media_storage=None, link_service=None,
+            short_link_service=None, deep_research_fetch=None, prompt_content_store=None,
+            email_review=email_review, daily_review_marks=None, gmail_reconnect_flag=flag, account_repo=None), **kw,
     )
     return worker, log
 
@@ -287,17 +314,17 @@ class TestGmailReconnectEnsureFailure:
         oauth.update.return_value = True        # the record still exists
         worker, log = _ordered_worker(oauth_credentials=oauth, mail_connector=ConnectorRegistry().get("gmail"))
         worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")
-        await worker._flag_gmail_reconnect("u1", "a1")
+        await worker._gmail_reconnect_flag.flag("u1", "a1")
         oauth.update.assert_not_awaited()
         oauth.save.assert_not_awaited()
         assert creds.needs_reconnect is False
-        worker._notification.notify.assert_not_awaited()
+        worker._gmail_reconnect_flag._notification.notify.assert_not_awaited()
 
         async def _ok(_uid):
             log.append("ensure")
 
         worker._agent_factory.ensure_agents_for_user.side_effect = _ok
-        await worker._flag_gmail_reconnect("u1", "a1")
+        await worker._gmail_reconnect_flag.flag("u1", "a1")
         oauth.update.assert_awaited_once_with(creds)
         oauth.save.assert_not_awaited()          # a flag write never creates a record
         assert creds.needs_reconnect is True
