@@ -3,6 +3,7 @@
 source) are replaced. Slack's handler gets the channel binding and the history source, Telegram's has neither (P9-D9;
 the Bot API has no history), and each platform adapter gets the bundle's audio service and localization."""
 import dataclasses
+from src.composition.deploy_topology import build_deploy_topology
 from unittest.mock import MagicMock, patch
 
 from src.composition.chat_services import ChatServices
@@ -23,7 +24,7 @@ def test_slack_builds_its_handler_from_the_bundle_with_its_binding_and_history()
     with patch(_SLACK + "SlackChannelHistorySource") as history, patch(_SLACK + "GcpTaskQueue"), \
             patch(_SLACK + "HTTPModeAdapter") as adapter:
         SlackAdapterFactory.create_adapter(
-            app=MagicMock(), config=config, env_config=MagicMock(is_development=True), chat=chat,
+            app=MagicMock(), config=config, deploy_topology=build_deploy_topology(config, MagicMock(is_development=True)), chat=chat,
             iam_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
             channel_binding_service=binding, rich_content_service=rich)
 

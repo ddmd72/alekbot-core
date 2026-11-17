@@ -19,7 +19,8 @@ def _ctx():
 def _self(telephony=True, phone="+15550101", notifications=True):
     return SimpleNamespace(
         _telephony=MagicMock() if telephony else None,
-        config={"TWILIO_PHONE_NUMBER": phone, "CLOUD_RUN_SERVICE_URL": "https://main.example.com"},
+        config={"TWILIO_PHONE_NUMBER": phone},
+        deploy_topology=SimpleNamespace(service_url="https://main.example.com"),
         notification_service=MagicMock() if notifications else None,
         repository=MagicMock(),
         session_store=MagicMock(),
